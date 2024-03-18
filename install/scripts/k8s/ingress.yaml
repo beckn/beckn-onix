@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: beckn-ingress
+spec:
+  rules:
+    - host: localhost
+      http:
+        paths:
+          - path: /registry
+            pathType: Prefix
+            backend:
+              service:
+                name: registry-service
+                port:
+                  number: 3000
+          - path: /gateway
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway-service
+                port:
+                  number: 4000
+          # Repeat the above structure for other services
