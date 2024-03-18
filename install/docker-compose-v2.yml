@@ -1,0 +1,112 @@
+version: '3'
+
+services:
+  registry:
+    image: fidedocker/registry
+    container_name: registry
+    networks:
+      - beckn_network
+    ports:
+      - 3000:3000
+      - 3030:3030
+    restart: unless-stopped
+    volumes:
+      - ./registry_data/config/swf.properties:/registry/overrideProperties/config/swf.properties
+      - ./registry_data/database:/registry/database
+
+  gateway:
+    image: fidedocker/gateway
+    depends_on:
+      - registry
+    container_name: gateway
+    networks:
+      - beckn_network
+    ports:
+      - 4000:4000
+      - 4030:4030
+    restart: unless-stopped
+    volumes:
+      - ./gateway_data/config/swf.properties:/gateway/overrideProperties/config/swf.properties
+      - ./gateway_data/database:/gateway/database
+
+  bap-client:
+    image: fidedocker/protocol-server
+    container_name: bap-client
+    networks:
+      - beckn_network
+    ports:
+      - 5001:5001
+    restart: unless-stopped
+    volumes:
+      - ./protocol-server-data/bap-client.yml:/usr/src/app/config/default.yml
+
+  bap-network:
+    image: fidedocker/protocol-server
+    container_name: bap-network
+    networks:
+      - beckn_network
+    ports:
+      - 5002:5002
+    restart: unless-stopped
+    volumes:
+      - ./protocol-server-data/bap-network.yml:/usr/src/app/config/default.yml
+
+  sandbox-api:
+    image: fidedocker/sandbox-api
+    container_name: sandbox-api
+    networks:
+      - beckn_network
+    ports:
+      - 4010:4000
+    restart: unless-stopped
+
+  sandbox-webhook:
+    image: fidedocker/sandbox-webhook-api
+    depends_on:
+      - sandbox-api
+    container_name: sandbox-webhook
+    networks:
+      - beckn_network
+    ports:
+      - 3005:3005
+    restart: unless-stopped
+    volumes:
+      - ./ENV/.env-webhook:/usr/src/app/.env
+
+  bpp-client:
+    image: fidedocker/protocol-server
+    container_name: bpp-client
+    networks:
+      - beckn_network
+    ports:
+      - 6001:6001
+    restart: unless-stopped
+    volumes:
+      - ./protocol-server-data/bpp-client.yml:/usr/src/app/config/default.yml
+
+  bpp-network:
+    image: fidedocker/protocol-server
+    container_name: bpp-network
+    networks:
+      - beckn_network
+    ports:
+      - 6002:6002
+    restart: unless-stopped
+    volumes:
+      - ./protocol-server-data/bpp-network.yml:/usr/src/app/config/default.yml
+
+  generic-client-layer:
+    image: fidedocker/generic-client-layer
+    container_name: generic-client-layer
+    networks:
+      - beckn_network
+    ports:
+      - 3015:3000
+    restart: unless-stopped
+    volumes:
+      - ./ENV/.env-generic-client-layer:/app/.env
+
+networks:
+  beckn_network:
+    driver: bridge
+
