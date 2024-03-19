@@ -20,7 +20,7 @@ create_network_participant() {
         "pub_key_id": "$pub_key_id",
         "subscriber_url": "$subscriber_url",
         "domain": "",
-        "extended_attributes": {"domains": []}
+        "extended_attributes": {"domains": []},
         "encr_public_key": "$encr_public_key",
         "signing_public_key": "$signing_public_key",
         "valid_from": "$valid_from",
