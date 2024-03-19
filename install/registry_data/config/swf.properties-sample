@@ -1,6 +1,6 @@
 swf.load.complete.config.tables.if.count.less.than=500
 swf.user.password.encrypted=false
-swf.plugins.background.core.workers.numThreads=1
+swf.plugins.background.core.workers.numThreads=3
 swf.application.authentication.required=false
 
 
@@ -31,9 +31,14 @@ swf.jdbc.set.dbschema.command=set schema public
 swf.api.keys.case=SNAKE
 swf.api.root.required=false
 
-swf.encryption.support=false
-#swf.key.store.directory=./.keystore
-
 # Needed for Google Login
 #swf.GOOGLE.client.id=
 #swf.GOOGLE.client.secret=
+
+swf.encryption.support=false
+## Uncomment below if encryption is needed and set appropriate passwords
+#swf.key.store.directory=./.keystore
+#swf.key.store.password=venky12
+#swf.key.entry.succinct.password=succinct12
+
+swf.ftl.dir=src/main/resources/templates

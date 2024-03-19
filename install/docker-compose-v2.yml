@@ -27,6 +27,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./gateway_data/config/swf.properties:/gateway/overrideProperties/config/swf.properties
+      - ./gateway_data/config/networks:/gateway/overrideProperties/config/networks #Update varibales post demo
       - ./gateway_data/database:/gateway/database
 
   bap-client:
