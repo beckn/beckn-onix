@@ -35,7 +35,7 @@ bap_client_port=5001
 bap_network_port=5002
 
 bap_subscriber_id="bap-network"
-bap_subscriber_id_key="bap-network-key"
+bap_subscriber_key_id="bap-network-key"
 bap_subscriber_url="http://bap-network:5002"
 bap_client_url="http://bap-client:5002"
 
@@ -48,6 +48,6 @@ bpp_client_port=6001
 bpp_network_port=6002
 
 bpp_subscriber_id="bpp-network"
-bpp_subscriber_id_key="bpp-network-key"
+bpp_subscriber_key_id="bpp-network-key"
 bpp_subscriber_url="http://bpp-network:6002"
 webhook_url="http://sandbox-webhook:3005"

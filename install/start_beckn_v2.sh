@@ -106,9 +106,9 @@ install_bap_protocol_server(){
     if [[ $1 ]];then
         registry_url=$1
         bap_subscriber_id=$2
-        bap_subscriber_id_key=$3
+        bap_subscriber_key_id=$3
         bap_subscriber_url=$4
-        bash scripts/update_bap_config.sh $registry_url $bap_subscriber_id $bap_subscriber_id_key $bap_subscriber_url
+        bash scripts/update_bap_config.sh $registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url
     else
         bash scripts/update_bap_config.sh
     fi
@@ -137,9 +137,9 @@ install_bpp_protocol_server_with_sandbox(){
     if [[ $1 ]];then
         registry_url=$1
         bpp_subscriber_id=$2
-        bpp_subscriber_id_key=$3
+        bpp_subscriber_key_id=$3
         bpp_subscriber_url=$4
-        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_id_key $bpp_subscriber_url
+        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url
     else
         bash scripts/update_bpp_config.sh
     fi
@@ -159,10 +159,10 @@ install_bpp_protocol_server(){
     if [[ $1 ]];then
         registry_url=$1
         bpp_subscriber_id=$2
-        bpp_subscriber_id_key=$3
+        bpp_subscriber_key_id=$3
         bpp_subscriber_url=$4
         webhook_url=$5
-        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_id_key $bpp_subscriber_url $webhook_url
+        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url
     else
         bash scripts/update_bpp_config.sh
     fi
@@ -248,9 +248,9 @@ else
             # Ask the user if they want to change the registry_url
             read -p "Do you want to change the registry_url? (${GREEN}Press Enter to accept default: $beckn_registry_url${NC}): " custom_registry_url
             registry_url=${custom_registry_url:-$beckn_registry_url}
-            bap_subscriber_id_key=$bap_subscriber_id-key
+            bap_subscriber_key_id=$bap_subscriber_id-key
             install_package
-            install_bap_protocol_server $registry_url $bap_subscriber_id $bap_subscriber_id_key $bap_subscriber_url
+            install_bap_protocol_server $registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url
             ;;
         3)
             read -p "Enter BPP Subscriber ID: " bpp_subscriber_id
@@ -258,9 +258,9 @@ else
             # Ask the user if they want to change the registry_url
             read -p "Do you want to change the registry_url? (${GREEN}Press Enter to accept default: $beckn_registry_url${NC}): " custom_registry_url
             registry_url=${custom_registry_url:-$beckn_registry_url}
-            bpp_subscriber_id_key=$bpp_subscriber_id-key
+            bpp_subscriber_key_id=$bpp_subscriber_id-key
             install_package
-            install_bpp_protocol_server_with_sandbox $registry_url $bpp_subscriber_id $bpp_subscriber_id_key $bpp_subscriber_url
+            install_bpp_protocol_server_with_sandbox $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url
             ;;
         4)
             read -p "Enter BPP Subscriber ID: " bpp_subscriber_id
@@ -270,9 +270,9 @@ else
             # Ask the user if they want to change the registry_url
             read -p "Do you want to change the registry_url? (${GREEN}Press Enter to accept default: $beckn_registry_url${NC}): " custom_registry_url
             registry_url=${custom_registry_url:-$beckn_registry_url}
-            bpp_subscriber_id_key=$bpp_subscriber_id-key
+            bpp_subscriber_key_id=$bpp_subscriber_id-key
             install_package
-            install_bpp_protocol_server $registry_url $bpp_subscriber_id $bpp_subscriber_id_key $bpp_subscriber_url $webhook_url
+            install_bpp_protocol_server $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url
             ;;
 
         5)
