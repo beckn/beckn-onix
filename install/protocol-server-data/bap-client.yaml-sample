@@ -112,7 +112,7 @@ app:
   # Mandatory.
   registryUrl: REGISTRY_URL
   auth: false
-  uniqueKey: "BAP_SUBSCRIBER_ID_KEY"
+  uniqueKey: "BAP_SUBSCRIBER_KEY_ID"
   
   # Mandatory.
   city: "std:080"

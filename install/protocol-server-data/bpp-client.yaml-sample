@@ -110,7 +110,7 @@ app:
   # Mandatory.
   registryUrl: REGISTRY_URL
   auth: true
-  uniqueKey: "BPP_SUBSCRIBER_ID_KEY"
+  uniqueKey: "BPP_SUBSCRIBER_KEY_ID"
   
   # Mandatory.
   city: "std:080"

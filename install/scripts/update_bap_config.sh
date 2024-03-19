@@ -30,7 +30,7 @@ fi
 if [[ $1 ]]; then
     registry_url=$1
     bap_subscriber_id=$2
-    bap_subscriber_id_key=$3
+    bap_subscriber_key_id=$3
     bap_subscriber_url=$4
 else
     if [[ $(uname -s) == 'Darwin' ]]; then
@@ -79,7 +79,7 @@ if [[ $(uname -s ) == 'Darwin' ]];then
         "PUBLIC_KEY=$public_key"
         "BAP_SUBSCRIBER_ID=$bap_subscriber_id"
         "BAP_SUBSCRIBER_URL=$bap_subscriber_url"
-        "BAP_SUBSCRIBER_ID_KEY=$bap_subscriber_id_key"
+        "BAP_SUBSCRIBER_KEY_ID=$bap_subscriber_key_id"
     )
 
     echo "Configuring BAP protocol server"
@@ -107,7 +107,7 @@ else
         ["PUBLIC_KEY"]=$public_key
         ["BAP_SUBSCRIBER_ID"]=$bap_subscriber_id
         ["BAP_SUBSCRIBER_URL"]=$bap_subscriber_url
-        ["BAP_SUBSCRIBER_ID_KEY"]=$bap_subscriber_id_key
+        ["BAP_SUBSCRIBER_KEY_ID"]=$bap_subscriber_key_id
     )
 
     echo "Configuring BAP protocol server"
@@ -121,4 +121,4 @@ fi
 
 echo "Registering BAP protocol server on the registry"
 
-create_network_participant "$registry_url" "application/json" "$bap_subscriber_id" "$bap_subscriber_id_key" "$bap_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type"
+create_network_participant "$registry_url" "application/json" "$bap_subscriber_id" "$bap_subscriber_key_id" "$bap_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type"

@@ -30,7 +30,7 @@ fi
 if [[ $1 ]]; then
     registry_url=$1
     bpp_subscriber_id=$2
-    bpp_subscriber_id_key=$3
+    bpp_subscriber_key_id=$3
     bpp_subscriber_url=$4
     webhook_url=$5
 else
@@ -77,7 +77,7 @@ if [[ $(uname -s ) == 'Darwin' ]];then
         "PUBLIC_KEY=$public_key"
         "BPP_SUBSCRIBER_URL=$bpp_subscriber_url"
         "BPP_SUBSCRIBER_ID=$bpp_subscriber_id"
-        "BPP_SUBSCRIBER_ID_KEY=$bpp_subscriber_id_key"
+        "BPP_SUBSCRIBER_KEY_ID=$bpp_subscriber_key_id"
         "WEBHOOK_URL=$webhook_url"
     )
 
@@ -107,7 +107,7 @@ else
         ["PUBLIC_KEY"]=$public_key
         ["BPP_SUBSCRIBER_URL"]=$bpp_subscriber_url
         ["BPP_SUBSCRIBER_ID"]=$bpp_subscriber_id
-        ["BPP_SUBSCRIBER_ID_KEY"]=$bpp_subscriber_id_key
+        ["BPP_SUBSCRIBER_KEY_ID"]=$bpp_subscriber_key_id
         ["WEBHOOK_URL"]=$webhook_url
     )
 
@@ -122,4 +122,4 @@ fi
 
 echo "Registering BPP protocol server on the registry"
 
-create_network_participant "$registry_url" "application/json" "$bpp_subscriber_id" "$bpp_subscriber_id_key" "$bpp_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type"
+create_network_participant "$registry_url" "application/json" "$bpp_subscriber_id" "$bpp_subscriber_key_id" "$bpp_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type"
