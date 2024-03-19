@@ -16,8 +16,6 @@ services:
 
   gateway:
     image: fidedocker/gateway
-    depends_on:
-      - registry
     container_name: gateway
     networks:
       - beckn_network
