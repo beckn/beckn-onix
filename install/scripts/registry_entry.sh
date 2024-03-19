@@ -18,6 +18,7 @@ create_network_participant() {
     {
         "subscriber_id": "$subscriber_id",
         "pub_key_id": "$pub_key_id",
+        "unique_key_id": "$pub_key_id",
         "subscriber_url": "$subscriber_url",
         "domain": " ",
         "extended_attributes": {"domains": []},
