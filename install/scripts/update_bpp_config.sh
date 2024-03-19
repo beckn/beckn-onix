@@ -32,6 +32,7 @@ if [[ $1 ]]; then
     bpp_subscriber_id=$2
     bpp_subscriber_id_key=$3
     bpp_subscriber_url=$4
+    webhook_url=$5
 else
     if [[ $(uname -s) == 'Darwin' ]]; then
         ip=localhost
