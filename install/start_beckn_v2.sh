@@ -162,7 +162,7 @@ install_bpp_protocol_server(){
         bpp_subscriber_id_key=$3
         bpp_subscriber_url=$4
         webhook_url=$5
-        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_id_key $bpp_subscriber_url $$webhook_url
+        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_id_key $bpp_subscriber_url $webhook_url
     else
         bash scripts/update_bpp_config.sh
     fi
