@@ -203,17 +203,40 @@ if [[ $install_all =~ ^[Yy]$ ]]; then
 else
     # User selects specific components to install
     echo "Please select the components that you want to install"
-    echo "1. Beckn Gateway & Beckn Registry"
-    echo "2. BAP Protocol Server"
-    echo "3. BPP Protocol Server with BPP Sandbox"
-    echo "4. BPP Protocol Server"
-    echo "5. Generic Client Layer"
-    echo "6. Exit"
+    echo "1. Beckn Registry"
+    echo "2. Beckn Gateway"
+    echo "3. BAP Protocol Server"
+    echo "4. BPP Protocol Server with BPP Sandbox"
+    echo "5. BPP Protocol Server"
+    echo "6. Generic Client Layer"
+    echo "7. Exit"
     
     read -p "Enter your choice (1-6): " user_choice
 
     case $user_choice in
         1)
+            echo "${GREEN}Default Registry URL: $registry_url"
+            read -p "Do you want to change Registry URL? (Y/N): ${NC}" change_url
+            if [[ $change_url =~ ^[Yy]$ ]]; then
+                read -p "Enter publicly accessible registry URL: " registry_url
+                
+                if [[ $registry_url =~ /$ ]]; then
+                    new_registry_url=${registry_url%/}
+                else
+                    new_registry_url=$registry_url
+                fi
+
+                install_package
+                install_registry $new_registry_url
+                #install_gateway $new_registry_url $gateway_url
+
+            else
+                install_package
+                install_registry
+                #install_gateway
+            fi
+            ;;
+        2)
             echo "${GREEN}Default Registry URL: $registry_url"
             echo "Default Gateway URL will be docker URL"
             read -p "Do you want to change Registry and Gateway URL? (Y/N): ${NC}" change_url
@@ -231,16 +254,14 @@ else
                 fi
 
                 install_package
-                install_registry $new_registry_url
                 install_gateway $new_registry_url $gateway_url
 
             else
                 install_package
-                install_registry
                 install_gateway
             fi
             ;;
-        2)
+        3)
             echo "${GREEN}................Installing Protocol Server for BAP................${NC}"
             
             read -p "Enter BAP Subscriber ID: " bap_subscriber_id
@@ -252,7 +273,7 @@ else
             install_package
             install_bap_protocol_server $registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url
             ;;
-        3)
+        4)
             read -p "Enter BPP Subscriber ID: " bpp_subscriber_id
             read -p "Enter BPP Subscriber URL: " bpp_subscriber_url
             # Ask the user if they want to change the registry_url
@@ -262,7 +283,7 @@ else
             install_package
             install_bpp_protocol_server_with_sandbox $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url
             ;;
-        4)
+        5)
             read -p "Enter BPP Subscriber ID: " bpp_subscriber_id
             read -p "Enter BPP Subscriber URL: " bpp_subscriber_url
             read -p "Enter Webhook URL: " webhook_url
@@ -275,7 +296,7 @@ else
             install_bpp_protocol_server $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url
             ;;
 
-        5)
+        6)
             echo "${GREEN}................Installing GENERIC CLIENT LAYER................${NC}"
             read -p "Enter BAP Subscriber ID: " bap_subscriber_id
             read -p "Enter BAP Subscriber URL: " bap_subscriber_url
@@ -284,7 +305,7 @@ else
             start_container "generic-client-layer"
             ;;
 
-        6)
+        7)
             echo "Exiting ONIX"
             exit 0
             ;;
