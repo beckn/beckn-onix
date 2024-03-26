@@ -2,7 +2,7 @@
 
 ## Overview
 
-This shell script, `onix.sh`, automates the setup of Beckn components, including the Registry, Gateway, Protocol Server BAP, Protocol Server BPP, Sandbox, Webhook, and supporting services such as MongoDB, Redis, and RabbitMQ.
+This shell script, `beckn-onix.sh`, automates the setup of Beckn components, including the Registry, Gateway, Protocol Server BAP, Protocol Server BPP, Sandbox, Webhook, and supporting services such as MongoDB, Redis, and RabbitMQ.
 
 ## How to Use
 
@@ -55,15 +55,18 @@ gateway.example.io
 bpp.example.io
 bap.example.io
 ```
+
 ## Registry
 
 **Default Registry Username and Password**
+
 ```
 username = root
 password = root
 ```
 
 The network configuration URL is not mandatory as this is for extending the core capabilities of the network
+
 ## Post-Installation Details
 
 Upon successful execution, the script provides the following details for use in the Postman collection:
