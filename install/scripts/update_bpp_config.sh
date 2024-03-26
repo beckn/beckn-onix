@@ -79,6 +79,9 @@ if [[ $(uname -s ) == 'Darwin' ]];then
         "BPP_SUBSCRIBER_ID=$bpp_subscriber_id"
         "BPP_SUBSCRIBER_KEY_ID=$bpp_subscriber_key_id"
         "WEBHOOK_URL=$webhook_url"
+        "USE_LAYER_2_CONFIG"=true
+        "MANDATE_LAYER_2_CONFIG"=true
+
     )
 
     echo "Configuring BPP protocol server"
@@ -109,6 +112,9 @@ else
         ["BPP_SUBSCRIBER_ID"]=$bpp_subscriber_id
         ["BPP_SUBSCRIBER_KEY_ID"]=$bpp_subscriber_key_id
         ["WEBHOOK_URL"]=$webhook_url
+        ["USE_LAYER_2_CONFIG"]=true
+        ["MANDATE_LAYER_2_CONFIG"]=true        
+
     )
 
     echo "Configuring BAP protocol server"

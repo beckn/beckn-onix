@@ -80,6 +80,8 @@ if [[ $(uname -s ) == 'Darwin' ]];then
         "BAP_SUBSCRIBER_ID=$bap_subscriber_id"
         "BAP_SUBSCRIBER_URL=$bap_subscriber_url"
         "BAP_SUBSCRIBER_KEY_ID=$bap_subscriber_key_id"
+        "USE_LAYER_2_CONFIG"=true
+        "MANDATE_LAYER_2_CONFIG"=true
     )
 
     echo "Configuring BAP protocol server"
@@ -108,6 +110,8 @@ else
         ["BAP_SUBSCRIBER_ID"]=$bap_subscriber_id
         ["BAP_SUBSCRIBER_URL"]=$bap_subscriber_url
         ["BAP_SUBSCRIBER_KEY_ID"]=$bap_subscriber_key_id
+        ["USE_LAYER_2_CONFIG"]=true
+        ["MANDATE_LAYER_2_CONFIG"]=true        
     )
 
     echo "Configuring BAP protocol server"
