@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: Beckn Protocol Core
-  description: uei:charging layer 2 config from core yaml
+  description: retail layer 2 config from core yaml 
   version: 1.1.0
 security:
   - SubscriberAuth: []
