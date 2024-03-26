@@ -2,91 +2,68 @@
 
 ## Overview
 
-This shell script, `start_beckn_v2.sh`, automates the setup of Beckn components, including the Registry, Gateway, Protocol Server BAP, Protocol Server BPP, Sandbox, Webhook, and supporting services such as MongoDB, Redis, and RabbitMQ.
+This shell script, `onix.sh`, automates the setup of Beckn components, including the Registry, Gateway, Protocol Server BAP, Protocol Server BPP, Sandbox, Webhook, and supporting services such as MongoDB, Redis, and RabbitMQ.
 
 ## How to Use
 
-1. **Clone the Repository:**
+### Prerequisites
 
-    ```bash
-    git clone -b main https://github.com/beckn/onix.git
-    ```
+1. Git
+2. Docker
 
-2. **Navigate to the Script Directory:**
+## Installation
 
-    ```bash
-    cd onix/install
-    ```
+### Debian / Ubuntu
 
-3. **Run the Setup Script:**
+**Clonning Onix Repo**
 
-    ```bash
-    ./start_beckn_v2.sh
-    ```
+```
+git clone https://github.com/beckn/beckn-onix.git
+```
 
-    The script will guide you through the installation.
+**Installing Docker**
 
-## Installation Sequence - Design
+```
+sudo apt install docker
+```
 
-1. **Install Required Packages:**
-   It will install Docker, Docker-Compose, and jq packages which are required for this setup.
+**Running Onix**
 
-    ```bash
-    ./package_manager.sh
-    ```
+```
+cd beckn-onix/ && cd  install/
+```
 
-2. **Install Registry Service:**
+```
+./onix.sh
+```
 
-    ```bash
-    ./start_container registry
-    ```
+Note: when running this file may lead to errors. The easy way to solve is to run the `onix.sh` file with root permissions.
 
-3. **Install Gateway Service:**
+```
+sudo ./onix.sh
+```
 
-    ```bash
-    ./update_gateway_details.sh registry
-    ./start_container gateway
-    ./register_gateway.sh
-    ```
+The reason for this error is due to the current user not having all the permission to access certain files present in the system.
 
-4. **Start Supporting Services:**
+**Domain**
 
-    - MongoDB
-    - RabbitMQ
-    - Redis
+You will also be requiring a domain and also need to map all the 4 server with each sub domain for example
 
-    ```bash
-    ./start_support_services
-    ```
+```
+registry.example.io
+gateway.example.io
+bpp.example.io
+bap.example.io
+```
+## Registry
 
-5. **Install Protocol Server for BAP:**
+**Default Registry Username and Password**
+```
+username = root
+password = root
+```
 
-    ```bash
-    ./update_bap_config.sh
-    ./start_container "bap-client"
-    ./start_container "bap-network"
-    ```
-
-6. **Install Sandbox:**
-
-    ```bash
-    ./start_container "sandbox-api"
-    ```
-
-7. **Install Webhook:**
-
-    ```bash
-    ./start_container "sandbox-webhook"
-    ```
-
-8. **Install Protocol Server for BPP:**
-
-    ```bash
-    ./update_bpp_config.sh
-    ./start_container "bpp-client"
-    ./start_container "bpp-network"
-    ```
-
+The network configuration URL is not mandatory as this is for extending the core capabilities of the network
 ## Post-Installation Details
 
 Upon successful execution, the script provides the following details for use in the Postman collection:
