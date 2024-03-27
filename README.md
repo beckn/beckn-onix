@@ -20,5 +20,9 @@ docker cp "$FILENAME" "$CONTAINER_NAME":"$CONTAINER_PATH/$FILENAME"
 
 # example
 docker cp retail_1.1.0.yaml bap-client:/usr/src/app/schemas/retail_1.1.0.yaml
+docker cp retail_1.1.0.yaml bap-network:/usr/src/app/schemas/retail_1.1.0.yaml
+
+docker cp retail_1.1.0.yaml bpp-client:/usr/src/app/schemas/retail_1.1.0.yaml
+docker cp retail_1.1.0.yaml bpp-netork:/usr/src/app/schemas/retail_1.1.0.yaml
 
 ```
