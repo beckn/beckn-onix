@@ -7,7 +7,7 @@ In the install folder, you find a tool that helps install a Beckn network. This 
 Experience the convenience and efficiency of ONIX as you embark on your journey with BECKN protocols and open networks.
 
 ## Note on mandatory Layer 2 Config (Important)
-This note will eventually be moved to a proper place in the documentation. It has been put here to alert people who install it in the meantime.
+This note will eventually be moved to a proper place in the documentation. It has been put here to alert people who run Beckn ONIX in the meantime.
 Beckn-Onix mandates availability of Layer 2 Config for a particular domain before any transactions can be conducted on it. If the layer 2 config is not present, on either the BAP or the BPP, the following error is returned back to the caller. "Config error :  Layer 2 config not found."
 
 Usually the network facilitators will host the Layer 2 config and provide a way to access it. Currently we have a small script (layer2/download_layer_2_config_bap.sh and layer2/download_layer_2_config_bpp.sh) that can download the layer 2 config from a fixed location and insert it into the docker container that runs the Protocol Server Client. 
