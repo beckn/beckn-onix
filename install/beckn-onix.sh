@@ -119,37 +119,6 @@ install_bap_protocol_server(){
     echo "Protocol server BAP installation successful"
 }
 
-# Function to install BPP Protocol Server with BPP Sandbox
-install_bpp_protocol_server_with_sandbox(){
-    start_support_services
-    echo "${GREEN}................Installing Sandbox................${NC}"
-    start_container "sandbox-api"
-    sleep 5
-    echo "Sandbox installation successful"
-
-    echo "${GREEN}................Installing Webhook................${NC}"
-    start_container "sandbox-webhook"
-    sleep
-    echo "Webhook installation successful"
-
-    echo "${GREEN}................Installing Protocol Server for BPP................${NC}"
-
-    if [[ $1 ]];then
-        registry_url=$1
-        bpp_subscriber_id=$2
-        bpp_subscriber_key_id=$3
-        bpp_subscriber_url=$4
-        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url
-    else
-        bash scripts/update_bpp_config.sh
-    fi
-
-    sleep 10
-    start_container "bpp-client"
-    start_container "bpp-network"
-    sleep 10
-    echo "Protocol server BPP installation successful"
-}
 
 # Function to install BPP Protocol Server without Sandbox
 install_bpp_protocol_server(){
@@ -179,15 +148,14 @@ install_bpp_protocol_server(){
 # MAIN SCRIPT STARTS HERE
 #!/bin/bash
 
-# echo "$(ls /home/ravi/onix)"
-echo "Welcome to Onix!"
+echo "Welcome to Beckn Onix!"
 if [ -f ./onix_ascii_art.txt ]; then
     cat ./onix_ascii_art.txt
 else
-    echo "[Display ONIX ASCII Art]"
+    echo "[Display Beckn ONIX ASCII Art]"
 fi
 
-echo "ONIX is a platform that helps you quickly launch and configure beckn-enabled networks."
+echo "Beckn ONIX is a platform that helps you quickly launch and configure beckn-enabled networks."
 echo -e "\nWhat would you like to do?\n1. Join an existing network\n2. Create new production network\n3. Set up a network on your local machine\n4. Merge multiple networks\n5. Configure Existing Network\n(Press Ctrl+C to exit)"
 read -p "Enter your choice: " choice
 
@@ -211,6 +179,8 @@ completeSetup() {
     platform=$1
     config_url=$2  # Passing this as an argument, though it could be optional or ignored by some setups
 
+    public_address="https://<your public IP address>"
+
     echo "Proceeding with the setup for $platform..."
     if [ -n "$config_url" ]; then
         echo "Using network configuration from: $config_url"
@@ -226,6 +196,7 @@ completeSetup() {
             else
                 new_registry_url=$registry_url
             fi
+            public_address=$registry_url
             install_package
             install_registry $new_registry_url
             ;;
@@ -243,6 +214,7 @@ completeSetup() {
                 gateway_url=${gateway_url%/}
             fi
 
+            public_address=$gateway_url
             install_package
             install_gateway $new_registry_url $gateway_url
             ;;
@@ -254,6 +226,7 @@ completeSetup() {
             read -p "Enter BAP Subscriber URL: " bap_subscriber_url
             read -p "Enter the registry_url(e.g. https://registry.becknprotocol.io/subscribers): " registry_url
             bap_subscriber_key_id=$bap_subscriber_id-key
+            public_address=$bap_subscriber_url
             install_package
             install_bap_protocol_server $registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url
             ;;
@@ -263,9 +236,12 @@ completeSetup() {
             read -p "Enter BPP Subscriber ID: " bpp_subscriber_id
             read -p "Enter BPP Subscriber URL: " bpp_subscriber_url
             read -p "Enter the registry_url(e.g. https://registry.becknprotocol.io/subscribers): " registry_url
+            read -p "Enter Webhook URL: " webhook_url
+
             bpp_subscriber_key_id=$bpp_subscriber_id-key
+            public_address=$bpp_subscriber_url
             install_package
-            install_bpp_protocol_server_with_sandbox $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url
+            install_bpp_protocol_server $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url
             ;;
         *)
             echo "Invalid platform selected."
@@ -275,7 +251,7 @@ completeSetup() {
 
     echo "[Installation Logs]"
     echo -e "${boldGreen}Your $platform setup is complete.${reset}"
-    echo -e "${boldGreen}You can access your $platform at http://<your public IP address>${reset}"
+    echo -e "${boldGreen}You can access your $platform at $public_address ${reset}"
     # Key generation and subscription logic follows here
 }
 
@@ -301,44 +277,6 @@ else
     exit 1
 fi
 
-echo "Process complete. Thank you for using Onix!"
+echo "Process complete. Thank you for using Beckn Onix!"
 
 
-
-# text="
-# The following components will be installed
-
-# 1. Registry
-# 2. Gateway
-# 3. Sandbox
-# 4. Sandbox Webhook
-# 5. Protocol Server for BAP
-# 6. Protocol Server for BPP
-# "
-
-# # Main script starts here
-# bash scripts/banner.sh
-# echo "Welcome to ONIX"
-# echo "$text"
-
-# read -p "${GREEN}Do you want to install all the components on the local system? (Y/n): ${NC}" install_all
-
-# if [[ $install_all =~ ^[Yy]$ ]]; then
-#     # Install and bring up everything
-#     install_package
-#     install_registry
-#     install_gateway
-#     start_support_services
-#     install_bap_protocol_server
-#     install_bpp_protocol_server_with_sandbox
-# else
-#     # User selects specific components to install
-#     echo "Please select the components that you want to install"
-#     echo "1. Beckn Gateway & Beckn Registry"
-#     echo "2. BAP Protocol Server"
-#     echo "3. BPP Protocol Server with BPP Sandbox"
-#     echo "4. BPP Protocol Server"
-#     echo "5. Generic Client Layer"
-#     echo "6. Exit"
-    
-#     read -p "Enter your choice (1-6): " user_choice
