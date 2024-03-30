@@ -33,7 +33,7 @@ Using Beckn ONIX, we can install a Beckn network on the cloud. This will be simi
 
 ### Sample deployment diagram
 
-The following diagram shows a conceptual view of a multi-node Bekn network. The urls shown here are the same as those used in the examples.
+The following diagram shows a conceptual view of a multi-node Beckn network. The urls shown here are the same as those used in the examples.
 
 ![Typical deployment](./images/sample_deployment.png)
 
@@ -53,17 +53,17 @@ In the Beckn ecosystem, a new network starts with the setting up of the Registry
 **Prerequisites for installation**
 
 - A domain or subdomain where the registry will be accessible (e.g https://onix-registry.becknprotocol.io)
-- A virtual server with domain/subdomain pointing to it. Refer [Appendix A](#appendix-a---registering-or-adding-domain-or-subdomains) for details
+- A virtual server with the above mentioned domain/subdomain pointing to it. Refer [Appendix A](#appendix-a---registering-or-adding-domain-or-subdomains) for details
 - SSL certificate for the server and configured in Nginx. Refer [Appendix B](#ssl-certificates-configured-in-reverse-proxy)
-- Reverse proxy configured to route the traffic at the registry url (e.g. onix-registry.becknprotocol.io) to port 3030. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
+- Reverse proxy configured to route the traffic at the registry url (e.g. https://onix-registry.becknprotocol.io) to port 3030. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
 
 **Installation Steps**
 
-- Clone the Beckn ONIX repository (git clone https://github.com/beckn/beckn-onix.git)
+- Clone the Beckn ONIX repository `git clone https://github.com/beckn/beckn-onix.git`
 - Change into the installation folder `cd beckn-onix/install`
 - Run the installation script `./beckn-onix.sh`
 - Specify you want to start a new network and install the registry
-- Skip the network configuration download option
+- Skip the apply network configuration option
 - Enter the publicly accessible address of the registry (e.g. https://onix-registry.becknprotocol.io)
 - The registry installation will continue to completion.
 
@@ -75,9 +75,9 @@ In the Beckn ecosystem, the role of the Gateway is limited to the discovery phas
 
 - Address of the registry of the network the gateway will join (e.g. https://onix-registry.becknprotocol.io)
 - A domain or subdomain where the gateway will be accessible (e.g https://onix-gateway.becknprotocol.io)
-- A virtual server with domain/subdomain pointing to it. Refer [Appendix A](#appendix-a---registering-or-adding-domain-or-subdomains) for details
+- A virtual server with the above mentioned domain/subdomain pointing to it. Refer [Appendix A](#appendix-a---registering-or-adding-domain-or-subdomains) for details
 - SSL certificate for the server and configured in Nginx. Refer [Appendix B](#ssl-certificates-configured-in-reverse-proxy)
-- Reverse proxy configured to route the traffic at the gateway url (e.g. onix-gateway.becknprotocol.io) to port 4030. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
+- Reverse proxy configured to route the traffic at the gateway url (e.g. https://onix-gateway.becknprotocol.io) to port 4030. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
 
 **Installation Steps**
 
@@ -85,7 +85,7 @@ In the Beckn ecosystem, the role of the Gateway is limited to the discovery phas
 - Change into the installation folder `cd beckn-onix/install`
 - Run the installation script `./beckn-onix.sh`
 - Specify you want to join an existing network and install the gateway
-- Skip the network configuration download option
+- Skip the apply network configuration option
 - Enter the address of the registry of the network you want to join (e.g. https://onix-registry.becknprotocol.io)
 - Enter the publicly accessible address of the gateway (e.g. https://onix-gateway.becknprotocol.io)
 - The gateway installation will continue to completion and it will register itself with the registry as a participant with role BG(Beckn Gateway)
@@ -99,10 +99,10 @@ The BAP (Beckn Application Platform) is the bridge between buyer side applicatio
 - Address of the registry's subscription endpoint of the network the BAP will join (e.g. https://onix-registry.becknprotocol.io/subscribers)
 - A domain or subdomain where the client endpoint of BAP will be accessible (e.g https://onix-bap-client.becknprotocol.io)
 - A domain or subdomain where the network endpoint of BAP will be accessible (e.g. https://onix-bap.becknprtocol.io)
-- A virtual server with both the above domains/subdomains pointing to it. Refer [Appendix A](#appendix-a---registering-or-adding-domain-or-subdomains) for details
+- A virtual server with both the above mentioned domains/subdomains pointing to it. Refer [Appendix A](#appendix-a---registering-or-adding-domain-or-subdomains) for details
 - SSL certificate for the two endpoints and configured in Nginx. Refer [Appendix B](#ssl-certificates-configured-in-reverse-proxy)
-- Reverse proxy configured to route the traffic at the bap client url (e.g. onix-bap-client.becknprotocol.io) to port 5001. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
-- Reverse proxy configured to route the traffic at the bap network url (e.g. onix-bap.becknprotocol.io) to port 5002. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
+- Reverse proxy configured to route the traffic at the bap client url (e.g. https://onix-bap-client.becknprotocol.io) to port 5001. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
+- Reverse proxy configured to route the traffic at the bap network url (e.g. https://onix-bap.becknprotocol.io) to port 5002. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
 
 **Installation Steps**
 
@@ -110,7 +110,7 @@ The BAP (Beckn Application Platform) is the bridge between buyer side applicatio
 - Change into the installation folder `cd beckn-onix/install`
 - Run the installation script `./beckn-onix.sh`
 - Specify you want to join an existing network and install the BAP.
-- Skip the network configuration download option
+- Skip the apply network configuration option
 - Enter the Subscriber id for the BAP. When setting up a new network, its value can be anything you want. However it is recommended to have it the same as the BAP URL without the https:// part (e.g. onix-bap.becknprotocol.io). In existing networks this might be further validated for uniqueness by the registry.
 - Enter the Subscriber URI for the BAP. This is the network endpoint of the BAP Beckn Adapter. (e.g. https://onix-bap.becknprotocol.io)
 - Enter the address of the subscription endpoint of the registry of the network you want to join (e.g. https://onix-registry.becknprotocol.io/subscribers). Note the suffix subscribers in the endpoint address.
@@ -125,10 +125,10 @@ The BPP (Beckn Provider Platform) is the bridge between the seller side applicat
 - Address of the registry's subscription endpoint of the network the BPP will join (e.g. https://onix-registry.becknprotocol.io/subscribers)
 - A domain or subdomain where the client endpoint of BPP will be accessible (e.g https://onix-bpp-client.becknprotocol.io)
 - A domain or subdomain where the network endpoint of BPP will be accessible (e.g. https://onix-bap.becknprtocol.io)
-- A virtual server with both the above domains/subdomains pointing to it. Refer [Appendix A](#appendix-a---registering-or-adding-domain-or-subdomains) for details
+- A virtual server with both the above mentioned domains/subdomains pointing to it. Refer [Appendix A](#appendix-a---registering-or-adding-domain-or-subdomains) for details
 - SSL certificate for the two endpoints and configured in Nginx. Refer [Appendix B](#ssl-certificates-configured-in-reverse-proxy)
-- Reverse proxy configured to route the traffic at the bap client url (e.g. onix-bap-client.becknprotocol.io) to port 5001. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
-- Reverse proxy configured to route the traffic at the bap network url (e.g. onix-bap.becknprotocol.io) to port 5002. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
+- Reverse proxy configured to route the traffic at the bap client url (e.g. https://onix-bap-client.becknprotocol.io) to port 5001. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
+- Reverse proxy configured to route the traffic at the bap network url (e.g. https://onix-bap.becknprotocol.io) to port 5002. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
 
 **Installation Steps**
 
@@ -136,16 +136,16 @@ The BPP (Beckn Provider Platform) is the bridge between the seller side applicat
 - Change into the installation folder `cd beckn-onix/install`
 - Run the installation script `./beckn-onix.sh`
 - Specify you want to join an existing network and install the BPP.
-- Skip the network configuration download option
-- Enter the Subscriber id for the BPP. When setting up a new network, its value can be anything you want. However it is recommended to have it the same as the BAP URL without the https:// part (e.g. onix-bpp.becknprotocol.io). In existing networks this might be further validated for uniqueness by the registry.
+- Skip the apply network configuration option
+- Enter the Subscriber id for the BPP. When setting up a new network, its value can be anything you want. However it is recommended to have it the same as the BPP URL without the https:// part (e.g. onix-bpp.becknprotocol.io). In existing networks this might be further validated for uniqueness by the registry.
 - Enter the Subscriber URL for the BPP (e.g. https://onix-bpp.becknprotocol.io). This is the network endpoint of the BPP Beckn Adapter.
-- Enter the webhook URL. This is the endpoint on your custom market place or headless shop which will receive Beckn requests. The endpoint usually contains the address of the market place or shop as a substring. (e.g. https://unified-bpp.becknprotocol.io)
+- Enter the webhook URL. This is the endpoint on your custom market place or headless shop which will receive Beckn requests. The endpoint usually contains the address of the market place or shop as a substring. (e.g. https://unified-bpp.becknprotocol.io/beckn-bpp-adapter)
 - Enter the address of the subscription endpoint of the registry of the network you want to join (e.g. https://onix-registry.becknprotocol.io/subscribers). Note the suffix subscribers in the endpoint address.
 - The BPP installation will continue to completion and it will register itself with the registry as a network participant.
 
 ### Changing subscription status of BAP and BPP at the registry
 
-While the Beckn ONIX installs network participant software as well as registers them with the Registry, they need to be manually put to the 'Subscribed' status. Its only then that they can transact. In real networks, the network facilitator might require additional documentation or validation before transitioning the BAP/BPP to the Subscribed state. When we are setting up the entire network ourselves, we can also do this task.
+While the Beckn ONIX installs network participant beckn adapter as well as registers them with the Registry, they need to be manually put to the 'Subscribed' status. Its only then that they can transact. In real networks, the network facilitator might require additional documentation or validation before transitioning the BAP/BPP to the Subscribed state. When we are setting up the entire network ourselves, we do this task ourselves.
 
 **Steps**
 
@@ -156,18 +156,18 @@ While the Beckn ONIX installs network participant software as well as registers 
 
 ### Downloading Layer 2 Configuration for a domain
 
-With Beckn onix installation of the Beckn network, we have a core network with all required network participants. However we cannot still do any transactions on this network. In order to do transactions, we need the Layer 2 Config file for the domain in which we want to transact. Layer 2 configuration files contain
+With Beckn network setup by ONIX, we have a core network with all required network participants. However we cannot still do any transactions on this network. In order to do transactions, we need the Layer 2 Config file for the domain in which we want to transact. Layer 2 configuration files contain
 
 - rules and policies agreed upon by entities operating in the domain through working group and other consultations
 - rules and policies required by the network facilitator
 
-Currently the layer-2 config are per domain, though this might change with future evolution of the core specification. The layer 2 config file is usually hosted by the network facilitator. Participants have to get this from the hosted location and install it within the respective containers. This is currently done by a script that needs to be run and provided with address of the layer 2 config file.
+Currently the layer-2 config are per domain, though this might change with future evolution of the Beckn core specification. The layer 2 config file is usually hosted by the network facilitator. Participants have to get this from the hosted location and install it within the respective containers. This is currently done by a script that needs to be run and provided with address of the layer 2 config file.
 
 **Steps**
 
 - Change into the beckn-onix/layer2 folder.
 - Start the `download_layer_2_config_bap.sh`
-- Specify the path of the layer 2 config file for the required domain. (e.g. https://raw.githubusercontent.com/beckn/beckn-onix/main/layer2/samples/retail_1.1.0.yaml). Some sample layer 2 config files are present at `https://raw.githubusercontent.com/beckn/beckn-onix/main/layer2/samples/retail_1.1.0.yaml`
+- Specify the path of the layer 2 config file for the required domain. (e.g. https://raw.githubusercontent.com/beckn/beckn-onix/main/layer2/samples/retail_1.1.0.yaml). Some sample layer 2 config files are present at `https://raw.githubusercontent.com/beckn/beckn-onix/main/layer2/samples`
 - This file is downloaded and installed into the container.
 - Repeat the same process for the BPP. However run the `download_layer_2_config_bpp.sh` file instead.
 
@@ -178,11 +178,11 @@ Currently the layer-2 config are per domain, though this might change with futur
 
 ## Running Beckn ONIX locally
 
-- In order for people new to Beckn who want to try out Beckn on their own machine, a simple one click installer has been written. Currently it can be installed by running the `start_beckn.sh` script. In the next release, this will be integrated with the main script and this script deprecated. An all in one installation has preconfigured values for variables and so pretty much does not ask for any input.
+- In order for people new to Beckn who want to try out Beckn on their own machine, a simple one click installer has been written. Currently it can be installed by running the `start_beckn.sh` script present in the installfolder. In the next release, this will be integrated with the main script and the `start_beckn.sh` script deprecated. An all in one installation has preconfigured values for variables and so pretty much does not ask for any input.
 
 ## Appendix A - Registering or adding domain or subdomains
 
-All the components of Beckn network need to be publicly accessible. Using domain names for them is the easiest. There are two options for domain names. One is a separate domain name for each component(e.g. registrybp.io). Second is to use subdomains for the individual componetns (e.g. onix-registry.becknprotocol.io , onix-gateway.becknprotocol.io etc). Which one of these two are used depends on the business requirement. For example if an organization is the network facilitator, they might go for a domain name for the registry instead of subdomain. In the examples given above we have primarily used subdomain approach.
+All the components of Beckn network need to be publicly accessible. Using domain names for them is the easiest. There are two options for domain names. One is a separate domain name for each component(e.g. registrybp.io). Second is to use subdomains for the individual componetns (e.g. onix-registry.becknprotocol.io , onix-gateway.becknprotocol.io etc). Which one of these two to use depends on the business requirement. For example if an organization is the network facilitator, they might go for a domain name for the registry instead of subdomain. In the examples given above we have primarily used subdomain approach.
 
 The process of registering domain names differs by the Domain Registrar. An example is here https://www.cloudflare.com/en-gb/products/registrar/
 
