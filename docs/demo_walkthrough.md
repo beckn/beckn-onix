@@ -1,4 +1,4 @@
-# Steps to setup a new Beckn network and conduct retail and energy transactions on it
+# Steps to setup a new Beckn network and conduct transactions on it
 
 ## Introduction
 
