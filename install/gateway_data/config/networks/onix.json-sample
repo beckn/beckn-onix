@@ -1,0 +1,11 @@
+{
+    "core_version" : "1.1.0",
+    "registry_id": "REGISTRY_ID..LREG",
+    "search_provider_id" : "GATEWAY_ID",
+    "self_registration_supported": true,
+    "subscription_needed_post_registration" : true,
+    "base_url": "REGISTRY_URL",
+    "registry_url" : "REGISTRY_URL/subscribers",
+    "extension_package": "in.succinct.beckn.boc",
+    "wild_card" : ""
+}
