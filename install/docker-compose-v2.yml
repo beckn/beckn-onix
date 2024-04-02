@@ -11,8 +11,8 @@ services:
       - 3030:3030
     restart: unless-stopped
     volumes:
-      - ./registry_data/config/swf.properties:/registry/overrideProperties/config/swf.properties
-      - ./registry_data/database:/registry/database
+      - registry_data_volume:/registry/overrideProperties/config
+      - registry_data_volume:/registry/database
 
   gateway:
     image: fidedocker/gateway
@@ -24,9 +24,8 @@ services:
       - 4030:4030
     restart: unless-stopped
     volumes:
-      - ./gateway_data/config/swf.properties:/gateway/overrideProperties/config/swf.properties
-      - ./gateway_data/config/networks:/gateway/overrideProperties/config/networks #Update varibales post demo
-      - ./gateway_data/database:/gateway/database
+      - gateway_data_volume:/gateway/overrideProperties/config
+      - gateway_database_volume:/gateway/database
 
   bap-client:
     image: fidedocker/protocol-server
@@ -108,4 +107,14 @@ services:
 networks:
   beckn_network:
     driver: bridge
+
+volumes:
+  registry_data_volume:
+    name: registry_data_volume
+  registry_database_volume:
+    name: registry_database_volume
+  gateway_data_volume:
+    name: gateway_data_volume
+  gateway_database_volume:
+    name: gateway_database_volume
 

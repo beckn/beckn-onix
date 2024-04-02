@@ -47,6 +47,10 @@ update_registry_details() {
     tmp_file=$(mktemp "tempfile.XXXXXXXXXX")
     sed "s|REGISTRY_URL|$registry_url|g; s|REGISTRY_PORT|$registry_port|g; s|PROTOCOL|$protocol|g" "$config_file" > "$tmp_file"
     mv "$tmp_file" "$config_file"
+    docker volume create registry_data_volume
+    docker run --rm -v $SCRIPT_DIR/../registry_data/config:/source -v registry_data_volume:/target busybox cp /source/{envvars,logger.properties,swf.properties} /target/
+    docker volume create registry_database_volume
+    docker run --rm -v $SCRIPT_DIR/../registry_data/database:/source -v registry_database_volume:/target busybox cp /source/db.txt /target/db.txt
 
 }
 # Function to start the MongoDB, Redis, and RabbitMQ Services
@@ -77,11 +81,11 @@ install_gateway() {
     echo "Registering Gateway in the registry"
 
     sleep 10
-    if [[ $1 && $2 ]]; then
-        bash scripts/register_gateway.sh $2
-    else
-        bash scripts/register_gateway.sh
-    fi
+    # if [[ $1 && $2 ]]; then
+    #     bash scripts/register_gateway.sh $2
+    # else
+    #     bash scripts/register_gateway.sh
+    # fi
     echo " "
     echo "Gateway installation successful"
 }
