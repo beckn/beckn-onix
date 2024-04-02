@@ -7,5 +7,5 @@ protocol-server-data/bap-network.yml
 protocol-server-data/bpp-client.yml
 protocol-server-data/bpp-network.yml
 ENV/.env-generic-client-layer
-registry.lock*
-gateway.lock*
+registry.*db
+gateway.*db

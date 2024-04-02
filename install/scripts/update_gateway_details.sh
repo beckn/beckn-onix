@@ -15,6 +15,7 @@ update_network_json(){
     tmp_file=$(mktemp "tempfile.XXXXXXXXXX")
     sed " s|GATEWAY_ID|$gateway_id|g; s|REGISTRY_ID|$registry_id|g; s|REGISTRY_URL|$registry_url|g" "$networks_config_file" > "$tmp_file"
     mv "$tmp_file" "$networks_config_file"
+    docker run --rm -v $SCRIPT_DIR/../gateway_data/config:/source -v gateway_data_volume:/target busybox cp -r /source/networks /target/
 }
 
 get_details_registry() {
@@ -38,9 +39,9 @@ get_details_registry() {
 
 update_gateway_config() {
         # Print the extracted keys
-        echo "Signing Public Key: $signing_public_key"
-        echo "Encryption Public Key: $encr_public_key"
-        echo "URL $subscriber_url"
+        # echo "Signing Public Key: $signing_public_key"
+        # echo "Encryption Public Key: $encr_public_key"
+        # echo "URL $subscriber_url"
 
         cp $SCRIPT_DIR/../gateway_data/config/swf.properties-sample $SCRIPT_DIR/../gateway_data/config/swf.properties
         config_file="$SCRIPT_DIR/../gateway_data/config/swf.properties"
@@ -49,7 +50,12 @@ update_gateway_config() {
         #sed " s|SUBSCRIBER_ID|$gateway_id|g; s|SIGNING_PUBLIC_KEY|$signing_public_key|g; s|ENCRYPTION_PUBLIC_KEY|$encr_public_key|g; s|GATEWAY_URL|$gateway_id|g; s|GATEWAY_PORT|$gateway_port|g; s|PROTOCOL|$protocol|g; s|REGISTRY_URL|$subscriber_url|g" "$config_file" > "$tmp_file"
         sed " s|SUBSCRIBER_ID|$gateway_id|g; s|GATEWAY_URL|$gateway_id|g; s|GATEWAY_PORT|$gateway_port|g; s|PROTOCOL|$protocol|g; s|REGISTRY_URL|$subscriber_url|g" "$config_file" > "$tmp_file"
         mv "$tmp_file" "$config_file"
+        docker volume create gateway_data_volume
+        docker volume create gateway_database_volume
+        docker run --rm -v $SCRIPT_DIR/../gateway_data/config:/source -v gateway_data_volume:/target busybox cp /source/{envvars,logger.properties,swf.properties} /target/
+        docker run --rm -v $SCRIPT_DIR/../registry_data/database:/source -v gateway_database_volume:/target busybox cp /source/db.txt /target/db.txt
         update_network_json
+
 }
 
 # if [[ $1 == https://* ]]; then
