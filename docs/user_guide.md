@@ -1,9 +1,9 @@
-# Beckn ONIX - User Guide
+# Beckn-ONIX - User Guide
 
 ## Table of Contents
 
 - [Introduction](#introduction)
-- [Running Beckn ONIX on the cloud](#running-beckn-onix-on-the-cloud)
+- [Running Beckn-ONIX on the cloud](#running-beckn-onix-on-the-cloud)
   - [Sample deployment diagram](#sample-deployment-diagram)
   - [Overall Prerequisites](#overall-pre-requisites)
   - [Setting up a new network - Registry](#setting-up-a-new-network---registry)
@@ -12,7 +12,7 @@
   - [Setting up a BPP Beckn Adapter](#setting-up-a-bpp-beckn-adapter)
   - [Downloading Layer 2 Configuration for a domain](#downloading-layer-2-configuration-for-a-domain)
   - [Testing transactions on the network](#testing-transactions-on-the-new-network)
-- [Running Beckn ONIX locally](#running-beckn-onix-locally)
+- [Running Beckn-ONIX locally](#running-beckn-onix-locally)
 - [Appendix A - subdomain/domain name configuration](#appendix-a---registering-or-adding-domain-or-subdomains)
 - [Appendix B - Nginx reverse proxy configuration](#appendix-b---nginx-reverse-proxy-configuration)
 
@@ -24,12 +24,12 @@ This user guide provides all information necessary to setup a Beckn network and 
 
 There are two primary setups covered in this document.
 
-- A typical production setup with the various Beckn components on different nodes - This is explained in the Running Beckn ONIX on the cloud section.
-- A developer all in one setup - This is explained in the Running Beckn ONIX locally section.
+- A typical production setup with the various Beckn components on different nodes - This is explained in the Running Beckn-ONIX on the cloud section.
+- A developer all in one setup - This is explained in the Running Beckn-ONIX locally section.
 
-## Running Beckn ONIX on the Cloud
+## Running Beckn-ONIX on the Cloud
 
-Using Beckn ONIX, we can install a Beckn network on the cloud. This will be similar to a simple production instance of Beckn network. In the sections below, we use Amazon EC2 as an example for VPS provider. The guide can be useful for other cloud environments with simple changes on methods of accessing them etc. In this part of the guide, we explain installation of the four components of Registry, Gateway, BAP and BPP Beckn Adapter on different instances of virtual servers. You can however use the same process with minimal changes to install multiple nodes on the same virtual server (e.g. Registry and Gateway on a single virtual server)
+Using Beckn-ONIX, we can install a Beckn network on the cloud. This will be similar to a simple production instance of Beckn network. In the sections below, we use Amazon EC2 as an example for VPS provider. The guide can be useful for other cloud environments with simple changes on methods of accessing them etc. In this part of the guide, we explain installation of the four components of Registry, Gateway, BAP and BPP Beckn Adapter on different instances of virtual servers. You can however use the same process with minimal changes to install multiple nodes on the same virtual server (e.g. Registry and Gateway on a single virtual server)
 
 ### Sample deployment diagram
 
@@ -59,7 +59,7 @@ In the Beckn ecosystem, a new network starts with the setting up of the Registry
 
 **Installation Steps**
 
-- Clone the Beckn ONIX repository `git clone https://github.com/beckn/beckn-onix.git`
+- Clone the Beckn-ONIX repository `git clone https://github.com/beckn/beckn-onix.git`
 - Change into the installation folder `cd beckn-onix/install`
 - Run the installation script `./beckn-onix.sh`
 - Specify you want to start a new network and install the registry
@@ -81,7 +81,7 @@ In the Beckn ecosystem, the role of the Gateway is limited to the discovery phas
 
 **Installation Steps**
 
-- Clone the Beckn ONIX repository (git clone https://github.com/beckn/beckn-onix.git)
+- Clone the Beckn-ONIX repository (git clone https://github.com/beckn/beckn-onix.git)
 - Change into the installation folder `cd beckn-onix/install`
 - Run the installation script `./beckn-onix.sh`
 - Specify you want to join an existing network and install the gateway
@@ -106,7 +106,7 @@ The BAP (Beckn Application Platform) is the bridge between buyer side applicatio
 
 **Installation Steps**
 
-- Clone the Beckn ONIX repository (git clone https://github.com/beckn/beckn-onix.git)
+- Clone the Beckn-ONIX repository (git clone https://github.com/beckn/beckn-onix.git)
 - Change into the installation folder `cd beckn-onix/install`
 - Run the installation script `./beckn-onix.sh`
 - Specify you want to join an existing network and install the BAP.
@@ -132,7 +132,7 @@ The BPP (Beckn Provider Platform) is the bridge between the seller side applicat
 
 **Installation Steps**
 
-- Clone the Beckn ONIX repository (git clone https://github.com/beckn/beckn-onix.git)
+- Clone the Beckn-ONIX repository (git clone https://github.com/beckn/beckn-onix.git)
 - Change into the installation folder `cd beckn-onix/install`
 - Run the installation script `./beckn-onix.sh`
 - Specify you want to join an existing network and install the BPP.
@@ -145,7 +145,7 @@ The BPP (Beckn Provider Platform) is the bridge between the seller side applicat
 
 ### Changing subscription status of BAP and BPP at the registry
 
-While the Beckn ONIX installs network participant beckn adapter as well as registers them with the Registry, they need to be manually put to the 'Subscribed' status. Its only then that they can transact. In real networks, the network facilitator might require additional documentation or validation before transitioning the BAP/BPP to the Subscribed state. When we are setting up the entire network ourselves, we do this task ourselves.
+While the Beckn-ONIX installs network participant beckn adapter as well as registers them with the Registry, they need to be manually put to the 'Subscribed' status. Its only then that they can transact. In real networks, the network facilitator might require additional documentation or validation before transitioning the BAP/BPP to the Subscribed state. When we are setting up the entire network ourselves, we do this task ourselves.
 
 **Steps**
 
@@ -156,7 +156,7 @@ While the Beckn ONIX installs network participant beckn adapter as well as regis
 
 ### Downloading Layer 2 Configuration for a domain
 
-With Beckn network setup by ONIX, we have a core network with all required network participants. However we cannot still do any transactions on this network. In order to do transactions, we need the Layer 2 Config file for the domain in which we want to transact. Layer 2 configuration files contain
+With Beckn network setup by Beckn-ONIX, we have a core network with all required network participants. However we cannot still do any transactions on this network. In order to do transactions, we need the Layer 2 Config file for the domain in which we want to transact. Layer 2 configuration files contain
 
 - rules and policies agreed upon by entities operating in the domain through working group and other consultations
 - rules and policies required by the network facilitator
@@ -176,7 +176,7 @@ Currently the layer-2 config are per domain, though this might change with futur
 - We can use postman collection for the specific domain to test end to end communication on the domain. Some sample postman collections for testing are [present here](https://github.com/beckn/beckn-sandbox/tree/main/artefacts)
 - When running postman collection from the buyer side, the base url to which the requests are sent should be the client side endpoint of the BAP Beckn Adapter instance. (e.g https://onix-bap-client.becknprotocol.io)
 
-## Running Beckn ONIX locally
+## Running Beckn-ONIX locally
 
 - In order for people new to Beckn who want to try out Beckn on their own machine, a simple one click installer has been written. Currently it can be installed by running the `start_beckn.sh` script present in the installfolder. In the next release, this will be integrated with the main script and the `start_beckn.sh` script deprecated. An all in one installation has preconfigured values for variables and so pretty much does not ask for any input.
 

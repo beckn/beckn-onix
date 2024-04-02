@@ -187,7 +187,7 @@ The following components will be installed
 
 # Main script starts here
 bash scripts/banner.sh
-echo "Welcome to ONIX"
+echo "Welcome to Beckn-ONIX"
 echo "$text"
 
 read -p "${GREEN}Do you want to install all the components on the local system? (Y/n): ${NC}" install_all
@@ -306,11 +306,11 @@ else
             ;;
 
         7)
-            echo "Exiting ONIX"
+            echo "Exiting Beckn-ONIX"
             exit 0
             ;;
         *)
-            echo "Invalid choice. Exiting ONIX."
+            echo "Invalid choice. Exiting Beckn-ONIX."
             exit 1
             ;;
     esac

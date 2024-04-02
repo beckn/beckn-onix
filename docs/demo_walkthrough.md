@@ -19,7 +19,7 @@ Some of the outputs listed below might be different when you run the script for 
 
 Note: Due to a [known issue](https://github.com/beckn/beckn-onix/issues/11), on certain machines, when the script is run for the first time, it errors out complaining about permission error in accessing docker daemon. Till this issue is fixed, the work around is to exit the terminal and restart the installation in a new terminal.
 
-Please refer to the [Beckn Onix User Guide](./user_guide.md) for detailed explanation of the below steps.
+Please refer to the [Beckn-ONIX User Guide](./user_guide.md) for detailed explanation of the below steps.
 
 ## Sample deployment diagram
 
@@ -119,7 +119,7 @@ Registry installation successful
 [Installation Logs]
 Your Registry setup is complete.
 You can access your Registry at https://onix-registry.becknprotocol.io
-Process complete. Thank you for using Beckn Onix!
+Process complete. Thank you for using Beckn-ONIX!
 ```
 
 ## Install a gateway for the network
@@ -231,7 +231,7 @@ Gateway installation successful
 [Installation Logs]
 Your Gateway setup is complete.
 You can access your Gateway at https://onix-gateway.becknprotocol.io
-Process complete. Thank you for using Beckn Onix!
+Process complete. Thank you for using Beckn-ONIX!
 ```
 
 ## Install a Beckn Adaptor for the BAP
@@ -324,7 +324,7 @@ Protocol server BAP installation successful
 [Installation Logs]
 Your BAP setup is complete.
 You can access your BAP at https://onix-bap.becknprotocol.io
-Process complete. Thank you for using Beckn Onix!
+Process complete. Thank you for using Beckn-ONIX!
 
 ```
 
@@ -420,7 +420,7 @@ Protocol server BPP installation successful
 [Installation Logs]
 Your BPP setup is complete.
 You can access your BPP at https://onix-bpp.becknprotocol.io
-Process complete. Thank you for using Beckn Onix!
+Process complete. Thank you for using Beckn-ONIX!
 ```
 
 ## Change the status of the BAP and BPP on registry to Subscribed
