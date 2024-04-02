@@ -51,7 +51,7 @@ update_registry_details() {
     docker run --rm -v $SCRIPT_DIR/../registry_data/config:/source -v registry_data_volume:/target busybox cp /source/{envvars,logger.properties,swf.properties} /target/
     docker volume create registry_database_volume
     docker run --rm -v $SCRIPT_DIR/../registry_data/database:/source -v registry_database_volume:/target busybox cp /source/db.txt /target/db.txt
-
+    docker rmi busybox
 }
 # Function to start the MongoDB, Redis, and RabbitMQ Services
 start_support_services(){
