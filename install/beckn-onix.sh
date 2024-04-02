@@ -155,7 +155,7 @@ else
     echo "[Display Beckn-ONIX ASCII Art]"
 fi
 
-echo "Beckn ONIX is a platform that helps you quickly launch and configure beckn-enabled networks."
+echo "Beckn-ONIX is a platform that helps you quickly launch and configure beckn-enabled networks."
 echo -e "\nWhat would you like to do?\n1. Join an existing network\n2. Create new production network\n3. Set up a network on your local machine\n4. Merge multiple networks\n5. Configure Existing Network\n(Press Ctrl+C to exit)"
 read -p "Enter your choice: " choice
 

@@ -18,7 +18,7 @@
 
 ## Introduction
 
-Beckn ONIX is [FIDE](https://fide.org/) project aimed at easing setup and maintainance of a [Beckn](https://becknprotocol.io/) Network using reference implementations. Objectives include setting up reliable, configurable and fast Beckn network as a virtual appliance. This initiative is independent of the evolution of the Beckn protocol. This effort is also aimed at inviting contributions from the community to create secure, reliable builds for production environments.
+Beckn-ONIX is [FIDE](https://fide.org/) project aimed at easing setup and maintainance of a [Beckn](https://becknprotocol.io/) Network using reference implementations. Objectives include setting up reliable, configurable and fast Beckn network as a virtual appliance. This initiative is independent of the evolution of the Beckn protocol. This effort is also aimed at inviting contributions from the community to create secure, reliable builds for production environments.
 
 This user guide provides all information necessary to setup a Beckn network and conduct transactions on it. For a better understanding of Beckn and the terminologies associated with the ecosystem, please refer to the [Beckn for Developers site](https://developers.becknprotocol.io/).
 
