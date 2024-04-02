@@ -1,7 +1,7 @@
 ## Beckn-ONIX FAQ
 
 **Q: What is Beckn-ONIX?**
-**A:** Beckn ONIX is [FIDE](https://fide.org/) project aimed at easing setup and maintainance of a [Beckn](https://becknprotocol.io/) Network using reference implementations. Objectives include setting up reliable, configurable and fast Beckn network as a virtual appliance.
+**A:** Beckn-ONIX is [FIDE](https://fide.org/) project aimed at easing setup and maintainance of a [Beckn](https://becknprotocol.io/) Network using reference implementations. Objectives include setting up reliable, configurable and fast Beckn network as a virtual appliance.
 
 **Q: Is Beckn-ONIX a protocol? Is Beckn-ONIX a new version of Beckn?**
 **A:** No Beckn-ONIX is not a protocol. Beckn-ONIX is not a new version of Beckn. Beckn-ONIX project just helps setup and maintain a Beckn network. This initiative is independent of the evolution of Beckn
