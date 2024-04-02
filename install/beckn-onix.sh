@@ -148,11 +148,11 @@ install_bpp_protocol_server(){
 # MAIN SCRIPT STARTS HERE
 #!/bin/bash
 
-echo "Welcome to Beckn Onix!"
+echo "Welcome to Beckn-ONIX!"
 if [ -f ./onix_ascii_art.txt ]; then
     cat ./onix_ascii_art.txt
 else
-    echo "[Display Beckn ONIX ASCII Art]"
+    echo "[Display Beckn-ONIX ASCII Art]"
 fi
 
 echo "Beckn ONIX is a platform that helps you quickly launch and configure beckn-enabled networks."
@@ -277,6 +277,6 @@ else
     exit 1
 fi
 
-echo "Process complete. Thank you for using Beckn Onix!"
+echo "Process complete. Thank you for using Beckn-ONIX!"
 
 

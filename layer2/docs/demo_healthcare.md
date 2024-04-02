@@ -1,10 +1,10 @@
-# Creating a Beckn network for healthcare using Beckn ONIX and transacting on it.
+# Creating a Beckn network for healthcare using Beckn-ONIX and transacting on it.
 
 ## Introduction
 
-[Beckn](https://becknprotocol.io/) as a protocol allows creation of decentralised commerce network across many domains. Healthcare is one of them. Beckn ONIX is a project aimed at easing setup and maintanence of Beckn network for different domains. It provides utilities to quickly setup the core Beckn network as well as provides tools to enable domain specific transactions. The latter is achieved through the use of layer 2 configuration files.
+[Beckn](https://becknprotocol.io/) as a protocol allows creation of decentralised commerce network across many domains. Healthcare is one of them. Beckn-ONIX is a project aimed at easing setup and maintanence of Beckn network for different domains. It provides utilities to quickly setup the core Beckn network as well as provides tools to enable domain specific transactions. The latter is achieved through the use of layer 2 configuration files.
 
-The [Beckn ONIX User Guide](./user_guide.md) provides an overall understanding of setup of the core Beckn network as well as download and ingestion of Layer 2 configuration files. The [step by step demo](./demo_walkthrough.md) walks through one such installation in great detail. The layer 2 configurations illustrated in that demo belong to the retail and energy domain.
+The [Beckn-ONIX User Guide](./user_guide.md) provides an overall understanding of setup of the core Beckn network as well as download and ingestion of Layer 2 configuration files. The [step by step demo](./demo_walkthrough.md) walks through one such installation in great detail. The layer 2 configurations illustrated in that demo belong to the retail and energy domain.
 
 ## Healthcare usecases on Beckn network
 
@@ -139,4 +139,4 @@ anyOf:
 
 ## Conclusion
 
-Multitide DHP related use cases can be implemented on the Beckn networks. The process Beckn ONIX follows to create core Beckn network and allowing participants to download layer 2 configuration is identical across domains. Layer 2 configuration captures both domain policies and rules as well as those enforced by the network facilitators. Layer 2 configuration are both prescriptive as well as mandatory. The mandatory rules and policies can be written on top of the core spec within the layer 2 config and can be enforced by incorporating a validator in the workflow.
+Multitide DHP related use cases can be implemented on the Beckn networks. The process Beckn-ONIX follows to create core Beckn network and allowing participants to download layer 2 configuration is identical across domains. Layer 2 configuration captures both domain policies and rules as well as those enforced by the network facilitators. Layer 2 configuration are both prescriptive as well as mandatory. The mandatory rules and policies can be written on top of the core spec within the layer 2 config and can be enforced by incorporating a validator in the workflow.
