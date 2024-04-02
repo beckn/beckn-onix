@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This document describes setting up of a [Beckn network](https://becknprotocol.io/) with Beckn ONIX and conducting transactions in a couple of domains (retail and energy). The general flow will involve the following steps:
+This document describes setting up of a [Beckn network](https://becknprotocol.io/) with Beckn-ONIX and conducting transactions in a couple of domains (retail and energy). The general flow will involve the following steps:
 
 - [Setup the prerequisites](#overall-prerequisites)
 - [Create a new network and install the registry](#create-a-new-network-and-install-the-registry)
@@ -63,7 +63,7 @@ cd beckn-onix/install
 - In the prompt that comes up, choose setting up a new network.
 
 ```
-Beckn ONIX is a platform that helps you quickly launch and configure beckn-enabled networks.
+Beckn-ONIX is a platform that helps you quickly launch and configure beckn-enabled networks.
 
 What would you like to do?
 1. Join an existing network
@@ -160,7 +160,7 @@ cd beckn-onix/install
 - In the prompt that comes up, choose joining an existing network.
 
 ```
-Beckn ONIX is a platform that helps you quickly launch and configure beckn-enabled networks.
+Beckn-ONIX is a platform that helps you quickly launch and configure beckn-enabled networks.
 
 What would you like to do?
 1. Join an existing network
