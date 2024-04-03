@@ -216,4 +216,4 @@ In the role of reverse proxy, Nginx will forward communication that came on a pa
 
 [This document](https://docs.nginx.com/nginx/admin-guide/web-server/reverse-proxy/) explains the configuration of reverse proxy using proxy_pass
 
-You can find sample Nginx configuration for the Registry, Gateway, BAP and BPP [here](./sample_nginx_configuration.md)
+You can find sample Nginx configuration for the Registry, Gateway, BAP and BPP [here](./sample_nginx_configurations.md)
