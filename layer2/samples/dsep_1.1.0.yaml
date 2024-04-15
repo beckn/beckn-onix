@@ -1,17 +1,19 @@
 openapi: 3.0.0
 info:
-  title: DHP Core API
-  description: DHP Core API specification. This is an adaptation of Beckn core version 1.1.0
-  version: 0.7.3
+  title: Decentralized Skilling and Education Protocol Specification
+  description: Adaptation of beckn protocol for the domain of skilling and education
+  version: 0.7.0
+
 security:
   - SubscriberAuth: []
+  - GatewaySubscriberAuthNew: []
 paths:
   /search:
     post:
       tags:
         - Beckn Provider Platform (BPP)
         - Beckn Gateway (BG)
-      description: BAP declares the customer's intent to buy/avail healthcare services/products.
+      description: This allows a BAP to discover for catalogs offering <br/> a) Jobs and Internships <br/>b) Trainings and Courses <br/> c) Mentors and Coaches and, </br> d) Scholarships and Grants
       requestBody:
         content:
           application/json:
@@ -33,14 +35,286 @@ paths:
               required:
                 - context
                 - message
+            examples:
+              Search for 'web design' jobs by category code in the region of Delhi:
+                value:
+                  context:
+                    domain: jobs
+                    location:
+                      city:
+                        code: std:011
+                      country:
+                        code: IND
+                    action: search
+                    version: 1.1.0
+                    bap_id: https://exampleapp.io/
+                    bap_uri: https://api.exampleapp.io/v0/
+                    message_id: 5ac3dd78-829e-4c7d-9139-a15adbb582cc
+                    timestamp: "2021-03-23T10:00:40.065Z"
+                    ttl: P10S
+                  message:
+                    intent:
+                      category:
+                        descriptor:
+                          name: Web design jobs
+                          code: nic2008:62012
+              Search for jobs by skills like carpentry and painting:
+                value:
+                  context:
+                    domain: jobs
+                    location:
+                      city:
+                        code: std:011
+                      country:
+                        code: IND
+                    action: search
+                    version: 1.1.0
+                    bap_id: https://exampleapp.io/
+                    bap_uri: https://api.exampleapp.io/uhi/v0/
+                    message_id: 5ac3dd78-829e-4c7d-9139-a15adbb582cc
+                    timestamp: "2021-03-23T10:00:40.065Z"
+                  message:
+                    intent:
+                      fulfillment:
+                        customer:
+                          person:
+                            skills:
+                              - name: Painting
+                              - name: Carpentry
+                            tags:
+                              - descriptor:
+                                  name: Competence
+                                list:
+                                  - descriptor:
+                                      name: Experience
+                                    value: 12Y
+
+              Search for jobs along with expected salary:
+                value:
+                  context:
+                    domain: jobs
+                    location:
+                      city:
+                        code: std:011
+                      country:
+                        code: IND
+                    action: search
+                    version: 1.1.0
+                    bap_id: https://exampleapp.io/
+                    bap_uri: https://api.exampleapp.io/uhi/v0/
+                    message_id: 5ac3dd78-829e-4c7d-9139-a15adbb582cc
+                    timestamp: "2021-03-23T10:00:40.065Z"
+                  message:
+                    intent:
+                      fulfillment:
+                        customer:
+                          person:
+                            skills:
+                              - name: Java Programming
+                            tags:
+                              - descriptor:
+                                  name: Competence
+                                list:
+                                  - descriptor:
+                                      name: Experience
+                                    value: 12Y
+                        tags:
+                          - descriptor:
+                              name: Expectations
+                            list:
+                              - descriptor:
+                                  name: expected_payment
+                                value: 250000INR/Month
+
+              Search for jobs offered by a specific provider:
+                value:
+                  context:
+                    domain: jobs
+                    location:
+                      city:
+                        code: std:011
+                      country:
+                        code: IND
+                    action: search
+                    version: 1.1.0
+                    bap_id: https://exampleapp.io/
+                    bap_uri: https://api.exampleapp.io/uhi/v0/
+                    message_id: 5ac3dd78-829e-4c7d-9139-a15adbb582cc
+                    timestamp: "2021-03-23T10:00:40.065Z"
+                  message:
+                    intent:
+                      provider:
+                        descriptor:
+                          name: Infosys
+              Search for online courses matching a specific topic:
+                value:
+                  context:
+                    domain: trainings-and-courses
+                    location:
+                      city:
+                        code: std:011
+                      country:
+                        code: IND
+                    action: search
+                    version: 1.1.0
+                    bap_id: https://exampleapp.io/
+                    bap_uri: https://api.exampleapp.io/v0/
+                    bpp_id: https://mymentor.com/
+                    bpp_uri: https://api.mymentor.com/v0/
+                    message_id: 5ac3dd78-829e-4c7d-9139-a15adbb582cc
+                    timestamp: "2021-03-23T10:00:40.065Z"
+                    ttl: P10S
+                  message:
+                    intent:
+                      item:
+                        descriptor:
+                          name: AI basics
+                        tags:
+                          - descriptor:
+                              name: course_labels
+                            list:
+                              - descriptor:
+                                  name: label_1
+                                value: AI
+                              - descriptor:
+                                  name: label_2
+                                value: ML
+                              - descriptor:
+                                  name: label_3
+                                value: beginners
+                              - descriptor:
+                                  name: label_4
+                                value: Artifical Intelligence
+                              - descriptor:
+                                  name: label_5
+                                value: machine learning
+                              - descriptor:
+                                  name: label_6
+                                value: neural networks
+                      fulfillment:
+                        type: FULL-TIME
+              Search for BTech courses offered by an engineering instituition like IIT Delhi:
+                value:
+                  context:
+                    domain: trainings-and-courses
+                    location:
+                      city:
+                        code: std:011
+                      country:
+                        code: IND
+                    action: search
+                    version: 1.1.0
+                    bap_id: https://exampleapp.io/
+                    bap_uri: https://api.exampleapp.io/v0/
+                    bpp_id: https://mymentor.com/
+                    bpp_uri: https://api.mymentor.com/v0/
+                    message_id: 5ac3dd78-829e-4c7d-9139-a15adbb582cc
+                    timestamp: "2021-03-23T10:00:40.065Z"
+                    ttl: P10S
+                  message:
+                    intent:
+                      provider:
+                        descriptor:
+                          name: IIT Delhi
+                      tags:
+                        - descriptor:
+                            name: course_labels
+                          list:
+                            - descriptor:
+                                name: label_1
+                              value: AI
+                            - descriptor:
+                                name: label_2
+                              value: ML
+                            - descriptor:
+                                name: label_3
+                              value: beginners
+                            - descriptor:
+                                name: label_4
+                              value: Artifical Intelligence
+                            - descriptor:
+                                name: label_5
+                              value: machine learning
+                            - descriptor:
+                                name: label_6
+                              value: neural networks
+                      category:
+                        descriptor:
+                          name: B.Tech
+                          code: BTECH
+                      fulfillment:
+                        type: FULL-TIME
+              Searching for a mentor by name:
+                value:
+                  context:
+                    domain: mentorship-and-coaching
+                    location:
+                      city:
+                        code: std:011
+                      country:
+                        code: IND
+                    action: search
+                    version: 1.1.0
+                    bap_id: https://exampleapp.io/
+                    bap_uri: https://api.exampleapp.io/v0/
+                    bpp_id: https://mymentor.com/
+                    bpp_uri: https://api.mymentor.com/v0/
+                    message_id: 5ac3dd78-829e-4c7d-9139-a15adbb582cc
+                    timestamp: "2021-03-23T10:00:40.065Z"
+                    ttl: P10S
+                  message:
+                    intent:
+                      fulfillment:
+                        agent:
+                          name: Dr Rajiv Manocha
+              Search for scholarships:
+                value:
+                  context:
+                    domain: mentorship
+                    location:
+                      city:
+                        code: std:011
+                      country:
+                        code: IND
+                    action: search
+                    version: 1.1.0
+                    bap_id: https://exampleapp.io/
+                    bap_uri: https://api.exampleapp.io/v0/
+                    bpp_id: https://mymentor.com/
+                    bpp_uri: https://api.mymentor.com/v0/
+                    message_id: 5ac3dd78-829e-4c7d-9139-a15adbb582cc
+                    timestamp: "2021-03-23T10:00:40.065Z"
+                    ttl: P10S
+                  message:
+                    intent:
+                      category:
+                        id: "4"
+                        descriptor:
+                          name: Engineering and Technology
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /select:
     post:
       tags:
         - Beckn Provider Platform (BPP)
-      description: BAP declares the customer's cart (or equivalent) created by selecting objects from the catalog
+      description: API for Selecting items from the catalog.
       requestBody:
         content:
           application/json:
@@ -67,8 +341,24 @@ paths:
                 - context
                 - message
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /init:
     post:
       tags:
@@ -100,8 +390,8 @@ paths:
                 - context
                 - message
       responses:
-        default:
-          description: Acknowledgement of message received after successful validation of schema and signature
+        "200":
+          description: Acknowledgement of message received
           content:
             application/json:
               schema:
@@ -111,13 +401,7 @@ paths:
                     type: object
                     properties:
                       ack:
-                        allOf:
-                          - $ref: "#/components/schemas/Ack"
-                          - properties:
-                              status:
-                                enum:
-                                  - ACK
-                                  - NACK
+                        $ref: "#/components/schemas/Ack"
                     required:
                       - ack
                   error:
@@ -155,8 +439,24 @@ paths:
                 - context
                 - message
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /status:
     post:
       tags:
@@ -188,8 +488,24 @@ paths:
                 - context
                 - message
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /track:
     post:
       tags:
@@ -224,8 +540,24 @@ paths:
                 - context
                 - message
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /cancel:
     post:
       tags:
@@ -261,8 +593,24 @@ paths:
                 - context
                 - message
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /update:
     post:
       tags:
@@ -290,9 +638,7 @@ paths:
                       description: 'Comma separated values of order objects being updated. For example: ```"update_target":"item,billing,fulfillment"```'
                       type: string
                     order:
-                      description: Updated order object
-                      allOf:
-                        - $ref: "#/components/schemas/Order"
+                      $ref: "#/components/schemas/Order"
                   required:
                     - update_target
                     - order
@@ -300,8 +646,24 @@ paths:
                 - context
                 - message
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /rating:
     post:
       tags:
@@ -333,14 +695,31 @@ paths:
                 - context
                 - message
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /support:
     post:
       tags:
         - Beckn Provider Platform (BPP)
       description: Contact support
       requestBody:
+        description: Contact support
         content:
           application/json:
             schema:
@@ -364,14 +743,31 @@ paths:
                 - context
                 - message
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
+
   /on_search:
     post:
       tags:
-        - Beckn Application Platform (BAP)
+        - Beckn App Platform (BAP)
         - Beckn Gateway (BG)
-      description: BPP sends its catalog in response to a search request.
+      description: Send catalog
       requestBody:
         content:
           application/json:
@@ -398,13 +794,166 @@ paths:
                   $ref: "#/components/schemas/Error"
               required:
                 - context
+            examples:
+              Publish a catalog of software jobs by a software agency:
+                value:
+                  context:
+                    domain: jobs:nic2008:62XXX
+                    location:
+                      city:
+                        code: "*"
+                      country:
+                        code: IND
+                    action: on_search
+                    version: 1.1.0
+                    bap_id: https://exampleapp.io/
+                    bap_uri: https://api.exampleapp.io/uhi/v0/
+                    bpp_id: https://naukri.com/
+                    bpp_uri: https://api.naukri.com/uhi/v0/
+                    message_id: 5ac3dd78-829e-4c7d-9139-a15adbb582cc
+                    timestamp: "2021-03-23T10:00:40.065Z"
+                  message:
+                    catalog:
+                      descriptor:
+                        name: Naukri Recruitment Platform
+                      providers:
+                        - descriptor:
+                            name: Infosys
+                          categories:
+                            - id: "1"
+                              name: Frontend Jobs
+                            - id: "2"
+                              name: Backend Jobs
+                          items:
+                            - descriptor:
+                                name: Senior Software Developer
+                                code: SSFD
+                              fulfillment_ids:
+                                - "1"
+                              category_ids:
+                                - "1"
+                              matched: true
+                            - descriptor:
+                                name: Software Consultant - On site
+                                code: SWCO
+                              fulfillment_ids:
+                                - "1"
+                              category_ids:
+                                - "1"
+                              matched: "false"
+                            - descriptor:
+                                name: Software Consultant - Remote
+                                code: SWCR
+                              fulfillment_ids:
+                                - "2"
+                              category_ids:
+                                - "2"
+                              matched: "false"
+                      fulfillments:
+                        - id: "1"
+                          descriptor:
+                            name: Full-time
+                          stops:
+                            - location:
+                                city:
+                                  code: BLR
+                        - id: "2"
+                          descriptor:
+                            name: On-site
+                          stops:
+                            - location:
+                                city:
+                                  code: BLR
+                              type: start
+                              time:
+                                timestamp: "2022-08-10"
+                            - location:
+                                city: BLR
+                              type: end
+                              time:
+                                timestamp: "2022-08-10"
+                        - id: "3"
+                          descriptor:
+                            name: Remote
+                          stops:
+                            - time:
+                                timestamp: "2022-08-10"
+                              type: start
+                            - time:
+                                timestamp: "2022-08-10"
+                              type: end
+              Publish a catalog of online courses:
+                value:
+                  context:
+                    domain: trainings-and-courses
+                    location:
+                      city:
+                        code: std:011
+                      country:
+                        code: IND
+                    action: on_search
+                    version: 1.1.0
+                    bap_id: https://exampleapp.io/
+                    bap_uri: https://api.exampleapp.io/uhi/v0/
+                    message_id: 5ac3dd78-829e-4c7d-9139-a15adbb582cc
+                    timestamp: "2021-03-23T10:00:40.065Z"
+                  message:
+                    catalog:
+                      descriptor:
+                        name: XAcademy
+                      providers:
+                        - descriptor:
+                            name: XAcademy
+                          categories:
+                            - id: "1"
+                              name: Software
+                            - id: "2"
+                              name: Management
+                          items:
+                            - id: "1"
+                              descriptor:
+                                name: Basics of AI
+                              price:
+                                value: "6000"
+                              fulfillment_ids:
+                                - "1"
+                              category_ids:
+                                - "1"
+                            - id: "2"
+                              descriptor:
+                                name: AI for Data Analysis
+                              price:
+                                value: "7000"
+                              fulfillment_ids:
+                                - "1"
+                              category_ids:
+                                - "1"
+                      fulfillments:
+                        - id: "1"
+                          type: ONLINE
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - context
   /on_select:
     post:
       tags:
-        - Beckn Application Platform (BAP)
+        - Beckn App Platform (BAP)
       description: Send draft order object with quoted price for selected items
       requestBody:
         content:
@@ -413,14 +962,7 @@ paths:
               type: object
               properties:
                 context:
-                  allOf:
-                    - $ref: "#/components/schemas/Context"
-                    - properties:
-                        action:
-                          enum:
-                            - on_select
-                      required:
-                        - action
+                  $ref: "#/components/schemas/Context"
                 message:
                   type: object
                   properties:
@@ -431,12 +973,28 @@ paths:
               required:
                 - context
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /on_init:
     post:
       tags:
-        - Beckn Application Platform (BAP)
+        - Beckn App Platform (BAP)
       description: Send order object with payment details updated
       requestBody:
         content:
@@ -458,19 +1016,33 @@ paths:
                   properties:
                     order:
                       $ref: "#/components/schemas/Order"
-                  required:
-                    - order
                 error:
                   $ref: "#/components/schemas/Error"
               required:
                 - context
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /on_confirm:
     post:
       tags:
-        - Beckn Application Platform (BAP)
+        - Beckn App Platform (BAP)
       description: Send active order object
       requestBody:
         content:
@@ -499,12 +1071,28 @@ paths:
               required:
                 - context
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /on_track:
     post:
       tags:
-        - Beckn Application Platform (BAP)
+        - Beckn App Platform (BAP)
       description: Send tracking details of an active order
       requestBody:
         content:
@@ -533,12 +1121,28 @@ paths:
               required:
                 - context
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /on_cancel:
     post:
       tags:
-        - Beckn Application Platform (BAP)
+        - Beckn App Platform (BAP)
       description: Send cancellation request_id with reasons list in case of cancellation request. Else send cancelled order object
       requestBody:
         content:
@@ -567,12 +1171,28 @@ paths:
               required:
                 - context
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /on_update:
     post:
       tags:
-        - Beckn Application Platform (BAP)
+        - Beckn App Platform (BAP)
       description: Returns updated service with updated runtime object
       requestBody:
         content:
@@ -601,12 +1221,28 @@ paths:
               required:
                 - context
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /on_status:
     post:
       tags:
-        - Beckn Application Platform (BAP)
+        - Beckn App Platform (BAP)
       description: Fetch the status of a Service
       requestBody:
         content:
@@ -635,12 +1271,28 @@ paths:
               required:
                 - context
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /on_rating:
     post:
       tags:
-        - Beckn Application Platform (BAP)
+        - Beckn App Platform (BAP)
       description: Provide feedback on a service
       requestBody:
         content:
@@ -668,14 +1320,29 @@ paths:
                   $ref: "#/components/schemas/Error"
               required:
                 - context
-                - message
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
   /on_support:
     post:
       tags:
-        - Beckn Application Platform (BAP)
+        - Beckn App Platform (BAP)
       description: Contact Support
       requestBody:
         content:
@@ -702,8 +1369,243 @@ paths:
               required:
                 - context
       responses:
-        default:
-          $ref: "#/paths/~1init/post/responses/default"
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
+
+  /get_cancellation_reasons:
+    post:
+      tags:
+        - BPP Meta APIs
+      description: Get cancellation reasons from the BPP
+      requestBody:
+        description: Context header is sent as the request
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context:
+                  $ref: "#/components/schemas/Context"
+      responses:
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
+
+  /cancellation_reasons:
+    post:
+      tags:
+        - BAP Meta APIs
+      description: Get cancellation reasons from the BPP
+      requestBody:
+        description: List of cancellation reasons
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context:
+                  $ref: "#/components/schemas/Context"
+                message:
+                  type: object
+                  properties:
+                    cancellation_reasons:
+                      type: array
+                      items:
+                        $ref: "#/components/schemas/Option"
+      responses:
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
+
+  /get_return_reasons:
+    post:
+      tags:
+        - BPP Meta APIs
+      description: Get return reasons from the BPP
+      requestBody:
+        description: Context header is sent as the request
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context:
+                  $ref: "#/components/schemas/Context"
+      responses:
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
+
+  /return_reasons:
+    post:
+      tags:
+        - BAP Meta APIs
+      description: Get return reasons from the BPP
+      requestBody:
+        description: List of return reasons
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context:
+                  $ref: "#/components/schemas/Context"
+                return_reasons:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/Option"
+      responses:
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
+
+  /get_rating_categories:
+    post:
+      tags:
+        - BPP Meta APIs
+      description: Get a list of categories that can be rated by the BAP
+      requestBody:
+        description: Context header is sent as the request
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context:
+                  $ref: "#/components/schemas/Context"
+      responses:
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
+
+  /rating_categories:
+    post:
+      tags:
+        - BAP Meta APIs
+      description: Get a list of categories that can be rated by the BAP
+      requestBody:
+        description: Array of categories which can be rated
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context:
+                  $ref: "#/components/schemas/Context"
+                rating_categories:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/Rating/properties/rating_category"
+      responses:
+        "200":
+          description: Acknowledgement of message received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: object
+                    properties:
+                      ack:
+                        $ref: "#/components/schemas/Ack"
+                    required:
+                      - ack
+                  error:
+                    $ref: "#/components/schemas/Error"
+                required:
+                  - message
 components:
   securitySchemes:
     SubscriberAuth:
@@ -711,14 +1613,24 @@ components:
       in: header
       name: Authorization
       description: 'Signature of message body using BAP or BPP subscriber''s signing public key. <br/><br/>Format:<br/><br/><code>Authorization : Signature keyId="{subscriber_id}|{unique_key_id}|{algorithm}",algorithm="ed25519",created="1606970629",expires="1607030629",headers="(created) (expires) digest",signature="Base64(signing string)"</code>'
+    GatewaySubscriberAuth:
+      type: apiKey
+      in: header
+      name: Proxy-Authorization
+      description: 'Signature of message body + BAP/BPP''s Authorization header using BG''s signing public key. Format:<br/><br/><code>Proxy-Authorization : Signature keyId="{subscriber_id}|{unique_key_id}|{algorithm}",algorithm="ed25519",created="1606970629",expires="1607030629",headers="(created) (expires) digest",signature="Base64(signing string)"</code><p><b>Note:</b>This header will be deprecated soon and will no longer be supported in future releases. New implementors are requested to use the X-Gateway-Authorization header. Existing implementations are requested to migrate their header to the new header. The deprecation date will be set after discussion as per the standard specification governance process.</p>'
+    GatewaySubscriberAuthNew:
+      type: apiKey
+      in: header
+      name: X-Gateway-Authorization
+      description: 'Signature of message body + BAP/BPP''s Authorization header using BG''s signing public key. Format:<br/><br/><code>X-Gateway-Authorization : Signature keyId="{subscriber_id}|{unique_key_id}|{algorithm}",algorithm="ed25519",created="1606970629",expires="1607030629",headers="(created) (expires) digest",signature="Base64(signing string)"</code>'
   schemas:
     Ack:
-      description: "Describes the acknowledgement sent in response to an API call. If the implementation uses HTTP/S, then Ack must be returned in the same session. Every API call to a BPP must be responded to with an Ack whether the BPP intends to respond with a callback or not. This has one property called `status` that indicates the status of the Acknowledgement."
+      description: This describes an acknowledgement of receipt of a message. Upon receiving a message, the receiver must first authenticate the sender by verifying its digital signature. Upon successful verification of the signature, the receiver must validate the schema of the message.  After performing both the operations, the receiver should send an Ack object in response.
       type: object
       properties:
         status:
           type: string
-          description: "The status of the acknowledgement. If the request passes the validation criteria of the BPP, then this is set to ACK. If a BPP responds with status = `ACK` to a request, it is required to respond with a callback. If the request fails the validation criteria, then this is set to NACK. Additionally, if a BPP does not intend to respond with a callback even after the request meets the validation criteria, it should set this value to `NACK`."
+          description: "Describe the status of the ACK response. If the message passes the acknowledgement criteria, then the receiver shouls set this value equal to ACK else it should be set to NACK"
           enum:
             - ACK
             - NACK
@@ -728,12 +1640,16 @@ components:
           items:
             $ref: "#/components/schemas/TagGroup"
     AddOn:
-      description: Describes an additional item offered as a value-addition to a product or service. This does not exist independently in a catalog and is always associated with an item.
+      description: This is typically an optional product or service that can be offered in addition to a product or a service of type Item. Objects of type AddOn should not exist without an associated Item. If a BAP receives an Item with an add-on, it must show it to the user as a selectable object. If any AddOn object is found without an associated Item object, then the validator must throw an error 'NO-PARENT=ITEM' with message 'No parent found'
       type: object
       properties:
         id:
-          description: Provider-defined ID of the add-on
           type: string
+          description: ID of the add-on as present in the source catalog
+        optional:
+          type: boolean
+          default: false
+          description: This value indicates if the add-on is optional or required to be selected by the user along with an Item. If this value is set to true, then the BAP must ensure that the add-on is mandatorily selected by the user while creating the Order object with the Item.
         descriptor:
           $ref: "#/components/schemas/Descriptor"
         price:
@@ -742,7 +1658,7 @@ components:
       description: Describes a postal address.
       type: string
     Agent:
-      description: "Describes the direct performer, driver or executor that fulfills an order. It is usually a person. But in some rare cases, it could be a non-living entity like a drone, or a bot. Some examples of agents are Doctor in the healthcare sector, a driver in the mobility sector, or a delivery person in the logistics sector. This object can be set at any stage of the order lifecycle. This can be set at the discovery stage when the BPP wants to provide details on the agent fulfilling the order, like in healthcare, where the doctor's name appears during search. This object can also used to search for a particular person that the customer wants fulfilling an order. Sometimes, this object gets instantiated after the order is confirmed, like in the case of on-demand taxis, where the driver is assigned after the user confirms the ride."
+      description: "Describes a person who fulfills this order."
       properties:
         person:
           $ref: "#/components/schemas/Person"
@@ -774,18 +1690,17 @@ components:
           description: Status of the token
           type: string
     Billing:
-      description: "Describes the billing details of an entity.<br>This has properties like name,organization,address,email,phone,time,tax_number, created_at,updated_at"
+      description: Describes the billing details of an order. This must be provided by BAP user before confirmation of the order.
       type: object
       properties:
         name:
-          description: Name of the billable entity
+          description: Name of the person under who's name the bill will be generated.
           type: string
         organization:
-          description: Details of the organization being billed.
+          description: Name of the organization under who's name the bill will be generated.
           allOf:
             - $ref: "#/components/schemas/Organization"
         address:
-          description: The address of the billable entity
           allOf:
             - $ref: "#/components/schemas/Address"
         state:
@@ -797,31 +1712,34 @@ components:
           allOf:
             - $ref: "#/components/schemas/City"
         email:
-          description: Email address where the bill is sent to
+          description: Email address of the person / organization being billed. The BPP must send the bill to this email address. The format of the bill may be defined in the network policy.
           type: string
           format: email
         phone:
-          description: Phone number of the billable entity
+          description: Phone number of the person / organization being billed. The BPP must send the bill to this phone number as per the format specified in the network policy. In case the bill is a downloadable file, it is recommended the bill should be sent to the phone number as a downloadable link.
           type: string
         time:
-          description: Details regarding the billing period
-          allOf:
-            - $ref: "#/components/schemas/Time"
+          $ref: "#/components/schemas/Time"
         tax_id:
-          description: ID of the billable entity as recognized by the taxation authority
+          description: This is the identity of a Tax-paying person or an organization. This number can be provided to the BPP to avail tax benefits, if applicable. The format of this string should be specified in the network policy
           type: string
+        created_at:
+          description: Date and time at which this bill was generated by the BPP.
+          type: string
+          format: date-time
+
     Cancellation:
       description: Describes a cancellation event
       type: object
       properties:
         time:
-          description: Date-time when the order was cancelled by the buyer
+          description: Date-time when the order was cancelled by the seeker
           type: string
           format: date-time
         cancelled_by:
           type: string
           enum:
-            - CONSUMER
+            - SEEKER
             - PROVIDER
         reason:
           description: The reason for cancellation
@@ -831,8 +1749,9 @@ components:
           description: Any additional information regarding the nature of cancellation
           allOf:
             - $ref: "#/components/schemas/Descriptor"
+
     CancellationTerm:
-      description: Describes the cancellation terms of an item or an order. This can be referenced at an item or order level. Item-level cancellation terms can override the terms at the order level.
+      description: Describes the cancellation terms of an order, i.e, scholarship application, course etc. This can be referenced at an item or order level. Item-level cancellation terms can override the terms at the order level.
       type: object
       properties:
         fulfillment_state:
@@ -853,7 +1772,7 @@ components:
         external_ref:
           $ref: "#/components/schemas/MediaFile"
     Catalog:
-      description: "Describes the products or services offered by a BPP. This is typically sent as the response to a search intent from a BAP. The payment terms, offers and terms of fulfillment supported by the BPP can also be included here. The BPP can show hierarchical nature of products/services in its catalog using the parent_category_id in categories. The BPP can also send a ttl (time to live) in the context which is the duration for which a BAP can cache the catalog and use the cached catalog.  <br>This has properties like bbp/descriptor,bbp/categories,bbp/fulfillments,bbp/payments,bbp/offers,bbp/providers and exp<br>This is used in the following situations.<br><ul><li>This is typically used in the discovery stage when the BPP sends the details of the products and services it offers as response to a search intent from the BAP. </li></ul>"
+      description: "Describes a skilling and education catalog"
       type: object
       properties:
         descriptor:
@@ -885,12 +1804,12 @@ components:
           description: Duration in seconds after which this catalog will expire
           type: string
     Category:
-      description: A label under which a collection of items can be grouped.
+      description: Describes a category
       type: object
       properties:
         id:
-          description: ID of the category
           type: string
+          description: Unique id of the category
         parent_category_id:
           $ref: "#/components/schemas/Category/properties/id"
         descriptor:
@@ -904,7 +1823,7 @@ components:
           items:
             $ref: "#/components/schemas/TagGroup"
     Circle:
-      description: Describes a circular region of a specified radius centered at a specified GPS coordinate.
+      description: Describes a circular area on the map
       type: object
       properties:
         gps:
@@ -916,11 +1835,11 @@ components:
       type: object
       properties:
         name:
+          type: string
           description: Name of the city
-          type: string
         code:
-          description: City code
           type: string
+          description: City code
     Contact:
       description: Describes the contact information of an entity
       type: object
@@ -933,11 +1852,10 @@ components:
           type: object
           description: A Jcard object as per draft-ietf-jcardcal-jcard-03 specification
     Context:
-      description: "Every API call in beckn protocol has a context. It provides a high-level overview to the receiver about the nature of the intended transaction. Typically, it is the BAP that sets the transaction context based on the consumer's location and action on their UI. But sometimes, during unsolicited callbacks, the BPP also sets the transaction context but it is usually the same as the context of a previous full-cycle, request-callback interaction between the BAP and the BPP. The context object contains four types of fields. <ol><li>Demographic information about the transaction using fields like `domain`, `country`, and `region`.</li><li>Addressing details like the sending and receiving platform's ID and API URL.</li><li>Interoperability information like the protocol version that implemented by the sender and,</li><li>Transaction details like the method being called at the receiver's endpoint, the transaction_id that represents an end-to-end user session at the BAP, a message ID to pair requests with callbacks, a timestamp to capture sending times, a ttl to specifiy the validity of the request, and a key to encrypt information if necessary.</li></ol> This object must be passed in every interaction between a BAP and a BPP. In HTTP/S implementations, it is not necessary to send the context during the synchronous response. However, in asynchronous protocols, the context must be sent during all interactions,"
+      description: Describes a beckn message context
       type: object
       properties:
         domain:
-          description: Domain code that is relevant to this transaction context
           allOf:
             - $ref: "#/components/schemas/Domain/properties/code"
         location:
@@ -945,50 +1863,45 @@ components:
           allOf:
             - $ref: "#/components/schemas/Location"
         action:
-          description: The Beckn protocol method being called by the sender and executed at the receiver.
           type: string
+          description: Defines the Beckn API call type.
         version:
           type: string
-          description: Version of transaction protocol being used by the sender.
+          description: Version of Beckn core API specification being used
         bap_id:
-          description: Subscriber ID of the BAP
-          allOf:
-            - description: "A globally unique identifier of the platform, Typically it is the fully qualified domain name (FQDN) of the platform."
-              type: string
+          type: string
+          description: Unique id of the BAP. By default it is the fully qualified domain name of the BAP
         bap_uri:
-          description: Subscriber URL of the BAP for accepting callbacks from BPPs.
-          allOf:
-            - description: The callback URL of the Subscriber. This should necessarily contain the same domain name as set in `subscriber_id``.
-              type: string
-              format: uri
+          type: string
+          format: uri
+          description: URI of the BAP for accepting callbacks. Must have the same domain name as the bap_id
         bpp_id:
-          description: Subscriber ID of the BPP
-          allOf:
-            - $ref: "#/components/schemas/Context/properties/bap_id/allOf/0"
+          type: string
+          description: Unique id of the BPP. By default it is the fully qualified domain name of the BPP
         bpp_uri:
-          description: Subscriber URL of the BPP for accepting calls from BAPs.
-          allOf:
-            - $ref: "#/components/schemas/Context/properties/bap_uri/allOf/0"
+          type: string
+          format: uri
+          description: URI of the BPP. Must have the same domain name as the bap_id
         transaction_id:
-          description: "This is a unique value which persists across all API calls from `search` through `confirm`. This is done to indicate an active user session across multiple requests. The BPPs can use this value to push personalized recommendations, and dynamic offerings related to an ongoing transaction despite being unaware of the user active on the BAP."
           type: string
           format: uuid
+          description: This is a unique value which persists across all API calls from search through confirm
         message_id:
-          description: "This is a unique value which persists during a request / callback cycle. Since beckn protocol APIs are asynchronous, BAPs need a common value to match an incoming callback from a BPP to an earlier call. This value can also be used to ignore duplicate messages coming from the BPP. It is recommended to generate a fresh message_id for every new interaction. When sending unsolicited callbacks, BPPs must generate a new message_id."
           type: string
           format: uuid
+          description: This is a unique value which persists during a request / callback cycle
         timestamp:
-          description: Time of request generation in RFC3339 format
           type: string
           format: date-time
+          description: Time of request generation in RFC3339 format
         key:
+          type: string
           description: The encryption public key of the sender
-          type: string
         ttl:
-          description: The duration in ISO8601 format after timestamp for which this message holds valid
           type: string
+          description: The duration in ISO8601 format after timestamp for which this message holds valid
     Country:
-      description: Describes a country
+      description: Describes a country.
       type: object
       properties:
         name:
@@ -1018,8 +1931,21 @@ components:
           $ref: "#/components/schemas/Person"
         contact:
           $ref: "#/components/schemas/Contact"
+    Domain:
+      description: "Described the industry sector or sub-sector. The network policy should contain codes for all the industry sectors supported by the network. Domains can be created in varying levels of granularity. The granularity of a domain can be decided by the participants of the network. Too broad domains will result in irrelevant search broadcast calls to BPPs that don't have services supporting the domain. Too narrow domains will result in a large number of registry entries for each BPP. It is recommended that network facilitators actively collaborate with various working groups and network participants to carefully choose domain codes keeping in mind relevance, performance, and opportunity cost. It is recommended that networks choose broad domains like mobility, logistics, healthcare etc, and progressively granularize them as and when the number of network participants for each domain grows large."
+      type: object
+      properties:
+        name:
+          description: Name of the domain
+          type: string
+        code:
+          description: "Standard code representing the domain. The standard is usually published as part of the network policy. Furthermore, the network facilitator should also provide a mechanism to provide the supported domains of a network."
+        additional_info:
+          description: A url that contains addtional information about that domain.
+          allOf:
+            - $ref: "#/components/schemas/MediaFile"
     DecimalValue:
-      description: Describes a numerical value in decimal form
+      description: Describes a decimal value
       type: string
       pattern: "[+-]?([0-9]*[.])?[0-9]+"
     Descriptor:
@@ -1053,35 +1979,33 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Image"
-    Domain:
-      description: "Described the industry sector or sub-sector. The network policy should contain codes for all the industry sectors supported by the network. Domains can be created in varying levels of granularity. The granularity of a domain can be decided by the participants of the network. Too broad domains will result in irrelevant search broadcast calls to BPPs that don't have services supporting the domain. Too narrow domains will result in a large number of registry entries for each BPP. It is recommended that network facilitators actively collaborate with various working groups and network participants to carefully choose domain codes keeping in mind relevance, performance, and opportunity cost. It is recommended that networks choose broad domains like mobility, logistics, healthcare etc, and progressively granularize them as and when the number of network participants for each domain grows large."
-      type: object
-      properties:
-        name:
-          description: Name of the domain
-          type: string
-        code:
-          description: "Standard code representing the domain. The standard is usually published as part of the network policy. Furthermore, the network facilitator should also provide a mechanism to provide the supported domains of a network."
-        additional_info:
-          description: A url that contains addtional information about that domain.
-          allOf:
-            - $ref: "#/components/schemas/MediaFile"
     Duration:
       description: Describes duration as per ISO8601 format
       type: string
     Error:
-      description: "Describes an error object that is returned by a BAP, BPP or BG as a response or callback to an action by another network participant. This object is sent when any request received by a network participant is unacceptable. This object can be sent either during Ack or with the callback."
+      description: Describes an error object
       type: object
       properties:
+        type:
+          type: string
+          enum:
+            - CONTEXT-ERROR
+            - CORE-ERROR
+            - DOMAIN-ERROR
+            - POLICY-ERROR
+            - JSON-SCHEMA-ERROR
         code:
           type: string
-          description: 'Standard error code. For full list of error codes, refer to docs/protocol-drafts/BECKN-005-ERROR-CODES-DRAFT-01.md of this repo"'
-        paths:
+          description: "Beckn specific error code. For full list of error codes, refer to docs/protocol-drafts/BECKN-RFC-005-ERROR-CODES-DRAFT-01.md of this repo"
+        path:
           type: string
           description: Path to json schema generating the error. Used only during json schema validation errors
         message:
           type: string
-          description: Human readable message describing the error. Used mainly for logging. Not recommended to be shown to the user.
+          description: Human readable message describing the error
+      required:
+        - type
+        - code
     Fee:
       description: A fee applied on a particular entity
       type: object
@@ -1206,7 +2130,7 @@ components:
           description: Height of the image in pixels
           type: string
     Intent:
-      description: "The intent to buy or avail a product or a service. The BAP can declare the intent of the consumer containing <ul><li>What they want (A product, service, offer)</li><li>Who they want (A seller, service provider, agent etc)</li><li>Where they want it and where they want it from</li><li>When they want it (start and end time of fulfillment</li><li>How they want to pay for it</li></ul><br>This has properties like descriptor,provider,fulfillment,payment,category,offer,item,tags<br>This is typically used by the BAP to send the purpose of the user's search to the BPP. This will be used by the BPP to find products or services it offers that may match the user's intent.<br>For example, in Mobility, the mobility consumer declares a mobility intent. In this case, the mobility consumer declares information that describes various aspects of their journey like,<ul><li>Where would they like to begin their journey (intent.fulfillment.start.location)</li><li>Where would they like to end their journey (intent.fulfillment.end.location)</li><li>When would they like to begin their journey (intent.fulfillment.start.time)</li><li>When would they like to end their journey (intent.fulfillment.end.time)</li><li>Who is the transport service provider they would like to avail services from (intent.provider)</li><li>Who is traveling (This is not recommended in public networks) (intent.fulfillment.customer)</li><li>What kind of fare product would they like to purchase (intent.item)</li><li>What add-on services would they like to avail</li><li>What offers would they like to apply on their booking (intent.offer)</li><li>What category of services would they like to avail (intent.category)</li><li>What additional luggage are they carrying</li><li>How would they like to pay for their journey (intent.payment)</li></ul><br>For example, in health domain, a consumer declares the intent for a lab booking the describes various aspects of their booking like,<ul><li>Where would they like to get their scan/test done (intent.fulfillment.start.location)</li><li>When would they like to get their scan/test done (intent.fulfillment.start.time)</li><li>When would they like to get the results of their test/scan (intent.fulfillment.end.time)</li><li>Who is the service provider they would like to avail services from (intent.provider)</li><li>Who is getting the test/scan (intent.fulfillment.customer)</li><li>What kind of test/scan would they like to purchase (intent.item)</li><li>What category of services would they like to avail (intent.category)</li><li>How would they like to pay for their journey (intent.payment)</li></ul>"
+      description: "The intent to get a Learning and Career Development Resources. The BAP can declare the intent of the consumer containing <ul><li>What they want (scholarship, job, course etc)</li><li>Who they want (A seller, service provider, agent etc)</li><li>Where they want it and where they want it from</li><li>When they want it (start and end time of fulfillment</li><li>How they want to pay for it</li></ul><br>This has properties like descriptor,provider,fulfillment,payment,category,offer,item,tags<br>This is typically used by the BAP to send the purpose of the user's search to the BPP. This will be used by the BPP to find products or services it offers that may match the user's intent.<br>For example, in Mobility, the mobility consumer declares a mobility intent. In this case, the mobility consumer declares information that describes various aspects of their journey like,<ul><li>Where would they like to begin their journey (intent.fulfillment.start.location)</li><li>Where would they like to end their journey (intent.fulfillment.end.location)</li><li>When would they like to begin their journey (intent.fulfillment.start.time)</li><li>When would they like to end their journey (intent.fulfillment.end.time)</li><li>Who is the transport service provider they would like to avail services from (intent.provider)</li><li>Who is traveling (This is not recommended in public networks) (intent.fulfillment.customer)</li><li>What kind of fare product would they like to purchase (intent.item)</li><li>What add-on services would they like to avail</li><li>What offers would they like to apply on their booking (intent.offer)</li><li>What category of services would they like to avail (intent.category)</li><li>What additional luggage are they carrying</li><li>How would they like to pay for their journey (intent.payment)</li></ul><br>For example, in health domain, a consumer declares the intent for a lab booking the describes various aspects of their booking like,<ul><li>Where would they like to get their scan/test done (intent.fulfillment.start.location)</li><li>When would they like to get their scan/test done (intent.fulfillment.start.time)</li><li>When would they like to get the results of their test/scan (intent.fulfillment.end.time)</li><li>Who is the service provider they would like to avail services from (intent.provider)</li><li>Who is getting the test/scan (intent.fulfillment.customer)</li><li>What kind of test/scan would they like to purchase (intent.item)</li><li>What category of services would they like to avail (intent.category)</li><li>How would they like to pay for their journey (intent.payment)</li></ul>"
       type: object
       properties:
         descriptor:
@@ -1778,7 +2702,7 @@ components:
         maximum_value:
           $ref: "#/components/schemas/DecimalValue"
     Provider:
-      description: Describes the catalog of a business.
+      description: Describes the catalog of an entity, entitiy can be a scholarship facilitator, course provider etc
       type: object
       properties:
         id:
@@ -1877,33 +2801,7 @@ components:
           type: string
         value:
           description: "Rating value given to the object. This can be a single value or can also contain an inequality operator like gt, gte, lt, lte. This can also contain an inequality expression containing logical operators like && and ||."
-          type: string
-    Region:
-      description: Describes an arbitrary region of space. The network policy should contain a published list of supported regions by the network.
-      type: object
-      properties:
-        dimensions:
-          description: "The number of dimensions that are used to describe any point inside that region. The most common dimensionality of a region is 2, that represents an area on a map. There are regions on the map that can be approximated to one-dimensional regions like roads, railway lines, or shipping lines. 3 dimensional regions are rarer, but are gaining popularity as flying drones are being adopted for various fulfillment services."
-          type: string
-          enum:
-            - "1"
-            - "2"
-            - "3"
-        type:
-          description: "The type of region. This is used to specify the granularity of the region represented by this object. Various examples of two-dimensional region types are city, country, state, district, and so on. The network policy should contain a list of all possible region types supported by the network."
-          type: string
-        name:
-          type: string
-          description: Name of the region as specified on the map where that region exists.
-        code:
-          type: string
-          description: A standard code representing the region. This should be interpreted in the same way by all network participants.
-        boundary:
-          type: string
-          description: "A string representing the boundary of the region. One-dimensional regions are represented by polylines. Two-dimensional regions are represented by polygons, and three-dimensional regions can represented by polyhedra."
-        map_url:
-          type: string
-          description: The url to the map of the region. This can be a globally recognized map or the one specified by the network policy.
+
     ReplacementTerm:
       description: The replacement policy of an item or an order
       type: object
@@ -1918,6 +2816,7 @@ components:
             - $ref: "#/components/schemas/Time"
         external_ref:
           $ref: "#/components/schemas/MediaFile"
+
     ReturnTerm:
       description: Describes the return policy of an item or an order
       type: object
@@ -2076,7 +2975,7 @@ components:
           items:
             $ref: "#/components/schemas/Tag"
     Time:
-      description: "Describes time in its various forms. It can be a single point in time; duration; or a structured timetable of operations<br>This has properties like label, time stamp,duration,range, days, schedule"
+      description: Describes time in its various forms. It can be a single point in time; duration; or a structured timetable of operations
       type: object
       properties:
         label:
@@ -2101,7 +3000,7 @@ components:
         schedule:
           $ref: "#/components/schemas/Schedule"
     Tracking:
-      description: Contains tracking information that can be used by the BAP to track the fulfillment of an order in real-time. which is useful for knowing the location of time sensitive deliveries.
+      description: Describes a tracking object. it can be used to track the status of a service, i.e, a scholarship application, a course etc.
       type: object
       properties:
         id:
@@ -2154,7 +3053,7 @@ components:
         emission_standard:
           type: string
     XInput:
-      description: "Contains any additional or extended inputs required to confirm an order. This is typically a Form Input. Sometimes, selection of catalog elements is not enough for the BPP to confirm an order. For example, to confirm a flight ticket, the airline requires details of the passengers along with information on baggage, identity, in addition to the class of ticket. Similarly, a logistics company may require details on the nature of shipment in order to confirm the shipping. A recruiting firm may require additional details on the applicant in order to confirm a job application. For all such purposes, the BPP can choose to send this object attached to any object in the catalog that is required to be sent while placing the order. This object can typically be sent at an item level or at the order level. The item level XInput will override the Order level XInput as it indicates a special requirement of information for that particular item. Hence the BAP must render a separate form for the Item and another form at the Order level before confirmation."
+      description: "Contains any additional or extended inputs required for the order. This is typically a Form Input. Sometimes, selection of catalog elements is not enough for the BPP to confirm an order. For example, A scholarship application may require additional details on the applicant as a proof of eligibility. For all such purposes, the BPP can choose to send this object attached to any object in the catalog that is required to be sent while placing the order. This object can typically be sent at an item level or at the order level. The item level XInput will override the Order level XInput as it indicates a special requirement of information for that particular item. Hence the BAP must render a separate form for the Item and another form at the Order level before confirmation."
       type: object
       properties:
         form:
