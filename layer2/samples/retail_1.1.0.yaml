@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
-  title: Beckn Protocol Core
-  description: retail layer 2 config from core yaml 
+  title: Beckn for Local Retail
+  description: Adaptation of beckn protocol for the local retail domain
   version: 1.1.0
 security:
   - SubscriberAuth: []
@@ -11,7 +11,7 @@ paths:
       tags:
         - Beckn Provider Platform (BPP)
         - Beckn Gateway (BG)
-      description: BAP declares the customer's intent to buy/avail products or services
+      description: BAP declares the customer's intent to buy products from retail providers
       requestBody:
         content:
           application/json:
