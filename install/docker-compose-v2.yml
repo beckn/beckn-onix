@@ -1,4 +1,4 @@
-version: '3'
+version: "3"
 
 services:
   registry:
@@ -37,6 +37,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./protocol-server-data/bap-client.yml:/usr/src/app/config/default.yml
+      - bap_client_logs:/usr/src/app/logs
+      - bap_client_schemas:/usr/src/app/schemas
 
   bap-network:
     image: fidedocker/protocol-server
@@ -48,6 +50,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./protocol-server-data/bap-network.yml:/usr/src/app/config/default.yml
+      - bap_network_logs:/usr/src/app/logs
+      - bap_network_schemas:/usr/src/app/schemas
 
   sandbox-api:
     image: fidedocker/sandbox-api
@@ -81,6 +85,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./protocol-server-data/bpp-client.yml:/usr/src/app/config/default.yml
+      - bpp_client_logs:/usr/src/app/logs
+      - bpp_client_schemas:/usr/src/app/schemas
 
   bpp-network:
     image: fidedocker/protocol-server
@@ -92,6 +98,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./protocol-server-data/bpp-network.yml:/usr/src/app/config/default.yml
+      - bpp_network_logs:/usr/src/app/logs
+      - bpp_network_schemas:/usr/src/app/schemas
 
   generic-client-layer:
     image: fidedocker/generic-client-layer
@@ -117,4 +125,11 @@ volumes:
     name: gateway_data_volume
   gateway_database_volume:
     name: gateway_database_volume
-
+  bap_client_schemas:
+  bap_client_logs:
+  bap_network_schemas:
+  bap_network_logs:
+  bpp_client_schemas:
+  bpp_client_logs:
+  bpp_network_schemas:
+  bpp_network_logs:
