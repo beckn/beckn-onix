@@ -5,6 +5,7 @@ services:
     container_name: mongoDB
     volumes:
       - beckn_mongo_db:/data/db
+      - beckn_mongo_config:/data/configdb
     networks:
       - beckn_network
     ports:
@@ -34,6 +35,8 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+    volumes:
+      - beckn_rabbitmq:/var/lib/rabbitmq
     environment:
       AMQP_URL: "amqp://queue_service?connection_attempts=3&retry_delay=5"
       RABBITMQ_DEFAULT_USER: beckn
@@ -47,5 +50,9 @@ networks:
 volumes:
   beckn_mongo_db:
     name: beckn_mongo_db
+  beckn_mongo_config:
+    name: beckn_mongo_config
   beckn_redis:
     name: beckn_redis
+  beckn_rabbitmq:
+    name: beckn_rabbitmq
