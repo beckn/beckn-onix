@@ -1,4 +1,4 @@
-version: '3'
+version: "3"
 
 services:
   registry:
@@ -12,7 +12,7 @@ services:
     restart: unless-stopped
     volumes:
       - registry_data_volume:/registry/overrideProperties/config
-      - registry_data_volume:/registry/database
+      - registry_database_volume:/registry/database
 
   gateway:
     image: fidedocker/gateway
@@ -111,10 +111,13 @@ networks:
 volumes:
   registry_data_volume:
     name: registry_data_volume
+    external: true
   registry_database_volume:
     name: registry_database_volume
+    external: true
   gateway_data_volume:
     name: gateway_data_volume
+    external: true
   gateway_database_volume:
     name: gateway_database_volume
-
+    external: true
