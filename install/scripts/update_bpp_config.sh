@@ -117,7 +117,7 @@ else
 
     )
 
-    echo "Configuring BAP protocol server"
+    echo "Configuring BPP protocol server"
     # Apply replacements in both files
     for file in "$clientFile" "$networkFile"; do
         for key in "${!replacements[@]}"; do

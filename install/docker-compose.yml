@@ -1,5 +1,3 @@
-version: '3'
-
 services:
   registry:
     image: fidedocker/registry
@@ -114,5 +112,5 @@ services:
 
 networks:
   beckn_network:
+    name: beckn_network
     driver: bridge
-

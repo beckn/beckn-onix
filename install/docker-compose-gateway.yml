@@ -1,5 +1,3 @@
-version: "3"
-
 services:
   gateway:
     image: fidedocker/gateway
@@ -16,6 +14,7 @@ services:
 
 networks:
   beckn_network:
+    name: beckn_network
     driver: bridge
 
 volumes:

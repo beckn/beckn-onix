@@ -1,5 +1,3 @@
-version: "3"
-
 services:
   bpp-client:
     image: fidedocker/protocol-server
@@ -10,7 +8,9 @@ services:
       - 6001:6001
     restart: unless-stopped
     volumes:
-      - ./protocol-server-data/bpp-client.yml:/usr/src/app/config/default.yml
+      - bpp_client_config_volume:/usr/src/app/config
+      - bpp_client_schemas_volume:/usr/src/app/schemas
+      - bpp_client_logs_volume:/usr/src/app/logs
 
   bpp-network:
     image: fidedocker/protocol-server
@@ -21,8 +21,27 @@ services:
       - 6002:6002
     restart: unless-stopped
     volumes:
-      - ./protocol-server-data/bpp-network.yml:/usr/src/app/config/default.yml
+      - bpp_network_config_volume:/usr/src/app/config
+      - bpp_network_schemas_volume:/usr/src/app/schemas
+      - bpp_network_logs_volume:/usr/src/app/logs
 
 networks:
   beckn_network:
+    name: beckn_network
     driver: bridge
+
+volumes:
+  bpp_client_config_volume:
+    name: bpp_client_config_volume
+    external: true
+  bpp_client_schemas_volume:
+    name: bpp_client_schemas_volume
+  bpp_client_logs_volume:
+    name: bpp_client_logs_volume
+  bpp_network_config_volume:
+    name: bpp_network_config_volume
+    external: true
+  bpp_network_schemas_volume:
+    name: bpp_network_schemas_volume
+  bpp_network_logs_volume:
+    name: bpp_network_logs_volume
