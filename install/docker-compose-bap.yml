@@ -1,5 +1,3 @@
-version: "3"
-
 services:
   bap-client:
     image: fidedocker/protocol-server

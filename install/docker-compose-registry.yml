@@ -1,5 +1,3 @@
-version: "3"
-
 services:
   registry:
     image: fidedocker/registry
