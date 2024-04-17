@@ -1,4 +1,4 @@
-version: '3'
+version: "3"
 
 services:
   registry:
@@ -114,5 +114,5 @@ services:
 
 networks:
   beckn_network:
+    name: beckn_network
     driver: bridge
-

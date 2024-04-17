@@ -116,6 +116,12 @@ install_bap_protocol_server(){
         bash scripts/update_bap_config.sh
     fi
     sleep 10
+    docker volume create bap_client_config_volume
+    docker volume create bap_network_config_volume
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_client_config_volume:/target busybox cp /source/bap-client.yml /target/default.yml
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_network_config_volume:/target busybox cp /source/bap-network.yml /target/default.yml
+    docker rmi busybox
+
     start_container "docker-compose-bap.yml" "bap-client"
     start_container "docker-compose-bap.yml" "bap-network"
     sleep 10
