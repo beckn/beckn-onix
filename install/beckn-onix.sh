@@ -12,7 +12,7 @@ install_package(){
 start_container(){
     #ignore orphaned containers warning
     export COMPOSE_IGNORE_ORPHANS=1
-    docker-compose -f docker-compose-v2.yml up -d $1
+    docker-compose -f $1 up -d $2
 }
 
 update_registry_details() {
@@ -50,7 +50,10 @@ update_registry_details() {
     docker volume create registry_data_volume
     docker run --rm -v $SCRIPT_DIR/../registry_data/config:/source -v registry_data_volume:/target busybox cp /source/{envvars,logger.properties,swf.properties} /target/
     docker volume create registry_database_volume
-    docker run --rm -v $SCRIPT_DIR/../registry_data/database:/source -v registry_database_volume:/target busybox cp /source/db.txt /target/db.txt
+    if [ -e $SCRIPT_DIR/../registry_data/database/db.txt ]
+    then
+        docker run --rm -v $SCRIPT_DIR/../registry_data/database:/source -v registry_database_volume:/target busybox cp /source/db.txt /target/db.txt
+    fi    
     docker rmi busybox
 }
 # Function to start the MongoDB, Redis, and RabbitMQ Services
@@ -77,7 +80,7 @@ install_gateway() {
         bash scripts/update_gateway_details.sh registry 
     fi
     echo "${GREEN}................Installing Gateway service................${NC}"
-    start_container gateway
+    start_container "docker-compose-gateway.yml" gateway
     echo "Registering Gateway in the registry"
 
     sleep 10
@@ -99,7 +102,7 @@ install_registry(){
     fi
 
     echo "${GREEN}................Installing Registry service................${NC}"
-    start_container registry
+    start_container "docker-compose-registry.yml" registry
     sleep 10
     echo "Registry installation successful"
 }
@@ -117,8 +120,8 @@ install_bap_protocol_server(){
         bash scripts/update_bap_config.sh
     fi
     sleep 10
-    start_container "bap-client"
-    start_container "bap-network"
+    start_container "docker-compose-bap.yml" "bap-client"
+    start_container "docker-compose-bap.yml" "bap-network"
     sleep 10
     echo "Protocol server BAP installation successful"
 }
@@ -141,8 +144,8 @@ install_bpp_protocol_server(){
     fi
 
     sleep 10
-    start_container "bpp-client"
-    start_container "bpp-network"
+    start_container "docker-compose-bpp.yml" "bpp-client"
+    start_container "docker-compose-bpp.yml" "bpp-network"
     sleep 10
     echo "Protocol server BPP installation successful"
 }
