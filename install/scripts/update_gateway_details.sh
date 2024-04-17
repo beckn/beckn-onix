@@ -53,7 +53,7 @@ update_gateway_config() {
         docker volume create gateway_data_volume
         docker volume create gateway_database_volume
         docker run --rm -v $SCRIPT_DIR/../gateway_data/config:/source -v gateway_data_volume:/target busybox cp /source/{envvars,logger.properties,swf.properties} /target/
-        docker run --rm -v $SCRIPT_DIR/../registry_data/database:/source -v gateway_database_volume:/target busybox cp /source/db.txt /target/db.txt
+        docker run --rm -v $SCRIPT_DIR/../gateway_data/database:/source -v gateway_database_volume:/target busybox cp /source/db.txt /target/db.txt
         update_network_json
 
 }

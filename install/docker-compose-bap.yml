@@ -1,0 +1,27 @@
+version: "3"
+
+services:
+  bap-client:
+    image: fidedocker/protocol-server
+    container_name: bap-client
+    networks:
+      - beckn_network
+    ports:
+      - 5001:5001
+    restart: unless-stopped
+    volumes:
+      - ./protocol-server-data/bap-client.yml:/usr/src/app/config/default.yml
+
+  bap-network:
+    image: fidedocker/protocol-server
+    container_name: bap-network
+    networks:
+      - beckn_network
+    ports:
+      - 5002:5002
+    restart: unless-stopped
+    volumes:
+      - ./protocol-server-data/bap-network.yml:/usr/src/app/config/default.yml
+networks:
+  beckn_network:
+    driver: bridge
