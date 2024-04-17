@@ -1,0 +1,28 @@
+version: "3"
+
+services:
+  bpp-client:
+    image: fidedocker/protocol-server
+    container_name: bpp-client
+    networks:
+      - beckn_network
+    ports:
+      - 6001:6001
+    restart: unless-stopped
+    volumes:
+      - ./protocol-server-data/bpp-client.yml:/usr/src/app/config/default.yml
+
+  bpp-network:
+    image: fidedocker/protocol-server
+    container_name: bpp-network
+    networks:
+      - beckn_network
+    ports:
+      - 6002:6002
+    restart: unless-stopped
+    volumes:
+      - ./protocol-server-data/bpp-network.yml:/usr/src/app/config/default.yml
+
+networks:
+  beckn_network:
+    driver: bridge
