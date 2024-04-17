@@ -1,12 +1,10 @@
-version: "3"
-
 services:
   mongo_db:
     image: mongo
     restart: unless-stopped
     container_name: mongoDB
     volumes:
-      - ./docker_data/mongo_DB:/data/db
+      - beckn_mongo_db:/data/db
     networks:
       - beckn_network
     ports:
@@ -25,7 +23,7 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - ./docker_data/redis_DB:/data
+      - beckn_redis:/data
 
   queue_service:
     image: rabbitmq:3.9.11-management-alpine
@@ -43,4 +41,11 @@ services:
 
 networks:
   beckn_network:
+    name: beckn_network
     driver: bridge
+
+volumes:
+  beckn_mongo_db:
+    name: beckn_mongo_db
+  beckn_redis:
+    name: beckn_redis
