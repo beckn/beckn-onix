@@ -12,7 +12,7 @@ install_package(){
 start_container(){
     #ignore orphaned containers warning
     export COMPOSE_IGNORE_ORPHANS=1
-    docker-compose -f docker-compose-v2.yml up -d $1
+    docker-compose -f $1 up -d $2
 }
 
 update_registry_details() {
@@ -48,9 +48,8 @@ update_registry_details() {
     sed "s|REGISTRY_URL|$registry_url|g; s|REGISTRY_PORT|$registry_port|g; s|PROTOCOL|$protocol|g" "$config_file" > "$tmp_file"
     mv "$tmp_file" "$config_file"
     docker volume create registry_data_volume
-    docker run --rm -v $SCRIPT_DIR/../registry_data/config:/source -v registry_data_volume:/target busybox cp /source/{envvars,logger.properties,swf.properties} /target/
     docker volume create registry_database_volume
-    docker run --rm -v $SCRIPT_DIR/../registry_data/database:/source -v registry_database_volume:/target busybox cp /source/db.txt /target/db.txt
+    docker run --rm -v $SCRIPT_DIR/../registry_data/config:/source -v registry_data_volume:/target busybox cp /source/{envvars,logger.properties,swf.properties} /target/
     docker rmi busybox
 }
 # Function to start the MongoDB, Redis, and RabbitMQ Services
@@ -77,7 +76,7 @@ install_gateway() {
         bash scripts/update_gateway_details.sh registry 
     fi
     echo "${GREEN}................Installing Gateway service................${NC}"
-    start_container gateway
+    start_container "docker-compose-gateway.yml" gateway
     echo "Registering Gateway in the registry"
 
     sleep 10
@@ -99,7 +98,7 @@ install_registry(){
     fi
 
     echo "${GREEN}................Installing Registry service................${NC}"
-    start_container registry
+    start_container "docker-compose-registry.yml" registry
     sleep 10
     echo "Registry installation successful"
 }
@@ -117,8 +116,8 @@ install_bap_protocol_server(){
         bash scripts/update_bap_config.sh
     fi
     sleep 10
-    start_container "bap-client"
-    start_container "bap-network"
+    start_container "docker-compose-bap.yml" "bap-client"
+    start_container "docker-compose-bap.yml" "bap-network"
     sleep 10
     echo "Protocol server BAP installation successful"
 }
@@ -141,8 +140,8 @@ install_bpp_protocol_server(){
     fi
 
     sleep 10
-    start_container "bpp-client"
-    start_container "bpp-network"
+    start_container "docker-compose-bpp.yml" "bpp-client"
+    start_container "docker-compose-bpp.yml" "bpp-network"
     sleep 10
     echo "Protocol server BPP installation successful"
 }
@@ -166,34 +165,17 @@ read -p "Enter your choice: " choice
 boldGreen="\e[1m\e[92m"
 reset="\e[0m"
 
-# Function to request network configuration URL
-requestNetworkConfig() {
-    echo "Please provide the network-specific configuration URL."
-    read -p "Paste the URL of the network configuration here (or press Enter to skip): " config_url
-    if [ -n "$config_url" ]; then
-        echo "Network configuration URL provided: $config_url"
-    else
-        echo "No network configuration URL provided, proceeding without it."
-    fi
-    echo ""
-}
-
 # Function to handle the setup process for each platform
 completeSetup() {
     platform=$1
-    config_url=$2  # Passing this as an argument, though it could be optional or ignored by some setups
 
     public_address="https://<your public IP address>"
 
     echo "Proceeding with the setup for $platform..."
-    if [ -n "$config_url" ]; then
-        echo "Using network configuration from: $config_url"
-    fi
     
     # Insert the specific commands for each platform, including requesting network config if necessary
     case $platform in
         "Registry")
-            requestNetworkConfig
             read -p "Enter publicly accessible registry URL: " registry_url
             if [[ $registry_url =~ /$ ]]; then
                 new_registry_url=${registry_url%/}
@@ -205,7 +187,6 @@ completeSetup() {
             install_registry $new_registry_url
             ;;
         "Gateway"|"Beckn Gateway")
-            requestNetworkConfig
             read -p "Enter your registry URL: " registry_url
             read -p "Enter publicly accessible gateway URL: " gateway_url
             
@@ -223,7 +204,6 @@ completeSetup() {
             install_gateway $new_registry_url $gateway_url
             ;;
         "BAP")
-            requestNetworkConfig
             echo "${GREEN}................Installing Protocol Server for BAP................${NC}"
             
             read -p "Enter BAP Subscriber ID: " bap_subscriber_id
@@ -235,7 +215,6 @@ completeSetup() {
             install_bap_protocol_server $registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url
             ;;
         "BPP")
-            requestNetworkConfig
             echo "${GREEN}................Installing Protocol Server for BAP................${NC}"
             read -p "Enter BPP Subscriber ID: " bpp_subscriber_id
             read -p "Enter BPP Subscriber URL: " bpp_subscriber_url
@@ -274,8 +253,7 @@ read -p "Enter your choice: " platform_choice
 selected_platform="${platforms[$((platform_choice-1))]}"
 
 if [[ -n $selected_platform ]]; then
-    # Note: Passing an empty string for config_url since it's optionally handled within `completeSetup`
-    completeSetup "$selected_platform" ""
+    completeSetup "$selected_platform"
 else
     echo "Invalid option. Please restart the script and select a valid option."
     exit 1
