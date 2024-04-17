@@ -119,7 +119,9 @@ install_bap_protocol_server(){
     docker volume create bap_client_config_volume
     docker volume create bap_network_config_volume
     docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_client_config_volume:/target busybox cp /source/bap-client.yml /target/default.yml
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_client_config_volume:/target busybox cp /source/bap-client.yaml-sample /target
     docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_network_config_volume:/target busybox cp /source/bap-network.yml /target/default.yml
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_network_config_volume:/target busybox cp /source/bap-network.yaml-sample /target
     docker rmi busybox
 
     start_container "docker-compose-bap.yml" "bap-client"
@@ -146,6 +148,14 @@ install_bpp_protocol_server(){
     fi
 
     sleep 10
+    docker volume create bpp_client_config_volume
+    docker volume create bpp_network_config_volume
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bpp_client_config_volume:/target busybox cp /source/bpp-client.yml /target/default.yml
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bpp_client_config_volume:/target busybox cp /source/bpp-client.yaml-sample /target
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bpp_network_config_volume:/target busybox cp /source/bpp-network.yml /target/default.yml
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bpp_network_config_volume:/target busybox cp /source/bpp-network.yaml-sample /target
+    docker rmi busybox
+
     start_container "docker-compose-bpp.yml" "bpp-client"
     start_container "docker-compose-bpp.yml" "bpp-network"
     sleep 10

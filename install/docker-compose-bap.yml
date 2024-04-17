@@ -35,12 +35,14 @@ networks:
 volumes:
   bap_client_config_volume:
     name: bap_client_config_volume
+    external: true
   bap_client_schemas_volume:
     name: bap_client_schemas_volume
   bap_client_logs_volume:
     name: bap_client_logs_volume
   bap_network_config_volume:
     name: bap_network_config_volume
+    external: true
   bap_network_schemas_volume:
     name: bap_network_schemas_volume
   bap_network_logs_volume:
