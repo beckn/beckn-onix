@@ -133,22 +133,6 @@ git clone https://github.com/beckn/beckn-onix.git
 
 ```
 
-- Due to a [known issue](https://github.com/beckn/beckn-onix/issues/8) with the new version of gateway, we need to do the following. This will be fixed by the project very soon and this step will not be required then. Open `beckn-onix/install/gateway_data/config/networks/onix.json` in an editor and change its contents to the following
-
-```
-{
-    "core_version" : "1.1.0",
-    "registry_id": "onix-registry.becknprotocol.io..LREG",
-    "search_provider_id" : "onix-gateway.becknprotocol.io",
-    "self_registration_supported": true,
-    "subscription_needed_post_registration" : true,
-    "base_url": "https://onix-registry.becknprotocol.io",
-    "registry_url" : "https://onix-registry.becknprotocol.io/subscribers",
-    "extension_package": "in.succinct.beckn.boc",
-    "wild_card" : ""
-}
-```
-
 - Change into the install folder and run the beckn-onix.sh script.
 
 ```
