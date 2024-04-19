@@ -1,6 +1,6 @@
 ## Introduction
 
-The [demo walkthrough](../docs/demo_walkthrough.md) and the accompanying video shows a story where we have the following steps
+The [setup walkthrough](../docs/setup_walkthrough.md) and the accompanying video shows a story where we have the following steps
 
 1. We install a core Beckn network using Beckn-ONIX
 2. We try to conduct a retail transaction, but it fails due to layer 2 config not being present

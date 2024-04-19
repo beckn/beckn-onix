@@ -87,19 +87,9 @@ Which platform would you like to set up?
 Enter your choice: 1
 ```
 
-- Skip the option to apply network configuration
-
-```
-Proceeding with the setup for Registry...
-Please provide the network-specific configuration URL.
-Paste the URL of the network configuration here (or press Enter to skip):
-```
-
 - Input the host name where the registry will reside as https://onix-registry.becknprotocol.io
 
 ```
-No network configuration URL provided, proceeding without it.
-
 Enter publicly accessible registry URL: https://onix-registry.becknprotocol.io
 ```
 
@@ -167,19 +157,9 @@ Which platform would you like to set up?
 Enter your choice: 1
 ```
 
-- Skip the option to apply network configuration
-
-```
-Proceeding with the setup for Gateway...
-Please provide the network-specific configuration URL.
-Paste the URL of the network configuration here (or press Enter to skip):
-```
-
 - Input the URL of the registry we just now installed https://onix-registry.becknprotocol.io
 
 ```
-No network configuration URL provided, proceeding without it.
-
 Enter your registry URL: https://onix-registry.becknprotocol.io
 ```
 
@@ -250,14 +230,6 @@ Which platform would you like to set up?
 2. BAP
 3. BPP
 Enter your choice: 2
-```
-
-- Skip the option to apply network configuration
-
-```
-Proceeding with the setup for BAP...
-Please provide the network-specific configuration URL.
-Paste the URL of the network configuration here (or press Enter to skip):
 ```
 
 - Input the BAP subscriber id - onix-bap.becknprotocol.io
@@ -345,14 +317,6 @@ Which platform would you like to set up?
 2. BAP
 3. BPP
 Enter your choice: 3
-```
-
-- Skip the option to apply network configuration
-
-```
-Proceeding with the setup for BPP...
-Please provide the network-specific configuration URL.
-Paste the URL of the network configuration here (or press Enter to skip):
 ```
 
 - Input BPP subscriber id as onix-bpp.becknprotocol.io

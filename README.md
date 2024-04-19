@@ -7,7 +7,7 @@ Within the install folder you will find a `beckn-onix.sh` file which is an insta
 Refer to the following documents for more information:
 
 - [User Guide](./docs/user_guide.md)
-- [Step by step walkthrough of a demo installation](./docs/demo_walkthrough.md)
+- [Step by step walkthrough of a setup](./docs/setup_walkthrough.md)
 - [Frequently asked questions (FAQ)](./docs/faq.md)
 - [release notes](./install/RELEASE.md)
 
