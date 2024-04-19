@@ -63,7 +63,6 @@ In the Beckn ecosystem, a new network starts with the setting up of the Registry
 - Change into the installation folder `cd beckn-onix/install`
 - Run the installation script `./beckn-onix.sh`
 - Specify you want to start a new network and install the registry
-- Skip the apply network configuration option
 - Enter the publicly accessible address of the registry (e.g. https://onix-registry.becknprotocol.io)
 - The registry installation will continue to completion.
 
@@ -85,7 +84,6 @@ In the Beckn ecosystem, the role of the Gateway is limited to the discovery phas
 - Change into the installation folder `cd beckn-onix/install`
 - Run the installation script `./beckn-onix.sh`
 - Specify you want to join an existing network and install the gateway
-- Skip the apply network configuration option
 - Enter the address of the registry of the network you want to join (e.g. https://onix-registry.becknprotocol.io)
 - Enter the publicly accessible address of the gateway (e.g. https://onix-gateway.becknprotocol.io)
 - The gateway installation will continue to completion and it will register itself with the registry as a participant with role BG(Beckn Gateway)
@@ -110,7 +108,6 @@ The BAP (Beckn Application Platform) is the bridge between buyer side applicatio
 - Change into the installation folder `cd beckn-onix/install`
 - Run the installation script `./beckn-onix.sh`
 - Specify you want to join an existing network and install the BAP.
-- Skip the apply network configuration option
 - Enter the Subscriber id for the BAP. When setting up a new network, its value can be anything you want. However it is recommended to have it the same as the BAP URL without the https:// part (e.g. onix-bap.becknprotocol.io). In existing networks this might be further validated for uniqueness by the registry.
 - Enter the Subscriber URI for the BAP. This is the network endpoint of the BAP Beckn Adapter. (e.g. https://onix-bap.becknprotocol.io)
 - Enter the address of the subscription endpoint of the registry of the network you want to join (e.g. https://onix-registry.becknprotocol.io/subscribers). Note the suffix subscribers in the endpoint address.
@@ -136,7 +133,6 @@ The BPP (Beckn Provider Platform) is the bridge between the seller side applicat
 - Change into the installation folder `cd beckn-onix/install`
 - Run the installation script `./beckn-onix.sh`
 - Specify you want to join an existing network and install the BPP.
-- Skip the apply network configuration option
 - Enter the Subscriber id for the BPP. When setting up a new network, its value can be anything you want. However it is recommended to have it the same as the BPP URL without the https:// part (e.g. onix-bpp.becknprotocol.io). In existing networks this might be further validated for uniqueness by the registry.
 - Enter the Subscriber URL for the BPP (e.g. https://onix-bpp.becknprotocol.io). This is the network endpoint of the BPP Beckn Adapter.
 - Enter the webhook URL. This is the endpoint on your custom market place or headless shop which will receive Beckn requests. The endpoint usually contains the address of the market place or shop as a substring. (e.g. https://unified-bpp.becknprotocol.io/beckn-bpp-adapter)

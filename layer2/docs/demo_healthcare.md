@@ -4,7 +4,7 @@
 
 [Beckn](https://becknprotocol.io/) as a protocol allows creation of decentralised commerce network across many domains. Healthcare is one of them. Beckn-ONIX is a project aimed at easing setup and maintanence of Beckn network for different domains. It provides utilities to quickly setup the core Beckn network as well as provides tools to enable domain specific transactions. The latter is achieved through the use of layer 2 configuration files.
 
-The [Beckn-ONIX User Guide](./user_guide.md) provides an overall understanding of setup of the core Beckn network as well as download and ingestion of Layer 2 configuration files. The [step by step demo](./demo_walkthrough.md) walks through one such installation in great detail. The layer 2 configurations illustrated in that demo belong to the retail and energy domain.
+The [Beckn-ONIX User Guide](./user_guide.md) provides an overall understanding of setup of the core Beckn network as well as download and ingestion of Layer 2 configuration files. The [step by step setup](./setup_walkthrough.md) walks through one such installation in great detail. The layer 2 configurations illustrated in that demo belong to the retail and energy domain.
 
 ## Healthcare usecases on Beckn network
 
@@ -27,7 +27,7 @@ A sample of the usecases that can be imagined on Beckn networks include
 
 ## Setting up Beckn network for healthcare usecases
 
-Setting up of a network for healthcare related use cases follows the same steps as illustrated in the [step by step demo](./demo_walkthrough.md) document. The primary differences is the layer 2 configuration file downloaded will be specific to healthcare and suited to conduct healthcare transactions. A sample layer 2 config for healthcare is available in the beckn_onix/layer2/samples folder and its path can be provided when running download_layer_2_config_bap.sh and download_layer_2_config_bpp.sh. If you are joining a network administered by a network facilitator, they might have a different layer 2 config and that should be used instead of the sample.
+Setting up of a network for healthcare related use cases follows the same steps as illustrated in the [step by step setup](./setup_walkthrough.md) document. The primary differences is the layer 2 configuration file downloaded will be specific to healthcare and suited to conduct healthcare transactions. A sample layer 2 config for healthcare is available in the beckn_onix/layer2/samples folder and its path can be provided when running download_layer_2_config_bap.sh and download_layer_2_config_bpp.sh. If you are joining a network administered by a network facilitator, they might have a different layer 2 config and that should be used instead of the sample.
 
 The following is a conceptual view of core and layer 2 config from a perspective of validation
 ![Validation in Beckn Adaptor](./images/message_validation_in_ba.png)
