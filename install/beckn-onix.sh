@@ -12,7 +12,7 @@ install_package(){
 start_container(){
     #ignore orphaned containers warning
     export COMPOSE_IGNORE_ORPHANS=1
-    docker-compose -f $1 up -d $2
+    docker compose -f $1 up -d $2
 }
 
 update_registry_details() {
