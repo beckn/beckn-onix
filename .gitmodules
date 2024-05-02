@@ -1,0 +1,3 @@
+[submodule "onix-gui"]
+	path = onix-gui
+	url = git@github.com:Mishalabdullah/beckn-onix-gui.git
