@@ -12,6 +12,8 @@
   - [Setting up a BPP Beckn Adapter](#setting-up-a-bpp-beckn-adapter)
   - [Downloading Layer 2 Configuration for a domain](#downloading-layer-2-configuration-for-a-domain)
   - [Testing transactions on the network](#testing-transactions-on-the-new-network)
+  - [Connecting BAP Beckn Adapter to BAP Software](#connecting-bap-beckn-adapter-to-bapbuyer-side-software)
+  - [Connecting BPP Beckn Adapter to BPP Software](#connecting-bpp-beckn-adapter-to-bppseller-side-software)
 - [Running Beckn-ONIX locally](#running-beckn-onix-locally)
 - [Appendix A - subdomain/domain name configuration](#appendix-a---registering-or-adding-domain-or-subdomains)
 - [Appendix B - Nginx reverse proxy configuration](#appendix-b---nginx-reverse-proxy-configuration)
@@ -121,11 +123,11 @@ The BPP (Beckn Provider Platform) is the bridge between the seller side applicat
 
 - Address of the registry's subscription endpoint of the network the BPP will join (e.g. https://onix-registry.becknprotocol.io/subscribers)
 - A domain or subdomain where the client endpoint of BPP will be accessible (e.g https://onix-bpp-client.becknprotocol.io)
-- A domain or subdomain where the network endpoint of BPP will be accessible (e.g. https://onix-bap.becknprtocol.io)
+- A domain or subdomain where the network endpoint of BPP will be accessible (e.g. https://onix-bpp.becknprtocol.io)
 - A virtual server with both the above mentioned domains/subdomains pointing to it. Refer [Appendix A](#appendix-a---registering-or-adding-domain-or-subdomains) for details
 - SSL certificate for the two endpoints and configured in Nginx. Refer [Appendix B](#ssl-certificates-configured-in-reverse-proxy)
-- Reverse proxy configured to route the traffic at the bap client url (e.g. https://onix-bap-client.becknprotocol.io) to port 5001. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
-- Reverse proxy configured to route the traffic at the bap network url (e.g. https://onix-bap.becknprotocol.io) to port 5002. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
+- Reverse proxy configured to route the traffic at the bap client url (e.g. https://onix-bpp-client.becknprotocol.io) to port 6001. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
+- Reverse proxy configured to route the traffic at the bap network url (e.g. https://onix-bpp.becknprotocol.io) to port 6002. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
 
 **Installation Steps**
 
@@ -171,6 +173,63 @@ Currently the layer-2 config are per domain, though this might change with futur
 
 - We can use postman collection for the specific domain to test end to end communication on the domain. Some sample postman collections for testing are [present here](https://github.com/beckn/beckn-sandbox/tree/main/artefacts)
 - When running postman collection from the buyer side, the base url to which the requests are sent should be the client side endpoint of the BAP Beckn Adapter instance. (e.g https://onix-bap-client.becknprotocol.io)
+
+### Connecting BAP Beckn Adapter to BAP(buyer side) software
+
+Currently Beckn ONIX only installs the reference BAP Adapter on the BAP machine. It does not install any reference buyer side software. However in real-world, buyer side BAP software will interact with this BAP Adapter to perform Beckn transactions. This section provides guidance on how to integrate the two. The following diagram shows the message flow from BAP all the way through to the BPP and back.
+
+![Request and response flow with BAP and BPP illustrated](./images/request_flow.png)
+
+The BAP software will typically be a Backend server that provides buying side functionality to users. It takes care of functionalities such as user authentication, profile management, Order flow, Order history and other functionalities common in a commerce application. Many of these functionalities are outside of Beckn scope. The Order flow is primarily where the software will use the BAP Beckn Adapter to communicate to the Beckn network. Typically the order flow within Beckn has four stages (Discovery, Order, Fulfillment and Post Fulfillment). Please refer to this [document](https://developers.becknprotocol.io/docs/introduction/beckn-protocol-specification/) for details on how the individual Beckn requests (currently ten) map to these.
+
+Taking an example of a user searching for an item, the user will typically enter his search request (say Arabica Coffee Powder) into the UI which will be conveyed to the BAP Backend server. The BAP backend server will call the BAP-Client endpoint with a Search request. This endpoint in the running example will be https://onix-bap-client.becknprotocol.io/search This endpoint as mentioned in the [Setting up a BAP Beckn Adapter](#setting-up-a-bap-beckn-adapter) should be configured to point to the BAP Beckn Adapter Client softare running at a port (default 5001) through Nginx configuration. The format of the message to be sent is explained in the [core specification](https://github.com/beckn/protocol-specifications/blob/master/api/transaction/build/transaction.yaml). An example is below
+
+```
+{
+    "context": {
+        "domain": "retail",
+        "location": {
+            "country": {
+                "code": "IND"
+            },
+            "city": {
+                "code": "std:080"
+            }
+        },
+        "action": "search",
+        "version": "1.1.0",
+        "bap_id": "onix-bap.becknprotocol.io",
+        "bap_uri": "https://onix-bap.becknprotocol.io",
+        "transaction_id": "{{$randomUUID}}",
+        "message_id": "{{$randomUUID}}",
+        "timestamp": "{{$timestamp}}"
+    },
+    "message": {
+        "intent": {
+            "item": {
+                "descriptor": {
+                    "name": "Arabica Coffee Powder"
+                }
+            }
+        }
+    }
+}
+```
+
+The reference implentation of the BAP Beckn Adapter will forward this to the Beckn network and return back with matching search results from different providers for the retail domain in the network. By default this happens in a synchronous manner, though it can be configured in the BAP Beckn Adapter Client Configuration (Refer to the "Protocol Server BAP Client Setup section" of this [document](https://github.com/beckn/protocol-server/blob/master/setup.md#protocol-server-bap-client-setup)) Refer to the [core protocol specification](https://github.com/beckn/protocol-specifications/blob/master/api/transaction/build/transaction.yaml) for the various other request and response formats for the rest of the order flow requests.
+
+### Connecting BPP Beckn Adapter to BPP(Seller side) software
+
+Currently Beckn-ONIX only installs the BPP Beckn Adapter reference implementation on the BPP machine. It does not install a reference implemenation of a market-place or BPP. Typically in real-world there is a backend server that provides seller functionality that talks to the BPP Beckn Adapter. This section describes how the interaction between BPP Beckn Adapter and such a server should occur. Refer to the image in the previous [section](#connecting-bap-beckn-adapter-to-bapbuyer-side-software) for an illustration of BAP and BPP integration along with message flow.
+
+The BPP software or market-place typically provides functionalities such as Login for shop owners, ability to manage inventory, list products, add product details, take an order, mark fulfillment of orders and aggregate post fulfillment feedback etc. While many of these functionalities are outside of the Beckn protocol, the BPP software will interact with the BPP Beckn Adapter for the order flow. The order flow typically involves Discovery, Order, Fulfillment and Post fulfillment phases and is explained in the context of Beckn [here](https://developers.becknprotocol.io/docs/introduction/beckn-protocol-specification/). The [core protocol specification](https://github.com/beckn/protocol-specifications/blob/master/api/transaction/build/transaction.yaml) explains the format of the various (currently ten) messages that need to flow between the BAP and BPP during the transaction.
+
+The communication between the BPP Beckn Adapter and the BPP software is asynchronous by default. [This document](https://github.com/beckn/protocol-specifications/blob/master/docs/BECKN-003-Beckn-Protocol-Communication-Draft-01.md) explains how the communication happens. In order to connect any BPP software with the BPP Beckn Adapter, we need to do two things.
+
+1. Configure the webhook address on the BPP Beckn Adapter to a endpoint in the BPP software. This endpoint will receive all the Beckn messages. The BPP software should identify the message through the action attribute in the context field of the request. Refer to the [Protocol Server BPP Client Setup](https://github.com/beckn/protocol-server/blob/master/setup.md#protocol-server-bpp-client-setup) section - webhook configuration for details.
+2. Once the BPP software is ready with a response (say the item results for the search query), it has to call the BPP Beckn Adapter Client endpoint. In the example, that would be https://onix-bpp-client.becknprotocol.io.
+
+Refer to the [core specification](https://github.com/beckn/protocol-specifications/blob/master/api/transaction/build/transaction.yaml) for details on the format of other responses (on_search, on_select, on_init etc) to complete the order flow.
 
 ## Running Beckn-ONIX locally
 
