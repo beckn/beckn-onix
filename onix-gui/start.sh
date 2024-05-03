@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set script variables
-PROJECT_DIR="onix"
+PROJECT_DIR="GUI"
 PORT=3005
 TUNNEL_SERVICE="lt"
 
@@ -14,6 +14,7 @@ echo "installing Dependencies"
 echo "Building and starting Next.js app..."
 npx next build &&
 echo "Builing Web App = True"
+sleep 3
 npx next start -p "$PORT" > /dev/null 2>&1 &
 
 # Wait for the Next.js app to start
