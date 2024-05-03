@@ -42,7 +42,7 @@ TUNNEL_SERVICE="lt"
 
 # Change to the project directory
 cd "$PROJECT_DIR" || exit
-
+nvm use 20 &&
 npm i &&
 
 # Build and start the Next.js app
