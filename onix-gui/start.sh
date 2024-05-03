@@ -31,9 +31,9 @@ nvm install Iron &&
 npm i -g localtunnel &&
 
 # Add user to the docker group and apply permissions
-sudo groupadd docker
-sudo usermod -aG docker $USER
-newgrp docker
+sudo groupadd docker & 
+sudo usermod -aG docker $USER & 
+newgrp docker &
 
 # Set script variables
 PROJECT_DIR="GUI"
