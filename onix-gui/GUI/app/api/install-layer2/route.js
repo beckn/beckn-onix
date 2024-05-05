@@ -28,7 +28,19 @@ export async function POST(req) {
 
   try {
     await executeShellCommand(
-      `docker exec ${containerName} wget -P /usr/src/app/schemas/  ${fileURL}`
+      `docker exec ${
+        containerName + "-client"
+      } wget -P /usr/src/app/schemas/ ${fileURL}`
+    );
+  } catch (error) {
+    console.error(`exec error: ${error}`);
+  }
+
+  try {
+    await executeShellCommand(
+      `docker exec ${
+        containerName + "-network"
+      } wget -P /usr/src/app/schemas/ ${fileURL}`
     );
     return NextResponse.json({ status: 200 });
   } catch (error) {
