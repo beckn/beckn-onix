@@ -5,7 +5,7 @@ source $SCRIPT_DIR/variables.sh
 # Run the script that generates keys and capture the output
 get_keys() {
     docker pull fidedocker/protocol-server > /dev/null 2>&1
-    docker run --name temp -itd fidedocker/protocol-server > /dev/null 2>&1
+    docker run --name temp -i fidedocker/protocol-server > /dev/null 2>&1
     output=$(docker exec -it temp node /usr/src/app/scripts/generate-keys 2>&1)
     docker stop temp > /dev/null 2>&1
     docker rm temp > /dev/null 2>&1
