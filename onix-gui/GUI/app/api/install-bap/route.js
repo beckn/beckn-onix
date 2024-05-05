@@ -91,12 +91,14 @@ export async function POST(req) {
     const data = await req.json();
 
     const registryUrl = data.registryUrl;
-    const bppSubscriberId = data.subscriberId;
-    const bppSubscriberUrl = data.subscriberUrl;
+    const bapSubscriberId = data.subscriberId;
+    const bapSubscriberUrl = data.subscriberUrl;
     const networkconfigurl = data.networkconfigurl;
+    // generating unqiuekey for bap subscriberId
+    const uniqueKeyId = bapSubscriberId + "-key";
 
-    let updateBppConfigCommand = `bash ${pathDir}/install/scripts/update_bap_config.sh  ${registryUrl} ${bppSubscriberId}  ${bppSubscriberUrl} ${networkconfigurl}`;
-    const result1 = await executeCommand(updateBppConfigCommand);
+    let updateBapConfigCommand = `bash ${pathDir}/install/scripts/update_bap_config.sh  ${registryUrl} ${bapSubscriberId} ${uniqueKeyId}  ${bapSubscriberUrl} ${networkconfigurl}`;
+    const result1 = await executeCommand(updateBapConfigCommand);
     console.log("Result 1:", result1);
     const result3 = await executeCommand(
       `docker-compose -f ${pathDir}/install/docker-compose-v2.yml up -d  "bap-client"`
