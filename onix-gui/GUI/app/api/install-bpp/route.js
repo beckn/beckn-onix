@@ -97,7 +97,6 @@ export async function POST(req, res) {
     // generating unqiuekey for bpp subscriberId
     const uniqueKeyId = bppSubscriberId + "-key";
     let updateBppConfigCommand = `bash ${pathDir}/install/scripts/update_bpp_config.sh  ${registryUrl} ${bppSubscriberId} ${uniqueKeyId} ${bppSubscriberUrl} ${webhookUrl}`;
-    console.log("Update BPP Config Command:", updateBppConfigCommand);
     const result1 = await executeCommand(updateBppConfigCommand);
     console.log("Result 1:", result1);
 

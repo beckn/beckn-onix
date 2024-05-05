@@ -50,7 +50,7 @@ export default function InstallYaml() {
           });
         } else {
           toast.update(toastId, {
-            render: "Yaml File Present 👌",
+            render: "Yaml File Downloaded 👌",
             type: "success",
             isLoading: false,
             autoClose: 5000,

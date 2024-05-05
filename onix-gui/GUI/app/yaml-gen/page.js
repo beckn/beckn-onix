@@ -125,7 +125,7 @@ export default function CheckYaml() {
               label={"Version Number"}
               value={versionNumber}
               onChange={handleVersionChange}
-              placeholder="1.0.0"
+              placeholder="1.1.0"
             />
 
             <div className={styles.buttonsContainer}>
