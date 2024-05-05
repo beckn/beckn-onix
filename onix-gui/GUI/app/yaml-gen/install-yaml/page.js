@@ -18,7 +18,7 @@ export default function InstallYaml() {
   const [yamlUrl, setYamlUrl] = useState("");
   const [checked, setChecked] = useState(false);
 
-  const container = checked ? "bpp-network" : "bap-network";
+  const container = checked ? "bpp" : "bap";
 
   const handleRegistryUrlChange = (event) => {
     setYamlUrl(event.target.value);
