@@ -8,12 +8,12 @@ There is a community contributed browser based GUI installer to install multi-no
 
 ## CLI Installer
 
-For those familiar with CLI, there is a command line installer to install multi-node reference implementation Beckn network. Refer to the [User Guide](./docs/user_guide.md) and [Setup Walkthrough](./docs/setup_walkthrough.md) for details.
+For those comfortable with CLI, there is a command line installer to install multi-node reference implementation Beckn network. Refer to the [User Guide](./docs/user_guide.md) and [Setup Walkthrough](./docs/setup_walkthrough.md) for details.
 
-## Additional documents
+## Other documents
 
+- [Release Notes](./docs/release_notes.md)
 - [Frequently asked questions (FAQ)](./docs/faq.md)
-- **Note on mandatory Layer 2 Config (Important)**
-  Please refer to this [note on mandatory layer 2 configuration](./docs/notes/mandatory_layer_2_config.md).
+- **[Note on mandatory layer 2 configuration(Important)](./docs/notes/mandatory_layer_2_config.md).**
 
 Experience the convenience and efficiency of Beckn-ONIX as you embark on your journey with Beckn protocols and open networks.

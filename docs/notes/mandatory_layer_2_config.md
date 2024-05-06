@@ -5,7 +5,9 @@ Beckn-ONIX mandates availability of Layer 2 Config for a particular domain befor
 
 Usually the network facilitators will host the Layer 2 config and provide a way to access it. Currently we have a small script (layer2/download_layer_2_config_bap.sh and layer2/download_layer_2_config_bpp.sh) that can download the layer 2 config from a fixed location and insert it into the docker container that runs the Protocol Server Client.
 
-If you have the Layer 2 config file with you and not hosted, you can use the following procedure to update it manually. In case you do not have layer 2 config file with you, as developer machine workaround, you can copy the core_version.yaml(e.g. core_1.1.0.yaml) and rename it as the layer 2 config for a domain (e.g. for a domain named retail for core version 1.1.0, retail_1.1.0.yaml). This is strictly not recommended for production networks.
+- In case you do not have layer 2 config file with you, some sample files are hosted in this repo in this [folder](../../layer2/samples/)
+- In case you do not have layer 2 config file with you, and the samples folder does not have the domain that you need, as developer machine workaround, you can copy the core_version.yaml(e.g. core_1.1.0.yaml) and rename it as the layer 2 config for a domain (e.g. for a domain named retail for core version 1.1.0, retail_1.1.0.yaml). This is strictly not recommended for production networks.
+- If you have the Layer 2 config file with you and not hosted, you can use the following procedure to update it manually.
 
 Process to manually update layer 2 config.
 
