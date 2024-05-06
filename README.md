@@ -10,6 +10,7 @@ Refer to the following documents for more information:
 - [Step by step walkthrough of a setup](./docs/setup_walkthrough.md)
 - [Frequently asked questions (FAQ)](./docs/faq.md)
 - [release notes](./install/RELEASE.md)
+- [GUI Installation Guide](./onix-gui/GUI/README.md)
 
 Experience the convenience and efficiency of Beckn-ONIX as you embark on your journey with Beckn protocols and open networks.
 
