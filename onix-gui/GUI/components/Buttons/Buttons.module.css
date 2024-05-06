@@ -1,0 +1,24 @@
+.primaryButton {
+    background-color: #abd4fa;
+    color: #000000;
+    padding: 0.5rem 1rem;
+    border-radius: 10px;
+    border: none;
+    font-size: 1rem;
+    cursor: pointer;
+
+    padding: 0.75rem 2rem;
+}
+
+.secondaryButton {
+    background-color: #000000;
+    color: #abd4fa;
+    padding: 0.5rem 1rem;
+    border-radius: 10px;
+    border: none;
+    font-size: 1rem;
+    cursor: pointer;
+
+    border: 1px solid #abd4fa;
+    padding: 0.75rem 2.25rem;
+}

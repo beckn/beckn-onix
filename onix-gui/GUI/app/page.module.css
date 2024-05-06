@@ -1,0 +1,182 @@
+.mainHeading {
+    font-size: 5rem;
+    margin-bottom: 1rem;
+    text-align: center;
+}
+
+.mainText {
+    font-size: 1.5rem;
+    max-width: 55rem;
+    text-align: center;
+    margin: auto;
+    margin-bottom: 1rem;
+}
+
+.boxesContainer {
+    margin-top: 2rem;
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+
+    flex-wrap: wrap;
+}
+
+.secondBoxesContainer {
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.box {
+    position: relative;
+
+    width: 15rem;
+    height: 15rem;
+    border: 1px solid rgb(61, 61, 61);
+
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-self: center;
+    text-align: center;
+
+    font-size: 1.25rem;
+    padding: 1rem;
+}
+
+.box p {
+    max-width: 12rem;
+    margin: 0 auto;
+}
+
+.box img {
+    width: 2rem;
+    position: absolute;
+
+    top: 1rem;
+    right: 1rem;
+}
+
+.smallbox {
+    position: relative;
+
+    width: 12rem;
+    height: 12rem;
+    border: 1px solid rgb(61, 61, 61);
+
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-self: center;
+    text-align: center;
+
+    font-size: 1.25rem;
+    padding: 1rem;
+}
+
+.smallbox p {
+    max-width: 12rem;
+    margin: 0 auto;
+}
+
+.smallbox img {
+    width: 2rem;
+    position: absolute;
+
+    top: 1rem;
+    right: 1rem;
+}
+
+
+.formContainer {
+    padding: 1rem;
+    border: 1px solid rgb(61, 61, 61);
+    border-radius: 30px;
+}
+
+.buttonsContainer {
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    column-gap: 0.5rem;
+    margin-top: 1rem;
+    margin-bottom: 1rem;
+}
+
+.currentRoute {
+    margin-bottom: 6rem;
+    font-family: "Ubuntu Mono", monospace;
+    font-size: 1.25rem;
+    font-weight: 600;
+
+    text-align: center;
+}
+
+.backButton {
+    position: absolute;
+    top: 1rem;
+    left: 1rem;
+    font-size: 1.25rem;
+    padding: 0.5rem;
+    border: 1px solid rgb(61, 61, 61);
+    background-color: transparent;
+    color: white;
+    cursor: pointer;
+}
+
+.dashboard {
+    margin-bottom: 2rem;
+}
+
+.dashboardHeading {
+    font-size: 2rem;
+    margin-bottom: 1rem;
+    text-align: center;
+}
+
+.dashboardTable {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 1.25rem;
+    font-family: "Ubuntu Mono", monospace;
+    border: 1px solid rgb(61, 61, 61);
+}
+
+.dashboardTable th,
+.dashboardTable td {
+    padding: 1rem;
+    text-align: left;
+    border-bottom: 1px solid rgb(61, 61, 61);
+}
+
+.dashboardTable th {
+    font-weight: 600;
+}
+
+@media screen and (max-width: 600px) {
+    .dashboardTable {
+        font-size: 1rem;
+    }
+
+    .dashboardTable th,
+    .dashboardTable td {
+        padding: 0.5rem;
+    }
+}
+
+.counts {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 1rem;
+    margin-bottom: 2rem;
+}
+
+.count {
+    max-width: 10rem;
+}
