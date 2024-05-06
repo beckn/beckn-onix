@@ -37,6 +37,9 @@ Experience the convenience and efficiency of Beckn-ONIX as you embark on your jo
 - There is a small error due to which the installation in progress toast for BAP and BPP does not stop, though the installation itself has succeeded
 - The GUI installer needs Node, NPM and LocalTunnel to be installed before starting.
 
+### Release date
+2024-05-06
+
 ## Beckn-ONIX Version 0.3.0 (2024-03-20)
 
 - This release supports streamlined multi-node installation.
@@ -67,7 +70,7 @@ Experience the convenience and efficiency of Beckn-ONIX as you embark on your jo
 
 ### Upcoming Version
 
-- A community driven
+- A community driven GUI installer is in works
 
 ### Release Date
 
