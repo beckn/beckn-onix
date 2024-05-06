@@ -53,5 +53,5 @@ built by the [Mulearn Team](https://mulearn.org/)
 1. [Mishal Abdullah](https://github.com/Mishalabdullah/)
 2. [Aswin Asok](https://github.com/AswinAsok)
 3. [Viraj Prabhu ](https://github.com/viraka)
-4. [Adasrsh](https://adarshmohanks.framer.website/)
+4. [Adarsh Mohan](https://adarshmohanks.framer.website/)
 
