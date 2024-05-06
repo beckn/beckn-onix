@@ -356,21 +356,21 @@ server {
         listen 80;
         listen [::]:80;
                 # Put the server name as website name <website-name>.
-        server_name onix-bap.becknprotocol.io;
+        server_name onix-bpp-client.becknprotocol.io;
 
                 location / {
                         # This for Host, Client and Forwarded For
-                        #proxy_set_header Host $http_host;
+                        proxy_set_header Host $http_host;
                         proxy_set_header X-Real-IP $remote_addr;
                         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 
                         # For Web Sockets.
-                        proxy_http_version 1.1;
+                        #proxy_http_version 1.1;
                         proxy_set_header Upgrade $http_upgrade;
                         proxy_set_header Connection "upgrade";
 
                         # For Proxy.
-                        proxy_pass "http://localhost:5002";
+                        proxy_pass "http://localhost:6001";
                 }
 }
 
@@ -379,33 +379,33 @@ server {
         listen [::]:443 ssl http2;
 
                 # Put the server name as website name <website-name>.
-        server_name onix-bap.becknprotocol.io;
+        server_name onix-bpp-client.becknprotocol.io;
 
                 # Point it to the port in which you want to run the server http://localhost:<Port-Number>.
                 location / {
                         # This for Host, Client and Forwarded For
-                        #proxy_set_header Host $http_host;
+                        proxy_set_header Host $http_host;
                         proxy_set_header X-Real-IP $remote_addr;
                         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 
                         # For Web Sockets.
-                        proxy_http_version 1.1;
+                        #proxy_http_version 1.1;
                         proxy_set_header Upgrade $http_upgrade;
                         proxy_set_header Connection "upgrade";
 
                         # For Proxy.
-                        proxy_pass "http://localhost:5002";
+                        proxy_pass "http://localhost:6001";
                 }
 
 
                 # This is the path to certificate. /etc/letsencrypt/live/<Domain-name>/fullchain.pem
-        ssl_certificate /etc/letsencrypt/live/onix-bap.becknprotocol.io/fullchain.pem;
+        ssl_certificate /etc/letsencrypt/live/onix-bpp-client.becknprotocol.io/fullchain.pem;
 
 
                 # This is the path to certificate. /etc/letsencrypt/live/<Domain-name>/privkey.pem
-        ssl_certificate_key /etc/letsencrypt/live/onix-bap.becknprotocol.io/privkey.pem;
+        ssl_certificate_key /etc/letsencrypt/live/onix-bpp-client.becknprotocol.io/privkey.pem;
 
-                ssl_session_timeout 1d;
+        ssl_session_timeout 1d;
         ssl_session_cache shared:MozSSL:10m;  # about 40000 sessions
         ssl_session_tickets off;
 
