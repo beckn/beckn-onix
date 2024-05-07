@@ -12,15 +12,15 @@ start_container(){
 #below function will start the MongoDB, Redis and RabbitMQ Services. 
 start_support_services(){
     echo "${GREEN}................Installing MongoDB................${NC}"
-    docker-compose -f docker-compose-app.yml up -d mongo_db
+    docker compose -f docker-compose-app.yml up -d mongo_db
     echo "MongoDB installation successful"
 
     echo "${GREEN}................Installing RabbitMQ................${NC}"
-    docker-compose -f docker-compose-app.yml up -d queue_service
+    docker compose -f docker-compose-app.yml up -d queue_service
     echo "RabbitMQ installation successful"
 
     echo "${GREEN}................Installing Redis................${NC}"
-    docker-compose -f docker-compose-app.yml up -d redis_db
+    docker compose -f docker-compose-app.yml up -d redis_db
     echo "Redis installation successful"
 }
 # Main script starts here

@@ -76,7 +76,7 @@ install_gateway() {
         bash scripts/update_gateway_details.sh registry 
     fi
     echo "${GREEN}................Installing Gateway service................${NC}"
-    start_container "docker-compose-gateway.yml" gateway
+    start_container $gateway_docker_compose_file gateway
     echo "Registering Gateway in the registry"
 
     sleep 10
@@ -98,7 +98,7 @@ install_registry(){
     fi
 
     echo "${GREEN}................Installing Registry service................${NC}"
-    start_container "docker-compose-registry.yml" registry
+    start_container $registry_docker_compose_file registry
     sleep 10
     echo "Registry installation successful"
 }
@@ -124,8 +124,8 @@ install_bap_protocol_server(){
     docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_network_config_volume:/target busybox cp /source/bap-network.yaml-sample /target
     docker rmi busybox
 
-    start_container "docker-compose-bap.yml" "bap-client"
-    start_container "docker-compose-bap.yml" "bap-network"
+    start_container $bap_docker_compose_file "bap-client"
+    start_container $bap_docker_compose_file "bap-network"
     sleep 10
     echo "Protocol server BAP installation successful"
 }
@@ -156,8 +156,8 @@ install_bpp_protocol_server(){
     docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bpp_network_config_volume:/target busybox cp /source/bpp-network.yaml-sample /target
     docker rmi busybox
 
-    start_container "docker-compose-bpp.yml" "bpp-client"
-    start_container "docker-compose-bpp.yml" "bpp-network"
+    start_container $bpp_docker_compose_file "bpp-client"
+    start_container $bpp_docker_compose_file "bpp-network"
     sleep 10
     echo "Protocol server BPP installation successful"
 }

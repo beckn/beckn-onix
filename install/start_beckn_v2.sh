@@ -12,7 +12,7 @@ install_package(){
 start_container(){
     #ignore orphaned containers warning
     export COMPOSE_IGNORE_ORPHANS=1
-    docker-compose -f docker-compose-v2.yml up -d $1
+    docker compose -f $1 up -d $2
 }
 
 update_registry_details() {
@@ -54,15 +54,15 @@ start_support_services(){
     #ignore orphaned containers warning
     export COMPOSE_IGNORE_ORPHANS=1
     echo "${GREEN}................Installing MongoDB................${NC}"
-    docker-compose -f docker-compose-app.yml up -d mongo_db
+    docker compose -f docker-compose-app.yml up -d mongo_db
     echo "MongoDB installation successful"
 
     echo "${GREEN}................Installing RabbitMQ................${NC}"
-    docker-compose -f docker-compose-app.yml up -d queue_service
+    docker compose -f docker-compose-app.yml up -d queue_service
     echo "RabbitMQ installation successful"
 
     echo "${GREEN}................Installing Redis................${NC}"
-    docker-compose -f docker-compose-app.yml up -d redis_db
+    docker compose -f docker-compose-app.yml up -d redis_db
     echo "Redis installation successful"
 }
 
@@ -73,7 +73,7 @@ install_gateway() {
         bash scripts/update_gateway_details.sh registry 
     fi
     echo "${GREEN}................Installing Gateway service................${NC}"
-    start_container gateway
+    start_container $gateway_docker_compose_file gateway
     echo "Registering Gateway in the registry"
 
     sleep 10
@@ -95,7 +95,7 @@ install_registry(){
     fi
 
     echo "${GREEN}................Installing Registry service................${NC}"
-    start_container registry
+    start_container $registry_docker_compose_file registry
     sleep 10
     echo "Registry installation successful"
 }
@@ -113,8 +113,8 @@ install_bap_protocol_server(){
         bash scripts/update_bap_config.sh
     fi
     sleep 10
-    start_container "bap-client"
-    start_container "bap-network"
+    start_container $bap_docker_compose_file "bap-client"
+    start_container $bap_docker_compose_file "bap-network"
     sleep 10
     echo "Protocol server BAP installation successful"
 }
@@ -123,12 +123,12 @@ install_bap_protocol_server(){
 install_bpp_protocol_server_with_sandbox(){
     start_support_services
     echo "${GREEN}................Installing Sandbox................${NC}"
-    start_container "sandbox-api"
+    start_container $bpp_docker_compose_file_sandbox "sandbox-api"
     sleep 5
     echo "Sandbox installation successful"
 
     echo "${GREEN}................Installing Webhook................${NC}"
-    start_container "sandbox-webhook"
+    start_container $bpp_docker_compose_file_sandbox "sandbox-webhook"
     sleep
     echo "Webhook installation successful"
 
@@ -139,14 +139,15 @@ install_bpp_protocol_server_with_sandbox(){
         bpp_subscriber_id=$2
         bpp_subscriber_key_id=$3
         bpp_subscriber_url=$4
-        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url
+        webhook_url=$5
+        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url
     else
         bash scripts/update_bpp_config.sh
     fi
 
     sleep 10
-    start_container "bpp-client"
-    start_container "bpp-network"
+    start_container $bpp_docker_compose_file_sandbox "bpp-client"
+    start_container $bpp_docker_compose_file_sandbox "bpp-network"
     sleep 10
     echo "Protocol server BPP installation successful"
 }
@@ -168,8 +169,8 @@ install_bpp_protocol_server(){
     fi
 
     sleep 10
-    start_container "bpp-client"
-    start_container "bpp-network"
+    start_container $bpp_docker_compose_file "bpp-client"
+    start_container $bpp_docker_compose_file "bpp-network"
     sleep 10
     echo "Protocol server BPP installation successful"
 }
@@ -276,12 +277,13 @@ else
         4)
             read -p "Enter BPP Subscriber ID: " bpp_subscriber_id
             read -p "Enter BPP Subscriber URL: " bpp_subscriber_url
+            read -p "Enter Webhook URL: " webhook_url
             # Ask the user if they want to change the registry_url
             read -p "Do you want to change the registry_url? (${GREEN}Press Enter to accept default: $beckn_registry_url${NC}): " custom_registry_url
             registry_url=${custom_registry_url:-$beckn_registry_url}
             bpp_subscriber_key_id=$bpp_subscriber_id-key
             install_package
-            install_bpp_protocol_server_with_sandbox $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url
+            install_bpp_protocol_server_with_sandbox $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url
             ;;
         5)
             read -p "Enter BPP Subscriber ID: " bpp_subscriber_id
@@ -302,7 +304,7 @@ else
             read -p "Enter BAP Subscriber URL: " bap_subscriber_url
             read -p "Enter BAP Client URL: " bap_client_url
             bash scripts/generic-client-layer.sh $bap_subscriber_id $bap_subscriber_url $bap_client_url
-            start_container "generic-client-layer"
+            start_container $gcl_docker_compose_file "generic-client-layer"
             ;;
 
         7)

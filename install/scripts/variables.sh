@@ -51,3 +51,10 @@ bpp_subscriber_id="bpp-network"
 bpp_subscriber_key_id="bpp-network-key"
 bpp_subscriber_url="http://bpp-network:6002"
 webhook_url="http://sandbox-webhook:3005"
+
+bpp_docker_compose_file=docker-compose-bpp.yml
+bpp_docker_compose_file_sandbox=docker-compose-bpp-with-sandbox.yml
+bap_docker_compose_file=docker-compose-bap.yml
+registry_docker_compose_file=docker-compose-registry.yml
+gateway_docker_compose_file=docker-compose-gateway.yml
+gcl_docker_compose_file=docker-compose-gcl.yml
