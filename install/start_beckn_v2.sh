@@ -129,7 +129,7 @@ install_bpp_protocol_server_with_sandbox(){
 
     echo "${GREEN}................Installing Webhook................${NC}"
     start_container $bpp_docker_compose_file_sandbox "sandbox-webhook"
-    sleep
+    sleep 5
     echo "Webhook installation successful"
 
     echo "${GREEN}................Installing Protocol Server for BPP................${NC}"
