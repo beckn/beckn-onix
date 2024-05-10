@@ -25,7 +25,6 @@ services:
       - bpp_network_schemas_volume:/usr/src/app/schemas
       - bpp_network_logs_volume:/usr/src/app/logs
 
-
   sandbox-api:
     image: fidedocker/sandbox-api
     container_name: sandbox-api
@@ -34,19 +33,8 @@ services:
     ports:
       - 4010:4000
     restart: unless-stopped
-
-  sandbox-webhook:
-    image: fidedocker/sandbox-webhook-api
-    depends_on:
-      - sandbox-api
-    container_name: sandbox-webhook
-    networks:
-      - beckn_network
-    ports:
-      - 3005:3005
-    restart: unless-stopped
     volumes:
-      - ./ENV/.env-webhook:/usr/src/app/.env
+      - ./ENV/.env-sandbox:/usr/src/app/.env
 
 networks:
   beckn_network:

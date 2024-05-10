@@ -73,13 +73,7 @@ This shell script, `start_beckn_v2.sh`, automates the setup of Beckn components,
    ./start_container "sandbox-api"
    ```
 
-7. **Install Webhook:**
-
-   ```bash
-   ./start_container "sandbox-webhook"
-   ```
-
-8. **Install Protocol Server for BPP:**
+7. **Install Protocol Server for BPP:**
 
    ```bash
    ./update_bpp_config.sh
