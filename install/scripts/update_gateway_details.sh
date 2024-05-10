@@ -90,6 +90,9 @@ if [[ $1 ]]; then
             registry_id=$(echo "$1" | sed 's/http:\/\///')
         fi
     fi
+    if [[ $registry_id = "registry:3030" ]]; then
+        registry_id="registry"
+    fi
 fi
 
 if [[ $2 ]]; then

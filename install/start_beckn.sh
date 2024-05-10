@@ -75,11 +75,6 @@ start_container "sandbox-api"
 sleep 5
 echo "Sandbox installation successful"
 
-echo "${GREEN}................Installing Webhook................${NC}"
-start_container "sandbox-webhook"
-sleep
-echo "Webhook installation successful"
-
 echo "${GREEN}................Installing Protocol Server for BPP................${NC}"
 bash scripts/update_bpp_config.sh
 sleep 10
