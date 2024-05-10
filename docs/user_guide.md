@@ -233,7 +233,7 @@ Refer to the [core specification](https://github.com/beckn/protocol-specificatio
 
 ## Running Beckn-ONIX locally
 
-- In order for people new to Beckn who want to try out Beckn on their own machine, a simple one click installer has been written. Currently it can be installed by running the `start_beckn.sh` script present in the installfolder. In the next release, this will be integrated with the main script and the `start_beckn.sh` script deprecated. An all in one installation has preconfigured values for variables and so pretty much does not ask for any input.
+- In order for people new to Beckn who want to try out Beckn on their own machine, choose the option to "Set up a network on your local machine" in the main screen. The all in one installation has preconfigured values for variables and so pretty much does not ask for any input.
 
 ## Appendix A - Registering or adding domain or subdomains
 
