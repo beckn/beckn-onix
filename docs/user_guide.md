@@ -46,6 +46,13 @@ Docker compose and docker are extensively used in the installation and running o
 
 - Atleast four virtual servers (EC2 instances) configured on the cloud provider with administrator login (e.g. ssh access) to them.
 - Access to domain name management with ability to create domain-name/subdomains for each of the components.
+- Run the following two commands on all machines where the script is being run for the first time. Login to a new shell for the command to take effect and continue with the installation. Not doing so will result in docker permisssion error
+
+```
+sudo groupadd docker
+sudo usermod -aG docker $USER
+```
+
 - Each of the various sections below list additional pre-requisites which build on these.
 
 ### Setting up a new network - Registry
