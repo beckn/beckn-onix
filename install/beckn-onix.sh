@@ -162,24 +162,44 @@ install_bpp_protocol_server(){
     echo "Protocol server BPP installation successful"
 }
 
+# Function to install BPP Protocol Server with Sandbox
+install_bpp_protocol_server_with_sandbox(){
+    start_support_services
 
+    docker volume create bpp_client_config_volume
+    docker volume create bpp_network_config_volume
+    
+    echo "${GREEN}................Installing Sandbox................${NC}"
+    start_container $bpp_docker_compose_file_sandbox "sandbox-api"
+    sleep 5
+    echo "Sandbox installation successful"
 
-# MAIN SCRIPT STARTS HERE
-#!/bin/bash
+    echo "${GREEN}................Installing Protocol Server for BPP................${NC}"
+    
+    if [[ $1 ]];then
+        registry_url=$1
+        bpp_subscriber_id=$2
+        bpp_subscriber_key_id=$3
+        bpp_subscriber_url=$4
+        webhook_url=$5
+        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url
+    else
+        bash scripts/update_bpp_config.sh
+    fi
 
-echo "Welcome to Beckn-ONIX!"
-if [ -f ./onix_ascii_art.txt ]; then
-    cat ./onix_ascii_art.txt
-else
-    echo "[Display Beckn-ONIX ASCII Art]"
-fi
+    sleep 10
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bpp_client_config_volume:/target busybox cp /source/bpp-client.yml /target/default.yml
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bpp_client_config_volume:/target busybox cp /source/bpp-client.yaml-sample /target
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bpp_network_config_volume:/target busybox cp /source/bpp-network.yml /target/default.yml
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bpp_network_config_volume:/target busybox cp /source/bpp-network.yaml-sample /target
+    docker rmi busybox
 
-echo "Beckn-ONIX is a platform that helps you quickly launch and configure beckn-enabled networks."
-echo -e "\nWhat would you like to do?\n1. Join an existing network\n2. Create new production network\n3. Set up a network on your local machine\n4. Merge multiple networks\n5. Configure Existing Network\n(Press Ctrl+C to exit)"
-read -p "Enter your choice: " choice
+    start_container $bpp_docker_compose_file "bpp-client"
+    start_container $bpp_docker_compose_file "bpp-network"
+    sleep 10
+    echo "Protocol server BPP installation successful"
+}
 
-boldGreen="\e[1m\e[92m"
-reset="\e[0m"
 
 # Function to handle the setup process for each platform
 completeSetup() {
@@ -254,25 +274,51 @@ completeSetup() {
     # Key generation and subscription logic follows here
 }
 
-# Determine the platforms available based on the initial choice
-platforms=("Gateway" "BAP" "BPP")
-[ "$choice" -eq 2 ] && platforms=("Registry" "${platforms[@]}")  # Add Registry for new network setups
 
-echo "Great choice! Get ready."
-echo -e "\nWhich platform would you like to set up?"
-for i in "${!platforms[@]}"; do 
-    echo "$((i+1)). ${platforms[$i]}"
-done
+# MAIN SCRIPT STARTS HERE
 
-read -p "Enter your choice: " platform_choice
-
-selected_platform="${platforms[$((platform_choice-1))]}"
-
-if [[ -n $selected_platform ]]; then
-    completeSetup "$selected_platform"
+echo "Welcome to Beckn-ONIX!"
+if [ -f ./onix_ascii_art.txt ]; then
+    cat ./onix_ascii_art.txt
 else
-    echo "Invalid option. Please restart the script and select a valid option."
-    exit 1
+    echo "[Display Beckn-ONIX ASCII Art]"
+fi
+
+echo "Beckn-ONIX is a platform that helps you quickly launch and configure beckn-enabled networks."
+echo -e "\nWhat would you like to do?\n1. Join an existing network\n2. Create new production network\n3. Set up a network on your local machine\n4. Merge multiple networks\n5. Configure Existing Network\n(Press Ctrl+C to exit)"
+read -p "Enter your choice: " choice
+
+boldGreen="\e[1m\e[92m"
+reset="\e[0m"
+
+if [[ $choice -eq 3 ]]; then
+    echo "Installing all components on the local machine"
+    install_package
+    install_registry
+    install_gateway
+    install_bap_protocol_server
+    install_bpp_protocol_server_with_sandbox
+else
+    # Determine the platforms available based on the initial choice
+    platforms=("Gateway" "BAP" "BPP")
+    [ "$choice" -eq 2 ] && platforms=("Registry" "${platforms[@]}")  # Add Registry for new network setups
+
+    echo "Great choice! Get ready."
+    echo -e "\nWhich platform would you like to set up?"
+    for i in "${!platforms[@]}"; do 
+        echo "$((i+1)). ${platforms[$i]}"
+    done
+
+    read -p "Enter your choice: " platform_choice
+
+    selected_platform="${platforms[$((platform_choice-1))]}"
+
+    if [[ -n $selected_platform ]]; then
+        completeSetup "$selected_platform"
+    else
+        echo "Invalid option. Please restart the script and select a valid option."
+        exit 1
+    fi
 fi
 
 echo "Process complete. Thank you for using Beckn-ONIX!"
