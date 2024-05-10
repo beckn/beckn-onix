@@ -73,7 +73,7 @@ install_gateway() {
     if [[ $1 && $2 ]]; then
         bash scripts/update_gateway_details.sh $1 $2
     else
-        bash scripts/update_gateway_details.sh registry 
+        bash scripts/update_gateway_details.sh http://registry:3030
     fi
     echo "${GREEN}................Installing Gateway service................${NC}"
     start_container $gateway_docker_compose_file gateway
