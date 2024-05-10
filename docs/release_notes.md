@@ -38,6 +38,7 @@ Experience the convenience and efficiency of Beckn-ONIX as you embark on your jo
 - The GUI installer needs Node, NPM and LocalTunnel to be installed before starting.
 
 ### Release date
+
 2024-05-06
 
 ## Beckn-ONIX Version 0.3.0 (2024-03-20)
@@ -66,7 +67,7 @@ Experience the convenience and efficiency of Beckn-ONIX as you embark on your jo
 
 ### Limitations
 
-- The beckn-onix.sh installer used for multi node. For single node installation the start_beckn.sh file has to be used.
+- The beckn-onix.sh installer used for multi node. For single node installation the start_beckn.sh file has to be used. (This is not true anymore. The beckn-onix.sh has an option to install all components on a single machine)
 
 ### Upcoming Version
 
