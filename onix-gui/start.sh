@@ -2,7 +2,8 @@
 
 # Installing dependencies
 
-sudo apt-get update
+install_dependencies_linux() {
+    sudo apt-get update
 sudo apt-get install ca-certificates curl
 
 sudo install -m 0755 -d /etc/apt/keyrings
@@ -33,7 +34,50 @@ npm i -g localtunnel &&
 # Add user to the docker group and apply permissions
 sudo groupadd docker & 
 sudo usermod -aG docker $USER & 
-newgrp docker &
+newgrp docker & 
+}
+
+install_dependencies_mac() {
+brew install curl
+brew install gpg
+
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+# Add the repository to Homebrew sources
+echo \
+"deb [arch=$(uname -m)] https://download.docker.com/linux/ubuntu \
+$(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt-get update
+sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+curl -L https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose
+chmod +x /usr/local/bin/docker-compose
+
+echo "installing node"
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash &&
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" # This loads nvm bash_completion
+nvm install 20 &&
+npm i -g localtunnel &&
+
+# Add user to the docker group and apply permissions
+sudo dscl . create /Groups/docker
+sudo dscl . append /Groups/docker GroupMembership $(whoami)
+}
+if [[ $(uname) == 'Linux' ]]; then
+    install_dependencies_linux
+elif [[ $(uname) == 'Darwin' ]]; then
+    install_dependencies_mac
+else
+    echo "Unsupported operating system."
+    exit 1
+fi
+
 
 # Set script variables
 PROJECT_DIR="GUI"
@@ -48,6 +92,8 @@ npm i &&
 # Build and start the Next.js app
 echo "installing Dependencies"
 echo "Building and starting Next.js app..."
+pkill node &&
+pkill geniuslm &&
 npx next build &&
 echo "Builing Web App = True"
 sleep 3
