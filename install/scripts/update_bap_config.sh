@@ -50,14 +50,12 @@ echo "Your Private Key: $private_key"
 echo "Your Public Key: $public_key"
 
 
-valid_from=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
-
 if [[ $(uname -s ) == 'Darwin' ]];then
-    valid_from=$(date -u +"%Y-%m-%dT%H:%M:%S.%000Z")
-    valid_until=$(date -u -v+1y +"%Y-%m-%dT%H:%M:%S.%000Z")
+    valid_from=$(date -u -v-1d +"%Y-%m-%dT%H:%M:%S.%000Z")
+    valid_until=$(date -u -v+3y +"%Y-%m-%dT%H:%M:%S.%000Z")
 else
-    valid_from=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
-    valid_until=$(date -u -d "+1 year" +"%Y-%m-%dT%H:%M:%S.%3NZ")
+    valid_from=$(date -u -d "-1 day" +"%Y-%m-%dT%H:%M:%S.%3NZ")
+    valid_until=$(date -u -d "+3 year" +"%Y-%m-%dT%H:%M:%S.%3NZ")
 fi
 
 type=BAP
