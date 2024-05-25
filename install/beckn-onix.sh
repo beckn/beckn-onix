@@ -162,6 +162,21 @@ install_bpp_protocol_server(){
     echo "Protocol server BPP installation successful"
 }
 
+mergingNetworks(){
+    echo -e "1. Merge Two Different Registries \n2. Merge Multiple Registries into a Super Registry"
+    read -p "Enter your choice: " merging_network
+    if [[ $merging_network == 1 ]]; then
+        echo "Merging Two Different Registries"
+    elif [[ $merging_network == 2 ]]; then
+        echo "Merging Multiple Registries into a Super Registry"
+    else
+        echo "Invalid option. Please restart the script and select a valid option."
+        exit 1
+    fi
+}
+
+
+
 # Function to install BPP Protocol Server with Sandbox
 install_bpp_protocol_server_with_sandbox(){
     start_support_services
@@ -292,20 +307,13 @@ boldGreen="\e[1m\e[92m"
 reset="\e[0m"
 
 if [[ $choice -eq 3 ]]; then
-    echo "Installing all components on the local machine"
-    install_package
-    install_registry
-    install_gateway
-    install_bap_protocol_server
-    install_bpp_protocol_server_with_sandbox
-else
-    # Determine the platforms available based on the initial choice
+    echo "Determining the platforms available based on the initial choice"
     platforms=("Gateway" "BAP" "BPP")
     [ "$choice" -eq 2 ] && platforms=("Registry" "${platforms[@]}")  # Add Registry for new network setups
 
     echo "Great choice! Get ready."
     echo -e "\nWhich platform would you like to set up?"
-    for i in "${!platforms[@]}"; do 
+    for i in "${!platforms[@]}"; do
         echo "$((i+1)). ${platforms[$i]}"
     done
 
@@ -319,6 +327,10 @@ else
         echo "Invalid option. Please restart the script and select a valid option."
         exit 1
     fi
+elif [[ $choice -eq 4 ]]; then
+    echo "Determining the platforms available based on the initial choice"
+    mergingNetworks
+    
 fi
 
 echo "Process complete. Thank you for using Beckn-ONIX!"
