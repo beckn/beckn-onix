@@ -163,11 +163,44 @@ install_bpp_protocol_server(){
 }
 
 mergingNetworks(){
+    # Now need implement the logic where registry A gets merged to registry B
+    # And also registry B & registry A gets merged into a super registry
     echo -e "1. Merge Two Different Registries \n2. Merge Multiple Registries into a Super Registry"
     read -p "Enter your choice: " merging_network
     if [[ $merging_network == 1 ]]; then
+        echo "Merging Registry A to Registry B"
+        read -p "Enter Registry A URL: " registry_a_url
+        read -p "Enter Registry B URL: " registry_b_url
+        response1=$(curl -s -H 'ACCEPT: application/json' -H 'CONTENT-TYPE: application/json' "$registry_a_url" -d '{}')   
+        response2=$(curl -s -H 'ACCEPT: application/json' -H 'CONTENT-TYPE: application/json' "$registry_b_url" -d '{}')
+        combined_response="${response1}${response2}"
+        echo "$combined_response"
+        # Need to to know how to send data to registry B , facing issues in authorization
         echo "Merging Two Different Registries"
     elif [[ $merging_network == 2 ]]; then
+    urls=()
+    while true; do
+        read -p "Enter registry URL (or 'N' to stop): " url
+        if [[ $url == 'N' ]]; then
+            break
+        else
+            urls+=("$url")
+        fi
+    done
+    
+    if [[ ${#urls[@]} -gt 0 ]]; then
+        echo "Entered registry URLs:"
+        all_responses=""
+        for url in "${urls[@]}"; do
+            response=$(curl -s -H 'ACCEPT: application/json' -H 'CONTENT-TYPE: application/json' "$url/subscribers/lookup" -d '{}')
+            all_responses+="$response"
+            echo "$all_responses"
+        done
+        echo "$all_responses"
+    else
+        echo "No registry URLs entered."
+    fi
+    
         echo "Merging Multiple Registries into a Super Registry"
     else
         echo "Invalid option. Please restart the script and select a valid option."
