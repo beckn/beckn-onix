@@ -171,12 +171,15 @@ mergingNetworks(){
         echo "Merging Registry A to Registry B"
         read -p "Enter Registry A URL: " registry_a_url
         read -p "Enter Registry B URL: " registry_b_url
-        response1=$(curl -s -H 'ACCEPT: application/json' -H 'CONTENT-TYPE: application/json' "$registry_a_url" -d '{}')   
-        response2=$(curl -s -H 'ACCEPT: application/json' -H 'CONTENT-TYPE: application/json' "$registry_b_url" -d '{}')
-        combined_response="${response1}${response2}"
-        echo "$combined_response"
-        # Need to to know how to send data to registry B , facing issues in authorization
-        echo "Merging Two Different Registries"
+        response=$(curl  -X  -H 'Accept: application/json' -H 'Content-Type: application/json' "$registry_b_url"+/subscribers/lookup -d '{}') &&
+        combined_response="${response}"
+        for element in $(echo "$combined_response" | jq -c '.[]'); do
+            curl --location "$registry_a_url"+/subscribers/register \
+            --header 'Content-Type: application/json' \
+            --data "$element"
+            echo 
+        done
+      echo "Merging Two Different Registries Done ..."
     elif [[ $merging_network == 2 ]]; then
     urls=()
     while true; do
