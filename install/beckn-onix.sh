@@ -165,32 +165,23 @@ install_bpp_protocol_server(){
 mergingNetworks(){
     echo -e "1. Merge Two Different Registries \n2. Merge Multiple Registries into a Super Registry"
     read -p "Enter your choice: " merging_network
-    # OPTION 1: Merging Two Different Registries
-    if [[ $merging_network == 1 ]]; then
-        echo "Merging Registry A to Registry B"
-        read -p "Enter Registry A URL: " registry_a_url
-        read -p "Enter Registry B URL: " registry_b_url
-        response=$(curl  -X  -H 'Accept: application/json' -H 'Content-Type: application/json' "$registry_b_url"+/subscribers/lookup -d '{}') &&
-        combined_response="${response}"
-        for element in $(echo "$combined_response" | jq -c '.[]'); do
-            curl --location "$registry_a_url"+/subscribers/register \
-            --header 'Content-Type: application/json' \
-            --data "$element"
-            echo 
-        done
-      echo "Merging Two Different Registries Done ..."
-    #   OPTION 2: Merging Multiple Registries into a Super Registry
-    elif [[ $merging_network == 2 ]]; then
     urls=()
-    while true; do
-        read -p "Enter registry URL (or 'N' to stop): " url
-        if [[ $url == 'N' ]]; then
-            break
-        else
-            urls+=("$url")
-        fi
-    done
-    read -p "Enter the Super Registry URL: " registry_super_url
+    if [ "$merging_network" = "2" ]; then
+        while true; do
+            read -p "Enter registry URL (or 'N' to stop): " url
+            if [[ $url == 'N' ]]; then
+                break
+            else
+                urls+=("$url")
+            fi
+        done
+        read -p "Enter the Super Registry URL: " registry_super_url
+    else
+        read -p "Enter A registry URL: " registry_a_url
+        read -p "Enter B registry URL: " registry_b_url
+        urls+=("$registry_a_url")
+    
+    fi
     if [[ ${#urls[@]} -gt 0 ]]; then
         echo "Entered registry URLs:"
         all_responses=""
@@ -199,16 +190,24 @@ mergingNetworks(){
             all_responses+="$response"
         done
         for element in $(echo "$all_responses" | jq -c '.[]'); do
-          curl --location "$registry_super_url"+/subscribers/register \
-            --header 'Content-Type: application/json' \
-            --data "$element"
-            echo 
+            if [ "$merging_network" -eq 1 ]; then
+                curl --location "$registry_b_url"+/subscribers/register \
+                    --header 'Content-Type: application/json' \
+                    --data "$element"
+                echo
+            else
+                curl --location "$registry_super_url"+/subscribers/register \
+                    --header 'Content-Type: application/json' \
+                    --data "$element"
+                echo
+            fi
         done
         echo "Merging Multiple Registries into a Super Registry Done ..."
     else
         echo "No registry URLs entered."
     fi
     
+    if [ "$merging_network" = "2" ]; then
         echo "Merging Multiple Registries into a Super Registry"
     else
         echo "Invalid option. Please restart the script and select a valid option."
