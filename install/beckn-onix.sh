@@ -345,15 +345,24 @@ read -p "Enter your choice: " choice
 
 boldGreen="\e[1m\e[92m"
 reset="\e[0m"
-
 if [[ $choice -eq 3 ]]; then
+    echo "Installing all components on the local machine"
+    install_package
+    install_registry
+    install_gateway
+    install_bap_protocol_server
+    install_bpp_protocol_server_with_sandbox
+elif [[ $choice -eq 4 ]]; then
     echo "Determining the platforms available based on the initial choice"
+    mergingNetworks
+else
+    # Determine the platforms available based on the initial choice
     platforms=("Gateway" "BAP" "BPP")
     [ "$choice" -eq 2 ] && platforms=("Registry" "${platforms[@]}")  # Add Registry for new network setups
 
     echo "Great choice! Get ready."
     echo -e "\nWhich platform would you like to set up?"
-    for i in "${!platforms[@]}"; do
+    for i in "${!platforms[@]}"; do 
         echo "$((i+1)). ${platforms[$i]}"
     done
 
@@ -367,11 +376,10 @@ if [[ $choice -eq 3 ]]; then
         echo "Invalid option. Please restart the script and select a valid option."
         exit 1
     fi
-elif [[ $choice -eq 4 ]]; then
-    echo "Determining the platforms available based on the initial choice"
-    mergingNetworks
-    
 fi
+
+echo "Process complete. Thank you for using Beckn-ONIX!"
+
 
 echo "Process complete. Thank you for using Beckn-ONIX!"
 
