@@ -15,6 +15,7 @@
   - [Connecting BAP Beckn Adapter to BAP Software](#connecting-bap-beckn-adapter-to-bapbuyer-side-software)
   - [Connecting BPP Beckn Adapter to BPP Software](#connecting-bpp-beckn-adapter-to-bppseller-side-software)
 - [Running Beckn-ONIX locally](#running-beckn-onix-locally)
+- [Upgrading to a new version](#upgrading-to-a-new-version)
 - [Appendix A - subdomain/domain name configuration](#appendix-a---registering-or-adding-domain-or-subdomains)
 - [Appendix B - Nginx reverse proxy configuration](#appendix-b---nginx-reverse-proxy-configuration)
 
@@ -241,6 +242,15 @@ Refer to the [core specification](https://github.com/beckn/protocol-specificatio
 ## Running Beckn-ONIX locally
 
 - In order for people new to Beckn who want to try out Beckn on their own machine, choose the option to "Set up a network on your local machine" in the main screen. The all in one installation has preconfigured values for variables and so pretty much does not ask for any input.
+
+## Upgrading to a new version
+- The following commands illustrate upgrade of the docker image for Protocol Server (here BPP). Use similar process for other components
+
+```
+docker compose -f docker-compose-bpp.yml down
+docker rmi fidedocker/protocol-server
+docker compose -f docker-compose-bpp.yml up -d
+```
 
 ## Appendix A - Registering or adding domain or subdomains
 
