@@ -15,6 +15,7 @@
   - [Connecting BAP Beckn Adapter to BAP Software](#connecting-bap-beckn-adapter-to-bapbuyer-side-software)
   - [Connecting BPP Beckn Adapter to BPP Software](#connecting-bpp-beckn-adapter-to-bppseller-side-software)
 - [Running Beckn-ONIX locally](#running-beckn-onix-locally)
+- [Upgrading to a new version](#upgrading-to-a-new-version)
 - [Appendix A - subdomain/domain name configuration](#appendix-a---registering-or-adding-domain-or-subdomains)
 - [Appendix B - Nginx reverse proxy configuration](#appendix-b---nginx-reverse-proxy-configuration)
 
@@ -38,6 +39,10 @@ Using Beckn-ONIX, we can install a Beckn network on the cloud. This will be simi
 The following diagram shows a conceptual view of a multi-node Beckn network. The urls shown here are the same as those used in the examples.
 
 ![Typical deployment](./images/sample_deployment.png)
+
+The following diagram shows the reverse proxy configuration (referred to also in the individual installations below) using the URLs used in the examples. Refer to this diagram during the reverse proxy configuration steps.
+
+![Reverse Proxy Configuration](./images/reverse_proxy_configuration.png)
 
 **Use of docker and reference implementations**
 Docker compose and docker are extensively used in the installation and running of the various component software. Similarly the Beckn-ONIX installer, itself being a reference implementation, installs the reference implentation of the Beckn Adapter for the BAP and BPP, reference implementation of the registry and gateway. In order to interact with the internals of these components, we will need to enter the container. Familiarity with Docker will be useful in working with the installation. To list the running containers use `docker ps`. Similarly for example to connect to a container and browse it using shell, use `docker exec -it bap-client sh`
@@ -242,6 +247,16 @@ Refer to the [core specification](https://github.com/beckn/protocol-specificatio
 
 - In order for people new to Beckn who want to try out Beckn on their own machine, choose the option to "Set up a network on your local machine" in the main screen. The all in one installation has preconfigured values for variables and so pretty much does not ask for any input.
 
+## Upgrading to a new version
+
+- The following commands illustrate upgrade of the docker image for Protocol Server (here BPP). Use similar process for other components
+
+```
+docker compose -f docker-compose-bpp.yml down
+docker rmi fidedocker/protocol-server
+docker compose -f docker-compose-bpp.yml up -d
+```
+
 ## Appendix A - Registering or adding domain or subdomains
 
 All the components of Beckn network need to be publicly accessible. Using domain names for them is the easiest. There are two options for domain names. One is a separate domain name for each component(e.g. registrybp.io). Second is to use subdomains for the individual componetns (e.g. onix-registry.becknprotocol.io , onix-gateway.becknprotocol.io etc). Which one of these two to use depends on the business requirement. For example if an organization is the network facilitator, they might go for a domain name for the registry instead of subdomain. In the examples given above we have primarily used subdomain approach.
@@ -278,4 +293,4 @@ In the role of reverse proxy, Nginx will forward communication that came on a pa
 
 [This document](https://docs.nginx.com/nginx/admin-guide/web-server/reverse-proxy/) explains the configuration of reverse proxy using proxy_pass
 
-You can find sample Nginx configuration for the Registry, Gateway, BAP and BPP [here](./sample_nginx_configurations.md)
+You can find sample Nginx configuration for the Registry, Gateway, BAP and BPP [here](./notes/sample_nginx_configurations.md)

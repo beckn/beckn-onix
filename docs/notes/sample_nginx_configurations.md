@@ -1,6 +1,8 @@
 # Nginx sample configuration for the different components
 
-This document lists the various Nginx configuration sample files used in the demo. These use the URLs used as example in the user guide and demo walkthrough. These can be used as a reference.
+This document lists the various Nginx configuration sample files used in the demo. These use the URLs used as example in the user guide and demo walkthrough. These can be used as a reference. This diagram illustrates the proxy_pass configuration (which is the primary part required) of all the nodes. If you know reverse proxy configuration, this diagram is all you need and you can ignore the rest of this page.
+
+![Reverse Proxy Configuration](../images/reverse_proxy_configuration.png)
 
 ## Nginx sample configuration for Registry
 
