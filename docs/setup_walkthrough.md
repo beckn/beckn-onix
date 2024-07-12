@@ -17,7 +17,12 @@ For the sake of illustration, all the urls are shown as subdomains of becknproto
 
 Some of the outputs listed below might be different when you run the script for the first time. The output depends on whether the required docker containers are present in the machine or not.
 
-Note: Due to a [known issue](https://github.com/beckn/beckn-onix/issues/11), on certain machines, when the script is run for the first time, it errors out complaining about permission error in accessing docker daemon. Till this issue is fixed, the work around is to exit the terminal and restart the installation in a new terminal.
+Run the following two commands on all machines where the script is being run for the first time. Login to a new shell for the command to take effect and continue with the installation. Not doing so will result in docker permisssion error
+
+```
+sudo groupadd docker
+sudo usermod -aG docker $USER
+```
 
 Please refer to the [Beckn-ONIX User Guide](./user_guide.md) for detailed explanation of the below steps.
 
@@ -47,6 +52,8 @@ The following diagram shows a conceptual view of a multi-node Bekn network that 
   - https://onix-bap.becknprotocol.io to port 5002 on the machine
   - https://onix-bpp-client.becknprotocol.io to port 6001 on the machine
   - https://onix-bpp.becknprotocol.io to port 6002 on the machine
+
+![Reverse Proxy Configuration Illustrated](./images/reverse_proxy_configuration.png)
 
 - This guide assumes you have a marketplace or a headless store and want to set it up to work with the Beckn network. It is still useful for people who are developing the buyer side software and want to set it up with the network. In such cases a [sandbox](https://github.com/beckn/beckn-sandbox) might be required to mimic a marketplace or a headless shop.
 

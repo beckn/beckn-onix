@@ -2,6 +2,8 @@
 
 Beckn-ONIX is [FIDE](https://fide.org/) project aimed at easing setup and maintainance of a [Beckn](https://becknprotocol.io/) Network using reference implementations. Objectives include setting up reliable, configurable and fast Beckn network as a virtual appliance. This initiative is independent of the evolution of the Beckn protocol. This effort is also aimed at inviting contributions from the community to create secure, reliable builds for production environments.
 
+> Disclaimer : Beckn-onix is a reference implementation of the Beckn-onix stack. It is a reference application only and has not been tested for production environmens. However, implementers can fork this repository and build it for scale. The maintainer of this repository holds no liabillity for deployments of this application in production environments. 
+
 ## GUI Installer
 
 There is a community contributed browser based GUI installer to install multi-node reference implementation Beckn network. Refer to the [Installation Guide](./onix-gui/GUI/README.md) and [wizard guide](./onix-gui/README.md) for details.
