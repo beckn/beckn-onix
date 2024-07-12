@@ -8,9 +8,20 @@ Beckn-ONIX is [FIDE](https://fide.org/) project aimed at easing setup and mainta
 
 There is a community contributed browser based GUI installer to install multi-node reference implementation Beckn network. Refer to the [Installation Guide](./onix-gui/GUI/README.md) and [wizard guide](./onix-gui/README.md) for details.
 
+Here is a [Demo Video](https://www.youtube.com/watch?v=98mU3OQxbqQ) on how to use beckn-onix GUI:
+
+[![Beckn Onix GUI](https://img.youtube.com/vi/98mU3OQxbqQ/0.jpg)](https://www.youtube.com/watch?v=98mU3OQxbqQ)
+
+
 ## CLI Installer
 
 For those comfortable with CLI, there is a command line installer to install multi-node reference implementation Beckn network. Refer to the [User Guide](./docs/user_guide.md) and [Setup Walkthrough](./docs/setup_walkthrough.md) for details.
+
+Here is a [Demo Video](https://youtu.be/eyFgQJgGHig) on how to use beckn-onix CLI:
+
+[![Beckn Onix CLI](https://img.youtube.com/vi/eyFgQJgGHig/0.jpg)](https://youtu.be/eyFgQJgGHig)
+
+
 
 ## Other documents
 
