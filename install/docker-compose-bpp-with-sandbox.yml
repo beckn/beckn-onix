@@ -2,6 +2,7 @@ services:
   bpp-client:
     image: fidedocker/protocol-server
     container_name: bpp-client
+    platform: linux/amd64
     networks:
       - beckn_network
     ports:
@@ -15,6 +16,7 @@ services:
   bpp-network:
     image: fidedocker/protocol-server
     container_name: bpp-network
+    platform: linux/amd64
     networks:
       - beckn_network
     ports:
@@ -28,6 +30,7 @@ services:
   sandbox-api:
     image: fidedocker/sandbox-api
     container_name: sandbox-api
+    platform: linux/amd64
     networks:
       - beckn_network
     ports:
