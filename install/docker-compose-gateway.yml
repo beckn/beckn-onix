@@ -2,6 +2,7 @@ services:
   gateway:
     image: fidedocker/gateway
     container_name: gateway
+    platform: linux/amd64
     networks:
       - beckn_network
     ports:
