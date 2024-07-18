@@ -8,10 +8,40 @@ Experience the convenience and efficiency of Beckn-ONIX as you embark on your jo
 
 | Version                                      | Release Date |
 | -------------------------------------------- | ------------ |
+| [v0.4.1](#beckn-onix-version-041-2024-06-22) | 2024-06-22   |
 | [v0.4.0](#beckn-onix-version-040-2024-05-06) | 2024-05-06   |
 | [v0.3.0](#beckn-onix-version-030-2024-03-20) | 2024-03-20   |
 | [v0.2.0](#beckn-onix-version-020-2024-03-01) | 2024-03-01   |
 | [v0.1.0](#beckn-onix-version-010-2024-02-16) | 2024-02-16   |
+
+## Beckn-ONIX Version 0.4.1 (2024-06-22)
+
+- This release adds a new feature for in CLI where its will be able to merge multiple registries.
+
+### New Features
+
+- Merging registry A to registry B
+- Creting a new super-registry from multiple registries.
+
+### Enhancements
+
+- None
+
+### Bug fixes
+
+- None
+
+### Limitations
+
+- None
+
+### Upcoming Version
+
+- GUI support for the Merging feature.
+
+### Release date
+
+2024-06-22
 
 ## Beckn-ONIX Version 0.4.0 (2024-05-06)
 
@@ -156,8 +186,7 @@ This release is specifically tailored for deployment on Linux machines, encompas
 
 ### Limitations
 
-- The current installer is tested only for Linux (Ubuntu), it might support other flavors also.
-- The current version installs all the components with the default configurations.
+- None
 
 ### Upcoming Version
 
