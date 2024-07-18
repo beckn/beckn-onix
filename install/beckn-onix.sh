@@ -162,6 +162,61 @@ install_bpp_protocol_server(){
     echo "Protocol server BPP installation successful"
 }
 
+mergingNetworks(){
+    echo -e "1. Merge Two Different Registries \n2. Merge Multiple Registries into a Super Registry"
+    read -p "Enter your choice: " merging_network
+    urls=()
+    if [ "$merging_network" = "2" ]; then
+        while true; do
+            read -p "Enter registry URL (or 'N' to stop): " url
+            if [[ $url == 'N' ]]; then
+                break
+            else
+                urls+=("$url")
+            fi
+        done
+        read -p "Enter the Super Registry URL: " registry_super_url
+    else
+        read -p "Enter A registry URL: " registry_a_url
+        read -p "Enter B registry URL: " registry_b_url
+        urls+=("$registry_a_url")
+    
+    fi
+    if [[ ${#urls[@]} -gt 0 ]]; then
+        echo "Entered registry URLs:"
+        all_responses=""
+        for url in "${urls[@]}"; do
+            response=$(curl -s -H 'ACCEPT: application/json' -H 'CONTENT-TYPE: application/json' "$url"+/subscribers/lookup -d '{}')
+            all_responses+="$response"
+        done
+        for element in $(echo "$all_responses" | jq -c '.[]'); do
+            if [ "$merging_network" -eq 1 ]; then
+                curl --location "$registry_b_url"+/subscribers/register \
+                    --header 'Content-Type: application/json' \
+                    --data "$element"
+                echo
+            else
+                curl --location "$registry_super_url"+/subscribers/register \
+                    --header 'Content-Type: application/json' \
+                    --data "$element"
+                echo
+            fi
+        done
+        echo "Merging Multiple Registries into a Super Registry Done ..."
+    else
+        echo "No registry URLs entered."
+    fi
+    
+    if [ "$merging_network" = "2" ]; then
+        echo "Merging Multiple Registries into a Super Registry"
+    else
+        echo "Invalid option. Please restart the script and select a valid option."
+        exit 1
+    fi
+}
+
+
+
 # Function to install BPP Protocol Server with Sandbox
 install_bpp_protocol_server_with_sandbox(){
     start_support_services
@@ -290,7 +345,6 @@ read -p "Enter your choice: " choice
 
 boldGreen="\e[1m\e[92m"
 reset="\e[0m"
-
 if [[ $choice -eq 3 ]]; then
     echo "Installing all components on the local machine"
     install_package
@@ -298,6 +352,9 @@ if [[ $choice -eq 3 ]]; then
     install_gateway
     install_bap_protocol_server
     install_bpp_protocol_server_with_sandbox
+elif [[ $choice -eq 4 ]]; then
+    echo "Determining the platforms available based on the initial choice"
+    mergingNetworks
 else
     # Determine the platforms available based on the initial choice
     platforms=("Gateway" "BAP" "BPP")
@@ -320,6 +377,9 @@ else
         exit 1
     fi
 fi
+
+echo "Process complete. Thank you for using Beckn-ONIX!"
+
 
 echo "Process complete. Thank you for using Beckn-ONIX!"
 
