@@ -2,8 +2,7 @@ swf.load.complete.config.tables.if.count.less.than=500
 swf.user.password.encrypted=false
 swf.plugins.background.core.workers.numThreads=3
 swf.application.authentication.required=false
-
-
+swf.application.requires.registration=true
 
 #swf.host=localhost
 swf.host=REGISTRY_URL
