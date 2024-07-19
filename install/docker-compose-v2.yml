@@ -2,6 +2,7 @@ services:
   registry:
     image: fidedocker/registry
     container_name: registry
+    platform: linux/amd64
     networks:
       - beckn_network
     ports:
@@ -15,6 +16,7 @@ services:
   gateway:
     image: fidedocker/gateway
     container_name: gateway
+    platform: linux/amd64
     networks:
       - beckn_network
     ports:
@@ -28,6 +30,7 @@ services:
   bap-client:
     image: fidedocker/protocol-server
     container_name: bap-client
+    platform: linux/amd64
     networks:
       - beckn_network
     ports:
@@ -39,6 +42,7 @@ services:
   bap-network:
     image: fidedocker/protocol-server
     container_name: bap-network
+    platform: linux/amd64
     networks:
       - beckn_network
     ports:
@@ -50,6 +54,7 @@ services:
   sandbox-api:
     image: fidedocker/sandbox-api
     container_name: sandbox-api
+    platform: linux/amd64
     networks:
       - beckn_network
     ports:
@@ -61,6 +66,7 @@ services:
   bpp-client:
     image: fidedocker/protocol-server
     container_name: bpp-client
+    platform: linux/amd64
     networks:
       - beckn_network
     ports:
@@ -72,6 +78,7 @@ services:
   bpp-network:
     image: fidedocker/protocol-server
     container_name: bpp-network
+    platform: linux/amd64
     networks:
       - beckn_network
     ports:
@@ -83,6 +90,7 @@ services:
   generic-client-layer:
     image: fidedocker/generic-client-layer
     container_name: generic-client-layer
+    platform: linux/amd64
     networks:
       - beckn_network
     ports:

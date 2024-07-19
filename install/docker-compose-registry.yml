@@ -2,6 +2,7 @@ services:
   registry:
     image: fidedocker/registry
     container_name: registry
+    platform: linux/amd64
     networks:
       - beckn_network
     ports:
