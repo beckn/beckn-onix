@@ -246,6 +246,7 @@ Refer to the [core specification](https://github.com/beckn/protocol-specificatio
 ## Running Beckn-ONIX locally
 
 - In order for people new to Beckn who want to try out Beckn on their own machine, choose the option to "Set up a network on your local machine" in the main screen. The all in one installation has preconfigured values for variables and so pretty much does not ask for any input.
+- In order to run the installation on a Macintosh computer, run the following command in the terminal where you run the install before you start the installation. `export DOCKER_DEFAULT_PLATFORM=linux/amd64`. Ensure you close the terminal after installation, so this setting does not affect other docker containers you might install.
 
 ## Upgrading to a new version
 
