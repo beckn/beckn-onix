@@ -27,4 +27,3 @@ volumes:
     external: true
   gateway_logs_volume:
     name: gateway_logs_volume
-    external: true

@@ -28,4 +28,3 @@ volumes:
     external: true
   registry_logs_volume:
     name: registry_logs_volume
-    external: true    
