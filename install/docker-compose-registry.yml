@@ -12,6 +12,7 @@ services:
     volumes:
       - registry_data_volume:/registry/overrideProperties/config
       - registry_database_volume:/registry/database
+      - registry_logs_volume:/registry/tmp
 
 networks:
   beckn_network:
@@ -25,3 +26,6 @@ volumes:
   registry_database_volume:
     name: registry_database_volume
     external: true
+  registry_logs_volume:
+    name: registry_logs_volume
+    external: true    
