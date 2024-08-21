@@ -138,8 +138,8 @@ The BPP (Beckn Provider Platform) is the bridge between the seller side applicat
 - A domain or subdomain where the network endpoint of BPP will be accessible (e.g. https://onix-bpp.becknprtocol.io)
 - A virtual server with both the above mentioned domains/subdomains pointing to it. Refer [Appendix A](#appendix-a---registering-or-adding-domain-or-subdomains) for details
 - SSL certificate for the two endpoints and configured in Nginx. Refer [Appendix B](#ssl-certificates-configured-in-reverse-proxy)
-- Reverse proxy configured to route the traffic at the bap client url (e.g. https://onix-bpp-client.becknprotocol.io) to port 6001. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
-- Reverse proxy configured to route the traffic at the bap network url (e.g. https://onix-bpp.becknprotocol.io) to port 6002. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
+- Reverse proxy configured to route the traffic at the bpp client url (e.g. https://onix-bpp-client.becknprotocol.io) to port 6001. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
+- Reverse proxy configured to route the traffic at the bpp network url (e.g. https://onix-bpp.becknprotocol.io) to port 6002. Refer [Appendix B](#configuring-nginx-reverse-proxy-using-proxy-pass)
 
 **Installation Steps**
 
