@@ -129,3 +129,6 @@ app:
     # In minutes
     syncInterval: 30
     redis_db: 3
+  
+  useLayer2Config: USE_LAYER_2_CONFIG
+  mandateLayer2Config: MANDATE_LAYER_2_CONFIG
