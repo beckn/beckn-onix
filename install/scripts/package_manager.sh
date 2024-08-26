@@ -19,42 +19,49 @@ install_package() {
     if [ -x "$(command -v apt-get)" ]; then
         # APT (Debian/Ubuntu)
         if [ "$1" == "docker" ]; then
-            docker > /dev/null 2>&1
-            if [ $? -ne 0 ]; then
-                curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-                echo "deb [signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+            if ! docker --version > /dev/null 2>&1; then
+                if [ -f /etc/debian_version ]; then
+                    curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                    echo "deb [signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+                else
+                    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                    echo "deb [signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+                fi
                 sudo apt update >/dev/null 2>&1
                 sudo apt install -y docker-ce docker-ce-cli containerd.io >/dev/null 2>&1
                 sudo usermod -aG docker $USER
                 source ~/.bashrc
-                command_exists docker
-                if [ $? -eq 0 ]; then
-                    sleep 10
-                    sudo systemctl enable docker.service
-                    sudo systemctl restart docker.service
-                fi
+                sudo systemctl enable docker.service
+                sudo systemctl restart docker.service
             else
                 echo "Docker is already installed."
             fi
         else
             if ! dpkg -l | grep -q "^ii  $1 "; then
                 sudo apt-get update >/dev/null 2>&1
-                sudo apt-get install -y $1 > /dev/null 2>&1
+                sudo apt-get install -y $1 >/dev/null 2>&1
             else
                 echo "$1 is already installed."
             fi
         fi
     elif [ -x "$(command -v yum)" ]; then
-        # YUM (Red Hat/CentOS)
+        # YUM (Red Hat/CentOS/Amazon Linux)
         if [ "$1" == "docker" ]; then
-            if ! rpm -qa | grep -q docker-ce; then
-                sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-                # Install Docker
-                sudo yum install -y docker >/dev/null 2>&1
-                sudo systemctl enable docker.service
-                sudo systemctl start docker.service
+            if ! docker --version > /dev/null 2>&1; then
+                if [ -f /etc/centos-release ]; then
+                    sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+                elif [ -f /etc/redhat-release ]; then
+                    sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+                elif grep -q "Amazon Linux release 2" /etc/system-release; then
+                    sudo amazon-linux-extras install docker -y
+                elif grep -q "Amazon Linux release" /etc/system-release; then
+                    sudo yum install -y docker
+                fi
+                sudo yum install -y docker-ce docker-ce-cli containerd.io >/dev/null 2>&1
                 sudo usermod -aG docker $USER
                 source ~/.bashrc
+                sudo systemctl enable docker.service
+                sudo systemctl restart docker.service
             else
                 echo "Docker is already installed."
             fi
@@ -66,17 +73,30 @@ install_package() {
             fi
         fi
     elif [ -x "$(command -v amazon-linux-extras)" ]; then
-        # Amazon Linux 2
-        if ! amazon-linux-extras list | grep -q "^$1 "; then
-            sudo amazon-linux-extras install $1 >/dev/null 2>&1
+        # Amazon Linux 2 specific
+        if [ "$1" == "docker" ]; then
+            if ! docker --version > /dev/null 2>&1; then
+                sudo amazon-linux-extras install docker -y >/dev/null 2>&1
+                sudo systemctl enable docker.service
+                sudo systemctl start docker.service
+                sudo usermod -aG docker $USER
+                source ~/.bashrc
+            else
+                echo "Docker is already installed."
+            fi
         else
-            echo "$1 is already installed."
+            if ! amazon-linux-extras list | grep -q "$1"; then
+                sudo amazon-linux-extras install $1 -y >/dev/null 2>&1
+            else
+                echo "$1 is already installed."
+            fi
         fi
     else
-        echo "${RED}Unsupported package manager. Please install $1 manually.${NC}"
+        echo "Unsupported package manager. Please install $1 manually."
         exit 1
     fi
 }
+
 
 
 remove_package(){
