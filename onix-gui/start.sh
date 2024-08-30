@@ -4,7 +4,7 @@
 
 # Execute the package_manager.sh script to handle Docker installation
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-source "$SCRIPT_DIR/../../install/scripts/package_manager.sh"
+source "../install/scripts/package_manager.sh"
 
 # Run the package_manager.sh script without passing any arguments
 # The script will handle the installation of required packages
