@@ -49,8 +49,10 @@ Docker compose and docker are extensively used in the installation and running o
 
 ### Overall Pre-requisites
 
+- OS  supported and test Beckn-ONIX installer are Ubuntu (20.04, 22.04 and 24.04), Debian (12), Amazon Linux 2, Windows with WSL support and MacOS. 
 - Atleast four virtual servers (EC2 instances) configured on the cloud provider with administrator login (e.g. ssh access) to them.
 - Access to domain name management with ability to create domain-name/subdomains for each of the components.
+- Latest docker version.
 - Run the following two commands on all machines where the script is being run for the first time. Login to a new shell for the command to take effect and continue with the installation. Not doing so will result in docker permisssion error
 
 ```
