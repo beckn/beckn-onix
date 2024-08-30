@@ -3,7 +3,6 @@
 # Installing dependencies
 
 # Execute the package_manager.sh script to handle Docker installation
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "../install/scripts/package_manager.sh"
 
 # Run the package_manager.sh script without passing any arguments
@@ -13,16 +12,16 @@ source "../install/scripts/package_manager.sh"
 
 echo "installing node"
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash &&
-source ~/.bashrc &&
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
+  source ~/.bashrc &&
+  export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"                   # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" # This loads nvm bash_completion
 nvm install 20 &&
-npm i -g localtunnel &&
+  npm i -g localtunnel &&
 
-# Add user to the docker group and apply permissions
-sudo groupadd docker & 
-sudo usermod -aG docker $USER & 
+  # Add user to the docker group and apply permissions
+  sudo groupadd docker &
+sudo usermod -aG docker $USER &
 newgrp docker &
 
 # Set script variables
@@ -33,13 +32,13 @@ TUNNEL_SERVICE="lt"
 # Change to the project directory
 cd "$PROJECT_DIR" || exit
 nvm use 20 &&
-npm i &&
+  npm i &&
 
-# Build and start the Next.js app
-echo "installing Dependencies"
+  # Build and start the Next.js app
+  echo "installing Dependencies"
 echo "Building and starting Next.js app..."
 npx next build &&
-echo "Builing Web App = True"
+  echo "Builing Web App = True"
 sleep 3
 npx next start -p "$PORT" &
 
@@ -48,7 +47,7 @@ npx next start -p "$PORT" &
 # Install the tunnel service if not installed
 sleep 3
 echo "Exposing local port $PORT using $TUNNEL_SERVICE..."
-lt --port "$PORT" > /tmp/lt.log 2>&1 &
+lt --port "$PORT" >/tmp/lt.log 2>&1 &
 
 # Wait for the tunnel service to start
 echo "Waiting for tunnel service to start..."
@@ -61,8 +60,8 @@ TUNNEL_URL=$(grep -o 'https://[^[:blank:]]*' /tmp/lt.log)
 echo "Getting Tunnel Password"
 TUNNEL_PASSWORD=$(curl https://loca.lt/mytunnelpassword) &&
 
-# Print the tunnel URL and password
-echo "---------------------------------------"
+  # Print the tunnel URL and password
+  echo "---------------------------------------"
 echo "Next.js app is running locally on port $PORT"
 echo "Tunnel Service URL: $TUNNEL_URL"
 echo "Tunnel Password: $TUNNEL_PASSWORD"
