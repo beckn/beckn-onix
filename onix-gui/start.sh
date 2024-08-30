@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# Function to kill previous processes if they are running
+kill_previous_processes() {
+  echo "Checking for running processes on port $PORT..."
+  lsof -i :$PORT | grep LISTEN | awk '{print $2}' | xargs -r kill -9
+  echo "Checking for running tunnel services..."
+  pkill -f "lt --port $PORT"
+}
+
 # Installing dependencies
 
 # Execute the package_manager.sh script to handle Docker installation
@@ -28,6 +36,9 @@ newgrp docker &
 PROJECT_DIR="GUI"
 PORT=3005
 TUNNEL_SERVICE="lt"
+
+# Kill previous processes if they are running
+kill_previous_processes
 
 # Change to the project directory
 cd "$PROJECT_DIR" || exit
