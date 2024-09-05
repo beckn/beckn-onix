@@ -162,11 +162,25 @@ install_bpp_protocol_server(){
     echo "Protocol server BPP installation successful"
 }
 
+#Function to restart
+restart_script(){
+    read -p "Do you want to restart the script or exit the script? (r for restart, e for exit): ${NC}" choice
+    if [[ $choice == "r" ]]; then
+        echo "Restarting the script..."
+        exec "$0"  # Restart the script by re-executing it
+    elif [[ $choice == "e" ]]; then
+        echo "Exiting the script..."
+        exit 0
+    fi
+}
+
 mergingNetworks(){
     echo -e "1. Merge Two Different Registries \n2. Merge Multiple Registries into a Super Registry"
     read -p "Enter your choice: " merging_network
     urls=()
     if [ "$merging_network" = "2" ]; then
+        echo "${GREEN}Currently this feature is not available in this distribution of Beckn ONIX${NC}"
+        exit 1
         while true; do
             read -p "Enter registry URL (or 'N' to stop): " url
             if [[ $url == 'N' ]]; then
@@ -177,42 +191,45 @@ mergingNetworks(){
         done
         read -p "Enter the Super Registry URL: " registry_super_url
     else
-        read -p "Enter A registry URL: " registry_a_url
-        read -p "Enter B registry URL: " registry_b_url
-        urls+=("$registry_a_url")
+        echo "${GREEN}Currently this feature is not available in this distribution of Beckn ONIX"
+        restart_script
+        # read -p "Enter A registry URL: " registry_a_url
+        # read -p "Enter B registry URL: " registry_b_url
+        # urls+=("$registry_a_url")
     
     fi
-    if [[ ${#urls[@]} -gt 0 ]]; then
-        echo "Entered registry URLs:"
-        all_responses=""
-        for url in "${urls[@]}"; do
-            response=$(curl -s -H 'ACCEPT: application/json' -H 'CONTENT-TYPE: application/json' "$url"+/subscribers/lookup -d '{}')
-            all_responses+="$response"
-        done
-        for element in $(echo "$all_responses" | jq -c '.[]'); do
-            if [ "$merging_network" -eq 1 ]; then
-                curl --location "$registry_b_url"+/subscribers/register \
-                    --header 'Content-Type: application/json' \
-                    --data "$element"
-                echo
-            else
-                curl --location "$registry_super_url"+/subscribers/register \
-                    --header 'Content-Type: application/json' \
-                    --data "$element"
-                echo
-            fi
-        done
-        echo "Merging Multiple Registries into a Super Registry Done ..."
-    else
-        echo "No registry URLs entered."
-    fi
+    # Commenting below lines of code still we are activly working on it
+    # if [[ ${#urls[@]} -gt 0 ]]; then
+    #     echo "Entered registry URLs:"
+    #     all_responses=""
+    #     for url in "${urls[@]}"; do
+    #         response=$(curl -s -H 'ACCEPT: application/json' -H 'CONTENT-TYPE: application/json' "$url"+/subscribers/lookup -d '{}')
+    #         all_responses+="$response"
+    #     done
+    #     for element in $(echo "$all_responses" | jq -c '.[]'); do
+    #         if [ "$merging_network" -eq 1 ]; then
+    #             curl --location "$registry_b_url"+/subscribers/register \
+    #                 --header 'Content-Type: application/json' \
+    #                 --data "$element"
+    #             echo
+    #         else
+    #             curl --location "$registry_super_url"+/subscribers/register \
+    #                 --header 'Content-Type: application/json' \
+    #                 --data "$element"
+    #             echo
+    #         fi
+    #     done
+    #     echo "Merging Multiple Registries into a Super Registry Done ..."
+    # else
+    #     echo "No registry URLs entered."
+    # fi
     
-    if [ "$merging_network" = "2" ]; then
-        echo "Merging Multiple Registries into a Super Registry"
-    else
-        echo "Invalid option. Please restart the script and select a valid option."
-        exit 1
-    fi
+    # if [ "$merging_network" = "2" ]; then
+    #     echo "Merging Multiple Registries into a Super Registry"
+    # else
+    #     echo "Invalid option. Please restart the script and select a valid option."
+    #     exit 1
+    # fi
 }
 
 
@@ -379,8 +396,3 @@ else
 fi
 
 echo "Process complete. Thank you for using Beckn-ONIX!"
-
-
-echo "Process complete. Thank you for using Beckn-ONIX!"
-
-
