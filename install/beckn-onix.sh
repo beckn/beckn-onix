@@ -164,7 +164,7 @@ install_bpp_protocol_server(){
 
 #Function to restart
 restart_script(){
-    read -p "Do you want to restart the script or exit the script? (r for restart, e for exit): ${NC}" choice
+    read -p "${GREEN}Do you want to restart the script or exit the script? (r for restart, e for exit): ${NC}" choice
     if [[ $choice == "r" ]]; then
         echo "Restarting the script..."
         exec "$0"  # Restart the script by re-executing it
@@ -191,7 +191,7 @@ mergingNetworks(){
         done
         read -p "Enter the Super Registry URL: " registry_super_url
     else
-        echo "${GREEN}Currently this feature is not available in this distribution of Beckn ONIX"
+        echo "${GREEN}Currently this feature is not available in this distribution of Beckn ONIX${NC}"
         restart_script
         # read -p "Enter A registry URL: " registry_a_url
         # read -p "Enter B registry URL: " registry_b_url
