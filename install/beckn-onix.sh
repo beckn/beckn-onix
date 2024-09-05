@@ -193,43 +193,42 @@ mergingNetworks(){
     else
         echo "${GREEN}Currently this feature is not available in this distribution of Beckn ONIX${NC}"
         restart_script
-        # read -p "Enter A registry URL: " registry_a_url
-        # read -p "Enter B registry URL: " registry_b_url
-        # urls+=("$registry_a_url")
+        read -p "Enter A registry URL: " registry_a_url
+        read -p "Enter B registry URL: " registry_b_url
+        urls+=("$registry_a_url")
     
     fi
-    # Commenting below lines of code still we are activly working on it
-    # if [[ ${#urls[@]} -gt 0 ]]; then
-    #     echo "Entered registry URLs:"
-    #     all_responses=""
-    #     for url in "${urls[@]}"; do
-    #         response=$(curl -s -H 'ACCEPT: application/json' -H 'CONTENT-TYPE: application/json' "$url"+/subscribers/lookup -d '{}')
-    #         all_responses+="$response"
-    #     done
-    #     for element in $(echo "$all_responses" | jq -c '.[]'); do
-    #         if [ "$merging_network" -eq 1 ]; then
-    #             curl --location "$registry_b_url"+/subscribers/register \
-    #                 --header 'Content-Type: application/json' \
-    #                 --data "$element"
-    #             echo
-    #         else
-    #             curl --location "$registry_super_url"+/subscribers/register \
-    #                 --header 'Content-Type: application/json' \
-    #                 --data "$element"
-    #             echo
-    #         fi
-    #     done
-    #     echo "Merging Multiple Registries into a Super Registry Done ..."
-    # else
-    #     echo "No registry URLs entered."
-    # fi
+    if [[ ${#urls[@]} -gt 0 ]]; then
+        echo "Entered registry URLs:"
+        all_responses=""
+        for url in "${urls[@]}"; do
+            response=$(curl -s -H 'ACCEPT: application/json' -H 'CONTENT-TYPE: application/json' "$url"+/subscribers/lookup -d '{}')
+            all_responses+="$response"
+        done
+        for element in $(echo "$all_responses" | jq -c '.[]'); do
+            if [ "$merging_network" -eq 1 ]; then
+                curl --location "$registry_b_url"+/subscribers/register \
+                    --header 'Content-Type: application/json' \
+                    --data "$element"
+                echo
+            else
+                curl --location "$registry_super_url"+/subscribers/register \
+                    --header 'Content-Type: application/json' \
+                    --data "$element"
+                echo
+            fi
+        done
+        echo "Merging Multiple Registries into a Super Registry Done ..."
+    else
+        echo "No registry URLs entered."
+    fi
     
-    # if [ "$merging_network" = "2" ]; then
-    #     echo "Merging Multiple Registries into a Super Registry"
-    # else
-    #     echo "Invalid option. Please restart the script and select a valid option."
-    #     exit 1
-    # fi
+    if [ "$merging_network" = "2" ]; then
+        echo "Merging Multiple Registries into a Super Registry"
+    else
+        echo "Invalid option. Please restart the script and select a valid option."
+        exit 1
+    fi
 }
 
 
