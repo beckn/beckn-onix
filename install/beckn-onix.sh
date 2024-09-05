@@ -180,7 +180,7 @@ mergingNetworks(){
     urls=()
     if [ "$merging_network" = "2" ]; then
         echo "${GREEN}Currently this feature is not available in this distribution of Beckn ONIX${NC}"
-        exit 1
+        restart_script
         while true; do
             read -p "Enter registry URL (or 'N' to stop): " url
             if [[ $url == 'N' ]]; then
