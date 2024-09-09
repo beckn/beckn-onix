@@ -1,11 +1,11 @@
 {
     "core_version" : "1.1.0",
-    "registry_id": "registry..LREG",
-    "search_provider_id" : "gateway",
+    "registry_id": "registry-dev.becknprotocol.io..LREG",
+    "search_provider_id" : "gateway-dev.becknprotocol.io",
     "self_registration_supported": true,
     "subscription_needed_post_registration" : true,
-    "base_url": "http://registry:3030",
-    "registry_url" : "http://registry:3030/subscribers",
+    "base_url": "https://registry-dev.becknprotocol.io",
+    "registry_url" : "https://registry-dev.becknprotocol.io/subscribers",
     "extension_package": "in.succinct.beckn.boc",
     "wild_card" : ""
 }
