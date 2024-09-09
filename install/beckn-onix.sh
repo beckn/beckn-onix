@@ -360,7 +360,7 @@ completeSetup() {
                 if [[ $registry_url =~ ^(http|https):// ]] && [[ $registry_url == */subscribers ]]; then
                     break
                 else
-                    echo "Please mention /subscribers in your registry URL"
+                    echo "${RED}Please mention /subscribers in your registry URL${NC}"
                 fi
             done
             bpp_subscriber_key_id="$bpp_subscriber_id-key"
