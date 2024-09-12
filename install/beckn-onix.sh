@@ -375,6 +375,30 @@ completeSetup() {
     esac
 }
 
+restart_script(){
+    read -p "${GREEN}Do you want to restart the script or exit the script? (r for restart, e for exit): ${NC}" choice
+    if [[ $choice == "r" ]]; then
+        echo "Restarting the script..."
+        exec "$0"  # Restart the script by re-executing it
+    elif [[ $choice == "e" ]]; then
+        echo "Exiting the script..."
+        exit 0
+    fi
+}
+
+# Function to validate user input
+validate_input() {
+    local input=$1
+    local max_option=$2
+
+    # Check if the input is a digit and within the valid range
+    if [[ "$input" =~ ^[0-9]+$ ]] && (( input >= 1 && input <= max_option )); then
+        return 0  # Valid input
+    else
+        echo "${RED}Invalid input. Please enter a number between 1 and $max_option.${NC}"
+        return 1  # Invalid input
+    fi
+}
 
 
 # MAIN SCRIPT STARTS HERE
@@ -389,6 +413,11 @@ fi
 echo "Beckn-ONIX is a platform that helps you quickly launch and configure beckn-enabled networks."
 echo -e "\nWhat would you like to do?\n1. Join an existing network\n2. Create new production network\n3. Set up a network on your local machine\n4. Merge multiple networks\n5. Configure Existing Network\n(Press Ctrl+C to exit)"
 read -p "Enter your choice: " choice
+
+validate_input "$choice" 5
+if [[ $? -ne 0 ]]; then
+    restart_script  # Restart the script if input is invalid
+fi
 
 boldGreen="\e[1m\e[92m"
 reset="\e[0m"
@@ -414,14 +443,17 @@ else
     done
 
     read -p "Enter your choice: " platform_choice
+    validate_input "$platform_choice" "${#platforms[@]}"
+    if [[ $? -ne 0 ]]; then
+        restart_script  # Restart the script if input is invalid
+    fi
 
     selected_platform="${platforms[$((platform_choice-1))]}"
 
     if [[ -n $selected_platform ]]; then
         completeSetup "$selected_platform"
     else
-        echo "Invalid option. Please restart the script and select a valid option."
-        exit 1
+        restart_script
     fi
 fi
 
