@@ -400,6 +400,27 @@ validate_input() {
     fi
 }
 
+check_docker_permissions() {
+    if ! command -v docker &> /dev/null; then
+        echo -e "${RED}Error: Docker is not installed on this system.${NC}"      
+        if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+            install_package
+            if [[ $? -ne 0 ]]; then
+                echo -e "${RED}Please install Docker and try again.${NC}"
+                echo -e "${RED}Please install Docker and jq manually.${NC}"
+                exit 1
+            fi
+        fi
+    fi
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        if ! groups "$USER" | grep -q '\bdocker\b'; then
+            echo -e "${RED}Error: You do not have permission to run Docker. Please add yourself to the docker group by running the following command:${NC}"
+            echo -e "${boldGreen}sudo usermod -aG docker \$USER"
+            echo -e "After running the above command, please log out and log back in to your system, then restart the deployment script.${NC}"
+            exit 1
+        fi
+    fi
+}
 
 # MAIN SCRIPT STARTS HERE
 
@@ -410,6 +431,9 @@ else
     echo "[Display Beckn-ONIX ASCII Art]"
 fi
 
+echo "Checking prerequisites of Beckn-ONIX deployment"
+check_docker_permissions
+
 echo "Beckn-ONIX is a platform that helps you quickly launch and configure beckn-enabled networks."
 echo -e "\nWhat would you like to do?\n1. Join an existing network\n2. Create new production network\n3. Set up a network on your local machine\n4. Merge multiple networks\n5. Configure Existing Network\n(Press Ctrl+C to exit)"
 read -p "Enter your choice: " choice
@@ -419,11 +443,8 @@ if [[ $? -ne 0 ]]; then
     restart_script  # Restart the script if input is invalid
 fi
 
-boldGreen="\e[1m\e[92m"
-reset="\e[0m"
 if [[ $choice -eq 3 ]]; then
     echo "Installing all components on the local machine"
-    install_package
     install_registry
     install_gateway
     install_bap_protocol_server
