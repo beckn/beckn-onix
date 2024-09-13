@@ -46,9 +46,6 @@ fi
 
 echo "Generating public/private key pair"
 get_keys
-echo "Your Private Key: $private_key" 
-echo "Your Public Key: $public_key"
-
 
 if [[ $(uname -s ) == 'Darwin' ]];then
     valid_from=$(date -u -v-1d +"%Y-%m-%dT%H:%M:%S.%000Z")
