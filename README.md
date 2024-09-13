@@ -26,5 +26,7 @@ Here is a [Demo Video](https://drive.google.com/file/d/1PfdhIpq-Qo6sDy0wAnO0zllC
 - [Known Issues](./docs/known_issues.md)
 - [Frequently asked questions (FAQ)](./docs/faq.md)
 - **[Note on mandatory layer 2 configuration(Important)](./docs/notes/mandatory_layer_2_config.md).**
+- **[Troubleshooting doc](https://github.com/beckn/missions/blob/main/docs/troubleshoot.md).**
+- **[Log Interpretation](https://github.com/beckn/missions/blob/main/docs/log-interpretation.md).**
 
 Experience the convenience and efficiency of Beckn-ONIX as you embark on your journey with Beckn protocols and open networks.
