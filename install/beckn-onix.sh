@@ -263,72 +263,164 @@ completeSetup() {
     public_address="https://<your public IP address>"
 
     echo "Proceeding with the setup for $platform..."
-    
-    # Insert the specific commands for each platform, including requesting network config if necessary
+
     case $platform in
         "Registry")
-            read -p "Enter publicly accessible registry URL: " registry_url
-            if [[ $registry_url =~ /$ ]]; then
-                new_registry_url=${registry_url%/}
-            else
-                new_registry_url=$registry_url
-            fi
+            while true; do
+                read -p "Enter publicly accessible registry URL: " registry_url
+                if [[ $registry_url =~ ^(http|https):// ]]; then
+                    break
+                else
+                    echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
+                fi
+            done
+            
+            new_registry_url="${registry_url%/}"
             public_address=$registry_url
             install_package
             install_registry $new_registry_url
             ;;
         "Gateway"|"Beckn Gateway")
-            read -p "Enter your registry URL: " registry_url
-            read -p "Enter publicly accessible gateway URL: " gateway_url
+            while true; do
+                read -p "Enter your registry URL: " registry_url
+                if [[ $registry_url =~ ^(http|https):// ]]; then
+                    break
+                else
+                    echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
+                fi
+            done
             
-            if [[ $registry_url =~ /$ ]]; then
-                new_registry_url=${registry_url%/}
-            else
-                new_registry_url=$registry_url
-            fi
-            if [[ $gateway_url =~ /$ ]]; then
-                gateway_url=${gateway_url%/}
-            fi
-
+            while true; do
+                read -p "Enter publicly accessible gateway URL: " gateway_url
+                if [[ $gateway_url =~ ^(http|https):// ]]; then
+                    gateway_url="${gateway_url%/}"
+                    break
+                else
+                    echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
+                fi
+            done
+            
             public_address=$gateway_url
             install_package
-            install_gateway $new_registry_url $gateway_url
+            install_gateway $registry_url $gateway_url
             ;;
         "BAP")
             echo "${GREEN}................Installing Protocol Server for BAP................${NC}"
             
             read -p "Enter BAP Subscriber ID: " bap_subscriber_id
-            read -p "Enter BAP Subscriber URL: " bap_subscriber_url
-            read -p "Enter the registry_url(e.g. https://registry.becknprotocol.io/subscribers): " registry_url
-            bap_subscriber_key_id=$bap_subscriber_id-key
+            while true; do
+                read -p "Enter BAP Subscriber URL: " bap_subscriber_url
+                if [[ $bap_subscriber_url =~ ^(http|https):// ]]; then
+                    break
+                else
+                    echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
+                fi
+            done
+
+            while true; do
+                read -p "Enter the registry URL (e.g., https://registry.becknprotocol.io/subscribers): " registry_url
+                if [[ $registry_url =~ ^(http|https):// ]] && [[ $registry_url == */subscribers ]]; then
+                    break
+                else
+                    echo "Please mention /subscribers in your registry URL"
+                fi
+            done      
+            
+            #read -p "Enter the registry URL (e.g., https://registry.becknprotocol.io/subscribers): " registry_url
+            bap_subscriber_key_id="$bap_subscriber_id-key"
             public_address=$bap_subscriber_url
+
             install_package
             install_bap_protocol_server $registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url
             ;;
         "BPP")
-            echo "${GREEN}................Installing Protocol Server for BAP................${NC}"
+            echo "${GREEN}................Installing Protocol Server for BPP................${NC}"
+            
             read -p "Enter BPP Subscriber ID: " bpp_subscriber_id
-            read -p "Enter BPP Subscriber URL: " bpp_subscriber_url
-            read -p "Enter the registry_url(e.g. https://registry.becknprotocol.io/subscribers): " registry_url
-            read -p "Enter Webhook URL: " webhook_url
+            while true; do
+                read -p "Enter BPP Subscriber URL: " bpp_subscriber_url
+                if [[ $bpp_subscriber_url =~ ^(http|https):// ]]; then
+                    break
+                else
+                    echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
+                fi
+            done
 
-            bpp_subscriber_key_id=$bpp_subscriber_id-key
+            while true; do
+                read -p "Enter Webhook URL: " webhook_url
+                if [[ $webhook_url =~ ^(http|https):// ]]; then
+                    break
+                else
+                    echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
+                fi
+            done
+            
+            while true; do
+                read -p "Enter the registry URL (e.g., https://registry.becknprotocol.io/subscribers): " registry_url
+                if [[ $registry_url =~ ^(http|https):// ]] && [[ $registry_url == */subscribers ]]; then
+                    break
+                else
+                    echo "${RED}Please mention /subscribers in your registry URL${NC}"
+                fi
+            done
+            bpp_subscriber_key_id="$bpp_subscriber_id-key"
             public_address=$bpp_subscriber_url
+
             install_package
             install_bpp_protocol_server $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url
             ;;
         *)
-            echo "Invalid platform selected."
-            exit 1
+            echo "Unknown platform: $platform"
             ;;
     esac
-
-    echo "[Installation Logs]"
-    echo -e "${boldGreen}Your $platform setup is complete.${reset}"
-    echo -e "${boldGreen}You can access your $platform at $public_address ${reset}"
-    # Key generation and subscription logic follows here
 }
 
+restart_script(){
+    read -p "${GREEN}Do you want to restart the script or exit the script? (r for restart, e for exit): ${NC}" choice
+    if [[ $choice == "r" ]]; then
+        echo "Restarting the script..."
+        exec "$0"  # Restart the script by re-executing it
+    elif [[ $choice == "e" ]]; then
+        echo "Exiting the script..."
+        exit 0
+    fi
+}
+
+# Function to validate user input
+validate_input() {
+    local input=$1
+    local max_option=$2
+
+    # Check if the input is a digit and within the valid range
+    if [[ "$input" =~ ^[0-9]+$ ]] && (( input >= 1 && input <= max_option )); then
+        return 0  # Valid input
+    else
+        echo "${RED}Invalid input. Please enter a number between 1 and $max_option.${NC}"
+        return 1  # Invalid input
+    fi
+}
+
+check_docker_permissions() {
+    if ! command -v docker &> /dev/null; then
+        echo -e "${RED}Error: Docker is not installed on this system.${NC}"      
+        if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+            install_package
+            if [[ $? -ne 0 ]]; then
+                echo -e "${RED}Please install Docker and try again.${NC}"
+                echo -e "${RED}Please install Docker and jq manually.${NC}"
+                exit 1
+            fi
+        fi
+    fi
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        if ! groups "$USER" | grep -q '\bdocker\b'; then
+            echo -e "${RED}Error: You do not have permission to run Docker. Please add yourself to the docker group by running the following command:${NC}"
+            echo -e "${boldGreen}sudo usermod -aG docker \$USER"
+            echo -e "After running the above command, please log out and log back in to your system, then restart the deployment script.${NC}"
+            exit 1
+        fi
+    fi
+}
 
 # MAIN SCRIPT STARTS HERE
 
@@ -339,15 +431,20 @@ else
     echo "[Display Beckn-ONIX ASCII Art]"
 fi
 
+echo "Checking prerequisites of Beckn-ONIX deployment"
+check_docker_permissions
+
 echo "Beckn-ONIX is a platform that helps you quickly launch and configure beckn-enabled networks."
 echo -e "\nWhat would you like to do?\n1. Join an existing network\n2. Create new production network\n3. Set up a network on your local machine\n4. Merge multiple networks\n5. Configure Existing Network\n(Press Ctrl+C to exit)"
 read -p "Enter your choice: " choice
 
-boldGreen="\e[1m\e[92m"
-reset="\e[0m"
+validate_input "$choice" 5
+if [[ $? -ne 0 ]]; then
+    restart_script  # Restart the script if input is invalid
+fi
+
 if [[ $choice -eq 3 ]]; then
     echo "Installing all components on the local machine"
-    install_package
     install_registry
     install_gateway
     install_bap_protocol_server
@@ -367,20 +464,18 @@ else
     done
 
     read -p "Enter your choice: " platform_choice
+    validate_input "$platform_choice" "${#platforms[@]}"
+    if [[ $? -ne 0 ]]; then
+        restart_script  # Restart the script if input is invalid
+    fi
 
     selected_platform="${platforms[$((platform_choice-1))]}"
 
     if [[ -n $selected_platform ]]; then
         completeSetup "$selected_platform"
     else
-        echo "Invalid option. Please restart the script and select a valid option."
-        exit 1
+        restart_script
     fi
 fi
 
 echo "Process complete. Thank you for using Beckn-ONIX!"
-
-
-echo "Process complete. Thank you for using Beckn-ONIX!"
-
-

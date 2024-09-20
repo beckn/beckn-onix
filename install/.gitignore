@@ -12,3 +12,5 @@ protocol-server-data/bpp-network.yml
 ENV/.env-generic-client-layer
 registry.*db
 gateway.*db
+gateway_data/config/networks/onix.json
+
