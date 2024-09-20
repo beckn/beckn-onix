@@ -4,9 +4,13 @@
 RED=$(tput setaf 1)
 GREEN=$(tput setaf 2)
 YELLOW=$(tput setaf 3)
+BLUE=$(tput setaf 4)
 NC=$(tput sgr0)
-boldGreen="\e[1m\e[92m"
-reset="\e[0m"
+
+# Bold Colour Code
+BOLD=$(tput bold)
+BoldGreen="${BOLD}$(tput setaf 2)"
+BoldRed="${BOLD}$(tput setaf 1)"
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
@@ -25,8 +29,8 @@ redisUrl="redis"
 registry_url="http://registry:3030/subscribers"
 beckn_registry_url="https://registry.becknprotocol.io/subscribers"
 
-#public_key="KKHOpMKQCbJHzjme+CPKI3HQxIhzKMpcLLRGMhzf7rk="
-#private_key="W7HkCMPWvxv6/jWqHlyUI4vWX8704+rN3kCwBGIA7rcooc6kwpAJskfOOZ74I8ojcdDEiHMoylwstEYyHN/uuQ=="
+layer2_url=""
+schemas_path="/usr/src/app/schemas"
 
 #BAP varibales. 
 
