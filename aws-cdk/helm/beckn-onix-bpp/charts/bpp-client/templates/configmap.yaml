@@ -1,0 +1,135 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "common.name" . }}-config
+  namespace: {{ .Values.global.namespace }}
+data:
+  default.yaml: |
+    # Mandatory
+    server:
+      port: {{ .Values.service.port }}
+
+    # Redis connection details
+    cache:
+      host: {{ .Values.global.redisCache.host }}
+      port: {{ .Values.global.redisCache.port }}
+      ttl: "PT10M"
+      # Optional. Default is 0.
+      db: 1
+
+    # Mongodb connection details
+    responseCache:
+      # By default password is picked from MongoDB POD if not supplied through Helm values.
+      mongoURL: "mongodb://{{ .Values.global.responseCacheMongo.username }}:{{ if .Values.global.responseCacheMongo.password }}{{ .Values.global.responseCacheMongo.password }}{{ else }}{{ include "getSecretValue" (dict "secretName" "mongodb" "namespace" "bpp-common-services" "key" "mongodb-root-password") }}{{ end }}@{{ .Values.global.responseCacheMongo.host }}:{{ .Values.global.responseCacheMongo.port }}/{{ .Values.global.responseCacheMongo.dbname }}?authSource=admin"
+      ttl: "PT10M"
+
+    # synchronous only required for BPP
+    client:
+    # Only required for BPP
+      webhook:
+        url: "http://sandbox.beckn-onix-aws-cdk.becknprotocol.io"
+
+    # Supported mode - bap and bpp
+    app:
+      mode: {{ .Values.app.mode }}
+
+      # Two types of gateway mode present - client and network
+      gateway:
+        mode: {{ .Values.app.gateway.mode }}
+        inboxQueue: "inbox-bpp"
+        outboxQueue: "outbox-bpp"
+
+        # RabbitMQ connection details
+        # By default password is picked from RabbitMQ POD if not supplied through Helm values.
+        amqpURL: "amqp://{{ .Values.global.rabbitMQamqp.username }}:{{ if .Values.global.rabbitMQamqp.password }}{{ .Values.global.rabbitMQamqp.password }}{{ else }}{{ include "getSecretValue" (dict "secretName" "rabbitmq" "namespace" "bpp-common-services" "key" "rabbitmq-password") }}{{ end }}@{{ .Values.global.rabbitMQamqp.host }}:{{ .Values.global.rabbitMQamqp.port }}"
+
+      # Mandatory.
+      actions:
+        requests:
+          search:
+            ttl : "PT15S"
+          init:
+            ttl : "PT10S"
+          select:
+            ttl : "PT10S"
+          confirm:
+            ttl : "PT10S"
+          status:
+            ttl : "PT10S"
+          track:
+            ttl : "PT10S"
+          cancel:
+            ttl : "PT10S"
+          update:
+            ttl : "PT10S"
+          rating:
+            ttl : "PT10S"
+          support:
+            ttl : "PT10S"
+          get_cancellation_reasons:
+            ttl : "PT10S"
+          get_rating_categories:
+            ttl : "PT10S"
+          cancellation:
+            ttl : "PT10S"
+        
+        responses:
+          on_search:
+            ttl: "PT15S"
+          on_init:
+            ttl: "PT10S"
+          on_select:
+            ttl: "PT10S"
+          on_confirm:
+            ttl: "PT10S"
+          on_status:
+            ttl: "PT10S"
+          on_track:
+            ttl: "PT10S"
+          on_cancel:
+            ttl: "PT10S"
+          on_update:
+            ttl: "PT10S"
+          on_rating:
+            ttl: "PT10S"
+          on_support:
+            ttl: "PT10S"
+          cancellation_reasons:
+            ttl: "PT10S"
+          rating_categories:
+            ttl: "PT10S"
+
+      # Mandatory keys
+      privateKey: {{ .Values.global.bpp.privateKey }}
+      publicKey: {{ .Values.global.bpp.publicKey }}
+      
+      # Subscriber details
+      subscriberId: "{{ .Values.global.subscriber_id | default .Values.global.externalDomain }}"
+      subscriberUri: "https://{{ .Values.global.externalDomain }}"
+
+      # Registry 
+      registryUrl: "{{ .Values.global.registry_url }}/subscribers"
+      auth: false
+      # BPP client key ID
+      uniqueKey: "{{ .Values.global.externalDomain }}.k1"
+
+      # Mandatory
+      city: "std:080"
+      country: "IND"
+
+      # Mandatory
+      ttl: "PT10M"
+
+      # Mandatory
+      httpTimeout: "PT3S"
+      httpRetryCount: 2
+      telemetry:
+        enabled: false
+        url: ""
+        batchSize: 100
+        # In minutes
+        syncInterval: 30
+        redis_db: 3
+
+      useLayer2Config: true
+      mandateLayer2Config: true
