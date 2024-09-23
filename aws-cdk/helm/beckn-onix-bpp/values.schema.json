@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "global": {
+      "type": "object",
+      "properties": {
+        "externalDomain": {
+          "type": "string",
+          "description": "The external domain for the BPP network."
+        },
+        "registry_url": {
+          "type": "string",
+          "description": "The URL for the registry."
+        },
+        "ingress": {
+          "type": "object",
+          "properties": {
+            "tls": {
+              "type": "object",
+              "properties": {
+                "certificateArn": {
+                  "type": "string",
+                  "description": "The ARN of the TLS certificate for ingress."
+                }
+              },
+              "required": ["certificateArn"],
+              "description": "TLS configuration for ingress."
+            }
+          },
+          "required": ["tls"],
+          "description": "Ingress-related configuration."
+        },
+        "efs": {
+          "type": "object",
+          "properties": {
+            "fileSystemId": {
+              "type": "string",
+              "description": "The EFS FileSystem ID."
+            }
+          },
+          "required": ["fileSystemId"],
+          "description": "EFS-related configuration."
+        },
+        "bpp": {
+          "type": "object",
+          "properties": {
+            "privateKey": {
+              "type": "string",
+              "description": "The private key for BPP."
+            },
+            "publicKey": {
+              "type": "string",
+              "description": "The public key for BPP."
+            }
+          },
+          "required": ["privateKey", "publicKey"],
+          "description": "Keys for BPP, including both private and public keys."
+        }
+      },
+      "required": [
+        "externalDomain",
+        "registry_url",
+        "ingress",
+        "efs",
+        "bpp"
+      ]
+    }
+  }
+}
