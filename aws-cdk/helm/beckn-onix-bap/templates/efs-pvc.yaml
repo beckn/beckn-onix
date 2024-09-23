@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: beckn-onix-bap-efs-pvc
+  namespace: {{ .Values.global.namespace }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: {{ include "common.name" . }}-efs-storageclass
+  resources:
+    requests:
+      storage: 5Gi

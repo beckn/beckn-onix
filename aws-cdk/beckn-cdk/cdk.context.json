@@ -1,0 +1,12 @@
+{
+  "availability-zones:account=365975017663:region=ap-south-1": [
+    "ap-south-1a",
+    "ap-south-1b",
+    "ap-south-1c"
+  ],
+  "availability-zones:account=471112672919:region=ap-south-1": [
+    "ap-south-1a",
+    "ap-south-1b",
+    "ap-south-1c"
+  ]
+}
