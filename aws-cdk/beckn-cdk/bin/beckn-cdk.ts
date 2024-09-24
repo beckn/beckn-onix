@@ -74,12 +74,6 @@ const deployBAP = () => {
   const vpcStack = new VpcStack(app, 'BapVpcStack', { config: config, env });
   const eksStack = new EksStack(app, 'BapEksStack', {config: config, vpc: vpcStack.vpc, env });
 
-  // aws common services deployed through aws managed services
-  // rabbit mq - 
-  // new DocumentDbStack(app, 'BapDocumentDbStack', { config: config, vpc: vpcStack.vpc, env });
-  // new RedisStack(app, 'BapRedisStack', { vpc: vpcStack.vpc, env });
-  // new RabbitMqStack(app, 'BapRabbitMqStack', { config: config, vpc: vpcStack.vpc, env });
-
   // bitnami - common services on eks - self hosted
   new HelmCommonServicesStack(app, 'HelmBapCommonServicesStack', {
     config: config,
@@ -103,11 +97,6 @@ const deployBAP = () => {
 const deployBPP = () => {
   const vpcStack = new VpcStack(app, 'BppVpcStack', {config: config, env });
   const eksStack = new EksStack(app, 'BppEksStack', {config: config, vpc: vpcStack.vpc, env });
-
-  //if aws
-  // new DocumentDbStack(app, 'BppDocumentDbStack', { config: config, vpc: vpcStack.vpc, env });
-  // new RedisStack(app, 'BppRedisStack', { vpc: vpcStack.vpc, env });
-  // new RabbitMqStack(app, 'BppRabbitMqStack', { config: config, vpc: vpcStack.vpc, env });
 
   // if bitnami
   new HelmCommonServicesStack(app, 'HelmBapCommonServicesStack', {
@@ -149,11 +138,6 @@ const deploySandbox = () => {
     eksCluster: eksStack.cluster,
     env,
   });
-
-  // aws
-  // new DocumentDbStack(app, 'DocumentDbStack', { config: config, vpc: vpcStack.vpc, env });
-  // new RedisStack(app, 'RedisStack', { vpc: vpcStack.vpc, env });
-  // new RabbitMqStack(app, 'RabbitMqStack', { config: config, vpc: vpcStack.vpc, env });
   
   // default - bitnami
   new HelmCommonServicesStack(app, 'BapHelmCommonServicesStack', {

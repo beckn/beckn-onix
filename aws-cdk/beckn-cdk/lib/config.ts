@@ -62,6 +62,4 @@ export const getConfig = (): ConfigProps => ({
     GATEWAY_EXTERNAL_DOMAIN: process.env.GATEWAY_EXTERNAL_DOMAIN || "", // user must provide it
     BAP_EXTERNAL_DOMAIN: process.env.BAP_EXTERNAL_DOMAIN || "", // user must provide it
     BPP_EXTERNAL_DOMAIN: process.env.BPP_EXTERNAL_DOMAIN || "", // user must provide it
-
-
 });

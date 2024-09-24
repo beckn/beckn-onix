@@ -54,29 +54,6 @@ export class HelmBapStack extends Stack {
       securityGroup: props.eksSecGrp,
       fileSystemPolicy: myFileSystemPolicy,
     });
-
-    // let efsBapFileSystemId: string | undefined;
-    // const existingFileSystemId = cdk.Fn.importValue('EfsBapFileSystemId');
-
-    // if(existingFileSystemId){
-    //   efsBapFileSystemId = existingFileSystemId;
-    // } else{
-    //   const efsBapFileSystem = new efs.FileSystem(this, 'Beckn-Onix-Bap', {
-    //     vpc: props.vpc,
-    //     securityGroup: props.eksSecGrp,
-    //   });
-
-    //   efsBapFileSystemId = efsBapFileSystem.fileSystemId;
-
-    //   new cdk.CfnOutput(this, 'EfsBapFileSystemId', {
-    //     value: efsBapFileSystemId,
-    //     exportName: 'EfsBapFileSystemId',
-    //   })
-    // }
-
-    // const efsBapFileSystemId = new efs.FileSystem(this, 'Beckn-Onix-Bap', {
-    //   vpc: props.vpc,
-    // });
     
     new helm.HelmChart(this, 'baphelm', {
       cluster: eksCluster,
