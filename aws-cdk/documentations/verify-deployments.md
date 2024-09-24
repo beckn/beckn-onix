@@ -1,9 +1,13 @@
 ### Verifying Deployed Beckn-ONIX Services in Amazon EKS
 
-Once the Helm charts are successfully deployed, you can verify that the services (Registry, Gateway, Redis, MongoDB, RabbitMQ, BAP and BPP) are running correctly in your Amazon EKS cluster by using the following commands.
+Once the Helm charts are successfully deployed (manually or through AWS CDK), you can verify that the services (Registry, Gateway, Redis, MongoDB, RabbitMQ, BAP and BPP) are running correctly in your Amazon EKS cluster by using the following commands.
+
+**Configure [Kubectl client](https://docs.aws.amazon.com/eks/latest/userguide/create-kubeconfig.html) with Amazon EKS Cluster**
 
 #### 1. Verify Namespaces
-Run the following command to check `namespaces`
+Run the following command to check `namespaces`. 
+
+**Note:** This output is from the Sandbox environment, so you will see that all services are deployed. However, you may observe namespaces in your environment based on the specific Beckn-ONIX service you are deploying.
 
 ```bash
 $ kubectl get namespaces

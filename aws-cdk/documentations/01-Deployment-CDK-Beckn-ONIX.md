@@ -13,8 +13,8 @@ This repository contains AWS CDK stacks for deploying the Beckn-ONIX services on
 ## Prerequisites
 
 - **AWS Account**: An AWS account to deploy AWS CDK stacks
-- **AWS CLI**: Configured with AWS account
-- **Kubectl Client**: Configured with the Amazon EKS cluster.
+- **[AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)**: Configured with AWS account
+- **Kubectl Client**: Configured with the Amazon EKS cluster. 
 - **Public Domain/Sub-Domain**: Along with SSL certificates for HTTPS.
 
 ### Domain and Subdomains
@@ -37,9 +37,6 @@ To obtain an SSL certificate through AWS Certificate Manager, follow the easy st
 Once a certificate is issued, copy the certificate ARN to be used in the Helm charts later. The certificate ARN follows this format:
 
 `arn:aws:acm:ap-south-1:<aws-account-id>:certificate/<identifier>`
-
-## Configuring AWS CLI 
-Crucial step in working with AWS CDK. You can do it in your local environment.If you prefer to configure AWS CLI on a remote server, you can SSH-ing into the server and running aws configure to set up the CLI credentials and configuration. Just ensure that the server has network connectivity to AWS services and that you have the necessary permissions to configure AWS CLI and access AWS resources from that server.
 
 ## Beckn-ONIX CDK Project Overview
 
@@ -120,11 +117,29 @@ The AWS CDK project follows a specific folder structure for better organization:
 | `BPP_PUBLIC_KEY`              | Public key for the BPP                               | `uRl8t3qB1T+2TbNAi/pu1gfy6uy9vzb3T3YiVrfZIzk=`          |
 | `CERT_ARN`                   | SSL certificate ARN (AWS Certificate Manager)         | `arn:aws:acm:ap-south-1:365975017663:certificate/04d1ef71-8407-495b-82f0-4eded8694189` |
                                                         
+## Prepare your environment
 
+```bash
+# Install TypeScript globally for CDK
+npm i -g typescript
+
+# Install aws cdk
+npm i -g aws-cdk
+
+# Clone the repository 
+git clone https://github.com/beckn/beckn-onix.git
+cd aws-cdk/beckn-cdk
+
+# Install the CDK application
+npm i
+
+# cdk bootstrap [aws://<ACCOUNT-NUMBER>/<REGION>]
+cdk bootstrap aws://<ACCOUNT-NUMBER>/<REGION>
+```
 
 ## Deploy CDK
 
-After you have made the relevant updates to the `.env` file, run the following commands to begin the deployment process.
+After you have prepared the environment, made the relevant updates to the `.env` file as per the Beckn-ONIX component you're deploying, run the following commands to begin the deployment process.
 
 ### Deployment by Environment
 
@@ -134,6 +149,7 @@ You can now choose to deploy one of the following environments:
 This will deploy the following stacks: VPC, Amazon EKS, and Amazon RDS Aurora Postgres and Registry:
 
 ```bash
+cdk list --context env=registry --all
 cdk deploy --context env=registry --all
 ```
 
@@ -141,6 +157,7 @@ cdk deploy --context env=registry --all
 This will deploy the following stacks: VPC, Amazon EKS, Amazon RDS Aurora Postgres and Gateway:
 
 ```bash
+cdk list --context env=gateway --all
 cdk deploy --context env=gateway --all
 ```
 
@@ -162,6 +179,7 @@ node generate-keys.js
 This will deploy the following stacks: VPC, Amazon EKS, BAP, and common services in Amazon EKS - Redis, DocumentDB, and RabbitMQ:
 
 ```bash
+cdk list --context env=bap --all
 cdk deploy --context env=bap --all
 ```
 
@@ -169,15 +187,27 @@ cdk deploy --context env=bap --all
 This will deploy the following stacks: VPC, Amazon EKS, BAP, and common services in Amazon EKS - Redis, DocumentDB, and RabbitMQ:
 
 ```bash
+cdk list --context env=bpp -all
 cdk deploy --context env=bpp -all
 ```
 
 5. **Sandbox Environment**  
 This environment is suitable for non-prod setup and will deploy all the stacks including - VPC, Amazon EKS, Amazon RDS Aurora Postgres, all Beckn-Onix services including common services:
 
-   ```bash
-   cdk deploy --context env=sandbox --all
-   ```
+```bash
+cdk list --context env=sandbox --all
+cdk deploy --context env=sandbox --all
+```
+
+## Destroy CDK Resources
+
+If you wish to clean up and remove all the deployed resources, you can use the following command:
+
+```bash
+cdk destroy --context env=<environment> --all
+
+Replace <environment> with the environment you wish to destroy (e.g., registry, gateway, bap, bpp, or sandbox). This command will prompt you to confirm the deletion of all resources in the specified stack.
+
 
 ## Next Steps
 
