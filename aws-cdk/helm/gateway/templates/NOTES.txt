@@ -1,0 +1,9 @@
+Get the Beckn-ONIX Gateway URL by running these commands:
+{{- if .Values.ingress.enabled }}
+  export INGRESS_HOST=$(kubectl get ingress {{ include "common.name" . }}-ingress -n {{ .Values.namespace }} -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"){{ "\n" }}
+  {{- if .Values.ingress.tls.enabled }}
+  echo "https://$INGRESS_HOST"{{ "\n" }}
+  {{- else }}
+  echo "http://$INGRESS_HOST"{{ "\n" }}
+  {{- end }}
+{{- end }}

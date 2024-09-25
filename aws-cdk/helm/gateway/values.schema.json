@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "externalDomain": {
+      "type": "string",
+      "description": "The external domain for the gateway."
+    },
+    "registry_url": {
+      "type": "string",
+      "description": "The URL of the registry."
+    },
+    "database": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "The hostname of the RDS PostgreSQL database."
+        },
+        "password": {
+          "type": "string",
+          "description": "The password for the RDS PostgreSQL database."
+        }
+      },
+      "required": ["host", "password"],
+      "description": "Database configuration for the gateway."
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "tls": {
+          "type": "object",
+          "properties": {
+            "certificateArn": {
+              "type": "string",
+              "description": "The ARN of the TLS certificate for ingress."
+            }
+          },
+          "required": ["certificateArn"],
+          "description": "TLS configuration for ingress."
+        }
+      },
+      "required": ["tls"],
+      "description": "Ingress-related configuration."
+    }
+  },
+  "required": [
+    "externalDomain",
+    "registry_url",
+    "database",
+    "ingress"
+  ]
+}
