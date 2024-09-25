@@ -1,0 +1,11 @@
+{{ "\n" }}
+Get the Beckn-ONIX BAP Network (Protocol Server) URL by running these commands:
+{{ "\n" }}
+{{- if .Values.global.ingress.enabled }}
+  export INGRESS_HOST=$(kubectl get ingress {{ include "common.name" . }}-ingress -n {{ .Values.namespace }} -o jsonpath="{.status.loadBalancer.ingress[0].hostname}")
+  {{- if .Values.global.ingress.tls.enabled }}
+  echo "https://$INGRESS_HOST"
+  {{- else }}
+  echo "http://$INGRESS_HOST"
+  {{- end }}
+{{- end }}

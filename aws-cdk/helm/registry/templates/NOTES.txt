@@ -1,0 +1,11 @@
+{{ "\n" }}
+Get the Beckn-ONIX Registry URL by running these commands:
+{{ "\n" }}
+{{- if .Values.ingress.enabled }}
+  export INGRESS_HOST=$(kubectl get ingress {{ include "common.name" . }}-ingress -n {{ .Values.namespace }} -o jsonpath="{.status.loadBalancer.ingress[0].hostname}")
+  {{- if .Values.ingress.tls.enabled }}
+  echo "https://$INGRESS_HOST"
+  {{- else }}
+  echo "http://$INGRESS_HOST"
+  {{- end }}
+{{- end }}

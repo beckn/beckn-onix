@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "common.name" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "common.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "common.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "common.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: {{ .Values.global.image.repository }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - name: bpp-client-port
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          {{- if .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: bpp-client-config
+              mountPath: "/usr/src/app/config/default.yaml"
+              subPath: default.yaml
+              readOnly: true
+            # EFS volumes for L2 schemas 
+            - name: bpp-schemas-efs-volume
+              mountPath: /usr/src/app/schemas
+            # EBS volumes for logs
+            - name: bpp-client-logs-ebs-volume
+              mountPath: /usr/src/app/logs
+      volumes:
+        - name: bpp-client-config
+          configMap:
+            name: {{ include "common.name" . }}-config
+        - name: bpp-schemas-efs-volume
+          persistentVolumeClaim:
+            claimName: beckn-onix-bpp-efs-pvc
+        - name: bpp-client-logs-ebs-volume
+          persistentVolumeClaim:
+            claimName: {{ include "common.name" . }}-logs-pvc

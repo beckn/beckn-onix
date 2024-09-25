@@ -1,0 +1,64 @@
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 5001
+
+# Supported app mode - bap or bpp. Gateway mode to be either client or network.
+app:
+  mode: bap
+  gateway:
+    mode: network 
+    
+resources:
+  # Adjust it as per desired POD resource demand 
+  requests:
+    cpu: "0.5"
+    memory: "1Gi"
+  limits:
+    cpu: "0.5"
+    memory: "1Gi"
+
+livenessProbe: {}
+  # httpGet:
+  #  path: /
+  #  port: http
+readinessProbe: {}
+  # httpGet:
+  #  path: /
+  #  port: http
+
+# To configure HPA
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 2
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: false
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+
