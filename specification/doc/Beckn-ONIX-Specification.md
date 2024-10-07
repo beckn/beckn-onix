@@ -28,9 +28,6 @@ The version history table describes the major changes to the specifications betw
 
 # Table of Contents
 
-- [Beckn-ONIX Stack: v0.1](#beckn-onix-stack-v01)
-- [Version History:](#version-history)
-- [Table of Contents](#table-of-contents)
 - [Preface](#preface)
   - [Purpose of the document](#purpose-of-the-document)
   - [Prerequisites](#prerequisites)
