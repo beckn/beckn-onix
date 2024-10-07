@@ -6,24 +6,10 @@
 The version history table describes the major changes to the specifications between published versions.
 
 
-<table>
-  <tr>
-   <td>Version       
-   </td>
-   <td>Authors                                                                                                                                                                                     
-   </td>
-   <td> Comment
-   </td>
-  </tr>
-  <tr>
-   <td>0.1
-   </td>
-   <td>Ravi Prakash
-   </td>
-   <td>First draft of core specifications
-   </td>
-  </tr>
-</table>
+| Version | Authors       | Comment                                                                   |
+|---------|---------------|---------------------------------------------------------------------------|
+| 0.1     | Ravi Prakash   | First draft of core specifications                                       |
+
 
 
 # Table of Contents
