@@ -1,11 +1,8 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as path from 'path';
 import { Construct } from 'constructs';
 import { ConfigProps } from './config';
-import cluster from 'cluster';
 import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
 
 export interface RdsStackProps extends cdk.StackProps {

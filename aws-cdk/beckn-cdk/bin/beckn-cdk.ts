@@ -75,19 +75,21 @@ const deployBAP = () => {
   const vpcStack = new VpcStack(app, 'BapVpcStack', { config: config, env });
   const eksStack = new EksStack(app, 'BapEksStack', {config: config, vpc: vpcStack.vpc, env });
 
-  if(service === 'managed'){
-    new DocumentDbStack(app, 'DocumentDbStack', { config: config, vpc: vpcStack.vpc, env });
-    new RedisStack(app, 'RedisStack', { vpc: vpcStack.vpc, env });
-    new RabbitMqStack(app, 'RabbitMqStack', { config: config, vpc: vpcStack.vpc, env });
-  }else {
-    // bitnami - common services on eks - self hosted
-    new HelmCommonServicesStack(app, 'HelmBapCommonServicesStack', {
-      config: config,
-      eksCluster: eksStack.cluster,
-      service: 'bap',
-      env,
-    });
-  }
+  // if(service === 'managed'){
+  //   new DocumentDbStack(app, 'DocumentDbStack', { config: config, vpc: vpcStack.vpc, env });
+  //   new RedisStack(app, 'RedisStack', { vpc: vpcStack.vpc, env });
+  //   new RabbitMqStack(app, 'RabbitMqStack', { config: config, vpc: vpcStack.vpc, env });
+  // }else {
+
+  // bitnami - common services on eks - self hosted
+  new HelmCommonServicesStack(app, 'HelmBapCommonServicesStack', {
+    config: config,
+    eksCluster: eksStack.cluster,
+    service: 'bap',
+    env,
+  });
+
+  // }
 
   new HelmBapStack(app, 'HelmBapStack', {
     config: config,
@@ -98,6 +100,7 @@ const deployBAP = () => {
     env,
   });
 
+  return vpcStack;
 };
 
 // Function to deploy BPP environment
@@ -105,19 +108,21 @@ const deployBPP = () => {
   const vpcStack = new VpcStack(app, 'BppVpcStack', {config: config, env });
   const eksStack = new EksStack(app, 'BppEksStack', {config: config, vpc: vpcStack.vpc, env });
 
-  if(service === 'managed'){
-    new DocumentDbStack(app, 'DocumentDbStack', { config: config, vpc: vpcStack.vpc, env });
-    new RedisStack(app, 'RedisStack', { vpc: vpcStack.vpc, env });
-    new RabbitMqStack(app, 'RabbitMqStack', { config: config, vpc: vpcStack.vpc, env });
-  }else {
-    // if bitnami
-    new HelmCommonServicesStack(app, 'HelmBapCommonServicesStack', {
-      config: config,
-      eksCluster: eksStack.cluster,
-      service: 'bpp',
-      env,
-    });
-  }
+  // if(service === 'managed'){
+  //   new DocumentDbStack(app, 'DocumentDbStack', { config: config, vpc: vpcStack.vpc, env });
+  //   new RedisStack(app, 'RedisStack', { vpc: vpcStack.vpc, env });
+  //   new RabbitMqStack(app, 'RabbitMqStack', { config: config, vpc: vpcStack.vpc, env });
+  // }else {
+
+  // if bitnami
+  new HelmCommonServicesStack(app, 'HelmBapCommonServicesStack', {
+    config: config,
+    eksCluster: eksStack.cluster,
+    service: 'bpp',
+    env,
+  });
+  
+  // }
 
   new HelmBppStack(app, 'HelmBppStack', {
     config: config,
@@ -127,6 +132,8 @@ const deployBPP = () => {
     isSandbox: false,
     env,
   });
+
+  return vpcStack;
 };
 
 // Function to deploy sandbox environment (all stacks)
@@ -159,26 +166,28 @@ const deploySandbox = () => {
     env,
   });
   
-  if(service === 'managed'){
-    new DocumentDbStack(app, 'DocumentDbStack', { config: config, vpc: vpcStack.vpc, env });
-    new RedisStack(app, 'RedisStack', { vpc: vpcStack.vpc, env });
-    new RabbitMqStack(app, 'RabbitMqStack', { config: config, vpc: vpcStack.vpc, env });
-  } else {
-    // default - bitnami
-    new HelmCommonServicesStack(app, 'BapHelmCommonServicesStack', {
-      config: config,
-      eksCluster: eksStack.cluster,
-      service: 'bap',
-      env,
-    });
+  // if(service === 'managed'){
+  //   new DocumentDbStack(app, 'DocumentDbStack', { config: config, vpc: vpcStack.vpc, env });
+  //   new RedisStack(app, 'RedisStack', { vpc: vpcStack.vpc, env });
+  //   new RabbitMqStack(app, 'RabbitMqStack', { config: config, vpc: vpcStack.vpc, env });
+  // } else {
 
-    new HelmCommonServicesStack(app, 'BppHelmCommonServicesStack', {
-      config: config,
-      eksCluster: eksStack.cluster,
-      service: 'bpp',
-      env,
-    });
-  }
+  // default - bitnami
+  new HelmCommonServicesStack(app, 'BapHelmCommonServicesStack', {
+    config: config,
+    eksCluster: eksStack.cluster,
+    service: 'bap',
+    env,
+  });
+
+  new HelmCommonServicesStack(app, 'BppHelmCommonServicesStack', {
+    config: config,
+    eksCluster: eksStack.cluster,
+    service: 'bpp',
+    env,
+  });
+
+  // }
 
   new HelmBapStack(app, 'HelmBapStack', {
     config: config,
@@ -197,17 +206,27 @@ const deploySandbox = () => {
     isSandbox: true,
     env,
   });
+
+  return vpcStack;
 };
+
+const deployManagedStack = (vpcStack: VpcStack) => {
+  new DocumentDbStack(app, 'DocumentDbStack', { config: config, vpc: vpcStack.vpc, env });
+  new RedisStack(app, 'RedisStack', { config: config, vpc: vpcStack.vpc, env });
+  new RabbitMqStack(app, 'RabbitMqStack', { config: config, vpc: vpcStack.vpc, env });
+}
 
 // Retrieve the environment from CDK context
 const environment = app.node.tryGetContext('env');
-const service = app.node.tryGetContext('service') || 'common'; // can be common or managed
+// const service = app.node.tryGetContext('service') || 'common'; // can be common or managed
+const bap_bpp_managed = app.node.tryGetContext('bap_bpp_managed') || 'common';
 
 // Deploy based on the selected environment
 switch (environment) {
   case 'sandbox':
     console.log('Deploying sandbox environment...');
-    deploySandbox();
+    const vpcStack_sandbox = deploySandbox();
+    if(bap_bpp_managed === 'managed') deployManagedStack(vpcStack_sandbox);
     break;
   case 'registry':
     console.log('Deploying registry environment...');
@@ -219,11 +238,13 @@ switch (environment) {
     break;
   case 'bap':
     console.log('Deploying BAP environment...');
-    deployBAP();
+    const vpcStack_bap = deployBAP();
+    if(bap_bpp_managed === 'managed') deployManagedStack(vpcStack_bap);
     break;
   case 'bpp':
     console.log('Deploying BPP environment...');
-    deployBPP();
+    const vpcStack_bpp = deployBPP();
+    if(bap_bpp_managed === 'managed') deployManagedStack(vpcStack_bpp);
     break;
   default:
     console.error('Unknown environment specified.');

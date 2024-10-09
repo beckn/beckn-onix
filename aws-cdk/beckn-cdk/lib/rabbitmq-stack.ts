@@ -52,7 +52,7 @@ export class RabbitMqStack extends cdk.Stack {
       engineVersion: '3.10.25',
       deploymentMode: 'SINGLE_INSTANCE',
       publiclyAccessible: false,
-      hostInstanceType: 'mq.m5.large',  // Adjust the instance type as needed
+      hostInstanceType: props.config.RABBITMQ_INSTANCE_TYPE,  // Adjust the instance type as needed
       subnetIds: [selectedSubnet.subnetId],  // Pass a single subnet
       securityGroups: [rabbitMqSecurityGroup.securityGroupId],
       users: [

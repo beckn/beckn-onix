@@ -31,7 +31,10 @@ export type ConfigProps = {
     GATEWAY_EXTERNAL_DOMAIN: string;
     BAP_EXTERNAL_DOMAIN: string;
     BPP_EXTERNAL_DOMAIN: string;
-    
+    REDIS_NO_INSTANCE: number;
+    REDIS_INSTANCE_TYPE: string;
+    DOCDB_INSTANCE_TYPE: string;
+    RABBITMQ_INSTANCE_TYPE: string;
 };
 
 export const getConfig = (): ConfigProps => ({
@@ -53,6 +56,10 @@ export const getConfig = (): ConfigProps => ({
     ROLE_ARN: process.env.ROLE_ARN || "",
     DOCDB_PASSWORD: process.env.DOCDB_PASSWORD || "",
     RABBITMQ_PASSWORD: process.env.RABBITMQ_PASSWORD || "",
+    REDIS_NO_INSTANCE: Number(process.env.REDIS_NO_INSTANCE) || 1,
+    REDIS_INSTANCE_TYPE: process.env.REDIS_INSTANCE_TYPE || "cache.t3.medium",
+    DOCDB_INSTANCE_TYPE: process.env.DOCDB_INSTANCE_TYPE || "db.r5.large",
+    RABBITMQ_INSTANCE_TYPE: process.env.RABBITMQ_INSTANCE_TYPE || "mq.m5.large",
     NAMESPACE: "-common-services",
     BAP_PUBLIC_KEY: process.env.BAP_PUBLIC_KEY || "",
     BAP_PRIVATE_KEY: process.env.BAP_PRIVATE_KEY || "",

@@ -2,8 +2,10 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as elasticache from 'aws-cdk-lib/aws-elasticache';
+import { ConfigProps } from './config';
 
 interface RedisStackProps extends cdk.StackProps {
+  config: ConfigProps;
   vpc: ec2.Vpc;
 }
 
@@ -28,9 +30,9 @@ export class RedisStack extends cdk.Stack {
 
     // Redis Cluster
     new elasticache.CfnCacheCluster(this, 'RedisCluster', {
-      cacheNodeType: 'cache.t3.medium',  // Adjust the node type based on your needs
+      cacheNodeType: props.config.REDIS_INSTANCE_TYPE,
       engine: 'redis',
-      numCacheNodes: 1,
+      numCacheNodes: props.config.REDIS_NO_INSTANCE,
       vpcSecurityGroupIds: [elasticacheSecurityGroup.securityGroupId],
       cacheSubnetGroupName: redisSubnetGroup.ref,
     });
