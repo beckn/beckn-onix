@@ -15,6 +15,7 @@ import { HelmGatewayStack } from '../lib/helm-gateway';
 import { HelmCommonServicesStack } from '../lib/helm-beckn-common-services';
 import { HelmBapStack } from '../lib/helm-bap';
 import { HelmBppStack } from '../lib/helm-bpp';
+import { LambdaStack } from '../lib/lambda-stack';
 
 
 const config = getConfig();
@@ -134,6 +135,13 @@ const deploySandbox = () => {
   const vpcStack = new VpcStack(app, 'VpcStack', {config: config, env });
   const eksStack = new EksStack(app, 'EksStack', {config: config, vpc: vpcStack.vpc, env });
   const rdsStack = new RdsStack(app, 'RdsStack', { config: config, vpc: vpcStack.vpc, envC: envC, env });
+
+  new LambdaStack(app, 'LambdaStack', {
+    rdsHost: rdsStack.rdsHost,
+    rdsUser: config.RDS_USER,
+    rdsPassword: rdsStack.rdsPassword,
+    vpc: vpcStack.vpc, env 
+  });
   
   new HelmRegistryStack(app, 'HelmRegistryStack', {
     config: config,

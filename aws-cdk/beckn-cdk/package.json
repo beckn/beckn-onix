@@ -22,8 +22,10 @@
   "dependencies": {
     "@aws-cdk/lambda-layer-kubectl-v30": "^2.0.1",
     "aws-cdk-lib": "2.158.0",
+    "aws-sdk": "^2.1691.0",
     "constructs": "^10.0.0",
     "dotenv": "^16.4.5",
+    "pg": "^8.13.0",
     "source-map-support": "^0.5.21"
   }
 }
