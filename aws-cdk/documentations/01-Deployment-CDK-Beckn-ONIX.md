@@ -78,6 +78,7 @@ The AWS CDK project follows a specific folder structure for better organization:
 | --------------------- | --------------  | ----------  |
 | `REGION`                | `ap-south-1`      | The AWS region in which to deploy all the resources |
 | `ACCOUNT`               | `123456789123`    | Your AWS 12 digit account number |
+| `ROLE_ARN`              | `arn:aws:iam::123456789123:role/Admin` | Create an [IAM role in AWS console](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-user.html#roles-creatingrole-user-console) or use existing role if any.
 
 
 #### BECKN-ONIX SPECIFIC MANDATORY VARIABLES ####
