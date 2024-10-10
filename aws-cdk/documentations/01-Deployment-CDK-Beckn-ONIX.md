@@ -173,13 +173,7 @@ curl https://raw.githubusercontent.com/beckn/protocol-server/master/scripts/gene
 npm install libsodium-wrappers
 node generate-keys.js
 ```
-
-### Note
-
-- **Action Required**: Copy the `publicKey` and `privateKey` from the output.
-  
-- **Environment Variable Setup**: Depending on whether you're installing BAP or BPP, you need to add the keys to your `.env` file:
-  
+**Note**: Copy the `publicKey` and `privateKey` from the output. Depending on whether you're installing BAP or BPP, you need to add the keys to your `.env` file:
   - **For BAP**:
     - `BAP_PUBLIC_KEY`
     - `BAP_PRIVATE_KEY`
