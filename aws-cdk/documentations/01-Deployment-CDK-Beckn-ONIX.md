@@ -184,12 +184,26 @@ cdk list --context env=bap --all
 cdk deploy --context env=bap --all
 ```
 
+For AWS manged BAP services in sandbox environment:
+
+```bash
+cdk list --context env=bap --context bap_bpp_managed=managed --all
+cdk deploy --context env=bap --context bap_bpp_managed=managed --all
+```
+
 4. **BPP (Buyer Platform Provider) Environment**
 This will deploy the following stacks: VPC, Amazon EKS, BAP, and common services in Amazon EKS - Redis, DocumentDB, and RabbitMQ:
 
 ```bash
 cdk list --context env=bpp -all
 cdk deploy --context env=bpp -all
+```
+
+For AWS manged BPP services in sandbox environment:
+
+```bash
+cdk list --context env=bpp --context bap_bpp_managed=managed --all
+cdk deploy --context env=bpp --context bap_bpp_managed=managed --all
 ```
 
 5. **Sandbox Environment**  
@@ -200,12 +214,20 @@ cdk list --context env=sandbox --all
 cdk deploy --context env=sandbox --all
 ```
 
+For AWS manged BAP, BPP services in sandbox environment:
+
+```bash
+cdk list --context env=sandbox --context bap_bpp_managed=managed --all
+cdk deploy --context env=sandbox --context bap_bpp_managed=managed --all
+```
+
 ## Destroy CDK Resources
 
 If you wish to clean up and remove all the deployed resources, you can use the following command:
 
 ```bash
 cdk destroy --context env=<environment> --all
+```
 
 Replace <environment> with the environment you wish to destroy (e.g., registry, gateway, bap, bpp, or sandbox). This command will prompt you to confirm the deletion of all resources in the specified stack.
 
