@@ -173,6 +173,7 @@ curl https://raw.githubusercontent.com/beckn/protocol-server/master/scripts/gene
 npm install libsodium-wrappers
 node generate-keys.js
 ```
+
 **Note**: Copy the `publicKey` and `privateKey` from the output. Depending on whether you're installing BAP or BPP, you need to add the keys to your `.env` file:
   - **For BAP**:
     - `BAP_PUBLIC_KEY`
@@ -190,26 +191,12 @@ cdk list --context env=bap --all
 cdk deploy --context env=bap --all
 ```
 
-For AWS manged BAP services in sandbox environment:
-
-```bash
-cdk list --context env=bap --context bap_bpp_managed=managed --all
-cdk deploy --context env=bap --context bap_bpp_managed=managed --all
-```
-
 4. **BPP (Buyer Platform Provider) Environment**
 This will deploy the following stacks: VPC, Amazon EKS, BAP, and common services in Amazon EKS - Redis, DocumentDB, and RabbitMQ:
 
 ```bash
 cdk list --context env=bpp -all
 cdk deploy --context env=bpp -all
-```
-
-For AWS manged BPP services in sandbox environment:
-
-```bash
-cdk list --context env=bpp --context bap_bpp_managed=managed --all
-cdk deploy --context env=bpp --context bap_bpp_managed=managed --all
 ```
 
 5. **Sandbox Environment**  
@@ -220,12 +207,18 @@ cdk list --context env=sandbox --all
 cdk deploy --context env=sandbox --all
 ```
 
-For AWS manged BAP, BPP services in sandbox environment:
+6. **Managed AWS Services** \
+We have created a separate stack for deploying AWS managed BAP and BPP services which will provision - Redis, DocumentDB, and RabbitMQ. \
+*Note - For running this stack you must have deployed any of these environments i.e. - Sandbox, BAP or BPP.*
+
+For AWS manged BAP, BPP services in sandbox environment: \
 
 ```bash
-cdk list --context env=sandbox --context bap_bpp_managed=managed --all
-cdk deploy --context env=sandbox --context bap_bpp_managed=managed --all
+cdk list --context env=<environment> --context bap_bpp_managed=managed --all
+cdk deploy --context env=<environment> --context bap_bpp_managed=managed --all
 ```
+
+Replace <environment> with the environment you have deployed before (e.g., bap, bpp, sandbox).
 
 ## Destroy CDK Resources
 
