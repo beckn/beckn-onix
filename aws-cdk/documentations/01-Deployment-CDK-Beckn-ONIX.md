@@ -174,7 +174,19 @@ npm install libsodium-wrappers
 node generate-keys.js
 ```
 
-**Note:** Copy the `publicKey` and `privateKey` from the output. You need to add keys to .env file before running CDK deploy.
+### Note
+
+- **Action Required**: Copy the `publicKey` and `privateKey` from the output.
+  
+- **Environment Variable Setup**: Depending on whether you're installing BAP or BPP, you need to add the keys to your `.env` file:
+  
+  - **For BAP**:
+    - `BAP_PUBLIC_KEY`
+    - `BAP_PRIVATE_KEY`
+  
+  - **For BPP**:
+    - `BPP_PUBLIC_KEY`
+    - `BPP_PRIVATE_KEY`
 
 3. **BAP (Buyer Application Provider) Environment**
 This will deploy the following stacks: VPC, Amazon EKS, BAP, and common services in Amazon EKS - Redis, DocumentDB, and RabbitMQ:
@@ -248,21 +260,10 @@ After installing all Beckn-Onix services, proceed with the next steps to verify 
 
    After updating your DNS records, you need to register your participants BAP and BPP network with the registry service. Follow the steps in the [BAP and BPP Registration](documentations/post-deployment-bap-bpp-register.md) document to complete this process.
 
+## Additional Resources:
 
+1. **[Layer 2 Configuration](documentations/update-layer2-config.md)**
+   Follow this guide to update [Layer 2 Configuration](documentations/update-layer2-config.md).
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+2. **[Helm Updates Release](documentations/helm-updates-release-process.md)**
+   Follow this guide to release new helm chart and update CDK to reflect that in [Helm Updates Release](documentations/helm-updates-release-process.md).
