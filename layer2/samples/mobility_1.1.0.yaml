@@ -2325,9 +2325,9 @@ paths:
                                     - CONFIRM_CANCEL
                               required:
                                 - code
-                              cancellation_reason_id:
-                                type: string
-                                pattern: '^[0-9]+$'
+                            cancellation_reason_id:
+                              type: string
+                              pattern: '^[0-9]+$'
                           required:
                             - order_id
                             - descriptor
