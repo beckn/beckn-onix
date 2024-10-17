@@ -14,6 +14,13 @@ BoldRed="${BOLD}$(tput setaf 1)"
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+# Default registry and gateway username and password
+USERNAME="root"
+PASSWORD="root"
+
+# Registry Role Permission file path
+REGISTRY_FILE_PATH="../registry_data/RolePermission.xlsx"
+
 #Comman Variables with Default values
 mongo_initdb_root_username="beckn"
 mongo_initdb_root_password="beckn123"
