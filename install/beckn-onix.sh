@@ -162,11 +162,25 @@ install_bpp_protocol_server(){
     echo "Protocol server BPP installation successful"
 }
 
+#Function to restart
+restart_script(){
+    read -p "${GREEN}Do you want to restart the script or exit the script? (r for restart, e for exit): ${NC}" choice
+    if [[ $choice == "r" ]]; then
+        echo "Restarting the script..."
+        exec "$0"  # Restart the script by re-executing it
+    elif [[ $choice == "e" ]]; then
+        echo "Exiting the script..."
+        exit 0
+    fi
+}
+
 mergingNetworks(){
     echo -e "1. Merge Two Different Registries \n2. Merge Multiple Registries into a Super Registry"
     read -p "Enter your choice: " merging_network
     urls=()
     if [ "$merging_network" = "2" ]; then
+        echo "${GREEN}Currently this feature is not available in this distribution of Beckn ONIX${NC}"
+        restart_script
         while true; do
             read -p "Enter registry URL (or 'N' to stop): " url
             if [[ $url == 'N' ]]; then
@@ -177,6 +191,8 @@ mergingNetworks(){
         done
         read -p "Enter the Super Registry URL: " registry_super_url
     else
+        echo "${GREEN}Currently this feature is not available in this distribution of Beckn ONIX${NC}"
+        restart_script
         read -p "Enter A registry URL: " registry_a_url
         read -p "Enter B registry URL: " registry_b_url
         urls+=("$registry_a_url")
@@ -379,8 +395,3 @@ else
 fi
 
 echo "Process complete. Thank you for using Beckn-ONIX!"
-
-
-echo "Process complete. Thank you for using Beckn-ONIX!"
-
-
