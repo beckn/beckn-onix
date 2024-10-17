@@ -101,6 +101,9 @@ install_registry() {
     start_container $registry_docker_compose_file registry
     sleep 10
     echo "Registry installation successful"
+
+    #Update Role Permission for registry. 
+    bash scripts/registry_role_permissions.sh
 }
 
 # Function to install Layer2 Config
