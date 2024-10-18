@@ -317,6 +317,77 @@ completeSetup() {
             install_package
             install_bpp_protocol_server $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url
             ;;
+        "ALL")
+            # Collect all inputs at once for all components
+
+            # Registry input
+            while true; do
+                read -p "Enter publicly accessible registry URL: " registry_url
+                if [[ $registry_url =~ ^(http|https):// ]]; then
+                    break
+                else
+                    echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
+                fi
+            done
+
+            # Gateway inputs
+            while true; do
+                read -p "Enter publicly accessible gateway URL: " gateway_url
+                if [[ $gateway_url =~ ^(http|https):// ]]; then
+                    gateway_url="${gateway_url%/}"
+                    break
+                else
+                    echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
+                fi
+            done
+
+            # BAP inputs
+            read -p "Enter BAP Subscriber ID: " bap_subscriber_id
+            while true; do
+                read -p "Enter BAP Subscriber URL: " bap_subscriber_url
+                if [[ $bap_subscriber_url =~ ^(http|https):// ]]; then
+                    break
+                else
+                    echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
+                fi
+            done
+
+            # BPP inputs
+            read -p "Enter BPP Subscriber ID: " bpp_subscriber_id
+            while true; do
+                read -p "Enter BPP Subscriber URL: " bpp_subscriber_url
+                if [[ $bpp_subscriber_url =~ ^(http|https):// ]]; then
+                    break
+                else
+                    echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
+                fi
+            done
+
+            while true; do
+                read -p "Enter Webhook URL: " webhook_url
+                if [[ $webhook_url =~ ^(http|https):// ]]; then
+                    break
+                else
+                    echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
+                fi
+            done
+
+            # Install components after gathering all inputs
+            install_package
+
+            install_registry $registry_url
+
+            install_gateway $registry_url $gateway_url
+
+            layer2_config
+            #Append /subscribers for registry_url
+            new_registry_url="${registry_url%/}/subscribers"
+            bap_subscriber_key_id="$bap_subscriber_id-key"
+            install_bap_protocol_server $new_registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url
+
+            bpp_subscriber_key_id="$bpp_subscriber_id-key"
+            install_bpp_protocol_server $new_registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url
+            ;;
         *)
             echo "Invalid platform selected."
             exit 1
@@ -357,7 +428,7 @@ elif [[ $choice -eq 4 ]]; then
     mergingNetworks
 else
     # Determine the platforms available based on the initial choice
-    platforms=("Gateway" "BAP" "BPP")
+    platforms=("Gateway" "BAP" "BPP" "ALL")
     [ "$choice" -eq 2 ] && platforms=("Registry" "${platforms[@]}")  # Add Registry for new network setups
 
     echo "Great choice! Get ready."
@@ -379,8 +450,3 @@ else
 fi
 
 echo "Process complete. Thank you for using Beckn-ONIX!"
-
-
-echo "Process complete. Thank you for using Beckn-ONIX!"
-
-
