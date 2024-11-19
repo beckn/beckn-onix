@@ -1,18 +1,7 @@
 <!-- tocstop -->
-# Beckn-ONIX Stack: v0.1
+# Beckn-ONIX Software Specification: v0.1
 
-# Version History: 
-
-The version history table describes the major changes to the specifications between published versions.
-
-
-| Version | Authors       | Comment                                                                   |
-|---------|---------------|---------------------------------------------------------------------------|
-| 0.1     | Ravi Prakash   | First draft of core specifications                                       |
-
-
-
-# Table of Contents
+## Table of Contents
 
 - [Preface](#preface)
   - [Purpose of the document](#purpose-of-the-document)
@@ -105,7 +94,7 @@ The version history table describes the major changes to the specifications betw
 
 ## Purpose of the document
 
-The purpose of this document is to establish a standardized framework for Beckn-ONIX. By defining common interfaces and components, this document aims to ensure that all Beckn-ONIX distributions and SDKs are interoperable, enabling seamless integration and communication between systems. This standardization is crucial for enhancing consistency and reliability.
+The purpose of this document is to define the software standard for Beckn-ONIX. By defining common interfaces and components, this document aims to ensure that all Beckn-ONIX distributions and SDKs are interoperable, enabling seamless integration and communication between systems. This standardization is crucial for enhancing consistency and reliability.
 
 
 ## Prerequisites
@@ -119,9 +108,7 @@ The users of this document are the developers or organizations who want to build
 
 
 ## Disclaimers
-
-….
-
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in [BECKN-010-Keyword-Definitions-for-Technical-Specifications](https://github.com/beckn/protocol-specifications/blob/keyword-defs/docs/BECKN-010-Keyword-Definitions-for-Technical-Specifications.md)
 
 ## Definitions and Acronyms
 
@@ -227,48 +214,28 @@ Refer to the below resources to get an understanding of the Beckn protocol and B
 
 # Introduction
 
-
-## The world before Beckn
-
-Today, most online transactions between a consumer and a provider happen via a centralized platform acting as an intermediary. However, not everything on the internet works this way. Emails, WiFi, phone calls, and the World Wide Web,  all operate on standard protocols that allow for Peer to Peer communication between machines without the need for a centralized intermediary. 
-
-Beckn Protocol fundamentally reimagines how transactions are conducted on the internet today. 
-
-
-## Can we reimagine transactions on the internet?
-
 Beckn-ONIX envisions becoming the foundational standard for rapidly deploying and integrating Beckn protocol-enabled networks. By offering a robust, secure, and high-performance framework, Beckn-ONIX aims to empower the community to build adaptable, production-ready applications with ease. Much like Apache or Nginx serves as a backbone for HTTP-based systems, Beckn-ONIX aspires to be the go-to standard for creating reliable and scalable Beckn protocol adapters. This vision focuses on accelerating innovation by simplifying network deployment, enabling developers to focus on building the future of decentralized applications.
 
 
 ## Why do we need Beckn-ONIX?
+* Automation
+* Value Adjacency
+* Future-proofing
+
+> Note: to be expanded further
+
+## Key Digital Functionalities
+
+Any Beckn-ONIX distribution MUST offer the following functionalities:
+
+* Setting up open networks
+* Joining existing networks
+* Configuring open networks
 
 
-## Objectives and Goals
-
-* A Beckn-ONIX distribution/SDK must allow setting up a new network.
-* A Beckn-ONIX distribution/SDK must allow an NP to join an existing network.
-* A Beckn-ONIX distribution/SDK must allow merging multiple networks.
-* A Beckn-ONIX distribution/SDK must allow configuration of an existing network.
-
-The goal is to accelerate the pace of innovation and encourage focus on driving progress and achieving breakthrough solutions.
-
-
-## Key Features
-
-A Beckn-ONIX distribution must have at least the following key capabilities:
-
-
-* Set up and configure open networks within a matter of minutes
-* Join existing networks through elaborate SDKs
-* Scale effortlessly
-* It should be simple and intuitive
-
-
-# Requirements
+# Cross Cutting / Non-functional Requirements
 
 This section lists the core requirements of a Beckn-ONIX distribution (sometimes referred to as **software**). It does not assume any implementation decisions except as required by the Beckn protocol (e.g. Beckn protocol messages are sent over http. So the network participant needs to expose http endpoints in order to receive them). Except those mentioned, all other design aspects can be chosen by the implementers.
-
-The mandatory requirements use the word **must**. The recommended requirements use the word **should** and the optional requirements use the word **may**. 
 
 
 ## Functional Requirements
@@ -302,8 +269,6 @@ In the rest of the document, the word **Network Participant** refers to the Beck
 
 
 #### Identity
-
-
 
 1. Software must allow setting Subscriber Id and Subscriber URL of the network participant. This Subscriber Id and Subscriber URL must follow the format defined[ here.](https://github.com/beckn/protocol-specifications/blob/master/schema/Subscriber.yaml) This Subscriber Id and Subscriber URL must be used in messages to identify the network participant. Depending on the role and the message, different names (subscriber_id, bap_id, bpp_id ) are used to refer to these values. Network participant’s Subscriber Id and Subscriber URL must be registered with the Registry. While registering usually, the role (BAP, BPP, BG), the domain in which they transact and the location of the network participant is also set. The exact process(manual/automated) of registration may be defined by registry implementation.
 
