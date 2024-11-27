@@ -6,7 +6,6 @@ source $SCRIPT_DIR/generate_keys.sh
 source $SCRIPT_DIR/variables.sh
 source $SCRIPT_DIR/get_container_details.sh
 
-
 newClientFile=$(echo "$bapClientFile" | sed 's/yaml-sample/yml/')
 newNetworkFile=$(echo "$bapNetworkFile" | sed 's/yaml-sample/yml/')
 
@@ -26,6 +25,8 @@ else
     sed -i "s|BAP_NETWORK_PORT|$network_port|" $networkFile
     sed -i "s|BAP_CLIENT_PORT|$client_port|" $clientFile
 fi
+
+api_key=$5
 
 if [[ $1 ]]; then
     registry_url=$1
@@ -120,4 +121,4 @@ fi
 
 echo "Registering BAP protocol server on the registry"
 
-create_network_participant "$registry_url" "application/json" "$bap_subscriber_id" "$bap_subscriber_key_id" "$bap_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type"
+create_network_participant "$registry_url" "application/json" "$bap_subscriber_id" "$bap_subscriber_key_id" "$bap_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type" "$api_key"
