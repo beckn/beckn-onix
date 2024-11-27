@@ -126,7 +126,7 @@ install_layer2_config() {
 
 # Function to install BAP Protocol Server
 install_bap_protocol_server() {
-    #start_support_services
+    start_support_services
     if [[ $1 ]]; then
         registry_url=$1
         bap_subscriber_id=$2
@@ -162,7 +162,7 @@ install_bap_protocol_server() {
 
 # Function to install BPP Protocol Server without Sandbox
 install_bpp_protocol_server() {
-    #start_support_services
+    start_support_services
     echo "${GREEN}................Installing Protocol Server for BPP................${NC}"
 
     if [[ $1 ]]; then
@@ -272,7 +272,7 @@ install_bpp_protocol_server_with_sandbox() {
         bpp_subscriber_key_id=$3
         bpp_subscriber_url=$4
         webhook_url=$5
-        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url
+        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url $api_key
     else
         bash scripts/update_bpp_config.sh
     fi
@@ -344,6 +344,47 @@ validate_user() {
   fi
 }
 
+# Validate the user credentials against the Registry
+validate_user() {
+  # Prompt for username
+  read -p "Enter your registry username: " username
+
+  # Prompt for password with '*' masking
+  echo -n "Enter your registry password: "
+  stty -echo    # Disable terminal echo
+
+  password=""
+  while IFS= read -r -n1 char; do
+      if [[ "$char" == $'\0' ]]; then
+          break
+      fi
+      password+="$char"
+      echo -n "*"  # Display '*' for each character typed
+  done
+  stty echo    # Re-enable terminal echo
+  echo         # Move to a new line after input
+
+  # Replace '/subscribers' with '/login' for validation
+  local login_url="${registry_url%/subscribers}/login"
+
+  # Validate credentials using a POST request
+  local response
+  response=$(curl -s -w "%{http_code}" -X POST "$login_url" \
+    -H "Content-Type: application/json" \
+    -d "{\"User\": {\"Name\":\"$username\", \"Password\":\"$password\"}}")
+
+  # Check if the HTTP response is 200 (success)
+  status_code="${response: -3}"
+  if [ "$status_code" -eq 200 ]; then
+    response_body="${response%???}"
+    api_key=$(echo "$response_body" | jq -r '.api_key')
+    return 0
+  else
+    echo "Please check your credentials or register new user on $login_url"
+    return 1
+  fi
+}
+
 # Function to handle the setup process for each platform
 completeSetup() {
     platform=$1
@@ -351,7 +392,6 @@ completeSetup() {
     public_address="https://<your public IP address>"
 
     echo "Proceeding with the setup for $platform..."
-
 
     case $platform in
     "Registry")
@@ -459,7 +499,7 @@ completeSetup() {
         if [ $? -eq 1 ]; then
             exit
         fi
-        
+
         bpp_subscriber_key_id="$bpp_subscriber_id-key"
         public_address=$bpp_subscriber_url
 
