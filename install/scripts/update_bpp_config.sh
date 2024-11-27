@@ -27,6 +27,8 @@ else
     sed -i "s|BPP_CLIENT_PORT|$client_port|" $clientFile
 fi 
 
+api_key=$6
+echo "$api_key in BPP"
 if [[ $1 ]]; then
     registry_url=$1
     bpp_subscriber_id=$2
@@ -126,4 +128,4 @@ fi
 
 echo "Registering BPP protocol server on the registry"
 
-create_network_participant "$registry_url" "application/json" "$bpp_subscriber_id" "$bpp_subscriber_key_id" "$bpp_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type"
+create_network_participant "$registry_url" "application/json" "$bpp_subscriber_id" "$bpp_subscriber_key_id" "$bpp_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type" "$api_key"
