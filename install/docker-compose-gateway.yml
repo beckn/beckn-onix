@@ -12,6 +12,7 @@ services:
     volumes:
       - gateway_data_volume:/gateway/overrideProperties/config
       - gateway_database_volume:/gateway/database
+      - gateway_logs_volume:/gateway/tmp
 
 networks:
   beckn_network:
@@ -25,3 +26,5 @@ volumes:
   gateway_database_volume:
     name: gateway_database_volume
     external: true
+  gateway_logs_volume:
+    name: gateway_logs_volume
