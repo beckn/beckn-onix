@@ -14,6 +14,7 @@ create_network_participant() {
         valid_until="$9"
         type="${10}"
         api_key="${11}"
+        np_domain="${12}"
 
     json_data=$(cat <<EOF
         {
@@ -21,7 +22,7 @@ create_network_participant() {
             "pub_key_id": "$pub_key_id",
             "unique_key_id": "$pub_key_id",
             "subscriber_url": "$subscriber_url",
-            "domain": " ",
+            "domain": "$np_domain",
             "extended_attributes": {"domains": []},
             "encr_public_key": "$encr_public_key",
             "signing_public_key": "$signing_public_key",

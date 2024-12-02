@@ -102,26 +102,26 @@ install_registry() {
     sleep 10
     echo "Registry installation successful"
 
-    #Update Role Permission for registry. 
+    #Update Role Permission for registry.
     bash scripts/registry_role_permissions.sh
 }
 
 # Function to install Layer2 Config
 install_layer2_config() {
-        container_name=$1
-        FILENAME="$(basename "$layer2_url")"
-        wget -O "$(basename "$layer2_url")" "$layer2_url" > /dev/null 2>&1
+    container_name=$1
+    FILENAME="$(basename "$layer2_url")"
+    wget -O "$(basename "$layer2_url")" "$layer2_url" >/dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        docker cp "$FILENAME" $container_name:"$schemas_path/$FILENAME" >/dev/null 2>&1
         if [ $? -eq 0 ]; then
-            docker cp "$FILENAME" $container_name:"$schemas_path/$FILENAME" > /dev/null 2>&1
-            if [ $? -eq 0 ]; then
-                echo "${GREEN}Successfully copied $FILENAME to Docker container $container_name.${NC}"
-            fi            
-        else
-            echo "${BoldRed}The Layer 2 configuration file has not been downloaded.${NC}"
-            echo -e "${BoldGreen}Please download the Layer 2 configuration files by running the download_layer_2_config_bap.sh script located in the ../layer2 folder."
-            echo -e "For further information, refer to this URL: https://github.com/beckn/beckn-onix/blob/main/docs/user_guide.md#downloading-layer-2-configuration-for-a-domain.${NC}"
+            echo "${GREEN}Successfully copied $FILENAME to Docker container $container_name.${NC}"
         fi
-        rm -f $FILENAME > /dev/null 2>&1
+    else
+        echo "${BoldRed}The Layer 2 configuration file has not been downloaded.${NC}"
+        echo -e "${BoldGreen}Please download the Layer 2 configuration files by running the download_layer_2_config_bap.sh script located in the ../layer2 folder."
+        echo -e "For further information, refer to this URL: https://github.com/beckn/beckn-onix/blob/main/docs/user_guide.md#downloading-layer-2-configuration-for-a-domain.${NC}"
+    fi
+    rm -f $FILENAME >/dev/null 2>&1
 }
 
 # Function to install BAP Protocol Server
@@ -132,7 +132,7 @@ install_bap_protocol_server() {
         bap_subscriber_id=$2
         bap_subscriber_key_id=$3
         bap_subscriber_url=$4
-        bash scripts/update_bap_config.sh $registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url $api_key
+        bash scripts/update_bap_config.sh $registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url $api_key $np_domain
     else
         bash scripts/update_bap_config.sh
     fi
@@ -143,7 +143,7 @@ install_bap_protocol_server() {
     docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_client_config_volume:/target busybox cp /source/bap-client.yaml-sample /target
     docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_network_config_volume:/target busybox cp /source/bap-network.yml /target/default.yml
     docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_network_config_volume:/target busybox cp /source/bap-network.yaml-sample /target
-    docker rmi busybox 
+    docker rmi busybox
 
     start_container $bap_docker_compose_file "bap-client"
     start_container $bap_docker_compose_file "bap-network"
@@ -171,7 +171,7 @@ install_bpp_protocol_server() {
         bpp_subscriber_key_id=$3
         bpp_subscriber_url=$4
         webhook_url=$5
-        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url $api_key
+        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url $api_key $np_domain
     else
         bash scripts/update_bpp_config.sh
     fi
@@ -195,7 +195,7 @@ install_bpp_protocol_server() {
         echo -e "${BoldGreen}Installing layer configuration for $(basename "$layer2_url")"
         install_layer2_config bpp-client
         install_layer2_config bpp-network
-    fi    
+    fi
     echo "Protocol server BPP installation successful"
 }
 
@@ -272,7 +272,7 @@ install_bpp_protocol_server_with_sandbox() {
         bpp_subscriber_key_id=$3
         bpp_subscriber_url=$4
         webhook_url=$5
-        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url $api_key
+        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url $api_key $np_domain
     else
         bash scripts/update_bpp_config.sh
     fi
@@ -305,84 +305,103 @@ layer2_config() {
 
 # Validate the user credentials against the Registry
 validate_user() {
-  # Prompt for username
-  read -p "Enter your registry username: " username
+    # Prompt for username
+    read -p "Enter your registry username: " username
 
-  # Prompt for password with '*' masking
-  echo -n "Enter your registry password: "
-  stty -echo    # Disable terminal echo
+    # Prompt for password with '*' masking
+    echo -n "Enter your registry password: "
+    stty -echo # Disable terminal echo
 
-  password=""
-  while IFS= read -r -n1 char; do
-      if [[ "$char" == $'\0' ]]; then
-          break
-      fi
-      password+="$char"
-      echo -n "*"  # Display '*' for each character typed
-  done
-  stty echo    # Re-enable terminal echo
-  echo         # Move to a new line after input
+    password=""
+    while IFS= read -r -n1 char; do
+        if [[ "$char" == $'\0' ]]; then
+            break
+        fi
+        password+="$char"
+        echo -n "*" # Display '*' for each character typed
+    done
+    stty echo # Re-enable terminal echo
+    echo      # Move to a new line after input
 
-  # Replace '/subscribers' with '/login' for validation
-  local login_url="${registry_url%/subscribers}/login"
+    # Replace '/subscribers' with '/login' for validation
+    local login_url="${registry_url%/subscribers}/login"
 
-  # Validate credentials using a POST request
-  local response
-  response=$(curl -s -w "%{http_code}" -X POST "$login_url" \
-    -H "Content-Type: application/json" \
-    -d "{\"User\": {\"Name\":\"$username\", \"Password\":\"$password\"}}")
+    # Validate credentials using a POST request
+    local response
+    response=$(curl -s -w "%{http_code}" -X POST "$login_url" \
+        -H "Content-Type: application/json" \
+        -d "{\"User\": {\"Name\":\"$username\", \"Password\":\"$password\"}}")
 
-  # Check if the HTTP response is 200 (success)
-  status_code="${response: -3}"
-  if [ "$status_code" -eq 200 ]; then
-    response_body="${response%???}"
-    api_key=$(echo "$response_body" | jq -r '.api_key')
-    return 0
-  else
-    echo "Please check your credentials or register new user on $login_url"
-    return 1
-  fi
+    # Check if the HTTP response is 200 (success)
+    status_code="${response: -3}"
+    if [ "$status_code" -eq 200 ]; then
+        response_body="${response%???}"
+        api_key=$(echo "$response_body" | jq -r '.api_key')
+        return 0
+    else
+        echo "Please check your credentials or register new user on $login_url"
+        return 1
+    fi
 }
 
 # Validate the user credentials against the Registry
 validate_user() {
-  # Prompt for username
-  read -p "Enter your registry username: " username
+    # Prompt for username
+    read -p "Enter your registry username: " username
 
-  # Prompt for password with '*' masking
-  echo -n "Enter your registry password: "
-  stty -echo    # Disable terminal echo
+    # Prompt for password with '*' masking
+    echo -n "Enter your registry password: "
+    stty -echo # Disable terminal echo
 
-  password=""
-  while IFS= read -r -n1 char; do
-      if [[ "$char" == $'\0' ]]; then
-          break
-      fi
-      password+="$char"
-      echo -n "*"  # Display '*' for each character typed
-  done
-  stty echo    # Re-enable terminal echo
-  echo         # Move to a new line after input
+    password=""
+    while IFS= read -r -n1 char; do
+        if [[ "$char" == $'\0' ]]; then
+            break
+        fi
+        password+="$char"
+        echo -n "*" # Display '*' for each character typed
+    done
+    stty echo # Re-enable terminal echo
+    echo      # Move to a new line after input
 
-  # Replace '/subscribers' with '/login' for validation
-  local login_url="${registry_url%/subscribers}/login"
+    # Replace '/subscribers' with '/login' for validation
+    local login_url="${registry_url%/subscribers}/login"
 
-  # Validate credentials using a POST request
-  local response
-  response=$(curl -s -w "%{http_code}" -X POST "$login_url" \
-    -H "Content-Type: application/json" \
-    -d "{\"User\": {\"Name\":\"$username\", \"Password\":\"$password\"}}")
+    # Validate credentials using a POST request
+    local response
+    response=$(curl -s -w "%{http_code}" -X POST "$login_url" \
+        -H "Content-Type: application/json" \
+        -d "{\"User\": {\"Name\":\"$username\", \"Password\":\"$password\"}}")
 
-  # Check if the HTTP response is 200 (success)
-  status_code="${response: -3}"
-  if [ "$status_code" -eq 200 ]; then
-    response_body="${response%???}"
-    api_key=$(echo "$response_body" | jq -r '.api_key')
-    return 0
-  else
-    echo "Please check your credentials or register new user on $login_url"
-    return 1
-  fi
+    # Check if the HTTP response is 200 (success)
+    status_code="${response: -3}"
+    if [ "$status_code" -eq 200 ]; then
+        response_body="${response%???}"
+        api_key=$(echo "$response_body" | jq -r '.api_key')
+        return 0
+    else
+        echo "Please check your credentials or register new user on $login_url"
+        return 1
+    fi
+}
+
+get_np_domain() {
+    read -p "Do you want to setup this $1 for specific domain? {Y/N} " dchoice
+
+    if [[ "$dchoice" == "Y" || "$dchoice" == "y" ]]; then
+        local login_url="${registry_url%/subscribers}"
+        read -p "Enter the domain name for $1 : " np_domain
+        domain_present=$(curl -s -H "ApiKey:$api_key" --header 'Content-Type: application/json' $login_url/network_domains/index | jq -r '.[].name' | tr '\n' ' ')
+        if echo "$domain_present" | grep -qw "$np_domain"; then
+            return 0
+        else
+            echo "${BoldRed}The domain '$np_domain' is NOT present in the network domains.${NC}"
+            echo "${BoldGreen}Available network domains: $domain_present ${NC}"
+        fi
+    else
+        np_domain=" " #If user don't want to add specific domain then save empty string
+        return 0
+    fi
 }
 
 # Function to handle the setup process for each platform
@@ -458,6 +477,12 @@ completeSetup() {
         if [ $? -eq 1 ]; then
             exit
         fi
+
+        get_np_domain $bap_subscriber_id
+        if [ $? -eq 1 ]; then
+            exit
+        fi
+
         bap_subscriber_key_id="$bap_subscriber_id-key"
         public_address=$bap_subscriber_url
 
@@ -496,6 +521,11 @@ completeSetup() {
             fi
         done
         validate_user
+        if [ $? -eq 1 ]; then
+            exit
+        fi
+
+        get_np_domain $bpp_subscriber_id
         if [ $? -eq 1 ]; then
             exit
         fi
