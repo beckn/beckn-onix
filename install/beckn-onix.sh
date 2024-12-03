@@ -620,6 +620,9 @@ if [[ $choice -eq 3 ]]; then
 elif [[ $choice -eq 4 ]]; then
     echo "Determining the platforms available based on the initial choice"
     mergingNetworks
+elif [[ $choice -eq 5 ]]; then
+    echo "${BoldGreen}Currently this feature is not available in this distribution of Beckn ONIX${NC}"
+    restart_script
 else
     # Determine the platforms available based on the initial choice
     platforms=("Gateway" "BAP" "BPP")
