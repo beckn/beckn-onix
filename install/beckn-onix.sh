@@ -344,47 +344,6 @@ validate_user() {
     fi
 }
 
-# Validate the user credentials against the Registry
-validate_user() {
-    # Prompt for username
-    read -p "Enter your registry username: " username
-
-    # Prompt for password with '*' masking
-    echo -n "Enter your registry password: "
-    stty -echo # Disable terminal echo
-
-    password=""
-    while IFS= read -r -n1 char; do
-        if [[ "$char" == $'\0' ]]; then
-            break
-        fi
-        password+="$char"
-        echo -n "*" # Display '*' for each character typed
-    done
-    stty echo # Re-enable terminal echo
-    echo      # Move to a new line after input
-
-    # Replace '/subscribers' with '/login' for validation
-    local login_url="${registry_url%/subscribers}/login"
-
-    # Validate credentials using a POST request
-    local response
-    response=$(curl -s -w "%{http_code}" -X POST "$login_url" \
-        -H "Content-Type: application/json" \
-        -d "{\"User\": {\"Name\":\"$username\", \"Password\":\"$password\"}}")
-
-    # Check if the HTTP response is 200 (success)
-    status_code="${response: -3}"
-    if [ "$status_code" -eq 200 ]; then
-        response_body="${response%???}"
-        api_key=$(echo "$response_body" | jq -r '.api_key')
-        return 0
-    else
-        echo "Please check your credentials or register new user on $login_url"
-        return 1
-    fi
-}
-
 get_np_domain() {
     read -p "Do you want to setup this $1 for specific domain? {Y/N} " dchoice
 
@@ -590,6 +549,67 @@ check_docker_permissions() {
     fi
 }
 
+# Function to update/upgrade a specific service
+update_service() {
+    service_name=$1
+    docker_compose_file=$2
+    image_name=$3
+
+    echo "${GREEN}................Updating $service_name................${NC}"
+
+    export COMPOSE_IGNORE_ORPHANS=1
+    # Pull the latest image
+    docker pull "$image_name"
+
+    # Stop and remove the existing container
+    docker compose -f "$docker_compose_file" stop "$service_name"
+    docker compose -f "$docker_compose_file" rm -f "$service_name"
+
+    # Start the service with the new image
+    docker compose -f "$docker_compose_file" up -d "$service_name"
+
+    echo "$service_name update successful"
+}
+
+# Function to handle the update/upgrade process
+update_network() {
+    echo -e "\nWhich component would you like to update?\n1. Registry\n2. Gateway\n3. BAP Protocol Server\n4. BPP Protocol Server\n5. All components"
+    read -p "Enter your choice: " update_choice
+
+    validate_input "$update_choice" 5
+    if [[ $? -ne 0 ]]; then
+        restart_script
+    fi
+
+    case $update_choice in
+    1)
+        update_service "registry" "$registry_docker_compose_file" "fidedocker/registry"
+        ;;
+    2)
+        update_service "gateway" "$gateway_docker_compose_file" "fidedocker/gateway"
+        ;;
+    3)
+        update_service "bap-client" "$bap_docker_compose_file" "fidedocker/protocol-server"
+        update_service "bap-network" "$bap_docker_compose_file" "fidedocker/protocol-server"
+        ;;
+    4)
+        update_service "bpp-client" "$bpp_docker_compose_file" "fidedocker/protocol-server"
+        update_service "bpp-network" "$bpp_docker_compose_file" "fidedocker/protocol-server"
+        ;;
+    5)
+        update_service "registry" "$registry_docker_compose_file" "fidedocker/registry"
+        update_service "gateway" "$gateway_docker_compose_file" "fidedocker/gateway"
+        update_service "bap-client" "$bap_docker_compose_file" "fidedocker/protocol-server"
+        update_service "bap-network" "$bap_docker_compose_file" "fidedocker/protocol-server"
+        update_service "bpp-client" "$bpp_docker_compose_file" "fidedocker/protocol-server"
+        update_service "bpp-network" "$bpp_docker_compose_file" "fidedocker/protocol-server"
+        ;;
+    *)
+        echo "Unknown choice"
+        ;;
+    esac
+}
+
 # MAIN SCRIPT STARTS HERE
 
 echo "Welcome to Beckn-ONIX!"
@@ -603,10 +623,10 @@ echo "Checking prerequisites of Beckn-ONIX deployment"
 check_docker_permissions
 
 echo "Beckn-ONIX is a platform that helps you quickly launch and configure beckn-enabled networks."
-echo -e "\nWhat would you like to do?\n1. Join an existing network\n2. Create new production network\n3. Set up a network on your local machine\n4. Merge multiple networks\n5. Configure Existing Network\n(Press Ctrl+C to exit)"
+echo -e "\nWhat would you like to do?\n1. Join an existing network\n2. Create new production network\n3. Set up a network on your local machine\n4. Merge multiple networks\n5. Configure Existing Network\n6. Update/Upgrade Application\n(Press Ctrl+C to exit)"
 read -p "Enter your choice: " choice
 
-validate_input "$choice" 5
+validate_input "$choice" 6
 if [[ $? -ne 0 ]]; then
     restart_script # Restart the script if input is invalid
 fi
@@ -623,6 +643,8 @@ elif [[ $choice -eq 4 ]]; then
 elif [[ $choice -eq 5 ]]; then
     echo "${BoldGreen}Currently this feature is not available in this distribution of Beckn ONIX${NC}"
     restart_script
+elif [[ $choice -eq 6 ]]; then
+    update_network
 else
     # Determine the platforms available based on the initial choice
     platforms=("Gateway" "BAP" "BPP")
