@@ -18,6 +18,8 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 USERNAME="root"
 PASSWORD="root"
 
+#NP Domain
+np_domain=""
 api_key=""
 # Registry Role Permission file path
 REGISTRY_FILE_PATH="../registry_data/RolePermission.xlsx"
