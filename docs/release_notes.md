@@ -15,7 +15,7 @@ Experience the convenience and efficiency of Beckn-ONIX as you embark on your jo
 | [v0.2.0](#beckn-onix-version-020-2024-03-01) | 2024-03-01   |
 | [v0.1.0](#beckn-onix-version-010-2024-02-16) | 2024-02-16   |
 
-## Beckn-ONIX Version 0.5 (2024-12-11)
+## Beckn-ONIX Version 0.5.0 (2024-12-11)
 
 - This release introduces comprehensive enhancements, new features for deployment and authentication, and critical bug fixes to improve installation and configuration processes.
 
