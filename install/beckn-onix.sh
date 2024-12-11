@@ -102,26 +102,26 @@ install_registry() {
     sleep 10
     echo "Registry installation successful"
 
-    #Update Role Permission for registry. 
+    #Update Role Permission for registry.
     bash scripts/registry_role_permissions.sh
 }
 
 # Function to install Layer2 Config
 install_layer2_config() {
-        container_name=$1
-        FILENAME="$(basename "$layer2_url")"
-        wget -O "$(basename "$layer2_url")" "$layer2_url" > /dev/null 2>&1
+    container_name=$1
+    FILENAME="$(basename "$layer2_url")"
+    wget -O "$(basename "$layer2_url")" "$layer2_url" >/dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        docker cp "$FILENAME" $container_name:"$schemas_path/$FILENAME" >/dev/null 2>&1
         if [ $? -eq 0 ]; then
-            docker cp "$FILENAME" $container_name:"$schemas_path/$FILENAME" > /dev/null 2>&1
-            if [ $? -eq 0 ]; then
-                echo "${GREEN}Successfully copied $FILENAME to Docker container $container_name.${NC}"
-            fi            
-        else
-            echo "${BoldRed}The Layer 2 configuration file has not been downloaded.${NC}"
-            echo -e "${BoldGreen}Please download the Layer 2 configuration files by running the download_layer_2_config_bap.sh script located in the ../layer2 folder."
-            echo -e "For further information, refer to this URL: https://github.com/beckn/beckn-onix/blob/main/docs/user_guide.md#downloading-layer-2-configuration-for-a-domain.${NC}"
+            echo "${GREEN}Successfully copied $FILENAME to Docker container $container_name.${NC}"
         fi
-        rm -f $FILENAME > /dev/null 2>&1
+    else
+        echo "${BoldRed}The Layer 2 configuration file has not been downloaded.${NC}"
+        echo -e "${BoldGreen}Please download the Layer 2 configuration files by running the download_layer_2_config_bap.sh script located in the ../layer2 folder."
+        echo -e "For further information, refer to this URL: https://github.com/beckn/beckn-onix/blob/main/docs/user_guide.md#downloading-layer-2-configuration-for-a-domain.${NC}"
+    fi
+    rm -f $FILENAME >/dev/null 2>&1
 }
 
 # Function to install BAP Protocol Server
@@ -132,7 +132,7 @@ install_bap_protocol_server() {
         bap_subscriber_id=$2
         bap_subscriber_key_id=$3
         bap_subscriber_url=$4
-        bash scripts/update_bap_config.sh $registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url
+        bash scripts/update_bap_config.sh $registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url $api_key $np_domain
     else
         bash scripts/update_bap_config.sh
     fi
@@ -143,7 +143,7 @@ install_bap_protocol_server() {
     docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_client_config_volume:/target busybox cp /source/bap-client.yaml-sample /target
     docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_network_config_volume:/target busybox cp /source/bap-network.yml /target/default.yml
     docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_network_config_volume:/target busybox cp /source/bap-network.yaml-sample /target
-    docker rmi busybox 
+    docker rmi busybox
 
     start_container $bap_docker_compose_file "bap-client"
     start_container $bap_docker_compose_file "bap-network"
@@ -171,7 +171,7 @@ install_bpp_protocol_server() {
         bpp_subscriber_key_id=$3
         bpp_subscriber_url=$4
         webhook_url=$5
-        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url
+        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url $api_key $np_domain
     else
         bash scripts/update_bpp_config.sh
     fi
@@ -195,7 +195,7 @@ install_bpp_protocol_server() {
         echo -e "${BoldGreen}Installing layer configuration for $(basename "$layer2_url")"
         install_layer2_config bpp-client
         install_layer2_config bpp-network
-    fi    
+    fi
     echo "Protocol server BPP installation successful"
 }
 
@@ -272,7 +272,7 @@ install_bpp_protocol_server_with_sandbox() {
         bpp_subscriber_key_id=$3
         bpp_subscriber_url=$4
         webhook_url=$5
-        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url
+        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url $api_key $np_domain
     else
         bash scripts/update_bpp_config.sh
     fi
@@ -301,6 +301,66 @@ layer2_config() {
             echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
         fi
     done
+}
+
+# Validate the user credentials against the Registry
+validate_user() {
+    # Prompt for username
+    read -p "Enter your registry username: " username
+
+    # Prompt for password with '*' masking
+    echo -n "Enter your registry password: "
+    stty -echo # Disable terminal echo
+
+    password=""
+    while IFS= read -r -n1 char; do
+        if [[ "$char" == $'\0' ]]; then
+            break
+        fi
+        password+="$char"
+        echo -n "*" # Display '*' for each character typed
+    done
+    stty echo # Re-enable terminal echo
+    echo      # Move to a new line after input
+
+    # Replace '/subscribers' with '/login' for validation
+    local login_url="${registry_url%/subscribers}/login"
+
+    # Validate credentials using a POST request
+    local response
+    response=$(curl -s -w "%{http_code}" -X POST "$login_url" \
+        -H "Content-Type: application/json" \
+        -d "{\"User\": {\"Name\":\"$username\", \"Password\":\"$password\"}}")
+
+    # Check if the HTTP response is 200 (success)
+    status_code="${response: -3}"
+    if [ "$status_code" -eq 200 ]; then
+        response_body="${response%???}"
+        api_key=$(echo "$response_body" | jq -r '.api_key')
+        return 0
+    else
+        echo "Please check your credentials or register new user on $login_url"
+        return 1
+    fi
+}
+
+get_np_domain() {
+    read -p "Do you want to setup this $1 for specific domain? {Y/N} " dchoice
+
+    if [[ "$dchoice" == "Y" || "$dchoice" == "y" ]]; then
+        local login_url="${registry_url%/subscribers}"
+        read -p "Enter the domain name for $1 : " np_domain
+        domain_present=$(curl -s -H "ApiKey:$api_key" --header 'Content-Type: application/json' $login_url/network_domains/index | jq -r '.[].name' | tr '\n' ' ')
+        if echo "$domain_present" | grep -qw "$np_domain"; then
+            return 0
+        else
+            echo "${BoldRed}The domain '$np_domain' is NOT present in the network domains.${NC}"
+            echo "${BoldGreen}Available network domains: $domain_present ${NC}"
+        fi
+    else
+        np_domain=" " #If user don't want to add specific domain then save empty string
+        return 0
+    fi
 }
 
 # Function to handle the setup process for each platform
@@ -372,7 +432,16 @@ completeSetup() {
                 echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
             fi
         done
-    
+        validate_user
+        if [ $? -eq 1 ]; then
+            exit
+        fi
+
+        get_np_domain $bap_subscriber_id
+        if [ $? -eq 1 ]; then
+            exit
+        fi
+
         bap_subscriber_key_id="$bap_subscriber_id-key"
         public_address=$bap_subscriber_url
 
@@ -410,6 +479,16 @@ completeSetup() {
                 echo "${RED}Please mention /subscribers in your registry URL${NC}"
             fi
         done
+        validate_user
+        if [ $? -eq 1 ]; then
+            exit
+        fi
+
+        get_np_domain $bpp_subscriber_id
+        if [ $? -eq 1 ]; then
+            exit
+        fi
+
         bpp_subscriber_key_id="$bpp_subscriber_id-key"
         public_address=$bpp_subscriber_url
 
@@ -470,6 +549,67 @@ check_docker_permissions() {
     fi
 }
 
+# Function to update/upgrade a specific service
+update_service() {
+    service_name=$1
+    docker_compose_file=$2
+    image_name=$3
+
+    echo "${GREEN}................Updating $service_name................${NC}"
+
+    export COMPOSE_IGNORE_ORPHANS=1
+    # Pull the latest image
+    docker pull "$image_name"
+
+    # Stop and remove the existing container
+    docker compose -f "$docker_compose_file" stop "$service_name"
+    docker compose -f "$docker_compose_file" rm -f "$service_name"
+
+    # Start the service with the new image
+    docker compose -f "$docker_compose_file" up -d "$service_name"
+
+    echo "$service_name update successful"
+}
+
+# Function to handle the update/upgrade process
+update_network() {
+    echo -e "\nWhich component would you like to update?\n1. Registry\n2. Gateway\n3. BAP Protocol Server\n4. BPP Protocol Server\n5. All components"
+    read -p "Enter your choice: " update_choice
+
+    validate_input "$update_choice" 5
+    if [[ $? -ne 0 ]]; then
+        restart_script
+    fi
+
+    case $update_choice in
+    1)
+        update_service "registry" "$registry_docker_compose_file" "fidedocker/registry"
+        ;;
+    2)
+        update_service "gateway" "$gateway_docker_compose_file" "fidedocker/gateway"
+        ;;
+    3)
+        update_service "bap-client" "$bap_docker_compose_file" "fidedocker/protocol-server"
+        update_service "bap-network" "$bap_docker_compose_file" "fidedocker/protocol-server"
+        ;;
+    4)
+        update_service "bpp-client" "$bpp_docker_compose_file" "fidedocker/protocol-server"
+        update_service "bpp-network" "$bpp_docker_compose_file" "fidedocker/protocol-server"
+        ;;
+    5)
+        update_service "registry" "$registry_docker_compose_file" "fidedocker/registry"
+        update_service "gateway" "$gateway_docker_compose_file" "fidedocker/gateway"
+        update_service "bap-client" "$bap_docker_compose_file" "fidedocker/protocol-server"
+        update_service "bap-network" "$bap_docker_compose_file" "fidedocker/protocol-server"
+        update_service "bpp-client" "$bpp_docker_compose_file" "fidedocker/protocol-server"
+        update_service "bpp-network" "$bpp_docker_compose_file" "fidedocker/protocol-server"
+        ;;
+    *)
+        echo "Unknown choice"
+        ;;
+    esac
+}
+
 # MAIN SCRIPT STARTS HERE
 
 echo "Welcome to Beckn-ONIX!"
@@ -483,10 +623,10 @@ echo "Checking prerequisites of Beckn-ONIX deployment"
 check_docker_permissions
 
 echo "Beckn-ONIX is a platform that helps you quickly launch and configure beckn-enabled networks."
-echo -e "\nWhat would you like to do?\n1. Join an existing network\n2. Create new production network\n3. Set up a network on your local machine\n4. Merge multiple networks\n5. Configure Existing Network\n(Press Ctrl+C to exit)"
+echo -e "\nWhat would you like to do?\n1. Join an existing network\n2. Create new production network\n3. Set up a network on your local machine\n4. Merge multiple networks\n5. Configure Existing Network\n6. Update/Upgrade Application\n(Press Ctrl+C to exit)"
 read -p "Enter your choice: " choice
 
-validate_input "$choice" 5
+validate_input "$choice" 6
 if [[ $? -ne 0 ]]; then
     restart_script # Restart the script if input is invalid
 fi
@@ -500,6 +640,11 @@ if [[ $choice -eq 3 ]]; then
 elif [[ $choice -eq 4 ]]; then
     echo "Determining the platforms available based on the initial choice"
     mergingNetworks
+elif [[ $choice -eq 5 ]]; then
+    echo "${BoldGreen}Currently this feature is not available in this distribution of Beckn ONIX${NC}"
+    restart_script
+elif [[ $choice -eq 6 ]]; then
+    update_network
 else
     # Determine the platforms available based on the initial choice
     platforms=("Gateway" "BAP" "BPP")

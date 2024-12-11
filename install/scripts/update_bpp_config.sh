@@ -33,6 +33,8 @@ if [[ $1 ]]; then
     bpp_subscriber_key_id=$3
     bpp_subscriber_url=$4
     webhook_url=$5
+    api_key=$6
+    np_domain=$7    
 else
     if [[ $(uname -s) == 'Darwin' ]]; then
         ip=localhost
@@ -126,4 +128,4 @@ fi
 
 echo "Registering BPP protocol server on the registry"
 
-create_network_participant "$registry_url" "application/json" "$bpp_subscriber_id" "$bpp_subscriber_key_id" "$bpp_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type"
+create_network_participant "$registry_url" "application/json" "$bpp_subscriber_id" "$bpp_subscriber_key_id" "$bpp_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type" "$api_key" "$np_domain"
