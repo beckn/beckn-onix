@@ -8,11 +8,47 @@ Experience the convenience and efficiency of Beckn-ONIX as you embark on your jo
 
 | Version                                      | Release Date |
 | -------------------------------------------- | ------------ |
+| [v0.5.0](#beckn-onix-version-050-2024-12-11) | 2024-12-11   |
 | [v0.4.1](#beckn-onix-version-041-2024-06-22) | 2024-06-22   |
 | [v0.4.0](#beckn-onix-version-040-2024-05-06) | 2024-05-06   |
 | [v0.3.0](#beckn-onix-version-030-2024-03-20) | 2024-03-20   |
 | [v0.2.0](#beckn-onix-version-020-2024-03-01) | 2024-03-01   |
 | [v0.1.0](#beckn-onix-version-010-2024-02-16) | 2024-02-16   |
+
+## Beckn-ONIX Version 0.5.0 (2024-12-11)
+
+- This release introduces comprehensive enhancements, new features for deployment and authentication, and critical bug fixes to improve installation and configuration processes.
+
+### New Features
+
+- **Install All Components**: Support for installing all components in one streamlined process.  
+- **Application Update Feature**: Simplified updates with a new application update capability.  
+- **Username/Password Authentication**: Added secure username/password authentication for PS deployments.  
+- **Domain Configuration**: Ability to input domain details during PS deployment setup.  
+
+### Enhancements
+
+- **Role Permission Updates**: Enhanced role permission handling during registry installation.  
+- **Layer 2 Configuration**: Added a Layer 2 configuration prompt for BAP/BPP deployments to support advanced customization. 
+
+### Bug fixes
+
+- **Registry URL Suffix Validation**: Fixed issues with validating the registry URL suffix.  
+- **Docker Command Permission Validation**: Resolved problems with permission validation for Docker commands.  
+- **Log Security Improvements**: Removed sensitive public and private keys from PS installation logs.  
+- **Menu Input Validation**: Improved input validation for menu options to prevent configuration errors. 
+
+### Limitations
+
+- None
+
+### Upcoming Version
+
+- None
+
+### Release date
+
+2024-12-11
 
 ## Beckn-ONIX Version 0.4.1 (2024-06-22)
 
