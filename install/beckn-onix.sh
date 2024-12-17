@@ -103,7 +103,7 @@ install_registry() {
     echo "Registry installation successful"
 
     #Update Role Permission for registry.
-    bash scripts/registry_role_permissions.sh
+    bash scripts/registry_role_permissions.sh 
 }
 
 # Function to install Layer2 Config
@@ -330,7 +330,7 @@ validate_user() {
     local response
     response=$(curl -s -w "%{http_code}" -X POST "$login_url" \
         -H "Content-Type: application/json" \
-        -d "{\"User\": {\"Name\":\"$username\", \"Password\":\"$password\"}}")
+        -d '{ "Name" : "'"$username"'", "Password" : "'"$password"'" }')
 
     # Check if the HTTP response is 200 (success)
     status_code="${response: -3}"
