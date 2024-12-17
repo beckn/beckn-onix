@@ -26,7 +26,6 @@ get_api_key() {
     fi
     # Extract API key using jq
     API_KEY=$(echo "$response" | jq -r '.api_key')
-    echo $API_KEY
     # Validate API key
     if [[ -z "$API_KEY" || "$API_KEY" == "null" ]]; then
         echo -e "${BoldRed}Error: Failed to retrieve API key${NC}"
@@ -63,8 +62,6 @@ upload_role_permission() {
 
 # Main Execution
 REGISTRY_FILE_PATH=$SCRIPT_DIR/RolePermission.xlsx
-echo "File to upload: $REGISTRY_FILE_PATH"
-
 
 if [[ $1 ]]; then
     registry_url=$1
