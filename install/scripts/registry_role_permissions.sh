@@ -1,63 +1,87 @@
 #!/bin/bash
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-source scripts/variables.sh
 
-# Function to log in and get the API key
+# Set script directory and source variables
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/variables.sh"
+
+API_KEY=""
+
+# Function to log in and retrieve the API key
 get_api_key() {
-    local login_url="$registry_url"
+    local login_url="${registry_url%/subscribers}/login"
     local username="$1"
     local password="$2"
 
-    # Call the login API and extract the api_key from the response
-    local response=$(curl -s -H 'ACCEPT: application/json' \
-                           -H 'CONTENT-TYPE: application/json' \
-                           -d '{"User" : { "Name" : "'"$username"'", "Password" : "'"$password"'" } }' \
-                           "$login_url")
+    # Call the login API
+    local response
+    response=$(curl -s -H "Accept: application/json" \
+                     -H "Content-Type: application/json" \
+                     -d "{ \"Name\": \"${username}\", \"Password\": \"${password}\" }" \
+                     "$login_url")
 
-    # Check if the curl command was successful
+    # Check if curl failed
     if [ $? -ne 0 ]; then
-        echo "${BoldRed}Error logging in to get API key${NC}"
+        echo -e "${BoldRed}Error: Failed to connect to $login_url${NC}"
+        return 1
+    fi
+    # Extract API key using jq
+    API_KEY=$(echo "$response" | jq -r '.api_key')
+    echo $API_KEY
+    # Validate API key
+    if [[ -z "$API_KEY" || "$API_KEY" == "null" ]]; then
+        echo -e "${BoldRed}Error: Failed to retrieve API key${NC}"
         return 1
     fi
 
-    # Extract the api_key from the response
-    local api_key=$(echo "$response" | jq -r '.api_key')
-
-    # Check if api_key is not null
-    if [ "$api_key" == "null" ] || [ -z "$api_key" ]; then
-        echo "${BoldRed}Failed to retrieve API key${NC}"
-        return 1
-    fi
+    echo -e "${BoldGreen}API Key retrieved successfully${NC}"
+    return 0
 }
 
 # Function to upload the RolePermission.xlsx file
 upload_role_permission() {
     local api_key="$1"
-    local upload_url="$registry_url/role_permissions/importxls"
-
-    # Use curl to upload the file
-    curl -s -H "ApiKey:$api_key" \
-         -F "datafile=@$REGISTRY_FILE_PATH" \
-         "$upload_url"
-
-    # Check if the curl command was successful
-    if [ $? -ne 0 ]; then
-        echo "${BoldRed}Error uploading RolePermission.xlsx${NC}"
+    local login_url="${registry_url%/subscribers}/role_permissions/importxls"
+    # Validate if file exists
+    if [[ ! -f "$REGISTRY_FILE_PATH" ]]; then
+        echo -e "${BoldRed}Error: File $REGISTRY_FILE_PATH not found${NC}"
         return 1
     fi
+    # Upload the file 
+    local response
+    response=$(curl -s -w "%{http_code}" -o /dev/null -H "ApiKey:$api_key" \
+                        -F "datafile=@${REGISTRY_FILE_PATH}" \
+                        "$login_url")
+
+    # # Check if curl failed
+    if [ "$response" -ne 302 ]; then
+        echo -e "${BoldRed}Error: Failed to upload RolePermission.xlsx. HTTP Status: $response${NC}"
+        return 1
+    fi
+    echo -e "${BoldGreen}RolePermission.xlsx uploaded successfully${NC}"
+    return 0
 }
 
+# Main Execution
+REGISTRY_FILE_PATH=$SCRIPT_DIR/RolePermission.xlsx
+echo "File to upload: $REGISTRY_FILE_PATH"
 
-echo $REGISTRY_FILE_PATH
 
-# Get the API key
-API_KEY=$(get_api_key "$USERNAME" "$PASSWORD")
-if [ $? -ne 0 ]; then
-    echo "${BoldRed}Role permission update failed. Please upload Role Permission manually.${NC}"
+if [[ $1 ]]; then
+    registry_url=$1
 else
-    # Upload the file using the retrieved API key
-    upload_role_permission "$API_KEY"
-    if [ $? -ne 0 ]; then
-        echo "${GREEN}Role permission updated in registry${NC}"
-    fi
+    registry_url="http://localhost:3030"
+fi
+
+# Step 1: Get the API key
+if ! get_api_key "$USERNAME" "$PASSWORD"; then
+    echo -e "${BoldRed}Error: Role permission update failed. Please upload manually.${NC}"
+    exit 1
+fi
+
+# Step 2: Upload the file
+if upload_role_permission "$API_KEY"; then
+    echo -e "${BoldGreen}Role permission updated in registry successfully.${NC}"
+else
+    echo -e "${BoldRed}Error: Role permission update failed.${NC}"
+    exit 1
 fi
