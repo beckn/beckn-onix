@@ -1,0 +1,1299 @@
+{
+    "info": {
+        "_postman_id": "eb1fe571-a2f4-4fc0-8272-2aff0173f502",
+        "name": "MOBILITY Sandbox",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+        "_exporter_id": "26726166"
+    },
+    "item": [
+        {
+            "name": "Ride hailing",
+            "item": [
+                {
+                    "name": "Search",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "let responseData = pm.response.json();",
+                                    "",
+                                    "if (responseData?.responses?.length) {",
+                                    "const res = responseData.responses.find(r => r.context.bpp_id == \"beckn-sandbox-bpp.becknprotocol.io\")",
+                                    "",
+                                    "    pm.collectionVariables.set(\"BPP_ID\", res.context.bpp_id);",
+                                    "    pm.collectionVariables.set(\"BPP_URI\", res.context.bpp_uri);",
+                                    "    pm.collectionVariables.set(\"MESSAGE_ID\", res.context.message_id);",
+                                    "}"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Signature keyId=\"bpp.dbs.digiit.io|164|ed25519\",algorithm=\"ed25519\",created=\"1655897034\",expires=\"1655900634\",headers=\"(created) (expires) digest\",signature=\"ddTKLg7eq3EXZGqPJhrDlwoTku3sTt/c7K4iRnAna+dC9x+hmBM6z+YZRnCu3WRj3dfZDOoi57U4hOoPXP/SCA==\"",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"country\": \"{{COUNTRY}}\",\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"city\": \"{{CITY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"search\",\n        \"bap_uri\": \"{{BAP_URI}}\"\n    },\n    \"message\": {\n        \"intent\": {\n            \"fulfillment\": {\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"12.903561,77.5939631\"\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.903561,77.5939631\"\n                    }\n                }\n            }\n        }\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/search",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["search"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Search",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "Signature keyId=\"bpp.dbs.digiit.io|164|ed25519\",algorithm=\"ed25519\",created=\"1655897034\",expires=\"1655900634\",headers=\"(created) (expires) digest\",signature=\"ddTKLg7eq3EXZGqPJhrDlwoTku3sTt/c7K4iRnAna+dC9x+hmBM6z+YZRnCu3WRj3dfZDOoi57U4hOoPXP/SCA==\"",
+                                        "type": "text"
+                                    }
+                                ],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"country\": \"{{COUNTRY}}\",\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"city\": \"{{CITY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"search\",\n        \"bap_uri\": \"{{BAP_URI}}\"\n    },\n    \"message\": {\n        \"intent\": {\n            \"fulfillment\": {\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"12.903561,77.5939631\"\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.903561,77.5939631\"\n                    }\n                }\n            }\n        }\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/search",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["search"]
+                                }
+                            },
+                            "_postman_previewlanguage": "json",
+                            "header": [
+                                {
+                                    "key": "Content-Type",
+                                    "value": "application/json",
+                                    "name": "Content-Type",
+                                    "description": "",
+                                    "type": "text"
+                                }
+                            ],
+                            "cookie": [],
+                            "body": "{\n    \"context\": {\n        \"country\": \"IND\",\n        \"bpp_uri\": \"https://api.example-bpp.in/path/to/url\",\n        \"domain\": \"nic2004:60221\",\n        \"timestamp\": \"2023-03-23T04:43:02Z\",\n        \"bap_id\": \"example-bap.in\",\n        \"transaction_id\": \"870782be-6757-43f1-945c-8eeaf9536259\",\n        \"bpp_id\": \"example-bpp.in\",\n        \"message_id\": \"21e54d3c-9c3b-47c1-aa3b-b0e7b20818ee\",\n        \"city\": \"std:080\",\n        \"core_version\": \"0.9.4\",\n        \"action\": \"on_search\",\n        \"bap_uri\": \"https://api.example-bpp.in/path/to/url\"\n    },\n    \"message\": {\n        \"catalog\": {\n            \"bpp/descriptor\": {\n                \"name\": \"Acme Taxis\"\n            },\n            \"bpp/providers\": [\n                {\n                    \"id\": \"1\",\n                    \"descriptor\": {\n                        \"name\": \"Acme Taxis\"\n                    },\n                    \"locations\": [\n                        {\n                            \"id\": \"1\",\n                            \"gps\": \"12.9164682,77.6089985\"\n                        },\n                        {\n                            \"id\": \"2\",\n                            \"gps\": \"12.91671,77.6092983\"\n                        },\n                        {\n                            \"id\": \"3\",\n                            \"gps\": \"12.9165733,77.6152167\"\n                        },\n                        {\n                            \"id\": \"4\",\n                            \"gps\": \"12.9068578,77.6044567\"\n                        }\n                    ],\n                    \"items\": [\n                        {\n                            \"id\": \"5777a0bf-9a08-49aa-a97d-1e5561a9622e\",\n                            \"descriptor\": {\n                                \"name\": \"Economy\",\n                                \"code\": \"RIDE\"\n                            },\n                            \"price\": {\n                                \"value\": \"175\",\n                                \"currency\": \"INR\"\n                            },\n                            \"tags\": {\n                                \"groups/1/descriptor/name\": \"Daytime Charges\",\n                                \"groups/1/display\": \"true\",\n                                \"groups/1/list/1/descriptor/name\": \"Min Fare upto 2 km\",\n                                \"groups/1/list/1/value\": \"₹ 30 upto 2 km\",\n                                \"groups/1/list/2/descriptor/name\": \"Rate above Min. Fare\",\n                                \"groups/1/list/2/value\": \"₹15 / km\",\n                                \"groups/1/list/3/descriptor/name\": \"Driver Pickup Charges\",\n                                \"groups/1/list/3/value\": \"₹ 10\",\n                                \"groups/1/list/4/descriptor/name\": \"Nominal Fare\",\n                                \"groups/1/list/4/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                                \"groups/1/list/4/value\": \"₹ 10\",\n                                \"groups/1/list/5/descriptor/name\": \"Waiting Charges\",\n                                \"groups/1/list/5/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                                \"groups/1/list/5/value\": \"₹ 0 / min\"\n                            },\n                            \"fulfillment_id\": \"fb5c84d4-1b59-4b9d-96b5-9d79107432c5\",\n                            \"payment_id\": \"1\"\n                        }\n                    ],\n                    \"fulfillments\": [\n                        {\n                            \"id\": \"fb5c84d4-1b59-4b9d-96b5-9d79107432c5\",\n                            \"start\": {\n                                \"location\": {\n                                    \"gps\": \"12.9099828, 77.6118226\",\n                                    \"address\": {\n                                        \"ward\": \"Uttarahalli Hobli, Ramanjaneyanagar\",\n                                        \"country\": \"India\",\n                                        \"building\": \"6th Main Rd\",\n                                        \"state\": \"Karnataka 560061\",\n                                        \"city\": \"Bengaluru\",\n                                        \"locality\": \"Uttarahalli Hobli\",\n                                        \"door\": \"98A, Sarovarm 2nd cross\",\n                                        \"area_code\": \"560061\",\n                                        \"street\": \"Ramanjaneyanagar\"\n                                    }\n                                }\n                            },\n                            \"end\": {\n                                \"location\": {\n                                    \"gps\": \"12.9351856, 77.62459969999999\",\n                                    \"address\": {\n                                        \"ward\": \"Basavanagudi, Chikkanna Garden, Example Memorial Hospital\",\n                                        \"country\": \"India\",\n                                        \"building\": \"Example Memorial Hospital\",\n                                        \"state\": \"Karnataka\",\n                                        \"city\": \"Bengaluru\",\n                                        \"locality\": \"Basavanagudi\",\n                                        \"door\": \"\",\n                                        \"area_code\": \"\",\n                                        \"street\": \"Chikkanna Garden\"\n                                    }\n                                }\n                            },\n                            \"vehicle\": {\n                                \"category\": \"TAXI\"\n                            }\n                        }\n                    ],\n                    \"payments\": [\n                        {\n                            \"id\": \"1\",\n                            \"type\": \"ON-FULFILLMENT\",\n                            \"collected_by\": \"BPP\"\n                        }\n                    ]\n                }\n            ]\n        }\n    }\n}"
+                        }
+                    ]
+                },
+                {
+                    "name": "Select",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [""],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"select\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order\": {\n            \"items\": [\n                {\n                    \"id\": \"5777a0bf-9a08-49aa-a97d-1e5561a9622e\"\n                }\n            ],\n            \"fulfillment\": {\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"12.910458, 77.543089\"\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.9535139, 77.5710434\"\n                    }\n                }\n            }\n        }\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/select",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["select"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Select",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"select\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order\": {\n            \"items\": [\n                {\n                    \"id\": \"5777a0bf-9a08-49aa-a97d-1e5561a9622e\"\n                }\n            ],\n            \"fulfillment\": {\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"12.910458, 77.543089\"\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.9535139, 77.5710434\"\n                    }\n                }\n            }\n        }\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/select",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["select"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Init",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"init\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order\": {\n            \"provider\": {\n                \"id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\"\n            },\n            \"items\": [\n                {\n                    \"id\": \"5777a0bf-9a08-49aa-a97d-1e5561a9622e\",\n                    \"fulfillment_id\": \"fulf_5cf064d5-4c0a-42d3-b73d-5f19a6f7468e\",\n                    \"payment_id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\"\n                }\n            ],\n            \"quote\": {\n                \"value\": \"76\",\n                \"currency\": \"INR\",\n                \"breakup\": [\n                    {\n                        \"title\": \"Base Fare\",\n                        \"price\": {\n                            \"value\": \"30\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"Per km fare\",\n                        \"price\": {\n                            \"value\": \"56\",\n                            \"currency\": \"INR\"\n                        }\n                    }\n                ]\n            },\n            \"fulfillment\": {\n                \"id\": \"fulf_5cf064d5-4c0a-42d3-b73d-5f19a6f7468e\",\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"13.008935, 77.6444085\",\n                        \"address\": {\n                            \"ward\": \"Uttarahalli Hobli, Ramanjaneyanagar\",\n                            \"country\": \"India\",\n                            \"building\": \"6th Main Rd\",\n                            \"state\": \"Karnataka 560061\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Uttarahalli Hobli\",\n                            \"door\": \"98A, Sarovarm 2nd cross\",\n                            \"area_code\": \"560061\",\n                            \"street\": \"Ramanjaneyanagar\"\n                        }\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.9711869, 77.5868122\",\n                        \"address\": {\n                            \"ward\": \"Basavanagudi, Chikkanna Garden, Example Memorial Hospital\",\n                            \"country\": \"India\",\n                            \"building\": \"Example Memorial Hospital\",\n                            \"state\": \"Karnataka\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Basavanagudi\",\n                            \"door\": \"\",\n                            \"area_code\": \"\",\n                            \"street\": \"Chikkanna Garden\"\n                        }\n                    }\n                },\n                \"agent\": {\n                    \"name\": \"RAGHAVENDRA J\",\n                    \"rateable\": true,\n                    \"rating\": \"5\"\n                },\n                \"vehicle\": {\n                    \"category\": \"AUTO_RICKSHAW\"\n                }\n            },\n            \"payment\": {\n                \"id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\",\n                \"type\": \"ON-FULFILLMENT\",\n                \"collected_by\": \"BPP\"\n            },\n            \"customer\": {\n                \"person\": {\n                    \"name\": \"John Doe\",\n                    \"phone\": \"+91-9897867564\",\n                    \"tags\": {\n                        \"groups/1/descriptor/name\": \"Localization\",\n                        \"groups/1/display\": false,\n                        \"groups/1/list/1/descriptor/name\": \"Language\",\n                        \"groups/1/list/1/value\": \"en\"\n                    }\n                }\n            }\n        }\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/init",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["init"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Init",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"init\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order\": {\n            \"provider\": {\n                \"id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\"\n            },\n            \"items\": [\n                {\n                    \"id\": \"5777a0bf-9a08-49aa-a97d-1e5561a9622e\",\n                    \"fulfillment_id\": \"fulf_5cf064d5-4c0a-42d3-b73d-5f19a6f7468e\",\n                    \"payment_id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\"\n                }\n            ],\n            \"quote\": {\n                \"value\": \"76\",\n                \"currency\": \"INR\",\n                \"breakup\": [\n                    {\n                        \"title\": \"Base Fare\",\n                        \"price\": {\n                            \"value\": \"30\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"Per km fare\",\n                        \"price\": {\n                            \"value\": \"56\",\n                            \"currency\": \"INR\"\n                        }\n                    }\n                ]\n            },\n            \"fulfillment\": {\n                \"id\": \"fulf_5cf064d5-4c0a-42d3-b73d-5f19a6f7468e\",\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"13.008935, 77.6444085\",\n                        \"address\": {\n                            \"ward\": \"Uttarahalli Hobli, Ramanjaneyanagar\",\n                            \"country\": \"India\",\n                            \"building\": \"6th Main Rd\",\n                            \"state\": \"Karnataka 560061\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Uttarahalli Hobli\",\n                            \"door\": \"98A, Sarovarm 2nd cross\",\n                            \"area_code\": \"560061\",\n                            \"street\": \"Ramanjaneyanagar\"\n                        }\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.9711869, 77.5868122\",\n                        \"address\": {\n                            \"ward\": \"Basavanagudi, Chikkanna Garden, Example Memorial Hospital\",\n                            \"country\": \"India\",\n                            \"building\": \"Example Memorial Hospital\",\n                            \"state\": \"Karnataka\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Basavanagudi\",\n                            \"door\": \"\",\n                            \"area_code\": \"\",\n                            \"street\": \"Chikkanna Garden\"\n                        }\n                    }\n                },\n                \"agent\": {\n                    \"name\": \"RAGHAVENDRA J\",\n                    \"rateable\": true,\n                    \"rating\": \"5\"\n                },\n                \"vehicle\": {\n                    \"category\": \"AUTO_RICKSHAW\"\n                }\n            },\n            \"payment\": {\n                \"id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\",\n                \"type\": \"ON-FULFILLMENT\",\n                \"collected_by\": \"BPP\"\n            },\n            \"customer\": {\n                \"person\": {\n                    \"name\": \"John Doe\",\n                    \"phone\": \"+91-9897867564\",\n                    \"tags\": {\n                        \"groups/1/descriptor/name\": \"Localization\",\n                        \"groups/1/display\": false,\n                        \"groups/1/list/1/descriptor/name\": \"Language\",\n                        \"groups/1/list/1/value\": \"en\"\n                    }\n                }\n            }\n        }\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/init",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["init"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Confirm",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Signature keyId=\"stagingapi.cscestore.in/ondc|176|ed25519\",algorithm=\"ed25519\",created=\"1653999792\",expires=\"1654003392\",headers=\"(created) (expires) digest\",signature=\"PZ+Svu17hHNgbQlb2rVhP3kskhu8FJy+i/9T/pROfD0YvwPHDFST2rWtG52LNJOLm/KDzyl43YuK2zBttrAWBA==\"",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"confirm\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order\": {\n            \"id\": \"7751bd26-3fdc-47ca-9b64-e998dc5abe68\",\n            \"provider\": {\n                \"id\": \"e8542642-0f4a-454c-9a9f-f46110c367a3\",\n                \"descriptor\": {\n                    \"name\": \"Raghavendra J\"\n                }\n            },\n            \"items\": [\n                {\n                    \"id\": \"5777a0bf-9a08-49aa-a97d-1e5561a9622e\",\n                    \"descriptor\": {\n                        \"name\": \"Auto Ride\",\n                        \"code\": \"RIDE\"\n                    },\n                    \"tags\": {\n                        \"groups/1/descriptor/name\": \"Daytime Charges\",\n                        \"groups/1/display\": \"true\",\n                        \"groups/1/list/1/descriptor/name\": \"Min Fare upto 2 km\",\n                        \"groups/1/list/1/value\": \"₹ 30 upto 2 km\",\n                        \"groups/1/list/2/descriptor/name\": \"Rate above Min. Fare\",\n                        \"groups/1/list/2/value\": \"₹15 / km\",\n                        \"groups/1/list/3/descriptor/name\": \"Driver Pickup Charges\",\n                        \"groups/1/list/3/value\": \"₹ 10\",\n                        \"groups/1/list/4/descriptor/name\": \"Nominal Fare\",\n                        \"groups/1/list/4/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                        \"groups/1/list/4/value\": \"₹ 10\",\n                        \"groups/1/list/5/descriptor/name\": \"Nominal Fare\",\n                        \"groups/1/list/5/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                        \"groups/1/list/5/value\": \"₹ 0 / min\",\n                        \"groups/2/descriptor/name\": \"Waiting Charges\",\n                        \"groups/2/display\": \"true\",\n                        \"groups/2/list/1/descriptor/name\": \"Night Charges\",\n                        \"groups/2/list/1/value\": \"1.5x of daytime charges applicable at night from 10 PM to 5 PM\",\n                        \"groups/2/list/2/descriptor/name\": \"Night Shift Start\",\n                        \"groups/2/list/2/value\": \"22:00:00\",\n                        \"groups/2/list/3/descriptor/name\": \"Night Shift End\",\n                        \"groups/2/list/3/value\": \"05:00:00\",\n                        \"groups/3/descriptor/name\": \"General Information\",\n                        \"groups/3/display\": \"true\",\n                        \"groups/3/list/1/descriptor/name\": \"Distance to nearest driver\",\n                        \"groups/3/list/1/value\": \"661 m\",\n                        \"groups/3/list/2/descriptor/name\": \"Wait time upto\",\n                        \"groups/3/list/2/value\": \"3 min\"\n                    },\n                    \"fulfillment_id\": \"fb5c84d4-1b59-4b9d-96b5-9d79107432c5\",\n                    \"payment_id\": \"1\"\n                }\n            ],\n            \"quote\": {\n                \"value\": \"81\",\n                \"currency\": \"INR\",\n                \"breakup\": [\n                    {\n                        \"title\": \"Base Fare\",\n                        \"price\": {\n                            \"value\": \"30\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"Per km fare\",\n                        \"price\": {\n                            \"value\": \"56\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"CGST @ 5%\",\n                        \"price\": {\n                            \"value\": \"2.5\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"SGST @ 5%\",\n                        \"price\": {\n                            \"value\": \"2.5\",\n                            \"currency\": \"INR\"\n                        }\n                    }\n                ]\n            },\n            \"fulfillment\": {\n                \"id\": \"fulf_5cf064d5-4c0a-42d3-b73d-5f19a6f7468e\",\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"13.008935, 77.6444085\",\n                        \"address\": {\n                            \"ward\": \"Uttarahalli Hobli, Ramanjaneyanagar\",\n                            \"country\": \"India\",\n                            \"building\": \"6th Main Rd\",\n                            \"state\": \"Karnataka 560061\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Uttarahalli Hobli\",\n                            \"door\": \"98A, Sarovarm 2nd cross\",\n                            \"area_code\": \"560061\",\n                            \"street\": \"Ramanjaneyanagar\"\n                        }\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.9711869, 77.5868122\",\n                        \"address\": {\n                            \"ward\": \"Basavanagudi, Chikkanna Garden, Example Memorial Hospital\",\n                            \"country\": \"India\",\n                            \"building\": \"Example Memorial Hospital\",\n                            \"state\": \"Karnataka\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Basavanagudi\",\n                            \"door\": \"\",\n                            \"area_code\": \"\",\n                            \"street\": \"Chikkanna Garden\"\n                        }\n                    }\n                },\n                \"agent\": {\n                    \"name\": \"RAGHAVENDRA J\",\n                    \"rateable\": true,\n                    \"rating\": \"5\"\n                },\n                \"vehicle\": {\n                    \"category\": \"AUTO_RICKSHAW\"\n                },\n                \"customer\": {\n                    \"person\": {\n                        \"name\": \"John Doe\",\n                        \"phone\": \"+91-9897867564\",\n                        \"tags\": {\n                            \"groups/1/descriptor/name\": \"Localization\",\n                            \"groups/1/display\": \"false\",\n                            \"groups/1/list/1/descriptor/name\": \"Language\",\n                            \"groups/1/list/1/value\": \"en\"\n                        }\n                    }\n                }\n            },\n            \"payment\": {\n                \"id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\",\n                \"type\": \"ON-FULFILLMENT\",\n                \"params\": {\n                    \"amount\": \"81\",\n                    \"currency\": \"INR\",\n                    \"transaction_status\": \"NOT-PAID\"\n                }\n            }\n        }\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/confirm",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["confirm"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Confirm",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "Signature keyId=\"stagingapi.cscestore.in/ondc|176|ed25519\",algorithm=\"ed25519\",created=\"1653999792\",expires=\"1654003392\",headers=\"(created) (expires) digest\",signature=\"PZ+Svu17hHNgbQlb2rVhP3kskhu8FJy+i/9T/pROfD0YvwPHDFST2rWtG52LNJOLm/KDzyl43YuK2zBttrAWBA==\"",
+                                        "type": "text"
+                                    }
+                                ],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"confirm\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order\": {\n            \"id\": \"7751bd26-3fdc-47ca-9b64-e998dc5abe68\",\n            \"provider\": {\n                \"id\": \"e8542642-0f4a-454c-9a9f-f46110c367a3\",\n                \"descriptor\": {\n                    \"name\": \"Raghavendra J\"\n                }\n            },\n            \"items\": [\n                {\n                    \"id\": \"5777a0bf-9a08-49aa-a97d-1e5561a9622e\",\n                    \"descriptor\": {\n                        \"name\": \"Auto Ride\",\n                        \"code\": \"RIDE\"\n                    },\n                    \"tags\": {\n                        \"groups/1/descriptor/name\": \"Daytime Charges\",\n                        \"groups/1/display\": \"true\",\n                        \"groups/1/list/1/descriptor/name\": \"Min Fare upto 2 km\",\n                        \"groups/1/list/1/value\": \"₹ 30 upto 2 km\",\n                        \"groups/1/list/2/descriptor/name\": \"Rate above Min. Fare\",\n                        \"groups/1/list/2/value\": \"₹15 / km\",\n                        \"groups/1/list/3/descriptor/name\": \"Driver Pickup Charges\",\n                        \"groups/1/list/3/value\": \"₹ 10\",\n                        \"groups/1/list/4/descriptor/name\": \"Nominal Fare\",\n                        \"groups/1/list/4/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                        \"groups/1/list/4/value\": \"₹ 10\",\n                        \"groups/1/list/5/descriptor/name\": \"Nominal Fare\",\n                        \"groups/1/list/5/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                        \"groups/1/list/5/value\": \"₹ 0 / min\",\n                        \"groups/2/descriptor/name\": \"Waiting Charges\",\n                        \"groups/2/display\": \"true\",\n                        \"groups/2/list/1/descriptor/name\": \"Night Charges\",\n                        \"groups/2/list/1/value\": \"1.5x of daytime charges applicable at night from 10 PM to 5 PM\",\n                        \"groups/2/list/2/descriptor/name\": \"Night Shift Start\",\n                        \"groups/2/list/2/value\": \"22:00:00\",\n                        \"groups/2/list/3/descriptor/name\": \"Night Shift End\",\n                        \"groups/2/list/3/value\": \"05:00:00\",\n                        \"groups/3/descriptor/name\": \"General Information\",\n                        \"groups/3/display\": \"true\",\n                        \"groups/3/list/1/descriptor/name\": \"Distance to nearest driver\",\n                        \"groups/3/list/1/value\": \"661 m\",\n                        \"groups/3/list/2/descriptor/name\": \"Wait time upto\",\n                        \"groups/3/list/2/value\": \"3 min\"\n                    },\n                    \"fulfillment_id\": \"fb5c84d4-1b59-4b9d-96b5-9d79107432c5\",\n                    \"payment_id\": \"1\"\n                }\n            ],\n            \"quote\": {\n                \"value\": \"81\",\n                \"currency\": \"INR\",\n                \"breakup\": [\n                    {\n                        \"title\": \"Base Fare\",\n                        \"price\": {\n                            \"value\": \"30\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"Per km fare\",\n                        \"price\": {\n                            \"value\": \"56\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"CGST @ 5%\",\n                        \"price\": {\n                            \"value\": \"2.5\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"SGST @ 5%\",\n                        \"price\": {\n                            \"value\": \"2.5\",\n                            \"currency\": \"INR\"\n                        }\n                    }\n                ]\n            },\n            \"fulfillment\": {\n                \"id\": \"fulf_5cf064d5-4c0a-42d3-b73d-5f19a6f7468e\",\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"13.008935, 77.6444085\",\n                        \"address\": {\n                            \"ward\": \"Uttarahalli Hobli, Ramanjaneyanagar\",\n                            \"country\": \"India\",\n                            \"building\": \"6th Main Rd\",\n                            \"state\": \"Karnataka 560061\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Uttarahalli Hobli\",\n                            \"door\": \"98A, Sarovarm 2nd cross\",\n                            \"area_code\": \"560061\",\n                            \"street\": \"Ramanjaneyanagar\"\n                        }\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.9711869, 77.5868122\",\n                        \"address\": {\n                            \"ward\": \"Basavanagudi, Chikkanna Garden, Example Memorial Hospital\",\n                            \"country\": \"India\",\n                            \"building\": \"Example Memorial Hospital\",\n                            \"state\": \"Karnataka\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Basavanagudi\",\n                            \"door\": \"\",\n                            \"area_code\": \"\",\n                            \"street\": \"Chikkanna Garden\"\n                        }\n                    }\n                },\n                \"agent\": {\n                    \"name\": \"RAGHAVENDRA J\",\n                    \"rateable\": true,\n                    \"rating\": \"5\"\n                },\n                \"vehicle\": {\n                    \"category\": \"AUTO_RICKSHAW\"\n                },\n                \"customer\": {\n                    \"person\": {\n                        \"name\": \"John Doe\",\n                        \"phone\": \"+91-9897867564\",\n                        \"tags\": {\n                            \"groups/1/descriptor/name\": \"Localization\",\n                            \"groups/1/display\": \"false\",\n                            \"groups/1/list/1/descriptor/name\": \"Language\",\n                            \"groups/1/list/1/value\": \"en\"\n                        }\n                    }\n                }\n            },\n            \"payment\": {\n                \"id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\",\n                \"type\": \"ON-FULFILLMENT\",\n                \"params\": {\n                    \"amount\": \"81\",\n                    \"currency\": \"INR\",\n                    \"transaction_status\": \"NOT-PAID\"\n                }\n            }\n        }\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/confirm",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["confirm"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Track",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Signature keyId=\"stagingapigateway.bizom.in/ondc|140|ed25519\",algorithm=\"ed25519\", created=\"1654001602\", expires=\"1654068802\", headers=\"(created) (expires) digest\", signature=\"st5AznOkhNx2mLj6yP5KMd56iqbOmLd2AivOx3ty7iEHw+aShYPn9tgNuN1qYHnNTXNoRY/gAQEawXDw5K8+BA==\"",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"track\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order_id\": \"22e090fc-b8b1-4437-9126-ff7a71c7845c\"\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/track",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["track"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Track",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "Signature keyId=\"stagingapigateway.bizom.in/ondc|140|ed25519\",algorithm=\"ed25519\", created=\"1654001602\", expires=\"1654068802\", headers=\"(created) (expires) digest\", signature=\"st5AznOkhNx2mLj6yP5KMd56iqbOmLd2AivOx3ty7iEHw+aShYPn9tgNuN1qYHnNTXNoRY/gAQEawXDw5K8+BA==\"",
+                                        "type": "text"
+                                    }
+                                ],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"track\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order_id\": \"22e090fc-b8b1-4437-9126-ff7a71c7845c\"\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/track",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["track"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Support",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"support\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"ref_id\": \"7751bd26-3fdc-47ca-9b64-e998dc5abe68\"\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/support",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["support"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Support",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"support\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"ref_id\": \"7751bd26-3fdc-47ca-9b64-e998dc5abe68\"\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/support",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["support"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Update [Not working]",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"update\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"update_target\": \"item,billing\",\n        \"order\": {\n            \"id\": \"7751bd26-3fdc-47ca-9b64-e998dc5abe68\",\n            \"provider\": {\n                \"id\": \"e8542642-0f4a-454c-9a9f-f46110c367a3\",\n                \"descriptor\": {\n                    \"name\": \"Raghavendra J\"\n                }\n            },\n            \"items\": [\n                {\n                    \"id\": \"5777a0bf-9a08-49aa-a97d-1e5561a9622e\",\n                    \"descriptor\": {\n                        \"name\": \"Auto Ride\",\n                        \"code\": \"RIDE\"\n                    },\n                    \"tags\": {\n                        \"groups/1/descriptor/name\": \"Daytime Charges\",\n                        \"groups/1/display\": \"true\",\n                        \"groups/1/list/1/descriptor/name\": \"Min Fare upto 2 km\",\n                        \"groups/1/list/1/value\": \"₹ 30 upto 2 km\",\n                        \"groups/1/list/2/descriptor/name\": \"Rate above Min. Fare\",\n                        \"groups/1/list/2/value\": \"₹15 / km\",\n                        \"groups/1/list/3/descriptor/name\": \"Driver Pickup Charges\",\n                        \"groups/1/list/3/value\": \"₹ 10\",\n                        \"groups/1/list/4/descriptor/name\": \"Nominal Fare\",\n                        \"groups/1/list/4/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                        \"groups/1/list/4/value\": \"₹ 10\",\n                        \"groups/1/list/5/descriptor/name\": \"Nominal Fare\",\n                        \"groups/1/list/5/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                        \"groups/1/list/5/value\": \"₹ 0 / min\",\n                        \"groups/2/descriptor/name\": \"Waiting Charges\",\n                        \"groups/2/display\": \"true\",\n                        \"groups/2/list/1/descriptor/name\": \"Night Charges\",\n                        \"groups/2/list/1/value\": \"1.5x of daytime charges applicable at night from 10 PM to 5 PM\",\n                        \"groups/2/list/2/descriptor/name\": \"Night Shift Start\",\n                        \"groups/2/list/2/value\": \"22:00:00\",\n                        \"groups/2/list/3/descriptor/name\": \"Night Shift End\",\n                        \"groups/2/list/3/value\": \"05:00:00\",\n                        \"groups/3/descriptor/name\": \"General Information\",\n                        \"groups/3/display\": \"true\",\n                        \"groups/3/list/1/descriptor/name\": \"Distance to nearest driver\",\n                        \"groups/3/list/1/value\": \"661 m\",\n                        \"groups/3/list/2/descriptor/name\": \"Wait time upto\",\n                        \"groups/3/list/2/value\": \"3 min\"\n                    },\n                    \"fulfillment_id\": \"fb5c84d4-1b59-4b9d-96b5-9d79107432c5\",\n                    \"payment_id\": \"1\"\n                }\n            ],\n            \"quote\": {\n                \"value\": \"81\",\n                \"currency\": \"INR\",\n                \"breakup\": [\n                    {\n                        \"title\": \"Base Fare\",\n                        \"price\": {\n                            \"value\": \"30\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"Per km fare\",\n                        \"price\": {\n                            \"value\": \"56\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"CGST @ 5%\",\n                        \"price\": {\n                            \"value\": \"2.5\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"SGST @ 5%\",\n                        \"price\": {\n                            \"value\": \"2.5\",\n                            \"currency\": \"INR\"\n                        }\n                    }\n                ]\n            },\n            \"fulfillment\": {\n                \"id\": \"fulf_5cf064d5-4c0a-42d3-b73d-5f19a6f7468e\",\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"13.008935, 77.6444085\",\n                        \"address\": {\n                            \"ward\": \"Uttarahalli Hobli, Ramanjaneyanagar\",\n                            \"country\": \"India\",\n                            \"building\": \"6th Main Rd\",\n                            \"state\": \"Karnataka 560061\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Uttarahalli Hobli\",\n                            \"door\": \"98A, Sarovarm 2nd cross\",\n                            \"area_code\": \"560061\",\n                            \"street\": \"Ramanjaneyanagar\"\n                        }\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.9711869, 77.5868122\",\n                        \"address\": {\n                            \"ward\": \"Basavanagudi, Chikkanna Garden, Example Memorial Hospital\",\n                            \"country\": \"India\",\n                            \"building\": \"Example Memorial Hospital\",\n                            \"state\": \"Karnataka\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Basavanagudi\",\n                            \"door\": \"\",\n                            \"area_code\": \"\",\n                            \"street\": \"Chikkanna Garden\"\n                        }\n                    }\n                },\n                \"agent\": {\n                    \"name\": \"RAGHAVENDRA J\",\n                    \"rateable\": true,\n                    \"rating\": \"5\"\n                },\n                \"vehicle\": {\n                    \"category\": \"AUTO_RICKSHAW\"\n                },\n                \"customer\": {\n                    \"person\": {\n                        \"name\": \"John Doe\",\n                        \"phone\": \"+91-9897867564\",\n                        \"tags\": {\n                            \"groups/1/descriptor/name\": \"Localization\",\n                            \"groups/1/display\": \"false\",\n                            \"groups/1/list/1/descriptor/name\": \"Language\",\n                            \"groups/1/list/1/value\": \"en\"\n                        }\n                    }\n                }\n            },\n            \"payment\": {\n                \"id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\",\n                \"type\": \"ON-FULFILLMENT\",\n                \"params\": {\n                    \"amount\": \"81\",\n                    \"currency\": \"INR\",\n                    \"transaction_status\": \"NOT-PAID\"\n                }\n            }\n        }\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/update",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["update"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Update",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"update\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"update_target\": \"item,billing\",\n        \"order\": {\n            \"id\": \"7751bd26-3fdc-47ca-9b64-e998dc5abe68\",\n            \"provider\": {\n                \"id\": \"e8542642-0f4a-454c-9a9f-f46110c367a3\",\n                \"descriptor\": {\n                    \"name\": \"Raghavendra J\"\n                }\n            },\n            \"items\": [\n                {\n                    \"id\": \"5777a0bf-9a08-49aa-a97d-1e5561a9622e\",\n                    \"descriptor\": {\n                        \"name\": \"Auto Ride\",\n                        \"code\": \"RIDE\"\n                    },\n                    \"tags\": {\n                        \"groups/1/descriptor/name\": \"Daytime Charges\",\n                        \"groups/1/display\": \"true\",\n                        \"groups/1/list/1/descriptor/name\": \"Min Fare upto 2 km\",\n                        \"groups/1/list/1/value\": \"₹ 30 upto 2 km\",\n                        \"groups/1/list/2/descriptor/name\": \"Rate above Min. Fare\",\n                        \"groups/1/list/2/value\": \"₹15 / km\",\n                        \"groups/1/list/3/descriptor/name\": \"Driver Pickup Charges\",\n                        \"groups/1/list/3/value\": \"₹ 10\",\n                        \"groups/1/list/4/descriptor/name\": \"Nominal Fare\",\n                        \"groups/1/list/4/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                        \"groups/1/list/4/value\": \"₹ 10\",\n                        \"groups/1/list/5/descriptor/name\": \"Nominal Fare\",\n                        \"groups/1/list/5/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                        \"groups/1/list/5/value\": \"₹ 0 / min\",\n                        \"groups/2/descriptor/name\": \"Waiting Charges\",\n                        \"groups/2/display\": \"true\",\n                        \"groups/2/list/1/descriptor/name\": \"Night Charges\",\n                        \"groups/2/list/1/value\": \"1.5x of daytime charges applicable at night from 10 PM to 5 PM\",\n                        \"groups/2/list/2/descriptor/name\": \"Night Shift Start\",\n                        \"groups/2/list/2/value\": \"22:00:00\",\n                        \"groups/2/list/3/descriptor/name\": \"Night Shift End\",\n                        \"groups/2/list/3/value\": \"05:00:00\",\n                        \"groups/3/descriptor/name\": \"General Information\",\n                        \"groups/3/display\": \"true\",\n                        \"groups/3/list/1/descriptor/name\": \"Distance to nearest driver\",\n                        \"groups/3/list/1/value\": \"661 m\",\n                        \"groups/3/list/2/descriptor/name\": \"Wait time upto\",\n                        \"groups/3/list/2/value\": \"3 min\"\n                    },\n                    \"fulfillment_id\": \"fb5c84d4-1b59-4b9d-96b5-9d79107432c5\",\n                    \"payment_id\": \"1\"\n                }\n            ],\n            \"quote\": {\n                \"value\": \"81\",\n                \"currency\": \"INR\",\n                \"breakup\": [\n                    {\n                        \"title\": \"Base Fare\",\n                        \"price\": {\n                            \"value\": \"30\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"Per km fare\",\n                        \"price\": {\n                            \"value\": \"56\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"CGST @ 5%\",\n                        \"price\": {\n                            \"value\": \"2.5\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"SGST @ 5%\",\n                        \"price\": {\n                            \"value\": \"2.5\",\n                            \"currency\": \"INR\"\n                        }\n                    }\n                ]\n            },\n            \"fulfillment\": {\n                \"id\": \"fulf_5cf064d5-4c0a-42d3-b73d-5f19a6f7468e\",\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"13.008935, 77.6444085\",\n                        \"address\": {\n                            \"ward\": \"Uttarahalli Hobli, Ramanjaneyanagar\",\n                            \"country\": \"India\",\n                            \"building\": \"6th Main Rd\",\n                            \"state\": \"Karnataka 560061\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Uttarahalli Hobli\",\n                            \"door\": \"98A, Sarovarm 2nd cross\",\n                            \"area_code\": \"560061\",\n                            \"street\": \"Ramanjaneyanagar\"\n                        }\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.9711869, 77.5868122\",\n                        \"address\": {\n                            \"ward\": \"Basavanagudi, Chikkanna Garden, Example Memorial Hospital\",\n                            \"country\": \"India\",\n                            \"building\": \"Example Memorial Hospital\",\n                            \"state\": \"Karnataka\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Basavanagudi\",\n                            \"door\": \"\",\n                            \"area_code\": \"\",\n                            \"street\": \"Chikkanna Garden\"\n                        }\n                    }\n                },\n                \"agent\": {\n                    \"name\": \"RAGHAVENDRA J\",\n                    \"rateable\": true,\n                    \"rating\": \"5\"\n                },\n                \"vehicle\": {\n                    \"category\": \"AUTO_RICKSHAW\"\n                },\n                \"customer\": {\n                    \"person\": {\n                        \"name\": \"John Doe\",\n                        \"phone\": \"+91-9897867564\",\n                        \"tags\": {\n                            \"groups/1/descriptor/name\": \"Localization\",\n                            \"groups/1/display\": \"false\",\n                            \"groups/1/list/1/descriptor/name\": \"Language\",\n                            \"groups/1/list/1/value\": \"en\"\n                        }\n                    }\n                }\n            },\n            \"payment\": {\n                \"id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\",\n                \"type\": \"ON-FULFILLMENT\",\n                \"params\": {\n                    \"amount\": \"81\",\n                    \"currency\": \"INR\",\n                    \"transaction_status\": \"NOT-PAID\"\n                }\n            }\n        }\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/update",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["update"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Cancel",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"cancel\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order_id\": \"b4232ad4-19ee-4c67-9223-a5189b13a741\",\n        \"cancellation_reason_id\": \"1\"\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/cancel",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["cancel"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Cancel",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"cancel\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order_id\": \"b4232ad4-19ee-4c67-9223-a5189b13a741\",\n        \"cancellation_reason_id\": \"5\"\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/cancel",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["cancel"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Status",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"status\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order_id\": \"7751bd26-3fdc-47ca-9b64-e998dc5abe68\"\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/status",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["status"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Status",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"status\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order_id\": \"7751bd26-3fdc-47ca-9b64-e998dc5abe68\"\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/status",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["status"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Rating",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"rating\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"rating_category\": \"RIDE\",\n        \"id\": \"string\",\n        \"value\": 0,\n        \"feedback_form\": [\n            {\n                \"id\": \"string\",\n                \"parent_id\": \"string\",\n                \"question\": \"string\",\n                \"answer\": \"string\",\n                \"answer_type\": \"radio\"\n            }\n        ],\n        \"feedback_id\": \"string\"\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/rating",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["rating"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Rating",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"rating\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"rating_category\": \"string\",\n        \"id\": \"string\",\n        \"value\": 0,\n        \"feedback_form\": [\n            {\n                \"id\": \"string\",\n                \"parent_id\": \"string\",\n                \"question\": \"string\",\n                \"answer\": \"string\",\n                \"answer_type\": \"radio\"\n            }\n        ],\n        \"feedback_id\": \"string\"\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/rating",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["rating"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Get cancellation reasons",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"get_cancellation_reasons\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/get_cancellation_reasons",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["get_cancellation_reasons"]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get rating categories",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"get_rating_categories\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/get_rating_categories",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["get_rating_categories"]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Public transit",
+            "item": [
+                {
+                    "name": "Search",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "let responseData = pm.response.json();",
+                                    "",
+                                    "if (responseData?.responses?.length) {",
+                                    "    const res = responseData.responses.find(r => r.context.bpp_id == \"beckn-sandbox-bpp.becknprotocol.io\")",
+                                    "",
+                                    "    pm.collectionVariables.set(\"BPP_ID\", res.context.bpp_id);",
+                                    "    pm.collectionVariables.set(\"BPP_URI\", res.context.bpp_uri);",
+                                    "    pm.collectionVariables.set(\"MESSAGE_ID\", res.context.message_id);",
+                                    "}"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Signature keyId=\"bpp.dbs.digiit.io|164|ed25519\",algorithm=\"ed25519\",created=\"1655897034\",expires=\"1655900634\",headers=\"(created) (expires) digest\",signature=\"ddTKLg7eq3EXZGqPJhrDlwoTku3sTt/c7K4iRnAna+dC9x+hmBM6z+YZRnCu3WRj3dfZDOoi57U4hOoPXP/SCA==\"",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"country\": \"{{COUNTRY}}\",\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"timestamp\": \"{{TIMESTAMP}}\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"city\": \"{{CITY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"search\",\n        \"bap_uri\": \"{{BAP_URI}}\"\n    },\n    \"message\": {\n        \"intent\": {\n            \"fulfillment\": {\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"28.700939,77.272102\"\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"28.5866263,77.2562282\"\n                    }\n                }\n            }\n        }\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/search",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["search"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Search",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "Signature keyId=\"bpp.dbs.digiit.io|164|ed25519\",algorithm=\"ed25519\",created=\"1655897034\",expires=\"1655900634\",headers=\"(created) (expires) digest\",signature=\"ddTKLg7eq3EXZGqPJhrDlwoTku3sTt/c7K4iRnAna+dC9x+hmBM6z+YZRnCu3WRj3dfZDOoi57U4hOoPXP/SCA==\"",
+                                        "type": "text"
+                                    }
+                                ],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"country\": \"{{COUNTRY}}\",\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"city\": \"{{CITY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"search\",\n        \"bap_uri\": \"{{BAP_URI}}\"\n    },\n    \"message\": {\n        \"intent\": {\n            \"fulfillment\": {\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"12.903561,77.5939631\"\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.903561,77.5939631\"\n                    }\n                }\n            }\n        }\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/search",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["search"]
+                                }
+                            },
+                            "_postman_previewlanguage": "json",
+                            "header": [
+                                {
+                                    "key": "Content-Type",
+                                    "value": "application/json",
+                                    "name": "Content-Type",
+                                    "description": "",
+                                    "type": "text"
+                                }
+                            ],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Select",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [""],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"select\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"{{TIMESTAMP}}\"\n    },\n    \"message\": {\n        \"order\": {\n            \"items\": [\n                {\n                    \"id\": \"1\"\n                }\n            ],\n            \"provider\": {\n                \"id\": \"1\"\n            }\n        }\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/select",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["select"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Select",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"select\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order\": {\n            \"items\": [\n                {\n                    \"id\": \"5777a0bf-9a08-49aa-a97d-1e5561a9622e\"\n                }\n            ],\n            \"fulfillment\": {\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"12.910458, 77.543089\"\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.9535139, 77.5710434\"\n                    }\n                }\n            }\n        }\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/select",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["select"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Init",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"init\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"{{TIMESTAMP}}\"\n    },\n    \"message\": {\n        \"order\": {\n            \"items\": [\n                {\n                    \"id\": \"1\"\n                }\n            ],\n            \"provider\": {\n                \"id\": \"1\"\n            },\n            \"billing\": {\n                \"name\": \"Hemant Sharma\",\n                \"email\": \"hemant.sharma@gmail.com\",\n                \"phone\": \"+91-9896569363\"\n            }\n        }\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/init",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["init"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Init",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"init\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order\": {\n            \"provider\": {\n                \"id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\"\n            },\n            \"items\": [\n                {\n                    \"id\": \"5777a0bf-9a08-49aa-a97d-1e5561a9622e\",\n                    \"fulfillment_id\": \"fulf_5cf064d5-4c0a-42d3-b73d-5f19a6f7468e\",\n                    \"payment_id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\"\n                }\n            ],\n            \"quote\": {\n                \"value\": \"76\",\n                \"currency\": \"INR\",\n                \"breakup\": [\n                    {\n                        \"title\": \"Base Fare\",\n                        \"price\": {\n                            \"value\": \"30\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"Per km fare\",\n                        \"price\": {\n                            \"value\": \"56\",\n                            \"currency\": \"INR\"\n                        }\n                    }\n                ]\n            },\n            \"fulfillment\": {\n                \"id\": \"fulf_5cf064d5-4c0a-42d3-b73d-5f19a6f7468e\",\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"13.008935, 77.6444085\",\n                        \"address\": {\n                            \"ward\": \"Uttarahalli Hobli, Ramanjaneyanagar\",\n                            \"country\": \"India\",\n                            \"building\": \"6th Main Rd\",\n                            \"state\": \"Karnataka 560061\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Uttarahalli Hobli\",\n                            \"door\": \"98A, Sarovarm 2nd cross\",\n                            \"area_code\": \"560061\",\n                            \"street\": \"Ramanjaneyanagar\"\n                        }\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.9711869, 77.5868122\",\n                        \"address\": {\n                            \"ward\": \"Basavanagudi, Chikkanna Garden, Example Memorial Hospital\",\n                            \"country\": \"India\",\n                            \"building\": \"Example Memorial Hospital\",\n                            \"state\": \"Karnataka\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Basavanagudi\",\n                            \"door\": \"\",\n                            \"area_code\": \"\",\n                            \"street\": \"Chikkanna Garden\"\n                        }\n                    }\n                },\n                \"agent\": {\n                    \"name\": \"RAGHAVENDRA J\",\n                    \"rateable\": true,\n                    \"rating\": \"5\"\n                },\n                \"vehicle\": {\n                    \"category\": \"AUTO_RICKSHAW\"\n                }\n            },\n            \"payment\": {\n                \"id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\",\n                \"type\": \"ON-FULFILLMENT\",\n                \"collected_by\": \"BPP\"\n            },\n            \"customer\": {\n                \"person\": {\n                    \"name\": \"John Doe\",\n                    \"phone\": \"+91-9897867564\",\n                    \"tags\": {\n                        \"groups/1/descriptor/name\": \"Localization\",\n                        \"groups/1/display\": false,\n                        \"groups/1/list/1/descriptor/name\": \"Language\",\n                        \"groups/1/list/1/value\": \"en\"\n                    }\n                }\n            }\n        }\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/init",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["init"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Confirm",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Signature keyId=\"stagingapi.cscestore.in/ondc|176|ed25519\",algorithm=\"ed25519\",created=\"1653999792\",expires=\"1654003392\",headers=\"(created) (expires) digest\",signature=\"PZ+Svu17hHNgbQlb2rVhP3kskhu8FJy+i/9T/pROfD0YvwPHDFST2rWtG52LNJOLm/KDzyl43YuK2zBttrAWBA==\"",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"confirm\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"{{TIMESTAMP}}\"\n    },\n    \"message\": {\n        \"order\": {\n            \"items\": [\n                {\n                    \"id\": \"1\"\n                }\n            ],\n            \"provider\": {\n                \"id\": \"1\"\n            },\n            \"billing\": {\n                \"name\": \"Hemant Sharma\",\n                \"email\": \"hemant.sharma@gmail.com\",\n                \"phone\": \"+91-9896569363\"\n            },\n            \"payment\": {\n                \"params\": {\n                    \"amount\": \"55\",\n                    \"currency\": \"INR\",\n                    \"transaction_id\": \"24566345563\"\n                }\n            }\n        }\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/confirm",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["confirm"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Confirm",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "Signature keyId=\"stagingapi.cscestore.in/ondc|176|ed25519\",algorithm=\"ed25519\",created=\"1653999792\",expires=\"1654003392\",headers=\"(created) (expires) digest\",signature=\"PZ+Svu17hHNgbQlb2rVhP3kskhu8FJy+i/9T/pROfD0YvwPHDFST2rWtG52LNJOLm/KDzyl43YuK2zBttrAWBA==\"",
+                                        "type": "text"
+                                    }
+                                ],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"confirm\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order\": {\n            \"id\": \"7751bd26-3fdc-47ca-9b64-e998dc5abe68\",\n            \"provider\": {\n                \"id\": \"e8542642-0f4a-454c-9a9f-f46110c367a3\",\n                \"descriptor\": {\n                    \"name\": \"Raghavendra J\"\n                }\n            },\n            \"items\": [\n                {\n                    \"id\": \"5777a0bf-9a08-49aa-a97d-1e5561a9622e\",\n                    \"descriptor\": {\n                        \"name\": \"Auto Ride\",\n                        \"code\": \"RIDE\"\n                    },\n                    \"tags\": {\n                        \"groups/1/descriptor/name\": \"Daytime Charges\",\n                        \"groups/1/display\": \"true\",\n                        \"groups/1/list/1/descriptor/name\": \"Min Fare upto 2 km\",\n                        \"groups/1/list/1/value\": \"₹ 30 upto 2 km\",\n                        \"groups/1/list/2/descriptor/name\": \"Rate above Min. Fare\",\n                        \"groups/1/list/2/value\": \"₹15 / km\",\n                        \"groups/1/list/3/descriptor/name\": \"Driver Pickup Charges\",\n                        \"groups/1/list/3/value\": \"₹ 10\",\n                        \"groups/1/list/4/descriptor/name\": \"Nominal Fare\",\n                        \"groups/1/list/4/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                        \"groups/1/list/4/value\": \"₹ 10\",\n                        \"groups/1/list/5/descriptor/name\": \"Nominal Fare\",\n                        \"groups/1/list/5/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                        \"groups/1/list/5/value\": \"₹ 0 / min\",\n                        \"groups/2/descriptor/name\": \"Waiting Charges\",\n                        \"groups/2/display\": \"true\",\n                        \"groups/2/list/1/descriptor/name\": \"Night Charges\",\n                        \"groups/2/list/1/value\": \"1.5x of daytime charges applicable at night from 10 PM to 5 PM\",\n                        \"groups/2/list/2/descriptor/name\": \"Night Shift Start\",\n                        \"groups/2/list/2/value\": \"22:00:00\",\n                        \"groups/2/list/3/descriptor/name\": \"Night Shift End\",\n                        \"groups/2/list/3/value\": \"05:00:00\",\n                        \"groups/3/descriptor/name\": \"General Information\",\n                        \"groups/3/display\": \"true\",\n                        \"groups/3/list/1/descriptor/name\": \"Distance to nearest driver\",\n                        \"groups/3/list/1/value\": \"661 m\",\n                        \"groups/3/list/2/descriptor/name\": \"Wait time upto\",\n                        \"groups/3/list/2/value\": \"3 min\"\n                    },\n                    \"fulfillment_id\": \"fb5c84d4-1b59-4b9d-96b5-9d79107432c5\",\n                    \"payment_id\": \"1\"\n                }\n            ],\n            \"quote\": {\n                \"value\": \"81\",\n                \"currency\": \"INR\",\n                \"breakup\": [\n                    {\n                        \"title\": \"Base Fare\",\n                        \"price\": {\n                            \"value\": \"30\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"Per km fare\",\n                        \"price\": {\n                            \"value\": \"56\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"CGST @ 5%\",\n                        \"price\": {\n                            \"value\": \"2.5\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"SGST @ 5%\",\n                        \"price\": {\n                            \"value\": \"2.5\",\n                            \"currency\": \"INR\"\n                        }\n                    }\n                ]\n            },\n            \"fulfillment\": {\n                \"id\": \"fulf_5cf064d5-4c0a-42d3-b73d-5f19a6f7468e\",\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"13.008935, 77.6444085\",\n                        \"address\": {\n                            \"ward\": \"Uttarahalli Hobli, Ramanjaneyanagar\",\n                            \"country\": \"India\",\n                            \"building\": \"6th Main Rd\",\n                            \"state\": \"Karnataka 560061\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Uttarahalli Hobli\",\n                            \"door\": \"98A, Sarovarm 2nd cross\",\n                            \"area_code\": \"560061\",\n                            \"street\": \"Ramanjaneyanagar\"\n                        }\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.9711869, 77.5868122\",\n                        \"address\": {\n                            \"ward\": \"Basavanagudi, Chikkanna Garden, Example Memorial Hospital\",\n                            \"country\": \"India\",\n                            \"building\": \"Example Memorial Hospital\",\n                            \"state\": \"Karnataka\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Basavanagudi\",\n                            \"door\": \"\",\n                            \"area_code\": \"\",\n                            \"street\": \"Chikkanna Garden\"\n                        }\n                    }\n                },\n                \"agent\": {\n                    \"name\": \"RAGHAVENDRA J\",\n                    \"rateable\": true,\n                    \"rating\": \"5\"\n                },\n                \"vehicle\": {\n                    \"category\": \"AUTO_RICKSHAW\"\n                },\n                \"customer\": {\n                    \"person\": {\n                        \"name\": \"John Doe\",\n                        \"phone\": \"+91-9897867564\",\n                        \"tags\": {\n                            \"groups/1/descriptor/name\": \"Localization\",\n                            \"groups/1/display\": \"false\",\n                            \"groups/1/list/1/descriptor/name\": \"Language\",\n                            \"groups/1/list/1/value\": \"en\"\n                        }\n                    }\n                }\n            },\n            \"payment\": {\n                \"id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\",\n                \"type\": \"ON-FULFILLMENT\",\n                \"params\": {\n                    \"amount\": \"81\",\n                    \"currency\": \"INR\",\n                    \"transaction_status\": \"NOT-PAID\"\n                }\n            }\n        }\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/confirm",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["confirm"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Track",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Signature keyId=\"stagingapigateway.bizom.in/ondc|140|ed25519\",algorithm=\"ed25519\", created=\"1654001602\", expires=\"1654068802\", headers=\"(created) (expires) digest\", signature=\"st5AznOkhNx2mLj6yP5KMd56iqbOmLd2AivOx3ty7iEHw+aShYPn9tgNuN1qYHnNTXNoRY/gAQEawXDw5K8+BA==\"",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"track\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"{{TIMESTAMP}}\"\n    },\n    \"message\": {\n        \"order_id\": \"{{ORDER_ID}}\"\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/track",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["track"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Track",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Authorization",
+                                        "value": "Signature keyId=\"stagingapigateway.bizom.in/ondc|140|ed25519\",algorithm=\"ed25519\", created=\"1654001602\", expires=\"1654068802\", headers=\"(created) (expires) digest\", signature=\"st5AznOkhNx2mLj6yP5KMd56iqbOmLd2AivOx3ty7iEHw+aShYPn9tgNuN1qYHnNTXNoRY/gAQEawXDw5K8+BA==\"",
+                                        "type": "text"
+                                    }
+                                ],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"track\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order_id\": \"22e090fc-b8b1-4437-9126-ff7a71c7845c\"\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/track",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["track"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Support",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"support\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"{{TIMESTAMP}}\"\n    },\n    \"message\": {\n        \"ref_id\": \"{{ORDER_ID}}\"\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/support",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["support"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Support",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"support\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"ref_id\": \"7751bd26-3fdc-47ca-9b64-e998dc5abe68\"\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/support",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["support"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Update [Not working]",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"update\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"update_target\": \"item,billing\",\n        \"order\": {\n            \"id\": \"7751bd26-3fdc-47ca-9b64-e998dc5abe68\",\n            \"provider\": {\n                \"id\": \"e8542642-0f4a-454c-9a9f-f46110c367a3\",\n                \"descriptor\": {\n                    \"name\": \"Raghavendra J\"\n                }\n            },\n            \"items\": [\n                {\n                    \"id\": \"5777a0bf-9a08-49aa-a97d-1e5561a9622e\",\n                    \"descriptor\": {\n                        \"name\": \"Auto Ride\",\n                        \"code\": \"RIDE\"\n                    },\n                    \"tags\": {\n                        \"groups/1/descriptor/name\": \"Daytime Charges\",\n                        \"groups/1/display\": \"true\",\n                        \"groups/1/list/1/descriptor/name\": \"Min Fare upto 2 km\",\n                        \"groups/1/list/1/value\": \"₹ 30 upto 2 km\",\n                        \"groups/1/list/2/descriptor/name\": \"Rate above Min. Fare\",\n                        \"groups/1/list/2/value\": \"₹15 / km\",\n                        \"groups/1/list/3/descriptor/name\": \"Driver Pickup Charges\",\n                        \"groups/1/list/3/value\": \"₹ 10\",\n                        \"groups/1/list/4/descriptor/name\": \"Nominal Fare\",\n                        \"groups/1/list/4/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                        \"groups/1/list/4/value\": \"₹ 10\",\n                        \"groups/1/list/5/descriptor/name\": \"Nominal Fare\",\n                        \"groups/1/list/5/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                        \"groups/1/list/5/value\": \"₹ 0 / min\",\n                        \"groups/2/descriptor/name\": \"Waiting Charges\",\n                        \"groups/2/display\": \"true\",\n                        \"groups/2/list/1/descriptor/name\": \"Night Charges\",\n                        \"groups/2/list/1/value\": \"1.5x of daytime charges applicable at night from 10 PM to 5 PM\",\n                        \"groups/2/list/2/descriptor/name\": \"Night Shift Start\",\n                        \"groups/2/list/2/value\": \"22:00:00\",\n                        \"groups/2/list/3/descriptor/name\": \"Night Shift End\",\n                        \"groups/2/list/3/value\": \"05:00:00\",\n                        \"groups/3/descriptor/name\": \"General Information\",\n                        \"groups/3/display\": \"true\",\n                        \"groups/3/list/1/descriptor/name\": \"Distance to nearest driver\",\n                        \"groups/3/list/1/value\": \"661 m\",\n                        \"groups/3/list/2/descriptor/name\": \"Wait time upto\",\n                        \"groups/3/list/2/value\": \"3 min\"\n                    },\n                    \"fulfillment_id\": \"fb5c84d4-1b59-4b9d-96b5-9d79107432c5\",\n                    \"payment_id\": \"1\"\n                }\n            ],\n            \"quote\": {\n                \"value\": \"81\",\n                \"currency\": \"INR\",\n                \"breakup\": [\n                    {\n                        \"title\": \"Base Fare\",\n                        \"price\": {\n                            \"value\": \"30\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"Per km fare\",\n                        \"price\": {\n                            \"value\": \"56\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"CGST @ 5%\",\n                        \"price\": {\n                            \"value\": \"2.5\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"SGST @ 5%\",\n                        \"price\": {\n                            \"value\": \"2.5\",\n                            \"currency\": \"INR\"\n                        }\n                    }\n                ]\n            },\n            \"fulfillment\": {\n                \"id\": \"fulf_5cf064d5-4c0a-42d3-b73d-5f19a6f7468e\",\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"13.008935, 77.6444085\",\n                        \"address\": {\n                            \"ward\": \"Uttarahalli Hobli, Ramanjaneyanagar\",\n                            \"country\": \"India\",\n                            \"building\": \"6th Main Rd\",\n                            \"state\": \"Karnataka 560061\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Uttarahalli Hobli\",\n                            \"door\": \"98A, Sarovarm 2nd cross\",\n                            \"area_code\": \"560061\",\n                            \"street\": \"Ramanjaneyanagar\"\n                        }\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.9711869, 77.5868122\",\n                        \"address\": {\n                            \"ward\": \"Basavanagudi, Chikkanna Garden, Example Memorial Hospital\",\n                            \"country\": \"India\",\n                            \"building\": \"Example Memorial Hospital\",\n                            \"state\": \"Karnataka\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Basavanagudi\",\n                            \"door\": \"\",\n                            \"area_code\": \"\",\n                            \"street\": \"Chikkanna Garden\"\n                        }\n                    }\n                },\n                \"agent\": {\n                    \"name\": \"RAGHAVENDRA J\",\n                    \"rateable\": true,\n                    \"rating\": \"5\"\n                },\n                \"vehicle\": {\n                    \"category\": \"AUTO_RICKSHAW\"\n                },\n                \"customer\": {\n                    \"person\": {\n                        \"name\": \"John Doe\",\n                        \"phone\": \"+91-9897867564\",\n                        \"tags\": {\n                            \"groups/1/descriptor/name\": \"Localization\",\n                            \"groups/1/display\": \"false\",\n                            \"groups/1/list/1/descriptor/name\": \"Language\",\n                            \"groups/1/list/1/value\": \"en\"\n                        }\n                    }\n                }\n            },\n            \"payment\": {\n                \"id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\",\n                \"type\": \"ON-FULFILLMENT\",\n                \"params\": {\n                    \"amount\": \"81\",\n                    \"currency\": \"INR\",\n                    \"transaction_status\": \"NOT-PAID\"\n                }\n            }\n        }\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/update",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["update"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Update",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"update\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"update_target\": \"item,billing\",\n        \"order\": {\n            \"id\": \"7751bd26-3fdc-47ca-9b64-e998dc5abe68\",\n            \"provider\": {\n                \"id\": \"e8542642-0f4a-454c-9a9f-f46110c367a3\",\n                \"descriptor\": {\n                    \"name\": \"Raghavendra J\"\n                }\n            },\n            \"items\": [\n                {\n                    \"id\": \"5777a0bf-9a08-49aa-a97d-1e5561a9622e\",\n                    \"descriptor\": {\n                        \"name\": \"Auto Ride\",\n                        \"code\": \"RIDE\"\n                    },\n                    \"tags\": {\n                        \"groups/1/descriptor/name\": \"Daytime Charges\",\n                        \"groups/1/display\": \"true\",\n                        \"groups/1/list/1/descriptor/name\": \"Min Fare upto 2 km\",\n                        \"groups/1/list/1/value\": \"₹ 30 upto 2 km\",\n                        \"groups/1/list/2/descriptor/name\": \"Rate above Min. Fare\",\n                        \"groups/1/list/2/value\": \"₹15 / km\",\n                        \"groups/1/list/3/descriptor/name\": \"Driver Pickup Charges\",\n                        \"groups/1/list/3/value\": \"₹ 10\",\n                        \"groups/1/list/4/descriptor/name\": \"Nominal Fare\",\n                        \"groups/1/list/4/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                        \"groups/1/list/4/value\": \"₹ 10\",\n                        \"groups/1/list/5/descriptor/name\": \"Nominal Fare\",\n                        \"groups/1/list/5/descriptor/short_desc\": \"Driver may quote extra to cover for traffic, chance of return trip, etc.\",\n                        \"groups/1/list/5/value\": \"₹ 0 / min\",\n                        \"groups/2/descriptor/name\": \"Waiting Charges\",\n                        \"groups/2/display\": \"true\",\n                        \"groups/2/list/1/descriptor/name\": \"Night Charges\",\n                        \"groups/2/list/1/value\": \"1.5x of daytime charges applicable at night from 10 PM to 5 PM\",\n                        \"groups/2/list/2/descriptor/name\": \"Night Shift Start\",\n                        \"groups/2/list/2/value\": \"22:00:00\",\n                        \"groups/2/list/3/descriptor/name\": \"Night Shift End\",\n                        \"groups/2/list/3/value\": \"05:00:00\",\n                        \"groups/3/descriptor/name\": \"General Information\",\n                        \"groups/3/display\": \"true\",\n                        \"groups/3/list/1/descriptor/name\": \"Distance to nearest driver\",\n                        \"groups/3/list/1/value\": \"661 m\",\n                        \"groups/3/list/2/descriptor/name\": \"Wait time upto\",\n                        \"groups/3/list/2/value\": \"3 min\"\n                    },\n                    \"fulfillment_id\": \"fb5c84d4-1b59-4b9d-96b5-9d79107432c5\",\n                    \"payment_id\": \"1\"\n                }\n            ],\n            \"quote\": {\n                \"value\": \"81\",\n                \"currency\": \"INR\",\n                \"breakup\": [\n                    {\n                        \"title\": \"Base Fare\",\n                        \"price\": {\n                            \"value\": \"30\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"Per km fare\",\n                        \"price\": {\n                            \"value\": \"56\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"CGST @ 5%\",\n                        \"price\": {\n                            \"value\": \"2.5\",\n                            \"currency\": \"INR\"\n                        }\n                    },\n                    {\n                        \"title\": \"SGST @ 5%\",\n                        \"price\": {\n                            \"value\": \"2.5\",\n                            \"currency\": \"INR\"\n                        }\n                    }\n                ]\n            },\n            \"fulfillment\": {\n                \"id\": \"fulf_5cf064d5-4c0a-42d3-b73d-5f19a6f7468e\",\n                \"start\": {\n                    \"location\": {\n                        \"gps\": \"13.008935, 77.6444085\",\n                        \"address\": {\n                            \"ward\": \"Uttarahalli Hobli, Ramanjaneyanagar\",\n                            \"country\": \"India\",\n                            \"building\": \"6th Main Rd\",\n                            \"state\": \"Karnataka 560061\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Uttarahalli Hobli\",\n                            \"door\": \"98A, Sarovarm 2nd cross\",\n                            \"area_code\": \"560061\",\n                            \"street\": \"Ramanjaneyanagar\"\n                        }\n                    }\n                },\n                \"end\": {\n                    \"location\": {\n                        \"gps\": \"12.9711869, 77.5868122\",\n                        \"address\": {\n                            \"ward\": \"Basavanagudi, Chikkanna Garden, Example Memorial Hospital\",\n                            \"country\": \"India\",\n                            \"building\": \"Example Memorial Hospital\",\n                            \"state\": \"Karnataka\",\n                            \"city\": \"Bengaluru\",\n                            \"locality\": \"Basavanagudi\",\n                            \"door\": \"\",\n                            \"area_code\": \"\",\n                            \"street\": \"Chikkanna Garden\"\n                        }\n                    }\n                },\n                \"agent\": {\n                    \"name\": \"RAGHAVENDRA J\",\n                    \"rateable\": true,\n                    \"rating\": \"5\"\n                },\n                \"vehicle\": {\n                    \"category\": \"AUTO_RICKSHAW\"\n                },\n                \"customer\": {\n                    \"person\": {\n                        \"name\": \"John Doe\",\n                        \"phone\": \"+91-9897867564\",\n                        \"tags\": {\n                            \"groups/1/descriptor/name\": \"Localization\",\n                            \"groups/1/display\": \"false\",\n                            \"groups/1/list/1/descriptor/name\": \"Language\",\n                            \"groups/1/list/1/value\": \"en\"\n                        }\n                    }\n                }\n            },\n            \"payment\": {\n                \"id\": \"7f7896dd-787e-4a0b-8675-e9e6fe93bb8f\",\n                \"type\": \"ON-FULFILLMENT\",\n                \"params\": {\n                    \"amount\": \"81\",\n                    \"currency\": \"INR\",\n                    \"transaction_status\": \"NOT-PAID\"\n                }\n            }\n        }\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/update",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["update"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Cancel",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"cancel\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"{{TIMESTAMP}}\"\n    },\n    \"message\": {\n        \"order_id\": \"{{ORDER_ID}}\",\n        \"cancellation_reason_id\": \"1\"\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/cancel",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["cancel"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Cancel",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"cancel\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order_id\": \"b4232ad4-19ee-4c67-9223-a5189b13a741\",\n        \"cancellation_reason_id\": \"5\"\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/cancel",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["cancel"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Status",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"status\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"{{TIMESTAMP}}\"\n    },\n    \"message\": {\n        \"order_id\": \"{{ORDER_ID}}\"\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/status",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["status"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Status",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"status\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"order_id\": \"7751bd26-3fdc-47ca-9b64-e998dc5abe68\"\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/status",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["status"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Rating",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"rating\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"{{TIMESTAMP}}\"\n    },\n    \"message\": {\n        \"rating_category\": \"VEHICLE\",\n        \"id\": \"{{ORDER_ID}}\",\n        \"value\": 2\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/rating",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["rating"]
+                        }
+                    },
+                    "response": [
+                        {
+                            "name": "Rating",
+                            "originalRequest": {
+                                "method": "POST",
+                                "header": [],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"rating\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{MESSAGE_ID}}\",\n        \"timestamp\": \"2023-03-23T04:41:16Z\"\n    },\n    \"message\": {\n        \"rating_category\": \"string\",\n        \"id\": \"string\",\n        \"value\": 0,\n        \"feedback_form\": [\n            {\n                \"id\": \"string\",\n                \"parent_id\": \"string\",\n                \"question\": \"string\",\n                \"answer\": \"string\",\n                \"answer_type\": \"radio\"\n            }\n        ],\n        \"feedback_id\": \"string\"\n    }\n}",
+                                    "options": {
+                                        "raw": {
+                                            "language": "json"
+                                        }
+                                    }
+                                },
+                                "url": {
+                                    "raw": "{{BASE_URL}}/rating",
+                                    "host": ["{{BASE_URL}}"],
+                                    "path": ["rating"]
+                                }
+                            },
+                            "_postman_previewlanguage": "Text",
+                            "header": [],
+                            "cookie": [],
+                            "body": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Get cancellation reasons",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{UMTC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"get_cancellation_reasons\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"{{TIMESTAMP}}\"\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/get_cancellation_reasons",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["get_cancellation_reasons"]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get rating categories",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"context\": {\n        \"domain\": \"{{ONDC_DOMAIN}}\",\n        \"city\": \"{{CITY}}\",\n        \"country\": \"{{COUNTRY}}\",\n        \"core_version\": \"{{CORE_VERSION}}\",\n        \"action\": \"get_rating_categories\",\n        \"bap_id\": \"{{BAP_ID}}\",\n        \"bap_uri\": \"{{BAP_URI}}\",\n        \"bpp_id\": \"{{BPP_ID}}\",\n        \"bpp_uri\": \"{{BPP_URI}}\",\n        \"transaction_id\": \"{{TRANSACTION_ID}}\",\n        \"message_id\": \"{{$randomUUID}}\",\n        \"timestamp\": \"{{TIMESTAMP}}\"\n    }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{BASE_URL}}/get_rating_categories",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["get_rating_categories"]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        }
+    ],
+    "event": [
+        {
+            "listen": "prerequest",
+            "script": {
+                "type": "text/javascript",
+                "exec": [""]
+            }
+        },
+        {
+            "listen": "test",
+            "script": {
+                "type": "text/javascript",
+                "exec": ["pm.environment.get(\"variable_key\");"]
+            }
+        }
+    ],
+    "variable": [
+        {
+            "key": "BASE_URL",
+            "value": "https://sandbox-bap-client.becknprotocol.io"
+        },
+        {
+            "key": "BAP_ID",
+            "value": "beckn-sandbox-bap.becknprotocol.io",
+            "type": "string"
+        },
+        {
+            "key": "BAP_URI",
+            "value": "https://sandbox-bap-network.becknprotocol.io",
+            "type": "string"
+        },
+        {
+            "key": "BPP_ID",
+            "value": "",
+            "type": "string"
+        },
+        {
+            "key": "BPP_URI",
+            "value": "",
+            "type": "string"
+        },
+        {
+            "key": "TRANSACTION_ID",
+            "value": "7afe44fd-d947-4a0a-81bc-d286784df2c1",
+            "type": "string"
+        },
+        {
+            "key": "ONDC_DOMAIN",
+            "value": "mobility:ridehailing:0.8.0",
+            "type": "string"
+        },
+        {
+            "key": "COUNTRY",
+            "value": "IND",
+            "type": "string"
+        },
+        {
+            "key": "CITY",
+            "value": "std:080",
+            "type": "string"
+        },
+        {
+            "key": "CORE_VERSION",
+            "value": "0.9.4",
+            "type": "string"
+        },
+        {
+            "key": "MESSAGE_ID",
+            "value": "0d3d2c49-050a-4018-ace9-24ede7de512e",
+            "type": "string"
+        },
+        {
+            "key": "UMTC_DOMAIN",
+            "value": "mobility:publictransport:0.8.0",
+            "type": "string"
+        },
+        {
+            "key": "TIMESTAMP",
+            "value": "2023-05-25T04:41:16Z",
+            "type": "string"
+        },
+        {
+            "key": "ORDER_ID",
+            "value": "22e090fc-b8b1-4437-9126-ff7a71c7845c",
+            "type": "string"
+        }
+    ]
+}
