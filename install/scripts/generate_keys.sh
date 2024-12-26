@@ -5,7 +5,7 @@ source $SCRIPT_DIR/variables.sh
 # Run the script that generates keys and capture the output
 get_keys() {
     # Run the container with platform flag for multi-arch support
-    docker run --name temp --platform linux/amd64,linux/arm64 -itd fidedocker/protocol-server > /dev/null 2>&1
+    docker run --name temp --platform linux/amd64 -itd fidedocker/protocol-server > /dev/null 2>&1
 
     # Execute the key generation script inside the container
     output=$(docker exec -i temp node /usr/src/app/scripts/generate-keys 2>&1)

@@ -20,13 +20,20 @@ install_package() {
         # APT (Debian/Ubuntu)
         if [ "$1" == "docker" ]; then
             if ! docker --version > /dev/null 2>&1; then
-                if [ -f /etc/debian_version ]; then
+                # Use /etc/os-release to reliably identify Debian and Ubuntu
+                if grep -q '^ID=debian' /etc/os-release; then
+                    # Debian
                     curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-                    echo "deb [signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-                else
+                    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+                elif grep -q '^ID=ubuntu' /etc/os-release; then
+                    # Ubuntu
                     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-                    echo "deb [signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+                    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+                else
+                    echo "Unsupported distribution. Please install Docker manually."
+                    exit 1
                 fi
+
                 sudo apt update >/dev/null 2>&1
                 sudo apt install -y docker-ce docker-ce-cli containerd.io >/dev/null 2>&1
                 sudo usermod -aG docker $USER
@@ -96,7 +103,6 @@ install_package() {
         exit 1
     fi
 }
-
 
 
 remove_package(){
