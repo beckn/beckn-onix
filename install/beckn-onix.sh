@@ -111,23 +111,47 @@ install_registry() {
 }
 
 # Function to install Layer2 Config
-install_layer2_config() {
-    container_name=$1
-    FILENAME="$(basename "$layer2_url")"
-    wget -O "$(basename "$layer2_url")" "$layer2_url" >/dev/null 2>&1
-    if [ $? -eq 0 ]; then
-        docker cp "$FILENAME" $container_name:"$schemas_path/$FILENAME" >/dev/null 2>&1
-        if [ $? -eq 0 ]; then
-            echo "${GREEN}Successfully copied $FILENAME to Docker container $container_name.${NC}"
-        fi
+install_bap_protocol_server() {
+    start_support_services
+    if [[ $1 ]]; then
+        registry_url=$1
+        bap_subscriber_id=$2
+        bap_subscriber_key_id=$3
+        bap_subscriber_url=$4
+        bash scripts/update_bap_config.sh $registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url $api_key $np_domain
     else
-        echo "${BoldRed}The Layer 2 configuration file has not been downloaded.${NC}"
-        echo -e "${BoldGreen}Please download the Layer 2 configuration files by running the download_layer_2_config_bap.sh script located in the ../layer2 folder."
-        echo -e "For further information, refer to this URL: https://github.com/beckn/beckn-onix/blob/main/docs/user_guide.md#downloading-layer-2-configuration-for-a-domain.${NC}"
+        bash scripts/update_bap_config.sh
     fi
-    rm -f $FILENAME >/dev/null 2>&1
-}
+    sleep 10
+    docker volume create bap_client_config_volume
+    docker volume create bap_network_config_volume
 
+    docker run --rm --platform linux/amd64,linux/arm64 \
+        -v $SCRIPT_DIR/../protocol-server-data:/source \
+        -v bap_client_config_volume:/target \
+        alpine:latest \
+        sh -c "cp /source/bap-client.yml /target/default.yml && cp /source/bap-client.yaml-sample /target"
+
+    docker run --rm --platform linux/amd64,linux/arm64 \
+        -v $SCRIPT_DIR/../protocol-server-data:/source \
+        -v bap_network_config_volume:/target \
+        alpine:latest \
+        sh -c "cp /source/bap-network.yml /target/default.yml && cp /source/bap-network.yaml-sample /target"
+
+    start_container $bap_docker_compose_file "bap-client"
+    start_container $bap_docker_compose_file "bap-network"
+    sleep 10
+
+    if [[ -z "$layer2_url" ]]; then
+        echo -e "${BoldGreen}Please download the Layer 2 configuration files by running the download_layer_2_config_bap.sh script located in the ../layer2 folder."
+        echo -e "For further information, refer to this URL:${BLUE}https://github.com/beckn/beckn-onix/blob/main/docs/user_guide.md#downloading-layer-2-configuration-for-a-domain.${NC}"
+    else
+        echo -e "${GREEN}Installing layer configuration for $(basename "$layer2_url")${NC}"
+        install_layer2_config bap-client
+        install_layer2_config bap-network
+    fi
+    echo "Protocol server BAP installation successful"
+}
 # Function to install BAP Protocol Server
 install_bap_protocol_server() {
     start_support_services
