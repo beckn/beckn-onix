@@ -1,16 +1,17 @@
 package config
 
 import (
-	"beckn-onix/shared/utils"
+	"log"
 	"os"
 
 	"github.com/joho/godotenv"
 )
 
-// LoadEnv loads environment variables
+// LoadEnv loads environment variables from .env file
 func LoadEnv() {
-	if err := godotenv.Load(); err != nil {
-		utils.Logger.Println("No .env file found, using system environment variables")
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("Warning: .env file not found, using system environment variables")
 	}
 }
 
@@ -18,10 +19,11 @@ func LoadEnv() {
 func GetPort() string {
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8081" // Default port
+		port = ":8080" // Default port
 	}
-	return ":" + port
+	return port
 }
+
 
 // GetProjectID retrieves the Google Cloud Project ID
 func GetProjectID() string {
@@ -32,11 +34,9 @@ func GetProjectID() string {
 func GetSubscriptionID() string {
 	return os.Getenv("PUBSUB_SUBSCRIPTION_ID")
 
-
 }
 
 
 func GetTopicID() string {
 	return os.Getenv("PUBSUB_TOPIC_ID")
 }
-
