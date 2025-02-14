@@ -1,0 +1,30 @@
+{
+    "method": "POST",
+    "url": "http://localhost:8080",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "context": {
+        "domain": "nic2004:60232",
+        "country": "IND",
+        "city": "std:080",
+        "action": "search",
+        "core_version": "1.2.0",
+        "bap_id": "pilot-gateway-1.beckn.nsdl.co.in/option91",
+        "bap_uri": "https://pilot-gateway-1.beckn.nsdl.co.in/option91",
+        "transaction_id": "T1",
+        "message_id": "M1",
+        "timestamp": "2023-06-06T21:00:00.000Z",
+        "ttl": "PT30S"
+      },
+      "message": {
+        "intent": {
+          "category": {
+            "id": "Immediate Delivery"
+          }
+        }
+      }
+    }
+  }
+  
