@@ -1,22 +1,46 @@
 package main
 
 import (
-	"beckn-onix/cmd/clientSideReciever/src/config"
-	"beckn-onix/cmd/clientSideReciever/src/routes"
-	utils "beckn-onix/shared/utils"
+	config "beckn-onix/cmd/clientSideReciever/config"
+	handlers "beckn-onix/cmd/clientSideReciever/handler"
+	shared "beckn-onix/shared"
+	"context"
+	"flag"
+	"fmt"
+	"log"
 	"net/http"
 )
 
 func main() {
-	// Load configuration
-	config.LoadEnv()
-	port := config.GetPort()
+
+	// Define the command-line flag for the YAML file path
+	configPath := flag.String("config", "config.yaml", "./config.yaml")
+	flag.Parse()
+
+	// Define the context (could be used for cancellation or timeouts)
+	ctx := context.Background()
+
+	// Load the configuration using InitConfig
+	configuration, err := config.InitConfig(ctx, *configPath)
+	if err != nil {
+		log.Fatalf("Error initializing config: %v", err)
+	}
+
+	// Use the config to initialize the server
+	fmt.Printf("App Name: %s\n", configuration.AppName)
+	fmt.Printf("Server Port: %d\n", configuration.ServerPort)
+	fmt.Printf("Database Host: %s\n", configuration.DBHost)
+	fmt.Printf("Database Port: %d\n", configuration.DBPort)
+	fmt.Printf("Database User: %s\n", configuration.DBUser)
+
+	port := fmt.Sprintf(":%d", configuration.ServerPort)
 
 	// Initialize router
-	mux := routes.InitializeRoutes()
+	http.HandleFunc("/", handlers.HomeHandler)
 
-	utils.Logger.Println("Server started on", port)
-	if err := http.ListenAndServe(port, mux); err != nil {
-		utils.Logger.Fatal("Server started on", port)
+
+	shared.Log.Info("Server started on", port)
+	if err := http.ListenAndServe(port, nil); err != nil {
+		shared.Log.Error("Server started on", port)
 	}
 }
