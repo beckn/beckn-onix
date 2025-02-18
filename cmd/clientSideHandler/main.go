@@ -1,31 +1,78 @@
 package main
 
 import (
+	shared "beckn-onix/shared"
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"log"
 	"net/http"
-
-	"beckn-onix/cmd/clientSideHandler/src/config"
-	"beckn-onix/cmd/clientSideHandler/src/routes"
-	handlers "beckn-onix/cmd/clientSideHandler/src/shared"
-	"beckn-onix/shared/utils"
+	"os"
+	"gopkg.in/yaml.v2" // For unmarshaling YAML
 )
 
+
+type Config struct {
+	AppName    string `yaml:"app_name"`
+	ServerPort int    `yaml:"port"`
+}
+
+
+func InitConfig(ctx context.Context, path string) (*Config, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("could not open config file: %v", err)
+	}
+	defer file.Close()
+
+	var config Config
+	decoder := yaml.NewDecoder(file)
+	err = decoder.Decode(&config)
+	if err != nil {
+		return nil, fmt.Errorf("could not unmarshal config data: %v", err)
+	}
+
+	return &config, nil
+}
+
+
 func main() {
-	// Load environment variables
-	config.LoadEnv()
+	configPath := flag.String("config", "config.yaml", "./config.yaml")
+	flag.Parse()
 
-	// Get server port
-	port := config.GetPort()
+	ctx := context.Background()
 
-	// Initialize router
-	mux := routes.InitializeRoutes()
+	configuration, err := InitConfig(ctx, *configPath)
+	if err != nil {
+		log.Fatalf("Error initializing config: %v", err)
+	}
 
-	// Start Pub/Sub Listener in a goroutine
-	go handlers.SubscribeToMessages(config.GetSubscriptionID())
 
-	utils.Logger.Println("Server started on", port)
+	fmt.Printf("App Name: %s\n", configuration.AppName)
+	fmt.Printf("Server Port: %d\n", configuration.ServerPort)
 
-	// Start the HTTP server
-	if err := http.ListenAndServe(port, mux); err != nil {
-		utils.Logger.Fatal("Failed to start server on", port, err)
+	port := fmt.Sprintf(":%d", configuration.ServerPort)
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			var req any
+			// Parse JSON body
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "Invalid JSON", http.StatusBadRequest)
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, "Message recieved successfully")
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	},
+	)
+
+	shared.Log.Info("Server started on", port)
+	if err := http.ListenAndServe(port, nil); err != nil {
+		shared.Log.Error("Server started on", port)
 	}
 }
