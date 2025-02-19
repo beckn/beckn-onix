@@ -10,7 +10,7 @@ import (
 // LoadEnv loads environment variables
 func LoadEnv() {
 	if err := godotenv.Load(); err != nil {
-		utils.Logger.Println("No .env file found, using system environment variables")
+		utils.Log.Println("No .env file found, using system environment variables")
 	}
 }
 
@@ -32,11 +32,8 @@ func GetProjectID() string {
 func GetSubscriptionID() string {
 	return os.Getenv("PUBSUB_SUBSCRIPTION_ID")
 
-
 }
-
 
 func GetTopicID() string {
 	return os.Getenv("PUBSUB_TOPIC_ID")
 }
-

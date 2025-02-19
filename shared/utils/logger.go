@@ -27,6 +27,14 @@ func (l *Logger) Error(v ...interface{}) {
 	l.logger.Println(v...)
 }
 
+func (l *Logger) Println(v ...interface{}) {
+	l.logger.SetPrefix("ERROR: ")
+	l.logger.Println(v...)
+}
+
+func (l *Logger) Fatalln(v ...interface{}) {
+	l.logger.SetPrefix("FATAL: ")
+	l.logger.Println(v...)
+}
 
 var Log = NewLogger()
-
