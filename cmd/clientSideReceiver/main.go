@@ -1,9 +1,9 @@
 package main
 
 import (
-	config "beckn-onix/cmd/clientSideReciever/config"
-	handlers "beckn-onix/cmd/clientSideReciever/handler"
-	shared "beckn-onix/shared"
+	config "beckn-onix/cmd/clientSideReceiver/config"
+	handlers "beckn-onix/cmd/clientSideReceiver/handler"
+	utils "beckn-onix/shared/utils"
 	"context"
 	"flag"
 	"fmt"
@@ -38,9 +38,8 @@ func main() {
 	// Initialize router
 	http.HandleFunc("/", handlers.HomeHandler)
 
-
-	shared.Log.Info("Server started on", port)
+	utils.Log.Info("Server started on", port)
 	if err := http.ListenAndServe(port, nil); err != nil {
-		shared.Log.Error("Server started on", port)
+		utils.Log.Error("Server started on", port)
 	}
 }

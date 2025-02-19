@@ -3,7 +3,6 @@ package handlers
 import (
 	"fmt"
 	"net/http"
-	
 )
 
 // HomeHandler handles the home route

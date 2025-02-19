@@ -4,11 +4,10 @@ import (
 	"log"
 	"os"
 
-	"github.com/joho/godotenv"
 	"context"
-	"gopkg.in/yaml.v2" // For unmarshaling YAML
 	"fmt"
-
+	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v2" // For unmarshaling YAML
 )
 
 // Config struct captures all the necessary configuration
@@ -53,4 +52,3 @@ func GetPort() string {
 	}
 	return port
 }
-
