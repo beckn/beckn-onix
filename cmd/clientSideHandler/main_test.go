@@ -94,7 +94,7 @@ port: 8081
 	}
 }
 
-// 🎯 Table-driven tests for ServerHandler (Success & Error Cases)
+
 func TestServerHandler(t *testing.T) {
 	tests := []struct {
 		name               string
