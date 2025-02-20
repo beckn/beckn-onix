@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"path/filepath"
-	"strings"
+	"time"
 
 	"beckn-onix/plugins/plugin_definition"
 
@@ -19,131 +19,149 @@ type tekuriValidator struct {
 }
 
 type tekuriValidatorProvider struct {
-	compiledSchemas map[string]map[string]*jsonschema.Schema // Cache for compiled schemas
+	//schemaCache map[string]map[string]*jsonschema.Schema
+	schemaCache map[string]*jsonschema.Schema
 }
 
 // Validate validates the given data against the schema.
 func (v *tekuriValidator) Validate(ctx context.Context, data []byte) error {
+	start := time.Now()
 	var jsonData interface{}
 	if err := json.Unmarshal(data, &jsonData); err != nil {
 		return err
 	}
-	return v.schema.Validate(jsonData)
+	err := v.schema.Validate(jsonData)
+	if err != nil {
+		fmt.Printf("Validation error: %v\n", err)
+	}
+	fmt.Printf("validate executed in %s\n", time.Since(start))
+
+	return err
 }
 
-func (vp *tekuriValidatorProvider) Initialize(schemaDir string) error {
-	// Check if vp is nil
-	if vp == nil {
-		return fmt.Errorf("tekuriValidatorProvider is not initialized")
-	}
+//(Approach 2)(all json files)
 
-	// Initialize compiledSchemas
-	vp.compiledSchemas = make(map[string]map[string]*jsonschema.Schema)
+// //Initialize reads all .json files from the given schema directory, validates them using JSON Schema, and prints the result.
+// func (vp *tekuriValidatorProvider) Initialize(schemaDir string) (map[string]plugin_definition.Validator, error) {
+// 	start := time.Now()
+// 	// Initialize the cache
+// 	vp.schemaCache = make(map[string]map[string]*jsonschema.Schema)
+// 	validatorCache := make(map[string]plugin_definition.Validator)
 
-	compiler := jsonschema.NewCompiler()
-	if compiler == nil {
-		return fmt.Errorf("jsonschema compiler is not initialized")
-	}
+// 	// Read the directory
+// 	files, err := ioutil.ReadDir(schemaDir)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to read schema directory: %v", err)
+// 	}
+
+// 	for _, file := range files {
+// 		if filepath.Ext(file.Name()) == ".json" {
+// 			// Read the JSON file
+// 			filePath := filepath.Join(schemaDir, file.Name())
+// 			compiler := jsonschema.NewCompiler()
+// 			compiledSchema, err := compiler.Compile(filePath)
+// 			if err != nil {
+// 				return nil, fmt.Errorf("failed to compile JSON schema from file %s: %v", file.Name(), err)
+// 			}
+// 			if compiledSchema == nil {
+// 				return nil, fmt.Errorf("compiled schema is nil for file %s", file.Name())
+// 			}
+// 			// Extract directory and filename to use in the nested map
+// 			dir := filepath.Base(filepath.Dir(filePath))
+// 			if vp.schemaCache[dir] == nil {
+// 				vp.schemaCache[dir] = make(map[string]*jsonschema.Schema)
+// 			}
+// 			// Store the compiled schema in the nested cache
+// 			vp.schemaCache[dir][file.Name()] = compiledSchema
+
+// 			validatorCache[file.Name()] = &tekuriValidator{schema: compiledSchema}
+// 		}
+// 	}
+// 	fmt.Printf("initialize  executed in %s\n", time.Since(start))
+
+// 	return validatorCache, nil
+// }
+
+// func (vp *tekuriValidatorProvider) Get(schemaKey string) (plugin_definition.Validator, error) {
+// 	// Extract domain, version, and defKey from the schemaKey
+// 	fmt.Println("before printing key :", schemaKey)
+// 	schemaKey = strings.Replace(schemaKey, ":", "_", -1)
+
+// 	fmt.Println("after printing key :", schemaKey)
+
+// 	parts := strings.Split(schemaKey, "_")
+// 	if len(parts) != 3 {
+// 		return nil, fmt.Errorf("invalid schema key format: %s", schemaKey)
+// 	}
+// 	domain := parts[0] + "_" + parts[1]
+// 	defKey := parts[2]
+
+// 	// Look up the compiled schema in the nested map
+// 	if domainMap, ok := vp.schemaCache[domain]; ok {
+// 		if schema, ok := domainMap[defKey]; ok {
+// 			return &tekuriValidator{schema: schema}, nil
+// 		}
+// 	}
+// 	return nil, fmt.Errorf("schema not found: %s", schemaKey)
+// }
+
+// (Approach 1)
+func (vp *tekuriValidatorProvider) Initialize(schemaDir string) (map[string]plugin_definition.Validator, error) {
+	start := time.Now()
+
+	vp.schemaCache = make(map[string]*jsonschema.Schema)
+	validatorCache := make(map[string]plugin_definition.Validator)
 
 	files, err := ioutil.ReadDir(schemaDir)
 	if err != nil {
-		return fmt.Errorf("failed to read schema directory: %w", err)
+		return nil, fmt.Errorf("failed to read schema directory: %w", err)
 	}
-
 	for _, file := range files {
-		if !file.IsDir() && strings.HasSuffix(file.Name(), ".json") {
-			schemaPath := filepath.Join(schemaDir, file.Name())
-			absSchemaPath, _ := filepath.Abs(schemaPath)
-			fmt.Println("path:", absSchemaPath)
-			fmt.Printf("Reading schema file: %s\n", schemaPath)
+		if filepath.Ext(file.Name()) == ".json" {
+			filePath := filepath.Join(schemaDir, file.Name())
 
-			fileContent, err := ioutil.ReadFile(schemaPath)
+			fmt.Println("Compiling filePath:", filePath)
+
+			// Read the file content
+			content, err := ioutil.ReadFile(filePath)
 			if err != nil {
-				return fmt.Errorf("failed to read schema file %s: %w", schemaPath, err)
+				return nil, fmt.Errorf("failed to read file %s: %v", filePath, err)
 			}
 
-			var schemaData map[string]interface{}
-			if err := json.Unmarshal(fileContent, &schemaData); err != nil {
-				return fmt.Errorf("failed to unmarshal schema file %s: %w", schemaPath, err)
+			var schemaDoc map[string]interface{}
+			if err := json.Unmarshal(content, &schemaDoc); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal JSON schema from file %s: %v", filePath, err)
 			}
 
-			if defs, ok := schemaData["$defs"].(map[string]interface{}); ok {
-				nameParts := strings.Split(strings.TrimSuffix(file.Name(), ".json"), "_")
-				if len(nameParts) != 3 {
-					return fmt.Errorf("invalid schema file name format: %s", file.Name())
-				}
-				domain := strings.ReplaceAll(strings.ToLower(nameParts[0]+"_"+nameParts[1]), ":", "_")
-				version := strings.ToLower(nameParts[2])
-				fmt.Printf("Domain: %s, Version: %s\n", domain, version)
+			if defs, exists := schemaDoc["$defs"]; exists {
+				defsMap := defs.(map[string]interface{})
 
-				for defKey, defValue := range defs {
-					fmt.Println("value :", defValue)
-					tempSchema := map[string]interface{}{
-						"$id":     fmt.Sprintf("file://%s", absSchemaPath),
-						"$schema": schemaData["$schema"],
-						"$defs": map[string]interface{}{
-							defKey: defValue,
-						},
-					}
-					tempSchemaData, err := json.Marshal(tempSchema)
+				for name, defSchema := range defsMap {
+					_, err := json.Marshal(defSchema)
 					if err != nil {
-						return fmt.Errorf("failed to marshal temporary schema for $defs.%s: %w", defKey, err)
+						return nil, fmt.Errorf("failed to marshal schema definition %s: %v", name, err)
 					}
-					fmt.Println(" ")
 
-					// Use a unique ID for the resource to avoid conflict
-					resourceId := fmt.Sprintf("file://%s/%s", absSchemaPath, defKey)
-					fmt.Println("resource Id :", resourceId)
-					compiler.AddResource(resourceId, strings.NewReader(string(tempSchemaData)))
+					compiler := jsonschema.NewCompiler()
+					if err := compiler.AddResource(name, filepath.Dir(filePath)); err != nil {
+						return nil, fmt.Errorf("failed to add resource for schema definition %s: %v", name, err)
+					}
 
-					// Compile the specific $defs section
-					defSchemaPath := fmt.Sprintf("file://%s", absSchemaPath)
-
-					fmt.Println("def schema path printing :::  ", defSchemaPath)
-
-					compiledSchema, err := compiler.Compile(defSchemaPath)
+					compiledSchema, err := compiler.Compile(filePath)
 					if err != nil {
-						fmt.Printf("Failed to compile $defs.%s in schema file: %s\nError: %v\n", defKey, schemaPath, err)
-						continue
+						return nil, fmt.Errorf("failed to compile schema definition: %v", err)
 					}
 
-					fmt.Println("schema :", compiledSchema)
-
-					// Initialize nested map if not already initialized
-					if _, exists := vp.compiledSchemas[domain]; !exists {
-						vp.compiledSchemas[domain] = make(map[string]*jsonschema.Schema)
-					}
-
-					cacheKey := fmt.Sprintf("%s_%s_%s", domain, version, defKey)
-					fmt.Println("key :", cacheKey)
-					vp.compiledSchemas[domain][cacheKey] = compiledSchema
-					fmt.Printf("Compiled and cached $defs.%s schema: %s\n", defKey, cacheKey)
+					schemaKey := fmt.Sprintf("%s.%s", file.Name(), name)
+					vp.schemaCache[schemaKey] = compiledSchema
+					validatorCache[schemaKey] = &tekuriValidator{schema: compiledSchema}
 				}
 			}
 		}
 	}
+	fmt.Printf("Initialize executed in %s\n", time.Since(start))
+	return validatorCache, nil
 
-	return nil
-}
-
-func (vp *tekuriValidatorProvider) Get(schemaKey string) (plugin_definition.Validator, error) {
-	// Extract domain, version, and defKey from the schemaKey
-	schemaKey = strings.Replace(schemaKey, ":", "_", -1)
-
-	parts := strings.Split(schemaKey, "_")
-	if len(parts) != 3 {
-		return nil, fmt.Errorf("invalid schema key format: %s", schemaKey)
-	}
-	domain := parts[0] + "_" + parts[1]
-	defKey := parts[2]
-
-	// Look up the compiled schema in the nested map
-	if domainMap, ok := vp.compiledSchemas[domain]; ok {
-		if schema, ok := domainMap[defKey]; ok {
-			return &tekuriValidator{schema: schema}, nil
-		}
-	}
-	return nil, fmt.Errorf("schema not found: %s", schemaKey)
 }
 
 // Ensure tekuriValidatorProvider implements ValidatorProvider

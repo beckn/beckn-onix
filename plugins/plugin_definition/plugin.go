@@ -9,6 +9,6 @@ type Validator interface {
 
 // ValidatorProvider interface for creating validators
 type ValidatorProvider interface {
-	Get(p string) (Validator, error)
-	Initialize(schemaDir string) error
+	//Get(p string) (Validator, error)
+	Initialize(schemaDir string) (map[string]Validator, error)
 }
