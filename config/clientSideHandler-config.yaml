@@ -1,2 +1,2 @@
-appName: "clientSideReciever"
-port: 8080
+appName: "clientSideHandler"
+port: 8081
