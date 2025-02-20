@@ -1,74 +1,83 @@
 package main
 
 import (
-	shared "beckn-onix/shared"
+	// Standard library packages
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"gopkg.in/yaml.v2" // For unmarshaling YAML
-	"log"
 	"net/http"
 	"os"
+
+	// BecknOnix packages
+	log "beckn-onix/log"
+
+	// Third-party packages
+	"gopkg.in/yaml.v2" // For unmarshaling YAML
 )
 
-type Config struct {
-	AppName    string `yaml:"app_name"`
-	ServerPort int    `yaml:"port"`
+type config struct {
+	AppName string `yaml:"appName"`
+	Port    int    `yaml:"port"`
 }
 
-func InitConfig(ctx context.Context, path string) (*Config, error) {
+
+func run(ctx context.Context, configPath string) error {
+	configuration, err := initConfig(ctx, configPath)
+	if err != nil {
+		return fmt.Errorf("error initializing config: %w", err)
+	}
+
+	fmt.Printf("App Name: %s\n", configuration.AppName)
+	fmt.Printf("Server Port: %d\n", configuration.Port)
+
+	port := fmt.Sprintf(":%d", configuration.Port)
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		log.Log.Info("Received request:", r.Method, r.URL.Path, r.Header)
+
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "Message received successfully")
+	},
+	)
+
+	log.Log.Info("Server started on", port)
+	if err := http.ListenAndServe(port, nil); err != nil {
+		return fmt.Errorf("server failed to start: %w", err)
+	}
+	return nil
+}
+
+func initConfig(ctx context.Context, path string) (*config, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("could not open config file: %v", err)
 	}
 	defer file.Close()
 
-	var config Config
+	var config config
 	decoder := yaml.NewDecoder(file)
 	err = decoder.Decode(&config)
 	if err != nil {
 		return nil, fmt.Errorf("could not unmarshal config data: %v", err)
 	}
+	if config.AppName == "" || config.Port == 0 {
+		return nil, fmt.Errorf("missing required fields in config")
+	}
 
 	return &config, nil
 }
 
+var configPath string
+
 func main() {
-	configPath := flag.String("config", "config.yaml", "./config.yaml")
+	flag.StringVar(&configPath, "config", "../../config/clientSideReciever-config.yaml", "../../config/clientSideReciever-config.yaml")
 	flag.Parse()
 
-	ctx := context.Background()
-
-	configuration, err := InitConfig(ctx, *configPath)
-	if err != nil {
-		log.Fatalf("Error initializing config: %v", err)
-	}
-
-	fmt.Printf("App Name: %s\n", configuration.AppName)
-	fmt.Printf("Server Port: %d\n", configuration.ServerPort)
-
-	port := fmt.Sprintf(":%d", configuration.ServerPort)
-
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" {
-			var req any
-			// Parse JSON body
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "Invalid JSON", http.StatusBadRequest)
-				return
-			}
-
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, "Message recieved successfully")
-		} else {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	},
-	)
-
-	shared.Log.Info("Server started on", port)
-	if err := http.ListenAndServe(port, nil); err != nil {
-		shared.Log.Error("Server started on", port)
+	if err := run(context.Background(), configPath); err != nil {
+		log.Log.Error("Application failed:", err)
 	}
 }

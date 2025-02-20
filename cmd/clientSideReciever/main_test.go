@@ -2,67 +2,124 @@ package main
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
-// TestInitConfig checks if the InitConfig function correctly reads a YAML file
+
+
+func createTempConfig(t *testing.T, data string) string {
+	t.Helper()
+	tmpFile, err := os.CreateTemp("", "config.yaml")
+	if err != nil {
+		t.Fatalf("Failed to create temp config: %v", err)
+	}
+	if _, err := tmpFile.Write([]byte(data)); err != nil {
+		t.Fatalf("Failed to write to temp config: %v", err)
+	}
+	tmpFile.Close()
+	return tmpFile.Name()
+}
+
+
+// 🎯 Table-driven tests for initConfig (Success & Error Cases)
 func TestInitConfig(t *testing.T) {
-
-	configData := `
-app_name: "clientSideReciever"
-port: 8080	
-`
-	tempFile, err := os.CreateTemp("", "config.yaml")
-	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
+	tests := []struct {
+		name        string
+		configData  string
+		expectError bool
+		expected    *config
+	}{
+		{
+			name: "Success - Valid Config",
+			configData: `
+appName: "clientSideReciever"
+port: 8080
+`,
+			expectError: false,
+			expected: &config{
+				AppName: "clientSideReciever",
+				Port:    8080,
+			},
+		},
+		{
+			name:        "Error - Invalid YAML Format",
+			configData:  `invalid_yaml: :::`,
+			expectError: true,
+		},
+		{
+			name:        "Error - Missing Required Fields",
+			configData:  `appName: ""`,
+			expectError: true,
+		},
 	}
-	defer os.Remove(tempFile.Name())
 
-	// Write test config to the temp file
-	if _, err := tempFile.Write([]byte(configData)); err != nil {
-		t.Fatalf("Failed to write to temp file: %v", err)
-	}
-	tempFile.Close()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tempFilePath := "../../config/clientSideReciever-config.yaml"
+			tempFile, err := os.Create(tempFilePath)
+			if err != nil {
+				t.Fatalf("Failed to create temp file: %v", err)
+			}
+			defer os.Remove(tempFile.Name())
 
-	ctx := context.Background()
-	config, err := InitConfig(ctx, tempFile.Name())
-	if err != nil {
-		t.Fatalf("InitConfig failed: %v", err)
-	}
+			if _, err := tempFile.Write([]byte(tc.configData)); err != nil {
+				t.Fatalf("Failed to write to temp file: %v", err)
+			}
+			tempFile.Close()
 
-	// Validate results
-	if config.AppName != "clientSideReciever" {
-		t.Errorf("Expected AppName to be 'TestApp', got %s", config.AppName)
-	}
-	if config.ServerPort != 8080 {
-		t.Errorf("Expected ServerPort to be 8080, got %d", config.ServerPort)
+			ctx := context.Background()
+			cfg, err := initConfig(ctx, tempFile.Name())
+
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("Expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Did not expect error, got %v", err)
+				}
+				if cfg.AppName != tc.expected.AppName {
+					t.Errorf("Expected appName %s, got %s", tc.expected.AppName, cfg.AppName)
+				}
+				if cfg.Port != tc.expected.Port {
+					t.Errorf("Expected Port %d, got %d", tc.expected.Port, cfg.Port)
+				}
+			}
+		})
 	}
 }
 
-// TestServerHandler checks if the HTTP server correctly handles requests
+// 🎯 Table-driven tests for ServerHandler (Success & Error Cases)
 func TestServerHandler(t *testing.T) {
-	// Create a test request
-	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"message": "Hello"}`))
-	req.Header.Set("Content-Type", "application/json")
+	tests := []struct {
+		name               string
+		method             string
+		body               string
+		expectedStatusCode int
+		expectedResponse   string
+	}{
+		{
+			name:               "Success - POST Request",
+			method:             "POST",
+			body:               `{"message": "Hello"}`,
+			expectedStatusCode: http.StatusOK,
+			expectedResponse:   "Message received successfully",
+		},
+		{
+			name:               "Error - Invalid Method (GET)",
+			method:             "GET",
+			body:               "",
+			expectedStatusCode: http.StatusMethodNotAllowed,
+			expectedResponse:   "Method not allowed\n",
+		}}
 
-	// Record the response
-	rec := httptest.NewRecorder()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" {
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				http.Error(w, "Error reading body", http.StatusInternalServerError)
-				return
-			}
-
-			if string(body) != `{"message": "Hello"}` {
-				t.Errorf("Expected body: %s, got: %s", `{"message": "Hello"}`, string(body))
-			}
 
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte("Message received successfully"))
@@ -71,36 +128,98 @@ func TestServerHandler(t *testing.T) {
 		}
 	})
 
-	// Serve HTTP request to the test response recorder
-	handler.ServeHTTP(rec, req)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, "/", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
 
-	// Validate response status code
-	if rec.Code != http.StatusOK {
-		t.Errorf("Expected status code 200, got %d", rec.Code)
-	}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
 
-	// Validate response body
-	expectedResponse := "Message received successfully"
-	if rec.Body.String() != expectedResponse {
-		t.Errorf("Expected response body: %q, got: %q", expectedResponse, rec.Body.String())
+			if rec.Code != tc.expectedStatusCode {
+				t.Errorf("Expected status code %d, got %d", tc.expectedStatusCode, rec.Code)
+			}
+
+			if rec.Body.String() != tc.expectedResponse {
+				t.Errorf("Expected response body: %q, got: %q", tc.expectedResponse, rec.Body.String())
+			}
+		})
 	}
 }
 
-// TestInvalidMethod checks if the server rejects non-POST requests
-func TestInvalidMethod(t *testing.T) {
-	req := httptest.NewRequest("GET", "/", nil) // Sending a GET request
-	rec := httptest.NewRecorder()
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-	})
 
-	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("Expected status code 405, got %d", rec.Code)
+func TestRun(t *testing.T) {
+	tests := []struct {
+		name        string
+		configData  string
+		expectError bool
+		expectCode  int // Expected HTTP status code for POST request
+	}{
+		{
+			name: "Success - Valid Config",
+			configData: `
+appName: "TestApp"
+port: 8082
+`,
+			expectError: false,
+			expectCode:  http.StatusOK,
+		},
+		{
+			name:        "Error - Invalid YAML Format",
+			configData:  `invalid_yaml: :::`,
+			expectError: true,
+		},
+		{
+			name: "Error - Missing Required Fields",
+			configData: `
+appName: "TestApp"
+`,
+			expectError: true,
+		},
+		{
+			name: "Error - Invalid Port",
+			configData: `
+appName: "TestApp"
+port: "invalid_port"
+`,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := createTempConfig(t, tt.configData)
+			defer os.Remove(configPath)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			// Run server in goroutine if no expected error
+			if !tt.expectError {
+				go func() {
+					if err := run(ctx, configPath); err != nil && !tt.expectError {
+						t.Errorf("Unexpected error: %v", err)
+					}
+				}()
+				time.Sleep(500 * time.Millisecond) // Allow server to start
+
+				resp, err := http.Post("http://localhost:8082/", "application/json", nil)
+				if err != nil {
+					t.Fatalf("Failed to make POST request: %v", err)
+				}
+				defer resp.Body.Close()
+
+				if resp.StatusCode != tt.expectCode {
+					t.Errorf("Expected status %d, got %d", tt.expectCode, resp.StatusCode)
+				}
+			} else {
+				// Expect error scenario
+				if err := run(ctx, configPath); err == nil {
+					t.Errorf("Expected error, got nil")
+				}
+			}
+		})
 	}
 }
