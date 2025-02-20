@@ -26,7 +26,7 @@ func createTempConfig(t *testing.T, data string) string {
 }
 
 
-// 🎯 Table-driven tests for initConfig (Success & Error Cases)
+
 func TestInitConfig(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -38,12 +38,12 @@ func TestInitConfig(t *testing.T) {
 			name: "Success - Valid Config",
 			configData: `
 appName: "clientSideHandler"
-port: 8080
+port: 8081
 `,
 			expectError: false,
 			expected: &config{
 				AppName: "clientSideHandler",
-				Port:    8080,
+				Port:    8081,
 			},
 		},
 		{

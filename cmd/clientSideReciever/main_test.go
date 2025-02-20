@@ -26,7 +26,6 @@ func createTempConfig(t *testing.T, data string) string {
 }
 
 
-// 🎯 Table-driven tests for initConfig (Success & Error Cases)
 func TestInitConfig(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -94,7 +93,6 @@ port: 8080
 	}
 }
 
-// 🎯 Table-driven tests for ServerHandler (Success & Error Cases)
 func TestServerHandler(t *testing.T) {
 	tests := []struct {
 		name               string
