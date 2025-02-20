@@ -30,7 +30,7 @@ port: 8080
 	tempFile.Close()
 
 	ctx := context.Background()
-	config, err := InitConfig(ctx, tempFile.Name())
+	config, err := initConfig(ctx, tempFile.Name())
 	if err != nil {
 		t.Fatalf("InitConfig failed: %v", err)
 	}
@@ -39,8 +39,8 @@ port: 8080
 	if config.AppName != "clientSideReciever" {
 		t.Errorf("Expected AppName to be 'TestApp', got %s", config.AppName)
 	}
-	if config.ServerPort != 8080 {
-		t.Errorf("Expected ServerPort to be 8080, got %d", config.ServerPort)
+	if config.Port != 8080 {
+		t.Errorf("Expected ServerPort to be 8080, got %d", config.Port)
 	}
 }
 
