@@ -74,7 +74,7 @@ func initConfig(ctx context.Context, path string) (*config, error) {
 var configPath string
 
 func main() {
-	flag.StringVar(&configPath, "config", "../../config/clientSideHandler-config.yaml", "../../config/clientSideReciever-config.yaml")
+	flag.StringVar(&configPath, "config", "../../config/clientSideHandler-config.yaml", "../../config/clientSideHandler-config.yaml")
 	flag.Parse()
 
 	if err := run(context.Background(), configPath); err != nil {
