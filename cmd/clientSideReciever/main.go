@@ -20,6 +20,16 @@ type config struct {
 	Port    int    `yaml:"port"`
 }
 
+func requestHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	log.Log.Info("Received request:", r.Method, r.URL.Path, r.Header)
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintln(w, "Message received successfully")
+}
 
 func run(ctx context.Context, configPath string) error {
 	configuration, err := initConfig(ctx, configPath)
@@ -27,28 +37,21 @@ func run(ctx context.Context, configPath string) error {
 		return fmt.Errorf("error initializing config: %w", err)
 	}
 
-	fmt.Printf("App Name: %s\n", configuration.AppName)
-	fmt.Printf("Server Port: %d\n", configuration.Port)
-
 	port := fmt.Sprintf(":%d", configuration.Port)
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
+	http.HandleFunc("/", requestHandler)
+
+	server := &http.Server{Addr: port}
+
+	// Run server in a goroutine
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Log.Error("Server failed:", err)
 		}
+	}()
 
-		log.Log.Info("Received request:", r.Method, r.URL.Path, r.Header)
-
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "Message received successfully")
-	},
-	)
-
-	log.Log.Info("Server started on", port)
-	if err := http.ListenAndServe(port, nil); err != nil {
-		return fmt.Errorf("server failed to start: %w", err)
-	}
-	return nil
+	<-ctx.Done()
+	log.Log.Info("Shutting down server...")
+	return server.Shutdown(context.Background())
 }
 
 func initConfig(ctx context.Context, path string) (*config, error) {
