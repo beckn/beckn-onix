@@ -1,46 +1,55 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
-	"beckn-onix/cmd/networkSideHandler/config"
+	"gopkg.in/yaml.v2"
 )
 
-type CreateUserRequest struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
+type Config struct {
+	AppName string `yaml:"appName"`
+	Port    int    `yaml:"port"`
 }
 
 func main() {
-	cfg := config.LoadConfig()
-
-	http.HandleFunc("/", CreateUserHandler)
-
-	fmt.Println("Server is running on port:", cfg.ServerPort)
-	log.Fatal(http.ListenAndServe(":"+cfg.ServerPort, nil))
+	cfg := loadConfig()
+	StartServer(cfg)
 }
 
-func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
+func StartServer(cfg *Config) {
+	http.HandleFunc("/", CreatePostHandler) // Fixed: Removed "POST /"
+
+	log.Printf("Server %s is running on port: %d\n", cfg.AppName, cfg.Port)
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", cfg.Port), nil))
+}
+
+func loadConfig() *Config {
+
+	data, err := os.ReadFile("../../config/networkSideReceiver-config.yaml")
+	if err != nil {
+		log.Fatalf("error reading config file: %v", err)
+	}
+
+	var config Config
+
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
+		log.Fatalf("error unmarshaling config: %v", err)
+	}
+
+	return &config
+}
+
+
+func CreatePostHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-
-	var req CreateUserRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if req.Name == "" || req.Email == "" {
-		http.Error(w, "Name and Email are required", http.StatusBadRequest)
-		return
-	}
-
-	w.WriteHeader(http.StatusCreated)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "User created successfully"})
+	w.WriteHeader(http.StatusOK)
 }
+
+
