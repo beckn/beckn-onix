@@ -4,9 +4,25 @@
 RED=$(tput setaf 1)
 GREEN=$(tput setaf 2)
 YELLOW=$(tput setaf 3)
+BLUE=$(tput setaf 4)
 NC=$(tput sgr0)
 
+# Bold Colour Code
+BOLD=$(tput bold)
+BoldGreen="${BOLD}$(tput setaf 2)"
+BoldRed="${BOLD}$(tput setaf 1)"
+
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Default registry and gateway username and password
+USERNAME="root"
+PASSWORD="root"
+
+#NP Domain
+np_domain=""
+api_key=""
+# Registry Role Permission file path
+REGISTRY_FILE_PATH="../registry_data/RolePermission.xlsx"
 
 #Comman Variables with Default values
 mongo_initdb_root_username="beckn"
@@ -23,8 +39,8 @@ redisUrl="redis"
 registry_url="http://registry:3030/subscribers"
 beckn_registry_url="https://registry.becknprotocol.io/subscribers"
 
-#public_key="KKHOpMKQCbJHzjme+CPKI3HQxIhzKMpcLLRGMhzf7rk="
-#private_key="W7HkCMPWvxv6/jWqHlyUI4vWX8704+rN3kCwBGIA7rcooc6kwpAJskfOOZ74I8ojcdDEiHMoylwstEYyHN/uuQ=="
+layer2_url=""
+schemas_path="/usr/src/app/schemas"
 
 #BAP varibales. 
 

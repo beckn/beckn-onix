@@ -6,7 +6,6 @@ source $SCRIPT_DIR/generate_keys.sh
 source $SCRIPT_DIR/variables.sh
 source $SCRIPT_DIR/get_container_details.sh
 
-
 newClientFile=$(echo "$bapClientFile" | sed 's/yaml-sample/yml/')
 newNetworkFile=$(echo "$bapNetworkFile" | sed 's/yaml-sample/yml/')
 
@@ -32,6 +31,8 @@ if [[ $1 ]]; then
     bap_subscriber_id=$2
     bap_subscriber_key_id=$3
     bap_subscriber_url=$4
+    api_key=$5
+    np_domain=$6
 else
     if [[ $(uname -s) == 'Darwin' ]]; then
         ip=localhost
@@ -46,9 +47,6 @@ fi
 
 echo "Generating public/private key pair"
 get_keys
-echo "Your Private Key: $private_key" 
-echo "Your Public Key: $public_key"
-
 
 if [[ $(uname -s ) == 'Darwin' ]];then
     valid_from=$(date -u -v-1d +"%Y-%m-%dT%H:%M:%S.%000Z")
@@ -123,4 +121,4 @@ fi
 
 echo "Registering BAP protocol server on the registry"
 
-create_network_participant "$registry_url" "application/json" "$bap_subscriber_id" "$bap_subscriber_key_id" "$bap_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type"
+create_network_participant "$registry_url" "application/json" "$bap_subscriber_id" "$bap_subscriber_key_id" "$bap_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type" "$api_key" "$np_domain"
