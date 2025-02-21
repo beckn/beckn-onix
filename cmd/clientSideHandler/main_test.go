@@ -26,7 +26,6 @@ func createTempConfig(t *testing.T, data string) string {
 }
 
 
-
 func TestInitConfig(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -94,7 +93,6 @@ port: 8081
 	}
 }
 
-
 func TestServerHandler(t *testing.T) {
 	tests := []struct {
 		name               string
@@ -152,10 +150,10 @@ func TestServerHandler(t *testing.T) {
 
 func TestRun(t *testing.T) {
 	tests := []struct {
-		name        string
-		configData  string
-		expectError bool
-		expectCode  int // Expected HTTP status code for POST request
+		name           string
+		configData     string
+		expectError    bool
+		expectCode     int // Expected HTTP status code for POST request
 	}{
 		{
 			name: "Success - Valid Config",
@@ -196,14 +194,13 @@ port: "invalid_port"
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			// Run server in goroutine if no expected error
 			if !tt.expectError {
 				go func() {
 					if err := run(ctx, configPath); err != nil && !tt.expectError {
 						t.Errorf("Unexpected error: %v", err)
 					}
 				}()
-				time.Sleep(500 * time.Millisecond) // Allow server to start
+				time.Sleep(500 * time.Millisecond) 
 
 				resp, err := http.Post("http://localhost:8082/", "application/json", nil)
 				if err != nil {
@@ -215,10 +212,85 @@ port: "invalid_port"
 					t.Errorf("Expected status %d, got %d", tt.expectCode, resp.StatusCode)
 				}
 			} else {
-				// Expect error scenario
 				if err := run(ctx, configPath); err == nil {
 					t.Errorf("Expected error, got nil")
 				}
+			}
+		})
+	}
+}
+
+func TestMainFunction(t *testing.T) {
+
+	originalArgs := os.Args
+	defer func() { os.Args = originalArgs }()
+
+
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr bool
+	}{
+		{
+			name:    "Default config path",
+			args:    []string{"cmd"},
+			wantErr: false,
+		},
+		{
+			name:    "Invalid config path",
+			args:    []string{"cmd", "-config=invalid/path.yaml"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			os.Args = tt.args
+
+			defer func() {
+				if r := recover(); r != nil {
+					if !tt.wantErr {
+						t.Errorf("Unexpected panic (os.Exit simulation): %v", r)
+					}
+				}
+			}()
+
+			main()
+
+			if tt.wantErr {
+				t.Log("Expected an error scenario for main function.")
+			}
+		})
+	}
+}
+
+func TestRequestHandler(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		expectCode int
+	}{
+		{
+			name:       "Success - POST request",
+			method:     http.MethodPost,
+			expectCode: http.StatusOK,
+		},
+		{
+			name:       "Fail - GET request",
+			method:     http.MethodGet,
+			expectCode: http.StatusMethodNotAllowed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "/", nil)
+			rr := httptest.NewRecorder()
+
+			requestHandler(rr, req)
+
+			if rr.Code != tt.expectCode {
+				t.Errorf("Expected status code %d, got %d", tt.expectCode, rr.Code)
 			}
 		})
 	}
