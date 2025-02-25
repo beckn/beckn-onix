@@ -11,18 +11,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Plugin config structs
 type PluginConfig struct {
 	ID     string            `yaml:"id"`
 	Config map[string]string `yaml:"config"`
 }
 
 type PluginManagerConfig struct {
-	Plugins    map[string]PluginConfig `yaml:"plugins"`
-	Middleware []PluginConfig          `yaml:"middleware"`
+	Plugins map[string]PluginConfig `yaml:"plugins"`
 }
 
-// PluginManager struct
 type PluginManager struct {
 	pluginDir string
 	config    *PluginManagerConfig
@@ -36,13 +33,11 @@ func New(pluginDir, configPath string) (*PluginManager, error) {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	pm := &PluginManager{
+	return &PluginManager{
 		pluginDir: pluginDir,
 		config:    config,
 		plugins:   make(map[string]interface{}),
-	}
-
-	return pm, nil
+	}, nil
 }
 
 func loadConfig(path string) (*PluginManagerConfig, error) {
@@ -59,17 +54,14 @@ func loadConfig(path string) (*PluginManagerConfig, error) {
 	return &cfg, nil
 }
 
-// Load a plugin dynamically
 func (pm *PluginManager) LoadPluginByID(pluginID string) (interface{}, error) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	// Return if already loaded
 	if instance, exists := pm.plugins[pluginID]; exists {
 		return instance, nil
 	}
 
-	// Find the plugin in the config
 	var pluginName string
 	var pluginConfig map[string]string
 
@@ -85,7 +77,10 @@ func (pm *PluginManager) LoadPluginByID(pluginID string) (interface{}, error) {
 		return nil, fmt.Errorf("plugin with ID %s not found in config", pluginID)
 	}
 
-	pluginPath := filepath.Join(pm.pluginDir, pluginName+".so")
+	finalPluginDir := pm.pluginDir + "/" + pluginName
+
+	// pluginPath := filepath.Join(pm.pluginDir, pluginName+".so")
+	pluginPath := filepath.Join(finalPluginDir, pluginName+".so")
 	p, err := plugin.Open(pluginPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open plugin %s: %w", pluginName, err)
@@ -96,13 +91,17 @@ func (pm *PluginManager) LoadPluginByID(pluginID string) (interface{}, error) {
 		return nil, fmt.Errorf("failed to find GetPlugin function in plugin %s: %w", pluginName, err)
 	}
 
-	getPluginFunc, ok := symbol.(func() SignerProvider)
-	if !ok {
-		return nil, fmt.Errorf("GetPlugin function has incorrect type in plugin %s", pluginName)
+	var instance interface{}
+	if getSignerProvider, ok := symbol.(func() SignerProvider); ok {
+		provider := getSignerProvider()
+		instance, err = provider.New(context.Background(), pluginConfig)
+	} else if getVerifierProvider, ok := symbol.(func() ValidatorProvider); ok {
+		provider := getVerifierProvider()
+		instance, err = provider.New(context.Background(), pluginConfig)
+	} else {
+		return nil, fmt.Errorf("plugin %s does not match expected types", pluginName)
 	}
 
-	provider := getPluginFunc()
-	instance, err := provider.New(context.Background(), pluginConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize plugin %s: %w", pluginName, err)
 	}
@@ -112,7 +111,7 @@ func (pm *PluginManager) LoadPluginByID(pluginID string) (interface{}, error) {
 }
 
 func (pm *PluginManager) GetSigner() (Signer, error) {
-	instance, err := pm.LoadPluginByID("beckn_signing")
+	instance, err := pm.LoadPluginByID("signing_plugin")
 	if err != nil {
 		return nil, err
 	}
@@ -122,6 +121,19 @@ func (pm *PluginManager) GetSigner() (Signer, error) {
 		return nil, fmt.Errorf("plugin does not implement Signer interface")
 	}
 	return signer, nil
+}
+
+func (pm *PluginManager) GetVerifier() (Validator, error) {
+	instance, err := pm.LoadPluginByID("verification_plugin")
+	if err != nil {
+		return nil, err
+	}
+
+	verifier, ok := instance.(Validator)
+	if !ok {
+		return nil, fmt.Errorf("plugin does not implement Validator interface")
+	}
+	return verifier, nil
 }
 
 func (pm *PluginManager) Close() {

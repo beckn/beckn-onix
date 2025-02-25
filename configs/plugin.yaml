@@ -1,7 +1,9 @@
 plugins:
   signing_plugin:
-    id: beckn_signing
+    id: "signing_plugin"
     config:
-      algorithm: ED25519
-      private_key: private.pem
-      public_key: public.pem
+      algorithm: "ED25519"
+  verification_plugin:
+    id: "verification_plugin"
+    config:
+      algorithm: "ED25519"
