@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"os"
-
 	"gopkg.in/yaml.v2"
+	
+	logger "beckn-onix/shared/utils"
 )
 
 type Config struct {
@@ -22,22 +22,22 @@ func main() {
 func StartServer(cfg *Config) {
 	http.HandleFunc("/", CreatePostHandler) // Fixed: Removed "POST /"
 
-	log.Printf("Server %s is running on port: %d\n", cfg.AppName, cfg.Port)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", cfg.Port), nil))
+	logger.Log.Info("Server is running on port: ", cfg.Port)
+	logger.Log.Error(http.ListenAndServe(fmt.Sprintf(":%d", cfg.Port), nil))
 }
 
 func loadConfig() *Config {
 
 	data, err := os.ReadFile("../../config/networkSideHandler-config.yaml")
 	if err != nil {
-		log.Fatalf("error reading config file: %v", err)
+		logger.Log.Error("error reading config file:", err)
 	}
 
 	var config Config
 
 	err = yaml.Unmarshal(data, &config)
 	if err != nil {
-		log.Fatalf("error unmarshaling config: %v", err)
+		logger.Log.Error("error unmarshaling config:", err)
 	}
 
 	return &config
