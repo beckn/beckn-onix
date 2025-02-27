@@ -3,5 +3,5 @@ plugins:
     id: tekuriValidator 
     config:
       #schema_dir: plugins/schemas/   #approach 1
-      schema_dir: plugins/schema/ondc_trv10/    #approach 2
+      schema_dir: plugins/schemas/    #approach 2
     plugin_path: plugins/implementations/ # Path to the directory containing the .so files
