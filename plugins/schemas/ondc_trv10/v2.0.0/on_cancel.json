@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ondc.org/trv10/2.0.0/on_cancel",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../core/v1.1.0/confirm.json#"
+    },
+    {
+      "$ref": "https://beckn.org/schema/confirm#"
+    },
+    {
+      "$ref": "./init.json#/allOf/2"
+    }
+  ]
+}
