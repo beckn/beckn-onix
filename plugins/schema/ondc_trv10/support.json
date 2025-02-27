@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ondc.org/trv10/2.0.0/support",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../beckn_base/api/io/support.json#"
+    },
+    {
+      "$ref": "https://beckn.org/schema/support#"
+    },
+    {
+      "$ref": "./init.json#/allOf/2"
+    }    
+  ]
+}

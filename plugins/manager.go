@@ -1,11 +1,12 @@
 package plugins
 
 import (
-	"beckn-onix/plugins/plugin_definition"
+	//"beckn-onix/plugins/plugin_definition"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"plugin"
+	"runtime"
 	"time"
 
 	"gopkg.in/yaml.v2"
@@ -31,12 +32,16 @@ type PluginDetails struct {
 
 // PluginManager manages the loading and execution of plugins.
 type PluginManager struct {
-	validatorProvider plugin_definition.ValidatorProvider
+	validatorProvider ValidatorProvider
 }
 
 // NewValidatorProvider initializes the PluginManager with the given configuration.
-func NewValidatorProvider(pluginsConfig PluginConfig) (*PluginManager, map[string]plugin_definition.Validator, error) {
+func NewValidatorProvider(pluginsConfig PluginConfig) (*PluginManager, map[string]Validator, error) {
 	start := time.Now()
+
+	var memStatsBefore runtime.MemStats
+	runtime.ReadMemStats(&memStatsBefore)
+
 	validationPlugin := pluginsConfig.Plugins.ValidationPlugin
 	if validationPlugin.ID == "" {
 		return nil, nil, fmt.Errorf("validation_plugin ID is empty")
@@ -59,9 +64,9 @@ func NewValidatorProvider(pluginsConfig PluginConfig) (*PluginManager, map[strin
 	if err != nil {
 		return nil, nil, err
 	}
-	getProviderFunc, ok := vpSymbol.(func() plugin_definition.ValidatorProvider)
+	getProviderFunc, ok := vpSymbol.(func() ValidatorProvider)
 	if !ok {
-		return nil, nil, fmt.Errorf("failed to cast to *plugin_definition.ValidatorProvider")
+		return nil, nil, fmt.Errorf("failed to cast to *plugins.ValidatorProvider")
 	}
 	validatorProvider := getProviderFunc()
 
@@ -70,14 +75,22 @@ func NewValidatorProvider(pluginsConfig PluginConfig) (*PluginManager, map[strin
 	if err != nil {
 		log.Fatalf("Failed to initialize validator provider: %v", err)
 	}
-	fmt.Println("validators are  :", validator)
+
+	fmt.Println("printing validators in new validator provider : ", validator)
+
+	var memStatsAfter runtime.MemStats
+	runtime.ReadMemStats(&memStatsAfter)
+	fmt.Printf("Memory allocated during plugin boot-up: %v MiB", (memStatsAfter.Alloc-memStatsBefore.Alloc)/1024/1024)
+	fmt.Println(" ")
+
 	fmt.Printf("plugin boot-up executed in %s\n", time.Since(start))
 	return &PluginManager{validatorProvider: validatorProvider}, validator, nil
 }
 
 // loadPluginsConfig loads the plugins configuration from a YAML file.
 func LoadPluginsConfig(filePath string) (PluginConfig, error) {
-	start := time.Now()
+	// start := time.Now()
+
 	data, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		return PluginConfig{}, err
@@ -88,7 +101,7 @@ func LoadPluginsConfig(filePath string) (PluginConfig, error) {
 	if err != nil {
 		return PluginConfig{}, err
 	}
-	fmt.Printf("loadconfig executed in %s\n", time.Since(start))
+	// fmt.Printf("loadconfig executed in %s\n", time.Since(start))
 
 	return config, nil
 }

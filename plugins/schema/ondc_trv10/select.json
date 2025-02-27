@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ondc.org/trv10/2.0.0/select",
+  "type": "object",
+  "allOf": [
+    { "$ref": "../beckn_base/api/io/select.json#" },
+    { "$ref": "https://beckn.org/schema/select#" },
+    { "$ref": "./init.json#/$defs/init_schema_1" },
+    { "$ref": "../paths/init.json#/$defs/init_schema_2" }
+  ]
+}
