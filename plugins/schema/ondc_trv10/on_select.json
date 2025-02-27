@@ -1,0 +1,827 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ondc.org/trv10/2.0.0/on_select",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../beckn_base/api/io/on_select.json#"
+    },
+    {
+      "$ref": "https://beckn.org/schema/on_select#"
+    },
+    {
+      "$ref": "./init.json#/allOf/2"
+    },
+    {
+      "$ref": "#/paths/~1on_init/post/requestBody/content/application~1json/schema/allOf/1/allOf/2"
+    },
+    {
+      "$ref": "#/paths/~1on_init/post/requestBody/content/application~1json/schema/allOf/1/allOf/4"
+    },
+    {
+      "properties": {
+        "message": {
+          "type": "object",
+          "properties": {
+            "order": {
+              "type": "object",
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": { "type": "string" },
+                      "descriptor": {
+                        "type": "object",
+                        "properties": {
+                          "name": { "type": "string" },
+                          "code": { "type": "string", "enum": ["RIDE"] }
+                        },
+                        "required": ["code"]
+                      },
+                      "price": {
+                        "type": "object",
+                        "properties": { "value": { "type": "string" } },
+                        "required": ["value"]
+                      },
+                      "fulfillment_ids": { "minItems": 1 },
+                      "location_ids": { "minItems": 1 }
+                    },
+                    "required": ["id", "price", "descriptor"]
+                  }
+                }
+              },
+              "required": ["items"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "allOf": [
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "properties": {
+                          "tags": {
+                            "items": {
+                              "if": {
+                                "properties": {
+                                  "descriptor": {
+                                    "properties": {
+                                      "code": { "const": "FARE_POLICY" }
+                                    }
+                                  }
+                                }
+                              },
+                              "then": {
+                                "properties": {
+                                  "list": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "descriptor": {
+                                          "properties": {
+                                            "code": {
+                                              "type": "string",
+                                              "enum": [
+                                                "MIN_FARE",
+                                                "MIN_FARE_DISTANCE_KM",
+                                                "PER_KM_CHARGE",
+                                                "PICKUP_CHARGE",
+                                                "WAITING_CHARGE_PER_MIN",
+                                                "NIGHT_CHARGE_MULTIPLIER",
+                                                "NIGHT_SHIFT_START_TIME",
+                                                "NIGHT_SHIFT_END_TIME",
+                                                "EXTERNAL_REF"
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "properties": {
+                          "tags": {
+                            "items": {
+                              "if": {
+                                "properties": {
+                                  "descriptor": {
+                                    "properties": {
+                                      "code": { "const": "FARE_POLICY" }
+                                    }
+                                  }
+                                }
+                              },
+                              "then": {
+                                "properties": {
+                                  "list": {
+                                    "allOf": [
+                                      {
+                                        "contains": {
+                                          "type": "object",
+                                          "properties": {
+                                            "descriptor": {
+                                              "type": "object",
+                                              "properties": {
+                                                "code": { "const": "MIN_FARE" }
+                                              },
+                                              "required": ["code"]
+                                            },
+                                            "value": {
+                                              "type": "string",
+                                              "pattern": "^[0-9]+(\\.[0-9]+)?$"
+                                            }
+                                          },
+                                          "required": ["descriptor", "value"]
+                                        }
+                                      },
+                                      {
+                                        "contains": {
+                                          "type": "object",
+                                          "properties": {
+                                            "descriptor": {
+                                              "type": "object",
+                                              "properties": {
+                                                "code": { "const": "MIN_FARE_DISTANCE_KM" }
+                                              },
+                                              "required": ["code"]
+                                            },
+                                            "value": {
+                                              "type": "string",
+                                              "pattern": "^[0-9]+(\\.[0-9]+)?$"
+                                            }
+                                          },
+                                          "required": ["descriptor", "value"]
+                                        }
+                                      },
+                                      {
+                                        "contains": {
+                                          "type": "object",
+                                          "properties": {
+                                            "descriptor": {
+                                              "type": "object",
+                                              "properties": {
+                                                "code": { "const": "PER_KM_CHARGE" }
+                                              },
+                                              "required": ["code"]
+                                            },
+                                            "value": {
+                                              "type": "string",
+                                              "pattern": "^[0-9]+(\\.[0-9]+)?$"
+                                            }
+                                          },
+                                          "required": ["descriptor", "value"]
+                                        }
+                                      },
+                                      {
+                                        "contains": {
+                                          "type": "object",
+                                          "properties": {
+                                            "descriptor": {
+                                              "type": "object",
+                                              "properties": {
+                                                "code": { "const": "PICKUP_CHARGE" }
+                                              },
+                                              "required": ["code"]
+                                            },
+                                            "value": {
+                                              "type": "string",
+                                              "pattern": "^[0-9]+(\\.[0-9]+)?$"
+                                            }
+                                          },
+                                          "required": ["descriptor", "value"]
+                                        }
+                                      },
+                                      {
+                                        "contains": {
+                                          "type": "object",
+                                          "properties": {
+                                            "descriptor": {
+                                              "type": "object",
+                                              "properties": {
+                                                "code": { "const": "WAITING_CHARGE_PER_MIN" }
+                                              },
+                                              "required": ["code"]
+                                            },
+                                            "value": {
+                                              "type": "string",
+                                              "pattern": "^[0-9]+(\\.[0-9]+)?$"
+                                            }
+                                          },
+                                          "required": ["descriptor", "value"]
+                                        }
+                                      },
+                                      {
+                                        "contains": {
+                                          "type": "object",
+                                          "properties": {
+                                            "descriptor": {
+                                              "type": "object",
+                                              "properties": {
+                                                "code": { "const": "NIGHT_CHARGE_MULTIPLIER" }
+                                              },
+                                              "required": ["code"]
+                                            },
+                                            "value": {
+                                              "type": "string",
+                                              "pattern": "^[0-9]+(\\.[0-9]+)?$"
+                                            }
+                                          },
+                                          "required": ["descriptor", "value"]
+                                        }
+                                      },
+                                      {
+                                        "contains": {
+                                          "type": "object",
+                                          "properties": {
+                                            "descriptor": {
+                                              "type": "object",
+                                              "properties": {
+                                                "code": { "const": "NIGHT_SHIFT_START_TIME" }
+                                              },
+                                              "required": ["code"]
+                                            },
+                                            "value": {
+                                              "type": "string",
+                                              "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$"
+                                            }
+                                          },
+                                          "required": ["descriptor", "value"]
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "properties": {
+                          "tags": {
+                            "items": {
+                              "if": {
+                                "properties": {
+                                  "descriptor": {
+                                    "properties": {
+                                      "code": { "const": "FARE_POLICY" }
+                                    }
+                                  }
+                                }
+                              },
+                              "then": {
+                                "properties": {
+                                  "list": {
+                                    "type": "array",
+                                    "items": {
+                                      "allOf": [
+                                        {
+                                          "if": {
+                                            "properties": {
+                                              "descriptor": {
+                                                "properties": {
+                                                  "code": {
+                                                    "enum": [
+                                                      "MIN_FARE",
+                                                      "MIN_FARE_DISTANCE_KM",
+                                                      "PER_KM_CHARGE",
+                                                      "PICKUP_CHARGE",
+                                                      "WAITING_CHARGE_PER_MIN",
+                                                      "NIGHT_CHARGE_MULTIPLIER"
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          },
+                                          "then": {
+                                            "properties": {
+                                              "value": {
+                                                "type": "string",
+                                                "pattern": "^-?\\d+(\\.\\d+)?$"
+                                              }
+                                            },
+                                            "required": ["descriptor", "value"]
+                                          }
+                                        },
+                                        {
+                                          "if": {
+                                            "properties": {
+                                              "descriptor": {
+                                                "properties": {
+                                                  "code": {
+                                                    "enum": [
+                                                      "NIGHT_SHIFT_START_TIME",
+                                                      "NIGHT_SHIFT_END_TIME"
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          },
+                                          "then": {
+                                            "properties": {
+                                              "value": {
+                                                "type": "string",
+                                                "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$"
+                                              }
+                                            },
+                                            "required": ["descriptor", "value"]
+                                          }
+                                        },
+                                        {
+                                          "if": {
+                                            "properties": {
+                                              "descriptor": {
+                                                "properties": {
+                                                  "code": { "const": "EXTERNAL_REF" }
+                                                }
+                                              }
+                                            }
+                                          },
+                                          "then": {
+                                            "properties": {
+                                              "value": {
+                                                "type": "string",
+                                                "pattern": "^https?://[^\\s/$.?#].[^\\s]*$"
+                                              }
+                                            },
+                                            "required": ["descriptor", "value"]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "properties": {
+                          "tags": {
+                            "items": {
+                              "if": {
+                                "properties": {
+                                  "descriptor": {
+                                    "properties": {
+                                      "code": { "const": "INFO" }
+                                    }
+                                  }
+                                }
+                              },
+                              "then": {
+                                "properties": {
+                                  "list": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "descriptor": {
+                                          "properties": {
+                                            "code": {
+                                              "type": "string",
+                                              "enum": [
+                                                "DISTANCE_TO_NEAREST_DRIVER_METER",
+                                                "ETA_TO_NEAREST_DRIVER_MIN"
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "properties": {
+                          "tags": {
+                            "items": {
+                              "if": {
+                                "properties": {
+                                  "descriptor": {
+                                    "properties": {
+                                      "code": { "const": "INFO" }
+                                    }
+                                  }
+                                }
+                              },
+                              "then": {
+                                "properties": {
+                                  "list": {
+                                    "allOf": [
+                                      {
+                                        "contains": {
+                                          "type": "object",
+                                          "properties": {
+                                            "descriptor": {
+                                              "type": "object",
+                                              "properties": {
+                                                "code": { "const": "ETA_TO_NEAREST_DRIVER_MIN" }
+                                              },
+                                              "required": ["code"]
+                                            },
+                                            "value": {
+                                              "type": "string",
+                                              "pattern": "^\\d+(\\.\\d+)?$"
+                                            }
+                                          },
+                                          "required": ["descriptor", "value"]
+                                        }
+                                      },
+                                      {
+                                        "contains": {
+                                          "type": "object",
+                                          "properties": {
+                                            "descriptor": {
+                                              "type": "object",
+                                              "properties": {
+                                                "code": { "const": "DISTANCE_TO_NEAREST_DRIVER_METER" }
+                                              },
+                                              "required": ["code"]
+                                            },
+                                            "value": {
+                                              "type": "string",
+                                              "pattern": "^\\d+(\\.\\d+)?$"
+                                            }
+                                          },
+                                          "required": ["descriptor", "value"]
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "properties": {
+                          "tags": {
+                            "items": {
+                              "if": {
+                                "properties": {
+                                  "descriptor": {
+                                    "properties": {
+                                      "code": { "const": "INFO" }
+                                    }
+                                  }
+                                }
+                              },
+                              "then": {
+                                "properties": {
+                                  "list": {
+                                    "type": "array",
+                                    "items": {
+                                      "allOf": [
+                                        {
+                                          "if": {
+                                            "properties": {
+                                              "descriptor": {
+                                                "properties": {
+                                                  "code": {
+                                                    "enum": [
+                                                      "DISTANCE_TO_NEAREST_DRIVER_METER",
+                                                      "ETA_TO_NEAREST_DRIVER_MIN"
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          },
+                                          "then": {
+                                            "properties": {
+                                              "value": {
+                                                "type": "string",
+                                                "pattern": "^-?\\d+(\\.\\d+)?$"
+                                              }
+                                            },
+                                            "required": ["descriptor", "value"]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "fulfillments": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "required": ["id"]
+                      }
+                    }
+                  },
+                  "required": ["fulfillments"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "fulfillments": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "state": {
+                            "type": "object",
+                            "properties": {
+                              "descriptor": {
+                                "type": "object",
+                                "properties": {
+                                  "code": {
+                                    "type": "string",
+                                    "enum": [
+                                      "RIDE_ASSIGNED",
+                                      "RIDE_ENROUTE_PICKUP",
+                                      "RIDE_ARRIVED_PICKUP",
+                                      "RIDE_STARTED",
+                                      "RIDE_ENDED",
+                                      "RIDE_CANCELLED"
+                                    ]
+                                  }
+                                },
+                                "required": ["code"]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "fulfillments": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "properties": {
+                          "stops": {
+                            "items": {
+                              "properties": {
+                                "authorization": {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "enum": ["OTP"]
+                                    },
+                                    "token": {
+                                      "type": "string",
+                                      "pattern": "^-?\\d+(\\.\\d+)?$"
+                                    }
+                                  },
+                                  "required": ["type", "token"]
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "fulfillments": {
+                      "items": {
+                        "properties": {
+                          "stops": {
+                            "type": "array",
+                            "minItems": 2,
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "location": {
+                                  "type": "object",
+                                  "properties": {
+                                    "gps": { "type": "string" }
+                                  },
+                                  "required": ["gps"]
+                                },
+                                "type": {
+                                  "enum": ["START", "END"]
+                                }
+                              },
+                              "required": ["location", "type"]
+                            }
+                          }
+                        },
+                        "required": ["stops"]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "fulfillments": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "vehicle": {
+                            "properties": {
+                              "category": {
+                                "type": "string",
+                                "enum": ["AUTO_RICKSHAW", "CAB"]
+                              }
+                            },
+                            "required": ["category"]
+                          }
+                        },
+                        "required": ["vehicle"]
+                      }
+                    }
+                  },
+                  "required": ["fulfillments"]
+                }
+              }
+            }
+          }
+        }        
+      ]
+    },
+    {
+      "$ref": "#/paths/~1on_init/post/requestBody/content/application~1json/schema/allOf/1/allOf/6"
+    },
+    {
+      "properties": {
+        "message": {
+          "properties": {
+            "order": {
+              "properties": {
+                "fulfillments": {
+                  "type": "array",
+                  "items": {
+                    "allOf": [
+                      {
+                        "not": {
+                          "required": ["agent"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "$ref": "#/paths/~1on_init/post/requestBody/content/application~1json/schema/allOf/1/allOf/7"
+    } 
+  ]
+}

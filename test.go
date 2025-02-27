@@ -3,7 +3,6 @@ package main
 import (
 	"beckn-onix/plugins"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -40,22 +39,22 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to parse request URL: %v", err)
 	}
-	//schemaFileName := fmt.Sprintf("%s.json", strings.Trim(u.Path, "/"))
+	schemaFileName := fmt.Sprintf("%s.json", strings.Trim(u.Path, "/"))
 
 	//approch 1 start
-	endpoint := strings.Trim(u.Path, "/")
+	//	endpoint := strings.Trim(u.Path, "/")
 
-	payloadData, err := ioutil.ReadFile("plugins/test/payload.json")
+	payloadData, err := ioutil.ReadFile("plugins/test/payload.json") //approach 2
 	if err != nil {
 		log.Fatalf("Failed to read payload data: %v", err)
 	}
-	var payload Payload
-	if err := json.Unmarshal(payloadData, &payload); err != nil {
-		log.Fatalf("Failed to unmarshal payload: %v", err)
-	}
-	domain := strings.Replace(strings.ToLower(payload.Context.Domain), ":", "_", -1)
-	schemaFileName := fmt.Sprintf("%s_%s.json.%s", domain,
-		strings.ToLower(payload.Context.Version), endpoint)
+	// var payload Payload
+	// if err := json.Unmarshal(payloadData, &payload); err != nil {
+	// 	log.Fatalf("Failed to unmarshal payload: %v", err)
+	// }
+	// domain := strings.Replace(strings.ToLower(payload.Context.Domain), ":", "_", -1)
+	// schemaFileName := fmt.Sprintf("%s_%s.json.%s", domain,
+	// 	strings.ToLower(payload.Context.Version), endpoint)
 
 	//end
 

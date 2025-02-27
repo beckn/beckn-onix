@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ondc.org/trv10/2.0.0/cancel",
+  "type": "object",
+  "properties": {
+    "context": {
+      "allOf": [
+        {
+          "$ref": "../schema/components.json#/$defs/Context"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "enum": [
+                "cancel"
+              ]
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      ]
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "order_id": {
+          "$ref": "../schema/components.json#/$defs/Order"
+        },
+        "cancellation_reason_id": {
+          "$ref": "../schema/components.json#/$defs/Option"
+        },
+        "descriptor": {
+          "$ref": "../schema/components.json#/$defs/Descriptor"
+        }
+      },
+      "required": [
+        "order_id"
+      ]
+    }
+  },
+  "required": [
+    "message",
+    "context"
+  ]
+}

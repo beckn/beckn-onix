@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beckn.org/schema/OnSelect",
+  "type": "object",
+  "properties": {
+    "context": {
+      "allOf": [
+        {
+          "$ref": "../schema/components.json#/$defs/Context"
+        },
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "on_select"
+              ]
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      ]
+    },
+    "message": {
+      "type": "object",
+      "properties": {
+        "order": {
+          "$ref": "../schema/components.json#/$defs/Order"
+        }
+      }
+    },
+    "error": {
+      "$ref": "../schema/components.json#/$defs/Error"
+    }
+  },
+  "required": [
+    "context"
+  ]
+}
