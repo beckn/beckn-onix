@@ -1,0 +1,9 @@
+plugins:
+  signing_plugin:
+    id: "signing_plugin"
+    config:
+      algorithm: "ED25519"
+  verification_plugin:
+    id: "verification_plugin"
+    config:
+      algorithm: "ED25519"
