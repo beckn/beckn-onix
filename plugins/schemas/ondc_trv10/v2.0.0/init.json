@@ -1,10 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ondc.org/trv10/2.0.0/init",
+  "$id": "init",
   "type": "object",
     "allOf": [
-      { "$ref": "../core/v1.1.0/init.json#" },
-      { "$ref": "https://beckn.org/schema/init#" },
+      { "$ref": "../../core/v1.1.0/init.json#" },
       {
         "allOf": [
           { "$ref": "./search.json#/properties/context/allOf/0" },
@@ -43,7 +42,7 @@
         }
       },
       { "$ref": "./confirm.json#/allOf/4" },
-      { "$ref": "./on_select.json#/allOf/10" },
+      { "$ref": "./on_select.json#" },
       {
         "properties": {
           "message": {
