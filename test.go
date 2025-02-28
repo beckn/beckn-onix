@@ -10,6 +10,7 @@ import (
 	"strings"
 )
 
+// Payload represents the structure of the data payload with context information.
 type Payload struct {
 	Context struct {
 		Domain  string `json:"domain"`

@@ -4,7 +4,7 @@
   "type": "object",
   "allOf": [
     {
-      "$ref": "../core/v1.1.0/confirm.json#"
+      "$ref": "../../core/v1.1.0/confirm.json#"
     },
     {
       "$ref": "https://beckn.org/schema/confirm#"

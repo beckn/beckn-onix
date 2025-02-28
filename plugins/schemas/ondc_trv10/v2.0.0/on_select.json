@@ -1,22 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ondc.org/trv10/2.0.0/on_select",
+  "$id": "on_select",
   "type": "object",
   "allOf": [
     {
-      "$ref": "../core/v1.1.0/on_select.json#"
-    },
-    {
-      "$ref": "https://beckn.org/schema/on_select#"
+      "$ref": "../../core/v1.1.0/on_select.json#"
     },
     {
       "$ref": "./init.json#/allOf/2"
-    },
-    {
-      "$ref": "#/paths/~1on_init/post/requestBody/content/application~1json/schema/allOf/1/allOf/2"
-    },
-    {
-      "$ref": "#/paths/~1on_init/post/requestBody/content/application~1json/schema/allOf/1/allOf/4"
     },
     {
       "properties": {
@@ -794,9 +785,6 @@
       ]
     },
     {
-      "$ref": "#/paths/~1on_init/post/requestBody/content/application~1json/schema/allOf/1/allOf/6"
-    },
-    {
       "properties": {
         "message": {
           "properties": {
@@ -819,9 +807,6 @@
           }
         }
       }
-    },
-    {
-      "$ref": "#/paths/~1on_init/post/requestBody/content/application~1json/schema/allOf/1/allOf/7"
     } 
   ]
 }

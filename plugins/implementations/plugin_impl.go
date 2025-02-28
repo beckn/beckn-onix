@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -84,10 +85,10 @@ func (v *tekuriValidator) Validate(ctx context.Context, data []byte) error {
 // }
 
 // (Approach 2)(all json files for each schema from sub directories)
-
 func (vp *tekuriValidatorProvider) Initialize(schemaDir string) (map[string]plugins.Validator, error) {
 	vp.schemaCache = make(map[string]map[string]*jsonschema.Schema)
 	validatorCache := make(map[string]plugins.Validator)
+	baseCustomID := "https://core/v1.1.0/"
 
 	// Walk through the directory and compile all .json files
 	err := filepath.Walk(schemaDir, func(path string, info os.FileInfo, err error) error {
@@ -96,20 +97,34 @@ func (vp *tekuriValidatorProvider) Initialize(schemaDir string) (map[string]plug
 		}
 		if !info.IsDir() && filepath.Ext(info.Name()) == ".json" {
 			filePath := filepath.Join(schemaDir, info.Name())
-			fmt.Println("printing path : ", path)
-			fmt.Println("Compiling file path: ", filePath)
 
+			// Construct the CustomID using baseCustomID and the file name
+			customID := baseCustomID + info.Name()
 			compiler := jsonschema.NewCompiler()
 
-			compiledSchema, err := compiler.Compile(path)
+			resource, err := os.Open(path)
+			if err != nil {
+				return fmt.Errorf("failed to open JSON schema file %s: %v", info.Name(), err)
+			}
+			defer func() {
+				if err := resource.Close(); err != nil {
+					log.Printf("Error closing resource: %v", err)
+				}
+			}()
+			// defer resource.Close()
+
+			if err := compiler.AddResource(customID, resource); err != nil {
+				return fmt.Errorf("failed to add resource for JSON schema file %s and custom id is %s: %v", info.Name(), customID, err)
+			}
+
+			// compiledSchema, err := compiler.Compile(path)
+			compiledSchema, err := compiler.Compile(customID)
 			if err != nil {
 				return fmt.Errorf("failed to compile JSON schema from file %s: %v", info.Name(), err)
 			}
 			if compiledSchema == nil {
 				return fmt.Errorf("compiled schema is nil for file %s", info.Name())
 			}
-
-			fmt.Printf("Compiled schema for file %s: %+v\n", info.Name(), compiledSchema)
 
 			dir := filepath.Base(filepath.Dir(filePath))
 			if vp.schemaCache[dir] == nil {
@@ -131,6 +146,7 @@ var _ plugins.ValidatorProvider = (*tekuriValidatorProvider)(nil)
 
 var providerInstance = &tekuriValidatorProvider{}
 
+// GetProvider returns the ValidatorProvider instance.
 func GetProvider() plugins.ValidatorProvider {
 	return providerInstance
 }

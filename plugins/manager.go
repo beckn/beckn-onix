@@ -12,20 +12,24 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// PluginConfig represents the configuration for plugins, including the plugins themselves.
 type PluginConfig struct {
 	Plugins Plugins `yaml:"plugins"`
 }
 
+// Plugins holds the various plugin types used in the configuration.
 type Plugins struct {
 	ValidationPlugin ValidationPlugin `yaml:"validation_plugin"`
 }
 
+// ValidationPlugin represents a plugin with an ID, configuration, and the path to the plugin.
 type ValidationPlugin struct {
 	ID         string        `yaml:"id"`
 	Config     PluginDetails `yaml:"config"`
 	PluginPath string        `yaml:"plugin_path"`
 }
 
+// PluginDetails contains information about the plugin schema directory.
 type PluginDetails struct {
 	Schema string `yaml:"schema_dir"`
 }
@@ -87,7 +91,7 @@ func NewValidatorProvider(pluginsConfig PluginConfig) (*PluginManager, map[strin
 	return &PluginManager{validatorProvider: validatorProvider}, validator, nil
 }
 
-// loadPluginsConfig loads the plugins configuration from a YAML file.
+// LoadPluginsConfig loads the plugins configuration from a YAML file.
 func LoadPluginsConfig(filePath string) (PluginConfig, error) {
 	// start := time.Now()
 

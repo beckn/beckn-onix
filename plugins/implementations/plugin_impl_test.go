@@ -21,7 +21,7 @@ type Message struct{}
 
 func TestInitializeValidDirectory(t *testing.T) {
 	provider := &tekuriValidatorProvider{}
-	schemaDir := "../schema/ondc_trv10_2.0.0/"
+	schemaDir := "../schema_valid/ondc_trv10_2.0.0/"
 	_, err := provider.Initialize(schemaDir)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -30,7 +30,7 @@ func TestInitializeValidDirectory(t *testing.T) {
 
 func TestInitializeInValidDirectory(t *testing.T) {
 	provider := &tekuriValidatorProvider{}
-	schemaDir := "../schemas/ondc_trv10_2.0.0/"
+	schemaDir := "../schema/ondc_trv10_2.0.0/"
 	_, err := provider.Initialize(schemaDir)
 	if err != nil {
 		t.Fatalf("failed to read schema directory: %v", err)
@@ -68,7 +68,7 @@ func TestInvalidCompileSchema(t *testing.T) {
 }
 
 func TestValidateData(t *testing.T) {
-	schemaDir := "../schema/ondc_trv10_2.0.0/"
+	schemaDir := "../schema_valid/ondc_trv10_2.0.0/"
 	if _, err := os.Stat(schemaDir); os.IsNotExist(err) {
 		t.Fatalf("Schema directory does not exist: %v", schemaDir)
 	}
@@ -108,7 +108,7 @@ func TestValidateData(t *testing.T) {
 }
 
 func TestInValidateData(t *testing.T) {
-	schemaDir := "../schema/ondc_trv10_2.0.0/"
+	schemaDir := "../schema_valid/ondc_trv10_2.0.0/"
 
 	if _, err := os.Stat(schemaDir); os.IsNotExist(err) {
 		t.Fatalf("Schema directory does not exist: %v", schemaDir)
@@ -138,7 +138,7 @@ func TestInValidateData(t *testing.T) {
 }
 
 func TestInValidateUnmarshalData(t *testing.T) {
-	schemaDir := "../schema/ondc_trv10_2.0.0/"
+	schemaDir := "../schema_valid/ondc_trv10_2.0.0/"
 
 	if _, err := os.Stat(schemaDir); os.IsNotExist(err) {
 		t.Fatalf("Schema directory does not exist: %v", schemaDir)

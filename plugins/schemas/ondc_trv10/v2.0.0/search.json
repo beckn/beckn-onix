@@ -1,9 +1,8 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://ondc.org/trv10/2.0.0/search",
+    "$id": "search",
     "allOf": [
-      { "$ref": "../core/v1.1.0/search.json#" },
-      { "$ref": "https://beckn.org/schema/search#" }
+      { "$ref": "../core/v1.1.0/search.json#" }
     ],
     "type": "object",
     "properties": {
@@ -40,11 +39,11 @@
               },
               "bap_id": {
                 "type": "string",
-                "pattern": "^(?!https?://).*$"
+                "pattern": "^(http|https).*"
               },
               "bpp_id": {
                 "type": "string",
-                "pattern": "^(?!https?://).*$"
+                "pattern": "^(http|https).*"
               },
               "ttl": {
                 "type": "string",
