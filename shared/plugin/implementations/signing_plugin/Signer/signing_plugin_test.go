@@ -1,4 +1,4 @@
-package Signer
+package signer
 
 import (
 	"context"

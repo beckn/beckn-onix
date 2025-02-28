@@ -1,4 +1,4 @@
-package Signer
+package signer
 
 import (
 	"context"
@@ -16,14 +16,14 @@ type SigningConfig struct {
 	TTL int64
 }
 
-// SignerImpl implements the Signer interface and handles the signing process.
-type SignerImpl struct {
+// Impl implements the Signer interface and handles the signing process.
+type Impl struct {
 	config SigningConfig
 }
 
 // NewSigner creates a new SignerImpl instance with the given configuration.
-func NewSigner(ctx context.Context, config SigningConfig) (*SignerImpl, error) {
-	return &SignerImpl{config: config}, nil
+func NewSigner(ctx context.Context, config SigningConfig) (*Impl, error) {
+	return &Impl{config: config}, nil
 }
 
 // createSigningString generates a signing string using BLAKE-512 hashing.
@@ -60,7 +60,7 @@ func signData(signingString []byte, privateKeyBase64 string) ([]byte, error) {
 }
 
 // Sign generates a digital signature for the provided payload.
-func (s *SignerImpl) Sign(ctx context.Context, body []byte, privateKeyBase64 string) (string, error) {
+func (s *Impl) Sign(ctx context.Context, body []byte, privateKeyBase64 string) (string, error) {
 	createdAt := time.Now().Unix()
 	expiresAt := createdAt + s.config.TTL
 

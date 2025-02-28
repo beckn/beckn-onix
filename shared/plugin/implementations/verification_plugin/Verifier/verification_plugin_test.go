@@ -1,4 +1,4 @@
-package Verifier
+package verifier
 
 import (
 	"context"

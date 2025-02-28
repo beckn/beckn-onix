@@ -11,15 +11,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// PluginConfig represents the configuration for a specific plugin.
 type PluginConfig struct {
 	ID     string            `yaml:"id"`
 	Config map[string]string `yaml:"config"`
 }
 
+// PluginManagerConfig holds configurations for multiple plugins.
 type PluginManagerConfig struct {
 	Plugins map[string]PluginConfig `yaml:"plugins"`
 }
 
+// PluginManager handles dynamic loading and management of plugins.
 type PluginManager struct {
 	pluginDir string
 	config    *PluginManagerConfig
@@ -27,6 +30,7 @@ type PluginManager struct {
 	mu        sync.Mutex
 }
 
+// New initializes a new PluginManager with the given plugin directory and config file.
 func New(pluginDir, configPath string) (*PluginManager, error) {
 	config, err := loadConfig(configPath)
 	if err != nil {
@@ -40,6 +44,7 @@ func New(pluginDir, configPath string) (*PluginManager, error) {
 	}, nil
 }
 
+// loadConfig reads and parses the plugin configuration from a YAML file.
 func loadConfig(path string) (*PluginManagerConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -54,6 +59,7 @@ func loadConfig(path string) (*PluginManagerConfig, error) {
 	return &cfg, nil
 }
 
+// LoadPluginByID loads a plugin by its ID and returns its instance.
 func (pm *PluginManager) LoadPluginByID(pluginID string) (interface{}, error) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
@@ -149,6 +155,7 @@ func (pm *PluginManager) GetVerifier() (Validator, error) {
 	return verifier, nil
 }
 
+// Close clears the loaded plugins and releases any associated resources.
 func (pm *PluginManager) Close() {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
