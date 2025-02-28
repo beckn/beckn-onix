@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
-	"time"
 )
 
 
@@ -36,20 +36,20 @@ func TestInitConfigSuccess(t *testing.T) {
 		{
 			name: "Success - Valid Config",
 			configData: `
-appName: "clientSideHandler"
-port: 8081
+appName: "networkSideHandler"
+port: 9091
 `,
 			expectError: false,
 			expected: &config{
-				AppName: "clientSideHandler",
-				Port:    8081,
+				AppName: "networkSideHandler",
+				Port:    9091,
 			},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tempFilePath := "../../config/clientSideHandler-config.yaml"
+			tempFilePath := "../../config/networkSideHandler-config.yaml"
 			tempFile, err := os.Create(tempFilePath)
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
@@ -104,7 +104,7 @@ func TestInitConfigFailure(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tempFilePath := "../../config/clientSideHandler-config.yaml"
+			tempFilePath := "../../config/networkSideHandler-config.yaml"
 			tempFile, err := os.Create(tempFilePath)
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
@@ -161,23 +161,13 @@ func TestServerHandler(t *testing.T) {
 			expectedResponse:   "Method not allowed\n",
 		}}
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" {
-
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("Message received successfully"))
-		} else {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(tc.method, "/", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 
 			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, req)
+			requestHandler(rec, req)
 
 			if rec.Code != tc.expectedStatusCode {
 				t.Errorf("Expected status code %d, got %d", tc.expectedStatusCode, rec.Code)
@@ -190,79 +180,113 @@ func TestServerHandler(t *testing.T) {
 	}
 }
 
-
-
-
-func TestRun(t *testing.T) {
-	tests := []struct {
-		name           string
-		configData     string
-		expectError    bool
-		expectCode     int // Expected HTTP status code for POST request
-	}{
-		{
-			name: "Success - Valid Config",
-			configData: `
+func TestRunSuccess(t *testing.T) {
+    tests := []struct {
+        name       string
+        configData string
+        expectCode int
+    }{
+        {
+            name: "Success - Valid Config",
+            configData: `
 appName: "TestApp"
-port: 8082
+port: 8083
 `,
-			expectError: false,
-			expectCode:  http.StatusOK,
-		},
-		{
-			name:        "Error - Invalid YAML Format",
-			configData:  `invalid_yaml: :::`,
-			expectError: true,
-		},
-		{
-			name: "Error - Missing Required Fields",
-			configData: `
+            expectCode: http.StatusOK,
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            configPath := createTempConfig(t, tt.configData)
+            defer os.Remove(configPath)
+
+            ctx, cancel := context.WithCancel(context.Background())
+            defer cancel()
+
+            serverReady := make(chan struct{})
+            serverError := make(chan error, 1)
+
+            go func() {
+                if err := run(ctx, configPath); err != nil {
+                    serverError <- err
+                }
+            }()
+
+            // Check when server is available
+            go func() {
+                for {
+                    select {
+                    case <-ctx.Done():
+                        return
+                    default:
+                        conn, err := net.Dial("tcp", "localhost:8083")
+                        if err == nil {
+                            conn.Close()
+                            close(serverReady)
+                            return
+                        }
+                    }
+                }
+            }()
+
+            // Wait for server to be ready or error
+            select {
+            case <-serverReady:
+                // Server is ready, make request
+                resp, err := http.Post("http://localhost:8083/", "application/json", nil)
+                if err != nil {
+                    t.Fatalf("Failed to make POST request: %v", err)
+                }
+                defer resp.Body.Close()
+
+                if resp.StatusCode != tt.expectCode {
+                    t.Errorf("Expected status %d, got %d", tt.expectCode, resp.StatusCode)
+                }
+            case err := <-serverError:
+                t.Fatalf("Unexpected server error: %v", err)
+            }
+        })
+    }
+}
+
+func TestRunFailure(t *testing.T) {
+    tests := []struct {
+        name       string
+        configData string
+    }{
+        {
+            name:       "Error - Invalid YAML Format",
+            configData: `invalid_yaml: :::`,
+        },
+        {
+            name: "Error - Missing Required Fields",
+            configData: `
 appName: "TestApp"
 `,
-			expectError: true,
-		},
-		{
-			name: "Error - Invalid Port",
-			configData: `
+        },
+        {
+            name: "Error - Invalid Port",
+            configData: `
 appName: "TestApp"
 port: "invalid_port"
 `,
-			expectError: true,
-		},
-	}
+        },
+    }
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			configPath := createTempConfig(t, tt.configData)
-			defer os.Remove(configPath)
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            configPath := createTempConfig(t, tt.configData)
+            defer os.Remove(configPath)
 
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
+            ctx, cancel := context.WithCancel(context.Background())
+            defer cancel()
 
-			if !tt.expectError {
-				go func() {
-					if err := run(ctx, configPath); err != nil && !tt.expectError {
-						t.Errorf("Unexpected error: %v", err)
-					}
-				}()
-				time.Sleep(500 * time.Millisecond) 
-
-				resp, err := http.Post("http://localhost:8082/", "application/json", nil)
-				if err != nil {
-					t.Fatalf("Failed to make POST request: %v", err)
-				}
-				defer resp.Body.Close()
-
-				if resp.StatusCode != tt.expectCode {
-					t.Errorf("Expected status %d, got %d", tt.expectCode, resp.StatusCode)
-				}
-			} else {
-				if err := run(ctx, configPath); err == nil {
-					t.Errorf("Expected error, got nil")
-				}
-			}
-		})
-	}
+            if err := run(ctx, configPath); err == nil {
+                t.Errorf("Expected error, got nil")
+            }
+        })
+    }
 }
 
 func TestMainFunction(t *testing.T) {

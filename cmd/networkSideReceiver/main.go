@@ -7,9 +7,8 @@ import (
 	"net/http"
 	"os"
 
-	logger "beckn-onix/shared/utils"
-
-	"gopkg.in/yaml.v2" 
+	log "beckn-onix/shared/log"
+	"gopkg.in/yaml.v2"
 )
 
 type config struct {
@@ -22,35 +21,40 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	log.Log.Info("Received request:", r.Method, r.URL.Path, r.Header)
+	w.WriteHeader(http.StatusOK)
 }
 
 func run(ctx context.Context, configPath string) error {
+	log.Log.Info("path: ", configPath)
 	configuration, err := initConfig(ctx, configPath)
 	if err != nil {
-		logger.Log.Error("error initializing config: ", err)
+		log.Log.Error("error initializing config: ", err)
 		return err
 	}
-	port := configuration.Port
+
+	port := fmt.Sprintf(":%d", configuration.Port)
 	http.HandleFunc("/", requestHandler)
 
-	server := &http.Server{Addr: fmt.Sprintf(":%d", port)}
-	logger.Log.Info("Server starting on port:", port)
+	server := &http.Server{Addr: port}
 
+	// Run server in a goroutine.
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Log.Error("Server failed:", err)
+			log.Log.Error("Server failed:", err)
 		}
 	}()
 
 	<-ctx.Done()
-	logger.Log.Info("Shutting down server...")
+	log.Log.Info("Shutting down server...")
 	return server.Shutdown(context.Background())
 }
 
-func initConfig(_ctx context.Context, path string) (*config, error) {
+func initConfig(ctx context.Context, path string) (*config, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		 logger.Log.Error("could not open config file: ", err)
+		log.Log.Error("could not open config file: ", err)
 		return nil, err
 	}
 	defer file.Close()
@@ -59,8 +63,8 @@ func initConfig(_ctx context.Context, path string) (*config, error) {
 	decoder := yaml.NewDecoder(file)
 	err = decoder.Decode(&config)
 	if err != nil {
-		 logger.Log.Error("could not unmarshal config data: ", err)
-		 return nil, err
+		log.Log.Error("could not unmarshal config data: ", err)
+		return nil, err
 	}
 	if config.AppName == "" || config.Port == 0 {
 		return nil, fmt.Errorf("missing required fields in config")
@@ -76,6 +80,6 @@ func main() {
 	flag.Parse()
 
 	if err := run(context.Background(), configPath); err != nil {
-		logger.Log.Fatalln("Application failed:", err)
+		log.Log.Fatalln("Application failed:", err)
 	}
 }
