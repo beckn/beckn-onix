@@ -1,7 +1,7 @@
 package main
 
 import (
-	"beckn-onix/plugin/pubsub"
+	"beckn-onix/plugin/manager"
 	logger "beckn-onix/shared/utils"
 	"context"
 	"log"
