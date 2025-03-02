@@ -1,3 +1,4 @@
+
 {
   "context": {
     "action": "search",
@@ -24,7 +25,7 @@
         "stops": [
           {
             "location": {
-              "gps": "13.0089, 77.644408"
+              "gps": "13.008935, 77.644408"
             },
             "type": "START"
           },
@@ -49,7 +50,7 @@
                 "descriptor": {
                   "code": "BUYER_FINDER_FEES_PERCENTAGE"
                 },
-                "value": 1
+                "value": "1"
               }
             ]
           },
@@ -63,13 +64,13 @@
                 "descriptor": {
                   "code": "DELAY_INTEREST"
                 },
-                "value": 5
+                "value": "5"
               },
               {
                 "descriptor": {
                   "code": "STATIC_TERMS"
                 },
-                "value": "example-test-bap.com/static-terms.txt"
+                "value": "https://example-test-bap.com/static-terms.txt"
               }
             ]
           }
@@ -78,3 +79,7 @@
     }
   }
 }
+
+
+
+

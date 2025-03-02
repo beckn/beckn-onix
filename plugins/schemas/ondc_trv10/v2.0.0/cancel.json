@@ -7,7 +7,7 @@
       "$ref": "../../core/v1.1.0/cancel.json#"
     },
     {
-      "$ref": "./init.json#/allOf/2"
+      "$ref": "init.json#/allOf/2"
     },
     {
       "properties": {

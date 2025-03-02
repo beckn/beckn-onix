@@ -22,25 +22,8 @@
           ]
         }
       ]
-    },
-    "message": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "order_id": {
-          "$ref": "definitions.json#/$defs/Order"
-        },
-        "cancellation_reason_id": {
-          "$ref": "definitions.json#/$defs/Option"
-        },
-        "descriptor": {
-          "$ref": "definitions.json#/$defs/Descriptor"
-        }
-      },
-      "required": [
-        "order_id"
-      ]
     }
+    
   },
   "required": [
     "message",

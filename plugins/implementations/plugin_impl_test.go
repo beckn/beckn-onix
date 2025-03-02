@@ -21,7 +21,7 @@ type Message struct{}
 
 func TestInitializeValidDirectory(t *testing.T) {
 	provider := &tekuriValidatorProvider{}
-	schemaDir := "../schema_valid/ondc_trv10_2.0.0/"
+	schemaDir := "../schemas/"
 	_, err := provider.Initialize(schemaDir)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -68,7 +68,7 @@ func TestInvalidCompileSchema(t *testing.T) {
 }
 
 func TestValidateData(t *testing.T) {
-	schemaDir := "../schema_valid/ondc_trv10_2.0.0/"
+	schemaDir := "../schemas/"
 	if _, err := os.Stat(schemaDir); os.IsNotExist(err) {
 		t.Fatalf("Schema directory does not exist: %v", schemaDir)
 	}

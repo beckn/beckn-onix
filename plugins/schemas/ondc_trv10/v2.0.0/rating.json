@@ -7,10 +7,7 @@
       "$ref": "../../core/v1.1.0/rating.json#"
     },
     {
-      "$ref": "https://beckn.org/schema/rating#"
-    },
-    {
-      "$ref": "./init.json#/allOf/2"
+      "$ref": "./init.json#/allOf/1"
     }    
   ]
 }
