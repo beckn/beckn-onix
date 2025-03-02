@@ -3,9 +3,14 @@
   "$id": "select",
   "type": "object",
   "allOf": [
-    { "$ref": "../core/v1.1.0/select.json#" },
-    { "$ref": "https://beckn.org/schema/select#" },
-    { "$ref": "./init.json#/$defs/init_schema_1" },
-    { "$ref": "../paths/init.json#/$defs/init_schema_2" }
+    {
+      "$ref": "../../core/v1.1.0/select.json#"
+    },
+    {
+      "$ref": "./init.json#/allOf/1"
+    },
+    {
+      "$ref": "./init.json#/allOf/2"
+    }
   ]
 }

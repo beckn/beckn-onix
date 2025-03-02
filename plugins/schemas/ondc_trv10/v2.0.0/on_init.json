@@ -7,10 +7,7 @@
       "$ref": "../../core/v1.1.0/on_init.json#"
     },
     {
-      "$ref": "https://beckn.org/schema/on_init#"
-    },
-    {
-      "$ref": "./init.json#/allOf/2"
+      "$ref": "./init.json#/allOf/1"
     },
     {
       "properties": {
@@ -35,7 +32,7 @@
       }
     },
     {
-      "$ref": "./on_select.json#/allOf/5"
+      "$ref": "./confirm.json#/allOf/5"
     },
     {
       "$ref": "./on_select.json#/allOf/6"
@@ -69,7 +66,7 @@
       }
     },
     {
-      "$ref": "./confirm.json#/allOf/5/allOf/1"
+      "$ref": "./confirm.json#/allOf/4/allOf/1"
     },    
     {
       "properties": {
@@ -226,7 +223,7 @@
       ]
     },
     {
-      "$ref": "./confirm.json#/allOf/7"
+      "$ref": "./confirm.json#/allOf/6"
     },
     {
       "allOf": [

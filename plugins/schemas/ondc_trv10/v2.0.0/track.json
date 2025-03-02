@@ -7,10 +7,7 @@
       "$ref": "../../core/v1.1.0/track.json#"
     },
     {
-      "$ref": "https://beckn.org/schema/track#"
-    },
-    {
-      "$ref": "./init.json#/allOf/2"
+      "$ref": "./init.json#/allOf/1"
     }
   ]
 }

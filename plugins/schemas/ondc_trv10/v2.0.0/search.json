@@ -2,7 +2,7 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "search",
     "allOf": [
-      { "$ref": "../core/v1.1.0/search.json#" }
+      { "$ref": "../../core/v1.1.0/search.json#" }
     ],
     "type": "object",
     "properties": {
@@ -38,12 +38,10 @@
                 "required": ["city", "country"]
               },
               "bap_id": {
-                "type": "string",
-                "pattern": "^(http|https).*"
+                "type": "string"
               },
               "bpp_id": {
-                "type": "string",
-                "pattern": "^(http|https).*"
+                "type": "string"
               },
               "ttl": {
                 "type": "string",

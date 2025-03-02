@@ -7,10 +7,7 @@
       "$ref": "../../core/v1.1.0/support.json#"
     },
     {
-      "$ref": "https://beckn.org/schema/support#"
-    },
-    {
-      "$ref": "./init.json#/allOf/2"
+      "$ref": "./init.json#/allOf/1"
     }    
   ]
 }

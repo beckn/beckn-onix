@@ -7,15 +7,15 @@
       "$ref": "../../core/v1.1.0/confirm.json#"
     },
     {
-      "$ref": "./init.json#/allOf/2"
+      "$ref": "./init.json#/allOf/1"
     },
     {
-      "$ref": "./init.json#/allOf/3"
+      "$ref": "./init.json#/allOf/2"
     },
     {
       "allOf": [
         {
-          "$ref": "./on_select.json#/allOf/8/allOf/0"
+          "$ref": "./on_select.json#/allOf/5"
         },
         {
           "properties": {
@@ -77,7 +77,7 @@
     {
       "allOf": [
         {
-          "$ref": "./init.json#/allOf/6"
+          "$ref": "./init.json#/allOf/7"
         },
         {
           "properties": {

@@ -80,8 +80,6 @@ func NewValidatorProvider(pluginsConfig PluginConfig) (*PluginManager, map[strin
 		log.Fatalf("Failed to initialize validator provider: %v", err)
 	}
 
-	fmt.Println("printing validators in new validator provider : ", validator)
-
 	var memStatsAfter runtime.MemStats
 	runtime.ReadMemStats(&memStatsAfter)
 	fmt.Printf("Memory allocated during plugin boot-up: %v MiB", (memStatsAfter.Alloc-memStatsBefore.Alloc)/1024/1024)
