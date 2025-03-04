@@ -20,7 +20,7 @@ type Context struct{}
 type Message struct{}
 
 func TestInitializeValidDirectory(t *testing.T) {
-	provider := &tekuriValidatorProvider{}
+	provider := &TekuriValidatorProvider{}
 	schemaDir := "../schemas/"
 	_, err := provider.Initialize(schemaDir)
 	if err != nil {
@@ -29,7 +29,7 @@ func TestInitializeValidDirectory(t *testing.T) {
 }
 
 func TestInitializeInValidDirectory(t *testing.T) {
-	provider := &tekuriValidatorProvider{}
+	provider := &TekuriValidatorProvider{}
 	schemaDir := "../schema/ondc_trv10_2.0.0/"
 	_, err := provider.Initialize(schemaDir)
 	if err != nil {
@@ -42,7 +42,7 @@ func TestInvalidCompileFile(t *testing.T) {
 	if _, err := os.Stat(schemaDir); os.IsNotExist(err) {
 		t.Fatalf("Schema directory does not exist: %v", schemaDir)
 	}
-	provider := &tekuriValidatorProvider{}
+	provider := &TekuriValidatorProvider{}
 	compiledSchema, err := provider.Initialize(schemaDir)
 	if err != nil {
 		t.Fatalf("failed to compile JSON schema : %v", err)
@@ -58,7 +58,7 @@ func TestInvalidCompileSchema(t *testing.T) {
 	if _, err := os.Stat(schemaDir); os.IsNotExist(err) {
 		t.Fatalf("Schema directory does not exist: %v", schemaDir)
 	}
-	provider := &tekuriValidatorProvider{}
+	provider := &TekuriValidatorProvider{}
 	compiledSchema, _ := provider.Initialize(schemaDir)
 	fmt.Println(compiledSchema)
 	if compiledSchema == nil {
@@ -72,15 +72,15 @@ func TestValidateData(t *testing.T) {
 	if _, err := os.Stat(schemaDir); os.IsNotExist(err) {
 		t.Fatalf("Schema directory does not exist: %v", schemaDir)
 	}
-	provider := &tekuriValidatorProvider{}
+	provider := &TekuriValidatorProvider{}
 	validators, err := provider.Initialize(schemaDir)
 	if err != nil {
 		t.Fatalf("Failed to initialize schema provider: %v", err)
 	}
-	var validator *tekuriValidator
+	var validator *TekuriValidator
 	for _, v := range validators {
 		var ok bool
-		validator, ok = v.(*tekuriValidator)
+		validator, ok = v.(*TekuriValidator)
 		if ok {
 			break
 		}
@@ -89,7 +89,7 @@ func TestValidateData(t *testing.T) {
 		t.Fatalf("No validators found in the map")
 	}
 
-	payloadFilePath := "../test/payload.json"
+	payloadFilePath := "../testData/payload.json"
 	payloadData, err := ioutil.ReadFile(payloadFilePath)
 	if err != nil {
 		t.Fatalf("Failed to read payload data: %v", err)
@@ -114,15 +114,15 @@ func TestInValidateData(t *testing.T) {
 		t.Fatalf("Schema directory does not exist: %v", schemaDir)
 	}
 
-	provider := &tekuriValidatorProvider{}
+	provider := &TekuriValidatorProvider{}
 	validators, err := provider.Initialize(schemaDir)
 	if err != nil {
 		t.Fatalf("Failed to initialize schema provider: %v", err)
 	}
-	var validator *tekuriValidator
+	var validator *TekuriValidator
 	for _, v := range validators {
 		var ok bool
-		validator, ok = v.(*tekuriValidator)
+		validator, ok = v.(*TekuriValidator)
 		if ok {
 			break
 		}
@@ -144,15 +144,15 @@ func TestInValidateUnmarshalData(t *testing.T) {
 		t.Fatalf("Schema directory does not exist: %v", schemaDir)
 	}
 
-	provider := &tekuriValidatorProvider{}
+	provider := &TekuriValidatorProvider{}
 	validators, err := provider.Initialize(schemaDir)
 	if err != nil {
 		t.Fatalf("Failed to initialize schema provider: %v", err)
 	}
-	var validator *tekuriValidator
+	var validator *TekuriValidator
 	for _, v := range validators {
 		var ok bool
-		validator, ok = v.(*tekuriValidator)
+		validator, ok = v.(*TekuriValidator)
 		if ok {
 			break
 		}
