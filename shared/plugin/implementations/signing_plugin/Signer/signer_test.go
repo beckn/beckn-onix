@@ -138,3 +138,14 @@ func TestSignDataInvalidPrivateKeyLength(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid private key length")
 }
+
+// TestClose verifies that the Close method of Impl returns nil without errors.
+func TestClose(t *testing.T) {
+	s := &Impl{}
+
+	err := s.Close()
+
+	if err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+}

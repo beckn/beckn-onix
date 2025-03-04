@@ -49,6 +49,10 @@ func (m *MockSigner) Sign(ctx context.Context, body []byte, privateKeyBase64 str
 	return "mocked_signature", nil
 }
 
+func (m *MockSigner) Close() error {
+	return nil
+}
+
 // MockSignerFactory is a helper function to simulate signer creation.
 func MockSignerFactory(ctx context.Context, cfg signer.SigningConfig) (plugins.Signer, error) {
 	if cfg.TTL <= 0 {

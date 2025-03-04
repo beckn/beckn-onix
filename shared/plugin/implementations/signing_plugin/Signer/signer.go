@@ -28,12 +28,9 @@ func NewSigner(ctx context.Context, config SigningConfig) (*Impl, error) {
 
 // createSigningString generates a signing string using BLAKE-512 hashing.
 func createSigningString(payload []byte, createdAt, expiresAt int64) (string, error) {
-	hasher, err := blake2b.New512(nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create hasher: %w", err)
-	}
+	hasher, _ := blake2b.New512(nil)
 
-	_, err = hasher.Write(payload)
+	_, err := hasher.Write(payload)
 	if err != nil {
 		return "", fmt.Errorf("failed to hash payload: %w", err)
 	}

@@ -157,3 +157,14 @@ func TestVerifyInvalidPublicKey(t *testing.T) {
 	assert.Error(t, err, "Expected error due to invalid public key")
 	assert.False(t, valid)
 }
+
+// TestClose verifies that the Close method of Impl returns nil without errors.
+func TestClose(t *testing.T) {
+	v := &Verifier{}
+
+	err := v.Close()
+
+	if err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+}
