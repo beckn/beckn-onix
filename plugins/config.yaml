@@ -2,6 +2,5 @@ plugins:
   validation_plugin: 
     id: tekuriValidator 
     config:
-      #schema_dir: plugins/schemas/   #approach 1
-      schema_dir: plugins/schemas/    #approach 2
-    plugin_path: plugins/implementations/ # Path to the directory containing the .so files
+      schema_dir: plugins/schemas/    
+    plugin_path: plugins/implementations/ 
