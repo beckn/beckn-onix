@@ -6,6 +6,7 @@ import "context"
 type Signer interface {
 	// Sign generates a signature for the given body and privateKeyBase64.
 	Sign(ctx context.Context, body []byte, privateKeyBase64 string) (string, error)
+	Close() error // Close for releasing resources
 }
 
 // SignerProvider initializes a new signer instance with the given config.
@@ -24,6 +25,7 @@ type PrivateKeyManager interface {
 type Validator interface {
 	// Verify checks the validity of the signature for the given body.
 	Verify(ctx context.Context, body []byte, header []byte, publicKeyBase64 string) (bool, error)
+	Close() error // Close for releasing resources
 }
 
 // ValidatorProvider initializes a new validator instance with the given config.
