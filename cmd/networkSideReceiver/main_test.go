@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 
@@ -36,12 +38,12 @@ func TestInitConfigSuccess(t *testing.T) {
 		{
 			name: "Success - Valid Config",
 			configData: `
-appName: "networkSideHandler"
+appName: "networkSideReceiver"
 port: 9091
 `,
 			expectError: false,
 			expected: &config{
-				AppName: "networkSideHandler",
+				AppName: "networkSideReceiver",
 				Port:    9091,
 			},
 		},
@@ -49,7 +51,7 @@ port: 9091
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tempFilePath := "../../config/networkSideHandler-config.yaml"
+			tempFilePath := "../../config/networkSideReceiver-config.yaml"
 			tempFile, err := os.Create(tempFilePath)
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
@@ -72,11 +74,9 @@ port: 9091
 				if err != nil {
 					t.Errorf("Did not expect error, got %v", err)
 				}
-				if cfg.AppName != tc.expected.AppName {
-					t.Errorf("Expected appName %s, got %s", tc.expected.AppName, cfg.AppName)
-				}
-				if cfg.Port != tc.expected.Port {
-					t.Errorf("Expected Port %d, got %d", tc.expected.Port, cfg.Port)
+				
+				if diff := cmp.Diff(tc.expected, cfg); diff != "" {
+					t.Errorf("Config mismatch (-expected +actual):\n%s", diff)
 				}
 			}
 		})
@@ -104,7 +104,7 @@ func TestInitConfigFailure(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tempFilePath := "../../config/networkSideHandler-config.yaml"
+			tempFilePath := "../../config/networkSideReceiver-config.yaml"
 			tempFile, err := os.Create(tempFilePath)
 			if err != nil {
 				t.Fatalf("Failed to create temp file: %v", err)
@@ -127,11 +127,9 @@ func TestInitConfigFailure(t *testing.T) {
 				if err != nil {
 					t.Errorf("Did not expect error, got %v", err)
 				}
-				if cfg.AppName != tc.expected.AppName {
-					t.Errorf("Expected appName %s, got %s", tc.expected.AppName, cfg.AppName)
-				}
-				if cfg.Port != tc.expected.Port {
-					t.Errorf("Expected Port %d, got %d", tc.expected.Port, cfg.Port)
+
+				if diff := cmp.Diff(tc.expected, cfg); diff != "" {
+					t.Errorf("Config mismatch (-expected +actual):\n%s", diff)
 				}
 			}
 		})

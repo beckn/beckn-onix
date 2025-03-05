@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 
@@ -72,11 +74,9 @@ port: 9091
 				if err != nil {
 					t.Errorf("Did not expect error, got %v", err)
 				}
-				if cfg.AppName != tc.expected.AppName {
-					t.Errorf("Expected appName %s, got %s", tc.expected.AppName, cfg.AppName)
-				}
-				if cfg.Port != tc.expected.Port {
-					t.Errorf("Expected Port %d, got %d", tc.expected.Port, cfg.Port)
+				
+				if diff := cmp.Diff(tc.expected, cfg); diff != "" {
+					t.Errorf("Config mismatch (-expected +actual):\n%s", diff)
 				}
 			}
 		})
@@ -127,11 +127,9 @@ func TestInitConfigFailure(t *testing.T) {
 				if err != nil {
 					t.Errorf("Did not expect error, got %v", err)
 				}
-				if cfg.AppName != tc.expected.AppName {
-					t.Errorf("Expected appName %s, got %s", tc.expected.AppName, cfg.AppName)
-				}
-				if cfg.Port != tc.expected.Port {
-					t.Errorf("Expected Port %d, got %d", tc.expected.Port, cfg.Port)
+
+				if diff := cmp.Diff(tc.expected, cfg); diff != "" {
+					t.Errorf("Config mismatch (-expected +actual):\n%s", diff)
 				}
 			}
 		})
