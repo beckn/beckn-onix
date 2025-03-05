@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"testing"
@@ -21,7 +20,7 @@ type Message struct{}
 
 func TestInitializeValidDirectory(t *testing.T) {
 	provider := &TekuriValidatorProvider{}
-	schemaDir := "../schemas/"
+	schemaDir := "../testData/schema_valid/"
 	_, err := provider.Initialize(schemaDir)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -30,7 +29,7 @@ func TestInitializeValidDirectory(t *testing.T) {
 
 func TestInitializeInValidDirectory(t *testing.T) {
 	provider := &TekuriValidatorProvider{}
-	schemaDir := "../schema/ondc_trv10_2.0.0/"
+	schemaDir := "../testData/schema/ondc_trv10/"
 	_, err := provider.Initialize(schemaDir)
 	if err != nil {
 		t.Fatalf("failed to read schema directory: %v", err)
@@ -38,7 +37,7 @@ func TestInitializeInValidDirectory(t *testing.T) {
 }
 
 func TestInvalidCompileFile(t *testing.T) {
-	schemaDir := "../invalid_schemas/"
+	schemaDir := "../testData/invalid_compile_schema/"
 	if _, err := os.Stat(schemaDir); os.IsNotExist(err) {
 		t.Fatalf("Schema directory does not exist: %v", schemaDir)
 	}
@@ -54,7 +53,7 @@ func TestInvalidCompileFile(t *testing.T) {
 }
 
 func TestInvalidCompileSchema(t *testing.T) {
-	schemaDir := "../invalid_schemas/invalid_compile_schema/"
+	schemaDir := "../testData/invalid_schemas/"
 	if _, err := os.Stat(schemaDir); os.IsNotExist(err) {
 		t.Fatalf("Schema directory does not exist: %v", schemaDir)
 	}
@@ -68,7 +67,7 @@ func TestInvalidCompileSchema(t *testing.T) {
 }
 
 func TestValidateData(t *testing.T) {
-	schemaDir := "../schemas/"
+	schemaDir := "../testData/schema_valid/"
 	if _, err := os.Stat(schemaDir); os.IsNotExist(err) {
 		t.Fatalf("Schema directory does not exist: %v", schemaDir)
 	}
@@ -89,8 +88,8 @@ func TestValidateData(t *testing.T) {
 		t.Fatalf("No validators found in the map")
 	}
 
-	payloadFilePath := "../testData/payload.json"
-	payloadData, err := ioutil.ReadFile(payloadFilePath)
+	payloadFilePath := "../testData/cancel.json"
+	payloadData, err := os.ReadFile(payloadFilePath)
 	if err != nil {
 		t.Fatalf("Failed to read payload data: %v", err)
 	}
@@ -108,7 +107,7 @@ func TestValidateData(t *testing.T) {
 }
 
 func TestInValidateData(t *testing.T) {
-	schemaDir := "../schema_valid/ondc_trv10_2.0.0/"
+	schemaDir := "../testData/schema_valid/"
 
 	if _, err := os.Stat(schemaDir); os.IsNotExist(err) {
 		t.Fatalf("Schema directory does not exist: %v", schemaDir)
@@ -138,7 +137,7 @@ func TestInValidateData(t *testing.T) {
 }
 
 func TestInValidateUnmarshalData(t *testing.T) {
-	schemaDir := "../schema_valid/ondc_trv10_2.0.0/"
+	schemaDir := "../testdata/schema_valid/"
 
 	if _, err := os.Stat(schemaDir); os.IsNotExist(err) {
 		t.Fatalf("Schema directory does not exist: %v", schemaDir)
