@@ -8,7 +8,7 @@ on:
 env:
  # AR_LOCATION: "${{ secrets.GCP_PROJECT_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_AR_REPO }}"
   APP_DIRECTORY: "go_app"
-  REF_BRANCH: "Feature/Test_CICD"
+  REF_BRANCH: "feature/test_go_app"
 
 jobs:
   lint_and_test:
