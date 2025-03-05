@@ -2,5 +2,5 @@ plugins:
   validation_plugin: 
     id: tekuriValidator 
     config:
-      schema_dir: plugins/schemas/    
+      schema_dir:   
     plugin_path: plugins/implementations/ 
