@@ -2,96 +2,75 @@ package main
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	plugins "beckn_onix/shared/plugin"
-	signer "beckn_onix/shared/plugin/implementations/signing_plugin/signer"
 
 	"github.com/stretchr/testify/assert"
 )
 
-// TestParseConfigSuccess tests parsing a valid configuration.
-func TestParseConfigSuccess(t *testing.T) {
-	config := map[string]string{"ttl": "3600"}
-	expectedConfig := signer.SigningConfig{TTL: 3600}
+// TestSignerProvider_New_Success ensures the provider successfully creates a new signer instance.
+func TestSignerProviderSuccess(t *testing.T) {
+	provider := SignerProvider{}
+	config := map[string]string{} // Since SigningConfig has no fields, passing an empty config
 
-	parsedConfig, err := parseConfig(config)
+	signerInstance, err := provider.New(context.Background(), config)
 
-	assert.NoError(t, err)
-	assert.Equal(t, expectedConfig, parsedConfig)
+	assert.NoError(t, err, "Expected no error when creating a signer instance")
+	assert.NotNil(t, signerInstance, "Signer instance should not be nil")
+	assert.Implements(t, (*plugins.Signer)(nil), signerInstance, "Signer instance should implement the Signer interface")
 }
 
-// TestParseConfigMissingTTL tests parsing a configuration where TTL is missing.
-func TestParseConfigMissingTTL(t *testing.T) {
+// TestSignerProvider_New_InvalidConfig ensures that an invalid config does not break the signer initialization.
+func TestSignerProviderInvalidConfig(t *testing.T) {
+	provider := SignerProvider{}
+	invalidConfig := map[string]string{"unexpected_key": "some_value"} // Unexpected config parameters
+
+	signerInstance, err := provider.New(context.Background(), invalidConfig)
+
+	assert.NoError(t, err, "Unexpected config should not cause an error if ignored")
+	assert.NotNil(t, signerInstance, "Signer instance should still be created")
+}
+
+// TestSignerProvider_New_NilContext ensures the provider can handle a nil context gracefully.
+func TestSignerProviderNilContext(t *testing.T) {
+	provider := SignerProvider{}
 	config := map[string]string{}
 
-	_, err := parseConfig(config)
+	signerInstance, err := provider.New(nil, config) // Passing nil context
 
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "ttl not found in config")
+	assert.NoError(t, err, "Nil context should not cause an error")
+	assert.NotNil(t, signerInstance, "Signer instance should still be created")
 }
 
-// TestParseConfigInvalidTTL tests parsing a configuration with an invalid TTL value.
-func TestParseConfigInvalidTTL(t *testing.T) {
-	config := map[string]string{"ttl": "invalid"}
+// TestSignerProvider_New_EmptyConfig ensures that an empty config does not cause issues.
+func TestSignerProviderEmptyConfig(t *testing.T) {
+	provider := SignerProvider{}
+	emptyConfig := map[string]string{}
 
-	_, err := parseConfig(config)
+	signerInstance, err := provider.New(context.Background(), emptyConfig)
 
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid ttl value")
+	assert.NoError(t, err, "Empty config should not cause an error")
+	assert.NotNil(t, signerInstance, "Signer instance should still be created")
 }
 
-// MockSigner is a mock implementation of plugins.Signer for testing.
-type MockSigner struct{}
+// TestSignerProvider_New_HandlesEdgeCases ensures no panic occurs even with unexpected input.
+func TestSignerProviderHandlesEdgeCases(t *testing.T) {
+	provider := SignerProvider{}
 
-func (m *MockSigner) Sign(ctx context.Context, body []byte, privateKeyBase64 string) (string, error) {
-	return "mocked_signature", nil
-}
-
-func (m *MockSigner) Close() error {
-	return nil
-}
-
-// MockSignerFactory is a helper function to simulate signer creation.
-func MockSignerFactory(ctx context.Context, cfg signer.SigningConfig) (plugins.Signer, error) {
-	if cfg.TTL <= 0 {
-		return nil, errors.New("invalid signer config")
+	edgeCases := []map[string]string{
+		nil,                     // Nil config map
+		{},                      // Empty map
+		{"ttl": ""},             // Empty string value
+		{"ttl": "-100"},         // Negative value
+		{"ttl": "not_a_number"}, // Non-numeric string
 	}
-	return &MockSigner{}, nil
-}
 
-// TestSignerProviderSuccess tests successful creation of a signer.
-func TestSignerProviderSuccess(t *testing.T) {
-	config := map[string]string{"ttl": "3600"}
-	provider := SignerProvider{}
-
-	signerInstance, err := provider.New(context.Background(), config)
-
-	assert.NoError(t, err)
-	assert.NotNil(t, signerInstance)
-}
-
-// TestSignerProviderInvalidConfig tests signer creation failure due to invalid config.
-func TestSignerProviderInvalidConfig(t *testing.T) {
-	config := map[string]string{"ttl": "invalid"}
-	provider := SignerProvider{}
-
-	signerInstance, err := provider.New(context.Background(), config)
-
-	assert.Error(t, err)
-	assert.Nil(t, signerInstance)
-	assert.Contains(t, err.Error(), "invalid config")
-}
-
-// TestSignerProviderMissingTTL tests signer creation failure due to missing TTL.
-func TestSignerProviderMissingTTL(t *testing.T) {
-	config := map[string]string{} // No TTL key
-	provider := SignerProvider{}
-
-	signerInstance, err := provider.New(context.Background(), config)
-
-	assert.Error(t, err)
-	assert.Nil(t, signerInstance)
-	assert.Contains(t, err.Error(), "invalid config")
+	for _, config := range edgeCases {
+		t.Run("Testing edge case", func(t *testing.T) {
+			signerInstance, err := provider.New(context.Background(), config)
+			assert.NoError(t, err, "Edge case should not cause an error")
+			assert.NotNil(t, signerInstance, "Signer instance should still be created")
+		})
+	}
 }

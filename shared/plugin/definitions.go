@@ -5,7 +5,7 @@ import "context"
 // Signer defines the method for signing.
 type Signer interface {
 	// Sign generates a signature for the given body and privateKeyBase64.
-	Sign(ctx context.Context, body []byte, privateKeyBase64 string) (string, error)
+	Sign(ctx context.Context, body []byte, privateKeyBase64 string, createdAt, expiresAt int64) (string, error)
 	Close() error // Close for releasing resources
 }
 

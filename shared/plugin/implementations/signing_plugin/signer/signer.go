@@ -6,14 +6,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"time"
 
 	"golang.org/x/crypto/blake2b"
 )
 
 // SigningConfig holds the configuration for the signing process.
 type SigningConfig struct {
-	TTL int64
 }
 
 // Impl implements the Signer interface and handles the signing process.
@@ -57,10 +55,7 @@ func signData(signingString []byte, privateKeyBase64 string) ([]byte, error) {
 }
 
 // Sign generates a digital signature for the provided payload.
-func (s *Impl) Sign(ctx context.Context, body []byte, privateKeyBase64 string) (string, error) {
-	createdAt := time.Now().Unix()
-	expiresAt := createdAt + s.config.TTL
-
+func (s *Impl) Sign(ctx context.Context, body []byte, privateKeyBase64 string, createdAt, expiresAt int64) (string, error) {
 	signingString, err := createSigningString(body, createdAt, expiresAt)
 	if err != nil {
 		return "", err
