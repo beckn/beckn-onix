@@ -28,12 +28,7 @@ func New(ctx context.Context, config *Config) (*Verifier, error) {
 
 // Verify checks the signature for the given payload and public key.
 func (v *Verifier) Verify(ctx context.Context, body []byte, header []byte, publicKeyBase64 string) (bool, error) {
-	signatureHeader := extractHeaderValue("Authorization", string(header))
-	if signatureHeader == "" {
-		return false, fmt.Errorf("authorization header missing")
-	}
-
-	createdTimestamp, expiredTimestamp, signature, err := parseAuthHeader(signatureHeader)
+	createdTimestamp, expiredTimestamp, signature, err := parseAuthHeader(string(header))
 	if err != nil {
 		return false, fmt.Errorf("error parsing header: %w", err)
 	}
@@ -97,17 +92,6 @@ func parseAuthHeader(header string) (int64, int64, string, error) {
 	}
 
 	return createdTimestamp, expiredTimestamp, signature, nil
-}
-
-// extractHeaderValue retrieves a specific header value from the headers string.
-func extractHeaderValue(key, headers string) string {
-	lines := strings.Split(headers, "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, key+":") {
-			return strings.TrimSpace(strings.TrimPrefix(line, key+":"))
-		}
-	}
-	return ""
 }
 
 // createSigningString constructs a signing string for verification.

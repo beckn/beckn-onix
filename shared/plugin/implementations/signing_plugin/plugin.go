@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strconv"
 
-	plugins "plugins/shared/plugin"
-	signer "plugins/shared/plugin/implementations/signing_plugin/Signer"
+	plugins "beckn_onix/shared/plugin"
+	signer "beckn_onix/shared/plugin/implementations/signing_plugin/signer"
 )
 
 // parseConfig converts a map of configuration values into a SigningConfig struct.
@@ -35,7 +35,7 @@ func (p SignerProvider) New(ctx context.Context, config map[string]string) (plug
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	return signer.NewSigner(ctx, cfg)
+	return signer.NewSigner(ctx, &cfg)
 }
 
 // Provider is the exported symbol that the plugin manager will look for.

@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 
-	plugins "plugins/shared/plugin"
-	verifier "plugins/shared/plugin/implementations/verification_plugin/Verifier"
+	plugins "beckn_onix/shared/plugin"
+	verifier "beckn_onix/shared/plugin/implementations/verification_plugin/verifier"
 )
 
 // VerifierProvider provides instances of Verifier.

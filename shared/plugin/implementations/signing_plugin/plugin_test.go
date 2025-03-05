@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	plugins "plugins/shared/plugin"
-	signer "plugins/shared/plugin/implementations/signing_plugin/Signer"
+	plugins "beckn_onix/shared/plugin"
+	signer "beckn_onix/shared/plugin/implementations/signing_plugin/signer"
 
 	"github.com/stretchr/testify/assert"
 )

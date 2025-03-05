@@ -57,7 +57,7 @@ func TestSignDataInvalidPrivateKey(t *testing.T) {
 func TestSignSuccess(t *testing.T) {
 	privateKey, _ := generateTestKeys()
 	config := SigningConfig{TTL: 3600}
-	signer, _ := NewSigner(context.Background(), config)
+	signer, _ := NewSigner(context.Background(), &config)
 	signature, err := signer.Sign(context.Background(), []byte("test payload"), privateKey)
 
 	assert.NoError(t, err)
@@ -67,7 +67,7 @@ func TestSignSuccess(t *testing.T) {
 // TestSignInvalidPrivateKey tests the Sign function with an invalid private key.
 func TestSignInvalidPrivateKey(t *testing.T) {
 	config := SigningConfig{TTL: 3600}
-	signer, _ := NewSigner(context.Background(), config)
+	signer, _ := NewSigner(context.Background(), &config)
 	_, err := signer.Sign(context.Background(), []byte("test payload"), "invalid_key")
 	assert.Error(t, err)
 }

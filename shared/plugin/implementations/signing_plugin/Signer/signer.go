@@ -18,11 +18,11 @@ type SigningConfig struct {
 
 // Impl implements the Signer interface and handles the signing process.
 type Impl struct {
-	config SigningConfig
+	config *SigningConfig
 }
 
 // NewSigner creates a new SignerImpl instance with the given configuration.
-func NewSigner(ctx context.Context, config SigningConfig) (*Impl, error) {
+func NewSigner(ctx context.Context, config *SigningConfig) (*Impl, error) {
 	return &Impl{config: config}, nil
 }
 
@@ -65,6 +65,9 @@ func (s *Impl) Sign(ctx context.Context, body []byte, privateKeyBase64 string) (
 	if err != nil {
 		return "", err
 	}
+
+	fmt.Println("Printing the created timestamp :", createdAt)
+	fmt.Println("Printing the expired timestamp :", expiresAt)
 
 	signature, err := signData([]byte(signingString), privateKeyBase64)
 	if err != nil {

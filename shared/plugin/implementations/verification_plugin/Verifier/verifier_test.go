@@ -14,9 +14,7 @@ import (
 // generateTestKeyPair generates a new ED25519 key pair for testing.
 func generateTestKeyPair() (string, string) {
 	publicKey, privateKey, _ := ed25519.GenerateKey(nil)
-	privateKeyBase64 := base64.StdEncoding.EncodeToString(privateKey)
-	publicKeyBase64 := base64.StdEncoding.EncodeToString(publicKey)
-	return privateKeyBase64, publicKeyBase64
+	return base64.StdEncoding.EncodeToString(privateKey), base64.StdEncoding.EncodeToString(publicKey)
 }
 
 // signTestData creates a valid signature for test cases.
@@ -30,7 +28,7 @@ func signTestData(privateKeyBase64 string, body []byte, createdAt, expiresAt int
 	return base64.StdEncoding.EncodeToString(signature)
 }
 
-// TestVerify_Success ensures the verification works with a valid payload.
+// TestVerifySuccess ensures the verification works with a valid payload.
 func TestVerifySuccess(t *testing.T) {
 	privateKeyBase64, publicKeyBase64 := generateTestKeyPair()
 
@@ -40,7 +38,7 @@ func TestVerifySuccess(t *testing.T) {
 	body := []byte("test payload")
 	signature := signTestData(privateKeyBase64, body, createdAt, expiresAt)
 
-	header := `Authorization: Signature created="` +
+	header := `Signature created="` +
 		strconv.FormatInt(createdAt, 10) +
 		`", expires="` + strconv.FormatInt(expiresAt, 10) +
 		`", signature="` + signature + `"`
@@ -48,7 +46,8 @@ func TestVerifySuccess(t *testing.T) {
 	verifier, _ := New(context.Background(), &Config{})
 
 	valid, err := verifier.Verify(context.Background(), body, []byte(header), publicKeyBase64)
-	assert.NoError(t, err)
+
+	assert.NoError(t, err, "Expected no error in verification")
 	assert.True(t, valid, "Expected signature verification to succeed")
 }
 
@@ -65,7 +64,7 @@ func TestVerifyMissingAuthHeader(t *testing.T) {
 func TestVerifyMalformedHeader(t *testing.T) {
 	verifier, _ := New(context.Background(), &Config{})
 
-	header := `Authorization: InvalidSignature created="wrong"`
+	header := `InvalidSignature created="wrong"`
 	valid, err := verifier.Verify(context.Background(), []byte("test payload"), []byte(header), "dummyPublicKey")
 
 	assert.Error(t, err, "Expected error due to malformed header")
@@ -79,7 +78,7 @@ func TestVerifyInvalidBase64Signature(t *testing.T) {
 	createdAt := time.Now().Unix()
 	expiresAt := createdAt + 3600
 
-	header := `Authorization: Signature created="` +
+	header := `Signature created="` +
 		strconv.FormatInt(createdAt, 10) +
 		`", expires="` + strconv.FormatInt(expiresAt, 10) +
 		`", signature="!!INVALIDBASE64!!"`
@@ -101,7 +100,7 @@ func TestVerifyExpiredSignature(t *testing.T) {
 	body := []byte("test payload")
 	signature := signTestData(privateKeyBase64, body, createdAt, expiresAt)
 
-	header := `Authorization: Signature created="` +
+	header := `Signature created="` +
 		strconv.FormatInt(createdAt, 10) +
 		`", expires="` + strconv.FormatInt(expiresAt, 10) +
 		`", signature="` + signature + `"`
@@ -118,12 +117,12 @@ func TestVerifyFutureSignature(t *testing.T) {
 	privateKeyBase64, publicKeyBase64 := generateTestKeyPair()
 
 	createdAt := time.Now().Unix() + 3600 // 1 hour in the future
-	expiresAt := createdAt + 3600
+	expiresAt := createdAt + 7200
 
 	body := []byte("test payload")
 	signature := signTestData(privateKeyBase64, body, createdAt, expiresAt)
 
-	header := `Authorization: Signature created="` +
+	header := `Signature created="` +
 		strconv.FormatInt(createdAt, 10) +
 		`", expires="` + strconv.FormatInt(expiresAt, 10) +
 		`", signature="` + signature + `"`
@@ -146,7 +145,7 @@ func TestVerifyInvalidPublicKey(t *testing.T) {
 	body := []byte("test payload")
 	signature := signTestData(privateKeyBase64, body, createdAt, expiresAt)
 
-	header := `Authorization: Signature created="` +
+	header := `Signature created="` +
 		strconv.FormatInt(createdAt, 10) +
 		`", expires="` + strconv.FormatInt(expiresAt, 10) +
 		`", signature="` + signature + `"`
@@ -158,13 +157,31 @@ func TestVerifyInvalidPublicKey(t *testing.T) {
 	assert.False(t, valid)
 }
 
-// TestClose verifies that the Close method of Impl returns nil without errors.
+// TestVerify_EmptyBody ensures empty payloads do not crash the verification.
+func TestVerifyEmptyBody(t *testing.T) {
+	privateKeyBase64, publicKeyBase64 := generateTestKeyPair()
+
+	createdAt := time.Now().Unix()
+	expiresAt := createdAt + 3600
+
+	body := []byte("")
+	signature := signTestData(privateKeyBase64, body, createdAt, expiresAt)
+
+	header := `Signature created="` +
+		strconv.FormatInt(createdAt, 10) +
+		`", expires="` + strconv.FormatInt(expiresAt, 10) +
+		`", signature="` + signature + `"`
+
+	verifier, _ := New(context.Background(), &Config{})
+
+	valid, err := verifier.Verify(context.Background(), body, []byte(header), publicKeyBase64)
+	assert.NoError(t, err, "Expected no error for empty body verification")
+	assert.True(t, valid, "Expected empty body verification to succeed")
+}
+
+// TestClose verifies that the Close method of Verifier returns nil without errors.
 func TestClose(t *testing.T) {
 	v := &Verifier{}
-
 	err := v.Close()
-
-	if err != nil {
-		t.Errorf("expected nil, got %v", err)
-	}
+	assert.NoError(t, err, "Expected Close method to return nil without errors")
 }
