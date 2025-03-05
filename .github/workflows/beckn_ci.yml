@@ -3,7 +3,7 @@ name: CI/CD Pipeline
 on:
   pull_request:
     branches:
-      - beck-onix-v1.0-develop  # Trigger when a PR is raised for merging into `beck-onix-v1.0-develop`
+      - beckn-onix-v1.0-develop  # Trigger when a PR is raised for merging into `beck-onix-v1.0-develop`
 
 env:
  # AR_LOCATION: "${{ secrets.GCP_PROJECT_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_AR_REPO }}"
