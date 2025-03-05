@@ -66,9 +66,6 @@ func (s *Impl) Sign(ctx context.Context, body []byte, privateKeyBase64 string) (
 		return "", err
 	}
 
-	fmt.Println("Printing the created timestamp :", createdAt)
-	fmt.Println("Printing the expired timestamp :", expiresAt)
-
 	signature, err := signData([]byte(signingString), privateKeyBase64)
 	if err != nil {
 		return "", err
