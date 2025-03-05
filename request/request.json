@@ -1,0 +1,30 @@
+{
+  "method": "POST",
+  "url": "http://localhost:8080",
+  "headers": {
+    "Authorization": "Signature keyId=\"sub123|ukid456|ed25519\",algorithm=\"ed25519\", created=\"1741183007\", expires=\"1741186607\", headers=\"(created) (expires) digest\", signature=\"+k2GsPVGqUrVaNUU+GHgbBenzi4UlNkV90sb5Ip1+ApwEmPupm2Nt857zitB3n7lqaZurYcJP5GaJIPhccNdCQ==\"",
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "context": {
+      "action": "search",
+      "bap_id": "pilot-gateway-1.beckn.nsdl.co.in/option91",
+      "bap_uri": "https://pilot-gateway-1.beckn.nsdl.co.in/option91",
+      "city": "std:080",
+      "core_version": "1.2.0",
+      "country": "IND",
+      "domain": "nic2004:60232",
+      "message_id": "M1",
+      "timestamp": "2023-06-06T21:00:00.000Z",
+      "transaction_id": "T1",
+      "ttl": "PT30S"
+    },
+    "message": {
+      "intent": {
+        "category": {
+          "id": "Immediate Delivery"
+        }
+      }
+    }
+  }
+}
