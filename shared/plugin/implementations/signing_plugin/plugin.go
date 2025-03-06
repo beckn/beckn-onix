@@ -11,9 +11,9 @@ import (
 type SignerProvider struct{}
 
 // New creates a new SignerImpl instance using the provided configuration.
-func (p SignerProvider) New(ctx context.Context, config map[string]string) (plugins.Signer, error) {
+func (p *SignerProvider) New(ctx context.Context, config map[string]string) (plugins.Signer, error) {
 	return signer.NewSigner(ctx, &signer.SigningConfig{})
 }
 
 // Provider is the exported symbol that the plugin manager will look for.
-var Provider = SignerProvider{}
+var Provider = &SignerProvider{}

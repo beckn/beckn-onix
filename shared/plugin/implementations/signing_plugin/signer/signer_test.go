@@ -145,7 +145,7 @@ func TestSignDataInvalidPrivateKeyLength(t *testing.T) {
 
 // TestClose verifies that the Close method of Impl returns nil without errors.
 func TestClose(t *testing.T) {
-	s := &Impl{}
+	s := &Signer{}
 
 	err := s.Close()
 

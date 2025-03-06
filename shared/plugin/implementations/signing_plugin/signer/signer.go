@@ -14,14 +14,14 @@ import (
 type SigningConfig struct {
 }
 
-// Impl implements the Signer interface and handles the signing process.
-type Impl struct {
+// Signer implements the Signer interface and handles the signing process.
+type Signer struct {
 	config *SigningConfig
 }
 
 // NewSigner creates a new SignerImpl instance with the given configuration.
-func NewSigner(ctx context.Context, config *SigningConfig) (*Impl, error) {
-	return &Impl{config: config}, nil
+func NewSigner(ctx context.Context, config *SigningConfig) (*Signer, error) {
+	return &Signer{config: config}, nil
 }
 
 // createSigningString generates a signing string using BLAKE-512 hashing.
@@ -55,7 +55,7 @@ func signData(signingString []byte, privateKeyBase64 string) ([]byte, error) {
 }
 
 // Sign generates a digital signature for the provided payload.
-func (s *Impl) Sign(ctx context.Context, body []byte, privateKeyBase64 string, createdAt, expiresAt int64) (string, error) {
+func (s *Signer) Sign(ctx context.Context, body []byte, privateKeyBase64 string, createdAt, expiresAt int64) (string, error) {
 	signingString, err := createSigningString(body, createdAt, expiresAt)
 	if err != nil {
 		return "", err
@@ -70,6 +70,6 @@ func (s *Impl) Sign(ctx context.Context, body []byte, privateKeyBase64 string, c
 }
 
 // Close releases resources (mock implementation returning nil).
-func (s *Impl) Close() error {
+func (s *Signer) Close() error {
 	return nil
 }

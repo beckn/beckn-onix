@@ -30,16 +30,19 @@ func New(ctx context.Context, config *Config) (*Verifier, error) {
 func (v *Verifier) Verify(ctx context.Context, body []byte, header []byte, publicKeyBase64 string) (bool, error) {
 	createdTimestamp, expiredTimestamp, signature, err := parseAuthHeader(string(header))
 	if err != nil {
+		// TODO: Return appropriate error code when Error Code Handling Module is ready
 		return false, fmt.Errorf("error parsing header: %w", err)
 	}
 
 	signatureBytes, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil {
+		// TODO: Return appropriate error code when Error Code Handling Module is ready
 		return false, fmt.Errorf("error decoding signature: %w", err)
 	}
 
 	currentTime := time.Now().Unix()
 	if createdTimestamp > currentTime || currentTime > expiredTimestamp {
+		// TODO: Return appropriate error code when Error Code Handling Module is ready
 		return false, fmt.Errorf("signature is expired or not yet valid")
 	}
 
@@ -50,10 +53,12 @@ func (v *Verifier) Verify(ctx context.Context, body []byte, header []byte, publi
 
 	decodedPublicKey, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 	if err != nil {
+		// TODO: Return appropriate error code when Error Code Handling Module is ready
 		return false, fmt.Errorf("error decoding public key: %w", err)
 	}
 
 	if !ed25519.Verify(ed25519.PublicKey(decodedPublicKey), []byte(signingString), signatureBytes) {
+		// TODO: Return appropriate error code when Error Code Handling Module is ready
 		return false, fmt.Errorf("signature verification failed")
 	}
 
