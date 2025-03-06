@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"os"
 
-	log "beckn-onix/log"
+	"beckn-onix/log"
 	"gopkg.in/yaml.v2"
 )
 

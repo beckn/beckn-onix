@@ -210,7 +210,6 @@ port: 8083
 				}
 			}()
 
-
 			go func() {
 				for {
 					select {
@@ -226,7 +225,6 @@ port: 8083
 					}
 				}
 			}()
-
 
 			select {
 			case <-serverReady:
