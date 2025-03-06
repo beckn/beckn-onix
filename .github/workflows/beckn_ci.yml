@@ -87,11 +87,11 @@ jobs:
           echo "Total coverage: $coverage%"
 
           # Check if coverage is greater than or equal to 90%
-          if (( $(echo "$coverage < 80" | bc -l) )); then
-            echo "Coverage is below 80%. Failing the job."
+          if (( $(echo "$coverage < 90" | bc -l) )); then
+            echo "Coverage is below 90%. Failing the job."
             exit 1
           else
-            echo "Coverage is 80% or above. Continuing the job."
+            echo "Coverage is 90% or above. Continuing the job."
           fi
 
   
