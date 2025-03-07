@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"flag"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -23,19 +25,43 @@ func createTempConfig(t *testing.T, data string) string {
 	return tmpFile.Name()
 }
 
+func TestValidateConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  *config
+		wantErr string
+	}{
+		{"Nil Config", nil, "config is nil"},
+		{"Missing AppName", &config{"", 8080}, "missing required field: AppName"},
+		{"Missing Port", &config{"MyApp", 0}, "missing required field: Port"},
+		{"Both AppName & Port Missing", &config{"", 0}, "missing required field: AppName"},
+		{"Valid config", &config{"MyApp", 8080}, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateConfig(tt.config)
+			if err != nil {
+				if err.Error() != tt.wantErr {
+					t.Errorf("expected error %q, got %q", tt.wantErr, err.Error())
+				}
+			} else if tt.wantErr != "" {
+				t.Errorf("expected error %q, got nil", tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestInitConfigSuccess(t *testing.T) {
 	tests := []struct {
 		name        string
-		configData  string
+		file        string
 		expectError bool
 		expected    *config
 	}{
 		{
-			name: "Success - Valid Config",
-			configData: `
-appName: "clientSideReciever"
-port: 9091
-`,
+			name:        "Success - Valid Config",
+			file:        "valid_config.yaml",
 			expectError: false,
 			expected: &config{
 				AppName: "clientSideReciever",
@@ -46,31 +72,20 @@ port: 9091
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tempFilePath := "../../config/clientSideReciever-config.yaml"
-			tempFile, err := os.Create(tempFilePath)
-			if err != nil {
-				t.Fatalf("Failed to create temp file: %v", err)
-			}
-			defer os.Remove(tempFile.Name())
-
-			if _, err := tempFile.Write([]byte(tc.configData)); err != nil {
-				t.Fatalf("Failed to write to temp file: %v", err)
-			}
-			tempFile.Close()
-
+			path := filepath.Join("testdata", tc.file)
 			ctx := context.Background()
-			cfg, err := initConfig(ctx, tempFile.Name())
+			cfg, err := initConfig(ctx, path)
 
 			if tc.expectError {
 				if err == nil {
-					t.Errorf("Expected error, got nil")
+					t.Errorf("Expected an error but got nil")
 				}
 			} else {
 				if err != nil {
-					t.Errorf("Did not expect error, got %v", err)
+					t.Errorf("Did not expect an error but got: %v", err)
 				}
 				if cfg.AppName != tc.expected.AppName {
-					t.Errorf("Expected appName %s, got %s", tc.expected.AppName, cfg.AppName)
+					t.Errorf("Expected AppName %s, got %s", tc.expected.AppName, cfg.AppName)
 				}
 				if cfg.Port != tc.expected.Port {
 					t.Errorf("Expected Port %d, got %d", tc.expected.Port, cfg.Port)
@@ -83,53 +98,26 @@ port: 9091
 func TestInitConfigFailure(t *testing.T) {
 	tests := []struct {
 		name        string
-		configData  string
+		file        string
 		expectError bool
-		expected    *config
 	}{
-		{
-			name:        "Error - Invalid YAML Format",
-			configData:  `invalid_yaml: :::`,
-			expectError: true,
-		},
-		{
-			name:        "Error - Missing Required Fields",
-			configData:  `appName: ""`,
-			expectError: true,
-		},
+		{"Error - Invalid YAML Format", "invalid_yaml.yaml", true},
+		{"Error - Missing Required Fields", "missing_required_fields.yaml", true},
+		{"Error - Nonexistent File", "nonexistent.yaml", true},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tempFilePath := "../../config/clientSideReciever-config.yaml"
-			tempFile, err := os.Create(tempFilePath)
-			if err != nil {
-				t.Fatalf("Failed to create temp file: %v", err)
-			}
-			defer os.Remove(tempFile.Name())
-
-			if _, err := tempFile.Write([]byte(tc.configData)); err != nil {
-				t.Fatalf("Failed to write to temp file: %v", err)
-			}
-			tempFile.Close()
-
+			path := filepath.Join("testdata", tc.file)
 			ctx := context.Background()
-			cfg, err := initConfig(ctx, tempFile.Name())
+			_, err := initConfig(ctx, path)
 
 			if tc.expectError {
 				if err == nil {
-					t.Errorf("Expected error, got nil")
+					t.Errorf("Expected an error but got nil")
 				}
 			} else {
-				if err != nil {
-					t.Errorf("Did not expect error, got %v", err)
-				}
-				if cfg.AppName != tc.expected.AppName {
-					t.Errorf("Expected appName %s, got %s", tc.expected.AppName, cfg.AppName)
-				}
-				if cfg.Port != tc.expected.Port {
-					t.Errorf("Expected Port %d, got %d", tc.expected.Port, cfg.Port)
-				}
+				t.Errorf("Did not expect an error but got one")
 			}
 		})
 	}
@@ -205,7 +193,7 @@ port: 8083
 			serverError := make(chan error, 1)
 
 			go func() {
-				if err := run(ctx, configPath); err != nil {
+				if _, err := run(ctx, configPath); err != nil {
 					serverError <- err
 				}
 			}()
@@ -277,7 +265,7 @@ port: "invalid_port"
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			if err := run(ctx, configPath); err == nil {
+			if _, err := run(ctx, configPath); err == nil {
 				t.Errorf("Expected error, got nil")
 			}
 		})
@@ -285,7 +273,6 @@ port: "invalid_port"
 }
 
 func TestMainFunction(t *testing.T) {
-
 	originalArgs := os.Args
 	defer func() { os.Args = originalArgs }()
 
@@ -309,24 +296,15 @@ func TestMainFunction(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			os.Args = tt.args
+			flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
-			defer func() {
-				if r := recover(); r != nil {
-					if !tt.wantErr {
-						t.Errorf("Unexpected panic (os.Exit simulation): %v", r)
-					}
-				}
-			}()
-
-			main()
-
-			if tt.wantErr {
-				t.Log("Expected an error scenario for main function.")
+			err := execute()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Unexpected error state: got %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
 }
-
 func TestRequestHandler(t *testing.T) {
 	tests := []struct {
 		name       string

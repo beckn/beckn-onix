@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
+	"strings"
 
 	"beckn-onix/log"
 
@@ -27,31 +30,45 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func run(ctx context.Context, configPath string) error {
-	configuration, err := initConfig(ctx, configPath)
+func run(ctx context.Context, configPath string) (*http.Server, error) {
+	cfg, err := initConfig(ctx, configPath)
 	if err != nil {
 		log.Log.Error("error initializing config: ", err)
-		return err
+		return nil, err
 	}
 
-	port := fmt.Sprintf(":%d", configuration.Port)
-	http.HandleFunc("/", requestHandler)
+	port := fmt.Sprintf(":%d", cfg.Port)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", requestHandler)
 
-	server := &http.Server{Addr: port}
+	server := &http.Server{Addr: port, Handler: mux}
 
-	// Run server in a goroutine.
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Log.Error("Server failed:", err)
 		}
 	}()
 
-	<-ctx.Done()
-	log.Log.Info("Shutting down server...")
-	return server.Shutdown(context.Background())
+	return server, nil
 }
 
-func initConfig(_ context.Context, path string) (*config, error) {
+func validateConfig(config *config) error {
+	if config == nil {
+		return errors.New("config is nil")
+	}
+
+	if len(strings.TrimSpace(config.AppName)) == 0 {
+		return errors.New("missing required field: AppName")
+	}
+
+	if config.Port == 0 {
+		return errors.New("missing required field: Port")
+	}
+
+	return nil
+}
+
+func initConfig(ctx context.Context, path string) (*config, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		log.Log.Error("could not open config file: ", err)
@@ -66,8 +83,9 @@ func initConfig(_ context.Context, path string) (*config, error) {
 		log.Log.Error("could not unmarshal config data: ", err)
 		return nil, err
 	}
-	if config.AppName == "" || config.Port == 0 {
-		return nil, fmt.Errorf("missing required fields in config")
+	err = validateConfig(&config)
+	if err != nil {
+		return nil, err
 	}
 
 	return &config, nil
@@ -75,11 +93,38 @@ func initConfig(_ context.Context, path string) (*config, error) {
 
 var configPath string
 
-func main() {
-	flag.StringVar(&configPath, "config", "../../config/clientSideReciever-config.yaml", "../../config/clientSideReciever-config.yaml")
+func getConfigPath() string {
+	var configPath string
+	flag.StringVar(&configPath, "config", "../../config/clientSideReciever-config.yaml", "Config file path")
 	flag.Parse()
+	return configPath
+}
 
-	if err := run(context.Background(), configPath); err != nil {
-		log.Log.Error("Application failed:", err) //TODO: change to fatal
+func execute() error {
+	configPath := getConfigPath()
+	server, err := run(context.Background(), configPath)
+	if err != nil {
+		log.Log.Error("Application failed:", err)
+		return err // Return error instead of exiting
+	}
+
+	// Ensure the server shuts down gracefully on termination
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt)
+	<-stop
+
+	log.Log.Info("Shutting down server...")
+	if err := server.Shutdown(context.Background()); err != nil {
+		log.Log.Error("Server shutdown failed:", err)
+		return err
+	}
+
+	return nil
+}
+
+func main() {
+	if err := execute(); err != nil {
+		log.Log.Error("Application terminated with error:", err)
+		os.Exit(1)
 	}
 }

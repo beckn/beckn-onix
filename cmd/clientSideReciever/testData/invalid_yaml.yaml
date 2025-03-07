@@ -1,0 +1,2 @@
+appName: "clientSideReceiver"
+port: "invalid_port"  # Wrong type
