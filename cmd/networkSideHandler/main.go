@@ -7,8 +7,9 @@ import (
 	"net/http"
 	"os"
 
-	log "beckn-onix/shared/log"
+	"beckn-onix/shared/log"
 	"gopkg.in/yaml.v2"
+	"strings"
 )
 
 type config struct {
@@ -16,7 +17,7 @@ type config struct {
 	Port    int    `yaml:"port"`
 }
 
-func requestHandler(w http.ResponseWriter, r *http.Request) {
+func handler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -27,15 +28,16 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func run(ctx context.Context, configPath string) error {
-	log.Log.Info("path: ", configPath)
+	log.Log.Debug("Path: ", configPath)
 	configuration, err := initConfig(ctx, configPath)
 	if err != nil {
-		log.Log.Error("error initializing config: ", err)
+		log.Log.Error("Error initializing config: ", err)
 		return err
 	}
+	log.Log.Debug("Config: ", configuration)
 
 	port := fmt.Sprintf(":%d", configuration.Port)
-	http.HandleFunc("/", requestHandler)
+	http.HandleFunc("/", handler)
 
 	server := &http.Server{Addr: port}
 
@@ -51,10 +53,26 @@ func run(ctx context.Context, configPath string) error {
 	return server.Shutdown(context.Background())
 }
 
+func (c *config) validate() error {
+    if len(strings.TrimSpace(c.AppName)) == 0 {
+        return fmt.Errorf("appName is required but was empty")
+    }
+    
+    if c.Port == 0 {
+        return fmt.Errorf("port is required but was not set")
+    }
+    
+    if c.Port < 1024 || c.Port > 65535 {
+        return fmt.Errorf("port must be between 1024 and 65535, got %d", c.Port)
+    }
+
+    return nil
+}
+
 func initConfig(ctx context.Context, path string) (*config, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		log.Log.Error("could not open config file: ", err)
+		log.Log.Error("Could not open config file: ", err)
 		return nil, err
 	}
 	defer file.Close()
@@ -63,12 +81,13 @@ func initConfig(ctx context.Context, path string) (*config, error) {
 	decoder := yaml.NewDecoder(file)
 	err = decoder.Decode(&config)
 	if err != nil {
-		log.Log.Error("could not unmarshal config data: ", err)
+		log.Log.Error("Could not unmarshal config data: ", err)
 		return nil, err
 	}
-	if config.AppName == "" || config.Port == 0 {
-		return nil, fmt.Errorf("missing required fields in config")
-	}
+	if err := config.validate(); err != nil {
+        log.Log.Error("Config validation failed: ", err)
+        return nil, err
+    }
 
 	return &config, nil
 }

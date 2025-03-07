@@ -32,7 +32,6 @@ func TestInitConfigSuccess(t *testing.T) {
 	tests := []struct {
 		name        string
 		configData  string
-		expectError bool
 		expected    *config
 	}{
 		{
@@ -41,7 +40,6 @@ func TestInitConfigSuccess(t *testing.T) {
 appName: "networkSideHandler"
 port: 9091
 `,
-			expectError: false,
 			expected: &config{
 				AppName: "networkSideHandler",
 				Port:    9091,
@@ -66,18 +64,12 @@ port: 9091
 			ctx := context.Background()
 			cfg, err := initConfig(ctx, tempFile.Name())
 
-			if tc.expectError {
-				if err == nil {
-					t.Errorf("Expected error, got nil")
-				}
-			} else {
-				if err != nil {
-					t.Errorf("Did not expect error, got %v", err)
-				}
-				
-				if diff := cmp.Diff(tc.expected, cfg); diff != "" {
-					t.Errorf("Config mismatch (-expected +actual):\n%s", diff)
-				}
+			if err != nil {
+				t.Errorf("Did not expect error, got %v", err)
+			}
+			
+			if diff := cmp.Diff(tc.expected, cfg); diff != "" {
+				t.Errorf("Config mismatch (-expected +actual):\n%s", diff)
 			}
 		})
 	}
@@ -165,7 +157,7 @@ func TestServerHandler(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 
 			rec := httptest.NewRecorder()
-			requestHandler(rec, req)
+			handler(rec, req)
 
 			if rec.Code != tc.expectedStatusCode {
 				t.Errorf("Expected status code %d, got %d", tc.expectedStatusCode, rec.Code)
@@ -354,7 +346,7 @@ func TestRequestHandler(t *testing.T) {
 			req := httptest.NewRequest(tt.method, "/", nil)
 			rr := httptest.NewRecorder()
 
-			requestHandler(rr, req)
+			handler(rr, req)
 
 			if rr.Code != tt.expectCode {
 				t.Errorf("Expected status code %d, got %d", tt.expectCode, rr.Code)

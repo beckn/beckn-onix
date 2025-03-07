@@ -1,4 +1,4 @@
-package utils
+package log   //TODO: To be removed once we have logger plugin
 
 import (
 	"log"
@@ -34,6 +34,12 @@ func (l *Logger) Println(v ...interface{}) {
 
 func (l *Logger) Fatalln(v ...interface{}) {
 	l.logger.SetPrefix("FATAL: ")
+	l.logger.Println(v...)
+}
+
+// Debug logs
+func (l *Logger) Debug(v ...interface{}) {
+	l.logger.SetPrefix("DEBUG: ")
 	l.logger.Println(v...)
 }
 
