@@ -33,7 +33,7 @@ func TestVerifySuccess(t *testing.T) {
 	createdAt := time.Now().Unix()
 	expiresAt := createdAt + 3600
 
-	body := []byte("test payload")
+	body := []byte("Test Payload")
 	signature := signTestData(privateKeyBase64, body, createdAt, expiresAt)
 
 	header := `Signature created="` + strconv.FormatInt(createdAt, 10) +
