@@ -1,163 +1,108 @@
-package plugins
+package plugin
 
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"plugin"
-	"sync"
+	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/beckn/beckn-onix/shared/plugin/definition"
 )
 
-// PluginConfig represents the configuration for a specific plugin.
+// Config represents the plugin manager configuration.
+type Config struct {
+	Root     string       `yaml:"root"`
+	Signer   PluginConfig `yaml:"signer"`
+	Verifier PluginConfig `yaml:"verifier"`
+}
+
+// PluginConfig represents configuration details for a plugin.
 type PluginConfig struct {
 	ID     string            `yaml:"id"`
 	Config map[string]string `yaml:"config"`
 }
 
-// PluginManagerConfig holds configurations for multiple plugins.
-type PluginManagerConfig struct {
-	Plugins map[string]PluginConfig `yaml:"plugins"`
+// Manager handles dynamic plugin loading and management.
+type Manager struct {
+	sp  definition.SignerProvider
+	vp  definition.ValidatorProvider
+	cfg *Config
 }
 
-// PluginManager handles dynamic loading and management of plugins.
-type PluginManager struct {
-	pluginDir string
-	config    *PluginManagerConfig
-	plugins   map[string]interface{}
-	mu        sync.Mutex
-}
+// NewManager initializes a new Manager with the given configuration file.
+func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("configuration cannot be nil")
+	}
 
-// New initializes a new PluginManager with the given plugin directory and config file.
-func New(pluginDir, configPath string) (*PluginManager, error) {
-	config, err := loadConfig(configPath)
+	// Load signer plugin
+	sp, err := provider[definition.SignerProvider](cfg.Root, cfg.Signer.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
+		return nil, fmt.Errorf("failed to load signer plugin: %w", err)
 	}
 
-	return &PluginManager{
-		pluginDir: pluginDir,
-		config:    config,
-		plugins:   make(map[string]interface{}),
-	}, nil
+	// Load verifier plugin
+	vp, err := provider[definition.ValidatorProvider](cfg.Root, cfg.Verifier.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load validator plugin: %w", err)
+	}
+
+	return &Manager{sp: sp, vp: vp, cfg: cfg}, nil
 }
 
-// loadConfig reads and parses the plugin configuration from a YAML file.
-func loadConfig(path string) (*PluginManagerConfig, error) {
-	data, err := os.ReadFile(path)
+// provider loads a plugin dynamically and retrieves its provider instance.
+func provider[T any](root, id string) (T, error) {
+	var zero T
+	if len(strings.TrimSpace(id)) == 0 {
+		return zero, nil
+	}
+
+	p, err := plugin.Open(pluginPath(root, id))
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		return zero, fmt.Errorf("failed to open plugin %s: %w", id, err)
 	}
 
-	var cfg PluginManagerConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w", err)
-	}
-
-	return &cfg, nil
-}
-
-// LoadPluginByID loads a plugin by its ID and returns its instance.
-func (pm *PluginManager) LoadPluginByID(pluginID string) (interface{}, error) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	if instance, exists := pm.plugins[pluginID]; exists {
-		return instance, nil
-	}
-
-	var pluginName string
-	var pluginConfig map[string]string
-
-	for name, p := range pm.config.Plugins {
-		if p.ID == pluginID {
-			pluginName = name
-			pluginConfig = p.Config
-			break
-		}
-	}
-
-	if pluginName == "" {
-		return nil, fmt.Errorf("plugin with ID %s not found in config", pluginID)
-	}
-
-	finalPluginDir := pm.pluginDir + "/" + pluginName
-	pluginPath := filepath.Join(finalPluginDir, pluginName+".so")
-
-	p, err := plugin.Open(pluginPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open plugin %s: %w", pluginName, err)
-	}
-
-	// Lookup the Provider symbol
 	symbol, err := p.Lookup("Provider")
 	if err != nil {
-		return nil, fmt.Errorf("failed to find Provider symbol in plugin %s: %w", pluginName, err)
+		return zero, fmt.Errorf("failed to find Provider symbol in plugin %s: %w", id, err)
 	}
 
-	// Initialize the plugin instance
-	var instance interface{}
-
-	switch pluginID {
-	case "signing_plugin":
-		provider, ok := symbol.(SignerProvider)
-		if !ok {
-			return nil, fmt.Errorf("plugin %s does not match expected SignerProvider type", pluginName)
-		}
-		instance, err = provider.New(context.Background(), pluginConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize plugin %s: %w", pluginName, err)
-		}
-	case "verification_plugin":
-		provider, ok := symbol.(ValidatorProvider)
-		if !ok {
-			return nil, fmt.Errorf("plugin %s does not match expected ValidatorProvider type", pluginName)
-		}
-		instance, err = provider.New(context.Background(), pluginConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize plugin %s: %w", pluginName, err)
-		}
-	default:
-		return nil, fmt.Errorf("unknown plugin ID: %s", pluginID)
+	prov, ok := symbol.(*T)
+	if !ok {
+		return zero, fmt.Errorf("failed to cast Provider for %s", id)
 	}
 
-	pm.plugins[pluginID] = instance
-	return instance, nil
+	return *prov, nil
 }
 
-// GetSigner loads and returns the signing plugin instance
-func (pm *PluginManager) GetSigner() (Signer, error) {
-	instance, err := pm.LoadPluginByID("signing_plugin")
-	if err != nil {
-		return nil, err
+// pluginPath constructs the path to the plugin shared object file.
+func pluginPath(root, id string) string {
+	return filepath.Join(root, id+".so")
+}
+
+// Signer retrieves the signing plugin instance.
+func (m *Manager) Signer(ctx context.Context) (definition.Signer, error) {
+	if m.sp == nil {
+		return nil, fmt.Errorf("signing plugin provider not loaded")
 	}
 
-	signer, ok := instance.(Signer)
-	if !ok {
-		return nil, fmt.Errorf("plugin does not implement Signer interface")
+	signer, err := m.sp.New(ctx, m.cfg.Signer.Config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize signer: %w", err)
 	}
 	return signer, nil
 }
 
-// GetVerifier loads and returns the verification plugin instance
-func (pm *PluginManager) GetVerifier() (Validator, error) {
-	instance, err := pm.LoadPluginByID("verification_plugin")
+// Validator retrieves the verification plugin instance.
+func (m *Manager) Validator(ctx context.Context) (definition.Validator, error) {
+	if m.vp == nil {
+		return nil, fmt.Errorf("validator plugin provider not loaded")
+	}
+
+	validator, err := m.vp.New(ctx, m.cfg.Verifier.Config)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to initialize validator: %w", err)
 	}
-
-	verifier, ok := instance.(Validator)
-	if !ok {
-		return nil, fmt.Errorf("plugin does not implement Validator interface")
-	}
-	return verifier, nil
-}
-
-// Close clears the loaded plugins and releases any associated resources.
-func (pm *PluginManager) Close() {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-	pm.plugins = make(map[string]interface{})
+	return validator, nil
 }

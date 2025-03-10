@@ -1,7 +1,0 @@
-plugins:
-  signing_plugin:
-    id: "signing_plugin"
-    config:
-      ttl: 3600
-  verification_plugin:
-    id: "verification_plugin"
