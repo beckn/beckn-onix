@@ -1,55 +1,85 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
+
+	log "beckn-onix/shared/log"
 	"gopkg.in/yaml.v2"
-	
-	logger "beckn-onix/shared/utils"
 )
 
-type Config struct {
+type config struct {
 	AppName string `yaml:"appName"`
 	Port    int    `yaml:"port"`
 }
 
-func main() {
-	cfg := loadConfig()
-	StartServer(cfg)
-}
-
-func StartServer(cfg *Config) {
-	http.HandleFunc("/", CreatePostHandler) // Fixed: Removed "POST /"
-
-	logger.Log.Info("Server is running on port: ", cfg.Port)
-	logger.Log.Error(http.ListenAndServe(fmt.Sprintf(":%d", cfg.Port), nil))
-}
-
-func loadConfig() *Config {
-
-	data, err := os.ReadFile("../../config/networkSideReceiver-config.yaml")
-	if err != nil {
-		logger.Log.Error("error reading config file:", err)
-	}
-
-	var config Config
-
-	err = yaml.Unmarshal(data, &config)
-	if err != nil {
-		logger.Log.Error("error unmarshaling config:", err)
-	}
-
-	return &config
-}
-
-
-func CreatePostHandler(w http.ResponseWriter, r *http.Request) {
+func requestHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	log.Log.Info("Received request:", r.Method, r.URL.Path, r.Header)
 	w.WriteHeader(http.StatusOK)
 }
 
+func run(ctx context.Context, configPath string) error {
+	log.Log.Info("path: ", configPath)
+	configuration, err := initConfig(ctx, configPath)
+	if err != nil {
+		log.Log.Error("error initializing config: ", err)
+		return err
+	}
 
+	port := fmt.Sprintf(":%d", configuration.Port)
+	http.HandleFunc("/", requestHandler)
+
+	server := &http.Server{Addr: port}
+
+	// Run server in a goroutine.
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Log.Error("Server failed:", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Log.Info("Shutting down server...")
+	return server.Shutdown(context.Background())
+}
+
+func initConfig(ctx context.Context, path string) (*config, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		log.Log.Error("could not open config file: ", err)
+		return nil, err
+	}
+	defer file.Close()
+
+	var config config
+	decoder := yaml.NewDecoder(file)
+	err = decoder.Decode(&config)
+	if err != nil {
+		log.Log.Error("could not unmarshal config data: ", err)
+		return nil, err
+	}
+	if config.AppName == "" || config.Port == 0 {
+		return nil, fmt.Errorf("missing required fields in config")
+	}
+
+	return &config, nil
+}
+
+var configPath string
+
+func main() {
+	flag.StringVar(&configPath, "config", "../../config/networkSideReceiver-config.yaml", "../../config/networkSideReceiver-config.yaml")
+	flag.Parse()
+
+	if err := run(context.Background(), configPath); err != nil {
+		log.Log.Fatalln("Application failed:", err)
+	}
+}
