@@ -67,17 +67,15 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 	domain = strings.ReplaceAll(domain, ":", "_")
 
 	schemaFileName := fmt.Sprintf("%s/%s/%s.json", domain, version, endpoint)
-	fmt.Println("printing schema file name : ", schemaFileName)
-
-	// schemaFileName := fmt.Sprintf("%s.json", endpoint)
 
 	pluginsConfig, err := plugins.LoadPluginsConfig("plugins/config.yaml")
 	if err != nil {
 		http.Error(w, "Failed to load plugins configuration", http.StatusInternalServerError)
 		return
 	}
+	debug := true
 
-	_, validators, err := plugins.NewValidatorProvider(pluginsConfig)
+	_, validators, err := plugins.NewValidatorProvider(pluginsConfig, debug)
 	if err != nil {
 		http.Error(w, "Failed to create PluginManager", http.StatusInternalServerError)
 		return
