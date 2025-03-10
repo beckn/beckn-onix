@@ -2,11 +2,12 @@ package plugins
 
 import (
 	//"beckn-onix/plugins/plugin_definition"
+	"beckn-onix/plugins/definitions"
 	"fmt"
-	"io/ioutil"
 	"log"
+	"os"
+	"path/filepath"
 	"plugin"
-	"runtime"
 	"time"
 
 	"gopkg.in/yaml.v2"
@@ -36,22 +37,24 @@ type PluginDetails struct {
 
 // PluginManager manages the loading and execution of plugins.
 type PluginManager struct {
-	validatorProvider ValidatorProvider
+	validatorProvider definitions.ValidatorProvider
 }
 
 // NewValidatorProvider initializes the PluginManager with the given configuration.
-func NewValidatorProvider(pluginsConfig PluginConfig) (*PluginManager, map[string]Validator, error) {
+func NewValidatorProvider(pluginsConfig PluginConfig, debug bool) (*PluginManager, map[string]definitions.Validator, error) {
 	start := time.Now()
-
-	var memStatsBefore runtime.MemStats
-	runtime.ReadMemStats(&memStatsBefore)
-
+	//	var memStatsBefore runtime.MemStats
+	// Only capture metrics in debug mode
+	// if debug {
+	// 	start = time.Now()
+	// 	runtime.ReadMemStats(&memStatsBefore)
+	// }
 	validationPlugin := pluginsConfig.Plugins.ValidationPlugin
 	if validationPlugin.ID == "" {
 		return nil, nil, fmt.Errorf("validation_plugin ID is empty")
 	}
 
-	pluginPath := validationPlugin.PluginPath + validationPlugin.ID + ".so"
+	pluginPath := filepath.Join(validationPlugin.PluginPath, validationPlugin.ID+".so")
 
 	// Check if the plugin path is empty
 	if pluginPath == "" {
@@ -68,7 +71,7 @@ func NewValidatorProvider(pluginsConfig PluginConfig) (*PluginManager, map[strin
 	if err != nil {
 		return nil, nil, err
 	}
-	getProviderFunc, ok := vpSymbol.(func() ValidatorProvider)
+	getProviderFunc, ok := vpSymbol.(func() definitions.ValidatorProvider)
 	if !ok {
 		return nil, nil, fmt.Errorf("failed to cast to *plugins.ValidatorProvider")
 	}
@@ -80,10 +83,13 @@ func NewValidatorProvider(pluginsConfig PluginConfig) (*PluginManager, map[strin
 		log.Fatalf("Failed to initialize validator provider: %v", err)
 	}
 
-	var memStatsAfter runtime.MemStats
-	runtime.ReadMemStats(&memStatsAfter)
-	fmt.Printf("Memory allocated during plugin boot-up: %v MiB", (memStatsAfter.Alloc-memStatsBefore.Alloc)/1024/1024)
-	fmt.Println(" ")
+	// Log metrics if in debug mode
+	// if debug {
+	// 	var memStatsAfter runtime.MemStats
+	// 	runtime.ReadMemStats(&memStatsAfter)
+	// 	fmt.Printf("Memory allocated during plugin boot-up: %v MiB\n", (memStatsAfter.Alloc-memStatsBefore.Alloc)/1024/1024)
+	// 	fmt.Printf("Plugin boot-up executed in %s\n", time.Since(start))
+	// }
 
 	fmt.Printf("plugin boot-up executed in %s\n", time.Since(start))
 	return &PluginManager{validatorProvider: validatorProvider}, validator, nil
@@ -93,7 +99,7 @@ func NewValidatorProvider(pluginsConfig PluginConfig) (*PluginManager, map[strin
 func LoadPluginsConfig(filePath string) (PluginConfig, error) {
 	// start := time.Now()
 
-	data, err := ioutil.ReadFile(filePath)
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return PluginConfig{}, err
 	}
