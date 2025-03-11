@@ -17,9 +17,6 @@ jobs:
       # 1. Checkout the code from the test branch (triggered by PR)
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          ref: ${{ env.REF_BRANCH }}
-          fetch-depth: 1
 
       # 2. Set up Go environment
       - name: Set up Go 1.24.0
