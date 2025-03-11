@@ -69,7 +69,7 @@ func TestVerifyMalformedHeader(t *testing.T) {
 	verifier, _ := New(context.Background(), &Config{})
 	header := `InvalidSignature created="wrong"`
 
-	valid, err := verifier.Verify(context.Background(), []byte("test payload"), []byte(header), "dummyPublicKey")
+	valid, err := verifier.Verify(context.Background(), []byte("Test Payload"), []byte(header), "dummyPublicKey")
 
 	if err == nil {
 		t.Fatal("Expected error due to malformed header, but got none")
