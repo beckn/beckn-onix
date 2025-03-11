@@ -239,14 +239,25 @@ Which platform would you like to set up?
 Enter your choice: 2
 ```
 
-- Input the BAP subscriber id - onix-bap.becknprotocol.io
-- Input the BAP URL - https://onix-bap.becknprotocol.io
-- Input the subscription endpoint of the registry - https://onix-registry.becknprotocol.io/subscribers
+- Input the BAP Subscriber ID - `onix-bap.becknprotocol.io`
+- Input the BAP URL - `https://onix-bap.becknprotocol.io`
+- Input the subscription endpoint of the registry - `https://onix-registry.becknprotocol.io/subscribers`
+- Input your registry username - `admin`
+- Input your registry password - `*****`
+- Do you want to setup this onix-bap.becknprotocol.io for a specific domain? - `{Y/N}`
+- Input the domain name for onix-bap.becknprotocol.io - *(Leave blank if not applicable)*
+- Paste the URL of the Layer 2 configuration here - *(Press Enter to skip if not applicable)*
 
 ```
 Enter BAP Subscriber ID: onix-bap.becknprotocol.io
 Enter BAP Subscriber URL: https://onix-bap.becknprotocol.io
-Enter the registry_url(e.g. https://registry.becknprotocol.io/subscribers)https://onix-registry.becknprotocol.io/subscribers
+Enter the registry_url (e.g., https://registry.becknprotocol.io/subscribers): https://onix-registry.becknprotocol.io/subscribers
+Enter your registry username: admin
+Enter your registry password: *****
+Do you want to setup this onix-bap.becknprotocol.io for a specific domain? {Y/N} Y
+Enter the domain name for onix-bap.becknprotocol.io: example.com
+Paste the URL of the Layer 2 configuration here (or press Enter to skip): https://config.example.com/layer2.json
+
 ```
 
 - The installation will complete to indicate the BAP Beckn Adaptor has installed.
@@ -330,12 +341,23 @@ Enter your choice: 3
 - Input the BPP URL as https://onix-bpp.becknprotocol.io
 - Input the registry URL to subscribe as https://onix-registry.becknprotocol.io/subscribers
 - Input the webhook URL as the endpoint where your seller app or marketplace is. In case you do not have one, you can try 'https://unified-bpp.becknprotocol.io/beckn-bpp-adapter'. However the availability of a seller software for ever at this endpoint is not guaranteed (It currently is present)
+- Input your registry username - `admin`
+- Input your registry password - `*****`
+- Do you want to setup this onix-bpp.becknprotocol.io for a specific domain? - `{Y/N}`
+- Input the domain name for onix-bpp.becknprotocol.io - *(Leave blank if not applicable)*
+- Paste the URL of the Layer 2 configuration here - *(Press Enter to skip if not applicable)*
 
 ```
 Enter BPP Subscriber ID: onix-bpp.becknprotocol.io
 Enter BPP Subscriber URL: https://onix-bpp.becknprotocol.io
-Enter the registry_url(e.g. https://registry.becknprotocol.io/subscribers): https://onix-registry.becknprotocol.io/subscribers
 Enter Webhook URL: https://unified-bpp.becknprotocol.io/beckn-bpp-adapter
+Enter the registry URL (e.g., https://registry.becknprotocol.io/subscribers): https://onix-registry.becknprotocol.io/subscribers
+Enter your registry username: root
+Enter your registry password: ****
+Do you want to setup this onix-bpp.becknprotocol.io for specific domain? {Y/N} y
+Enter the domain name for onix-bpp.becknprotocol.io : retail:1.1.0
+Paste the URL of the Layer 2 configuration here (or press Enter to skip):
+
 ```
 
 - The installation will complete to indicate the BPP Beckn Adaptor has installed.
