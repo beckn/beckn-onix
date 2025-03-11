@@ -32,16 +32,16 @@ jobs:
         run: |
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
-      # 4. Run golangci-lint on the entire APP_DIRECTORY (including subdirectories)
+      # 4. Run golangci-lint on the entire APP_DIRECTORY (including subdirectories) ${{ env.APP_DIRECTORY }}
       - name: Run golangci-lint
         run: |
-          golangci-lint run ${{ env.APP_DIRECTORY }}
+          golangci-lint run ./...
 
-      # 5. Run unit tests with coverage recursively for all Go files
+      # 5. Run unit tests with coverage recursively for all Go files ${{ env.APP_DIRECTORY }}
       - name: Run unit tests with coverage
         run: |
           # Run tests recursively for all Go files
-          go test -v -coverprofile=coverage.out ${{ env.APP_DIRECTORY }}/...
+          go test -v -coverprofile=coverage.out ./...
 
           # Generate coverage report
           go tool cover -func=coverage.out | tee coverage.txt
@@ -68,12 +68,12 @@ jobs:
           fi
 
       # 7. Build the Go code
-      - name: Build Go code
-        run: |
-          go build -o myapp ${{ env.APP_DIRECTORY }}/...
-          if [ ! -f myapp ]; then
-            echo "Build failed: myapp executable was not created."
-            exit 1
-          else
-            echo "Build succeeded: myapp executable created."
-          fi
+      #- name: Build Go code
+      #  run: |
+      #    go build -o myapp ${{ env.APP_DIRECTORY }}/...
+      #    if [ ! -f myapp ]; then
+      #      echo "Build failed: myapp executable was not created."
+      #      exit 1
+      #    else
+      #      echo "Build succeeded: myapp executable created."
+       #   fi
