@@ -13,9 +13,9 @@ import (
 type VerifierProvider struct{}
 
 // New initializes a new Verifier instance.
-func (vp *VerifierProvider) New(ctx context.Context, config map[string]string) (plugin.Validator, error) {
+func (vp VerifierProvider) New(ctx context.Context, config map[string]string) (plugin.Verifier, error) {
 	return verifier.New(ctx, &verifier.Config{})
 }
 
 // Provider is the exported symbol that the plugin manager will look for.
-var Provider definition.ValidatorProvider = &VerifierProvider{}
+var Provider definition.VerifierProvider = VerifierProvider{}

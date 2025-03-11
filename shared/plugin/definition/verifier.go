@@ -2,17 +2,17 @@ package definition
 
 import "context"
 
-// Validator defines the method for verifying signatures.
-type Validator interface {
+// Verifier defines the method for verifying signatures.
+type Verifier interface {
 	// Verify checks the validity of the signature for the given body.
 	Verify(ctx context.Context, body []byte, header []byte, publicKeyBase64 string) (bool, error)
 	Close() error // Close for releasing resources
 }
 
-// ValidatorProvider initializes a new validator instance with the given config.
-type ValidatorProvider interface {
+// VerifierProvider initializes a new validator instance with the given config.
+type VerifierProvider interface {
 	// New creates a new validator instance based on the provided config.
-	New(ctx context.Context, config map[string]string) (Validator, error)
+	New(ctx context.Context, config map[string]string) (Verifier, error)
 }
 
 // PublicKeyManager is the interface for key management plugin.

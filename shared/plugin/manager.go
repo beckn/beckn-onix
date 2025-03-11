@@ -26,7 +26,7 @@ type PluginConfig struct {
 // Manager handles dynamic plugin loading and management.
 type Manager struct {
 	sp  definition.SignerProvider
-	vp  definition.ValidatorProvider
+	vp  definition.VerifierProvider
 	cfg *Config
 }
 
@@ -43,7 +43,7 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 	}
 
 	// Load verifier plugin
-	vp, err := provider[definition.ValidatorProvider](cfg.Root, cfg.Verifier.ID)
+	vp, err := provider[definition.VerifierProvider](cfg.Root, cfg.Verifier.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load validator plugin: %w", err)
 	}
@@ -95,7 +95,7 @@ func (m *Manager) Signer(ctx context.Context) (definition.Signer, error) {
 }
 
 // Validator retrieves the verification plugin instance.
-func (m *Manager) Validator(ctx context.Context) (definition.Validator, error) {
+func (m *Manager) Validator(ctx context.Context) (definition.Verifier, error) {
 	if m.vp == nil {
 		return nil, fmt.Errorf("validator plugin provider not loaded")
 	}
