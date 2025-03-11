@@ -54,7 +54,7 @@ func TestVerifySuccess(t *testing.T) {
 // TestVerifyMissingAuthHeader checks if missing Authorization header causes an error.
 func TestVerifyMissingAuthHeader(t *testing.T) {
 	verifier, _ := New(context.Background(), &Config{})
-	valid, err := verifier.Verify(context.Background(), []byte("test payload"), []byte(""), "dummyPublicKey")
+	valid, err := verifier.Verify(context.Background(), []byte("Test Payload"), []byte(""), "dummyPublicKey")
 
 	if err == nil {
 		t.Fatal("Expected error due to missing authorization header, but got none")
