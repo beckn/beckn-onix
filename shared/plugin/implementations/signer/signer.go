@@ -19,8 +19,8 @@ type Signer struct {
 	config *Config
 }
 
-// NewSigner creates a new SignerImpl instance with the given configuration.
-func NewSigner(ctx context.Context, config *Config) (*Signer, error) {
+// New creates a new SignerImpl instance with the given configuration.
+func New(ctx context.Context, config *Config) (*Signer, error) {
 	return &Signer{config: config}, nil
 }
 

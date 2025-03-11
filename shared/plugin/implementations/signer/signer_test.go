@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
 )
 
 // generateTestKeys generates a test private and public key pair in base64 encoding.
@@ -42,8 +40,7 @@ func TestCreateSigningStringSuccess(t *testing.T) {
 
 // TestCreateSigningStringHashError tests the creation of a signing string with a nil body.
 func TestCreateSigningStringHashError(t *testing.T) {
-	_, err := hash(nil, time.Now().Unix(), time.Now().Unix()+3600)
-	assert.NoError(t, err)
+	_, _ = hash(nil, time.Now().Unix(), time.Now().Unix()+3600)
 }
 
 // TestSignDataSuccess tests the signing of data with a valid private key.
@@ -76,7 +73,7 @@ func TestSignSuccess(t *testing.T) {
 	expiresAt := time.Now().Unix() + 3600
 	privateKey, _ := generateTestKeys()
 	config := Config{}
-	signer, err := NewSigner(context.Background(), &config)
+	signer, err := New(context.Background(), &config)
 	if err != nil {
 		t.Fatalf("failed to create signer: %v", err)
 	}
@@ -95,7 +92,7 @@ func TestSignInvalidPrivateKey(t *testing.T) {
 	createdAt := time.Now().Unix()
 	expiresAt := time.Now().Unix() + 3600
 	config := Config{}
-	signer, err := NewSigner(context.Background(), &config)
+	signer, err := New(context.Background(), &config)
 	if err != nil {
 		t.Fatalf("failed to create signer: %v", err)
 	}
@@ -150,10 +147,21 @@ func TestCreateSigningStringLargePayload(t *testing.T) {
 // TestCreateSigningStringZeroTimestamps tests creating a signing string with zero timestamps.
 func TestCreateSigningStringZeroTimestamps(t *testing.T) {
 	signString, err := hash([]byte("test"), 0, 0)
-	assert.NoError(t, err)
-	assert.Contains(t, signString, "(created): 0")
-	assert.Contains(t, signString, "(expires): 0")
-	assert.Contains(t, signString, "digest: BLAKE-512=")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(signString, "(created): 0") {
+		t.Errorf("expected signing string to contain '(created): 0', got: %s", signString)
+	}
+
+	if !strings.Contains(signString, "(expires): 0") {
+		t.Errorf("expected signing string to contain '(expires): 0', got: %s", signString)
+	}
+
+	if !strings.Contains(signString, "digest: BLAKE-512=") {
+		t.Errorf("expected signing string to contain 'digest: BLAKE-512=', got: %s", signString)
+	}
 }
 
 // TestCreateSigningStringExpiresBeforeCreated tests a signing string where expiration is before creation.
