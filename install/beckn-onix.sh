@@ -359,7 +359,7 @@ get_np_domain() {
         local login_url="${registry_url%/subscribers}"
         read -p "Enter the domain name for $1 : " np_domain
         domain_present=$(curl -s -H "ApiKey:$api_key" --header 'Content-Type: application/json' $login_url/network_domains/index | jq -r '.[].name' | tr '\n' ' ')
-        if echo ":$domain_present:" | grep -qw ":$np_domain:"; then
+        if echo "$domain_present" | grep -Fqw "$np_domain"; then
             return 0
         else
             echo "${BoldRed}The domain '$np_domain' is NOT present in the network domains.${NC}"
