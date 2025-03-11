@@ -20,7 +20,7 @@ func generateTestKeys() (string, string) {
 func TestCreateSigningStringSuccess(t *testing.T) {
 	createdAt := time.Now().Unix()
 	expiresAt := createdAt + 3600
-	body := []byte("test payload")
+	body := []byte("Test Payload")
 
 	signString, err := hash(body, createdAt, expiresAt)
 	if err != nil {
