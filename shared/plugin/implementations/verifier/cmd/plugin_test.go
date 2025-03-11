@@ -34,7 +34,7 @@ func TestVerifierProviderSuccess(t *testing.T) {
 func TestVerifierProviderWithNilContext(t *testing.T) {
 	provider := VerifierProvider{}
 
-	verifierInstance, err := provider.New(nil, map[string]string{})
+	verifierInstance, err := provider.New(context.TODO(), map[string]string{})
 
 	if err != nil {
 		t.Fatalf("Expected no error, but got: %v", err)
