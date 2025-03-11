@@ -8,7 +8,7 @@ log:
     - requestId
     - userId
 plugin:
-  root: /mnt/gcs/plugins
+  root: ../../shared/plugin/definition/
   publisher:
     id: publisher
     config:

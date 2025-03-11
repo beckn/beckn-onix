@@ -3,21 +3,10 @@
 # Create plugins directory if it doesn't exist
 mkdir -p plugins
 
-# Build order plugin
-if [ -d "plugins/order" ]; then
-    echo "Building order plugin..."
-    cd plugins/order
-    go build -buildmode=plugin -o ./order.so
-    cd ../..
-fi
+# Build publisher plugin
+go build -buildmode=plugin -o plugins/publisher.so ./plugins/publisher/main.go
 
-
-# Check if publisher plugin exists
-if [ -d "plugins/publisher" ]; then
-    echo "Building publisher plugin..."
-    cd plugins/publisher
-    go build -buildmode=plugin -o ./publisher.so
-    cd ../..
-fi
+# Build validator plugin
+go build -buildmode=plugin -o plugins/validator.so ./plugins/validator/main.go
 
 echo "Plugin build complete!"

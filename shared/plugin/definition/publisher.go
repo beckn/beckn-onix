@@ -1,56 +1,75 @@
-package definition
+package main
 
 import (
 	logger "beckn-onix/shared/log"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
 
-// Publisher defines the interface for publishing messages
-type Publisher interface {
-	Handle(message string) error  // Use Handle method instead of embedding Plugin
-	Publish(message string) error // Add specific publisher method
+// Message represents the structure of a message to be published
+type Message struct {
+	ID        string `json:"id"`
+	Timestamp string `json:"timestamp"`
+	Payload   string `json:"payload"`
+	Topic     string `json:"topic"`
+	Project   string `json:"project"`
 }
 
+// Publisher interface extends Plugin
+type PublisherInterface interface {
+	PluginInterface
+	Publish(message string) error
+}
+
+// Plugin interface that all plugins must implement
+type PluginInterface interface {
+	Handle(message string) error
+	Configure(config map[string]interface{}) error
+}
+
+// PublisherPlugin implements the Publisher interface
 type PublisherPlugin struct {
-	project   string
-	topic     string
-	region    string
-	validator *ValidatorPlugin
+	project  string
+	topic    string
+	messages []Message // Store messages for demonstration
 }
 
 var (
 	ErrProjectMissing = errors.New("missing required field 'project'")
 	ErrTopicMissing   = errors.New("missing required field 'topic'")
-	ErrRegionMissing  = errors.New("missing required field 'region'")
 )
 
 // Handle processes the incoming message
 func (p *PublisherPlugin) Handle(message string) error {
-	// Validate plugin is properly configured
-	if p.project == "" || p.topic == "" || p.region == "" {
+	if p.project == "" || p.topic == ""  {
 		return errors.New("publisher not properly configured")
 	}
 
-	// First validate the message if validator is configured
-	if p.validator != nil {
-		if err := p.validator.Handle(message); err != nil {
-			logger.Log.Error("Validation failed: ", err)
-			return fmt.Errorf("validation failed: %w", err)
-		}
+	// Create a new message
+	msg := Message{
+		ID:        fmt.Sprintf("msg-%d", time.Now().UnixNano()),
+		Timestamp: time.Now().Format(time.RFC3339),
+		Payload:   message,
+		Topic:     p.topic,
+		Project:   p.project,
 	}
 
-	timestamp := time.Now().Format(time.RFC3339)
-	messageID := time.Now().UnixNano()
+	// Convert message to JSON for logging
+	jsonMsg, err := json.MarshalIndent(msg, "", "  ")
+	if err != nil {
+		logger.Log.Error("Failed to marshal message:", err)
+		return fmt.Errorf("failed to marshal message: %w", err)
+	}
 
-	logger.Log.Info(timestamp, "Publishing message to Google Cloud Pub/Sub")
-	logger.Log.Info("  Project: ", p.project)
-	logger.Log.Info("  Topic: ", p.topic)
-	logger.Log.Info("  Region: ", p.region)
-	logger.Log.Info("  Message: ", message)
-	logger.Log.Info("  Message ID: ", messageID, " (simulated)")
+	// Log the formatted message
+	logger.Log.Info("Publishing message:")
+	logger.Log.Info(string(jsonMsg))
+
+	// Store message (simulating publish)
+	p.messages = append(p.messages, msg)
 
 	return nil
 }
@@ -60,21 +79,19 @@ func (p *PublisherPlugin) Publish(message string) error {
 	if message == "" {
 		return errors.New("empty message")
 	}
+
+	// Validate message format (assuming JSON)
+	var js json.RawMessage
+	if err := json.Unmarshal([]byte(message), &js); err != nil {
+		logger.Log.Error("Invalid JSON message:", err)
+		return fmt.Errorf("invalid JSON message: %w", err)
+	}
+
 	return p.Handle(message)
 }
 
 // Configure sets up the plugin with the provided configuration
 func (p *PublisherPlugin) Configure(config map[string]interface{}) error {
-	// Configure validator if present in config
-	if validatorConfig, ok := config["validator"].(map[string]interface{}); ok {
-		p.validator = &ValidatorPlugin{}
-		if err := p.validator.Configure(validatorConfig); err != nil {
-			return err
-		}
-		logger.Log.Info("Validator configured for publisher")
-	}
-
-	// Validate required fields
 	if project, ok := config["project"]; ok {
 		p.project = project.(string)
 	} else {
@@ -87,26 +104,24 @@ func (p *PublisherPlugin) Configure(config map[string]interface{}) error {
 		return ErrTopicMissing
 	}
 
-	if region, ok := config["region"]; ok {
-		p.region = region.(string)
-	} else {
-		return ErrRegionMissing
-	}
 
-	// Validate non-empty values
+
 	if strings.TrimSpace(p.project) == "" {
 		return ErrProjectMissing
 	}
 	if strings.TrimSpace(p.topic) == "" {
 		return ErrTopicMissing
 	}
-	if strings.TrimSpace(p.region) == "" {
-		return ErrRegionMissing
-	}
+	
 
-	logger.Log.Info("Publisher plugin configured with project=", p.project, "topic=", p.topic, "region=", p.region)
+	logger.Log.Info("Publisher plugin configured with project=", p.project, "topic=", p.topic)
 
 	return nil
+}
+
+// GetMessages returns all published messages (for demonstration)
+func (p *PublisherPlugin) GetMessages() []Message {
+	return p.messages
 }
 
 // Export the plugin

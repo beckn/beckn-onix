@@ -4,28 +4,35 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 
-	"beckn-onix/shared/log"
+	log "beckn-onix/shared/log"
+	"beckn-onix/shared/plugin"
 	"strings"
 
 	"gopkg.in/yaml.v2"
 )
 
 type config struct {
-	AppName string `yaml:"appName"`
-	Port    int    `yaml:"port"`
+	AppName string       `yaml:"appName"`
+	Port    int          `yaml:"port"`
+	Plugin  PluginConfig `yaml:"plugin"`
+}
+
+type PluginConfig struct {
+	Root      string          `yaml:"root"`
+	Publisher PublisherConfig `yaml:"publisher"`
+}
+
+type PublisherConfig struct {
+	ID     string                 `yaml:"id"`
+	Config map[string]interface{} `yaml:"config"`
 }
 
 type server struct {
-	config *config
-}
-
-func newServer(cfg *config) (*server, error) {
-	return &server{
-		config: cfg,
-	}, nil
+	publisher plugin.Publisher
 }
 
 func (s *server) handler(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +41,21 @@ func (s *server) handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Log.Info("Received request:", r.Method, r.URL.Path, r.Header)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Log.Error("Error reading request body:", err)
+		http.Error(w, "Error reading request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	go func() {
+		if err := s.publisher.Publish(string(body)); err != nil {
+			log.Log.Error("Failed to publish message:", err)
+		}
+	}()
+
+	log.Log.Info("Received request:", r.Method, r.URL.Path)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -46,21 +67,27 @@ func run(ctx context.Context, configPath string) error {
 		return err
 	}
 	log.Log.Debug("Config: ", configuration)
-	// Initialize server with dependencies
-	srv, err := newServer(configuration)
-	if err != nil {
-		log.Log.Error("Error initializing server:", err)
-		return err
+	pm := plugin.NewPluginManager(configuration.Plugin.Root,configPath)
+	if err := pm.LoadPlugin(configuration.Plugin.Publisher.ID); err != nil {
+		return fmt.Errorf("failed to load publisher plugin: %w", err)
 	}
 
-	port := fmt.Sprintf(":%d", configuration.Port)
+	pub, err := pm.GetPublisher(configuration.Plugin.Publisher.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get publisher: %w", err)
+	}
 
-	// Use the server's handler method
+	if err := pub.Configure(configuration.Plugin.Publisher.Config); err != nil {
+		return fmt.Errorf("failed to configure publisher: %w", err)
+	}
+
+	srv := &server{publisher: pub}
+
+	port := fmt.Sprintf(":%d", configuration.Port)
 	http.HandleFunc("/", srv.handler)
 
 	httpServer := &http.Server{Addr: port}
 
-	// Run server in a goroutine
 	go func() {
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Log.Error("Server failed:", err)
@@ -83,6 +110,14 @@ func (c *config) validate() error {
 
 	if c.Port < 1024 || c.Port > 65535 {
 		return fmt.Errorf("port must be between 1024 and 65535, got %d", c.Port)
+	}
+
+	if c.Plugin.Root == "" {
+		return fmt.Errorf("plugin root path is required")
+	}
+
+	if c.Plugin.Publisher.ID == "" {
+		return fmt.Errorf("publisher ID is required")
 	}
 
 	return nil
