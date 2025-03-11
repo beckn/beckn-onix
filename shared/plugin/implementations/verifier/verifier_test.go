@@ -133,7 +133,7 @@ func TestVerifyFutureSignature(t *testing.T) {
 	createdAt := time.Now().Unix() + 3600 // 1 hour in the future
 	expiresAt := createdAt + 7200
 
-	body := []byte("test payload")
+	body := []byte("Test Payload")
 	signature := signTestData(privateKeyBase64, body, createdAt, expiresAt)
 
 	header := `Signature created="` + strconv.FormatInt(createdAt, 10) +
