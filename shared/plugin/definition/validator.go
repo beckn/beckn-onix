@@ -18,10 +18,13 @@ var (
 )
 
 // Handle processes the incoming message for validation
-func (v *ValidatorPlugin) Handle(message string) {
+func (v *ValidatorPlugin) Handle(message string) error {
 	logger.Log.Info("Validating message with validator ID:", v.id)
 	logger.Log.Info("Message to validate:", message)
 	logger.Log.Info("Validation config:", v.config)
+
+	// Add validation logic here
+	return nil
 }
 
 // Configure sets up the validator plugin with the provided configuration
@@ -56,5 +59,3 @@ func (v *ValidatorPlugin) Configure(config map[string]interface{}) error {
 
 	return nil
 }
-
-

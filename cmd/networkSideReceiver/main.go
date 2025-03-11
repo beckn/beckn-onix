@@ -8,8 +8,9 @@ import (
 	"os"
 
 	"beckn-onix/shared/log"
-	"gopkg.in/yaml.v2"
 	"strings"
+
+	"gopkg.in/yaml.v2"
 )
 
 type config struct {
@@ -17,7 +18,17 @@ type config struct {
 	Port    int    `yaml:"port"`
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
+type server struct {
+	config *config
+}
+
+func newServer(cfg *config) (*server, error) {
+	return &server{
+		config: cfg,
+	}, nil
+}
+
+func (s *server) handler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -35,38 +46,46 @@ func run(ctx context.Context, configPath string) error {
 		return err
 	}
 	log.Log.Debug("Config: ", configuration)
+	// Initialize server with dependencies
+	srv, err := newServer(configuration)
+	if err != nil {
+		log.Log.Error("Error initializing server:", err)
+		return err
+	}
 
 	port := fmt.Sprintf(":%d", configuration.Port)
-	http.HandleFunc("/", handler)
 
-	server := &http.Server{Addr: port}
+	// Use the server's handler method
+	http.HandleFunc("/", srv.handler)
 
-	// Run server in a goroutine.
+	httpServer := &http.Server{Addr: port}
+
+	// Run server in a goroutine
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Log.Error("Server failed:", err)
 		}
 	}()
 
 	<-ctx.Done()
 	log.Log.Info("Shutting down server...")
-	return server.Shutdown(context.Background())
+	return httpServer.Shutdown(context.Background())
 }
 
 func (c *config) validate() error {
-    if len(strings.TrimSpace(c.AppName)) == 0 {
-        return fmt.Errorf("appName is required but was empty")
-    }
-    
-    if c.Port == 0 {
-        return fmt.Errorf("port is required but was not set")
-    }
-    
-    if c.Port < 1024 || c.Port > 65535 {
-        return fmt.Errorf("port must be between 1024 and 65535, got %d", c.Port)
-    }
+	if len(strings.TrimSpace(c.AppName)) == 0 {
+		return fmt.Errorf("appName is required but was empty")
+	}
 
-    return nil
+	if c.Port == 0 {
+		return fmt.Errorf("port is required but was not set")
+	}
+
+	if c.Port < 1024 || c.Port > 65535 {
+		return fmt.Errorf("port must be between 1024 and 65535, got %d", c.Port)
+	}
+
+	return nil
 }
 
 func initConfig(ctx context.Context, path string) (*config, error) {
@@ -85,9 +104,9 @@ func initConfig(ctx context.Context, path string) (*config, error) {
 		return nil, err
 	}
 	if err := config.validate(); err != nil {
-        log.Log.Error("Config validation failed: ", err)
-        return nil, err
-    }
+		log.Log.Error("Config validation failed: ", err)
+		return nil, err
+	}
 
 	return &config, nil
 }
@@ -95,7 +114,7 @@ func initConfig(ctx context.Context, path string) (*config, error) {
 var configPath string
 
 func main() {
-	flag.StringVar(&configPath, "config", "../../config/networkSideHandler-config.yaml", "../../config/networkSideHandler-config.yaml")
+	flag.StringVar(&configPath, "config", "../../config/networkSideReceiver-config.yaml", "path to config file")
 	flag.Parse()
 
 	if err := run(context.Background(), configPath); err != nil {

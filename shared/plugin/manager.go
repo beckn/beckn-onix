@@ -2,21 +2,25 @@ package plugin
 
 import (
 	logger "beckn-onix/shared/log"
+	"beckn-onix/shared/plugin/definition"
+	"fmt"
 	"path/filepath"
 	"plugin"
+	"sync"
 )
 
 // Plugin defines the interface that all plugins must implement
 type Plugin interface {
-	Handle(message string)
+	Handle(message string) error
 	Configure(config map[string]interface{}) error
 }
 
 // PluginManager manages all registered plugins
 type PluginManager struct {
-	plugins    map[string]Plugin
+	plugins    map[string]Plugin // Changed from definition.Plugin to Plugin
 	pluginPath string
 	config     *Config
+	mu         sync.RWMutex
 }
 
 // NewPluginManager creates a new plugin manager
@@ -52,21 +56,48 @@ func (pm *PluginManager) LoadPlugin(name string) error {
 
 	// Register plugin
 	pluginInstance := symbol.(Plugin)
-	pm.RegisterPlugin(name, pluginInstance)
+	pm.Register(name, pluginInstance)
 
 	// Configure the plugin if configuration exists
 	if pluginConfig, exists := pm.config.GetPluginConfig(name); exists {
 		if err := pluginInstance.Configure(pluginConfig.Config); err != nil {
-			logger.Log.Info("Warning: Failed to configure plugin", name, ":",err)
+			logger.Log.Info("Warning: Failed to configure plugin", name, ":", err)
 		}
 	}
 
 	return nil
 }
 
-// RegisterPlugin registers a new plugin with the manager
-func (pm *PluginManager) RegisterPlugin(topic string, plugin Plugin) {
-	pm.plugins[topic] = plugin
+// Register adds a plugin to the manager
+func (pm *PluginManager) Register(name string, plugin Plugin) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.plugins[name] = plugin
+}
+
+// Get returns a plugin by name
+func (pm *PluginManager) Get(name string) (Plugin, error) {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	if plugin, exists := pm.plugins[name]; exists {
+		return plugin, nil
+	}
+	return nil, fmt.Errorf("plugin '%s' not found", name)
+}
+
+// GetPublisher returns the publisher plugin if registered
+func (pm *PluginManager) GetPublisher(name string) (definition.Publisher, error) {
+	plugin, err := pm.Get(name)
+	if err != nil {
+		return nil, err
+	}
+
+	publisher, ok := plugin.(definition.Publisher)
+	if !ok {
+		return nil, fmt.Errorf("plugin '%s' is not a publisher", name)
+	}
+	return publisher, nil
 }
 
 // PublishMessage publishes a message to a specific topic

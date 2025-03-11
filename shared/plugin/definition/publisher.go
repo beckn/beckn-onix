@@ -3,11 +3,17 @@ package definition
 import (
 	logger "beckn-onix/shared/log"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
 
-// PublisherPlugin implements the Plugin interface for Google Cloud Pub/Sub
+// Publisher defines the interface for publishing messages
+type Publisher interface {
+	Handle(message string) error  // Use Handle method instead of embedding Plugin
+	Publish(message string) error // Add specific publisher method
+}
+
 type PublisherPlugin struct {
 	project   string
 	topic     string
@@ -22,23 +28,39 @@ var (
 )
 
 // Handle processes the incoming message
-func (p *PublisherPlugin) Handle(message string) {
+func (p *PublisherPlugin) Handle(message string) error {
+	// Validate plugin is properly configured
+	if p.project == "" || p.topic == "" || p.region == "" {
+		return errors.New("publisher not properly configured")
+	}
+
 	// First validate the message if validator is configured
 	if p.validator != nil {
-		p.validator.Handle(message)
+		if err := p.validator.Handle(message); err != nil {
+			logger.Log.Error("Validation failed: ", err)
+			return fmt.Errorf("validation failed: %w", err)
+		}
 	}
 
 	timestamp := time.Now().Format(time.RFC3339)
-
 	messageID := time.Now().UnixNano()
 
-	logger.Log.Info("[", "%s", "]", "Publishing message to Google Cloud Pub/Sub", timestamp)
+	logger.Log.Info(timestamp, "Publishing message to Google Cloud Pub/Sub")
 	logger.Log.Info("  Project: ", p.project)
 	logger.Log.Info("  Topic: ", p.topic)
 	logger.Log.Info("  Region: ", p.region)
 	logger.Log.Info("  Message: ", message)
-	logger.Log.Info("  Message ID:  (simulated)", messageID)
+	logger.Log.Info("  Message ID: ", messageID, " (simulated)")
 
+	return nil
+}
+
+// Publish implements the Publisher interface
+func (p *PublisherPlugin) Publish(message string) error {
+	if message == "" {
+		return errors.New("empty message")
+	}
+	return p.Handle(message)
 }
 
 // Configure sets up the plugin with the provided configuration
