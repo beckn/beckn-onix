@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bap-client
+  namespace: beckn-onix
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bap-client
+  template:
+    metadata:
+      labels:
+        app: bap-client
+    spec:
+      containers:
+      - name: bap-client
+        image: fidedocker/protocol-server
+        ports:
+        - containerPort: 5001
+        volumeMounts:
+        - name: bap-client-config-volume
+          mountPath: /usr/src/app/config
+        - name: bap-client-schemas-volume
+          mountPath: /usr/src/app/schemas
+        - name: bap-client-logs-volume
+          mountPath: /usr/src/app/logs
+        env:
+        - name: BAP_CLIENT_PORT
+          value: "5001"
+        - name: REDIS_URL
+          value: "your-redis-url"
+        - name: MONGO_USERNAME
+          value: "your-mongo-username"
+        - name: MONGO_PASSWORD
+          value: "your-mongo-password"
+        - name: MONGO_URL
+          value: "your-mongo-url"
+        - name: MONGO_DB_NAME
+          value: "your-mongo-db-name"
+        - name: RABBITMQ_USERNAME
+          value: "your-rabbitmq-username"
+        - name: RABBITMQ_PASSWORD
+          value: "your-rabbitmq-password"
+        - name: RABBITMQ_URL
+          value: "your-rabbitmq-url"
+        - name: USE_LAYER_2_CONFIG
+          value: "false"
+        - name: MANDATE_LAYER_2_CONFIG
+          value: "false"
+        - name: BAP_SUBSCRIBER_ID
+          value: "your-bap-subscriber-id"
+        - name: BAP_SUBSCRIBER_URL
+          value: "your-bap-subscriber-url"
+        - name: REGISTRY_URL
+          value: "your-registry-url"
+        - name: BAP_SUBSCRIBER_KEY_ID
+          value: "your-bap-subscriber-key-id"
+      volumes:
+      - name: bap-client-config-volume
+        configMap:
+          name: protocol-config
+          items:
+          - key: bap-client.yml
+            path: default.yml
+      - name: bap-client-schemas-volume
+        emptyDir: {}
+      - name: bap-client-logs-volume
+        emptyDir: {}

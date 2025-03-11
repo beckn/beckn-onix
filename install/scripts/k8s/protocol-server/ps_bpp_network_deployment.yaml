@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bpp-network
+  namespace: beckn-onix
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bpp-network
+  template:
+    metadata:
+      labels:
+        app: bpp-network
+    spec:
+      containers:
+      - name: bpp-network
+        image: fidedocker/protocol-server
+        ports:
+        - containerPort: 6002
+        volumeMounts:
+        - name: bpp-network-config-volume
+          mountPath: /usr/src/app/config
+        - name: bpp-network-schemas-volume
+          mountPath: /usr/src/app/schemas
+        - name: bpp-network-logs-volume
+          mountPath: /usr/src/app/logs
+        env:
+        - name: BPP_NETWORK_PORT
+          value: "6002"
+        - name: REDIS_URL
+          value: "your-redis-url"
+        - name: MONGO_USERNAME
+          value: "your-mongo-username"
+        - name: MONGO_PASSWORD
+          value: "your-mongo-password"
+        - name: MONGO_URL
+          value: "your-mongo-url"
+        - name: MONGO_DB_NAME
+          value: "your-mongo-db-name"
+        - name: RABBITMQ_USERNAME
+          value: "your-rabbitmq-username"
+        - name: RABBITMQ_PASSWORD
+          value: "your-rabbitmq-password"
+        - name: RABBITMQ_URL
+          value: "your-rabbitmq-url"
+        - name: WEBHOOK_URL
+          value: "your-webhook-url"
+        - name: BPP_SUBSCRIBER_ID
+          value: "your-bpp-subscriber-id"
+        - name: BPP_SUBSCRIBER_URL
+          value: "your-bpp-subscriber-url"
+        - name: REGISTRY_URL
+          value: "your-registry-url"
+        - name: BPP_SUBSCRIBER_KEY_ID
+          value: "your-bpp-subscriber-key-id"
+      volumes:
+      - name: bpp-network-config-volume
+        configMap:
+          name: bpp-config
+          items:
+          - key: bpp-network.yml
+            path: default.yml
+      - name: bpp-network-schemas-volume
+        emptyDir: {}
+      - name: bpp-network-logs-volume
+        emptyDir: {}

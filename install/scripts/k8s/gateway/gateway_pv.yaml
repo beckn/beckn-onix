@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gateway-data-volume
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /data/gateway-data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gateway-data-volume-claim
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gateway-database-volume
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /data/gateway-database
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gateway-database-volume-claim
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gateway-logs-volume
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /data/gateway-logs
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gateway-logs-volume-claim
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: beckn-onix
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: registry
+  template:
+    metadata:
+      labels:
+        app: registry
+    spec:
+      containers:
+        - name: registry
+          image: fidedocker/registry
+          ports:
+            - containerPort: 3000
+            - containerPort: 3030
+          volumeMounts:
+            - name: registry-config-volume
+              mountPath: /registry/overrideProperties/config
+            - name: registry-data-volume
+              mountPath: /registry/overrideProperties/config
+            - name: registry-logs-volume
+              mountPath: /registry/database
+      volumes:
+        - name: registry-config-volume
+          configMap:
+            name: registry-config
+        - name: registry-data-volume
+          persistentVolumeClaim:
+            claimName: registry-data-volume-claim
+        - name: registry-database-volume
+          persistentVolumeClaim:
+            claimName: registry-database-volume-claim
+        - name: registry-logs-volume
+          persistentVolumeClaim:
+            claimName: registry-logs-volume-claim

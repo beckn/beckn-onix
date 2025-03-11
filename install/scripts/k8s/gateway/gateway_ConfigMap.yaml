@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: beckn-onix
+data:
+  swf.properties: |
+    swf.load.complete.config.tables.if.count.less.than=500
+    swf.user.password.encrypted=false
+    swf.plugins.background.core.workers.numThreads=1
+    swf.application.authentication.required=false
+
+    swf.encryption.support=false
+    swf.key.store.directory=./.keystore
+    swf.key.store.password=venky12
+    swf.key.entry.succinct.password=succinct12
+
+    swf.host=${GATEWAY_URL}
+    swf.external.port=${GATEWAY_PORT}
+    swf.external.scheme=${PROTOCOL}
+
+    swf.jdbc.driver=org.h2.Driver
+    swf.jdbc.url=jdbc:h2:./database/standalone;AUTO_SERVER=TRUE;
+    swf.jdbc.userid=standalone
+    swf.jdbc.password=standalone
+    swf.jdbc.validationQuery=values(1)
+    swf.jdbc.dbschema=PUBLIC
+    swf.jdbc.dbschema.setonconnection=true
+    swf.jdbc.set.dbschema.command=set schema public
+
+    beckn.auth.enabled=true
+
+    in.succinct.beckn.gateway.subscriber_id=${SUBSCRIBER_ID}
+    in.succinct.beckn.gateway.public_key_id=${SUBSCRIBER_ID}.k1
+
+    in.succinct.onet.country.iso.3=IND
+    in.succinct.onet.country.iso.2=IN
+    in.succinct.onet.name=onix
+
+  onix.json: |
+    {
+        "core_version": "1.1.0",
+        "registry_id": "${REGISTRY_ID}",
+        "search_provider_id": "${GATEWAY_ID}",
+        "self_registration_supported": true,
+        "subscription_needed_post_registration": true,
+        "base_url": "${REGISTRY_URL}",
+        "registry_url": "${REGISTRY_URL}/subscribers",
+        "extension_package": "in.succinct.beckn.boc",
+        "wild_card": ""
+    }

@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: registry-config
+  namespace: beckn-onix
+data:
+  swf.properties: |
+    swf.load.complete.config.tables.if.count.less.than=500
+    swf.user.password.encrypted=false
+    swf.plugins.background.core.workers.numThreads=3
+    swf.application.authentication.required=false
+    swf.application.requires.registration=true
+
+    #swf.host=localhost
+    swf.host=${REGISTRY_URL}
+    swf.external.port=${REGISTRY_PORT}
+    swf.external.scheme=${PROTOCOL}
+
+    swf.jdbc.driver=org.h2.Driver
+    swf.jdbc.url=jdbc:h2:./database/registry;AUTO_SERVER=TRUE;
+    swf.jdbc.userid=registry
+    swf.jdbc.password=registry
+    swf.jdbc.validationQuery=values(1)
+    swf.jdbc.dbschema=PUBLIC
+    swf.jdbc.dbschema.setonconnection=true
+    swf.jdbc.set.dbschema.command=set schema public
+
+    #push.server.private.key=your_private_key
+    #push.server.public.key=your_public_key
+
+    swf.api.keys.case=SNAKE
+    swf.api.root.required=false
+
+    swf.encryption.support=false
+    swf.ftl.dir=src/main/resources/templates

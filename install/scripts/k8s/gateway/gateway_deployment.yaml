@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: beckn-onix
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+      - name: gateway
+        image: fidedocker/gateway
+        ports:
+        - containerPort: 4000
+        - containerPort: 4030
+        volumeMounts:
+        - name: gateway-config-volume
+          mountPath: /gateway/overrideProperties/config
+        - name: gateway-data-volume
+          mountPath: /gateway/overrideProperties/config
+        - name: gateway-database-volume
+          mountPath: /gateway/database
+        - name: gateway-logs-volume
+          mountPath: /gateway/tmp
+        env:
+        - name: GATEWAY_URL
+          value: "your-gateway-url"
+        - name: GATEWAY_PORT
+          value: "4030"
+        - name: PROTOCOL
+          value: "http"
+        - name: SUBSCRIBER_ID
+          value: "your-subscriber-id"
+        - name: REGISTRY_ID
+          value: "your-registry-id"
+        - name: GATEWAY_ID
+          value: "your-gateway-id"
+        - name: REGISTRY_URL
+          value: "your-registry-url"
+      volumes:
+      - name: gateway-config-volume
+        configMap:
+          name: gateway-config
+      - name: gateway-data-volume
+        persistentVolumeClaim:
+          claimName: gateway-data-volume-claim
+      - name: gateway-database-volume
+        persistentVolumeClaim:
+          claimName: gateway-database-volume-claim
+      - name: gateway-logs-volume
+        persistentVolumeClaim:
+          claimName: gateway-logs-volume-claim

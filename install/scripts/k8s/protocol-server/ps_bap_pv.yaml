@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: bap-client-config-volume
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /data/bap-client-config
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bap-client-config-volume-claim
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: bap-network-config-volume
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /data/bap-network-config
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bap-network-config-volume-claim
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
