@@ -7,7 +7,7 @@ on:
 
 env:
  # AR_LOCATION: "${{ secrets.GCP_PROJECT_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_AR_REPO }}"
-  APP_DIRECTORY: "shared/plugin/implementations/signer"
+  APP_DIRECTORY: "shared/plugin"
  # REF_BRANCH: "feature/signing_plugin"
 
 jobs:
