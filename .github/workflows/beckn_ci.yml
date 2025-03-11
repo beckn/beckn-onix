@@ -34,14 +34,15 @@ jobs:
         run: |
           golangci-lint run ./...
 
-      # 5. Run unit tests with coverage recursively for all Go files ${{ env.APP_DIRECTORY }}
+      # 5. Run unit tests with coverage in the entire repository
       - name: Run unit tests with coverage
         run: |
-          # Run tests recursively for all Go files
-          go test -v -coverprofile=coverage.out ./...
-
-          # Generate coverage report
-          go tool cover -func=coverage.out | tee coverage.txt
+          # Find all directories with Go test files and run `go test` on them
+          find ./ -type f -name '*_test.go' -exec dirname {} \; | sort -u | while read dir; do
+            echo "Running tests in $dir"
+            go test -v -coverprofile=coverage.out $dir
+            go tool cover -func=coverage.out | tee coverage.txt
+          done
 
       # 6. Check if coverage is >= 90%, but only check coverage if tests exist
       - name: Check coverage percentage
