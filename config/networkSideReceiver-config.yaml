@@ -1,2 +1,18 @@
-appName: "networkSideReceiver"
+appName: "networkSideReciever"
 port: 9092
+log:
+  level: info
+  destinations:
+    - type: stdout
+  context_keys:
+    - requestId
+    - userId
+plugin:
+  root: /mnt/gcs/plugins
+  publisher:
+    id: publisher
+    config:
+      project: ondc-seller-dev
+      topic: networkSideTopic
+  validator:
+    id: validatora
