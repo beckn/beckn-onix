@@ -10,7 +10,7 @@ import (
 	"os/signal"
 	"strings"
 
-	"beckn-onix/log"
+	logpackage "beckn-onix/log"
 
 	"gopkg.in/yaml.v2"
 )
@@ -26,14 +26,14 @@ func requestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Log.Info("Received request:", r.Method, r.URL.Path, r.Header)
+	logpackage.Info(context.Background(), fmt.Sprintf("Received request: %s %s Headers: %v", r.Method, r.URL.Path, r.Header))
 	w.WriteHeader(http.StatusOK)
 }
 
 func run(ctx context.Context, configPath string) (*http.Server, error) {
 	cfg, err := initConfig(ctx, configPath)
 	if err != nil {
-		log.Log.Error("error initializing config: ", err)
+		logpackage.Error(context.Background(), err, "error initializing config")
 		return nil, err
 	}
 
@@ -45,7 +45,7 @@ func run(ctx context.Context, configPath string) (*http.Server, error) {
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Log.Error("Server failed:", err)
+			logpackage.Error(context.Background(), err, "Server failed")
 		}
 	}()
 
@@ -71,7 +71,7 @@ func validateConfig(config *config) error {
 func initConfig(ctx context.Context, path string) (*config, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		log.Log.Error("could not open config file: ", err)
+		logpackage.Error(context.Background(), err, "Could not open config file")
 		return nil, err
 	}
 	defer file.Close()
@@ -80,7 +80,7 @@ func initConfig(ctx context.Context, path string) (*config, error) {
 	decoder := yaml.NewDecoder(file)
 	err = decoder.Decode(&config)
 	if err != nil {
-		log.Log.Error("could not unmarshal config data: ", err)
+		logpackage.Error(context.Background(), err, "Could not unmarshal config data")
 		return nil, err
 	}
 	err = validateConfig(&config)
@@ -104,18 +104,17 @@ func execute() error {
 	configPath := getConfigPath()
 	server, err := run(context.Background(), configPath)
 	if err != nil {
-		log.Log.Error("Application failed:", err)
-		return err // Return error instead of exiting
+		logpackage.Error(context.Background(), err, "Application failed")
+		return err
 	}
 
-	// Ensure the server shuts down gracefully on termination
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
 	<-stop
 
-	log.Log.Info("Shutting down server...")
+	logpackage.Info(context.Background(), "Shutting down server...")
 	if err := server.Shutdown(context.Background()); err != nil {
-		log.Log.Error("Server shutdown failed:", err)
+		logpackage.Error(context.Background(), err, "Server shutdown failed:")
 		return err
 	}
 
@@ -123,8 +122,9 @@ func execute() error {
 }
 
 func main() {
+	logpackage.InitLogger()
 	if err := execute(); err != nil {
-		log.Log.Error("Application terminated with error:", err)
+		logpackage.Error(context.Background(), err, "Application terminated with error")
 		os.Exit(1)
 	}
 }
