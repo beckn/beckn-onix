@@ -106,8 +106,8 @@ install_registry() {
     if [[ $1 ]]; then
         bash scripts/registry_role_permissions.sh $1
     else
-        bash scripts/registry_role_permissions.sh 
-    fi     
+        bash scripts/registry_role_permissions.sh
+    fi
 }
 
 # Function to install Layer2 Config
@@ -343,9 +343,19 @@ validate_user() {
         api_key=$(echo "$response_body" | jq -r '.api_key')
         return 0
     else
-        echo "Please check your credentials or register new user on $login_url"
-        return 1
+        response=$(curl -s -w "%{http_code}" -X POST "$login_url" \
+            -H "Content-Type: application/json" \
+            -d '{ "User" : { "Name" : "'"$username"'", "Password" : "'"$password"'" }}')
+
+        status_code="${response: -3}"
+        if [ "$status_code" -eq 200 ]; then
+            response_body="${response%???}"
+            api_key=$(echo "$response_body" | jq -r '.api_key')
+            return 0
+        fi
     fi
+    echo "Please check your credentials or register new user on $login_url"
+    return 1
 }
 
 get_np_domain() {
