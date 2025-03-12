@@ -1,0 +1,7 @@
+plugins:
+  publisher:
+    id: pubsub_publisher
+    config:
+      project: "gcp-project-id"
+      topic: "pubsub-topic"
+      region: "region"
