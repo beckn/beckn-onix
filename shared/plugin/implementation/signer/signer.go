@@ -23,12 +23,7 @@ type Signer struct {
 func New(ctx context.Context, config *Config) (*Signer, func() error, error) {
 	s := &Signer{config: config}
 
-	// Close releases resources (mock implementation returning nil)
-	closeFunc := func() error {
-		return s.Close()
-	}
-
-	return s, closeFunc, nil
+	return s, s.Close, nil
 }
 
 // hash generates a signing string using BLAKE-512 hashing.

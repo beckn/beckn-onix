@@ -48,12 +48,12 @@ func TestSignerProviderSuccess(t *testing.T) {
 
 	for _, tt := range successTests {
 		t.Run(tt.name, func(t *testing.T) {
-			signerInstance, close, err := provider.New(tt.ctx, tt.config)
+			signer, close, err := provider.New(tt.ctx, tt.config)
 
 			if err != nil {
 				t.Fatalf("Test %q failed: expected no error, but got: %v", tt.name, err)
 			}
-			if signerInstance == nil {
+			if signer == nil {
 				t.Fatalf("Test %q failed: signer instance should not be nil", tt.name)
 			}
 			if close != nil {

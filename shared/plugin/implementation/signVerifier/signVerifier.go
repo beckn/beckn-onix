@@ -25,12 +25,7 @@ type Verifier struct {
 func New(ctx context.Context, config *Config) (*Verifier, func() error, error) {
 	v := &Verifier{config: config}
 
-	// Close releases resources (mock implementation returning nil)
-	closeFunc := func() error {
-		return v.Close()
-	}
-
-	return v, closeFunc, nil
+	return v, v.Close, nil
 }
 
 // Verify checks the signature for the given payload and public key.

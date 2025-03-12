@@ -33,12 +33,12 @@ func TestVerifierProviderSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			verifierInstance, close, err := provider.New(tt.ctx, tt.config)
+			verifier, close, err := provider.New(tt.ctx, tt.config)
 
 			if err != nil {
 				t.Fatalf("Expected no error, but got: %v", err)
 			}
-			if verifierInstance == nil {
+			if verifier == nil {
 				t.Fatal("Expected verifier instance to be non-nil")
 			}
 			if close != nil {

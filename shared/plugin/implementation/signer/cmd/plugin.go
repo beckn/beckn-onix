@@ -17,11 +17,6 @@ func (p SignerProvider) New(ctx context.Context, config map[string]string) (defi
 		return nil, nil, errors.New("context cannot be nil")
 	}
 
-	// // Close releases resources (mock implementation returning nil).
-	// cleanup := func() error {
-	// 	return nil
-	// }
-
 	return signer.New(ctx, &signer.Config{})
 }
 
