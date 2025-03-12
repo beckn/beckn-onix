@@ -105,10 +105,9 @@ func execute() error {
 	server, err := run(context.Background(), configPath)
 	if err != nil {
 		logpackage.Error(context.Background(), err, "Application failed")
-		return err // Return error instead of exiting
+		return err 
 	}
 
-	// Ensure the server shuts down gracefully on termination
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
 	<-stop
