@@ -14,7 +14,7 @@ type Signer interface {
 // SignerProvider initializes a new signer instance with the given config.
 type SignerProvider interface {
 	// New creates a new signer instance based on the provided config.
-	New(ctx context.Context, config map[string]string) (Signer, error)
+	New(ctx context.Context, config map[string]string) (Signer, func() error, error)
 }
 
 // PrivateKeyManager is the interface for key management plugin.

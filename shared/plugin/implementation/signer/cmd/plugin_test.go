@@ -48,13 +48,18 @@ func TestSignerProviderSuccess(t *testing.T) {
 
 	for _, tt := range successTests {
 		t.Run(tt.name, func(t *testing.T) {
-			signerInstance, err := provider.New(tt.ctx, tt.config)
+			signerInstance, close, err := provider.New(tt.ctx, tt.config)
 
 			if err != nil {
 				t.Fatalf("Test %q failed: expected no error, but got: %v", tt.name, err)
 			}
 			if signerInstance == nil {
 				t.Fatalf("Test %q failed: signer instance should not be nil", tt.name)
+			}
+			if close != nil {
+				if err := close(); err != nil {
+					t.Fatalf("Cleanup function returned an error: %v", err)
+				}
 			}
 		})
 	}
@@ -80,13 +85,16 @@ func TestSignerProviderFailure(t *testing.T) {
 
 	for _, tt := range failureTests {
 		t.Run(tt.name, func(t *testing.T) {
-			signerInstance, err := provider.New(tt.ctx, tt.config)
+			signerInstance, close, err := provider.New(tt.ctx, tt.config)
 
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("Test %q failed: expected error: %v, got: %v", tt.name, tt.wantErr, err)
 			}
 			if signerInstance != nil {
 				t.Fatalf("Test %q failed: expected signer instance to be nil", tt.name)
+			}
+			if close != nil {
+				t.Fatalf("Test %q failed: expected cleanup function to be nil", tt.name)
 			}
 		})
 	}

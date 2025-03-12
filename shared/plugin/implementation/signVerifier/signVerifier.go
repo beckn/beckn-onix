@@ -22,8 +22,15 @@ type Verifier struct {
 }
 
 // New creates a new Verifier instance.
-func New(ctx context.Context, config *Config) (*Verifier, error) {
-	return &Verifier{config: config}, nil
+func New(ctx context.Context, config *Config) (*Verifier, func() error, error) {
+	v := &Verifier{config: config}
+
+	// Close releases resources (mock implementation returning nil)
+	closeFunc := func() error {
+		return v.Close()
+	}
+
+	return v, closeFunc, nil
 }
 
 // Verify checks the signature for the given payload and public key.

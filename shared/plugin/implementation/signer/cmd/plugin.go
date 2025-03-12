@@ -11,11 +11,17 @@ import (
 // SignerProvider implements the definition.SignerProvider interface.
 type SignerProvider struct{}
 
-// New creates a new SignerImpl instance using the provided configuration.
-func (p SignerProvider) New(ctx context.Context, config map[string]string) (definition.Signer, error) {
+// New creates a new Signer instance using the provided configuration.
+func (p SignerProvider) New(ctx context.Context, config map[string]string) (definition.Signer, func() error, error) {
 	if ctx == nil {
-		return nil, errors.New("context cannot be nil")
+		return nil, nil, errors.New("context cannot be nil")
 	}
+
+	// // Close releases resources (mock implementation returning nil).
+	// cleanup := func() error {
+	// 	return nil
+	// }
+
 	return signer.New(ctx, &signer.Config{})
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 )
@@ -18,7 +19,7 @@ func generateTestKeys() (string, string) {
 func TestSignSuccess(t *testing.T) {
 	privateKey, _ := generateTestKeys()
 	config := Config{}
-	signer, _ := New(context.Background(), &config)
+	signer, close, _ := New(context.Background(), &config)
 
 	successTests := []struct {
 		name       string
@@ -45,6 +46,11 @@ func TestSignSuccess(t *testing.T) {
 			if len(signature) == 0 {
 				t.Errorf("expected a non-empty signature, but got empty")
 			}
+			if close != nil {
+				if err := close(); err != nil {
+					t.Fatalf("Cleanup function returned an error: %v", err)
+				}
+			}
 		})
 	}
 }
@@ -52,7 +58,7 @@ func TestSignSuccess(t *testing.T) {
 // TestSignFailure tests the Sign method with invalid inputs to ensure proper error handling.
 func TestSignFailure(t *testing.T) {
 	config := Config{}
-	signer, _ := New(context.Background(), &config)
+	signer, close, _ := New(context.Background(), &config)
 
 	failureTests := []struct {
 		name            string
@@ -85,33 +91,14 @@ func TestSignFailure(t *testing.T) {
 			_, err := signer.Sign(context.Background(), tt.payload, tt.privateKey, tt.createdAt, tt.expiresAt)
 			if err == nil {
 				t.Errorf("expected error but got none")
-			} else if !contains(err.Error(), tt.expectErrString) {
+			} else if !strings.Contains(err.Error(), tt.expectErrString) {
 				t.Errorf("expected error message to contain %q, got %v", tt.expectErrString, err)
+			}
+			if close != nil {
+				if err := close(); err != nil {
+					t.Fatalf("Cleanup function returned an error: %v", err)
+				}
 			}
 		})
 	}
-}
-
-// TestSignerClose verifies that the Close method does not return an error.
-func TestSignerClose(t *testing.T) {
-	s := &Signer{}
-	err := s.Close()
-	if err != nil {
-		t.Errorf("expected nil, got %v", err)
-	}
-}
-
-// Helper function to check if a string contains a substring.
-func contains(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 && stringContains(s, substr)
-}
-
-// Alternative to strings.Contains (avoiding import).
-func stringContains(s, substr string) bool {
-	for i := 0; i < len(s)-len(substr)+1; i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

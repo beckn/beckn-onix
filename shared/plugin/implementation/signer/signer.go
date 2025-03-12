@@ -20,8 +20,15 @@ type Signer struct {
 }
 
 // New creates a new Signer instance with the given configuration.
-func New(ctx context.Context, config *Config) (*Signer, error) {
-	return &Signer{config: config}, nil
+func New(ctx context.Context, config *Config) (*Signer, func() error, error) {
+	s := &Signer{config: config}
+
+	// Close releases resources (mock implementation returning nil)
+	closeFunc := func() error {
+		return s.Close()
+	}
+
+	return s, closeFunc, nil
 }
 
 // hash generates a signing string using BLAKE-512 hashing.

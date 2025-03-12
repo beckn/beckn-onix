@@ -12,7 +12,7 @@ type Verifier interface {
 // VerifierProvider initializes a new Verifier instance with the given config.
 type VerifierProvider interface {
 	// New creates a new Verifier instance based on the provided config.
-	New(ctx context.Context, config map[string]string) (Verifier, error)
+	New(ctx context.Context, config map[string]string) (Verifier, func() error, error)
 }
 
 // PublicKeyManager is the interface for key management plugin.

@@ -14,10 +14,11 @@ import (
 type VerifierProvider struct{}
 
 // New initializes a new Verifier instance.
-func (vp VerifierProvider) New(ctx context.Context, config map[string]string) (plugin.Verifier, error) {
+func (vp VerifierProvider) New(ctx context.Context, config map[string]string) (plugin.Verifier, func() error, error) {
 	if ctx == nil {
-		return nil, errors.New("context cannot be nil")
+		return nil, nil, errors.New("context cannot be nil")
 	}
+
 	return verifier.New(ctx, &verifier.Config{})
 }
 

@@ -51,7 +51,7 @@ func TestVerifySuccess(t *testing.T) {
 				`", expires="` + strconv.FormatInt(tt.expiresAt, 10) +
 				`", signature="` + signature + `"`
 
-			verifier, _ := New(context.Background(), &Config{})
+			verifier, close, _ := New(context.Background(), &Config{})
 			valid, err := verifier.Verify(context.Background(), tt.body, []byte(header), publicKeyBase64)
 
 			if err != nil {
@@ -59,6 +59,11 @@ func TestVerifySuccess(t *testing.T) {
 			}
 			if !valid {
 				t.Fatal("Expected signature verification to succeed")
+			}
+			if close != nil {
+				if err := close(); err != nil {
+					t.Fatalf("Test %q failed: cleanup function returned an error: %v", tt.name, err)
+				}
 			}
 		})
 	}
@@ -129,7 +134,7 @@ func TestVerifyFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			verifier, _ := New(context.Background(), &Config{})
+			verifier, close, _ := New(context.Background(), &Config{})
 			valid, err := verifier.Verify(context.Background(), tt.body, []byte(tt.header), tt.pubKey)
 
 			if err == nil {
@@ -138,15 +143,11 @@ func TestVerifyFailure(t *testing.T) {
 			if valid {
 				t.Fatal("Expected verification to fail")
 			}
+			if close != nil {
+				if err := close(); err != nil {
+					t.Fatalf("Test %q failed: cleanup function returned an error: %v", tt.name, err)
+				}
+			}
 		})
-	}
-}
-
-// TestClose verifies that the Close method of Verifier returns nil without errors.
-func TestClose(t *testing.T) {
-	v := &Verifier{}
-	err := v.Close()
-	if err != nil {
-		t.Fatalf("Expected Close method to return nil without errors, but got: %v", err)
 	}
 }

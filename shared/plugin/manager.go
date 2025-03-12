@@ -82,27 +82,27 @@ func pluginPath(root, id string) string {
 }
 
 // Signer retrieves the signing plugin instance.
-func (m *Manager) Signer(ctx context.Context) (definition.Signer, error) {
+func (m *Manager) Signer(ctx context.Context) (definition.Signer, func() error, error) {
 	if m.sp == nil {
-		return nil, fmt.Errorf("signing plugin provider not loaded")
+		return nil, nil, fmt.Errorf("signing plugin provider not loaded")
 	}
 
-	signer, err := m.sp.New(ctx, m.cfg.Signer.Config)
+	signer, close, err := m.sp.New(ctx, m.cfg.Signer.Config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize signer: %w", err)
+		return nil, nil, fmt.Errorf("failed to initialize signer: %w", err)
 	}
-	return signer, nil
+	return signer, close, nil
 }
 
 // Verifier retrieves the verification plugin instance.
-func (m *Manager) Verifier(ctx context.Context) (definition.Verifier, error) {
+func (m *Manager) Verifier(ctx context.Context) (definition.Verifier, func() error, error) {
 	if m.vp == nil {
-		return nil, fmt.Errorf("Verifier plugin provider not loaded")
+		return nil, nil, fmt.Errorf("Verifier plugin provider not loaded")
 	}
 
-	Verifier, err := m.vp.New(ctx, m.cfg.Verifier.Config)
+	Verifier, close, err := m.vp.New(ctx, m.cfg.Verifier.Config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize Verifier: %w", err)
+		return nil, nil, fmt.Errorf("failed to initialize Verifier: %w", err)
 	}
-	return Verifier, nil
+	return Verifier, close, nil
 }

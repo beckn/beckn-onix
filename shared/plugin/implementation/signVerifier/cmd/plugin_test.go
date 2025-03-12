@@ -33,13 +33,18 @@ func TestVerifierProviderSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			verifierInstance, err := provider.New(tt.ctx, tt.config)
+			verifierInstance, close, err := provider.New(tt.ctx, tt.config)
 
 			if err != nil {
 				t.Fatalf("Expected no error, but got: %v", err)
 			}
 			if verifierInstance == nil {
 				t.Fatal("Expected verifier instance to be non-nil")
+			}
+			if close != nil {
+				if err := close(); err != nil {
+					t.Fatalf("Test %q failed: cleanup function returned an error: %v", tt.name, err)
+				}
 			}
 		})
 	}
@@ -65,7 +70,7 @@ func TestVerifierProviderFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			verifierInstance, err := provider.New(tt.ctx, tt.config)
+			verifierInstance, close, err := provider.New(tt.ctx, tt.config)
 
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("Expected error: %v, but got: %v", tt.wantErr, err)
@@ -73,6 +78,12 @@ func TestVerifierProviderFailure(t *testing.T) {
 			if verifierInstance != nil {
 				t.Fatal("Expected verifier instance to be nil")
 			}
+			if close != nil {
+				if err := close(); err != nil {
+					t.Fatalf("Test %q failed: cleanup function returned an error: %v", tt.name, err)
+				}
+			}
+
 		})
 	}
 }
