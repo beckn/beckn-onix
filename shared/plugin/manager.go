@@ -2,9 +2,11 @@ package plugin
 
 import (
 	logger "beckn-onix/shared/log"
+	"context"
 	"fmt"
 	"path/filepath"
 	"plugin"
+	"reflect"
 	"sync"
 )
 
@@ -12,6 +14,12 @@ import (
 type Publisher interface {
 	Handle(message string) error
 	Publish(message string) error
+	Configure(config map[string]interface{}) error
+}
+
+// Encrypter defines the interface for encryption
+type Encryption interface {
+	Encrypt(ctx context.Context, data string, publicKey string) (string, error)
 	Configure(config map[string]interface{}) error
 }
 
@@ -49,6 +57,7 @@ func NewPluginManager(pluginPath string, configFile string) *PluginManager {
 // LoadPlugin loads a plugin from a .so file
 func (pm *PluginManager) LoadPlugin(name string) error {
 	pluginFile := filepath.Join(pm.pluginPath, "/"+name+".so")
+	logger.Log.Info("Loading plugin: ", pluginFile)
 
 	plug, err := plugin.Open(pluginFile)
 	if err != nil {
@@ -62,12 +71,14 @@ func (pm *PluginManager) LoadPlugin(name string) error {
 	}
 
 	// Register plugin
-	pluginInstance := symbol.(Plugin)
+	pluginInstance, ok := symbol.(Plugin)
+	if !ok {
+		logger.Log.Println("Error during interface conversion: ", reflect.TypeOf(pluginInstance))
+	}
 	pm.Register(name, pluginInstance)
 	// if err != nil {
 	// 	return err
 	// }
-
 
 	// Configure the plugin if configuration exists
 	if pluginConfig, exists := pm.config.GetPluginConfig(name); exists {
@@ -84,7 +95,7 @@ func (pm *PluginManager) Register(name string, plugin Plugin) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	pm.plugins[name] = plugin
-	
+
 }
 
 // Get returns a plugin by name
@@ -110,6 +121,20 @@ func (pm *PluginManager) GetPublisher(name string) (Publisher, error) {
 		return nil, fmt.Errorf("plugin '%s' is not a publisher", name)
 	}
 	return publisher, nil
+}
+
+// GetEncrypter returns the encrypter plugin if registered
+func (pm *PluginManager) GetEncrypter(name string) (Encryption, error) {
+	plugin, err := pm.Get(name)
+	if err != nil {
+		return nil, err
+	}
+
+	encrypter, ok := plugin.(Encryption)
+	if !ok {
+		return nil, fmt.Errorf("plugin '%s' is not an encrypter", name)
+	}
+	return encrypter, nil
 }
 
 // PublishMessage publishes a message to a specific topic

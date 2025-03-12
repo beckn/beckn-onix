@@ -16,3 +16,8 @@ plugin:
       topic: networkSideTopic
   validator:
     id: validatora
+  encryption:
+    id: encryption
+    config:
+      algorithm: RSA-OAEP
+      key_id: test-key

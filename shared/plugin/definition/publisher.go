@@ -10,7 +10,7 @@ import (
 )
 
 // Message represents the structure of a message to be published
-type Message struct {
+type PublisherMessage struct {
 	ID        string `json:"id"`
 	Timestamp string `json:"timestamp"`
 	Payload   string `json:"payload"`
@@ -34,7 +34,7 @@ type PluginInterface interface {
 type PublisherPlugin struct {
 	project  string
 	topic    string
-	messages []Message // Store messages for demonstration
+	messages []PublisherMessage // Store messages for demonstration
 }
 
 var (
@@ -44,12 +44,12 @@ var (
 
 // Handle processes the incoming message
 func (p *PublisherPlugin) Handle(message string) error {
-	if p.project == "" || p.topic == ""  {
+	if p.project == "" || p.topic == "" {
 		return errors.New("publisher not properly configured")
 	}
 
 	// Create a new message
-	msg := Message{
+	msg := PublisherMessage{
 		ID:        fmt.Sprintf("msg-%d", time.Now().UnixNano()),
 		Timestamp: time.Now().Format(time.RFC3339),
 		Payload:   message,
@@ -104,15 +104,12 @@ func (p *PublisherPlugin) Configure(config map[string]interface{}) error {
 		return ErrTopicMissing
 	}
 
-
-
 	if strings.TrimSpace(p.project) == "" {
 		return ErrProjectMissing
 	}
 	if strings.TrimSpace(p.topic) == "" {
 		return ErrTopicMissing
 	}
-	
 
 	logger.Log.Info("Publisher plugin configured with project=", p.project, "topic=", p.topic)
 
@@ -120,9 +117,11 @@ func (p *PublisherPlugin) Configure(config map[string]interface{}) error {
 }
 
 // GetMessages returns all published messages (for demonstration)
-func (p *PublisherPlugin) GetMessages() []Message {
+func (p *PublisherPlugin) GetMessages() []PublisherMessage {
 	return p.messages
 }
 
 // Export the plugin
+//
+//go:export Plugin
 var Plugin PublisherPlugin

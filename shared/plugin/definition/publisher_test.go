@@ -282,12 +282,12 @@ func TestMessageCreation(t *testing.T) {
 	tests := []struct {
 		name    string
 		payload string
-		want    Message
+		want    PublisherMessage
 	}{
 		{
 			name:    "Create message with payload",
 			payload: `{"data": "test"}`,
-			want: Message{
+			want: PublisherMessage{
 				Payload: `{"data": "test"}`,
 			},
 		},
