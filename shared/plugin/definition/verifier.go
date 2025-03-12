@@ -9,9 +9,9 @@ type Verifier interface {
 	Close() error // Close for releasing resources
 }
 
-// VerifierProvider initializes a new validator instance with the given config.
+// VerifierProvider initializes a new Verifier instance with the given config.
 type VerifierProvider interface {
-	// New creates a new validator instance based on the provided config.
+	// New creates a new Verifier instance based on the provided config.
 	New(ctx context.Context, config map[string]string) (Verifier, error)
 }
 

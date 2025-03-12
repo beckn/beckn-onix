@@ -45,7 +45,7 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 	// Load verifier plugin
 	vp, err := provider[definition.VerifierProvider](cfg.Root, cfg.Verifier.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load validator plugin: %w", err)
+		return nil, fmt.Errorf("failed to load Verifier plugin: %w", err)
 	}
 
 	return &Manager{sp: sp, vp: vp, cfg: cfg}, nil
@@ -94,15 +94,15 @@ func (m *Manager) Signer(ctx context.Context) (definition.Signer, error) {
 	return signer, nil
 }
 
-// Validator retrieves the verification plugin instance.
-func (m *Manager) Validator(ctx context.Context) (definition.Verifier, error) {
+// Verifier retrieves the verification plugin instance.
+func (m *Manager) Verifier(ctx context.Context) (definition.Verifier, error) {
 	if m.vp == nil {
-		return nil, fmt.Errorf("validator plugin provider not loaded")
+		return nil, fmt.Errorf("Verifier plugin provider not loaded")
 	}
 
-	validator, err := m.vp.New(ctx, m.cfg.Verifier.Config)
+	Verifier, err := m.vp.New(ctx, m.cfg.Verifier.Config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize validator: %w", err)
+		return nil, fmt.Errorf("failed to initialize Verifier: %w", err)
 	}
-	return validator, nil
+	return Verifier, nil
 }
