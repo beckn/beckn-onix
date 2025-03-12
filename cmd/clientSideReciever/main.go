@@ -105,7 +105,7 @@ func execute() error {
 	server, err := run(context.Background(), configPath)
 	if err != nil {
 		logpackage.Error(context.Background(), err, "Application failed")
-		return err 
+		return err
 	}
 
 	stop := make(chan os.Signal, 1)
