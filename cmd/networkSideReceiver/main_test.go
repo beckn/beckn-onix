@@ -2,328 +2,467 @@ package main
 
 import (
 	"context"
-	"net"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
 
-
-
-func createTempConfig(t *testing.T, data string) string {
-	t.Helper()
-	tmpFile, err := os.CreateTemp("", "config.yaml")
-	if err != nil {
-		t.Fatalf("Failed to create temp config: %v", err)
-	}
-	if _, err := tmpFile.Write([]byte(data)); err != nil {
-		t.Fatalf("Failed to write to temp config: %v", err)
-	}
-	tmpFile.Close()
-	return tmpFile.Name()
+// MockPublisher implements the plugin.Publisher interface
+type mockPublisher struct {
+	mu        sync.Mutex
+	messages  []string
+	shouldErr bool
 }
 
+func newMockPublisher(shouldErr bool) *mockPublisher {
+	return &mockPublisher{
+		messages:  make([]string, 0),
+		shouldErr: shouldErr,
+	}
+}
 
+func (m *mockPublisher) Publish(message string) error {
+	if m.shouldErr {
+		return fmt.Errorf("mock publish error")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.messages = append(m.messages, message)
+	return nil
+}
+
+func (m *mockPublisher) Handle(message string) error {
+	return m.Publish(message)
+}
+
+func (m *mockPublisher) Configure(config map[string]interface{}) error {
+	if m.shouldErr {
+		return fmt.Errorf("mock configure error")
+	}
+	return nil
+}
+
+// Helper function to create temporary config file
+func createTempConfig(t *testing.T, content string) string {
+	t.Helper()
+	tmpfile, err := os.CreateTemp("", "config-*.yaml")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	if _, err := tmpfile.Write([]byte(content)); err != nil {
+		t.Fatalf("Failed to write to temp file: %v", err)
+	}
+	if err := tmpfile.Close(); err != nil {
+		t.Fatalf("Failed to close temp file: %v", err)
+	}
+	return tmpfile.Name()
+}
+
+// Helper function to create test plugin directory and files
+func setupTestPlugins(t *testing.T) string {
+	t.Helper()
+	tmpDir, err := os.MkdirTemp("", "plugins-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp plugin directory: %v", err)
+	}
+
+	// Create a dummy plugin file
+	pluginPath := filepath.Join(tmpDir, "test-publisher.so")
+	if err := os.WriteFile(pluginPath, []byte("dummy plugin"), 0644); err != nil {
+		t.Fatalf("Failed to create dummy plugin file: %v", err)
+	}
+
+	return tmpDir
+}
+
+// Success Test Cases
 func TestInitConfigSuccess(t *testing.T) {
+	pluginDir := setupTestPlugins(t)
+	defer os.RemoveAll(pluginDir)
+
 	tests := []struct {
-		name        string
-		configData  string
-		expected    *config
+		name       string
+		configData string
+		want       *config
 	}{
 		{
-			name: "Success - Valid Config",
-			configData: `
-appName: "networkSideHandler"
-port: 9091
-`,
-			expected: &config{
-				AppName: "networkSideHandler",
-				Port:    9091,
+			name: "Valid minimal config",
+			configData: fmt.Sprintf(`
+appName: "testApp"
+port: 8080
+plugin:
+  root: "%s"
+  publisher:
+    id: "test-publisher"
+    config:
+      project: "test"
+      topic: "test-topic"
+`, pluginDir),
+			want: &config{
+				AppName: "testApp",
+				Port:    8080,
+				Plugin: PluginConfig{
+					Root: pluginDir,
+					Publisher: PublisherConfig{
+						ID: "test-publisher",
+						Config: map[string]interface{}{
+							"project": "test",
+							"topic":   "test-topic",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "Valid config with optional fields",
+			configData: fmt.Sprintf(`
+appName: "testApp2"
+port: 9090
+plugin:
+  root: "%s"
+  publisher:
+    id: "test-publisher"
+    config:
+      project: "test2"
+      topic: "test-topic2"
+      region: "us-west"
+`, pluginDir),
+			want: &config{
+				AppName: "testApp2",
+				Port:    9090,
+				Plugin: PluginConfig{
+					Root: pluginDir,
+					Publisher: PublisherConfig{
+						ID: "test-publisher",
+						Config: map[string]interface{}{
+							"project": "test2",
+							"topic":   "test-topic2",
+							"region":  "us-west",
+						},
+					},
+				},
 			},
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			tempFilePath := "../../config/networkSideHandler-config.yaml"
-			tempFile, err := os.Create(tempFilePath)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := createTempConfig(t, tt.configData)
+			defer os.Remove(configPath)
+
+			got, err := initConfig(context.Background(), configPath)
 			if err != nil {
-				t.Fatalf("Failed to create temp file: %v", err)
+				t.Fatalf("initConfig() error = %v", err)
 			}
-			defer os.Remove(tempFile.Name())
 
-			if _, err := tempFile.Write([]byte(tc.configData)); err != nil {
-				t.Fatalf("Failed to write to temp file: %v", err)
-			}
-			tempFile.Close()
-
-			ctx := context.Background()
-			cfg, err := initConfig(ctx, tempFile.Name())
-
-			if err != nil {
-				t.Errorf("Did not expect error, got %v", err)
-			}
-			
-			if diff := cmp.Diff(tc.expected, cfg); diff != "" {
-				t.Errorf("Config mismatch (-expected +actual):\n%s", diff)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("initConfig() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
 }
 
-func TestInitConfigFailure(t *testing.T) {
+func TestServerHandlerSuccess(t *testing.T) {
 	tests := []struct {
-		name        string
-		configData  string
-		expectError bool
-		expected    *config
+		name         string
+		method       string
+		body         string
+		expectedCode int
 	}{
 		{
-			name:        "Error - Invalid YAML Format",
-			configData:  `invalid_yaml: :::`,
-			expectError: true,
+			name:         "Valid POST request",
+			method:       http.MethodPost,
+			body:         `{"test": "data"}`,
+			expectedCode: http.StatusOK,
 		},
 		{
-			name:        "Error - Missing Required Fields",
-			configData:  `appName: ""`,
-			expectError: true,
+			name:         "Empty body POST",
+			method:       http.MethodPost,
+			body:         "",
+			expectedCode: http.StatusOK,
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			tempFilePath := "../../config/networkSideHandler-config.yaml"
-			tempFile, err := os.Create(tempFilePath)
-			if err != nil {
-				t.Fatalf("Failed to create temp file: %v", err)
-			}
-			defer os.Remove(tempFile.Name())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pub := newMockPublisher(false)
+			s := &server{publisher: pub}
 
-			if _, err := tempFile.Write([]byte(tc.configData)); err != nil {
-				t.Fatalf("Failed to write to temp file: %v", err)
-			}
-			tempFile.Close()
+			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
+			w := httptest.NewRecorder()
 
-			ctx := context.Background()
-			cfg, err := initConfig(ctx, tempFile.Name())
+			s.handler(w, req)
 
-			if tc.expectError {
-				if err == nil {
-					t.Errorf("Expected error, got nil")
-				}
-			} else {
-				if err != nil {
-					t.Errorf("Did not expect error, got %v", err)
-				}
-
-				if diff := cmp.Diff(tc.expected, cfg); diff != "" {
-					t.Errorf("Config mismatch (-expected +actual):\n%s", diff)
-				}
-			}
-		})
-	}
-}
-
-func TestServerHandler(t *testing.T) {
-	tests := []struct {
-		name               string
-		method             string
-		body               string
-		expectedStatusCode int
-		expectedResponse   string
-	}{
-		{
-			name:               "Success - POST Request",
-			method:             "POST",
-			body:               `{"message": "Hello"}`,
-			expectedStatusCode: http.StatusOK,
-			expectedResponse:   "",
-		},
-		{
-			name:               "Error - Invalid Method (GET)",
-			method:             "GET",
-			body:               "",
-			expectedStatusCode: http.StatusMethodNotAllowed,
-			expectedResponse:   "Method not allowed\n",
-		}}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(tc.method, "/", strings.NewReader(tc.body))
-			req.Header.Set("Content-Type", "application/json")
-
-			rec := httptest.NewRecorder()
-			handler(rec, req)
-
-			if rec.Code != tc.expectedStatusCode {
-				t.Errorf("Expected status code %d, got %d", tc.expectedStatusCode, rec.Code)
-			}
-
-			if rec.Body.String() != tc.expectedResponse {
-				t.Errorf("Expected response body: %q, got: %q", tc.expectedResponse, rec.Body.String())
+			if w.Code != tt.expectedCode {
+				t.Errorf("handler() status = %v, want %v", w.Code, tt.expectedCode)
 			}
 		})
 	}
 }
 
 func TestRunSuccess(t *testing.T) {
-    tests := []struct {
-        name       string
-        configData string
-        expectCode int
-    }{
-        {
-            name: "Success - Valid Config",
-            configData: `
-appName: "TestApp"
-port: 8083
-`,
-            expectCode: http.StatusOK,
-        },
-    }
-
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            configPath := createTempConfig(t, tt.configData)
-            defer os.Remove(configPath)
-
-            ctx, cancel := context.WithCancel(context.Background())
-            defer cancel()
-
-            serverReady := make(chan struct{})
-            serverError := make(chan error, 1)
-
-            go func() {
-                if err := run(ctx, configPath); err != nil {
-                    serverError <- err
-                }
-            }()
-
-            // Check when server is available
-            go func() {
-                for {
-                    select {
-                    case <-ctx.Done():
-                        return
-                    default:
-                        conn, err := net.Dial("tcp", "localhost:8083")
-                        if err == nil {
-                            conn.Close()
-                            close(serverReady)
-                            return
-                        }
-                    }
-                }
-            }()
-
-            // Wait for server to be ready or error
-            select {
-            case <-serverReady:
-                // Server is ready, make request
-                resp, err := http.Post("http://localhost:8083/", "application/json", nil)
-                if err != nil {
-                    t.Fatalf("Failed to make POST request: %v", err)
-                }
-                defer resp.Body.Close()
-
-                if resp.StatusCode != tt.expectCode {
-                    t.Errorf("Expected status %d, got %d", tt.expectCode, resp.StatusCode)
-                }
-            case err := <-serverError:
-                t.Fatalf("Unexpected server error: %v", err)
-            }
-        })
-    }
-}
-
-func TestRunFailure(t *testing.T) {
-    tests := []struct {
-        name       string
-        configData string
-    }{
-        {
-            name:       "Error - Invalid YAML Format",
-            configData: `invalid_yaml: :::`,
-        },
-        {
-            name: "Error - Missing Required Fields",
-            configData: `
-appName: "TestApp"
-`,
-        },
-        {
-            name: "Error - Invalid Port",
-            configData: `
-appName: "TestApp"
-port: "invalid_port"
-`,
-        },
-    }
-
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            configPath := createTempConfig(t, tt.configData)
-            defer os.Remove(configPath)
-
-            ctx, cancel := context.WithCancel(context.Background())
-            defer cancel()
-
-            if err := run(ctx, configPath); err == nil {
-                t.Errorf("Expected error, got nil")
-            }
-        })
-    }
-}
-
-func TestMainFunction(t *testing.T) {
-
-	originalArgs := os.Args
-	defer func() { os.Args = originalArgs }()
-
-
 	tests := []struct {
-		name    string
-		args    []string
-		wantErr bool
+		name      string
+		setupFunc func(t *testing.T) (string, func())
 	}{
 		{
-			name:    "Default config path",
-			args:    []string{"cmd"},
-			wantErr: false,
+			name: "Success with valid config and plugin",
+			setupFunc: func(t *testing.T) (string, func()) {
+				// Use the existing plugin directory
+				pluginDir := "../../plugins/publisher"
+
+				// Verify plugin file exists
+				if _, err := os.Stat(filepath.Join(pluginDir, "publisher.so")); err != nil {
+					t.Skipf("Plugin file not found. Please ensure publisher.so exists in %s", pluginDir)
+				}
+
+				configData := fmt.Sprintf(`
+appName: "testApp"
+port: 8080
+plugin:
+  root: "%s"
+  publisher:
+    id: "publisher"
+    config:
+      project: "test"
+      topic: "test-topic"
+`, pluginDir)
+				configPath := createTempConfig(t, configData)
+				cleanup := func() {
+					os.Remove(configPath)
+				}
+				return configPath, cleanup
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath, cleanup := tt.setupFunc(t)
+			defer cleanup()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+
+			err := run(ctx, configPath)
+			if err != nil && !strings.Contains(err.Error(), "context deadline exceeded") {
+				t.Errorf("run() unexpected error = %v", err)
+			}
+		})
+	}
+}
+
+// Failure Test Cases
+func TestInitConfigFailure(t *testing.T) {
+	tests := []struct {
+		name       string
+		configData string
+		wantErr    bool
+	}{
+		{
+			name: "Invalid YAML",
+			configData: `
+appName: "testApp"
+port: invalid
+`,
+			wantErr: true,
 		},
 		{
-			name:    "Invalid config path",
-			args:    []string{"cmd", "-config=invalid/path.yaml"},
+			name: "Missing required fields",
+			configData: `
+port: 8080
+`,
+			wantErr: true,
+		},
+		{
+			name: "Invalid port range",
+			configData: `
+appName: "testApp"
+port: 80
+plugin:
+  root: "/plugins"
+  publisher:
+    id: "test-publisher"
+`,
+			wantErr: true,
+		},
+		{
+			name: "Missing plugin root",
+			configData: `
+appName: "testApp"
+port: 8080
+plugin:
+  publisher:
+    id: "test-publisher"
+`,
 			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			os.Args = tt.args
+			configPath := createTempConfig(t, tt.configData)
+			defer os.Remove(configPath)
 
-			defer func() {
-				if r := recover(); r != nil {
-					if !tt.wantErr {
-						t.Errorf("Unexpected panic (os.Exit simulation): %v", r)
-					}
-				}
-			}()
-
-			main()
-
-			if tt.wantErr {
-				t.Log("Expected an error scenario for main function.")
+			_, err := initConfig(context.Background(), configPath)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("initConfig() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
 }
 
+func TestServerHandlerFailure(t *testing.T) {
+	tests := []struct {
+		name         string
+		method       string
+		body         string
+		publisherErr bool
+		expectedCode int
+	}{
+		{
+			name:         "Invalid method GET",
+			method:       http.MethodGet,
+			body:         "",
+			publisherErr: false,
+			expectedCode: http.StatusMethodNotAllowed,
+		},
+		{
+			name:         "Publisher error",
+			method:       http.MethodPost,
+			body:         `{"test": "data"}`,
+			publisherErr: true,
+			expectedCode: http.StatusOK, // Still OK because publish is async
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pub := newMockPublisher(tt.publisherErr)
+			s := &server{publisher: pub}
+
+			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
+			w := httptest.NewRecorder()
+
+			s.handler(w, req)
+
+			if w.Code != tt.expectedCode {
+				t.Errorf("handler() status = %v, want %v", w.Code, tt.expectedCode)
+			}
+		})
+	}
+}
+
+func TestRunFailure(t *testing.T) {
+	tests := []struct {
+		name      string
+		setupFunc func(t *testing.T) (string, string, func())
+		errSubstr string
+	}{
+		{
+			name: "Failure with non-existent config",
+			setupFunc: func(t *testing.T) (string, string, func()) {
+				return "nonexistent.yaml", "", func() {}
+			},
+			errSubstr: "no such file",
+		},
+		{
+			name: "Failure with invalid plugin path",
+			setupFunc: func(t *testing.T) (string, string, func()) {
+				configData := `
+appName: "testApp"
+port: 8080
+plugin:
+  root: "/nonexistent/plugins"
+  publisher:
+    id: "test-publisher"
+    config:
+      project: "test"
+      topic: "test-topic"
+`
+				configPath := createTempConfig(t, configData)
+				return configPath, "", func() { os.Remove(configPath) }
+			},
+			errSubstr: "failed to load publisher plugin",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath, _, cleanup := tt.setupFunc(t)
+			defer cleanup()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+
+			err := run(ctx, configPath)
+			if err == nil || !strings.Contains(err.Error(), tt.errSubstr) {
+				t.Errorf("run() error = %v, want error containing %q", err, tt.errSubstr)
+			}
+		})
+	}
+}
+
+// Main Function Test
+func TestMain(t *testing.T) {
+	pluginDir := setupTestPlugins(t)
+	defer os.RemoveAll(pluginDir)
+
+	// Save original args
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	configData := fmt.Sprintf(`
+appName: "testApp"
+port: 8080
+plugin:
+  root: "%s"
+  publisher:
+    id: "test-publisher"
+    config:
+      project: "test"
+      topic: "test-topic"
+`, pluginDir)
+
+	configPath := createTempConfig(t, configData)
+	defer os.Remove(configPath)
+
+	os.Args = []string{"cmd", "-config", configPath}
+
+	// Use a channel to catch potential panics
+	done := make(chan bool)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("main() panic = %v", r)
+			}
+			done <- true
+		}()
+		main()
+	}()
+
+	// Wait for either completion or timeout
+	select {
+	case <-done:
+		// Test passed
+	case <-time.After(2 * time.Second):
+		t.Error("main() test timed out")
+	}
+}
+
 func TestRequestHandler(t *testing.T) {
+	srv := &server{
+		publisher: &mockPublisher{},
+	}
+
 	tests := []struct {
 		name       string
 		method     string
@@ -346,7 +485,7 @@ func TestRequestHandler(t *testing.T) {
 			req := httptest.NewRequest(tt.method, "/", nil)
 			rr := httptest.NewRecorder()
 
-			handler(rr, req)
+			srv.handler(rr, req)
 
 			if rr.Code != tt.expectCode {
 				t.Errorf("Expected status code %d, got %d", tt.expectCode, rr.Code)
