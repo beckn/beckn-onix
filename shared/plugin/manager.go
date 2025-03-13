@@ -54,11 +54,11 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 	}
 
 	// Initialize validator
-	validatorMap, err := vp.New(ctx, map[string]string{
+	validatorMap, defErr := vp.New(ctx, map[string]string{
 		"schema_dir": cfg.Plugins.ValidationPlugin.Schema.SchemaDir,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize validator: %w", err)
+	if defErr != (definition.Error{}) {
+		return nil, fmt.Errorf("failed to initialize validator: %v", defErr)
 	}
 
 	// Initialize the validators map
@@ -66,7 +66,6 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 	for key, validator := range validatorMap {
 		validators[key] = validator
 	}
-	fmt.Println("validators : ", validators)
 
 	return &Manager{vp: vp, validators: validators, cfg: cfg}, nil
 }
@@ -103,20 +102,21 @@ func pluginPath(path, id string) string {
 }
 
 // Validators retrieves the validation plugin instances.
-func (m *Manager) Validators(ctx context.Context) (map[string]definition.Validator, error) {
+func (m *Manager) Validators(ctx context.Context) (map[string]definition.Validator, definition.Error) {
 	if m.vp == nil {
-		return nil, fmt.Errorf("validator plugin provider not loaded")
-	}
+		return nil, definition.Error{Message: "validator plugin provider not loaded"}
 
+	}
 	configMap := map[string]string{
 		"schema_dir": m.cfg.Plugins.ValidationPlugin.Schema.SchemaDir,
 	}
 	_, err := m.vp.New(ctx, configMap)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize validator: %w", err)
+	if err != (definition.Error{}) {
+
+		return nil, definition.Error{Message: fmt.Sprintf("failed to initialize validator: %v", err)}
 	}
 
-	return m.validators, nil
+	return m.validators, definition.Error{}
 }
 
 // LoadConfig loads the configuration from a YAML file.

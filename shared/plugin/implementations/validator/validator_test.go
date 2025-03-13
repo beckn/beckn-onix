@@ -1,7 +1,9 @@
 package validator
 
 import (
+	"beckn-onix/shared/plugin/definition"
 	"context"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -66,15 +68,15 @@ func TestValidator_Validate(t *testing.T) {
 
 	config := map[string]string{"schema_dir": schemaDir}
 	v, err := New(context.Background(), config)
-	if err != nil {
+	if err != (definition.Error{}) {
 		t.Fatalf("Failed to create validator: %v", err)
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			u, _ := url.Parse(tt.url)
-			valid, err := v["example_1.0_endpoint"].Validate(context.Background(), *u, []byte(tt.payload))
-			if (err != nil && !strings.Contains(err.Error(), tt.wantErr)) || (err == nil && tt.wantErr != "") {
+			valid, err := v["example_1.0_endpoint"].Validate(context.Background(), u, []byte(tt.payload))
+			if (err != (definition.Error{}) && !strings.Contains(err.Message, tt.wantErr)) || (err == (definition.Error{}) && tt.wantErr != "") {
 				t.Errorf("Error: Validate() returned error = %v, expected error = %v", err, tt.wantErr)
 				return
 			}
@@ -97,7 +99,8 @@ func TestValidator_Initialise(t *testing.T) {
 			name: "Schema directory does not exist",
 			setupFunc: func(schemaDir string) error {
 				// Do not create the schema directory
-				return nil
+				return fmt.Errorf("schema directory does not exist: %s", schemaDir)
+
 			},
 			wantErr: "schema directory does not exist",
 		},
@@ -210,9 +213,9 @@ func TestValidator_Initialise(t *testing.T) {
 			v := &Validator{config: config}
 
 			_, err := v.Initialise()
-			if (err != nil && !strings.Contains(err.Error(), tt.wantErr)) || (err == nil && tt.wantErr != "") {
+			if (err != (definition.Error{}) && !strings.Contains(err.Message, tt.wantErr)) || (err == (definition.Error{}) && tt.wantErr != "") {
 				t.Errorf("Error: Initialise() returned error = %v, expected error = %v", err, tt.wantErr)
-			} else if err == nil {
+			} else if err == (definition.Error{}) {
 				t.Logf("Test %s passed: validator initialized successfully", tt.name)
 			} else {
 				t.Logf("Test %s passed with expected error: %v", tt.name, err)
@@ -279,9 +282,9 @@ func TestValidator_New(t *testing.T) {
 			}
 
 			_, err := New(context.Background(), tt.config)
-			if (err != nil && !strings.Contains(err.Error(), tt.wantErr)) || (err == nil && tt.wantErr != "") {
+			if (err != (definition.Error{}) && !strings.Contains(err.Message, tt.wantErr)) || (err == (definition.Error{}) && tt.wantErr != "") {
 				t.Errorf("Error: New() returned error = %v, expected error = %v", err, tt.wantErr)
-			} else if err == nil {
+			} else if err == (definition.Error{}) {
 				t.Logf("Test %s passed: validator initialized successfully", tt.name)
 			} else {
 				t.Logf("Test %s passed with expected error: %v", tt.name, err)

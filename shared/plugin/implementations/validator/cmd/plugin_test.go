@@ -12,8 +12,8 @@ import (
 // MockValidator is a mock implementation of the Validator interface for testing.
 type MockValidator struct{}
 
-func (m *MockValidator) Validate(ctx context.Context, u url.URL, data []byte) (bool, error) {
-	return true, nil
+func (m *MockValidator) Validate(ctx context.Context, u *url.URL, data []byte) (bool, definition.Error) {
+	return true, (definition.Error{})
 }
 
 // Mock New function for testing
@@ -70,7 +70,7 @@ func TestValidatorProvider_New(t *testing.T) {
 
 			// Check for expected error
 			if tt.expectedError != "" {
-				if err == nil || err.Error() != tt.expectedError {
+				if err == (definition.Error{}) || err.Message != tt.expectedError {
 					t.Errorf("expected error %q, got %v", tt.expectedError, err)
 				}
 				return
