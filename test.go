@@ -65,9 +65,9 @@ func main() {
 	}
 
 	// Get the validators map
-	validators, err := manager.Validators(context.Background())
-	if err != nil {
-		log.Fatalf("Failed to get validators: %v", err)
+	validators, defErr := manager.Validators(context.Background())
+	if defErr != (definition.Error{}) {
+		log.Fatalf("Failed to get validators: %v", defErr)
 	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +88,7 @@ func validateHandler(w http.ResponseWriter, r *http.Request, validators map[stri
 
 	// Extract endpoint from request URL
 	requestURL := r.RequestURI
-	u, err := url.Parse(requestURL)
+	u, err := url.ParseRequestURI(requestURL)
 	if err != nil {
 		http.Error(w, "Failed to parse request URL", http.StatusBadRequest)
 		return
@@ -99,8 +99,6 @@ func validateHandler(w http.ResponseWriter, r *http.Request, validators map[stri
 		http.Error(w, "Failed to read payload data", http.StatusInternalServerError)
 		return
 	}
-	fmt.Println("printing payload data", string(payloadData))
-
 	var payload Payload
 	err = json.Unmarshal(payloadData, &payload)
 	if err != nil {
@@ -123,9 +121,9 @@ func validateHandler(w http.ResponseWriter, r *http.Request, validators map[stri
 	}
 
 	ctx := context.Background()
-	valid, err := validator.Validate(ctx, *u, payloadData)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Document validation failed: %v", err), http.StatusBadRequest)
+	valid, validationErr := validator.Validate(ctx, u, payloadData)
+	if validationErr != (definition.Error{}) {
+		http.Error(w, fmt.Sprintf("Document validation failed: %v", validationErr), http.StatusBadRequest)
 	} else if !valid {
 		http.Error(w, "Document validation failed", http.StatusBadRequest)
 	} else {
