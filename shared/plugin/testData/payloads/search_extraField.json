@@ -1,0 +1,63 @@
+{
+    "context": {
+      "action": "search",
+      "bap_id": "bap.example.com",
+      "bap_uri": "https://example-bap.com/prod/trv10",
+      "domain": "example-domain",
+      "location": {
+        "city": {
+          "code": "PUN"
+        },
+        "country": {
+          "code": "IND"
+        }
+      },
+      "message_id": "123e4567-e89b-12d3-a456-426614174000",
+      "timestamp": "2025-03-06T12:00:00Z",
+      "transaction_id": "123e4567-e89b-12d3-a456-426614174001",
+      "ttl": "PT30M",
+      "version": "1.0.0",
+      "extra_field": "unexpected_value"
+    },
+    "message": {
+      "intent": {
+        "fulfillment": {
+          "stops": [
+            {
+              "location": {
+                "gps": "19.0760,72.8777",
+                "created_at": "unexpected_value"
+              },
+              "type": "START"
+            },
+            {
+              "location": {
+                "gps": "18.5204,73.8567"
+              },
+              "type": "END"
+            }
+          ]
+        },
+        "payment": {
+          "collected_by": "BPP",
+          "tags": [
+            {
+              "descriptor": {
+                "code": "some-code"
+              },
+              "display": true,
+              "list": [
+                {
+                  "descriptor": {
+                    "code": "list-code"
+                  },
+                  "value": "list-value"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+  
