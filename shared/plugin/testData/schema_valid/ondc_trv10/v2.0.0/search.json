@@ -1,0 +1,129 @@
+{
+  "$id": "http://example.com/schema/searchSchema",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "context": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string" },
+        "bap_id": { "type": "string" },
+        "bap_uri": { "type": "string", "format": "uri" },
+        "domain": { "type": "string" },
+        "location": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "object",
+              "properties": {
+                "code": { "type": "string" }
+              },
+              "required": ["code"]
+            },
+            "country": {
+              "type": "object",
+              "properties": {
+                "code": { "type": "string" }
+              },
+              "required": ["code"]
+            }
+          },
+          "required": ["city", "country"]
+        },
+        "message_id": { "type": "string", "format": "uuid" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "transaction_id": { "type": "string", "format": "uuid" },
+        "ttl": { "type": "string" },
+        "version": { "type": "string" }
+      },
+      "required": [
+        "action",
+        "bap_id",
+        "bap_uri",
+        "domain",
+        "location",
+        "message_id",
+        "timestamp",
+        "transaction_id",
+        "ttl",
+        "version"
+      ]
+    },
+    "message": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "type": "object",
+          "properties": {
+            "fulfillment": {
+              "type": "object",
+              "properties": {
+                "stops": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "location": {
+                        "type": "object",
+                        "properties": {
+                          "gps": { "type": "string", "pattern": "^\\d{1,3}\\.\\d+,\\s?\\d{1,3}\\.\\d+$" }
+                        },
+                        "required": ["gps"]
+                      },
+                      "type": { "type": "string", "enum": ["START", "END"] }
+                    },
+                    "required": ["location", "type"]
+                  }
+                }
+              },
+              "required": ["stops"]
+            },
+            "payment": {
+              "type": "object",
+              "properties": {
+                "collected_by": { "type": "string", "enum": ["BPP", "BAP"] },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "descriptor": {
+                        "type": "object",
+                        "properties": {
+                          "code": { "type": "string" }
+                        },
+                        "required": ["code"]
+                      },
+                      "display": { "type": "boolean" },
+                      "list": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "descriptor": {
+                              "type": "object",
+                              "properties": {
+                                "code": { "type": "string" }
+                              },
+                              "required": ["code"]
+                            },
+                            "value": { "type": "string" }
+                          },
+                          "required": ["descriptor", "value"]
+                        }
+                      }
+                    },
+                    "required": ["descriptor", "display", "list"]
+                  }
+                }
+              },
+              "required": ["collected_by", "tags"]
+            }
+          },
+          "required": ["fulfillment", "payment"]
+        }
+      }
+    }
+  },
+  "required": ["context", "message"]
+}

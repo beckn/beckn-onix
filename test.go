@@ -1,34 +1,86 @@
 package main
 
 import (
-	"beckn-onix/plugins"
+	"beckn-onix/shared/plugin"
+	"beckn-onix/shared/plugin/definition"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 )
 
-// Payload represents the structure of the data payload with context information.
+var (
+	manager    *plugin.Manager
+	validators map[string]definition.Validator
+)
+
+// Payload represents the structure of the payload with context information.
 type Payload struct {
 	Context struct {
-		Domain  string `json:"domain"`
-		Version string `json:"version"`
+		Action   string `json:"action"`
+		BapID    string `json:"bap_id"`
+		BapURI   string `json:"bap_uri"`
+		BppID    string `json:"bpp_id"`
+		BppURI   string `json:"bpp_uri"`
+		Domain   string `json:"domain"`
+		Location struct {
+			City struct {
+				Code string `json:"code"`
+			} `json:"city"`
+			Country struct {
+				Code string `json:"code"`
+			} `json:"country"`
+		} `json:"location"`
+		MessageID     string `json:"message_id"`
+		Timestamp     string `json:"timestamp"`
+		TransactionID string `json:"transaction_id"`
+		TTL           string `json:"ttl"`
+		Version       string `json:"version"`
 	} `json:"context"`
+	Message struct {
+		CancellationReasonID string `json:"cancellation_reason_id"`
+		Descriptor           struct {
+			Code string `json:"code"`
+			Name string `json:"name"`
+		} `json:"descriptor"`
+		OrderID string `json:"order_id"`
+	} `json:"message"`
 }
 
 func main() {
-	http.HandleFunc("/", validateHandler)
+	var err error
+	// Load the configuration
+	config, err := plugin.LoadConfig("shared/plugin/plugin.yaml")
+	if err != nil {
+		log.Fatalf("Failed to load plugins configuration: %v", err)
+	}
+
+	// Initialize the plugin manager
+	manager, err = plugin.NewManager(context.Background(), config)
+	if err != nil {
+		log.Fatalf("Failed to create PluginManager: %v", err)
+	}
+
+	// Get the validators map
+	validators, err := manager.Validators(context.Background())
+	if err != nil {
+		log.Fatalf("Failed to get validators: %v", err)
+	}
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		validateHandler(w, r, validators)
+	})
 	fmt.Println("Starting server on port 8084...")
-	err := http.ListenAndServe(":8084", nil)
+	err = http.ListenAndServe(":8084", nil)
 	if err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
 }
 
-func validateHandler(w http.ResponseWriter, r *http.Request) {
+func validateHandler(w http.ResponseWriter, r *http.Request, validators map[string]definition.Validator) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
@@ -47,39 +99,22 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read payload data", http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("printing payload data", string(payloadData))
 
-	// Initialize an instance of Payload struct
 	var payload Payload
-	err1 := json.Unmarshal(payloadData, &payload)
-	if err1 != nil {
-		http.Error(w, "Failed to parse JSON payload", http.StatusBadRequest)
-		return
-	}
-
-	// Extract the domain, version, and endpoint from the payload and URL
-	domain := payload.Context.Domain
-	version := payload.Context.Version
-	version = fmt.Sprintf("v%s", version)
-
-	endpoint := strings.Trim(u.Path, "/")
-	fmt.Println("Handling request for endpoint:", endpoint)
-	domain = strings.ToLower(domain)
-	domain = strings.ReplaceAll(domain, ":", "_")
-
-	schemaFileName := fmt.Sprintf("%s/%s/%s.json", domain, version, endpoint)
-
-	pluginsConfig, err := plugins.LoadPluginsConfig("plugins/config.yaml")
+	err = json.Unmarshal(payloadData, &payload)
 	if err != nil {
-		http.Error(w, "Failed to load plugins configuration", http.StatusInternalServerError)
+		log.Printf("Failed to parse JSON payload: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to parse JSON payload: %v", err), http.StatusBadRequest)
 		return
 	}
-	debug := true
 
-	_, validators, err := plugins.NewValidatorProvider(pluginsConfig, debug)
-	if err != nil {
-		http.Error(w, "Failed to create PluginManager", http.StatusInternalServerError)
+	// Validate that the domain and version fields are not empty
+	if payload.Context.Domain == "" || payload.Context.Version == "" {
+		http.Error(w, "Invalid payload: domain and version are required fields", http.StatusBadRequest)
 		return
 	}
+	schemaFileName := "ondc_trv10_v2.0.0_cancel"
 
 	validator, exists := validators[schemaFileName]
 	if !exists {
@@ -87,10 +122,12 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
-	err = validator.Validate(ctx, payloadData)
+	ctx := context.Background()
+	valid, err := validator.Validate(ctx, *u, payloadData)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Document validation failed: %v", err), http.StatusBadRequest)
+	} else if !valid {
+		http.Error(w, "Document validation failed", http.StatusBadRequest)
 	} else {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Document validation succeeded!"))
