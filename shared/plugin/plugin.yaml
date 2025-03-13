@@ -1,0 +1,6 @@
+plugins:
+  validation_plugin: 
+    id: validator 
+    config:
+      schema_dir:        #Directory where the schema files are stored
+    plugin_path: shared/plugin/implementations/
