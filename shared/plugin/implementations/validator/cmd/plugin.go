@@ -18,13 +18,7 @@ func (vp ValidatorProvider) New(ctx context.Context, config map[string]string) (
 		return nil, definition.Error{Path: "", Message: err.Message}
 	}
 
-	// Convert the map to the expected type
-	result := make(map[string]definition.Validator)
-	for key, val := range validators {
-		result[key] = val
-	}
-
-	return result, definition.Error{}
+	return validators, definition.Error{}
 }
 
 // Provider is the exported symbol that the plugin manager will look for.
