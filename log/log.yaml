@@ -1,0 +1,12 @@
+level: info
+destinations:
+  - type: stdout
+  - type: file
+    config:
+      path: logs/app.log
+      maxSize: "500"
+      maxBackups: "15"
+      maxAge: "30"
+context_keys:
+  - requestId
+  - userId
