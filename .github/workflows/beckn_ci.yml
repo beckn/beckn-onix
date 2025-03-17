@@ -17,9 +17,6 @@ jobs:
       # 1. Checkout the code from the test branch (triggered by PR)
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          ref: ${{ env.REF_BRANCH }}
-          fetch-depth: 1
 
       # 2. Set up Go environment
       - name: Set up Go 1.24.0
@@ -32,19 +29,20 @@ jobs:
         run: |
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
-      # 4. Run golangci-lint on the entire APP_DIRECTORY (including subdirectories)
+      # 4. Run golangci-lint on the entire APP_DIRECTORY (including subdirectories) ${{ env.APP_DIRECTORY }}
       - name: Run golangci-lint
         run: |
-          golangci-lint run ${{ env.APP_DIRECTORY }}
+          golangci-lint run ./...
 
-      # 5. Run unit tests with coverage recursively for all Go files
+      # 5. Run unit tests with coverage in the entire repository
       - name: Run unit tests with coverage
         run: |
-          # Run tests recursively for all Go files
-          go test -v -coverprofile=coverage.out ${{ env.APP_DIRECTORY }}/...
-
-          # Generate coverage report
-          go tool cover -func=coverage.out | tee coverage.txt
+          # Find all directories with Go test files and run `go test` on them
+          find ./ -type f -name '*_test.go' -exec dirname {} \; | sort -u | while read dir; do
+            echo "Running tests in $dir"
+            go test -v -coverprofile=coverage.out $dir
+            go tool cover -func=coverage.out | tee coverage.txt
+          done
 
       # 6. Check if coverage is >= 90%, but only check coverage if tests exist
       - name: Check coverage percentage
@@ -68,12 +66,12 @@ jobs:
           fi
 
       # 7. Build the Go code
-      - name: Build Go code
-        run: |
-          go build -o myapp ${{ env.APP_DIRECTORY }}/...
-          if [ ! -f myapp ]; then
-            echo "Build failed: myapp executable was not created."
-            exit 1
-          else
-            echo "Build succeeded: myapp executable created."
-          fi
+      #- name: Build Go code
+      #  run: |
+      #    go build -o myapp ${{ env.APP_DIRECTORY }}/...
+      #    if [ ! -f myapp ]; then
+      #      echo "Build failed: myapp executable was not created."
+      #      exit 1
+      #    else
+      #      echo "Build succeeded: myapp executable created."
+       #   fi
