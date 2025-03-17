@@ -1,0 +1,69 @@
+- id: pooja-stores
+  descriptor:
+    name: Pooja Stores
+  locations:
+    - id: koramangala-4th-block-location
+      gps: "12.9349377,77.6055586"
+  categories:
+    - id: fresh_fruits
+      descriptor:
+        name: Fresh Fruits
+    - id: beverages
+      descriptor:
+        name: Beverages
+  items:
+    - id: item_2
+      descriptor:
+        name: Green Apples Organic
+        images:
+          - url: "https://mock_bpp.com/images/item_2.jpg"
+      category_id: fresh_fruits
+      location_id: koramangala-4th-block-location
+      price:
+        currency: INR
+        value: "170"
+      matched: true
+    - id: item_1
+      descriptor:
+        name: Red Apples
+        images:
+          - url: "https://mock_bpp.com/images/item_1.jpg"
+      category_id: fresh_fruits
+      location_id: koramangala-4th-block-location
+      price:
+        currency: INR
+        value: "90"
+      related: true
+    - id: item_7
+      descriptor:
+        name: Green Apple Juice
+        images:
+          - url: "https://mock_bpp.com/images/item_7.jpg"
+      category_id: beverages
+      location_id: koramangala-4th-block-location
+      price:
+        currency: INR
+        value: "70"
+      matched: true
+- id: food-mall
+  descriptor:
+    name: Food Mall
+  locations:
+    - id: food-mall-location
+      gps: "12.9349377,77.6055586"
+  categories:
+    - id: fresh-food
+      descriptor:
+        name: Fresh food
+  items:
+    - id: item_1_1
+      descriptor:
+        name: Green Apple Salad
+        images:
+          - url: "https://mock_bpp.com/images/item_1_1.jpg"
+      category_id: fresh-food
+      location_id: food-mall-location
+      price:
+        currency: INR
+        value: "200"
+      matched: true
