@@ -20,6 +20,7 @@ type BecknRequest struct {
 type Error struct {
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
+	Paths   string `json:"paths,omitempty"`
 }
 
 type Message struct {
@@ -55,13 +56,17 @@ var DefaultError = Error{
 	Message: "Internal server error",
 }
 
-func Nack(ctx context.Context, tp ErrorType, body []byte) ([]byte, error) {
+func Nack(ctx context.Context, tp ErrorType, paths string, body []byte) ([]byte, error) {
 	var req BecknRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, fmt.Errorf("failed to parse request: %w", err)
 	}
 
 	errorObj, ok := errorMap[tp]
+	if paths != "" {
+		errorObj.Paths = paths
+	}
+
 	var response BecknResponse
 
 	if !ok {

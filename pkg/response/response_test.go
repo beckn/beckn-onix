@@ -18,6 +18,7 @@ func TestNack(t *testing.T) {
 		wantErrCode string
 		wantErrMsg  string
 		wantErr     bool
+		path        string
 	}{
 		{
 			name:        "Schema validation error",
@@ -27,6 +28,7 @@ func TestNack(t *testing.T) {
 			wantErrCode: "400",
 			wantErrMsg:  "Schema validation failed",
 			wantErr:     false,
+			path:        "test",
 		},
 		{
 			name:        "Invalid request error",
@@ -36,6 +38,7 @@ func TestNack(t *testing.T) {
 			wantErrCode: "401",
 			wantErrMsg:  "Invalid request format",
 			wantErr:     false,
+			path:        "test",
 		},
 		{
 			name:        "Unknown error type",
@@ -45,6 +48,7 @@ func TestNack(t *testing.T) {
 			wantErrCode: "500",
 			wantErrMsg:  "Internal server error",
 			wantErr:     false,
+			path:        "test",
 		},
 		{
 			name:        "Empty request body",
@@ -54,12 +58,14 @@ func TestNack(t *testing.T) {
 			wantErrCode: "400",
 			wantErrMsg:  "Schema validation failed",
 			wantErr:     false,
+			path:        "test",
 		},
 		{
 			name:        "Invalid JSON",
 			errorType:   SchemaValidationErrorType,
 			requestBody: `{invalid json}`,
 			wantErr:     true,
+			path:        "test",
 		},
 		{
 			name:        "Complex nested context",
@@ -69,12 +75,13 @@ func TestNack(t *testing.T) {
 			wantErrCode: "400",
 			wantErrMsg:  "Schema validation failed",
 			wantErr:     false,
+			path:        "test",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, err := Nack(ctx, tt.errorType, []byte(tt.requestBody))
+			resp, err := Nack(ctx, tt.errorType, tt.path, []byte(tt.requestBody))
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Nack() error = %v, wantErr %v", err, tt.wantErr)
