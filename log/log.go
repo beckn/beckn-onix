@@ -1,150 +1,251 @@
-package logpackage
+package log
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
-	"path/filepath"
-	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
 	"gopkg.in/natefinch/lumberjack.v2"
-	"gopkg.in/yaml.v2"
+	// "gopkg.in/yaml.v2"
 )
 
-type LoggerConfig struct {
-	Level       string   `yaml:"level"`
-	FilePath    string   `yaml:"file_path"`
-	MaxSize     int      `yaml:"max_size"`
-	MaxBackups  int      `yaml:"max_backups"`
-	MaxAge      int      `yaml:"max_age"`
-	ContextKeys []string `yaml:"context_keys"`
+type Level string
+type DestinationType string
+type Destination struct {
+	Type   DestinationType   `yaml:"type"`
+	Config map[string]string `yaml:"config"`
+}
+
+const (
+	Stdout DestinationType = "stdout"
+	File   DestinationType = "file"
+)
+
+const (
+	DebugLevel Level = "debug"
+	InfoLevel  Level = "info"
+	WarnLevel  Level = "warn"
+	ErrorLevel Level = "error"
+	FatalLevel Level = "fatal"
+	PanicLevel Level = "panic"
+)
+
+var logLevels = map[Level]zerolog.Level{
+	DebugLevel: zerolog.DebugLevel,
+	InfoLevel:  zerolog.InfoLevel,
+	WarnLevel:  zerolog.WarnLevel,
+	ErrorLevel: zerolog.ErrorLevel,
+	FatalLevel: zerolog.FatalLevel,
+	PanicLevel: zerolog.PanicLevel,
+}
+
+type Config struct {
+	level        Level         `yaml:"level"`
+	destinations []Destination `yaml:"destinations"`
+	contextKeys  []string      `yaml:"contextKeys"`
 }
 
 var (
 	logger zerolog.Logger
-	cfg    LoggerConfig
+	cfg    Config
 	once   sync.Once
-
-	getConfigPath = func() (string, error) {
-		_, file, _, ok := runtime.Caller(0)
-		if !ok {
-			return "", fmt.Errorf("failed to get runtime caller")
-		}
-		dir := filepath.Dir(file)
-		return filepath.Join(dir, "log.yaml"), nil
-	}
 )
 
-func loadConfig() (LoggerConfig, error) {
-	var config LoggerConfig
+var (
+	ErrInvalidLogLevel   = errors.New("invalid log level")
+	ErrLogDestinationNil = errors.New("log Destinations cant be empty")
+	ErrMissingFilePath   = errors.New("file path missing in destination config for file logging")
+)
 
-	configPath, err := getConfigPath()
-	if err != nil {
-		return config, fmt.Errorf("error finding config path: %w", err)
+func (config *Config) validate() error {
+	if _, exists := logLevels[config.level]; !exists {
+		return ErrInvalidLogLevel
 	}
 
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return config, fmt.Errorf("failed to read config file: %w", err)
+	if len(config.destinations) == 0 {
+		return ErrLogDestinationNil
 	}
 
-	err = yaml.Unmarshal(data, &config)
-	if err != nil {
-		return config, fmt.Errorf("failed to parse YAML: %w", err)
-	}
-
-	return config, nil
-}
-
-func InitLogger(configs ...LoggerConfig) {
-	once.Do(func() {
-		var err error
-
-		if len(configs) > 0 {
-			cfg = configs[0]
-		} else {
-			cfg, err = loadConfig()
-			if err != nil {
-				fmt.Println("Logger initialization failed:", err)
-				return
+	for _, dest := range config.destinations {
+		switch dest.Type {
+		case Stdout:
+		case File:
+			if _, exists := dest.Config["path"]; !exists {
+				return ErrMissingFilePath
 			}
+
+			for _, key := range []string{"maxSize", "maxBackups", "maxAge"} {
+				if valStr, ok := dest.Config[key]; ok {
+					if _, err := strconv.Atoi(valStr); err != nil {
+						return fmt.Errorf("invalid %s: %w", key, err)
+					}
+				}
+			}
+		default:
+			return fmt.Errorf("Invalid destination type '%s'", dest.Type)
 		}
-
-		level, err := zerolog.ParseLevel(cfg.Level)
-		if err != nil {
-			level = zerolog.InfoLevel
-		}
-
-		zerolog.SetGlobalLevel(level)
-		zerolog.TimeFieldFormat = time.RFC3339
-
-		logWriter := zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}
-		fileWriter := &lumberjack.Logger{
-			Filename:   cfg.FilePath,
-			MaxSize:    cfg.MaxSize,
-			MaxBackups: cfg.MaxBackups,
-			MaxAge:     cfg.MaxAge,
-		}
-
-		multi := zerolog.MultiLevelWriter(logWriter, fileWriter)
-		logger = zerolog.New(multi).With().Timestamp().Logger()
-	})
+	}
+	return nil
 }
 
+var defaultConfig = Config{
+	level: InfoLevel,
+	destinations: []Destination{
+		{Type: Stdout},
+	},
+	contextKeys: []string{"userID", "requestID"},
+}
+
+func init() {
+	logger, _ = getLogger(defaultConfig)
+}
+
+func getLogger(config Config) (zerolog.Logger, error) {
+	var newLogger zerolog.Logger
+	var writers []io.Writer
+	for _, dest := range config.destinations {
+		switch dest.Type {
+		case Stdout:
+			writers = append(writers, os.Stdout)
+		case File:
+			filePath := dest.Config["path"]
+			lumberjackLogger := &lumberjack.Logger{
+				Filename: filePath,
+			}
+
+			setConfigValue := func(key string, target *int) {
+				if valStr, ok := dest.Config[key]; ok {
+					if val, err := strconv.Atoi(valStr); err == nil {
+						*target = val
+					}
+				}
+			}
+			setConfigValue("maxSize", &lumberjackLogger.MaxSize)
+			setConfigValue("maxBackups", &lumberjackLogger.MaxBackups)
+			setConfigValue("maxAge", &lumberjackLogger.MaxAge)
+			if compress, ok := dest.Config["compress"]; ok {
+				lumberjackLogger.Compress = compress == "true"
+			}
+			writers = append(writers, lumberjackLogger)
+		}
+	}
+	multiwriter := io.MultiWriter(writers...)
+	newLogger = zerolog.New(multiwriter).
+		Level(logLevels[config.level]).
+		With().
+		Timestamp().
+		Caller().
+		Logger()
+
+	cfg = config
+	return newLogger, nil
+}
+func InitLogger(c Config) error {
+	if err := c.validate(); err != nil {
+		return err
+	}
+	var initErr error
+	once.Do(func() {
+		logger, initErr = getLogger(c)
+	})
+	return initErr
+}
 func Debug(ctx context.Context, msg string) {
-	logEvent(ctx, logger.Debug(), msg)
+	logEvent(ctx, zerolog.DebugLevel, msg, nil)
 }
 
 func Debugf(ctx context.Context, format string, v ...any) {
-	logEvent(ctx, logger.Debug(), fmt.Sprintf(format, v...))
+	msg := fmt.Sprintf(format, v...)
+	logEvent(ctx, zerolog.DebugLevel, msg, nil)
 }
 
 func Info(ctx context.Context, msg string) {
-	logEvent(ctx, logger.Info(), msg)
+	logEvent(ctx, zerolog.InfoLevel, msg, nil)
 }
 
 func Infof(ctx context.Context, format string, v ...any) {
-	logEvent(ctx, logger.Info(), fmt.Sprintf(format, v...))
+	msg := fmt.Sprintf(format, v...)
+	logEvent(ctx, zerolog.InfoLevel, msg, nil)
 }
 
 func Warn(ctx context.Context, msg string) {
-	logEvent(ctx, logger.Warn(), msg)
+	logEvent(ctx, zerolog.WarnLevel, msg, nil)
 }
 
 func Warnf(ctx context.Context, format string, v ...any) {
-	logEvent(ctx, logger.Warn(), fmt.Sprintf(format, v...))
+	msg := fmt.Sprintf(format, v...)
+	logEvent(ctx, zerolog.WarnLevel, msg, nil)
 }
 
 func Error(ctx context.Context, err error, msg string) {
-	logEvent(ctx, logger.Error().Err(err), msg)
+	logEvent(ctx, zerolog.ErrorLevel, msg, err)
 }
 
 func Errorf(ctx context.Context, err error, format string, v ...any) {
-	logEvent(ctx, logger.Error().Err(err), fmt.Sprintf(format, v...))
+	msg := fmt.Sprintf(format, v...)
+	logEvent(ctx, zerolog.ErrorLevel, msg, err)
 }
 
-var ExitFunc = func(code int) {
-	os.Exit(code)
+func Fatal(ctx context.Context, err error, msg string) {
+	logEvent(ctx, zerolog.FatalLevel, msg, err)
 }
 
-func Fatal(ctx context.Context, msg string) {
-	logEvent(ctx, logger.Error(), msg)
-	ExitFunc(1)
+func Fatalf(ctx context.Context, err error, format string, v ...any) {
+	msg := fmt.Sprintf(format, v...)
+	logEvent(ctx, zerolog.FatalLevel, msg, err)
 }
 
-func Fatalf(ctx context.Context, format string, v ...any) {
-	logEvent(ctx, logger.Fatal(), fmt.Sprintf(format, v...))
-	ExitFunc(1)
+func Panic(ctx context.Context, err error, msg string) {
+	logEvent(ctx, zerolog.PanicLevel, msg, err)
 }
 
-func logEvent(ctx context.Context, event *zerolog.Event, msg string) {
-	for _, key := range cfg.ContextKeys {
-		if val, ok := ctx.Value(key).(string); ok && val != "" {
-			event.Str(key, val)
-		}
+func Panicf(ctx context.Context, err error, format string, v ...any) {
+	msg := fmt.Sprintf(format, v...)
+	logEvent(ctx, zerolog.PanicLevel, msg, err)
+}
+
+func logEvent(ctx context.Context, level zerolog.Level, msg string, err error) {
+	event := logger.WithLevel(level)
+
+	if err != nil {
+		event = event.Err(err)
 	}
+	addCtx(ctx, event)
 	event.Msg(msg)
+}
+func Request(ctx context.Context, r *http.Request, body []byte) {
+	event := logger.Info()
+	addCtx(ctx, event)
+	event.Str("method", r.Method).
+		Str("url", r.URL.String()).
+		Str("body", string(body)).
+		Str("remoteAddr", r.RemoteAddr).
+		Msg("HTTP Request")
+}
+
+func addCtx(ctx context.Context, event *zerolog.Event) {
+	for _, key := range cfg.contextKeys {
+		val, ok := ctx.Value(key).(string)
+		if !ok {
+			continue
+		}
+		event.Str(key, val)
+	}
+}
+
+func Response(ctx context.Context, r *http.Request, statusCode int, responseTime time.Duration) {
+	event := logger.Info()
+	addCtx(ctx, event)
+	event.Str("method", r.Method).
+		Str("url", r.URL.String()).
+		Int("statusCode", statusCode).
+		Dur("responseTime", responseTime).
+		Msg("HTTP Response")
 }
