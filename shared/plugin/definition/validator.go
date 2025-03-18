@@ -1,4 +1,4 @@
-package main
+package definition
 
 import (
 	logger "beckn-onix/shared/log"

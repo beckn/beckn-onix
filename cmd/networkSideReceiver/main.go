@@ -22,9 +22,8 @@ type config struct {
 }
 
 type PluginConfig struct {
-	Root       string           `yaml:"root"`
-	Publisher  PublisherConfig  `yaml:"publisher"`
-	Encryption EncryptionConfig `yaml:"encryption"`
+	Root      string          `yaml:"root"`
+	Publisher PublisherConfig `yaml:"publisher"`
 }
 
 type PublisherConfig struct {
@@ -32,14 +31,8 @@ type PublisherConfig struct {
 	Config map[string]interface{} `yaml:"config"`
 }
 
-type EncryptionConfig struct {
-	ID     string                 `yaml:"id"`
-	Config map[string]interface{} `yaml:"config"`
-}
-
 type server struct {
 	publisher plugin.Publisher
-	encryption plugin.Encryption
 }
 
 func (s *server) handler(w http.ResponseWriter, r *http.Request) {
@@ -56,30 +49,14 @@ func (s *server) handler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// Get public key from request header or config
-	publicKey := r.Header.Get("X-Public-Key")
-	if publicKey == "" {
-		log.Log.Error("Public key not provided")
-		http.Error(w, "Public key required", http.StatusBadRequest)
-		return
-	}
-
-	// Encrypt the message
-	encryptedData, err := s.encryption.Encrypt(r.Context(), string(body), publicKey)
-	if err != nil {
-		log.Log.Error("Failed to encrypt message:", err)
-		http.Error(w, "Encryption failed", http.StatusInternalServerError)
-		return
-	}
-
-	// Publish encrypted message
+	// Publish message
 	go func() {
-		if err := s.publisher.Publish(encryptedData); err != nil {
+		if err := s.publisher.Publish(string(body)); err != nil {
 			log.Log.Error("Failed to publish message:", err)
 		}
 	}()
 
-	log.Log.Info("Received and encrypted request:", r.Method, r.URL.Path)
+	log.Log.Info("Received request:", r.Method, r.URL.Path)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -91,6 +68,7 @@ func run(ctx context.Context, configPath string) error {
 		return err
 	}
 	log.Log.Debug("Config: ", configuration)
+
 	pm := plugin.NewPluginManager(configuration.Plugin.Root, configPath)
 	if err := pm.LoadPlugin(configuration.Plugin.Publisher.ID); err != nil {
 		return fmt.Errorf("failed to load publisher plugin: %w", err)
@@ -105,23 +83,8 @@ func run(ctx context.Context, configPath string) error {
 		return fmt.Errorf("failed to configure publisher: %w", err)
 	}
 
-	// Load and configure encryption plugin
-	if err := pm.LoadPlugin(configuration.Plugin.Encryption.ID); err != nil {
-		return fmt.Errorf("failed to load encryption plugin: %w", err)
-	}
-
-	enc, err := pm.GetEncrypter(configuration.Plugin.Encryption.ID)
-	if err != nil {
-		return fmt.Errorf("failed to get encrypter: %w", err)
-	}
-
-	if err := enc.Configure(configuration.Plugin.Encryption.Config); err != nil {
-		return fmt.Errorf("failed to configure encrypter: %w", err)
-	}
-
 	srv := &server{
 		publisher: pub,
-		encryption: enc,
 	}
 
 	port := fmt.Sprintf(":%d", configuration.Port)
@@ -159,10 +122,6 @@ func (c *config) validate() error {
 
 	if c.Plugin.Publisher.ID == "" {
 		return fmt.Errorf("publisher ID is required")
-	}
-
-	if c.Plugin.Encryption.ID == "" {
-		return fmt.Errorf("encryption ID is required")
 	}
 
 	return nil
