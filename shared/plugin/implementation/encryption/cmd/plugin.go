@@ -16,19 +16,7 @@ func (p EncrypterProvider) New(ctx context.Context, config map[string]string) (d
 	if ctx == nil {
 		return nil, errors.New("context cannot be nil")
 	}
-
-	// Check for required configuration fields
-	if _, ok := config["publicKey"]; !ok {
-		return nil, errors.New("publicKey is required in config")
-	}
-
-	// Attempt to create a new Encrypter
-	encrypter, err := encryption.New(ctx, &encryption.Config{})
-	if err != nil {
-		return nil, err
-	}
-
-	return encrypter, nil
+	return encryption.New(ctx, &encryption.Config{})
 }
 
 // Provider is the exported symbol that the plugin manager will look for.

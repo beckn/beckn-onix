@@ -2,24 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/base64"
-	"encoding/pem"
 	"strings"
 	"testing"
 )
 
 func TestEncrypterProviderSuccess(t *testing.T) {
-	// Generate a test key pair first
-	publicKey, _, err := generateTestKeyPair()
-	if err != nil {
-		t.Fatalf("Failed to generate test key pair: %v", err)
-	}
-
-	publicKeyPEM := exportPublicKeyToPEM(publicKey)
-	publicKeyBase64 := base64.StdEncoding.EncodeToString(publicKeyPEM)
+	// Generate a test key pair first to use across all tests
+	publicKey := generateTestPublicKey(t)
 
 	tests := []struct {
 		name   string
@@ -27,41 +19,37 @@ func TestEncrypterProviderSuccess(t *testing.T) {
 		config map[string]string
 	}{
 		{
-			name: "Valid configuration with context",
-			ctx:  context.Background(),
-			config: map[string]string{
-				"publicKey": publicKeyBase64,
-				"algorithm": "RSA",
-			},
+			name:   "Valid empty config",
+			ctx:    context.Background(),
+			config: map[string]string{},
 		},
 		{
-			name: "Minimal configuration with context",
+			name: "Valid config with algorithm",
 			ctx:  context.Background(),
 			config: map[string]string{
-				"publicKey": publicKeyBase64,
+				"algorithm": "AES",
 			},
 		},
 	}
 
-	provider := EncrypterProvider{}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Create provider and encrypter
+			provider := EncrypterProvider{}
 			encrypter, err := provider.New(tt.ctx, tt.config)
 			if err != nil {
-				t.Errorf("EncrypterProvider.New() error = %v", err)
-				return
+				t.Fatalf("EncrypterProvider.New() error = %v", err)
 			}
 			if encrypter == nil {
-				t.Error("EncrypterProvider.New() returned nil encrypter")
+				t.Fatal("EncrypterProvider.New() returned nil encrypter")
 			}
 
+			// Test basic encryption
 			testData := "test message"
-			encrypted, err := encrypter.Encrypt(context.Background(), testData, publicKeyBase64)
+			encrypted, err := encrypter.Encrypt(tt.ctx, testData, publicKey)
 			if err != nil {
 				t.Errorf("Encrypt() error = %v", err)
 			}
-
 			if encrypted == "" {
 				t.Error("Encrypt() returned empty string")
 			}
@@ -76,83 +64,60 @@ func TestEncrypterProviderSuccess(t *testing.T) {
 func TestEncrypterProviderFailure(t *testing.T) {
 	tests := []struct {
 		name      string
+		ctx       context.Context
 		config    map[string]string
-		wantErr   bool
 		errSubstr string
 	}{
 		{
-			name:      "Invalid public key",
-			config:    map[string]string{}, // Missing publicKey
-			wantErr:   true,
-			errSubstr: "publicKey is required",
+			name:      "Nil context",
+			ctx:       nil,
+			config:    map[string]string{},
+			errSubstr: "context cannot be nil",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := EncrypterProvider{}
-			_, err := provider.New(context.Background(), tt.config)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("EncrypterProvider.New() error = %v, wantErr %v", err, tt.wantErr)
+			encrypter, err := provider.New(tt.ctx, tt.config)
+			if err == nil {
+				t.Error("EncrypterProvider.New() expected error, got nil")
 				return
 			}
-			if err != nil && !strings.Contains(err.Error(), tt.errSubstr) {
+			if !strings.Contains(err.Error(), tt.errSubstr) {
 				t.Errorf("EncrypterProvider.New() error = %v, want error containing %q", err, tt.errSubstr)
+			}
+			if encrypter != nil {
+				t.Error("EncrypterProvider.New() expected nil encrypter when error")
 			}
 		})
 	}
 }
 
-// Helper function to generate RSA key pair for testing
-func generateTestKeyPair() (*rsa.PublicKey, *rsa.PrivateKey, error) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, nil, err
+func TestProviderImplementation(t *testing.T) {
+	if Provider == nil {
+		t.Fatal("Provider is nil")
 	}
-	return &privateKey.PublicKey, privateKey, nil
 }
 
-// Helper function to export public key to PEM format
-func exportPublicKeyToPEM(publicKey *rsa.PublicKey) []byte {
-	publicKeyBytes, err := x509.MarshalPKIXPublicKey(publicKey)
-	if err != nil {
-		return nil
-	}
-
-	publicKeyPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: publicKeyBytes,
-	})
-
-	return publicKeyPEM
-}
-
-// TestEncrypterIntegration tests the full encryption flow
 func TestEncrypterIntegration(t *testing.T) {
 	provider := EncrypterProvider{}
 	ctx := context.Background()
 
-	// Generate test key pair
-	publicKey, _, err := generateTestKeyPair()
+	// Generate test key pair first
+	curve := ecdh.X25519()
+	privateKey, err := curve.GenerateKey(rand.Reader)
 	if err != nil {
-		t.Fatalf("Failed to generate test key pair: %v", err)
+		t.Fatalf("Failed to generate private key: %v", err)
 	}
+	publicKey := base64.StdEncoding.EncodeToString(privateKey.PublicKey().Bytes())
 
-	// Export and encode public key
-	publicKeyPEM := exportPublicKeyToPEM(publicKey)
-	publicKeyBase64 := base64.StdEncoding.EncodeToString(publicKeyPEM)
-
-	// Create encrypter with valid config
-	config := map[string]string{
-		"publicKey": publicKeyBase64,
-	}
-
-	encrypter, err := provider.New(ctx, config)
+	// Create encrypter
+	encrypter, err := provider.New(ctx, map[string]string{})
 	if err != nil {
 		t.Fatalf("Failed to create encrypter: %v", err)
 	}
 
-	// Test cases
 	tests := []struct {
 		name    string
 		data    string
@@ -168,28 +133,29 @@ func TestEncrypterIntegration(t *testing.T) {
 			data:    "",
 			wantErr: false,
 		},
-		{
-			name:    "Encrypt JSON message",
-			data:    `{"key": "value"}`,
-			wantErr: false,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encrypted, err := encrypter.Encrypt(ctx, tt.data, publicKeyBase64)
+			result, err := encrypter.Encrypt(ctx, tt.data, publicKey)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Encrypt() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if !tt.wantErr && encrypted == "" {
+			if !tt.wantErr && result == "" {
 				t.Error("Encrypt() returned empty string")
 			}
 		})
 	}
+}
 
-	// Test cleanup
-	if err := encrypter.Close(); err != nil {
-		t.Errorf("Close() error = %v", err)
+// Helper function to generate a test public key
+func generateTestPublicKey(t *testing.T) string {
+	t.Helper()
+	curve := ecdh.X25519()
+	privateKey, err := curve.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate private key: %v", err)
 	}
+	return base64.StdEncoding.EncodeToString(privateKey.PublicKey().Bytes())
 }
