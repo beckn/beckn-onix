@@ -1,0 +1,13 @@
+mode: set
+github.com/beckn/beckn-onix/shared/plugin/implementation/publisher/cmd/plugin.go:12.74,13.19 1 1
+github.com/beckn/beckn-onix/shared/plugin/implementation/publisher/cmd/plugin.go:13.19,15.3 1 1
+github.com/beckn/beckn-onix/shared/plugin/implementation/publisher/cmd/plugin.go:17.2,18.26 2 1
+github.com/beckn/beckn-onix/shared/plugin/implementation/publisher/cmd/plugin.go:18.26,20.3 1 1
+github.com/beckn/beckn-onix/shared/plugin/implementation/publisher/cmd/plugin.go:22.2,23.24 2 1
+github.com/beckn/beckn-onix/shared/plugin/implementation/publisher/cmd/plugin.go:23.24,25.3 1 1
+github.com/beckn/beckn-onix/shared/plugin/implementation/publisher/cmd/plugin.go:27.2,30.8 1 1
+github.com/beckn/beckn-onix/shared/plugin/implementation/publisher/cmd/plugin.go:37.109,38.16 1 1
+github.com/beckn/beckn-onix/shared/plugin/implementation/publisher/cmd/plugin.go:38.16,40.3 1 1
+github.com/beckn/beckn-onix/shared/plugin/implementation/publisher/cmd/plugin.go:42.2,43.16 2 1
+github.com/beckn/beckn-onix/shared/plugin/implementation/publisher/cmd/plugin.go:43.16,45.3 1 1
+github.com/beckn/beckn-onix/shared/plugin/implementation/publisher/cmd/plugin.go:47.2,47.32 1 0
