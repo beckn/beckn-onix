@@ -72,7 +72,7 @@ func TestValidatorProviderSuccess(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			vp := schemaValidatorProvider{}
-			validator, close, err := vp.New(tt.ctx, tt.config)
+			schemaValidator, close, err := vp.New(tt.ctx, tt.config)
 
 			// Ensure no error occurred
 			if err != nil {
@@ -80,9 +80,9 @@ func TestValidatorProviderSuccess(t *testing.T) {
 				return
 			}
 
-			// Ensure the validator is not nil
-			if validator == nil {
-				t.Error("expected a non-nil validator, got nil")
+			// Ensure the schemaValidator is not nil
+			if schemaValidator == nil {
+				t.Error("expected a non-nil schemaValidator, got nil")
 			}
 
 			// Ensure the close function is not nil
@@ -111,10 +111,22 @@ func TestValidatorProviderFailure(t *testing.T) {
 		expectedError string
 	}{
 		{
+			name:          "Config is empty",
+			ctx:           context.Background(),
+			config:        map[string]string{},
+			expectedError: "config must contain 'schema_dir'",
+		},
+		{
+			name:          "schema_dir is empty",
+			ctx:           context.Background(),
+			config:        map[string]string{"schema_dir": ""},
+			expectedError: "config must contain 'schema_dir'",
+		},
+		{
 			name:          "Invalid schema directory",
 			ctx:           context.Background(), // Valid context
 			config:        map[string]string{"schema_dir": "/invalid/dir"},
-			expectedError: "failed to initialise validator: schema directory does not exist: /invalid/dir",
+			expectedError: "failed to initialise schemaValidator: schema directory does not exist: /invalid/dir",
 		},
 		{
 			name:          "Nil context",

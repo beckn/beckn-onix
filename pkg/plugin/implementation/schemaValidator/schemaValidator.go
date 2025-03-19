@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	definition "github.com/beckn/beckn-onix/pkg/plugin/definition"
+	response "github.com/beckn/beckn-onix/pkg/response"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -23,12 +23,13 @@ type payload struct {
 	} `json:"context"`
 }
 
-// Validator implements the Validator interface.
+// SchemaValidator implements the Validator interface.
 type SchemaValidator struct {
 	config      *Config
 	schemaCache map[string]*jsonschema.Schema
 }
 
+// Config struct for SchemaValidator.
 type Config struct {
 	SchemaDir string
 }
@@ -45,8 +46,8 @@ func New(ctx context.Context, config *Config) (*SchemaValidator, func() error, e
 	}
 
 	// Call Initialise function to load schemas and get validators
-	if err := v.Initialise(); err != nil {
-		return nil, nil, fmt.Errorf("failed to initialise validator: %v", err)
+	if err := v.initialise(); err != nil {
+		return nil, nil, fmt.Errorf("failed to initialise schemaValidator: %v", err)
 	}
 	return v, v.Close, nil
 }
@@ -88,20 +89,20 @@ func (v *SchemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 		// Handle schema validation errors
 		if validationErr, ok := err.(*jsonschema.ValidationError); ok {
 			// Convert validation errors into an array of SchemaValError
-			var schemaErrors []definition.SchemaValError
+			var schemaErrors []response.Error
 			for _, cause := range validationErr.Causes {
 				// Extract the path and message from the validation error
 				path := strings.Join(cause.InstanceLocation, ".") // JSON path to the invalid field
 				message := cause.Error()                          // Validation error message
 
 				// Append the error to the schemaErrors array
-				schemaErrors = append(schemaErrors, definition.SchemaValError{
-					Path:    path,
+				schemaErrors = append(schemaErrors, response.Error{
+					Paths:   path,
 					Message: message,
 				})
 			}
 			// Return the array of schema validation errors
-			return &definition.SchemaValidationErr{Errors: schemaErrors}
+			return &response.SchemaValidationErr{Errors: schemaErrors}
 		}
 		// Return a generic error for non-validation errors
 		return fmt.Errorf("validation failed: %v", err)
@@ -116,7 +117,7 @@ type ValidatorProvider struct{}
 
 // Initialise initialises the validator provider by compiling all the JSON schema files
 // from the specified directory and storing them in a cache indexed by their schema filenames.
-func (v *SchemaValidator) Initialise() error {
+func (v *SchemaValidator) initialise() error {
 	schemaDir := v.config.SchemaDir
 	// Check if the directory exists and is accessible.
 	info, err := os.Stat(schemaDir)

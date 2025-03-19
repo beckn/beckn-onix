@@ -5,10 +5,10 @@ import (
 	"errors"
 
 	definition "github.com/beckn/beckn-onix/pkg/plugin/definition"
-	validator "github.com/beckn/beckn-onix/pkg/plugin/implementation/schemaValidator"
+	schemaValidator "github.com/beckn/beckn-onix/pkg/plugin/implementation/schemaValidator"
 )
 
-// ValidatorProvider provides instance of Validator.
+// schemaValidatorProvider provides instances of schemaValidator.
 type schemaValidatorProvider struct{}
 
 // New initializes a new Verifier instance.
@@ -23,11 +23,11 @@ func (vp schemaValidatorProvider) New(ctx context.Context, config map[string]str
 		return nil, nil, errors.New("config must contain 'schema_dir'")
 	}
 
-	// Create a new Validator instance with the provided configuration
-	return validator.New(ctx, &validator.Config{
-		SchemaDir: schemaDir, // Pass the schemaDir to the validator.Config
+	// Create a new schemaValidator instance with the provided configuration
+	return schemaValidator.New(ctx, &schemaValidator.Config{
+		SchemaDir: schemaDir,
 	})
 }
 
 // Provider is the exported symbol that the plugin manager will look for.
-var Provider definition.SchemaValidatorProvider = &schemaValidatorProvider{}
+var Provider definition.SchemaValidatorProvider = schemaValidatorProvider{}
