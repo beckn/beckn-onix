@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"github.com/beckn/beckn-onix/shared/plugin/definition"
-	"github.com/beckn/beckn-onix/shared/plugin/implementation/decryption"
+	decrypter "github.com/beckn/beckn-onix/shared/plugin/implementation/decryption"
 )
 
 // DecrypterProvider implements the definition.DecrypterProvider interface.
@@ -16,11 +16,7 @@ func (p DecrypterProvider) New(ctx context.Context, config map[string]string) (d
 	if ctx == nil {
 		return nil, nil, errors.New("context cannot be nil")
 	}
-	decrypter, cleanup, err := decryption.New(ctx, &decryption.Config{})
-	if err != nil {
-		return nil, nil, err
-	}
-	return decrypter, cleanup, nil
+	return decrypter.New(ctx, &decrypter.Config{})
 }
 
 // Provider is the exported symbol that the plugin manager will look for.

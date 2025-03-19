@@ -2,173 +2,116 @@ package decryption
 
 import (
 	"context"
+	"crypto/aes"
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
-	"fmt"
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/zenazn/pkcs7pad"
 )
 
-func generateValidTestKeys() (privateKeyB64, publicKeyB64 string) {
+// Helper function to generate valid test keys
+func generateTestKeys(t *testing.T) (privateKeyB64, publicKeyB64 string, sharedSecret []byte) {
 	curve := ecdh.X25519()
-	private, err := curve.GenerateKey(rand.Reader)
+	privateKey, err := curve.GenerateKey(rand.Reader)
 	if err != nil {
-		panic(err) // This should never happen in tests
+		t.Fatalf("Failed to generate private key: %v", err)
 	}
-	public := private.PublicKey()
 
-	return base64.StdEncoding.EncodeToString(private.Bytes()),
-		base64.StdEncoding.EncodeToString(public.Bytes())
+	publicKey := privateKey.PublicKey()
+	privateKeyB64 = base64.StdEncoding.EncodeToString(privateKey.Bytes())
+	publicKeyB64 = base64.StdEncoding.EncodeToString(publicKey.Bytes())
+
+	// Generate shared secret for encryption
+	secret, err := privateKey.ECDH(publicKey)
+	if err != nil {
+		t.Fatalf("Failed to generate shared secret: %v", err)
+	}
+	sharedSecret = secret
+	return
 }
 
-func TestConfig(t *testing.T) {
+// Helper function to encrypt test data
+func encryptTestData(t *testing.T, data []byte, sharedSecret []byte) string {
+	// Create AES cipher
+	block, err := aes.NewCipher(sharedSecret)
+	if err != nil {
+		t.Fatalf("Failed to create AES cipher: %v", err)
+	}
+
+	// Pad the data
+	paddedData := pkcs7pad.Pad(data, block.BlockSize())
+
+	// Encrypt the data
+	ciphertext := make([]byte, len(paddedData))
+	for i := 0; i < len(paddedData); i += block.BlockSize() {
+		block.Encrypt(ciphertext[i:i+block.BlockSize()], paddedData[i:i+block.BlockSize()])
+	}
+
+	return base64.StdEncoding.EncodeToString(ciphertext)
+}
+
+// TestDecrypterSuccess tests successful decryption scenarios
+func TestDecrypterSuccess(t *testing.T) {
+	privateKeyB64, publicKeyB64, sharedSecret := generateTestKeys(t)
+
 	tests := []struct {
 		name    string
-		config  *Config
+		data    []byte
 		wantErr bool
 	}{
 		{
-			name:    "success with nil config",
-			config:  nil,
+			name:    "Valid decryption with small data",
+			data:    []byte("test"),
 			wantErr: false,
 		},
 		{
-			name:    "success with empty config",
-			config:  &Config{},
+			name:    "Valid decryption with medium data",
+			data:    []byte("medium length test data that spans multiple blocks"),
+			wantErr: false,
+		},
+		{
+			name:    "Valid decryption with empty data",
+			data:    []byte{},
 			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			decrypter, cleanup, err := New(context.Background(), tt.config)
+			// Encrypt the test data
+			encryptedData := encryptTestData(t, tt.data, sharedSecret)
+
+			decrypter, cleanup, err := New(context.Background(), &Config{})
+			if err != nil {
+				t.Fatalf("Failed to create decrypter: %v", err)
+			}
+			defer func() {
+				if err := cleanup(); err != nil {
+					t.Errorf("Cleanup failed: %v", err)
+				}
+			}()
+
+			result, err := decrypter.Decrypt(context.Background(), encryptedData, privateKeyB64, publicKeyB64)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("Decrypt() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
+
 			if !tt.wantErr {
-				if decrypter == nil {
-					t.Error("New() decrypter is nil")
-				}
-				if cleanup == nil {
-					t.Error("New() cleanup is nil")
-				}
-				if err := cleanup(); err != nil {
-					t.Errorf("cleanup() error = %v", err)
+				if result != string(tt.data) {
+					t.Errorf("Decrypt() = %v, want %v", result, string(tt.data))
 				}
 			}
 		})
 	}
 }
 
-// TestDecrypter_Interface tests that the API works as expected
-func TestDecrypterInterface(t *testing.T) {
-	tests := []struct {
-		name          string
-		ctx           context.Context
-		encryptedData string
-		privateKey    string
-		publicKey     string
-		expectError   bool
-	}{
-		{
-			name:          "verify API contract - valid inputs",
-			ctx:           context.Background(),
-			encryptedData: base64.StdEncoding.EncodeToString(make([]byte, 16)),
-			privateKey:    base64.StdEncoding.EncodeToString(make([]byte, 32)),
-			publicKey:     base64.StdEncoding.EncodeToString(make([]byte, 32)),
-			expectError:   true, // We expect error because the data isn't properly formatted
-		},
-		{
-			name:          "verify API contract - nil context",
-			ctx:           nil,
-			encryptedData: base64.StdEncoding.EncodeToString(make([]byte, 16)),
-			privateKey:    base64.StdEncoding.EncodeToString(make([]byte, 32)),
-			publicKey:     base64.StdEncoding.EncodeToString(make([]byte, 32)),
-			expectError:   true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			d := &Decrypter{config: &Config{}}
-			_, err := d.Decrypt(tt.ctx, tt.encryptedData, tt.privateKey, tt.publicKey)
-
-			if tt.expectError && err == nil {
-				t.Error("Expected error but got none")
-			}
-			if !tt.expectError && err != nil {
-				t.Errorf("Expected no error but got: %v", err)
-			}
-		})
-	}
-}
-
-// MockDecrypter extends Decrypter to allow successful test by overriding the internal methods
-type MockDecrypter struct {
-	Decrypter
-	mockData string
-}
-
-// Override Decrypt to return mock data for successful tests
-func (m *MockDecrypter) Decrypt(ctx context.Context, encryptedData, privateKeyBase64, publicKeyBase64 string) (string, error) {
-	// Simple validation to simulate real behavior
-	if _, err := base64.StdEncoding.DecodeString(privateKeyBase64); err != nil {
-		return "", fmt.Errorf("invalid private key: %w", err)
-	}
-	if _, err := base64.StdEncoding.DecodeString(publicKeyBase64); err != nil {
-		return "", fmt.Errorf("invalid public key: %w", err)
-	}
-	if _, err := base64.StdEncoding.DecodeString(encryptedData); err != nil {
-		return "", fmt.Errorf("failed to decode encrypted data: %w", err)
-	}
-
-	return m.mockData, nil
-}
-
-func TestDecrypterSuccess(t *testing.T) {
-	privateKeyB64, publicKeyB64 := generateValidTestKeys()
-	mockDecrypter := &MockDecrypter{
-		mockData: "Successfully decrypted data",
-	}
-
-	tests := []struct {
-		name          string
-		encryptedData string
-		privateKey    string
-		publicKey     string
-		expected      string
-	}{
-		{
-			name:          "successful decryption",
-			encryptedData: base64.StdEncoding.EncodeToString([]byte("test encrypted data")),
-			privateKey:    privateKeyB64,
-			publicKey:     publicKeyB64,
-			expected:      "Successfully decrypted data",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := mockDecrypter.Decrypt(context.Background(), tt.encryptedData, tt.privateKey, tt.publicKey)
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-			if result != tt.expected {
-				t.Errorf("expected %q, got %q", tt.expected, result)
-			}
-		})
-	}
-}
-
+// TestDecrypterFailure tests various failure scenarios
 func TestDecrypterFailure(t *testing.T) {
-	// Generate valid test keys
-	privateKeyB64, publicKeyB64 := generateValidTestKeys()
-
-	// Create valid encrypted data for tests that need it
-	validEncryptedData := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	privateKeyB64, publicKeyB64, _ := generateTestKeys(t)
 
 	tests := []struct {
 		name          string
@@ -178,90 +121,151 @@ func TestDecrypterFailure(t *testing.T) {
 		expectedErr   string
 	}{
 		{
-			name:          "invalid private key base64",
-			encryptedData: validEncryptedData,
-			privateKey:    "invalid-base64",
+			name:          "Invalid private key format",
+			encryptedData: base64.StdEncoding.EncodeToString(make([]byte, 32)),
+			privateKey:    "invalid-base64!@#$",
 			publicKey:     publicKeyB64,
 			expectedErr:   "invalid private key",
 		},
 		{
-			name:          "invalid public key base64",
-			encryptedData: validEncryptedData,
+			name:          "Invalid public key format",
+			encryptedData: base64.StdEncoding.EncodeToString(make([]byte, 32)),
 			privateKey:    privateKeyB64,
-			publicKey:     "invalid-base64",
+			publicKey:     "invalid-base64!@#$",
 			expectedErr:   "invalid public key",
 		},
 		{
-			name:          "invalid encrypted data base64",
-			encryptedData: "invalid-base64",
+			name:          "Invalid encrypted data format",
+			encryptedData: "invalid-base64!@#$",
 			privateKey:    privateKeyB64,
 			publicKey:     publicKeyB64,
 			expectedErr:   "failed to decode encrypted data",
 		},
 		{
-			name:          "invalid blocksize",
-			encryptedData: base64.StdEncoding.EncodeToString([]byte("not-multiple-of-blocksize")),
-			privateKey:    privateKeyB64,
+			name:          "Empty private key",
+			encryptedData: base64.StdEncoding.EncodeToString(make([]byte, 32)),
+			privateKey:    "",
 			publicKey:     publicKeyB64,
-			expectedErr:   "ciphertext is not a multiple of the blocksize",
+			expectedErr:   "invalid private key",
 		},
 		{
-			name:          "invalid private key size",
-			encryptedData: validEncryptedData,
-			privateKey:    base64.StdEncoding.EncodeToString([]byte("small")),
+			name:          "Empty public key",
+			encryptedData: base64.StdEncoding.EncodeToString(make([]byte, 32)),
+			privateKey:    privateKeyB64,
+			publicKey:     "",
+			expectedErr:   "invalid public key",
+		},
+		{
+			name:          "Invalid base64 data",
+			encryptedData: "=invalid-base64", // Invalid base64 with leading =
+			privateKey:    privateKeyB64,
+			publicKey:     publicKeyB64,
+			expectedErr:   "failed to decode encrypted data",
+		},
+		{
+			name:          "Invalid private key size",
+			encryptedData: base64.StdEncoding.EncodeToString(make([]byte, 32)),
+			privateKey:    base64.StdEncoding.EncodeToString([]byte("short")),
 			publicKey:     publicKeyB64,
 			expectedErr:   "failed to create private key",
 		},
 		{
-			name:          "invalid public key size",
-			encryptedData: validEncryptedData,
+			name:          "Invalid public key size",
+			encryptedData: base64.StdEncoding.EncodeToString(make([]byte, 32)),
 			privateKey:    privateKeyB64,
-			publicKey:     base64.StdEncoding.EncodeToString([]byte("small")),
+			publicKey:     base64.StdEncoding.EncodeToString([]byte("short")),
 			expectedErr:   "failed to create public key",
+		},
+		{
+			name:          "Invalid block size",
+			encryptedData: base64.StdEncoding.EncodeToString([]byte("not-block-size")),
+			privateKey:    privateKeyB64,
+			publicKey:     publicKeyB64,
+			expectedErr:   "ciphertext is not a multiple of the blocksize",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := &Decrypter{config: &Config{}}
-			_, err := d.Decrypt(context.Background(), tt.encryptedData, tt.privateKey, tt.publicKey)
+			decrypter, cleanup, err := New(context.Background(), &Config{})
+			if err != nil {
+				t.Fatalf("Failed to create decrypter: %v", err)
+			}
+			defer func() {
+				if err := cleanup(); err != nil {
+					t.Errorf("Cleanup failed: %v", err)
+				}
+			}()
 
+			_, err = decrypter.Decrypt(context.Background(), tt.encryptedData, tt.privateKey, tt.publicKey)
 			if err == nil {
-				t.Error("expected error but got none")
+				t.Error("Expected error but got none")
 				return
 			}
 
 			if !strings.Contains(err.Error(), tt.expectedErr) {
-				t.Errorf("expected error containing %q, got %q", tt.expectedErr, err.Error())
+				t.Errorf("Expected error containing %q, got %q", tt.expectedErr, err.Error())
 			}
 		})
 	}
 }
 
-func TestDecrypterClose(t *testing.T) {
+// TestNewDecrypter tests the creation of new Decrypter instances
+func TestNewDecrypter(t *testing.T) {
 	tests := []struct {
-		name    string
-		wantErr bool
+		name      string
+		ctx       context.Context
+		config    *Config
+		wantError bool
 	}{
 		{
-			name:    "successful close",
-			wantErr: false,
+			name:      "Valid context and config",
+			ctx:       context.Background(),
+			config:    &Config{},
+			wantError: false,
+		},
+		{
+			name:      "Nil context",
+			ctx:       nil,
+			config:    &Config{},
+			wantError: false,
+		},
+		{
+			name:      "Nil config",
+			ctx:       context.Background(),
+			config:    nil,
+			wantError: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := &Decrypter{config: &Config{}}
-			if err := d.Close(); (err != nil) != tt.wantErr {
-				t.Errorf("Close() error = %v, wantErr %v", err, tt.wantErr)
+			decrypter, cleanup, err := New(tt.ctx, tt.config)
+			if (err != nil) != tt.wantError {
+				t.Errorf("New() error = %v, wantError %v", err, tt.wantError)
+				return
+			}
+
+			if !tt.wantError {
+				if decrypter == nil {
+					t.Error("Expected non-nil decrypter")
+				}
+				if cleanup == nil {
+					t.Error("Expected non-nil cleanup function")
+				} else {
+					if err := cleanup(); err != nil {
+						t.Errorf("Cleanup failed: %v", err)
+					}
+				}
 			}
 		})
 	}
 }
 
-// TestCoverage runs this empty test to ensure we have over 90% code coverage without testing the actual decryption logic
-func TestCoverage(t *testing.T) {
-	if os.Getenv("TEST_COVERAGE") != "1" {
-		t.Skip("Skipping coverage test")
+// TestDecrypterClose tests the Close method
+func TestDecrypterClose(t *testing.T) {
+	decrypter := &Decrypter{}
+	if err := decrypter.Close(); err != nil {
+		t.Errorf("Close() error = %v", err)
 	}
 }
