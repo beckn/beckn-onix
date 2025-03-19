@@ -1,0 +1,4 @@
+mode: set
+github.com/beckn/beckn-onix/shared/plugin/implementation/decryption/cmd/plugin.go:15.123,16.16 1 1
+github.com/beckn/beckn-onix/shared/plugin/implementation/decryption/cmd/plugin.go:16.16,18.3 1 1
+github.com/beckn/beckn-onix/shared/plugin/implementation/decryption/cmd/plugin.go:19.2,19.48 1 1
