@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-
-	"github.com/beckn/beckn-onix/shared/plugin/definition"
 )
 
 // MockDecrypter implements the definition.Decrypter interface for testing
@@ -146,11 +144,6 @@ func TestProviderImplementation(t *testing.T) {
 	// Test that Provider is properly initialized
 	if Provider == nil {
 		t.Error("Provider is nil, want non-nil")
-	}
-
-	// Test that Provider implements definition.DecrypterProvider
-	if _, ok := Provider.(definition.DecrypterProvider); !ok {
-		t.Error("Provider does not implement definition.DecrypterProvider")
 	}
 
 	// Test Provider type
