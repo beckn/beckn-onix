@@ -12,14 +12,12 @@ import (
 type EncrypterProvider struct{}
 
 func (p EncrypterProvider) New(ctx context.Context, config map[string]string) (definition.Encrypter, func() error, error) {
- if ctx == nil {
-   return nil, nil,errors.New("context cannot be nil")
- }
- cfg := &encrypter.Config{}
- return encrypter.New(ctx, cfg)
+	if ctx == nil {
+		return nil, nil, errors.New("context cannot be nil")
+	}
+	cfg := &encrypter.Config{}
+	return encrypter.New(ctx, cfg)
 }
-
-
 
 // Provider is the exported symbol that the plugin manager will look for.
 var Provider definition.EncrypterProvider = EncrypterProvider{}

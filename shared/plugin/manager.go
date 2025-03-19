@@ -12,9 +12,9 @@ import (
 
 // Config represents the plugin manager configuration.
 type Config struct {
-	Root     string       `yaml:"root"`
-	Signer   PluginConfig `yaml:"signer"`
-	Verifier PluginConfig `yaml:"verifier"`
+	Root      string       `yaml:"root"`
+	Signer    PluginConfig `yaml:"signer"`
+	Verifier  PluginConfig `yaml:"verifier"`
 	Encrypter PluginConfig `yaml:"encrypter"`
 }
 

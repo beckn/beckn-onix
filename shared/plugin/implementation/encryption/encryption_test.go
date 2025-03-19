@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
-
 )
 
 // Helper function to generate a test X25519 key pair
@@ -295,5 +294,3 @@ func TestEncrypt(t *testing.T) {
 		})
 	}
 }
-
-
