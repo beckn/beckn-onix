@@ -34,7 +34,10 @@ func TestLogFunctions(t *testing.T) {
 		{
 			name: "Debug log with context",
 			logFunc: func(ctx context.Context) {
-				ctx = context.WithValue(ctx, "requestID", "12345")
+				type ctxKey string
+				const requestID ctxKey = "requestID"
+
+				ctx = context.WithValue(ctx, requestID, "12345")
 				Debug(ctx, "debug message")
 			},
 			expectedOutput: `{"level":"debug","requestID":"12345","message":"debug message"}`,
@@ -42,7 +45,10 @@ func TestLogFunctions(t *testing.T) {
 		{
 			name: "Debugf with context",
 			logFunc: func(ctx context.Context) {
-				ctx = context.WithValue(ctx, "requestID", "12345")
+				type ctxKey string
+				const requestID ctxKey = "requestID"
+
+				ctx = context.WithValue(ctx, requestID, "12345")
 				Debugf(ctx, "formatted %s", "debug message")
 			},
 			expectedOutput: `{"level":"debug","requestID":"12345","message":"formatted debug message"}`,
@@ -50,7 +56,10 @@ func TestLogFunctions(t *testing.T) {
 		{
 			name: "Info log with message",
 			logFunc: func(ctx context.Context) {
-				ctx = context.WithValue(ctx, "requestID", "12345")
+				type ctxKey string
+				const requestID ctxKey = "requestID"
+
+				ctx = context.WithValue(ctx, requestID, "12345")
 				Info(ctx, "info message")
 			},
 			expectedOutput: `{"level":"info","requestID":"12345","message":"info message"}`,
@@ -66,7 +75,10 @@ func TestLogFunctions(t *testing.T) {
 		{
 			name: "Warn log with context",
 			logFunc: func(ctx context.Context) {
-				ctx = context.WithValue(ctx, "requestID", "12345")
+				type ctxKey string
+				const requestID ctxKey = "requestID"
+
+				ctx = context.WithValue(ctx, requestID, "12345")
 				Warn(ctx, "warning message")
 			},
 			expectedOutput: `{"level":"warn","requestID":"12345","message":"warning message"}`,
@@ -74,7 +86,10 @@ func TestLogFunctions(t *testing.T) {
 		{
 			name: "Warnf with context",
 			logFunc: func(ctx context.Context) {
-				ctx = context.WithValue(ctx, "requestID", "12345")
+				type ctxKey string
+				const requestID ctxKey = "requestID"
+
+				ctx = context.WithValue(ctx, requestID, "12345")
 				Warnf(ctx, "formatted %s", "warning message")
 			},
 			expectedOutput: `{"level":"warn","requestID":"12345","message":"formatted warning message"}`,
@@ -82,7 +97,10 @@ func TestLogFunctions(t *testing.T) {
 		{
 			name: "Error log with error and context",
 			logFunc: func(ctx context.Context) {
-				ctx = context.WithValue(ctx, "userID", "67890")
+				type ctxKey string
+				const userID ctxKey = "userID"
+
+				ctx = context.WithValue(ctx, userID, "67890")
 				Error(ctx, errors.New("something went wrong"), "error message")
 			},
 			expectedOutput: `{"level":"error","userID":"67890","error":"something went wrong","message":"error message"}`,
@@ -90,7 +108,10 @@ func TestLogFunctions(t *testing.T) {
 		{
 			name: "Errorf with error and context",
 			logFunc: func(ctx context.Context) {
-				ctx = context.WithValue(ctx, "userID", "67890")
+				type ctxKey string
+				const userID ctxKey = "userID"
+
+				ctx = context.WithValue(ctx, userID, "67890")
 				Errorf(ctx, errors.New("something went wrong"), "formatted %s", "error message")
 			},
 			expectedOutput: `{"level":"error","userID":"67890","error":"something went wrong","message":"formatted error message"}`,
@@ -98,7 +119,10 @@ func TestLogFunctions(t *testing.T) {
 		{
 			name: "Fatal log with error and context",
 			logFunc: func(ctx context.Context) {
-				ctx = context.WithValue(ctx, "requestID", "12345")
+				type ctxKey string
+				const requestID ctxKey = "requestID"
+
+				ctx = context.WithValue(ctx, requestID, "12345")
 				Fatal(ctx, errors.New("fatal error"), "fatal message")
 			},
 			expectedOutput: `{"level":"fatal","requestID":"12345","error":"fatal error","message":"fatal message"}`,
@@ -106,7 +130,10 @@ func TestLogFunctions(t *testing.T) {
 		{
 			name: "Fatalf with error and context",
 			logFunc: func(ctx context.Context) {
-				ctx = context.WithValue(ctx, "requestID", "12345")
+				type ctxKey string
+				const requestID ctxKey = "requestID"
+
+				ctx = context.WithValue(ctx, requestID, "12345")
 				Fatalf(ctx, errors.New("fatal error"), "formatted %s", "fatal message")
 			},
 			expectedOutput: `{"level":"fatal","requestID":"12345","error":"fatal error","message":"formatted fatal message"}`,
@@ -114,7 +141,10 @@ func TestLogFunctions(t *testing.T) {
 		{
 			name: "Panic log with error and context",
 			logFunc: func(ctx context.Context) {
-				ctx = context.WithValue(ctx, "userID", "67890")
+				type ctxKey string
+				const userID ctxKey = "userID"
+
+				ctx = context.WithValue(ctx, userID, "67890")
 				Panic(ctx, errors.New("panic error"), "panic message")
 			},
 			expectedOutput: `{"level":"panic","userID":"67890","error":"panic error","message":"panic message"}`,
@@ -122,7 +152,10 @@ func TestLogFunctions(t *testing.T) {
 		{
 			name: "Panicf with error and context",
 			logFunc: func(ctx context.Context) {
-				ctx = context.WithValue(ctx, "userID", "67890")
+				type ctxKey string
+				const userID ctxKey = "userID"
+
+				ctx = context.WithValue(ctx, userID, "67890")
 				Panicf(ctx, errors.New("panic error"), "formatted %s", "panic message")
 			},
 			expectedOutput: `{"level":"panic","userID":"67890","error":"panic error","message":"formatted panic message"}`,
