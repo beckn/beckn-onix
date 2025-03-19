@@ -15,8 +15,8 @@ import (
 
 // Config represents the plugin manager configuration.
 type Config struct {
-	Root      string       `yaml:"root"`
-	Validator PluginConfig `yaml:"schema_validator"`
+	Root            string       `yaml:"root"`
+	SchemaValidator PluginConfig `yaml:"schema_validator"`
 }
 
 // PluginConfig represents configuration details for a plugin.
@@ -46,8 +46,7 @@ type SchemaDetails struct {
 
 // Manager handles dynamic plugin loading and management.
 type Manager struct {
-	vp definition.SchemaValidatorProvider
-	// validators definition.Validator
+	vp  definition.SchemaValidatorProvider
 	cfg *Config
 }
 
@@ -57,8 +56,8 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 		return nil, fmt.Errorf("configuration cannot be nil")
 	}
 
-	// Load validator plugin
-	vp, err := provider[definition.SchemaValidatorProvider](cfg.Root, cfg.Validator.ID)
+	// Load schema validator plugin
+	vp, err := provider[definition.SchemaValidatorProvider](cfg.Root, cfg.SchemaValidator.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load validator plugin: %w", err)
 	}
@@ -115,17 +114,17 @@ func pluginPath(path, id string) string {
 }
 
 // Validators retrieves the validation plugin instances.
-func (m *Manager) Validator(ctx context.Context) (definition.SchemaValidator, func() error, error) {
+func (m *Manager) SchemaValidator(ctx context.Context) (definition.SchemaValidator, func() error, error) {
 	if m.vp == nil {
-		return nil, nil, fmt.Errorf("validator plugin provider not loaded")
+		return nil, nil, fmt.Errorf("schema validator plugin provider not loaded")
 
 	}
-	validator, close, err := m.vp.New(ctx, m.cfg.Validator.Config)
+	schemaValidator, close, err := m.vp.New(ctx, m.cfg.SchemaValidator.Config)
 	if err != nil {
 
-		return nil, nil, fmt.Errorf("failed to initialize validator: %v", err)
+		return nil, nil, fmt.Errorf("failed to initialize schema validator: %v", err)
 	}
-	return validator, close, nil
+	return schemaValidator, close, nil
 }
 
 // LoadConfig loads the configuration from a YAML file.

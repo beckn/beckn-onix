@@ -1,6 +1,6 @@
 root: pkg/plugin/implementation/
 schema_validator:
-  id: validator
+  id: schemaValidator
   config:
     schema_dir: schemas #Directory where the schema files are stored
   plugin_path: pkg/plugin/implementations/
