@@ -15,6 +15,7 @@ type Config struct {
 	Root     string       `yaml:"root"`
 	Signer   PluginConfig `yaml:"signer"`
 	Verifier PluginConfig `yaml:"verifier"`
+	Decrypter PluginConfig `yaml:"decrypter"`
 }
 
 // PluginConfig represents configuration details for a plugin.
@@ -27,6 +28,7 @@ type PluginConfig struct {
 type Manager struct {
 	sp  definition.SignerProvider
 	vp  definition.VerifierProvider
+	dec definition.DecrypterProvider
 	cfg *Config
 }
 
@@ -47,8 +49,13 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load Verifier plugin: %w", err)
 	}
+	// Load decrypter plugin
+	dec, err := provider[definition.DecrypterProvider](cfg.Root, cfg.Decrypter.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load Decrypter plugin: %w", err)
+	}
 
-	return &Manager{sp: sp, vp: vp, cfg: cfg}, nil
+	return &Manager{sp: sp, vp: vp, dec:dec, cfg: cfg}, nil
 }
 
 // provider loads a plugin dynamically and retrieves its provider instance.
@@ -105,4 +112,17 @@ func (m *Manager) Verifier(ctx context.Context) (definition.Verifier, func() err
 		return nil, nil, fmt.Errorf("failed to initialize Verifier: %w", err)
 	}
 	return Verifier, close, nil
+}
+
+// Decrypter retrieves the decryption plugin instance.
+func (m *Manager) Decrypter(ctx context.Context) (definition.Decrypter, func() error, error) {
+	if m.dec == nil {
+        return nil, nil, fmt.Errorf("decrypter plugin provider not loaded")
+    }
+
+    decrypter, close, err := m.dec.New(ctx, m.cfg.Decrypter.Config)
+    if err != nil {
+        return nil, nil, fmt.Errorf("failed to initialize Decrypter: %w", err)
+    }
+    return decrypter, close, nil
 }
