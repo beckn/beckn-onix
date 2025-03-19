@@ -13,7 +13,6 @@ import (
 
 	"github.com/rs/zerolog"
 	"gopkg.in/natefinch/lumberjack.v2"
-	// "gopkg.in/yaml.v2"
 )
 
 type Level string
@@ -49,7 +48,7 @@ var logLevels = map[Level]zerolog.Level{
 type Config struct {
 	level        Level         `yaml:"level"`
 	destinations []Destination `yaml:"destinations"`
-	contextKeys  []string      `yaml:"contextKeys"`
+	contextKeys  []any         `yaml:"contextKeys"`
 }
 
 var (
@@ -89,7 +88,7 @@ func (config *Config) validate() error {
 				}
 			}
 		default:
-			return fmt.Errorf("Invalid destination type '%s'", dest.Type)
+			return fmt.Errorf("invalid destination type '%s'", dest.Type)
 		}
 	}
 	return nil
@@ -100,7 +99,7 @@ var defaultConfig = Config{
 	destinations: []Destination{
 		{Type: Stdout},
 	},
-	contextKeys: []string{"userID", "requestID"},
+	contextKeys: []any{"userID", "requestID"},
 }
 
 func init() {
@@ -231,12 +230,14 @@ func Request(ctx context.Context, r *http.Request, body []byte) {
 }
 
 func addCtx(ctx context.Context, event *zerolog.Event) {
+	fmt.Print("key=====", cfg.contextKeys)
 	for _, key := range cfg.contextKeys {
 		val, ok := ctx.Value(key).(string)
 		if !ok {
 			continue
 		}
-		event.Str(key, val)
+		keyStr := key.(string)
+		event.Str(keyStr, val)
 	}
 }
 
