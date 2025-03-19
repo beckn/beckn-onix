@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
 
@@ -66,7 +65,7 @@ func main() {
 	}
 
 	// Get the validator.
-	validator, _, defErr := manager.Validator(context.Background())
+	validator, _, defErr := manager.SchemaValidator(context.Background())
 	if defErr != nil {
 		log.Fatalf("Failed to get validators: %v", defErr)
 	}
@@ -115,19 +114,8 @@ func validateHandler(w http.ResponseWriter, r *http.Request, validators definiti
 	// }
 	validationErr := validators.Validate(ctx, u, payloadData)
 	if validationErr != nil {
-		// Check if the error is of type SchemaValidationErr
-		if schemaErr, ok := validationErr.(*definition.SchemaValidationErr); ok {
-			// Handle schema validation errors
-			var errorMessages []string
-			for _, err := range schemaErr.Errors {
-				errorMessages = append(errorMessages, fmt.Sprintf("Path: %s, Message: %s", err.Path, err.Message))
-			}
-			errorMessage := fmt.Sprintf("Schema validation failed: %s", strings.Join(errorMessages, "; "))
-			http.Error(w, errorMessage, http.StatusBadRequest)
-		} else {
-			// Handle other types of errors
-			http.Error(w, fmt.Sprintf("Schema validation failed: %v", validationErr), http.StatusBadRequest)
-		}
+		// Handle other types of errors
+		http.Error(w, fmt.Sprintf("Schema validation failed: %v", validationErr), http.StatusBadRequest)
 	} else {
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write([]byte("Schema validation succeeded!")); err != nil {
