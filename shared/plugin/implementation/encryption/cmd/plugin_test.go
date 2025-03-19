@@ -36,17 +36,22 @@ func TestEncrypterProviderSuccess(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create provider and encrypter
 			provider := EncrypterProvider{}
-			encrypter, err := provider.New(tt.ctx, tt.config)
+			encrypter, cleanup, err := provider.New(tt.ctx, tt.config)
 			if err != nil {
 				t.Fatalf("EncrypterProvider.New() error = %v", err)
 			}
 			if encrypter == nil {
 				t.Fatal("EncrypterProvider.New() returned nil encrypter")
 			}
+			defer func() {
+				if cleanup != nil {
+					cleanup()
+				}
+			}()
 
 			// Test basic encryption
 			testData := "test message"
-			encrypted, err := encrypter.Encrypt(tt.ctx, testData, publicKey)
+			encrypted, err := encrypter.Encrypt(tt.ctx, testData, publicKey, publicKey)
 			if err != nil {
 				t.Errorf("Encrypt() error = %v", err)
 			}
@@ -79,7 +84,7 @@ func TestEncrypterProviderFailure(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := EncrypterProvider{}
-			encrypter, err := provider.New(tt.ctx, tt.config)
+			encrypter, cleanup, err := provider.New(tt.ctx, tt.config)
 			if err == nil {
 				t.Error("EncrypterProvider.New() expected error, got nil")
 				return
@@ -89,6 +94,9 @@ func TestEncrypterProviderFailure(t *testing.T) {
 			}
 			if encrypter != nil {
 				t.Error("EncrypterProvider.New() expected nil encrypter when error")
+			}
+			if cleanup != nil {
+				cleanup()
 			}
 		})
 	}
@@ -113,10 +121,15 @@ func TestEncrypterIntegration(t *testing.T) {
 	publicKey := base64.StdEncoding.EncodeToString(privateKey.PublicKey().Bytes())
 
 	// Create encrypter
-	encrypter, err := provider.New(ctx, map[string]string{})
+	encrypter, cleanup, err := provider.New(ctx, map[string]string{})
 	if err != nil {
 		t.Fatalf("Failed to create encrypter: %v", err)
 	}
+	defer func() {
+		if cleanup != nil {
+			cleanup()
+		}
+	}()
 
 	tests := []struct {
 		name    string
@@ -137,7 +150,7 @@ func TestEncrypterIntegration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := encrypter.Encrypt(ctx, tt.data, publicKey)
+			result, err := encrypter.Encrypt(ctx, tt.data, publicKey, publicKey)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Encrypt() error = %v, wantErr %v", err, tt.wantErr)
 				return

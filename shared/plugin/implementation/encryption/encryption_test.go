@@ -1,4 +1,4 @@
-package encryption
+package encrypter
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+
 )
 
 // Helper function to generate a test X25519 key pair
@@ -22,35 +23,40 @@ func generateTestKeyPair(t *testing.T) (string, []byte) {
 
 	// Encode public key to base64
 	publicKeyBase64 := base64.StdEncoding.EncodeToString(publicKeyBytes)
+
 	return publicKeyBase64, privateKey.Bytes()
 }
 
 // TestEncryptSuccess tests successful encryption scenarios
 func TestEncryptSuccess(t *testing.T) {
-	publicKey, _ := generateTestKeyPair(t)
+	publicKey, privateKey := generateTestKeyPair(t)
 
 	tests := []struct {
 		name    string
 		data    string
 		pubKey  string
+		privKey string
 		wantErr bool
 	}{
 		{
 			name:    "Valid short message",
 			data:    "Hello, World!",
 			pubKey:  publicKey,
+			privKey: base64.StdEncoding.EncodeToString(privateKey),
 			wantErr: false,
 		},
 		{
 			name:    "Valid JSON message",
 			data:    `{"key":"value"}`,
 			pubKey:  publicKey,
+			privKey: base64.StdEncoding.EncodeToString(privateKey),
 			wantErr: false,
 		},
 		{
 			name:    "Valid empty message",
 			data:    "",
 			pubKey:  publicKey,
+			privKey: base64.StdEncoding.EncodeToString(privateKey),
 			wantErr: false,
 		},
 	}
@@ -58,7 +64,7 @@ func TestEncryptSuccess(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			encrypter := &Encrypter{config: &Config{}}
-			encrypted, err := encrypter.Encrypt(context.Background(), tt.data, tt.pubKey)
+			encrypted, err := encrypter.Encrypt(context.Background(), tt.data, tt.privKey, tt.pubKey)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Encrypt() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -88,10 +94,15 @@ func TestEncryptSuccess(t *testing.T) {
 
 // TestEncryptFailure tests encryption failure scenarios
 func TestEncryptFailure(t *testing.T) {
+	// Generate a valid key pair for testing
+	publicKey, privateKey := generateTestKeyPair(t)
+	validPrivKey := base64.StdEncoding.EncodeToString(privateKey)
+
 	tests := []struct {
 		name          string
 		data          string
 		publicKey     string
+		privKey       string
 		wantErr       bool
 		errorContains string
 	}{
@@ -99,6 +110,7 @@ func TestEncryptFailure(t *testing.T) {
 			name:          "Invalid public key format",
 			data:          "test data",
 			publicKey:     "invalid-base64!@#$",
+			privKey:       validPrivKey,
 			wantErr:       true,
 			errorContains: "invalid public key",
 		},
@@ -106,6 +118,7 @@ func TestEncryptFailure(t *testing.T) {
 			name:          "Invalid key bytes",
 			data:          "test data",
 			publicKey:     base64.StdEncoding.EncodeToString([]byte("invalid-key-bytes")),
+			privKey:       validPrivKey,
 			wantErr:       true,
 			errorContains: "failed to create public key",
 		},
@@ -113,6 +126,7 @@ func TestEncryptFailure(t *testing.T) {
 			name:          "Empty public key",
 			data:          "test data",
 			publicKey:     "",
+			privKey:       validPrivKey,
 			wantErr:       true,
 			errorContains: "invalid public key",
 		},
@@ -120,15 +134,32 @@ func TestEncryptFailure(t *testing.T) {
 			name:          "Too short key",
 			data:          "test data",
 			publicKey:     base64.StdEncoding.EncodeToString([]byte{1, 2, 3, 4}),
+			privKey:       validPrivKey,
 			wantErr:       true,
 			errorContains: "failed to create public key",
+		},
+		{
+			name:          "Invalid private key",
+			data:          "test data",
+			publicKey:     publicKey,
+			privKey:       "invalid-base64!@#$",
+			wantErr:       true,
+			errorContains: "invalid private key",
+		},
+		{
+			name:          "Empty private key",
+			data:          "test data",
+			publicKey:     publicKey,
+			privKey:       "",
+			wantErr:       true,
+			errorContains: "invalid private key",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			encrypter := &Encrypter{config: &Config{}}
-			_, err := encrypter.Encrypt(context.Background(), tt.data, tt.publicKey)
+			_, err := encrypter.Encrypt(context.Background(), tt.data, tt.privKey, tt.publicKey)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Encrypt() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -164,7 +195,7 @@ func TestNew(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encrypter, err := New(tt.ctx, tt.config)
+			encrypter, _, err := New(tt.ctx, tt.config)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -185,57 +216,58 @@ func TestClose(t *testing.T) {
 }
 
 func TestEncrypt(t *testing.T) {
-	// Generate a test public key for encryption tests
-	curve := ecdh.X25519()
-	privateKey, err := curve.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("Failed to generate test key: %v", err)
-	}
-	publicKey := base64.StdEncoding.EncodeToString(privateKey.PublicKey().Bytes())
+	// Generate a test key pair for encryption tests
+	publicKey, privateKey := generateTestKeyPair(t)
+	validPrivKey := base64.StdEncoding.EncodeToString(privateKey)
 
 	tests := []struct {
 		name          string
 		data          string
+		privateKey    string
 		publicKey     string
 		wantErr       bool
 		errorContains string
 	}{
 		{
-			name:      "Valid encryption",
-			data:      "test data",
-			publicKey: publicKey,
-			wantErr:   false,
+			name:       "Valid encryption",
+			data:       "test data",
+			privateKey: validPrivKey,
+			publicKey:  publicKey,
+			wantErr:    false,
 		},
 		{
-			name:      "Empty data",
-			data:      "",
-			publicKey: publicKey,
-			wantErr:   false,
+			name:       "Empty data",
+			data:       "",
+			privateKey: validPrivKey,
+			publicKey:  publicKey,
+			wantErr:    false,
 		},
 		{
-			name:          "Invalid public key",
+			name:          "Invalid private key",
 			data:          "test data",
-			publicKey:     "invalid-base64",
+			privateKey:    "invalid-base64",
+			publicKey:     publicKey,
 			wantErr:       true,
-			errorContains: "invalid public key",
+			errorContains: "invalid private key",
 		},
 		{
-			name:          "Empty public key",
+			name:          "Empty private key",
 			data:          "test data",
-			publicKey:     "",
+			privateKey:    "",
+			publicKey:     publicKey,
 			wantErr:       true,
-			errorContains: "invalid public key",
+			errorContains: "invalid private key",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encrypter, err := New(context.Background(), &Config{})
+			encrypter, _, err := New(context.Background(), &Config{})
 			if err != nil {
 				t.Fatalf("Failed to create encrypter: %v", err)
 			}
 
-			result, err := encrypter.Encrypt(context.Background(), tt.data, tt.publicKey)
+			result, err := encrypter.Encrypt(context.Background(), tt.data, tt.privateKey, tt.publicKey)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Encrypt() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -264,51 +296,4 @@ func TestEncrypt(t *testing.T) {
 	}
 }
 
-func TestPKCS7Padding(t *testing.T) {
-	tests := []struct {
-		name      string
-		data      []byte
-		blockSize int
-		wantErr   bool
-	}{
-		{
-			name:      "Valid padding",
-			data:      []byte("test"),
-			blockSize: 16,
-			wantErr:   false,
-		},
-		{
-			name:      "Empty data",
-			data:      []byte{},
-			blockSize: 16,
-			wantErr:   false,
-		},
-		{
-			name:      "Invalid block size - too small",
-			data:      []byte("test"),
-			blockSize: 0,
-			wantErr:   true,
-		},
-		{
-			name:      "Invalid block size - too large",
-			data:      []byte("test"),
-			blockSize: 256,
-			wantErr:   true,
-		},
-	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			padded, err := pkcs7Pad(tt.data, tt.blockSize)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("pkcs7Pad() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !tt.wantErr {
-				if len(padded)%tt.blockSize != 0 {
-					t.Errorf("pkcs7Pad() result length %d is not multiple of blockSize %d", len(padded), tt.blockSize)
-				}
-			}
-		})
-	}
-}

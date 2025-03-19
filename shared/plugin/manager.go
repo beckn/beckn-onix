@@ -121,9 +121,9 @@ func (m *Manager) Encrypter(ctx context.Context) (definition.Encrypter, func() e
 		return nil, nil, fmt.Errorf("encryption plugin provider not loaded")
 	}
 
-	encrypter, err := m.enc.New(ctx, m.cfg.Encrypter.Config)
+	encrypter, close, err := m.enc.New(ctx, m.cfg.Encrypter.Config)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to initialize encrypter: %w", err)
 	}
-	return encrypter, nil, nil
+	return encrypter, close, nil
 }
