@@ -4,124 +4,151 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/beckn/beckn-onix/core/module/handler"
 	"github.com/beckn/beckn-onix/plugin"
+	"github.com/beckn/beckn-onix/plugin/definition"
 )
 
-// MockPluginManager implements the PluginManager interface for testing purposes.
-type MockPluginManager struct {
+// mockPluginManager is a mock implementation of the PluginManager interface
+type mockPluginManager struct {
 	middlewareFunc func(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error)
 }
 
-// Middleware returns a middleware function for testing based on the mock setup.
-func (m *MockPluginManager) Middleware(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error) {
-	if m.middlewareFunc != nil {
-		return m.middlewareFunc(ctx, cfg)
-	}
+// Middleware mocks the Middleware method of PluginManager.
+func (m *mockPluginManager) Middleware(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error) {
+	return m.middlewareFunc(ctx, cfg)
+}
+
+// SignValidator mocks the SignValidator method of PluginManager.
+func (m *mockPluginManager) SignValidator(ctx context.Context, cfg *plugin.Config) (definition.SignValidator, error) {
 	return nil, nil
 }
 
-// mockHandlerProvider is a mock implementation of a handler provider function for testing.
-func mockHandlerProvider(ctx context.Context, mgr *plugin.Manager, cfg *handler.Config) (http.Handler, error) {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("Mocked Response"))
-	}), nil
+// Validator mocks the Validator method of PluginManager.
+func (m *mockPluginManager) Validator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error) {
+	return nil, nil
 }
 
-// TestRegister tests the Register function with various scenarios.
+// Router mocks the Router method of PluginManager.
+func (m *mockPluginManager) Router(ctx context.Context, cfg *plugin.Config) (definition.Router, error) {
+	return nil, nil
+}
+
+// Publisher mocks the Publisher method of PluginManager.
+func (m *mockPluginManager) Publisher(ctx context.Context, cfg *plugin.Config) (definition.Publisher, error) {
+	return nil, nil
+}
+
+// Signer mocks the Signer method of PluginManager.
+func (m *mockPluginManager) Signer(ctx context.Context, cfg *plugin.Config) (definition.Signer, error) {
+	return nil, nil
+}
+
+// Step mocks the Step method of PluginManager.
+func (m *mockPluginManager) Step(ctx context.Context, cfg *plugin.Config) (definition.Step, error) {
+	return nil, nil
+}
+
+// TestRegister tests the Register function for different scenarios.
 func TestRegister(t *testing.T) {
+	// Preserve the original handler provider and restore it after tests.
+	originalHandlerProviders := getHandlerProviders
+	defer func() { getHandlerProviders = originalHandlerProviders }()
+
+	// Override handler providers for testing purposes.
+	getHandlerProviders = func() map[handler.HandlerType]handler.Provider {
+		return GetDummyHandlerProviders()
+	}
+
 	tests := []struct {
-		name          string
-		moduleConfigs []Config
-		mockSetup     func(mgr *MockPluginManager)
-		expectedError string
+		name        string
+		mCfgs       []Config
+		mockManager *mockPluginManager
+		expectError bool
 	}{
 		{
-			name: "Valid configuration",
-			moduleConfigs: []Config{
+			name: "successful registration",
+			mCfgs: []Config{
 				{
-					Name: "module1",
-					Path: "/module1",
+					Name: "test-module",
+					Path: "/test",
 					Handler: handler.Config{
 						Type: handler.HandlerTypeStd,
+						Plugins: handler.PluginCfg{
+							Middleware: []plugin.Config{{ID: "mock-middleware"}},
+						},
 					},
 				},
 			},
-			mockSetup: func(mgr *MockPluginManager) {
-				mgr.middlewareFunc = func(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error) {
-					return func(h http.Handler) http.Handler {
-						return h // Return the handler unchanged
+			mockManager: &mockPluginManager{
+				middlewareFunc: func(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error) {
+					return func(next http.Handler) http.Handler {
+						return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							next.ServeHTTP(w, r)
+						})
 					}, nil
-				}
+				},
 			},
-			expectedError: "",
+			expectError: false,
 		},
 		{
-			name: "Invalid handler type",
-			moduleConfigs: []Config{
+			name: "invalid handler type",
+			mCfgs: []Config{
 				{
-					Name: "module2",
-					Path: "/module2",
+					Name: "invalid-module",
+					Path: "/invalid",
 					Handler: handler.Config{
-						Type: "invalid_type", // Invalid handler type
+						Type: "invalid-type",
 					},
 				},
 			},
-			mockSetup:     func(mgr *MockPluginManager) {},
-			expectedError: "invalid module : module2",
+			mockManager: &mockPluginManager{},
+			expectError: true,
 		},
 		{
-			name: "Handler provider error",
-			moduleConfigs: []Config{
+			name: "middleware error",
+			mCfgs: []Config{
 				{
-					Name: "module3",
-					Path: "/module3",
+					Name: "test-module",
+					Path: "/test",
 					Handler: handler.Config{
 						Type: handler.HandlerTypeStd,
+						Plugins: handler.PluginCfg{
+							Middleware: []plugin.Config{{ID: "mock-middleware"}},
+						},
 					},
 				},
 			},
-			mockSetup: func(mgr *MockPluginManager) {
-				mgr.middlewareFunc = func(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error) {
+			mockManager: &mockPluginManager{
+				middlewareFunc: func(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error) {
 					return nil, errors.New("middleware error")
-				}
+				},
 			},
-			expectedError: "failed to add post processors: middleware error",
+			expectError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a new context
-			ctx := context.Background()
-
-			// Create a new ServeMux
 			mux := http.NewServeMux()
+			err := Register(context.Background(), tt.mCfgs, mux, tt.mockManager)
 
-			// Create a mock plugin manager
-			mgr := &MockPluginManager{}
-			if tt.mockSetup != nil {
-				tt.mockSetup(mgr)
+			// Check if an error occurred when it was expected.
+			if (err != nil) != tt.expectError {
+				t.Errorf("expected error: %v, got: %v", tt.expectError, err)
 			}
 
-			// Register the handler provider
-			handlerProviders[handler.HandlerTypeStd] = mockHandlerProvider
+			// If no error, test if the registered handler responds correctly.
+			if !tt.expectError {
+				req := httptest.NewRequest(http.MethodGet, "/test", nil)
+				rr := httptest.NewRecorder()
+				mux.ServeHTTP(rr, req)
 
-			// Call the Register function
-			err := Register(ctx, tt.moduleConfigs, mux, nil)
-
-			// Check the expected error
-			if tt.expectedError != "" {
-				if err == nil {
-					t.Errorf("expected error but got none")
-				} else if err.Error() != tt.expectedError {
-					t.Errorf("expected error %q but got %q", tt.expectedError, err.Error())
-				}
-			} else {
-				if err != nil {
-					t.Errorf("expected no error but got %q", err.Error())
+				if status := rr.Code; status != http.StatusOK {
+					t.Errorf("expected status OK, got: %v", status)
 				}
 			}
 		})

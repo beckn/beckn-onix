@@ -17,20 +17,32 @@ type Config struct {
 	Handler handler.Config
 }
 
-// handlerProvider is a function type that provides an HTTP handler.
-type handlerProvider func(ctx context.Context, mgr *plugin.Manager, cfg *handler.Config) (http.Handler, error)
-
 // handlerProviders maps handler types to their respective provider functions.
-var handlerProviders = map[handler.HandlerType]handlerProvider{
+var handlerProviders = map[handler.HandlerType]handler.Provider{
 	handler.HandlerTypeStd: handler.NewStdHandler,
 }
 
+// GetDummyHandlerProviders returns a map of dummy providers for testing.
+func GetDummyHandlerProviders() map[handler.HandlerType]handler.Provider {
+	return map[handler.HandlerType]handler.Provider{
+		handler.HandlerTypeStd: handler.DummyHandler,
+	}
+}
+
+// Function to get handler providers, can be overridden for testing
+var getHandlerProviders = func() map[handler.HandlerType]handler.Provider {
+	return handlerProviders
+}
+
 // Register registers the handlers for the application.
-func Register(ctx context.Context, mCfgs []Config, mux *http.ServeMux, mgr *plugin.Manager) error {
+func Register(ctx context.Context, mCfgs []Config, mux *http.ServeMux, mgr handler.PluginManager) error {
 	log.Debugf(ctx, "Registering modules with config: %#v", mCfgs)
 	// Iterate over the handlers in the configuration.
+	providers := getHandlerProviders()
+
 	for _, c := range mCfgs {
-		rmp, ok := handlerProviders[c.Handler.Type]
+		// rmp, ok := handlerProviders[c.Handler.Type]
+		rmp, ok := providers[c.Handler.Type]
 		if !ok {
 			return fmt.Errorf("invalid module : %s", c.Name)
 		}
@@ -50,7 +62,7 @@ func Register(ctx context.Context, mCfgs []Config, mux *http.ServeMux, mgr *plug
 }
 
 // chain applies middleware to a handler in reverse order.
-func chain(ctx context.Context, mgr *plugin.Manager, handler http.Handler, mws []plugin.Config) (http.Handler, error) {
+func chain(ctx context.Context, mgr handler.PluginManager, handler http.Handler, mws []plugin.Config) (http.Handler, error) {
 	// Apply the middleware in reverse order.
 	for i := len(mws) - 1; i >= 0; i-- {
 		mw, err := mgr.Middleware(ctx, &mws[i])

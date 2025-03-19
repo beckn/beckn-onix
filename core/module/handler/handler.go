@@ -1,10 +1,27 @@
 package handler
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/beckn/beckn-onix/plugin"
+	"github.com/beckn/beckn-onix/plugin/definition"
 )
+
+// PluginManager defines the methods required for the stdHandler.
+type PluginManager interface {
+	Middleware(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error)
+	SignValidator(ctx context.Context, cfg *plugin.Config) (definition.SignValidator, error)
+	Validator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)
+	Router(ctx context.Context, cfg *plugin.Config) (definition.Router, error)
+	Publisher(ctx context.Context, cfg *plugin.Config) (definition.Publisher, error)
+	Signer(ctx context.Context, cfg *plugin.Config) (definition.Signer, error)
+	Step(ctx context.Context, cfg *plugin.Config) (definition.Step, error)
+}
+
+// Provider is a function type that provides an HTTP handler.
+type Provider func(ctx context.Context, mgr PluginManager, cfg *Config) (http.Handler, error)
 
 // HandlerType defines the type of handler.
 type HandlerType string
@@ -14,8 +31,8 @@ const (
 	HandlerTypeStd HandlerType = "std"
 )
 
-// pluginCfg holds configuration for various plugins.
-type pluginCfg struct {
+// PluginCfg holds configuration for various plugins.
+type PluginCfg struct {
 	SchemaValidator *plugin.Config  `yaml:"schemaValidator,omitempty"`
 	SignValidator   *plugin.Config  `yaml:"signValidator,omitempty"`
 	Publisher       *plugin.Config  `yaml:"publisher,omitempty"`
@@ -27,7 +44,7 @@ type pluginCfg struct {
 
 // Config represents the handler configuration.
 type Config struct {
-	Plugins pluginCfg `yaml:"plugin"`
+	Plugins PluginCfg `yaml:"plugin"`
 	Steps   []string
 	Type    HandlerType
 }
@@ -67,4 +84,12 @@ func (s *Step) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 	*s = step
 	return nil
+}
+
+// DummyHandler is a test HTTP handler that returns a simple response.
+func DummyHandler(ctx context.Context, mgr PluginManager, cfg *Config) (http.Handler, error) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Dummy Handler Response"))
+	}), nil
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/beckn/beckn-onix/core/module"
 	"github.com/beckn/beckn-onix/core/pkg/log"
 	"github.com/beckn/beckn-onix/plugin"
+	"github.com/beckn/beckn-onix/plugin/definition"
 	"gopkg.in/yaml.v2"
 )
 
@@ -35,6 +36,16 @@ type timeoutConfig struct {
 	Read  time.Duration `yaml:"read"`
 	Write time.Duration `yaml:"write"`
 	Idle  time.Duration `yaml:"idle"`
+}
+
+type pluginManager interface {
+	Middleware(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error)
+	SignValidator(ctx context.Context, cfg *plugin.Config) (definition.SignValidator, error)
+	Validator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)
+	Router(ctx context.Context, cfg *plugin.Config) (definition.Router, error)
+	Publisher(ctx context.Context, cfg *plugin.Config) (definition.Publisher, error)
+	Signer(ctx context.Context, cfg *plugin.Config) (definition.Signer, error)
+	Step(ctx context.Context, cfg *plugin.Config) (definition.Step, error)
 }
 
 var configPath string
@@ -89,7 +100,7 @@ func validateConfig(cfg *config) error {
 }
 
 // newServer creates and initializes the HTTP server.
-func newServer(ctx context.Context, mgr *plugin.Manager, cfg *config) (http.Handler, error) {
+func newServer(ctx context.Context, mgr pluginManager, cfg *config) (http.Handler, error) {
 	mux := http.NewServeMux()
 	err := module.Register(ctx, cfg.Modules, mux, mgr)
 	if err != nil {
@@ -111,6 +122,7 @@ func run(ctx context.Context, configPath string) error {
 
 	// Initialize plugin manager.
 	log.Infof(ctx, "Initializing plugin manager")
+	var mgr pluginManager
 	mgr, closer, err := plugin.NewManager(ctx, cfg.PluginManager)
 	if err != nil {
 		return fmt.Errorf("failed to create plugin manager: %w", err)

@@ -10,7 +10,6 @@ import (
 	"net/url"
 
 	"github.com/beckn/beckn-onix/core/pkg/log"
-	"github.com/beckn/beckn-onix/plugin"
 	"github.com/beckn/beckn-onix/plugin/definition"
 )
 
@@ -25,7 +24,7 @@ type stdHandler struct {
 }
 
 // NewStdHandler initializes a new processor with plugins and steps.
-func NewStdHandler(ctx context.Context, mgr *plugin.Manager, cfg *Config) (http.Handler, error) {
+func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config) (http.Handler, error) {
 	p := &stdHandler{
 		steps: []definition.Step{},
 	}
@@ -120,7 +119,7 @@ func proxy(r *http.Request, w http.ResponseWriter, target *url.URL) {
 }
 
 // initPlugins initializes required plugins for the processor.
-func (p *stdHandler) initPlugins(ctx context.Context, mgr *plugin.Manager, cfg *pluginCfg) error {
+func (p *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *PluginCfg) error {
 	var err error
 
 	if cfg.SignValidator != nil {
@@ -157,7 +156,7 @@ func (p *stdHandler) initPlugins(ctx context.Context, mgr *plugin.Manager, cfg *
 }
 
 // initSteps initializes and validates processing steps for the processor.
-func (p *stdHandler) initSteps(ctx context.Context, mgr *plugin.Manager, cfg *Config) error {
+func (p *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Config) error {
 	steps := make(map[string]definition.Step)
 
 	// Validate plugin dependencies before proceeding
