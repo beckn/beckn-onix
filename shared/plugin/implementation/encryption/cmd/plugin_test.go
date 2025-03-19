@@ -45,7 +45,9 @@ func TestEncrypterProviderSuccess(t *testing.T) {
 			}
 			defer func() {
 				if cleanup != nil {
-					cleanup()
+					if err := cleanup(); err != nil {
+						t.Errorf("Cleanup() error = %v", err)
+					}
 				}
 			}()
 
@@ -96,7 +98,9 @@ func TestEncrypterProviderFailure(t *testing.T) {
 				t.Error("EncrypterProvider.New() expected nil encrypter when error")
 			}
 			if cleanup != nil {
-				cleanup()
+				if err := cleanup(); err != nil {
+					t.Errorf("Cleanup() error = %v", err)
+				}
 			}
 		})
 	}
@@ -127,7 +131,9 @@ func TestEncrypterIntegration(t *testing.T) {
 	}
 	defer func() {
 		if cleanup != nil {
-			cleanup()
+			if err := cleanup(); err != nil {
+				t.Errorf("Cleanup() error = %v", err)
+			}
 		}
 	}()
 
