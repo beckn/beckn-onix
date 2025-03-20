@@ -29,13 +29,13 @@ func generateTestKeys(t *testing.T) (privateKeyB64, publicKeyB64 string, sharedS
 	if err != nil {
 		t.Fatalf("Failed to generate shared secret: %v", err)
 	}
-	sharedSecret = secret
-	return privateKeyB64, publicKeyB64, sharedSecret
+
+	return privateKeyB64, publicKeyB64, secret
 }
 
 // Helper function to encrypt test data.
 func encryptTestData(t *testing.T, data []byte, sharedSecret []byte) string {
-	// Create AES cipher
+	// Create AES cipher.
 	block, err := aes.NewCipher(sharedSecret)
 	if err != nil {
 		t.Fatalf("Failed to create AES cipher: %v", err)
@@ -156,7 +156,7 @@ func TestDecrypterFailure(t *testing.T) {
 		},
 		{
 			name:          "Invalid base64 data",
-			encryptedData: "=invalid-base64", // Invalid base64 with leading =
+			encryptedData: "=invalid-base64", // Invalid encrypted data.
 			privateKey:    privateKeyB64,
 			publicKey:     publicKeyB64,
 			expectedErr:   "failed to decode encrypted data",
@@ -201,8 +201,10 @@ func TestDecrypterFailure(t *testing.T) {
 				t.Error("Expected error but got none")
 			}
 
-			if !strings.Contains(err.Error(), tt.expectedErr) {
-				t.Errorf("Expected error containing %q, got %q", tt.expectedErr, err.Error())
+			if err != nil {
+				if !strings.Contains(err.Error(), tt.expectedErr) {
+					t.Errorf("Expected error containing %q, got %q", tt.expectedErr, err.Error())
+				}
 			}
 		})
 	}

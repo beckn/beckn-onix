@@ -12,9 +12,9 @@ import (
 
 // Config represents the plugin manager configuration.
 type Config struct {
-	Root     string       `yaml:"root"`
-	Signer   PluginConfig `yaml:"signer"`
-	Verifier PluginConfig `yaml:"verifier"`
+	Root      string       `yaml:"root"`
+	Signer    PluginConfig `yaml:"signer"`
+	Verifier  PluginConfig `yaml:"verifier"`
 	Decrypter PluginConfig `yaml:"decrypter"`
 }
 
@@ -28,7 +28,7 @@ type PluginConfig struct {
 type Manager struct {
 	sp  definition.SignerProvider
 	vp  definition.VerifierProvider
-	dp definition.DecrypterProvider
+	dp  definition.DecrypterProvider
 	cfg *Config
 }
 
@@ -38,24 +38,24 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 		return nil, fmt.Errorf("configuration cannot be nil")
 	}
 
-	// Load signer plugin
+	// Load signer plugin.
 	sp, err := provider[definition.SignerProvider](cfg.Root, cfg.Signer.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load signer plugin: %w", err)
 	}
 
-	// Load verifier plugin
+	// Load verifier plugin.
 	vp, err := provider[definition.VerifierProvider](cfg.Root, cfg.Verifier.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load Verifier plugin: %w", err)
 	}
-	// Load decrypter plugin
+	// Load decrypter plugin.
 	dp, err := provider[definition.DecrypterProvider](cfg.Root, cfg.Decrypter.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load Decrypter plugin: %w", err)
 	}
 
-	return &Manager{sp: sp, vp: vp, dp:dp, cfg: cfg}, nil
+	return &Manager{sp: sp, vp: vp, dp: dp, cfg: cfg}, nil
 }
 
 // provider loads a plugin dynamically and retrieves its provider instance.
@@ -117,12 +117,12 @@ func (m *Manager) Verifier(ctx context.Context) (definition.Verifier, func() err
 // Decrypter retrieves the decryption plugin instance.
 func (m *Manager) Decrypter(ctx context.Context) (definition.Decrypter, func() error, error) {
 	if m.dp == nil {
-        return nil, nil, fmt.Errorf("decrypter plugin provider not loaded")
-    }
+		return nil, nil, fmt.Errorf("decrypter plugin provider not loaded")
+	}
 
-    decrypter, close, err := m.dp.New(ctx, m.cfg.Decrypter.Config)
-    if err != nil {
-        return nil, nil, fmt.Errorf("failed to initialize Decrypter: %w", err)
-    }
-    return decrypter, close, nil
+	decrypter, close, err := m.dp.New(ctx, m.cfg.Decrypter.Config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize Decrypter: %w", err)
+	}
+	return decrypter, close, nil
 }
