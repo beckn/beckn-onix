@@ -14,11 +14,12 @@ import (
 
 type Config struct {
 	checkKeys []string
+	Role      string
 }
-
 type contextKeyType string
 
 const contextKey = "context"
+const subscriberIDKey contextKeyType = "subscriber_id"
 
 func NewUUIDSetter(cfg *Config) (func(http.Handler) http.Handler, error) {
 	if err := validateConfig(cfg); err != nil {
@@ -47,7 +48,14 @@ func NewUUIDSetter(cfg *Config) (func(http.Handler) http.Handler, error) {
 				http.Error(w, fmt.Sprintf("%s field is not a map.", contextKey), http.StatusBadRequest)
 				return
 			}
-			ctx := r.Context()
+			var subID any
+			switch cfg.Role {
+			case "bap":
+				subID = contextData["bap_id"]
+			case "bpp":
+				subID = contextData["bpp_id"]
+			}
+			ctx := context.WithValue(r.Context(), subscriberIDKey, subID)
 			for _, key := range cfg.checkKeys {
 				value := uuid.NewString()
 				updatedValue := update(contextData, key, value)
@@ -89,9 +97,6 @@ func isEmpty(v any) bool {
 func validateConfig(cfg *Config) error {
 	if cfg == nil {
 		return errors.New("config cannot be nil")
-	}
-	if len(cfg.checkKeys) == 0 {
-		return errors.New("checkKeys cannot be empty")
 	}
 	for _, key := range cfg.checkKeys {
 		if key == "" {

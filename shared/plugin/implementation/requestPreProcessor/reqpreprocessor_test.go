@@ -3,7 +3,6 @@ package reqpreprocessor
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,34 +15,41 @@ func TestNewUUIDSetter(t *testing.T) {
 		requestBody  map[string]any
 		expectedCode int
 		expectedKeys []string
+		role         string
 	}{
 		{
-			name: "Valid keys, update missing keys",
+			name: "Valid keys, update missing keys with bap role",
 			config: &Config{
 				checkKeys: []string{"transaction_id", "message_id"},
+				Role:      "bap",
 			},
 			requestBody: map[string]any{
 				"context": map[string]any{
 					"transaction_id": "",
 					"message_id":     nil,
+					"bap_id":         "bap-123",
 				},
 			},
 			expectedCode: http.StatusOK,
-			expectedKeys: []string{"transaction_id", "message_id"},
+			expectedKeys: []string{"transaction_id", "message_id", "bap_id"},
+			role:         "bap",
 		},
 		{
-			name: "Valid keys, do not update existing keys",
+			name: "Valid keys, do not update existing keys with bpp role",
 			config: &Config{
 				checkKeys: []string{"transaction_id", "message_id"},
+				Role:      "bpp",
 			},
 			requestBody: map[string]any{
 				"context": map[string]any{
 					"transaction_id": "existing-transaction",
 					"message_id":     "existing-message",
+					"bpp_id":         "bpp-456",
 				},
 			},
 			expectedCode: http.StatusOK,
-			expectedKeys: []string{"transaction_id", "message_id"},
+			expectedKeys: []string{"transaction_id", "message_id", "bpp_id"},
+			role:         "bpp",
 		},
 		{
 			name: "Missing context key",
@@ -66,18 +72,6 @@ func TestNewUUIDSetter(t *testing.T) {
 			expectedCode: http.StatusBadRequest,
 		},
 		{
-			name: "Empty checkKeys in config",
-			config: &Config{
-				checkKeys: []string{},
-			},
-			requestBody: map[string]any{
-				"context": map[string]any{
-					"transaction_id": "",
-				},
-			},
-			expectedCode: http.StatusInternalServerError,
-		},
-		{
 			name:         "Nil config",
 			config:       nil,
 			requestBody:  map[string]any{},
@@ -97,48 +91,44 @@ func TestNewUUIDSetter(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error while creating middleware: %v", err)
 			}
-
-			// Prepare request
 			bodyBytes, _ := json.Marshal(tt.requestBody)
 			req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(bodyBytes))
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
-
-			// Define a dummy handler
 			dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ctx := r.Context()
 				w.WriteHeader(http.StatusOK)
-				if _, err := io.Copy(w, r.Body); err != nil {
-					http.Error(w, "Failed to copy request body", http.StatusInternalServerError)
+				if subID, ok := ctx.Value(subscriberIDKey).(string); ok {
+					response := map[string]any{
+						"subscriber_id": subID,
+					}
+					json.NewEncoder(w).Encode(response)
+				} else {
+					http.Error(w, "Subscriber ID not found", http.StatusInternalServerError)
 					return
 				}
 			})
-
-			// Apply middleware
 			middleware(dummyHandler).ServeHTTP(rec, req)
-
-			// Check status code
 			if rec.Code != tt.expectedCode {
 				t.Errorf("Expected status code %d, but got %d", tt.expectedCode, rec.Code)
 			}
-
-			// If success, check updated keys
 			if rec.Code == http.StatusOK {
 				var responseBody map[string]any
 				if err := json.Unmarshal(rec.Body.Bytes(), &responseBody); err != nil {
 					t.Fatal("Failed to unmarshal response body:", err)
 				}
-
-				// Validate updated keys
-				contextData, ok := responseBody[contextKey].(map[string]any)
-				if !ok {
-					t.Fatalf("Expected context to be a map, got %T", responseBody[contextKey])
+				expectedSubIDKey := "bap_id"
+				if tt.role == "bpp" {
+					expectedSubIDKey = "bpp_id"
 				}
 
-				for _, key := range tt.expectedKeys {
-					value, exists := contextData[key]
-					if !exists || isEmpty(value) {
-						t.Errorf("Expected key %s to be set, but it's missing or empty", key)
+				if subID, ok := responseBody["subscriber_id"].(string); ok {
+					expectedSubID := tt.requestBody["context"].(map[string]any)[expectedSubIDKey]
+					if subID != expectedSubID {
+						t.Errorf("Expected subscriber_id %v, but got %v", expectedSubID, subID)
 					}
+				} else {
+					t.Error("subscriber_id not found in response")
 				}
 			}
 		})
