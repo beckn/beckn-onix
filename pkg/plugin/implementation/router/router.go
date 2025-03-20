@@ -71,22 +71,16 @@ func (r *Router) loadRules() error {
 	if err != nil {
 		return fmt.Errorf("error reading config file: %w", err)
 	}
-	// fmt.Println("Config file content:", string(data))
 	var config routingConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return fmt.Errorf("error parsing YAML: %w", err)
 	}
-	fmt.Println("Parsed config:", config)
-
-	fmt.Println("Loaded rules:", config.RoutingRules)
 
 	// Validate rules
 	if err := validateRules(config.RoutingRules); err != nil {
 		return fmt.Errorf("invalid routing rules: %w", err)
 	}
 	r.rules = config.RoutingRules
-	fmt.Println("Loaded rules:", r.rules)
-
 	return nil
 }
 
