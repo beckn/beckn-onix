@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/beckn/beckn-onix/shared/plugin/definition"
-	"github.com/beckn/beckn-onix/shared/plugin/implementation/publisher"
+	"github.com/beckn/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn/beckn-onix/pkg/plugin/implementation/publisher"
 )
 
 // Returns error if required fields are missing.

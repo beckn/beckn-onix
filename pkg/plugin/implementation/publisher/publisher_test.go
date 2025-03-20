@@ -4,22 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	"cloud.google.com/go/pubsub"
 )
 
-// Helper to create a test publisher directly
-func createTestPublisher() *Publisher {
-	client, _ := pubsub.NewClient(context.Background(), "test-project")
-	topic := client.Topic("test-topic")
-	return &Publisher{
-		client: client,
-		topic:  topic,
-		config: &Config{ProjectID: "test-project", TopicID: "test-topic"},
-	}
-}
-
-// TestValidate tests the validate function
+// TestValidate tests the validate function.
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -68,8 +55,8 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-// TestNew tests the New function with validation errors only
-// We can't easily test the pubsub client creation parts without complex mocks
+// TestNew tests the New function with validation errors only.
+// We can't easily test the pubsub client creation parts without complex mocks.
 func TestNew(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -108,16 +95,4 @@ func TestNew(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestPublish tests the behavior of the Publisher.Publish method
-// Since we can't easily mock the pubsub client and topic, we'll skip the actual test
-func TestPublish(t *testing.T) {
-	t.Skip("Requires real pubsub client or complex mocking")
-}
-
-// TestClose tests the behavior of the Publisher.Close method
-// Since we can't easily mock the pubsub client, we'll skip the actual test
-func TestClose(t *testing.T) {
-	t.Skip("Requires real pubsub client or complex mocking")
 }
