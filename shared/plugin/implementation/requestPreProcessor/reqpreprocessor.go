@@ -16,6 +16,8 @@ type Config struct {
 	checkKeys []string
 }
 
+type contextKeyType string
+
 const contextKey = "context"
 
 func NewUUIDSetter(cfg *Config) (func(http.Handler) http.Handler, error) {
@@ -49,7 +51,7 @@ func NewUUIDSetter(cfg *Config) (func(http.Handler) http.Handler, error) {
 			for _, key := range cfg.checkKeys {
 				value := uuid.NewString()
 				updatedValue := update(contextData, key, value)
-				ctx = context.WithValue(ctx, key, updatedValue)
+				ctx = context.WithValue(ctx, contextKeyType(key), updatedValue)
 			}
 			data[contextKey] = contextData
 			updatedBody, err := json.Marshal(data)
