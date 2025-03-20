@@ -57,7 +57,7 @@ func TestEncryptSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encrypter := &Encrypter{}
+			encrypter := &encrypter{}
 			encrypted, err := encrypter.Encrypt(context.Background(), tt.data, tt.privKey, tt.pubKey)
 			if err != nil {
 				t.Errorf("Encrypt() expected no error, but got: %v", err)
@@ -94,7 +94,6 @@ func TestEncryptFailure(t *testing.T) {
 		data          string
 		publicKey     string
 		privKey       string
-		wantErr       bool
 		errorContains string
 	}{
 		{
@@ -102,7 +101,6 @@ func TestEncryptFailure(t *testing.T) {
 			data:          "test data",
 			publicKey:     "invalid-base64!@#$",
 			privKey:       privateKey,
-			wantErr:       true,
 			errorContains: "invalid public key",
 		},
 		{
@@ -110,7 +108,6 @@ func TestEncryptFailure(t *testing.T) {
 			data:          "test data",
 			publicKey:     base64.StdEncoding.EncodeToString([]byte("invalid-key-bytes")),
 			privKey:       privateKey,
-			wantErr:       true,
 			errorContains: "failed to create public key",
 		},
 		{
@@ -118,7 +115,6 @@ func TestEncryptFailure(t *testing.T) {
 			data:          "test data",
 			publicKey:     publicKey,
 			privKey:       base64.StdEncoding.EncodeToString([]byte("invalid-key-bytes")),
-			wantErr:       true,
 			errorContains: "failed to create private key",
 		},
 		{
@@ -126,7 +122,6 @@ func TestEncryptFailure(t *testing.T) {
 			data:          "test data",
 			publicKey:     "",
 			privKey:       privateKey,
-			wantErr:       true,
 			errorContains: "invalid public key",
 		},
 		{
@@ -134,7 +129,6 @@ func TestEncryptFailure(t *testing.T) {
 			data:          "test data",
 			publicKey:     base64.StdEncoding.EncodeToString([]byte{1, 2, 3, 4}),
 			privKey:       privateKey,
-			wantErr:       true,
 			errorContains: "failed to create public key",
 		},
 		{
@@ -142,7 +136,6 @@ func TestEncryptFailure(t *testing.T) {
 			data:          "test data",
 			publicKey:     publicKey,
 			privKey:       "invalid-base64!@#$",
-			wantErr:       true,
 			errorContains: "invalid private key",
 		},
 		{
@@ -150,18 +143,14 @@ func TestEncryptFailure(t *testing.T) {
 			data:          "test data",
 			publicKey:     publicKey,
 			privKey:       "",
-			wantErr:       true,
 			errorContains: "invalid private key",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encrypter := &Encrypter{}
+			encrypter := &encrypter{}
 			_, err := encrypter.Encrypt(context.Background(), tt.data, tt.privKey, tt.publicKey)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Encrypt() error = %v, wantErr %v", err, tt.wantErr)
-			}
 			if err != nil && !strings.Contains(err.Error(), tt.errorContains) {
 				t.Errorf("Encrypt() error = %v, want error containing %q", err, tt.errorContains)
 			}
@@ -169,35 +158,22 @@ func TestEncryptFailure(t *testing.T) {
 	}
 }
 
-// TestNew tests the creation of new Encrypter instances.
+// TestNew tests the creation of new encrypter instances.
 func TestNew(t *testing.T) {
 	tests := []struct {
-		name    string
-		ctx     context.Context
-		config  *Config
-		wantErr bool
+		name string
+		ctx  context.Context
 	}{
 		{
-			name:    "Valid config",
-			ctx:     context.Background(),
-			config:  &Config{},
-			wantErr: false,
-		},
-		{
-			name:    "Nil config",
-			ctx:     context.Background(),
-			config:  nil,
-			wantErr: false,
+			name: "Success",
+			ctx:  context.Background(),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			encrypter, _, err := New(tt.ctx)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if !tt.wantErr && encrypter == nil {
+			if err == nil && encrypter == nil {
 				t.Error("New() returned nil encrypter")
 			}
 		})

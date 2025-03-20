@@ -11,21 +11,16 @@ import (
 	"github.com/zenazn/pkcs7pad"
 )
 
-// Config holds the configuration for the encryption process.
-type Config struct {
-}
-
 // Encrypter implements the Encrypter interface and handles the encryption process.
-type Encrypter struct {
+type encrypter struct {
 }
 
 // New creates a new Encrypter instance with the given configuration.
-func New(ctx context.Context) (*Encrypter, func() error, error) {
-	e := &Encrypter{}
-	return e, nil, nil
+func New(ctx context.Context) (*encrypter, func() error, error) {
+	return &encrypter{}, nil, nil
 }
 
-func (e *Encrypter) Encrypt(ctx context.Context, data string, privateKeyBase64, publicKeyBase64 string) (string, error) {
+func (e *encrypter) Encrypt(ctx context.Context, data string, privateKeyBase64, publicKeyBase64 string) (string, error) {
 	privateKeyBytes, err := base64.StdEncoding.DecodeString(privateKeyBase64)
 	if err != nil {
 		return "", fmt.Errorf("invalid private key: %w", err)
@@ -38,7 +33,6 @@ func (e *Encrypter) Encrypt(ctx context.Context, data string, privateKeyBase64, 
 
 	// Convert the input string to a byte slice.
 	dataByte := []byte(data)
-
 	aesCipher, err := createAESCipher(privateKeyBytes, publicKeyBytes)
 	if err != nil {
 		return "", fmt.Errorf("failed to create AES cipher: %w", err)
