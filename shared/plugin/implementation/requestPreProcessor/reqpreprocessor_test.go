@@ -24,8 +24,8 @@ func TestNewUUIDSetter(t *testing.T) {
 			},
 			requestBody: map[string]any{
 				"context": map[string]any{
-					"transaction_id":   "",
-					"message_id": nil,
+					"transaction_id": "",
+					"message_id":     nil,
 				},
 			},
 			expectedCode: http.StatusOK,
@@ -38,8 +38,8 @@ func TestNewUUIDSetter(t *testing.T) {
 			},
 			requestBody: map[string]any{
 				"context": map[string]any{
-					"transaction_id":   "existing-transaction",
-					"message_id": "existing-message",
+					"transaction_id": "existing-transaction",
+					"message_id":     "existing-message",
 				},
 			},
 			expectedCode: http.StatusOK,
@@ -107,7 +107,10 @@ func TestNewUUIDSetter(t *testing.T) {
 			// Define a dummy handler
 			dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
-				io.Copy(w, r.Body)
+				if _, err := io.Copy(w, r.Body); err != nil {
+					http.Error(w, "Failed to copy request body", http.StatusInternalServerError)
+					return
+				}
 			})
 
 			// Apply middleware
