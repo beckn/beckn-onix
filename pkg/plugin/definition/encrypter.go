@@ -6,9 +6,6 @@ import "context"
 type Encrypter interface {
 	// Encrypt encrypts the given body using the provided privateKeyBase64 and publicKeyBase64.
 	Encrypt(ctx context.Context, data string, privateKeyBase64, publicKeyBase64 string) (string, error)
-
-	// Close for releasing resources.
-	Close() error
 }
 
 // EncrypterProvider initializes a new encrypter instance with the given config.

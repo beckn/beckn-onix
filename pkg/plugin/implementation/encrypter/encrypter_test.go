@@ -203,11 +203,3 @@ func TestNew(t *testing.T) {
 		})
 	}
 }
-
-// TestClose tests the Close method.
-func TestClose(t *testing.T) {
-	encrypter := &Encrypter{}
-	if err := encrypter.Close(); err != nil {
-		t.Errorf("Close() error = %v", err)
-	}
-}

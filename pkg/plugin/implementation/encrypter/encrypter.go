@@ -22,7 +22,7 @@ type Encrypter struct {
 // New creates a new Encrypter instance with the given configuration.
 func New(ctx context.Context) (*Encrypter, func() error, error) {
 	e := &Encrypter{}
-	return e, e.Close, nil
+	return e, nil, nil
 }
 
 func (e *Encrypter) Encrypt(ctx context.Context, data string, privateKeyBase64, publicKeyBase64 string) (string, error) {
@@ -73,9 +73,4 @@ func createAESCipher(privateKey, publicKey []byte) (cipher.Block, error) {
 	}
 
 	return aesCipher, nil
-}
-
-// Close releases resources.
-func (e *Encrypter) Close() error {
-	return nil
 }
