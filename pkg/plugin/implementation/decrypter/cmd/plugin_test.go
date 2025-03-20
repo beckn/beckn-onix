@@ -5,26 +5,6 @@ import (
 	"testing"
 )
 
-// MockDecrypter implements the definition.Decrypter interface for testing.
-type MockDecrypter struct {
-	decryptFunc func(ctx context.Context, encryptedData, privateKey, publicKey string) (string, error)
-	closeFunc   func() error
-}
-
-func (m *MockDecrypter) Decrypt(ctx context.Context, encryptedData, privateKey, publicKey string) (string, error) {
-	if m.decryptFunc != nil {
-		return m.decryptFunc(ctx, encryptedData, privateKey, publicKey)
-	}
-	return "", nil
-}
-
-func (m *MockDecrypter) Close() error {
-	if m.closeFunc != nil {
-		return m.closeFunc()
-	}
-	return nil
-}
-
 func TestDecrypterProviderSuccess(t *testing.T) {
 	tests := []struct {
 		name        string
