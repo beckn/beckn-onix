@@ -18,7 +18,7 @@ func generateTestKeyPair(t *testing.T) (string, string) {
 	}
 
 	publicKeyBytes := privateKey.PublicKey().Bytes()
-	// Encode public key to base64.
+	// Encode public and private key to base64.
 	publicKeyBase64 := base64.StdEncoding.EncodeToString(publicKeyBytes)
 	privateKeyBase64 := base64.StdEncoding.EncodeToString(privateKey.Bytes())
 
@@ -193,7 +193,6 @@ func TestNew(t *testing.T) {
 			encrypter, _, err := New(tt.ctx, tt.config)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
-				return
 			}
 			if !tt.wantErr && encrypter == nil {
 				t.Error("New() returned nil encrypter")

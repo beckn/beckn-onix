@@ -28,7 +28,7 @@ type PluginConfig struct {
 type Manager struct {
 	sp  definition.SignerProvider
 	vp  definition.VerifierProvider
-	ep 	definition.EncrypterProvider
+	ep  definition.EncrypterProvider
 	cfg *Config
 }
 
