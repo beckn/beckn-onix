@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/beckn/beckn-onix/shared/plugin/definition"
-	"github.com/beckn/beckn-onix/shared/plugin/implementation/signer"
+	"github.com/beckn/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn/beckn-onix/pkg/plugin/implementation/signer"
 )
 
 // SignerProvider implements the definition.SignerProvider interface.
