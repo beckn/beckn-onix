@@ -11,23 +11,17 @@ import (
 	"github.com/zenazn/pkcs7pad"
 )
 
-// Config holds the configuration for the decryption process.
-type Config struct {
-}
-
 // Decrypter implements the Decrypter interface and handles the decryption process.
-type Decrypter struct {
-	config *Config
+type decrypter struct {
 }
 
 // New creates a new Decrypter instance with the given configuration.
-func New(ctx context.Context, config *Config) (*Decrypter, func() error, error) {
-	d := &Decrypter{config: config}
-	return d, d.Close, nil
+func New(ctx context.Context) (*decrypter, func() error, error) {
+	return &decrypter{}, nil, nil
 }
 
 // Decrypt decrypts the given encryptedData using the provided privateKeyBase64 and publicKeyBase64.
-func (d *Decrypter) Decrypt(ctx context.Context, encryptedData, privateKeyBase64, publicKeyBase64 string) (string, error) {
+func (d *decrypter) Decrypt(ctx context.Context, encryptedData, privateKeyBase64, publicKeyBase64 string) (string, error) {
 	privateKeyBytes, err := base64.StdEncoding.DecodeString(privateKeyBase64)
 	if err != nil {
 		return "", fmt.Errorf("invalid private key: %w", err)
@@ -88,9 +82,4 @@ func createAESCipher(privateKey, publicKey []byte) (cipher.Block, error) {
 	}
 
 	return aesCipher, nil
-}
-
-// Close releases resources.
-func (d *Decrypter) Close() error {
-	return nil
 }

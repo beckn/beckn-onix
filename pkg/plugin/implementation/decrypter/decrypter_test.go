@@ -58,24 +58,20 @@ func TestDecrypterSuccess(t *testing.T) {
 	privateKeyB64, publicKeyB64, sharedSecret := generateTestKeys(t)
 
 	tests := []struct {
-		name    string
-		data    []byte
-		wantErr bool
+		name string
+		data []byte
 	}{
 		{
-			name:    "Valid decryption with small data",
-			data:    []byte("test"),
-			wantErr: false,
+			name: "Valid decryption with small data",
+			data: []byte("test"),
 		},
 		{
-			name:    "Valid decryption with medium data",
-			data:    []byte("medium length test data that spans multiple blocks"),
-			wantErr: false,
+			name: "Valid decryption with medium data",
+			data: []byte("medium length test data that spans multiple blocks"),
 		},
 		{
-			name:    "Valid decryption with empty data",
-			data:    []byte{},
-			wantErr: false,
+			name: "Valid decryption with empty data",
+			data: []byte{},
 		},
 	}
 
@@ -84,22 +80,17 @@ func TestDecrypterSuccess(t *testing.T) {
 			// Encrypt the test data.
 			encryptedData := encryptTestData(t, tt.data, sharedSecret)
 
-			decrypter, cleanup, err := New(context.Background(), &Config{})
+			decrypter, _, err := New(context.Background())
 			if err != nil {
 				t.Fatalf("Failed to create decrypter: %v", err)
 			}
-			defer func() {
-				if err := cleanup(); err != nil {
-					t.Errorf("Cleanup failed: %v", err)
-				}
-			}()
 
 			result, err := decrypter.Decrypt(context.Background(), encryptedData, privateKeyB64, publicKeyB64)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Decrypt() error = %v, wantErr %v", err, tt.wantErr)
+			if err != nil {
+				t.Errorf("Decrypt() error = %v", err)
 			}
 
-			if !tt.wantErr {
+			if err == nil {
 				if result != string(tt.data) {
 					t.Errorf("Decrypt() = %v, want %v", result, string(tt.data))
 				}
@@ -186,15 +177,10 @@ func TestDecrypterFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			decrypter, cleanup, err := New(context.Background(), &Config{})
+			decrypter, _, err := New(context.Background())
 			if err != nil {
 				t.Fatalf("Failed to create decrypter: %v", err)
 			}
-			defer func() {
-				if err := cleanup(); err != nil {
-					t.Errorf("Cleanup failed: %v", err)
-				}
-			}()
 
 			_, err = decrypter.Decrypt(context.Background(), tt.encryptedData, tt.privateKey, tt.publicKey)
 			if err == nil {
@@ -213,58 +199,31 @@ func TestDecrypterFailure(t *testing.T) {
 // TestNewDecrypter tests the creation of new Decrypter instances.
 func TestNewDecrypter(t *testing.T) {
 	tests := []struct {
-		name      string
-		ctx       context.Context
-		config    *Config
-		wantError bool
+		name string
+		ctx  context.Context
 	}{
 		{
-			name:      "Valid context and config",
-			ctx:       context.Background(),
-			config:    &Config{},
-			wantError: false,
+			name: "Valid context",
+			ctx:  context.Background(),
 		},
 		{
-			name:      "Nil context",
-			ctx:       nil,
-			config:    &Config{},
-			wantError: false,
-		},
-		{
-			name:      "Nil config",
-			ctx:       context.Background(),
-			config:    nil,
-			wantError: false,
+			name: "Nil context",
+			ctx:  nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			decrypter, cleanup, err := New(tt.ctx, tt.config)
-			if (err != nil) != tt.wantError {
-				t.Errorf("New() error = %v, wantError %v", err, tt.wantError)
+			decrypter, _, err := New(tt.ctx)
+			if err != nil {
+				t.Errorf("New() error = %v", err)
 			}
 
-			if !tt.wantError {
+			if err == nil {
 				if decrypter == nil {
 					t.Error("Expected non-nil decrypter")
 				}
-				if cleanup == nil {
-					t.Error("Expected non-nil cleanup function")
-				} else {
-					if err := cleanup(); err != nil {
-						t.Errorf("Cleanup failed: %v", err)
-					}
-				}
 			}
 		})
-	}
-}
-
-// TestDecrypterClose tests the Close method.
-func TestDecrypterClose(t *testing.T) {
-	decrypter := &Decrypter{}
-	if err := decrypter.Close(); err != nil {
-		t.Errorf("Close() error = %v", err)
 	}
 }

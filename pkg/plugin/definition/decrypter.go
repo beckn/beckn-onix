@@ -6,9 +6,6 @@ import "context"
 type Decrypter interface {
 	// Decrypt decrypts the given body using the provided privateKeyBase64 and publicKeyBase64.
 	Decrypt(ctx context.Context, encryptedData string, privateKeyBase64, publicKeyBase64 string) (string, error)
-
-	// Close for releasing resources.
-	Close() error
 }
 
 // DecrypterProvider initializes a new decrypter instance with the given config.
