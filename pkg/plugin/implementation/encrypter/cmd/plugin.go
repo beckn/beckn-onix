@@ -5,13 +5,13 @@ import (
 	"errors"
 
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn/beckn-onix/pkg/plugin/implementation/encryption"
+	"github.com/beckn/beckn-onix/pkg/plugin/implementation/encrypter"
 )
 
 // EncrypterProvider implements the definition.EncrypterProvider interface.
 type EncrypterProvider struct{}
 
-func (p EncrypterProvider) New(ctx context.Context, config map[string]string) (definition.Encrypter, func() error, error) {
+func (ep EncrypterProvider) New(ctx context.Context, config map[string]string) (definition.Encrypter, func() error, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("context cannot be nil")
 	}

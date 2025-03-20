@@ -37,7 +37,7 @@ func (e *Encrypter) Encrypt(ctx context.Context, data string, privateKeyBase64, 
 		return "", fmt.Errorf("invalid public key: %w", err)
 	}
 
-	// Convert the input string to a byte slice
+	// Convert the input string to a byte slice.
 	dataByte := []byte(data)
 
 	aesCipher, err := createAESCipher(privateKeyBytes, publicKeyBytes)
@@ -46,7 +46,6 @@ func (e *Encrypter) Encrypt(ctx context.Context, data string, privateKeyBase64, 
 	}
 
 	dataByte = pkcs7pad.Pad(dataByte, aesCipher.BlockSize())
-
 	for i := 0; i < len(dataByte); i += aesCipher.BlockSize() {
 		aesCipher.Encrypt(dataByte[i:i+aesCipher.BlockSize()], dataByte[i:i+aesCipher.BlockSize()])
 	}
@@ -77,7 +76,7 @@ func createAESCipher(privateKey, publicKey []byte) (cipher.Block, error) {
 	return aesCipher, nil
 }
 
-// Close releases resources
+// Close releases resources.
 func (e *Encrypter) Close() error {
 	return nil
 }
