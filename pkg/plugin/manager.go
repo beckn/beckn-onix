@@ -7,7 +7,7 @@ import (
 	"plugin"
 	"strings"
 
-	"github.com/beckn/beckn-onix/shared/plugin/definition"
+	"github.com/beckn/beckn-onix/pkg/plugin/definition"
 )
 
 // Config represents the plugin manager configuration.

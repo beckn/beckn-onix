@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/beckn/beckn-onix/shared/plugin/definition"
+	"github.com/beckn/beckn-onix/pkg/plugin/definition"
 )
 
 // MockPublisher is a mock implementation of the definition.Publisher interface for testing.
