@@ -71,11 +71,23 @@ func TestNew(t *testing.T) {
 			expectedError: "",
 		},
 		{
+			name:          "Empty config",
+			config:        nil,
+			expectedError: "config cannot be nil",
+		},
+		{
 			name: "Empty routing config path",
 			config: &Config{
 				RoutingConfig: "",
 			},
 			expectedError: "routing_config path is empty",
+		},
+		{
+			name: "Routing config file does not exist",
+			config: &Config{
+				RoutingConfig: "/nonexistent/path/to/rules.yaml",
+			},
+			expectedError: "error reading config file",
 		},
 	}
 
