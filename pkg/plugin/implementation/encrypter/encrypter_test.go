@@ -34,57 +34,52 @@ func TestEncryptSuccess(t *testing.T) {
 		data    string
 		pubKey  string
 		privKey string
-		wantErr bool
 	}{
 		{
 			name:    "Valid short message",
 			data:    "Hello, World!",
 			pubKey:  publicKey,
 			privKey: privateKey,
-			wantErr: false,
 		},
 		{
 			name:    "Valid JSON message",
 			data:    `{"key":"value"}`,
 			pubKey:  publicKey,
 			privKey: privateKey,
-			wantErr: false,
 		},
 		{
 			name:    "Valid empty message",
 			data:    "",
 			pubKey:  publicKey,
 			privKey: privateKey,
-			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encrypter := &Encrypter{config: &Config{}}
+			encrypter := &Encrypter{}
 			encrypted, err := encrypter.Encrypt(context.Background(), tt.data, tt.privKey, tt.pubKey)
-			if (err != nil) != tt.wantErr {
+			if err != nil {
 				t.Errorf("Encrypt() expected no error, but got: %v", err)
 			}
 
-			if !tt.wantErr {
-				// Verify the encrypted data is valid base64.
-				_, err := base64.StdEncoding.DecodeString(encrypted)
-				if err != nil {
-					t.Errorf("Encrypt() output is not valid base64: %v", err)
-				}
-
-				// Since we can't decrypt without the ephemeral private key,
-				// we can only verify that encryption doesn't return empty data.
-				if encrypted == "" {
-					t.Error("Encrypt() returned empty string")
-				}
-
-				// Verify the output is different from input (basic encryption check).
-				if encrypted == tt.data {
-					t.Error("Encrypt() output matches input, suggesting no encryption occurred")
-				}
+			// Verify the encrypted data is valid base64.
+			_, err = base64.StdEncoding.DecodeString(encrypted)
+			if err != nil {
+				t.Errorf("Encrypt() output is not valid base64: %v", err)
 			}
+
+			// Since we can't decrypt without the ephemeral private key,
+			// we can only verify that encryption doesn't return empty data.
+			if encrypted == "" {
+				t.Error("Encrypt() returned empty string")
+			}
+
+			// Verify the output is different from input (basic encryption check).
+			if encrypted == tt.data {
+				t.Error("Encrypt() output matches input, suggesting no encryption occurred")
+			}
+
 		})
 	}
 }
@@ -111,12 +106,20 @@ func TestEncryptFailure(t *testing.T) {
 			errorContains: "invalid public key",
 		},
 		{
-			name:          "Invalid key bytes",
+			name:          "Invalid key bytes(public key)",
 			data:          "test data",
 			publicKey:     base64.StdEncoding.EncodeToString([]byte("invalid-key-bytes")),
 			privKey:       privateKey,
 			wantErr:       true,
 			errorContains: "failed to create public key",
+		},
+		{
+			name:          "Invalid key bytes(private key)",
+			data:          "test data",
+			publicKey:     publicKey,
+			privKey:       base64.StdEncoding.EncodeToString([]byte("invalid-key-bytes")),
+			wantErr:       true,
+			errorContains: "failed to create private key",
 		},
 		{
 			name:          "Empty public key",
@@ -154,7 +157,7 @@ func TestEncryptFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encrypter := &Encrypter{config: &Config{}}
+			encrypter := &Encrypter{}
 			_, err := encrypter.Encrypt(context.Background(), tt.data, tt.privKey, tt.publicKey)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Encrypt() error = %v, wantErr %v", err, tt.wantErr)
@@ -190,7 +193,7 @@ func TestNew(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encrypter, _, err := New(tt.ctx, tt.config)
+			encrypter, _, err := New(tt.ctx)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
 			}

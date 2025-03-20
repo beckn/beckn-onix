@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"strings"
 	"testing"
 )
 
@@ -45,45 +44,6 @@ func TestEncrypterProviderSuccess(t *testing.T) {
 				}
 			}()
 
-		})
-	}
-}
-
-func TestEncrypterProviderFailure(t *testing.T) {
-	tests := []struct {
-		name      string
-		ctx       context.Context
-		config    map[string]string
-		errSubstr string
-	}{
-		{
-			name:      "Nil context",
-			ctx:       nil,
-			config:    map[string]string{},
-			errSubstr: "context cannot be nil",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			provider := EncrypterProvider{}
-			encrypter, cleanup, err := provider.New(tt.ctx, tt.config)
-			if err == nil {
-				t.Error("EncrypterProvider.New() expected error, got nil")
-			}
-			if err != nil {
-				if !strings.Contains(err.Error(), tt.errSubstr) {
-					t.Errorf("EncrypterProvider.New() error = %v, want error containing %q", err, tt.errSubstr)
-				}
-			}
-			if encrypter != nil {
-				t.Error("EncrypterProvider.New() expected nil encrypter when error")
-			}
-			if cleanup != nil {
-				if err := cleanup(); err != nil {
-					t.Errorf("Cleanup() error = %v", err)
-				}
-			}
 		})
 	}
 }

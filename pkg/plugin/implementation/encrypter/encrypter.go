@@ -17,12 +17,11 @@ type Config struct {
 
 // Encrypter implements the Encrypter interface and handles the encryption process.
 type Encrypter struct {
-	config *Config
 }
 
 // New creates a new Encrypter instance with the given configuration.
-func New(ctx context.Context, config *Config) (*Encrypter, func() error, error) {
-	e := &Encrypter{config: config}
+func New(ctx context.Context) (*Encrypter, func() error, error) {
+	e := &Encrypter{}
 	return e, e.Close, nil
 }
 
