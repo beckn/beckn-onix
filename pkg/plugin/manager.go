@@ -19,6 +19,7 @@ type Config struct {
 	Encrypter       PluginConfig `yaml:"encrypter"`
 	Publisher       PluginConfig `yaml:"publisher"`
 	SchemaValidator PluginConfig `yaml:"schemaValidator"`
+	Router          PluginConfig `yaml:"router"`
 }
 
 // PluginConfig represents configuration details for a plugin.
@@ -40,6 +41,7 @@ type Manager struct {
 	ep  definition.EncrypterProvider
 	pb  definition.PublisherProvider
 	svp definition.SchemaValidatorProvider
+	rp  definition.RouterProvider
 	cfg *Config
 }
 
@@ -79,7 +81,19 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 		return nil, fmt.Errorf("failed to load encryption plugin: %w", err)
 	}
 
-	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, dp: dp, cfg: cfg}, nil
+	// Load router plugin.
+	rp, err := provider[definition.RouterProvider](cfg.Root, cfg.Router.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load encryption plugin: %w", err)
+	}
+
+	// Load schema validator plugin
+	svp, err := provider[definition.SchemaValidatorProvider](cfg.Root, cfg.SchemaValidator.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load validator plugin: %w", err)
+	}
+
+	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, dp: dp, rp: rp, svp: svp, cfg: cfg}, nil
 }
 
 // provider loads a plugin dynamically and retrieves its provider instance.
@@ -175,4 +189,32 @@ func (m *Manager) Publisher(ctx context.Context) (definition.Publisher, error) {
 		return nil, fmt.Errorf("failed to initialize publisher: %w", err)
 	}
 	return publisher, nil
+}
+
+// SchemaValidator retrieves the validation plugin instances.
+func (m *Manager) SchemaValidator(ctx context.Context) (definition.SchemaValidator, func() error, error) {
+	if m.svp == nil {
+		return nil, nil, fmt.Errorf("schema validator plugin provider not loaded")
+
+	}
+	schemaValidator, close, err := m.svp.New(ctx, m.cfg.SchemaValidator.Config)
+	if err != nil {
+
+		return nil, nil, fmt.Errorf("failed to initialize schema validator: %v", err)
+	}
+	return schemaValidator, close, nil
+}
+
+// Router retrieves the router plugin instances.
+func (m *Manager) Router(ctx context.Context) (definition.Router, func() error, error) {
+	if m.rp == nil {
+		return nil, nil, fmt.Errorf("router plugin provider not loaded")
+
+	}
+	schemaValidator, close, err := m.rp.New(ctx, m.cfg.Router.Config)
+	if err != nil {
+
+		return nil, nil, fmt.Errorf("failed to initialize schema validator: %v", err)
+	}
+	return schemaValidator, close, nil
 }
