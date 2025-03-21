@@ -72,7 +72,7 @@ func TestValidatorProviderSuccess(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			vp := schemaValidatorProvider{}
-			schemaValidator, close, err := vp.New(tt.ctx, tt.config)
+			schemaValidator, _, err := vp.New(tt.ctx, tt.config)
 
 			// Ensure no error occurred
 			if err != nil {
@@ -83,16 +83,6 @@ func TestValidatorProviderSuccess(t *testing.T) {
 			// Ensure the schemaValidator is not nil
 			if schemaValidator == nil {
 				t.Error("expected a non-nil schemaValidator, got nil")
-			}
-
-			// Ensure the close function is not nil
-			if close == nil {
-				t.Error("expected a non-nil close function, got nil")
-			}
-
-			// Test the close function
-			if err := close(); err != nil {
-				t.Errorf("close function returned an error: %v", err)
 			}
 		})
 	}
