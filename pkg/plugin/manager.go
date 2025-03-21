@@ -12,9 +12,9 @@ import (
 
 // Config represents the plugin manager configuration.
 type Config struct {
-	Root     string       `yaml:"root"`
-	Signer   PluginConfig `yaml:"signer"`
-	Verifier PluginConfig `yaml:"verifier"`
+	Root      string       `yaml:"root"`
+	Signer    PluginConfig `yaml:"signer"`
+	Verifier  PluginConfig `yaml:"verifier"`
 	Publisher PluginConfig `yaml:"publisher"`
 }
 
@@ -38,19 +38,19 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 		return nil, fmt.Errorf("configuration cannot be nil")
 	}
 
-	// Load signer plugin
+	// Load signer plugin.
 	sp, err := provider[definition.SignerProvider](cfg.Root, cfg.Signer.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load signer plugin: %w", err)
 	}
 
-	// Load publisher plugin
+	// Load publisher plugin.
 	pb, err := provider[definition.PublisherProvider](cfg.Root, cfg.Publisher.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load publisher plugin: %w", err)
 	}
 
-	// Load verifier plugin
+	// Load verifier plugin.
 	vp, err := provider[definition.VerifierProvider](cfg.Root, cfg.Verifier.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load Verifier plugin: %w", err)
@@ -121,9 +121,9 @@ func (m *Manager) Publisher(ctx context.Context) (definition.Publisher, error) {
 		return nil, fmt.Errorf("publisher plugin provider not loaded")
 	}
 
-	publisher,  err := m.pb.New(ctx, m.cfg.Publisher.Config)
+	publisher, err := m.pb.New(ctx, m.cfg.Publisher.Config)
 	if err != nil {
-		return nil,  fmt.Errorf("failed to initialize publisher: %w", err)
+		return nil, fmt.Errorf("failed to initialize publisher: %w", err)
 	}
-	return publisher,  nil
+	return publisher, nil
 }
