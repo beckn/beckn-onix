@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type ErrorType string
@@ -21,6 +22,20 @@ type Error struct {
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
 	Paths   string `json:"paths,omitempty"`
+}
+
+// SchemaValidationErr represents a collection of schema validation failures.
+type SchemaValidationErr struct {
+	Errors []Error
+}
+
+// Error implements the error interface for SchemaValidationErr.
+func (e *SchemaValidationErr) Error() string {
+	var errorMessages []string
+	for _, err := range e.Errors {
+		errorMessages = append(errorMessages, fmt.Sprintf("%s: %s", err.Paths, err.Message))
+	}
+	return strings.Join(errorMessages, "; ")
 }
 
 type Message struct {
