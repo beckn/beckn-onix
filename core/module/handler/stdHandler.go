@@ -177,7 +177,7 @@ func (p *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 	for _, step := range cfg.Steps {
 		switch step {
 		case "sign":
-			p.steps = append(p.steps, &signStep{signer: p.signer})
+			p.steps = append(p.steps, &SignStep{Signer: p.signer})
 		case "validateSign":
 			p.steps = append(p.steps, &validateSignStep{validator: p.signValidator})
 		case "validateSchema":

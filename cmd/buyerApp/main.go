@@ -111,13 +111,31 @@ func msgIdHandler(w http.ResponseWriter, r *http.Request) {
 	mu.Unlock()
 }
 
-func main() {
-	configPath := flag.String("config", "config.yaml", "../../config/byuerApp-config.yaml")
+// func main() {
+// 	configPath := flag.String("config", "config.yaml", "../../config/byuerApp-config.yaml")
+// 	flag.Parse()
+
+// 	err := loadConfig(*configPath)
+// 	if err != nil {
+// 		log.Fatalf("Failed to load config: %v", err)
+// 	}
+
+// 	http.HandleFunc("/webhook", webhookHandler)
+// 	http.HandleFunc("/call-api", callAPIHandler)
+// 	http.HandleFunc("/webhook-data", webhookDataHandler)
+// 	http.HandleFunc("/msgId", msgIdHandler)
+// 	http.HandleFunc("/", uiHandler)
+
+// 	log.Printf("Server starting on port %s", cfg.Port)
+// 	log.Fatal(http.ListenAndServe(":"+cfg.Port, nil))
+// }
+
+func run() error {
+	configPath := flag.String("config", "config.yaml", "../../config/buyerApp-config.yaml")
 	flag.Parse()
 
-	err := loadConfig(*configPath)
-	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+	if err := loadConfig(*configPath); err != nil {
+		return err
 	}
 
 	http.HandleFunc("/webhook", webhookHandler)
@@ -127,5 +145,11 @@ func main() {
 	http.HandleFunc("/", uiHandler)
 
 	log.Printf("Server starting on port %s", cfg.Port)
-	log.Fatal(http.ListenAndServe(":"+cfg.Port, nil))
+	return http.ListenAndServe(":"+cfg.Port, nil)
+}
+
+func main() {
+	if err := run(); err != nil {
+		log.Fatalf("Application failed: %v", err)
+	}
 }

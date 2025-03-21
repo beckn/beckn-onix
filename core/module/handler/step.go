@@ -6,14 +6,14 @@ import (
 	"github.com/beckn/beckn-onix/plugin/definition"
 )
 
-// signStep represents the signing step in the process.
-type signStep struct {
-	signer definition.Signer
+// SignStep represents the signing step in the process.
+type SignStep struct {
+	Signer definition.Signer
 }
 
 // Run executes the signing step by signing the request body.
-func (s *signStep) Run(ctx *definition.StepContext) error {
-	sign, err := s.signer.Sign(ctx, ctx.Body, ctx.SigningKey)
+func (s *SignStep) Run(ctx *definition.StepContext) error {
+	sign, err := s.Signer.Sign(ctx, ctx.Body, ctx.SigningKey)
 	if err != nil {
 		return fmt.Errorf("failed to sign request: %w", err)
 	}
