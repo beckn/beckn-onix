@@ -11,11 +11,11 @@ import (
 	"github.com/zenazn/pkcs7pad"
 )
 
-// Decrypter implements the Decrypter interface and handles the decryption process.
+// decrypter implements the Decrypter interface and handles the decryption process.
 type decrypter struct {
 }
 
-// New creates a new Decrypter instance with the given configuration.
+// New creates a new decrypter instance with the given configuration.
 func New(ctx context.Context) (*decrypter, func() error, error) {
 	return &decrypter{}, nil, nil
 }
