@@ -49,7 +49,7 @@ func New(ctx context.Context, config *Config) (*SchemaValidator, func() error, e
 	if err := v.initialise(); err != nil {
 		return nil, nil, fmt.Errorf("failed to initialise schemaValidator: %v", err)
 	}
-	return v, v.Close, nil
+	return v, nil, nil
 }
 
 // Validate validates the given data against the schema.
@@ -193,10 +193,5 @@ func (v *SchemaValidator) initialise() error {
 		return fmt.Errorf("failed to read schema directory: %v", err)
 	}
 
-	return nil
-}
-
-// Close releases resources (mock implementation returning nil).
-func (v *SchemaValidator) Close() error {
 	return nil
 }

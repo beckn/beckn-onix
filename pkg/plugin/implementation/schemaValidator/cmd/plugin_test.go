@@ -63,7 +63,7 @@ func TestValidatorProviderSuccess(t *testing.T) {
 		{
 			name:          "Valid schema directory",
 			ctx:           context.Background(), // Valid context
-			config:        map[string]string{"schema_dir": schemaDir},
+			config:        map[string]string{"schemaDir": schemaDir},
 			expectedError: "",
 		},
 	}
@@ -114,24 +114,24 @@ func TestValidatorProviderFailure(t *testing.T) {
 			name:          "Config is empty",
 			ctx:           context.Background(),
 			config:        map[string]string{},
-			expectedError: "config must contain 'schema_dir'",
+			expectedError: "config must contain 'schemaDir'",
 		},
 		{
-			name:          "schema_dir is empty",
+			name:          "schemaDir is empty",
 			ctx:           context.Background(),
-			config:        map[string]string{"schema_dir": ""},
-			expectedError: "config must contain 'schema_dir'",
+			config:        map[string]string{"schemaDir": ""},
+			expectedError: "config must contain 'schemaDir'",
 		},
 		{
 			name:          "Invalid schema directory",
 			ctx:           context.Background(), // Valid context
-			config:        map[string]string{"schema_dir": "/invalid/dir"},
+			config:        map[string]string{"schemaDir": "/invalid/dir"},
 			expectedError: "failed to initialise schemaValidator: schema directory does not exist: /invalid/dir",
 		},
 		{
 			name:          "Nil context",
 			ctx:           nil, // Nil context
-			config:        map[string]string{"schema_dir": schemaDir},
+			config:        map[string]string{"schemaDir": schemaDir},
 			expectedError: "context cannot be nil",
 		},
 	}

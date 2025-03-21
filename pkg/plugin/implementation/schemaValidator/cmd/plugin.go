@@ -17,10 +17,10 @@ func (vp schemaValidatorProvider) New(ctx context.Context, config map[string]str
 		return nil, nil, errors.New("context cannot be nil")
 	}
 
-	// Extract schema_dir from the config map
-	schemaDir, ok := config["schema_dir"]
+	// Extract schemaDir from the config map
+	schemaDir, ok := config["schemaDir"]
 	if !ok || schemaDir == "" {
-		return nil, nil, errors.New("config must contain 'schema_dir'")
+		return nil, nil, errors.New("config must contain 'schemaDir'")
 	}
 
 	// Create a new schemaValidator instance with the provided configuration
