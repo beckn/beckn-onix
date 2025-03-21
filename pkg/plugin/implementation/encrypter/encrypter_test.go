@@ -27,7 +27,8 @@ func generateTestKeyPair(t *testing.T) (string, string) {
 
 // TestEncryptSuccess tests successful encryption scenarios.
 func TestEncryptSuccess(t *testing.T) {
-	publicKey, privateKey := generateTestKeyPair(t)
+	_, privateKey := generateTestKeyPair(t)
+	peerpublicKey, _ := generateTestKeyPair(t)
 
 	tests := []struct {
 		name    string
@@ -38,19 +39,19 @@ func TestEncryptSuccess(t *testing.T) {
 		{
 			name:    "Valid short message",
 			data:    "Hello, World!",
-			pubKey:  publicKey,
+			pubKey:  peerpublicKey,
 			privKey: privateKey,
 		},
 		{
 			name:    "Valid JSON message",
 			data:    `{"key":"value"}`,
-			pubKey:  publicKey,
+			pubKey:  peerpublicKey,
 			privKey: privateKey,
 		},
 		{
 			name:    "Valid empty message",
 			data:    "",
-			pubKey:  publicKey,
+			pubKey:  peerpublicKey,
 			privKey: privateKey,
 		},
 	}
@@ -87,7 +88,8 @@ func TestEncryptSuccess(t *testing.T) {
 // TestEncryptFailure tests encryption failure scenarios.
 func TestEncryptFailure(t *testing.T) {
 	// Generate a valid key pair for testing.
-	publicKey, privateKey := generateTestKeyPair(t)
+	_, privateKey := generateTestKeyPair(t)
+	peerpublicKey, _ := generateTestKeyPair(t)
 
 	tests := []struct {
 		name          string
@@ -113,7 +115,7 @@ func TestEncryptFailure(t *testing.T) {
 		{
 			name:          "Invalid key bytes(private key)",
 			data:          "test data",
-			publicKey:     publicKey,
+			publicKey:     peerpublicKey,
 			privKey:       base64.StdEncoding.EncodeToString([]byte("invalid-key-bytes")),
 			errorContains: "failed to create private key",
 		},
@@ -134,14 +136,14 @@ func TestEncryptFailure(t *testing.T) {
 		{
 			name:          "Invalid private key",
 			data:          "test data",
-			publicKey:     publicKey,
+			publicKey:     peerpublicKey,
 			privKey:       "invalid-base64!@#$",
 			errorContains: "invalid private key",
 		},
 		{
 			name:          "Empty private key",
 			data:          "test data",
-			publicKey:     publicKey,
+			publicKey:     peerpublicKey,
 			privKey:       "",
 			errorContains: "invalid private key",
 		},

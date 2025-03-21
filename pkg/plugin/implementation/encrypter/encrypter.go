@@ -11,11 +11,11 @@ import (
 	"github.com/zenazn/pkcs7pad"
 )
 
-// Encrypter implements the Encrypter interface and handles the encryption process.
+// encrypter implements the Encrypter interface and handles the encryption process.
 type encrypter struct {
 }
 
-// New creates a new Encrypter instance with the given configuration.
+// New creates a new encrypter instance with the given configuration.
 func New(ctx context.Context) (*encrypter, func() error, error) {
 	return &encrypter{}, nil, nil
 }
