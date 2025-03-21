@@ -27,11 +27,6 @@ type PluginConfig struct {
 	Config map[string]string `yaml:"config"`
 }
 
-// SchemaDetails contains information about the plugin schema directory.
-type SchemaDetails struct {
-	SchemaDir string `yaml:"schemaDir"`
-}
-
 // Manager handles dynamic plugin loading and management.
 type Manager struct {
 	sp  definition.SignerProvider
@@ -79,7 +74,13 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 		return nil, fmt.Errorf("failed to load encryption plugin: %w", err)
 	}
 
-	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, dp: dp, cfg: cfg}, nil
+	// Load schema validation plugin.
+	svp, err := provider[definition.SchemaValidatorProvider](cfg.Root, cfg.Encrypter.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load schema validation plugin: %w", err)
+	}
+
+	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, dp: dp, svp: svp, cfg: cfg}, nil
 }
 
 // provider loads a plugin dynamically and retrieves its provider instance.
@@ -175,4 +176,17 @@ func (m *Manager) Publisher(ctx context.Context) (definition.Publisher, error) {
 		return nil, fmt.Errorf("failed to initialize publisher: %w", err)
 	}
 	return publisher, nil
+}
+
+// Encrypter retrieves the encryption plugin instance.
+func (m *Manager) SchemaValidation(ctx context.Context) (definition.SchemaValidator, func() error, error) {
+	if m.svp == nil {
+		return nil, nil, fmt.Errorf("schema validation plugin provider not loaded")
+	}
+
+	schemaValidator, close, err := m.svp.New(ctx, m.cfg.SchemaValidator.Config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize schema validator: %w", err)
+	}
+	return schemaValidator, close, nil
 }

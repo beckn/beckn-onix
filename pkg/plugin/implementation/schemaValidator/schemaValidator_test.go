@@ -289,7 +289,7 @@ func TestValidator_Initialise(t *testing.T) {
 	}
 }
 
-func TestValidator_New_Success(t *testing.T) {
+func TestValidatorNew_Success(t *testing.T) {
 	schemaDir := setupTestSchema(t)
 	defer os.RemoveAll(schemaDir)
 
@@ -300,7 +300,7 @@ func TestValidator_New_Success(t *testing.T) {
 	}
 }
 
-func TestValidator_New_Failure(t *testing.T) {
+func TestValidatorNewFailure(t *testing.T) {
 	tests := []struct {
 		name      string
 		config    *Config
@@ -315,22 +315,6 @@ func TestValidator_New_Failure(t *testing.T) {
 			},
 			wantErr: "config cannot be nil",
 		},
-		// {
-		// 	name:   "Config is empty",
-		// 	config: &Config{},
-		// 	setupFunc: func(schemaDir string) error {
-		// 		return nil
-		// 	},
-		// 	wantErr: "config must contain 'schema_dir'",
-		// },
-		// {
-		// 	name:   "schema_dir is empty",
-		// 	config: &Config{SchemaDir: ""},
-		// 	setupFunc: func(schemaDir string) error {
-		// 		return nil
-		// 	},
-		// 	wantErr: "config must contain 'schema_dir'",
-		// },
 		{
 			name: "Failed to initialise validators",
 			config: &Config{
