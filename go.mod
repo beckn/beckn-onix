@@ -7,6 +7,7 @@ toolchain go1.23.7
 require golang.org/x/crypto v0.36.0
 
 require (
+	github.com/zenazn/pkcs7pad v0.0.0-20170308005700-253a5b1f0e03
 	cloud.google.com/go v0.119.0 // indirect
 	cloud.google.com/go/auth v0.15.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.7 // indirect

@@ -15,6 +15,7 @@ type Config struct {
 	Root      string       `yaml:"root"`
 	Signer    PluginConfig `yaml:"signer"`
 	Verifier  PluginConfig `yaml:"verifier"`
+	Encrypter PluginConfig `yaml:"encrypter"`
 	Publisher PluginConfig `yaml:"publisher"`
 }
 
@@ -28,6 +29,7 @@ type PluginConfig struct {
 type Manager struct {
 	sp  definition.SignerProvider
 	vp  definition.VerifierProvider
+	ep  definition.EncrypterProvider
 	pb  definition.PublisherProvider
 	cfg *Config
 }
@@ -56,7 +58,13 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 		return nil, fmt.Errorf("failed to load Verifier plugin: %w", err)
 	}
 
-	return &Manager{sp: sp, vp: vp, pb: pb, cfg: cfg}, nil
+	// Load encryption plugin.
+	ep, err := provider[definition.EncrypterProvider](cfg.Root, cfg.Encrypter.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load encryption plugin: %w", err)
+	}
+
+	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, cfg: cfg}, nil
 }
 
 // provider loads a plugin dynamically and retrieves its provider instance.
@@ -113,6 +121,19 @@ func (m *Manager) Verifier(ctx context.Context) (definition.Verifier, func() err
 		return nil, nil, fmt.Errorf("failed to initialize Verifier: %w", err)
 	}
 	return Verifier, close, nil
+}
+
+// Encrypter retrieves the encryption plugin instance.
+func (m *Manager) Encrypter(ctx context.Context) (definition.Encrypter, func() error, error) {
+	if m.ep == nil {
+		return nil, nil, fmt.Errorf("encryption plugin provider not loaded")
+	}
+
+	encrypter, close, err := m.ep.New(ctx, m.cfg.Encrypter.Config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize encrypter: %w", err)
+	}
+	return encrypter, close, nil
 }
 
 // Publisher retrieves the publisher plugin instance.
