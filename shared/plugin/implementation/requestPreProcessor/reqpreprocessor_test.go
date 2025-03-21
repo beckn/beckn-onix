@@ -102,8 +102,11 @@ func TestNewUUIDSetter(t *testing.T) {
 					response := map[string]any{
 						"subscriber_id": subID,
 					}
-					json.NewEncoder(w).Encode(response)
-				} else {
+					if err := json.NewEncoder(w).Encode(response); err != nil {
+						http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+						return
+					}
+									} else {
 					http.Error(w, "Subscriber ID not found", http.StatusInternalServerError)
 					return
 				}
