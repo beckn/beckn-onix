@@ -18,15 +18,7 @@ func TestLogFunctions(t *testing.T) {
 	testConfig := Config{
 		level: DebugLevel,
 		destinations: []Destination{
-			{
-				Type: File,
-				Config: map[string]string{
-					"path":       "log/app.txt",
-					"maxSize":    "500",
-					"maxBackups": "15",
-					"maxAge":     "30",
-				},
-			},
+			{Type: Stdout},
 		},
 		contextKeys: []any{"userID", "requestID"},
 	}
