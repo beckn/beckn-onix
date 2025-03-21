@@ -15,6 +15,7 @@ type Config struct {
 	Root      string       `yaml:"root"`
 	Signer    PluginConfig `yaml:"signer"`
 	Verifier  PluginConfig `yaml:"verifier"`
+	Decrypter PluginConfig `yaml:"decrypter"`
 	Encrypter PluginConfig `yaml:"encrypter"`
 	Publisher PluginConfig `yaml:"publisher"`
 }
@@ -29,6 +30,7 @@ type PluginConfig struct {
 type Manager struct {
 	sp  definition.SignerProvider
 	vp  definition.VerifierProvider
+	dp  definition.DecrypterProvider
 	ep  definition.EncrypterProvider
 	pb  definition.PublisherProvider
 	cfg *Config
@@ -58,13 +60,19 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 		return nil, fmt.Errorf("failed to load Verifier plugin: %w", err)
 	}
 
+	// Load decrypter plugin.
+	dp, err := provider[definition.DecrypterProvider](cfg.Root, cfg.Decrypter.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load Decrypter plugin: %w", err)
+	}
+
 	// Load encryption plugin.
 	ep, err := provider[definition.EncrypterProvider](cfg.Root, cfg.Encrypter.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load encryption plugin: %w", err)
 	}
 
-	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, cfg: cfg}, nil
+	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, dp: dp, cfg: cfg}, nil
 }
 
 // provider loads a plugin dynamically and retrieves its provider instance.
@@ -121,6 +129,19 @@ func (m *Manager) Verifier(ctx context.Context) (definition.Verifier, func() err
 		return nil, nil, fmt.Errorf("failed to initialize Verifier: %w", err)
 	}
 	return Verifier, close, nil
+}
+
+// Decrypter retrieves the decryption plugin instance.
+func (m *Manager) Decrypter(ctx context.Context) (definition.Decrypter, func() error, error) {
+	if m.dp == nil {
+		return nil, nil, fmt.Errorf("decrypter plugin provider not loaded")
+	}
+
+	decrypter, close, err := m.dp.New(ctx, m.cfg.Decrypter.Config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize Decrypter: %w", err)
+	}
+	return decrypter, close, nil
 }
 
 // Encrypter retrieves the encryption plugin instance.
