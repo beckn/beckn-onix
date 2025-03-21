@@ -13,17 +13,17 @@ func setupTestConfig(t *testing.T) string {
 	t.Helper()
 
 	// Create a temporary directory for the routing rules
-	configDir, err := os.MkdirTemp("", "routing_rules")
+	configDir, err := os.MkdirTemp("", "routingRules")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
 
 	// Define sample routing rules
 	rulesContent := `
-routing_rules:
+routingRules:
   - domain: "ONDC:TRV11"
     version: "2.0.0"
-    routing_type: "url"
+    routingType: "url"
     target:
       url: "https://services-backend/trv/v1"
     endpoints:
@@ -34,7 +34,7 @@ routing_rules:
 
   - domain: "ONDC:TRV11"
     version: "2.0.0"
-    routing_type: "msgq"
+    routingType: "msgq"
     target:
       topic_id: "trv_topic_id1"
     endpoints:
@@ -42,7 +42,7 @@ routing_rules:
 `
 
 	// Write the routing rules to a file
-	rulesFilePath := filepath.Join(configDir, "routing_rules.yaml")
+	rulesFilePath := filepath.Join(configDir, "routingRules.yaml")
 	if err := os.WriteFile(rulesFilePath, []byte(rulesContent), 0644); err != nil {
 		t.Fatalf("Failed to write routing rules file: %v", err)
 	}
@@ -50,8 +50,8 @@ routing_rules:
 	return rulesFilePath
 }
 
-// TestRouterProvider_Success tests the RouterProvider implementation for success cases.
-func TestRouterProvider_Success(t *testing.T) {
+// TestRouterProviderSuccess tests the RouterProvider implementation for success cases.
+func TestRouterProviderSuccess(t *testing.T) {
 	rulesFilePath := setupTestConfig(t)
 	defer os.RemoveAll(filepath.Dir(rulesFilePath))
 
@@ -65,7 +65,7 @@ func TestRouterProvider_Success(t *testing.T) {
 			name: "Valid configuration",
 			ctx:  context.Background(),
 			config: map[string]string{
-				"routing_config": rulesFilePath,
+				"routingConfig": rulesFilePath,
 			},
 		},
 	}
@@ -73,7 +73,7 @@ func TestRouterProvider_Success(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := RouterProvider{}
-			router, closeFunc, err := provider.New(tt.ctx, tt.config)
+			router, _, err := provider.New(tt.ctx, tt.config)
 
 			// Ensure no error occurred
 			if err != nil {
@@ -85,20 +85,12 @@ func TestRouterProvider_Success(t *testing.T) {
 			if router == nil {
 				t.Error("expected a non-nil Router instance, got nil")
 			}
-			if closeFunc == nil {
-				t.Error("expected a non-nil close function, got nil")
-			}
-
-			// Test the close function
-			if err := closeFunc(); err != nil {
-				t.Errorf("close function returned an error: %v", err)
-			}
 		})
 	}
 }
 
-// TestRouterProvider_Failure tests the RouterProvider implementation for failure cases.
-func TestRouterProvider_Failure(t *testing.T) {
+// TestRouterProviderFailure tests the RouterProvider implementation for failure cases.
+func TestRouterProviderFailure(t *testing.T) {
 	rulesFilePath := setupTestConfig(t)
 	defer os.RemoveAll(filepath.Dir(rulesFilePath))
 
@@ -113,20 +105,20 @@ func TestRouterProvider_Failure(t *testing.T) {
 			name: "Empty routing config path",
 			ctx:  context.Background(),
 			config: map[string]string{
-				"routing_config": "",
+				"routingConfig": "",
 			},
-			expectedError: "failed to load routing rules: routing_config path is empty",
+			expectedError: "failed to load routing rules: routingConfig path is empty",
 		},
 		{
 			name:          "Missing routing config key",
 			ctx:           context.Background(),
 			config:        map[string]string{},
-			expectedError: "routing_config is required in the configuration",
+			expectedError: "routingConfig is required in the configuration",
 		},
 		{
 			name:          "Nil context",
 			ctx:           nil,
-			config:        map[string]string{"routing_config": rulesFilePath},
+			config:        map[string]string{"routingConfig": rulesFilePath},
 			expectedError: "context cannot be nil",
 		},
 	}

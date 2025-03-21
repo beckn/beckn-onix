@@ -18,9 +18,9 @@ func (rp RouterProvider) New(ctx context.Context, config map[string]string) (def
 	}
 
 	// Parse the routing_config key from the config map
-	routingConfig, ok := config["routing_config"]
+	routingConfig, ok := config["routingConfig"]
 	if !ok {
-		return nil, nil, errors.New("routing_config is required in the configuration")
+		return nil, nil, errors.New("routingConfig is required in the configuration")
 	}
 	return router.New(ctx, &router.Config{
 		RoutingConfig: routingConfig,
