@@ -3,20 +3,22 @@ package plugin
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"plugin"
 	"strings"
 
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
-
-	"gopkg.in/yaml.v2"
 )
 
 // Config represents the plugin manager configuration.
 type Config struct {
 	Root            string       `yaml:"root"`
-	SchemaValidator PluginConfig `yaml:"schema_validator"`
+	Signer          PluginConfig `yaml:"signer"`
+	Verifier        PluginConfig `yaml:"verifier"`
+	Decrypter       PluginConfig `yaml:"decrypter"`
+	Encrypter       PluginConfig `yaml:"encrypter"`
+	Publisher       PluginConfig `yaml:"publisher"`
+	SchemaValidator PluginConfig `yaml:"schemaValidator"`
 }
 
 // PluginConfig represents configuration details for a plugin.
@@ -25,28 +27,19 @@ type PluginConfig struct {
 	Config map[string]string `yaml:"config"`
 }
 
-// // ValidationPluginConfig represents configuration details for a plugin.
-// type ValidationPluginConfig struct {
-// 	ID         string        `yaml:"id"`
-// 	Schema     SchemaDetails `yaml:"config"`
-// 	PluginPath string        `yaml:"plugin_path"`
-// }
-
 // SchemaDetails contains information about the plugin schema directory.
 type SchemaDetails struct {
-	SchemaDir string `yaml:"schema_dir"`
+	SchemaDir string `yaml:"schemaDir"`
 }
-
-// // Config represents the configuration for the application, including plugin configurations.
-// type Config struct {
-// 	Plugins struct {
-// 		ValidationPlugin ValidationPluginConfig `yaml:"validation_plugin"`
-// 	} `yaml:"plugins"`
-// }
 
 // Manager handles dynamic plugin loading and management.
 type Manager struct {
-	vp  definition.SchemaValidatorProvider
+	sp  definition.SignerProvider
+	vp  definition.VerifierProvider
+	dp  definition.DecrypterProvider
+	ep  definition.EncrypterProvider
+	pb  definition.PublisherProvider
+	svp definition.SchemaValidatorProvider
 	cfg *Config
 }
 
@@ -56,40 +49,47 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 		return nil, fmt.Errorf("configuration cannot be nil")
 	}
 
-	// Load schema validator plugin
-	vp, err := provider[definition.SchemaValidatorProvider](cfg.Root, cfg.SchemaValidator.ID)
+	// Load signer plugin.
+	sp, err := provider[definition.SignerProvider](cfg.Root, cfg.Signer.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load validator plugin: %w", err)
-	}
-	if vp == nil {
-		return nil, fmt.Errorf("validator provider is nil")
+		return nil, fmt.Errorf("failed to load signer plugin: %w", err)
 	}
 
-	// // Initialize validator
-	// validatorMap, defErr := vp.New(ctx, map[string]string{
-	// 	"schema_dir": cfg.Plugins.ValidationPlugin.Schema.SchemaDir,
-	// })
-	// if defErr != nil {
-	// 	return nil, fmt.Errorf("failed to initialize validator: %v", defErr)
-	// }
+	// Load publisher plugin.
+	pb, err := provider[definition.PublisherProvider](cfg.Root, cfg.Publisher.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load publisher plugin: %w", err)
+	}
 
-	// // Initialize the validators map
-	// validators := make(map[string]definition.Validator)
-	// for key, validator := range validatorMap {
-	// 	validators[key] = validator
-	// }
+	// Load verifier plugin.
+	vp, err := provider[definition.VerifierProvider](cfg.Root, cfg.Verifier.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load Verifier plugin: %w", err)
+	}
 
-	return &Manager{vp: vp, cfg: cfg}, nil
+	// Load decrypter plugin.
+	dp, err := provider[definition.DecrypterProvider](cfg.Root, cfg.Decrypter.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load Decrypter plugin: %w", err)
+	}
+
+	// Load encryption plugin.
+	ep, err := provider[definition.EncrypterProvider](cfg.Root, cfg.Encrypter.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load encryption plugin: %w", err)
+	}
+
+	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, dp: dp, cfg: cfg}, nil
 }
 
 // provider loads a plugin dynamically and retrieves its provider instance.
-func provider[T any](path string, id string) (T, error) {
+func provider[T any](root, id string) (T, error) {
 	var zero T
 	if len(strings.TrimSpace(id)) == 0 {
 		return zero, nil
 	}
 
-	p, err := plugin.Open(pluginPath(path, id))
+	p, err := plugin.Open(pluginPath(root, id))
 	if err != nil {
 		return zero, fmt.Errorf("failed to open plugin %s: %w", id, err)
 	}
@@ -99,7 +99,6 @@ func provider[T any](path string, id string) (T, error) {
 		return zero, fmt.Errorf("failed to find Provider symbol in plugin %s: %w", id, err)
 	}
 
-	// Ensure the symbol is of the correct type
 	prov, ok := symbol.(*T)
 	if !ok {
 		return zero, fmt.Errorf("failed to cast Provider for %s", id)
@@ -108,38 +107,72 @@ func provider[T any](path string, id string) (T, error) {
 	return *prov, nil
 }
 
-// pluginPath constructs the path to the plugin pkg object file.
-func pluginPath(path, id string) string {
-	return filepath.Join(path, id+".so")
+// pluginPath constructs the path to the plugin shared object file.
+func pluginPath(root, id string) string {
+	return filepath.Join(root, id+".so")
 }
 
-// Validators retrieves the validation plugin instances.
-func (m *Manager) SchemaValidator(ctx context.Context) (definition.SchemaValidator, func() error, error) {
+// Signer retrieves the signing plugin instance.
+func (m *Manager) Signer(ctx context.Context) (definition.Signer, func() error, error) {
+	if m.sp == nil {
+		return nil, nil, fmt.Errorf("signing plugin provider not loaded")
+	}
+
+	signer, close, err := m.sp.New(ctx, m.cfg.Signer.Config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize signer: %w", err)
+	}
+	return signer, close, nil
+}
+
+// Verifier retrieves the verification plugin instance.
+func (m *Manager) Verifier(ctx context.Context) (definition.Verifier, func() error, error) {
 	if m.vp == nil {
-		return nil, nil, fmt.Errorf("schema validator plugin provider not loaded")
-
+		return nil, nil, fmt.Errorf("Verifier plugin provider not loaded")
 	}
-	schemaValidator, close, err := m.vp.New(ctx, m.cfg.SchemaValidator.Config)
+
+	Verifier, close, err := m.vp.New(ctx, m.cfg.Verifier.Config)
 	if err != nil {
-
-		return nil, nil, fmt.Errorf("failed to initialize schema validator: %v", err)
+		return nil, nil, fmt.Errorf("failed to initialize Verifier: %w", err)
 	}
-	return schemaValidator, close, nil
+	return Verifier, close, nil
 }
 
-// LoadConfig loads the configuration from a YAML file.
-func LoadConfig(path string) (*Config, error) {
-	file, err := os.Open(path)
+// Decrypter retrieves the decryption plugin instance.
+func (m *Manager) Decrypter(ctx context.Context) (definition.Decrypter, func() error, error) {
+	if m.dp == nil {
+		return nil, nil, fmt.Errorf("decrypter plugin provider not loaded")
+	}
+
+	decrypter, close, err := m.dp.New(ctx, m.cfg.Decrypter.Config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open config file: %w", err)
+		return nil, nil, fmt.Errorf("failed to initialize Decrypter: %w", err)
 	}
-	defer file.Close()
+	return decrypter, close, nil
+}
 
-	var cfg Config
-	decoder := yaml.NewDecoder(file)
-	if err := decoder.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to decode config file: %w", err)
+// Encrypter retrieves the encryption plugin instance.
+func (m *Manager) Encrypter(ctx context.Context) (definition.Encrypter, func() error, error) {
+	if m.ep == nil {
+		return nil, nil, fmt.Errorf("encryption plugin provider not loaded")
 	}
 
-	return &cfg, nil
+	encrypter, close, err := m.ep.New(ctx, m.cfg.Encrypter.Config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize encrypter: %w", err)
+	}
+	return encrypter, close, nil
+}
+
+// Publisher retrieves the publisher plugin instance.
+func (m *Manager) Publisher(ctx context.Context) (definition.Publisher, error) {
+	if m.pb == nil {
+		return nil, fmt.Errorf("publisher plugin provider not loaded")
+	}
+
+	publisher, err := m.pb.New(ctx, m.cfg.Publisher.Config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize publisher: %w", err)
+	}
+	return publisher, nil
 }
