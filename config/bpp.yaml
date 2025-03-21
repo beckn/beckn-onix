@@ -1,0 +1,63 @@
+appName: "bppClientService"
+log:
+  level: debug
+  destinations:
+    - type: stdout
+  context_keys:
+    - transaction_id
+    - message_id
+http:
+  port: 8080
+  timeout:
+    read: 30
+    write: 30
+    idle: 30
+plugin:
+  root: /app/plugins
+  pluginZipPath: /mnt/gcs/plugins/plugins_bundle.zip
+  plugins:
+    - publisher
+    - nopschemavalidator
+    - router
+    - nopsigner
+    - nopsignvalidator
+    - reqpreprocessor
+    - gcpAuthMdw
+module:
+  modules:
+    - name: transactionReciever
+      path: /reciever
+      targetType: msgQ
+      plugin:
+        schemaValidator:
+          id: nopschemavalidator
+        signValidator:
+          id: nopsignvalidator
+        publisher:
+          id: publisher
+          config:
+            project: ondc-seller-dev
+            topic: bppNetworkReciever
+        router:
+          id: router
+          config:
+            routingConfigPath: /mnt/gcs/configs/bppRecieverRouting-config.yaml
+        preProcessors:
+          - id: reqpreprocessor
+    - name: transactionCaller
+      path: /caller
+      targetType: "http"
+      plugin:
+        signer:
+          id: nopsigner
+        router:
+          id: router
+          config:
+            routingConfigPath: /mnt/gcs/configs/bppCallerRouting-config.yaml
+        preProcessors:
+          - id: reqpreprocessor
+        # postProcessors:
+        #   - id: gcpAuthMdw
+        #     config:
+        #       audience: https://bap-adapter-903496459467.asia-southeast1.run.app
+        #       serviceAccount: 903496459467-compute@developer.gserviceaccount.com

@@ -1,0 +1,2 @@
+bap_url: "https://bap-csr-903496459467.asia-southeast1.run.app"  # Replace with actual Beckn API endpoint
+port: "8080"  # The port on which the server will run
