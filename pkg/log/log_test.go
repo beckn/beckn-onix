@@ -319,8 +319,6 @@ func TestInfof(t *testing.T) {
 	}
 }
 
-
-
 func TestWarnf(t *testing.T) {
 	logPath := setupLogger(t, WarnLevel)
 	ctx := context.WithValue(context.Background(), userID, "12345")
@@ -343,7 +341,6 @@ func TestWarnf(t *testing.T) {
 		t.Errorf("expected Warnf message, but it was not found in logs")
 	}
 }
-
 
 func TestErrorf(t *testing.T) {
 	logPath := setupLogger(t, ErrorLevel)
@@ -369,7 +366,6 @@ func TestErrorf(t *testing.T) {
 	}
 }
 
-
 func TestFatalf(t *testing.T) {
 	logPath := setupLogger(t, FatalLevel)
 	ctx := context.WithValue(context.Background(), userID, "12345")
@@ -393,8 +389,6 @@ func TestFatalf(t *testing.T) {
 		t.Errorf("expected Fatalf message, but it was not found in logs")
 	}
 }
-
-
 
 func TestPanicf(t *testing.T) {
 	logPath := setupLogger(t, PanicLevel)
