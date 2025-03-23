@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -115,10 +116,26 @@ func getLogger(config Config) (zerolog.Logger, error) {
 			writers = append(writers, os.Stdout)
 		case File:
 			filePath := dest.Config["path"]
-			fmt.Printf("writing test log to file: %v\n", filePath)
-			lumberjackLogger := &lumberjack.Logger{
-				Filename: filePath,
+			dir := filepath.Dir(filePath)
+			if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+				return newLogger, fmt.Errorf("failed to create log directory: %v", err)
 			}
+
+			fmt.Printf("writing test log to file: %v\n", config)
+			lumberjackLogger := &lumberjack.Logger{
+				Filename:   filePath,
+				MaxSize:    500, // Default size in MB if not overridden
+				MaxBackups: 15,  // Number of backups
+				MaxAge:     30,  // Days to retain
+				Compress:   false,
+			}
+			absPath, err := filepath.Abs(filePath)
+			if err != nil {
+				return newLogger, fmt.Errorf("failed to get absolute path: %v", err)
+			}
+			fmt.Printf("Attempting to write logs to: %s\n", absPath)
+			lumberjackLogger.Filename = absPath
+
 			setConfigValue := func(key string, target *int) {
 				if valStr, ok := dest.Config[key]; ok {
 					if val, err := strconv.Atoi(valStr); err == nil {
@@ -132,12 +149,15 @@ func getLogger(config Config) (zerolog.Logger, error) {
 			if compress, ok := dest.Config["compress"]; ok {
 				lumberjackLogger.Compress = compress == "true"
 			}
-			Info(context.Background(), "here")
 			writers = append(writers, lumberjackLogger)
-
 		}
 	}
 	multiwriter := io.MultiWriter(writers...)
+	defer func() {
+		if closer, ok := multiwriter.(io.Closer); ok {
+			closer.Close()
+		}
+	}()
 	newLogger = zerolog.New(multiwriter).
 		Level(logLevels[config.level]).
 		With().
@@ -155,10 +175,10 @@ func InitLogger(c Config) error {
 	}
 
 	var initErr error
-	once.Do(func() {
+	// once.Do(func() {
 
-		logger, initErr = getLogger(c)
-	})
+	logger, initErr = getLogger(c)
+	// })
 	return initErr
 }
 func Debug(ctx context.Context, msg string) {
@@ -221,6 +241,7 @@ func logEvent(ctx context.Context, level zerolog.Level, msg string, err error) {
 	if err != nil {
 		event = event.Err(err)
 	}
+	// fmt.Print("=======>", event, ctx)
 	addCtx(ctx, event)
 	event.Msg(msg)
 }
