@@ -64,7 +64,7 @@ var (
 	ErrMissingFilePath   = errors.New("file path missing in destination config for file logging")
 )
 
-func (config *Config) validate() error {
+func (config *Config) Validate() error {
 	if _, exists := logLevels[config.level]; !exists {
 		return ErrInvalidLogLevel
 	}
@@ -171,7 +171,7 @@ func getLogger(config Config) (zerolog.Logger, error) {
 func InitLogger(c Config) error {
 	var initErr error
 	once.Do(func() {
-		if err := c.validate(); err != nil {
+		if err := c.Validate(); err != nil {
 			return
 		}
 

@@ -3,20 +3,16 @@ package log
 import (
 	"bufio"
 	"bytes"
-	"fmt"
-	"net/http"
-	"time"
-
-	// "bytes"
-	// "fmt"
-	// "net/http"
-	// "time"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testLogFilePath = "./test_logs/test.log"
@@ -49,12 +45,10 @@ func setupLogger(t *testing.T, l Level) string {
 		},
 		contextKeys: []any{"userID", "requestID"},
 	}
-
 	err = InitLogger(config)
 	if err != nil {
 		t.Fatalf("failed to initialize logger: %v", err)
 	}
-
 	return testLogFilePath
 }
 
@@ -64,13 +58,11 @@ func readLogFile(t *testing.T, logPath string) []string {
 		t.Fatalf("failed to open log file: %v", err)
 	}
 	defer file.Close()
-
 	var lines []string
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
 	}
-
 	if err := scanner.Err(); err != nil {
 		t.Fatalf("failed to read log file: %v", err)
 	}
@@ -92,7 +84,6 @@ func TestDebug(t *testing.T) {
 	ctx := context.WithValue(context.Background(), userID, "12345")
 	Debug(ctx, "Debug message")
 	lines := readLogFile(t, logPath)
-
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
@@ -114,7 +105,6 @@ func TestInfo(t *testing.T) {
 	ctx := context.WithValue(context.Background(), userID, "12345")
 	Info(ctx, "Info message")
 	lines := readLogFile(t, logPath)
-
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
@@ -137,7 +127,6 @@ func TestWarn(t *testing.T) {
 	ctx := context.WithValue(context.Background(), userID, "12345")
 	Warn(ctx, "Warning message")
 	lines := readLogFile(t, logPath)
-
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
@@ -149,7 +138,6 @@ func TestWarn(t *testing.T) {
 			break
 		}
 	}
-
 	if !found {
 		t.Errorf("expected Warning message, but it was not found in logs")
 	}
@@ -160,7 +148,6 @@ func TestError(t *testing.T) {
 	ctx := context.WithValue(context.Background(), userID, "12345")
 	Error(ctx, fmt.Errorf("test error"), "Error message")
 	lines := readLogFile(t, logPath)
-
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
@@ -172,7 +159,6 @@ func TestError(t *testing.T) {
 			break
 		}
 	}
-
 	if !found {
 		t.Errorf("expected Error message, but it was not found in logs")
 	}
@@ -185,7 +171,6 @@ func TestRequest(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:8080"
 	Request(ctx, req, []byte(`{"key":"value"}`))
 	lines := readLogFile(t, logPath)
-
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
@@ -200,7 +185,6 @@ func TestRequest(t *testing.T) {
 	if !found {
 		t.Errorf("expected formatted debug message, but it was not found in logs")
 	}
-
 }
 
 func TestResponse(t *testing.T) {
@@ -209,7 +193,6 @@ func TestResponse(t *testing.T) {
 	req, _ := http.NewRequest("GET", "/api/test", nil)
 	Response(ctx, req, 200, time.Millisecond*123)
 	lines := readLogFile(t, logPath)
-
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
@@ -217,18 +200,15 @@ func TestResponse(t *testing.T) {
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
 		if logEntry["message"] == "HTTP Response" {
-
 			if logEntry["message"] == "HTTP Response" {
 				value, ok := logEntry["statusCode"]
 				if !ok {
 					t.Fatalf("Expected key 'statusCode' not found in log entry")
 				}
-
 				statusCode, ok := value.(float64)
 				if !ok {
 					t.Fatalf("Value for 'statusCode' is not a float64, found: %T", value)
 				}
-
 				if statusCode == 200 {
 					found = true
 					break
@@ -239,7 +219,6 @@ func TestResponse(t *testing.T) {
 	if !found {
 		t.Errorf("expected message, but it was not found in logs")
 	}
-
 }
 
 func TestFatal(t *testing.T) {
@@ -247,7 +226,6 @@ func TestFatal(t *testing.T) {
 	ctx := context.WithValue(context.Background(), userID, "12345")
 	Fatal(ctx, fmt.Errorf("fatal error"), "Fatal message")
 	lines := readLogFile(t, logPath)
-
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
@@ -259,7 +237,6 @@ func TestFatal(t *testing.T) {
 			break
 		}
 	}
-
 	if !found {
 		t.Errorf("expected Fatal message, but it was not found in logs")
 	}
@@ -270,7 +247,6 @@ func TestPanic(t *testing.T) {
 	ctx := context.WithValue(context.Background(), userID, "12345")
 	Panic(ctx, fmt.Errorf("panic error"), "Panic message")
 	lines := readLogFile(t, logPath)
-
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
@@ -282,7 +258,6 @@ func TestPanic(t *testing.T) {
 			break
 		}
 	}
-
 	if !found {
 		t.Errorf("expected Panic message, but it was not found in logs")
 	}
@@ -293,7 +268,6 @@ func TestDebugf(t *testing.T) {
 	ctx := context.WithValue(context.Background(), userID, "12345")
 	Debugf(ctx, "Debugf message: %s", "test")
 	lines := readLogFile(t, logPath)
-
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
@@ -305,7 +279,6 @@ func TestDebugf(t *testing.T) {
 			break
 		}
 	}
-
 	if !found {
 		t.Errorf("expected formatted debug message, but it was not found in logs")
 	}
@@ -316,7 +289,6 @@ func TestInfof(t *testing.T) {
 	ctx := context.WithValue(context.Background(), userID, "12345")
 	Infof(ctx, "Infof message: %s", "test")
 	lines := readLogFile(t, logPath)
-
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
@@ -328,7 +300,6 @@ func TestInfof(t *testing.T) {
 			break
 		}
 	}
-
 	if !found {
 		t.Errorf("expected Infof message, but it was not found in logs")
 	}
@@ -339,7 +310,6 @@ func TestWarnf(t *testing.T) {
 	ctx := context.WithValue(context.Background(), userID, "12345")
 	Warnf(ctx, "Warnf message: %s", "test")
 	lines := readLogFile(t, logPath)
-
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
@@ -351,7 +321,6 @@ func TestWarnf(t *testing.T) {
 			break
 		}
 	}
-
 	if !found {
 		t.Errorf("expected Warnf message, but it was not found in logs")
 	}
@@ -363,7 +332,6 @@ func TestErrorf(t *testing.T) {
 	err := fmt.Errorf("error message")
 	Errorf(ctx, err, "Errorf message: %s", "test")
 	lines := readLogFile(t, logPath)
-
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
@@ -375,7 +343,6 @@ func TestErrorf(t *testing.T) {
 			break
 		}
 	}
-
 	if !found {
 		t.Errorf("expected Errorf message, but it was not found in logs")
 	}
@@ -387,7 +354,6 @@ func TestFatalf(t *testing.T) {
 	err := fmt.Errorf("fatal error")
 	Fatalf(ctx, err, "Fatalf message: %s", "test")
 	lines := readLogFile(t, logPath)
-
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
@@ -399,7 +365,6 @@ func TestFatalf(t *testing.T) {
 			break
 		}
 	}
-
 	if !found {
 		t.Errorf("expected Fatalf message, but it was not found in logs")
 	}
@@ -426,5 +391,145 @@ func TestPanicf(t *testing.T) {
 
 	if !found {
 		t.Errorf("expected Panicf message, but it was not found in logs")
+	}
+}
+
+func TestValidateConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  Config
+		wantErr error
+	}{
+		{
+			name: "Valid config with Stdout",
+			config: Config{
+				level: InfoLevel,
+				destinations: []Destination{
+					{Type: Stdout},
+				},
+			},
+			wantErr: nil,
+		},
+		{
+			name: "Valid config with File destination and valid path",
+			config: Config{
+				level: InfoLevel,
+				destinations: []Destination{
+					{
+						Type: File,
+						Config: map[string]string{
+							"path":       "./logs/app.log",
+							"maxSize":    "10",
+							"maxBackups": "5",
+							"maxAge":     "7",
+						},
+					},
+				},
+			},
+			wantErr: nil,
+		},
+		{
+			name: "Error: Invalid log level",
+			config: Config{
+				level: "invalid",
+				destinations: []Destination{
+					{Type: Stdout},
+				},
+			},
+			wantErr: ErrInvalidLogLevel,
+		},
+		{
+			name: "Error: No destinations provided",
+			config: Config{
+				level:        InfoLevel,
+				destinations: []Destination{},
+			},
+			wantErr: ErrLogDestinationNil,
+		},
+		{
+			name: "Error: Invalid destination type",
+			config: Config{
+				level: InfoLevel,
+				destinations: []Destination{
+					{Type: "unknown"},
+				},
+			},
+			wantErr: fmt.Errorf("invalid destination type 'unknown'"),
+		},
+		{
+			name: "Error: Missing file path for file destination",
+			config: Config{
+				level: InfoLevel,
+				destinations: []Destination{
+					{
+						Type: File,
+						Config: map[string]string{
+							"maxSize": "10",
+						},
+					},
+				},
+			},
+			wantErr: ErrMissingFilePath,
+		},
+		{
+			name: "Error: Invalid maxSize value in file destination",
+			config: Config{
+				level: InfoLevel,
+				destinations: []Destination{
+					{
+						Type: File,
+						Config: map[string]string{
+							"path":    "./logs/app.log",
+							"maxSize": "invalid",
+						},
+					},
+				},
+			},
+			wantErr: errors.New(`invalid maxSize: strconv.Atoi: parsing "invalid": invalid syntax`),
+		},
+		{
+			name: "Error: Invalid maxBackups value in file destination",
+			config: Config{
+				level: InfoLevel,
+				destinations: []Destination{
+					{
+						Type: File,
+						Config: map[string]string{
+							"path":       "./logs/app.log",
+							"maxBackups": "invalid",
+						},
+					},
+				},
+			},
+			wantErr: errors.New(`invalid maxBackups: strconv.Atoi: parsing "invalid": invalid syntax`),
+		},
+		{
+			name: "Error: Invalid maxAge value in file destination",
+			config: Config{
+				level: InfoLevel,
+				destinations: []Destination{
+					{
+						Type: File,
+						Config: map[string]string{
+							"path":   "./logs/app.log",
+							"maxAge": "invalid",
+						},
+					},
+				},
+			},
+			wantErr: errors.New(`invalid maxAge: strconv.Atoi: parsing "invalid": invalid syntax`),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if (err == nil) != (tt.wantErr == nil) {
+				t.Errorf("validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && tt.wantErr != nil && err.Error() != tt.wantErr.Error() {
+				t.Errorf("validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }
