@@ -82,7 +82,7 @@ func parseLogLine(t *testing.T, line string) map[string]interface{} {
 	var logEntry map[string]interface{}
 	err := json.Unmarshal([]byte(line), &logEntry)
 	if err != nil {
-		t.Fatalf("failed to parse log entry: %v", err)
+		t.Fatalf("Failed to parse log line: %v", err)
 	}
 	return logEntry
 }
@@ -216,15 +216,30 @@ func TestResponse(t *testing.T) {
 	var found bool
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
-		if logEntry["level"] == "debug" && strings.Contains(logEntry["message"].(string), "Debugf message") {
-			found = true
-			break
+		if logEntry["message"] == "HTTP Response" {
+
+			if logEntry["message"] == "HTTP Response" {
+				value, ok := logEntry["statusCode"]
+				if !ok {
+					t.Fatalf("Expected key 'statusCode' not found in log entry")
+				}
+
+				statusCode, ok := value.(float64)
+				if !ok {
+					t.Fatalf("Value for 'statusCode' is not a float64, found: %T", value)
+				}
+
+				if statusCode == 200 {
+					found = true
+					break
+				}
+			}
 		}
 	}
-
 	if !found {
-		t.Errorf("expected formatted debug message, but it was not found in logs")
+		t.Errorf("expected message, but it was not found in logs")
 	}
+
 }
 
 func TestFatal(t *testing.T) {
