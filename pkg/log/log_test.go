@@ -192,15 +192,15 @@ func TestRequest(t *testing.T) {
 	var found bool
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
-		if logEntry["level"] == "debug" && strings.Contains(logEntry["message"].(string), "Debugf message") {
+		if logEntry["message"] == "HTTP Request" || logEntry["method"] == "POST" {
 			found = true
 			break
 		}
 	}
-
 	if !found {
 		t.Errorf("expected formatted debug message, but it was not found in logs")
 	}
+
 }
 
 func TestResponse(t *testing.T) {

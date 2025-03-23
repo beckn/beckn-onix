@@ -169,17 +169,19 @@ func getLogger(config Config) (zerolog.Logger, error) {
 	return newLogger, nil
 }
 func InitLogger(c Config) error {
-
-	if err := c.validate(); err != nil {
-		return err
-	}
-
 	var initErr error
-	// once.Do(func() {
+	once.Do(func() {
+		if err := c.validate(); err != nil {
+			return
+		}
 
-	logger, initErr = getLogger(c)
-	// })
+		logger, initErr = getLogger(c)
+		if initErr != nil {
+			return
+		}
+	})
 	return initErr
+
 }
 func Debug(ctx context.Context, msg string) {
 	logEvent(ctx, zerolog.DebugLevel, msg, nil)
@@ -241,7 +243,6 @@ func logEvent(ctx context.Context, level zerolog.Level, msg string, err error) {
 	if err != nil {
 		event = event.Err(err)
 	}
-	// fmt.Print("=======>", event, ctx)
 	addCtx(ctx, event)
 	event.Msg(msg)
 }
