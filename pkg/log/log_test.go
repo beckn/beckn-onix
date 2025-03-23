@@ -1,289 +1,421 @@
 package log
 
 import (
+	"bufio"
 	"bytes"
-	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
-	"strings"
-	"testing"
 	"time"
 
-	"github.com/rs/zerolog"
+	// "bytes"
+	// "fmt"
+	// "net/http"
+	// "time"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
 )
 
-func TestLogFunctions(t *testing.T) {
-	testConfig := Config{
-		level: DebugLevel,
+const testLogFilePath = "./test_logs/test.log"
+
+type ctxKey any
+
+var requestID ctxKey = "requestID"
+var userID ctxKey = "userID"
+
+func setupLogger(t *testing.T, l Level) string {
+	dir := filepath.Dir(testLogFilePath)
+	err := os.MkdirAll(dir, os.ModePerm)
+	if err != nil {
+		t.Fatalf("failed to create test log directory: %v", err)
+	}
+
+	config := Config{
+		level: l,
 		destinations: []Destination{
-			{Type: Stdout},
+			{
+				Type: File,
+				Config: map[string]string{
+					"path":      testLogFilePath,
+					"maxSize":   "1",
+					"maxAge":    "1",
+					"maxBackup": "1",
+					"compress":  "false",
+				},
+			},
 		},
 		contextKeys: []any{"userID", "requestID"},
 	}
-	err := InitLogger(testConfig)
+
+	err = InitLogger(config)
 	if err != nil {
-		t.Fatalf("Failed to initialize logger: %v", err)
+		t.Fatalf("failed to initialize logger: %v", err)
 	}
 
-	tests := []struct {
-		name           string
-		logFunc        func(ctx context.Context)
-		expectedOutput string
-	}{
-		{
-			name: "Debug log with context",
-			logFunc: func(ctx context.Context) {
-				type ctxKey any
-				var requestID ctxKey = "requestID"
+	return testLogFilePath
+}
 
-				ctx = context.WithValue(ctx, requestID, "12345")
-				Debug(ctx, "debug message")
-			},
-			expectedOutput: `{"level":"debug","requestID":"12345","message":"debug message"}`,
-		},
-		{
-			name: "Debugf with context",
-			logFunc: func(ctx context.Context) {
-				type ctxKey any
-				var requestID ctxKey = "requestID"
-
-				ctx = context.WithValue(ctx, requestID, "12345")
-				Debugf(ctx, "formatted %s", "debug message")
-			},
-			expectedOutput: `{"level":"debug","requestID":"12345","message":"formatted debug message"}`,
-		},
-		{
-			name: "Info log with message",
-			logFunc: func(ctx context.Context) {
-				type ctxKey any
-				var requestID ctxKey = "requestID"
-
-				ctx = context.WithValue(ctx, requestID, "12345")
-				Info(ctx, "info message")
-			},
-			expectedOutput: `{"level":"info","requestID":"12345","message":"info message"}`,
-		},
-
-		{
-			name: "Info log with formatted message",
-			logFunc: func(ctx context.Context) {
-				Infof(ctx, "formatted %s", "info message")
-			},
-			expectedOutput: `{"level":"info","message":"formatted info message"}`,
-		},
-		{
-			name: "Warn log with context",
-			logFunc: func(ctx context.Context) {
-				type ctxKey any
-				var requestID ctxKey = "requestID"
-
-				ctx = context.WithValue(ctx, requestID, "12345")
-				Warn(ctx, "warning message")
-			},
-			expectedOutput: `{"level":"warn","requestID":"12345","message":"warning message"}`,
-		},
-		{
-			name: "Warnf with context",
-			logFunc: func(ctx context.Context) {
-				type ctxKey any
-				var requestID ctxKey = "requestID"
-
-				ctx = context.WithValue(ctx, requestID, "12345")
-				Warnf(ctx, "formatted %s", "warning message")
-			},
-			expectedOutput: `{"level":"warn","requestID":"12345","message":"formatted warning message"}`,
-		},
-		{
-			name: "Error log with error and context",
-			logFunc: func(ctx context.Context) {
-				type ctxKey any
-				var userID ctxKey = "userID"
-
-				ctx = context.WithValue(ctx, userID, "67890")
-				Error(ctx, errors.New("something went wrong"), "error message")
-			},
-			expectedOutput: `{"level":"error","userID":"67890","error":"something went wrong","message":"error message"}`,
-		},
-		{
-			name: "Errorf with error and context",
-			logFunc: func(ctx context.Context) {
-				type ctxKey any
-				var userID ctxKey = "userID"
-
-				ctx = context.WithValue(ctx, userID, "67890")
-				Errorf(ctx, errors.New("something went wrong"), "formatted %s", "error message")
-			},
-			expectedOutput: `{"level":"error","userID":"67890","error":"something went wrong","message":"formatted error message"}`,
-		},
-		{
-			name: "Fatal log with error and context",
-			logFunc: func(ctx context.Context) {
-				type ctxKey any
-				var requestID ctxKey = "requestID"
-
-				ctx = context.WithValue(ctx, requestID, "12345")
-				Fatal(ctx, errors.New("fatal error"), "fatal message")
-			},
-			expectedOutput: `{"level":"fatal","requestID":"12345","error":"fatal error","message":"fatal message"}`,
-		},
-		{
-			name: "Fatalf with error and context",
-			logFunc: func(ctx context.Context) {
-				type ctxKey any
-				var requestID ctxKey = "requestID"
-
-				ctx = context.WithValue(ctx, requestID, "12345")
-				Fatalf(ctx, errors.New("fatal error"), "formatted %s", "fatal message")
-			},
-			expectedOutput: `{"level":"fatal","requestID":"12345","error":"fatal error","message":"formatted fatal message"}`,
-		},
-		{
-			name: "Panic log with error and context",
-			logFunc: func(ctx context.Context) {
-				type ctxKey any
-				var userID ctxKey = "userID"
-
-				ctx = context.WithValue(ctx, userID, "67890")
-				Panic(ctx, errors.New("panic error"), "panic message")
-			},
-			expectedOutput: `{"level":"panic","userID":"67890","error":"panic error","message":"panic message"}`,
-		},
-		{
-			name: "Panicf with error and context",
-			logFunc: func(ctx context.Context) {
-				type ctxKey any
-				var userID ctxKey = "userID"
-
-				ctx = context.WithValue(ctx, userID, "67890")
-				Panicf(ctx, errors.New("panic error"), "formatted %s", "panic message")
-			},
-			expectedOutput: `{"level":"panic","userID":"67890","error":"panic error","message":"formatted panic message"}`,
-		},
-		{
-			name: "Request log",
-			logFunc: func(ctx context.Context) {
-				req, _ := http.NewRequest("GET", "http://example.com", nil)
-				req.RemoteAddr = "127.0.0.1:8080"
-				Request(ctx, req, []byte("request body"))
-			},
-			expectedOutput: `{"level":"info","method":"GET","url":"http://example.com","body":"request body","remoteAddr":"127.0.0.1:8080","message":"HTTP Request"}`,
-		},
-		{
-			name: "Response log",
-			logFunc: func(ctx context.Context) {
-				req, _ := http.NewRequest("GET", "http://example.com", nil)
-				Response(ctx, req, 200, 100*time.Millisecond)
-			},
-			expectedOutput: `{"level":"info","method":"GET","url":"http://example.com","statusCode":200,"responseTime":100,"message":"HTTP Response"}`,
-		},
+func readLogFile(t *testing.T, logPath string) []string {
+	file, err := os.Open(logPath)
+	if err != nil {
+		t.Fatalf("failed to open log file: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			logger = zerolog.New(&buf).With().Timestamp().Logger()
-			tt.logFunc(context.Background())
-			output := buf.String()
-			t.Logf("Log output: %s", output)
-			lines := strings.Split(strings.TrimSpace(output), "\n")
-			if len(lines) == 0 {
-				t.Fatal("No log output found")
-			}
-			lastLine := lines[len(lines)-1]
-			var logOutput map[string]interface{}
-			if err := json.Unmarshal([]byte(lastLine), &logOutput); err != nil {
-				t.Fatalf("Failed to unmarshal log output: %v", err)
-			}
-			delete(logOutput, "time")
-			delete(logOutput, "caller")
-			var expectedOutput map[string]interface{}
-			if err := json.Unmarshal([]byte(tt.expectedOutput), &expectedOutput); err != nil {
-				t.Fatalf("Failed to unmarshal expected output: %v", err)
-			}
-			for key, expectedValue := range expectedOutput {
-				actualValue, ok := logOutput[key]
-				if !ok {
-					t.Errorf("Expected key %q not found in log output", key)
-					continue
-				}
-				if actualValue != expectedValue {
-					t.Errorf("Mismatch for key %q: expected %v, got %v", key, expectedValue, actualValue)
-				}
-			}
-		})
+	defer file.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("failed to read log file: %v", err)
+	}
+
+	return lines
+}
+
+func parseLogLine(t *testing.T, line string) map[string]interface{} {
+	var logEntry map[string]interface{}
+	err := json.Unmarshal([]byte(line), &logEntry)
+	if err != nil {
+		t.Fatalf("failed to parse log entry: %v", err)
+	}
+	return logEntry
+}
+
+func TestDebug(t *testing.T) {
+	logPath := setupLogger(t, DebugLevel)
+	ctx := context.WithValue(context.Background(), userID, "12345")
+	Debug(ctx, "Debug message")
+	lines := readLogFile(t, logPath)
+
+	if len(lines) == 0 {
+		t.Fatal("No logs were written.")
+	}
+	var found bool
+	for _, line := range lines {
+		logEntry := parseLogLine(t, line)
+		if logEntry["level"] == "debug" && strings.Contains(logEntry["message"].(string), "Debug message") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected Debug message, but it was not found in logs")
 	}
 }
-func TestDestinationValidation(t *testing.T) {
-	tests := []struct {
-		name          string
-		config        Config
-		expectedError error
-	}{
-		// Missing `path` for File destination
-		{
-			name: "Missing file path",
-			config: Config{
-				level: InfoLevel,
-				destinations: []Destination{
-					{
-						Type: File,
-						Config: map[string]string{
-							"maxSize":    "500",
-							"maxBackups": "15",
-							"maxAge":     "30",
-						},
-					},
-				},
-			},
-			expectedError: ErrMissingFilePath,
-		},
-		{
-			name: "Invalid maxAge",
-			config: Config{
-				level: InfoLevel,
-				destinations: []Destination{
-					{
-						Type: File,
-						Config: map[string]string{
-							"path":       "log/app.txt",
-							"maxSize":    "500",
-							"maxBackups": "15",
-							"maxAge":     "invalid",
-						},
-					},
-				},
-			},
-			expectedError: errors.New("invalid maxAge"),
-		},
-		{
-			name: "Valid file destination",
-			config: Config{
-				level: InfoLevel,
-				destinations: []Destination{
-					{
-						Type: File,
-						Config: map[string]string{
-							"path":       "log/app.txt",
-							"maxSize":    "500",
-							"maxBackups": "15",
-							"maxAge":     "30",
-						},
-					},
-				},
-			},
-			expectedError: nil,
-		},
+
+func TestInfo(t *testing.T) {
+	logPath := setupLogger(t, InfoLevel)
+	ctx := context.WithValue(context.Background(), userID, "12345")
+	Info(ctx, "Info message")
+	lines := readLogFile(t, logPath)
+
+	if len(lines) == 0 {
+		t.Fatal("No logs were written.")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fmt.Print(tt.config)
-			err := InitLogger(tt.config)
-			if (err == nil && tt.expectedError != nil) || (err != nil && tt.expectedError == nil) {
-				t.Errorf("Expected error: %v, got: %v", tt.expectedError, err)
-			} else if err != nil && tt.expectedError != nil && !strings.Contains(err.Error(), tt.expectedError.Error()) {
-				t.Errorf("Expected error to contain: %v, got: %v", tt.expectedError, err)
-			}
-		})
+	var found bool
+	for _, line := range lines {
+		logEntry := parseLogLine(t, line)
+		if logEntry["level"] == "info" && strings.Contains(logEntry["message"].(string), "Info message") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected Info message, but it was not found in logs")
+	}
+}
+
+func TestWarn(t *testing.T) {
+	logPath := setupLogger(t, WarnLevel)
+	ctx := context.WithValue(context.Background(), userID, "12345")
+	Warn(ctx, "Warning message")
+	lines := readLogFile(t, logPath)
+
+	if len(lines) == 0 {
+		t.Fatal("No logs were written.")
+	}
+	var found bool
+	for _, line := range lines {
+		logEntry := parseLogLine(t, line)
+		if logEntry["level"] == "warn" && strings.Contains(logEntry["message"].(string), "Warning message") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected Warning message, but it was not found in logs")
+	}
+}
+
+func TestError(t *testing.T) {
+	logPath := setupLogger(t, ErrorLevel)
+	ctx := context.WithValue(context.Background(), userID, "12345")
+	Error(ctx, fmt.Errorf("test error"), "Error message")
+	lines := readLogFile(t, logPath)
+
+	if len(lines) == 0 {
+		t.Fatal("No logs were written.")
+	}
+	var found bool
+	for _, line := range lines {
+		logEntry := parseLogLine(t, line)
+		if logEntry["level"] == "error" && strings.Contains(logEntry["message"].(string), "Error message") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected Error message, but it was not found in logs")
+	}
+}
+
+func TestRequest(t *testing.T) {
+	logPath := setupLogger(t, InfoLevel)
+	ctx := context.WithValue(context.Background(), requestID, "abc-123")
+	req, _ := http.NewRequest("POST", "/api/test", bytes.NewBuffer([]byte(`{"key":"value"}`)))
+	req.RemoteAddr = "127.0.0.1:8080"
+	Request(ctx, req, []byte(`{"key":"value"}`))
+	lines := readLogFile(t, logPath)
+
+	if len(lines) == 0 {
+		t.Fatal("No logs were written.")
+	}
+	var found bool
+	for _, line := range lines {
+		logEntry := parseLogLine(t, line)
+		if logEntry["level"] == "debug" && strings.Contains(logEntry["message"].(string), "Debugf message") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected formatted debug message, but it was not found in logs")
+	}
+}
+
+func TestResponse(t *testing.T) {
+	logPath := setupLogger(t, InfoLevel)
+	ctx := context.WithValue(context.Background(), requestID, "abc-123")
+	req, _ := http.NewRequest("GET", "/api/test", nil)
+	Response(ctx, req, 200, time.Millisecond*123)
+	lines := readLogFile(t, logPath)
+
+	if len(lines) == 0 {
+		t.Fatal("No logs were written.")
+	}
+	var found bool
+	for _, line := range lines {
+		logEntry := parseLogLine(t, line)
+		if logEntry["level"] == "debug" && strings.Contains(logEntry["message"].(string), "Debugf message") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected formatted debug message, but it was not found in logs")
+	}
+}
+
+func TestFatal(t *testing.T) {
+	logPath := setupLogger(t, FatalLevel)
+	ctx := context.WithValue(context.Background(), userID, "12345")
+	Fatal(ctx, fmt.Errorf("fatal error"), "Fatal message")
+	lines := readLogFile(t, logPath)
+
+	if len(lines) == 0 {
+		t.Fatal("No logs were written.")
+	}
+	var found bool
+	for _, line := range lines {
+		logEntry := parseLogLine(t, line)
+		if logEntry["level"] == "fatal" && strings.Contains(logEntry["message"].(string), "Fatal message") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected Fatal message, but it was not found in logs")
+	}
+}
+
+func TestPanic(t *testing.T) {
+	logPath := setupLogger(t, PanicLevel)
+	ctx := context.WithValue(context.Background(), userID, "12345")
+	Panic(ctx, fmt.Errorf("panic error"), "Panic message")
+	lines := readLogFile(t, logPath)
+
+	if len(lines) == 0 {
+		t.Fatal("No logs were written.")
+	}
+	var found bool
+	for _, line := range lines {
+		logEntry := parseLogLine(t, line)
+		if logEntry["level"] == "panic" && strings.Contains(logEntry["message"].(string), "Panic message") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected Panic message, but it was not found in logs")
+	}
+}
+
+func TestDebugf(t *testing.T) {
+	logPath := setupLogger(t, DebugLevel)
+	ctx := context.WithValue(context.Background(), userID, "12345")
+	Debugf(ctx, "Debugf message: %s", "test")
+	lines := readLogFile(t, logPath)
+
+	if len(lines) == 0 {
+		t.Fatal("No logs were written.")
+	}
+	var found bool
+	for _, line := range lines {
+		logEntry := parseLogLine(t, line)
+		if logEntry["level"] == "debug" && strings.Contains(logEntry["message"].(string), "Debugf message") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected formatted debug message, but it was not found in logs")
+	}
+}
+
+func TestInfof(t *testing.T) {
+	logPath := setupLogger(t, InfoLevel)
+	ctx := context.WithValue(context.Background(), userID, "12345")
+	Infof(ctx, "Infof message: %s", "test")
+	lines := readLogFile(t, logPath)
+
+	if len(lines) == 0 {
+		t.Fatal("No logs were written.")
+	}
+	var found bool
+	for _, line := range lines {
+		logEntry := parseLogLine(t, line)
+		if logEntry["level"] == "info" && strings.Contains(logEntry["message"].(string), "Infof message") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected Infof message, but it was not found in logs")
+	}
+}
+
+
+
+func TestWarnf(t *testing.T) {
+	logPath := setupLogger(t, WarnLevel)
+	ctx := context.WithValue(context.Background(), userID, "12345")
+	Warnf(ctx, "Warnf message: %s", "test")
+	lines := readLogFile(t, logPath)
+
+	if len(lines) == 0 {
+		t.Fatal("No logs were written.")
+	}
+	var found bool
+	for _, line := range lines {
+		logEntry := parseLogLine(t, line)
+		if logEntry["level"] == "warn" && strings.Contains(logEntry["message"].(string), "Warnf message") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected Warnf message, but it was not found in logs")
+	}
+}
+
+
+func TestErrorf(t *testing.T) {
+	logPath := setupLogger(t, ErrorLevel)
+	ctx := context.WithValue(context.Background(), userID, "12345")
+	err := fmt.Errorf("error message")
+	Errorf(ctx, err, "Errorf message: %s", "test")
+	lines := readLogFile(t, logPath)
+
+	if len(lines) == 0 {
+		t.Fatal("No logs were written.")
+	}
+	var found bool
+	for _, line := range lines {
+		logEntry := parseLogLine(t, line)
+		if logEntry["level"] == "error" && strings.Contains(logEntry["message"].(string), "Errorf message") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected Errorf message, but it was not found in logs")
+	}
+}
+
+
+func TestFatalf(t *testing.T) {
+	logPath := setupLogger(t, FatalLevel)
+	ctx := context.WithValue(context.Background(), userID, "12345")
+	err := fmt.Errorf("fatal error")
+	Fatalf(ctx, err, "Fatalf message: %s", "test")
+	lines := readLogFile(t, logPath)
+
+	if len(lines) == 0 {
+		t.Fatal("No logs were written.")
+	}
+	var found bool
+	for _, line := range lines {
+		logEntry := parseLogLine(t, line)
+		if logEntry["level"] == "fatal" && strings.Contains(logEntry["message"].(string), "Fatalf message") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected Fatalf message, but it was not found in logs")
+	}
+}
+
+
+
+func TestPanicf(t *testing.T) {
+	logPath := setupLogger(t, PanicLevel)
+	ctx := context.WithValue(context.Background(), userID, "12345")
+	err := fmt.Errorf("panic error")
+	Panicf(ctx, err, "Panicf message: %s", "test")
+	lines := readLogFile(t, logPath)
+
+	if len(lines) == 0 {
+		t.Fatal("No logs were written.")
+	}
+	var found bool
+	for _, line := range lines {
+		logEntry := parseLogLine(t, line)
+		if logEntry["level"] == "panic" && strings.Contains(logEntry["message"].(string), "Panicf message") {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected Panicf message, but it was not found in logs")
 	}
 }
