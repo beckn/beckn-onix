@@ -17,12 +17,7 @@ const (
 	InvalidRequestErrorType   ErrorType = "INVALID_REQUEST"
 )
 
-// type BecknRequest struct {
-// 	Context map[string]interface{} `json:"context,omitempty"`
-// }
-
 func SendAck(w http.ResponseWriter) {
-	// Create the response object
 	resp := &model.Response{
 		Message: model.Message{
 			Ack: model.Ack{
@@ -31,22 +26,22 @@ func SendAck(w http.ResponseWriter) {
 		},
 	}
 
-	// Marshal to JSON
 	data, err := json.Marshal(resp)
 	if err != nil {
 		http.Error(w, "failed to marshal response", http.StatusInternalServerError)
 		return
 	}
 
-	// Set headers and write response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write(data)
+	_, err = w.Write(data)
+	if err != nil {
+		http.Error(w, "failed to write response", http.StatusInternalServerError)
+		return
+	}
 }
 
-// nack sends a negative acknowledgment (NACK) response with an error message.
 func nack(w http.ResponseWriter, err *model.Error, status int) {
-	// Create the NACK response object
 	resp := &model.Response{
 		Message: model.Message{
 			Ack: model.Ack{
@@ -55,28 +50,27 @@ func nack(w http.ResponseWriter, err *model.Error, status int) {
 			Error: err,
 		},
 	}
-
-	// Marshal the response to JSON
 	data, jsonErr := json.Marshal(resp)
 	if jsonErr != nil {
 		http.Error(w, "failed to marshal response", http.StatusInternalServerError)
 		return
 	}
-
-	// Set headers and write response
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status) // Assuming NACK means a bad request
-	w.Write(data)
+	w.WriteHeader(status)
+	_, er := w.Write(data)
+	if er != nil {
+		http.Error(w, "failed to write response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func internalServerError(ctx context.Context) *model.Error {
 	return &model.Error{
-		Code:    http.StatusText(http.StatusInternalServerError), 
+		Code:    http.StatusText(http.StatusInternalServerError),
 		Message: fmt.Sprintf("Internal server error, MessageID: %s", ctx.Value(model.MsgIDKey)),
 	}
 }
 
-// SendNack sends a negative acknowledgment (NACK) response with an error message.
 func SendNack(ctx context.Context, w http.ResponseWriter, err error) {
 	var schemaErr *model.SchemaValidationErr
 	var signErr *model.SignValidationErr
