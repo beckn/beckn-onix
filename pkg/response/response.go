@@ -17,6 +17,18 @@ const (
 	InvalidRequestErrorType   ErrorType = "INVALID_REQUEST"
 )
 
+type errorResponseWriter struct{}
+
+func (e *errorResponseWriter) Header() http.Header {
+	return http.Header{}
+}
+
+func (e *errorResponseWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write error")
+}
+
+func (e *errorResponseWriter) WriteHeader(statusCode int) {}
+
 func SendAck(w http.ResponseWriter) {
 	resp := &model.Response{
 		Message: model.Message{
