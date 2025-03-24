@@ -13,7 +13,10 @@ import (
 )
 
 func TestSendAck(t *testing.T) {
-	http.NewRequest("GET", "/", nil)
+	_, err := http.NewRequest("GET", "/", nil)
+	if err != nil {
+		t.Fatal(err) // For tests
+	}
 	rr := httptest.NewRecorder()
 
 	SendAck(rr)
@@ -58,7 +61,10 @@ func TestNack(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			http.NewRequest("POST", "/", nil)
+			_, err := http.NewRequest("GET", "/", nil)
+			if err != nil {
+				t.Fatal(err) // For tests
+			}
 			rr := httptest.NewRecorder()
 
 			nack(rr, tt.err, tt.status)
@@ -123,7 +129,10 @@ func TestSendNack(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			http.NewRequest("POST", "/", nil)
+			_, err := http.NewRequest("GET", "/", nil)
+			if err != nil {
+				t.Fatal(err) // For tests
+			}
 			rr := httptest.NewRecorder()
 
 			SendNack(ctx, rr, tt.err)
@@ -133,10 +142,16 @@ func TestSendNack(t *testing.T) {
 			}
 
 			var actual map[string]interface{}
-			json.Unmarshal(rr.Body.Bytes(), &actual)
+			err = json.Unmarshal(rr.Body.Bytes(), &actual)
+			if err != nil {
+				t.Fatalf("failed to unmarshal response: %v", err)
+			}
 
 			var expected map[string]interface{}
-			json.Unmarshal([]byte(tt.expected), &expected)
+			err = json.Unmarshal([]byte(tt.expected), &expected)
+			if err != nil {
+				t.Fatalf("failed to unmarshal expected response: %v", err)
+			}
 
 			if !compareJSON(expected, actual) {
 				t.Errorf("expected body %s, got %s", tt.expected, rr.Body.String())
