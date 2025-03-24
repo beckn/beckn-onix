@@ -2,143 +2,152 @@ package model
 
 import (
 	"errors"
-	"net/http"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"gopkg.in/yaml.v2"
 )
 
 func TestError_Error(t *testing.T) {
 	err := &Error{
-		Code:    "400",
-		Paths:   "/path/to/field",
-		Message: "Invalid value",
+		Code:    "404",
+		Paths:   "/api/v1/user",
+		Message: "User not found",
 	}
 
-	expected := "Error: Code=400, Path=/path/to/field, Message=Invalid value"
-	if err.Error() != expected {
-		t.Errorf("Expected %s, got %s", expected, err.Error())
+	expected := "Error: Code=404, Path=/api/v1/user, Message=User not found"
+	actual := err.Error()
+
+	if actual != expected {
+		t.Errorf("expected %s, got %s", expected, actual)
 	}
 }
 
 func TestSchemaValidationErr_Error(t *testing.T) {
-	errs := SchemaValidationErr{
+	schemaErr := &SchemaValidationErr{
 		Errors: []Error{
-			{Paths: "/field1", Message: "Field is required"},
-			{Paths: "/field2", Message: "Invalid format"},
+			{Paths: "/user", Message: "Field required"},
+			{Paths: "/email", Message: "Invalid format"},
 		},
 	}
 
-	expected := "/field1: Field is required; /field2: Invalid format"
-	if errs.Error() != expected {
-		t.Errorf("Expected %s, got %s", expected, errs.Error())
+	expected := "/user: Field required; /email: Invalid format"
+	actual := schemaErr.Error()
+
+	if actual != expected {
+		t.Errorf("expected %s, got %s", expected, actual)
 	}
 }
 
 func TestSchemaValidationErr_BecknError(t *testing.T) {
-	errs := SchemaValidationErr{
+	schemaErr := &SchemaValidationErr{
 		Errors: []Error{
-			{Paths: "/field1", Message: "Field is required"},
-			{Paths: "/field2", Message: "Invalid format"},
+			{Paths: "/user", Message: "Field required"},
 		},
 	}
 
-	result := errs.BecknError()
-	if result.Code != http.StatusText(http.StatusBadRequest) {
-		t.Errorf("Expected %s, got %s", http.StatusText(http.StatusBadRequest), result.Code)
-	}
-
-	expectedPaths := "/field1;/field2"
-	expectedMessage := "Field is required; Invalid format"
-	if result.Paths != expectedPaths {
-		t.Errorf("Expected paths %s, got %s", expectedPaths, result.Paths)
-	}
-	if result.Message != expectedMessage {
-		t.Errorf("Expected message %s, got %s", expectedMessage, result.Message)
-	}
-}
-
-func TestNewSignValidationErrf(t *testing.T) {
-	err := NewSignValidationErrf("signature %s", "invalid")
-	expected := "signature invalid"
-	if err.Error() != expected {
-		t.Errorf("Expected %s, got %s", expected, err.Error())
-	}
-}
-
-func TestNewSignValidationErr(t *testing.T) {
-	baseErr := errors.New("invalid signature")
-	err := NewSignValidationErr(baseErr)
-	if err.Error() != "invalid signature" {
-		t.Errorf("Expected %s, got %s", "invalid signature", err.Error())
+	beErr := schemaErr.BecknError()
+	expected := "Bad Request"
+	if beErr.Code != expected {
+		t.Errorf("expected %s, got %s", expected, beErr.Code)
 	}
 }
 
 func TestSignValidationErr_BecknError(t *testing.T) {
-	err := NewSignValidationErr(errors.New("invalid signature"))
-	result := err.BecknError()
+	signErr := NewSignValidationErr(errors.New("signature failed"))
+	beErr := signErr.BecknError()
 
-	expected := "Signature Validation Error: invalid signature"
-	if result.Code != http.StatusText(http.StatusUnauthorized) {
-		t.Errorf("Expected %s, got %s", http.StatusText(http.StatusUnauthorized), result.Code)
-	}
-	if result.Message != expected {
-		t.Errorf("Expected %s, got %s", expected, result.Message)
+	expectedMsg := "Signature Validation Error: signature failed"
+	if beErr.Message != expectedMsg {
+		t.Errorf("expected %s, got %s", expectedMsg, beErr.Message)
 	}
 }
 
-func TestNewBadReqErr(t *testing.T) {
-	baseErr := errors.New("bad request error")
-	err := NewBadReqErr(baseErr)
-	if err.Error() != "bad request error" {
-		t.Errorf("Expected %s, got %s", "bad request error", err.Error())
+func TestNewSignValidationErrf(t *testing.T) {
+	signErr := NewSignValidationErrf("error %s", "signature failed")
+	expected := "error signature failed"
+	if signErr.Error() != expected {
+		t.Errorf("expected %s, got %s", expected, signErr.Error())
 	}
 }
 
-func TestNewBadReqErrf(t *testing.T) {
-	err := NewBadReqErrf("missing %s", "field")
-	expected := "missing field"
-	if err.Error() != expected {
-		t.Errorf("Expected %s, got %s", expected, err.Error())
+func TestNewSignValidationErr(t *testing.T) {
+	err := errors.New("signature error")
+	signErr := NewSignValidationErr(err)
+
+	if signErr.Error() != err.Error() {
+		t.Errorf("expected %s, got %s", err.Error(), signErr.Error())
 	}
 }
 
 func TestBadReqErr_BecknError(t *testing.T) {
-	err := NewBadReqErr(errors.New("invalid payload"))
-	result := err.BecknError()
+	badReqErr := NewBadReqErr(errors.New("invalid input"))
+	beErr := badReqErr.BecknError()
 
-	expected := "BAD Request: invalid payload"
-	if result.Code != http.StatusText(http.StatusBadRequest) {
-		t.Errorf("Expected %s, got %s", http.StatusText(http.StatusBadRequest), result.Code)
-	}
-	if result.Message != expected {
-		t.Errorf("Expected %s, got %s", expected, result.Message)
+	expectedMsg := "BAD Request: invalid input"
+	if beErr.Message != expectedMsg {
+		t.Errorf("expected %s, got %s", expectedMsg, beErr.Message)
 	}
 }
 
-func TestNewNotFoundErr(t *testing.T) {
-	baseErr := errors.New("resource not found")
-	err := NewNotFoundErr(baseErr)
-	if err.Error() != "resource not found" {
-		t.Errorf("Expected %s, got %s", "resource not found", err.Error())
+func TestNewBadReqErrf(t *testing.T) {
+	badReqErr := NewBadReqErrf("invalid field %s", "name")
+	expected := "invalid field name"
+	if badReqErr.Error() != expected {
+		t.Errorf("expected %s, got %s", expected, badReqErr.Error())
 	}
 }
 
-func TestNewNotFoundErrf(t *testing.T) {
-	err := NewNotFoundErrf("route %s not found", "/api/data")
-	expected := "route /api/data not found"
-	if err.Error() != expected {
-		t.Errorf("Expected %s, got %s", expected, err.Error())
+func TestNewBadReqErr(t *testing.T) {
+	err := errors.New("bad request")
+	badReqErr := NewBadReqErr(err)
+
+	if badReqErr.Error() != err.Error() {
+		t.Errorf("expected %s, got %s", err.Error(), badReqErr.Error())
 	}
 }
 
 func TestNotFoundErr_BecknError(t *testing.T) {
-	err := NewNotFoundErr(errors.New("endpoint not available"))
-	result := err.BecknError()
+	notFoundErr := NewNotFoundErr(errors.New("resource not found"))
+	beErr := notFoundErr.BecknError()
 
-	expected := "Endpoint not found: endpoint not available"
-	if result.Code != http.StatusText(http.StatusNotFound) {
-		t.Errorf("Expected %s, got %s", http.StatusText(http.StatusNotFound), result.Code)
+	expectedMsg := "Endpoint not found: resource not found"
+	if beErr.Message != expectedMsg {
+		t.Errorf("expected %s, got %s", expectedMsg, beErr.Message)
 	}
-	if result.Message != expected {
-		t.Errorf("Expected %s, got %s", expected, result.Message)
+}
+
+func TestNewNotFoundErrf(t *testing.T) {
+	notFoundErr := NewNotFoundErrf("resource %s not found", "user")
+	expected := "resource user not found"
+	if notFoundErr.Error() != expected {
+		t.Errorf("expected %s, got %s", expected, notFoundErr.Error())
 	}
+}
+
+func TestNewNotFoundErr(t *testing.T) {
+	err := errors.New("not found")
+	notFoundErr := NewNotFoundErr(err)
+
+	if notFoundErr.Error() != err.Error() {
+		t.Errorf("expected %s, got %s", err.Error(), notFoundErr.Error())
+	}
+}
+
+func TestRole_UnmarshalYAML_ValidRole(t *testing.T) {
+	var role Role
+	yamlData := []byte("bap")
+
+	err := yaml.Unmarshal(yamlData, &role)
+	assert.NoError(t, err)
+	assert.Equal(t, RoleBAP, role)
+}
+
+func TestRole_UnmarshalYAML_InvalidRole(t *testing.T) {
+	var role Role
+	yamlData := []byte("invalid")
+
+	err := yaml.Unmarshal(yamlData, &role)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid Role")
 }

@@ -1,0 +1,27 @@
+mode: set
+github.com/beckn/beckn-onix/pkg/model/error.go:15.32,17.2 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:23.46,25.31 2 1
+github.com/beckn/beckn-onix/pkg/model/error.go:25.31,27.3 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:28.2,28.42 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:31.51,32.24 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:32.24,37.3 1 0
+github.com/beckn/beckn-onix/pkg/model/error.go:38.2,40.31 3 1
+github.com/beckn/beckn-onix/pkg/model/error.go:40.31,41.22 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:41.22,43.4 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:44.3,44.43 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:47.2,51.3 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:58.72,60.2 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:62.55,64.2 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:66.49,71.2 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:77.41,79.2 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:81.56,83.2 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:85.41,90.2 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:96.45,98.2 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:100.60,102.2 1 1
+github.com/beckn/beckn-onix/pkg/model/error.go:104.43,109.2 1 1
+github.com/beckn/beckn-onix/pkg/model/model.go:63.71,65.45 2 0
+github.com/beckn/beckn-onix/pkg/model/model.go:65.45,67.3 1 0
+github.com/beckn/beckn-onix/pkg/model/model.go:69.2,70.23 2 0
+github.com/beckn/beckn-onix/pkg/model/model.go:70.23,72.3 1 0
+github.com/beckn/beckn-onix/pkg/model/model.go:73.2,74.12 2 0
+github.com/beckn/beckn-onix/pkg/model/model.go:93.61,95.2 1 0
