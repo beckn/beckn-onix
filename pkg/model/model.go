@@ -8,15 +8,12 @@ import (
 	"time"
 )
 
-// Subscriber represents a unique operational configuration of a trusted platform on a network.
 type Subscriber struct {
 	SubscriberID string `json:"subscriber_id"`
 	URL          string `json:"url" format:"uri"`
 	Type         string `json:"type" enum:"BAP,BPP,BG"`
 	Domain       string `json:"domain"`
 }
-
-// SubscriptionDetails represents subscription details of a Network Participant.
 type Subscription struct {
 	Subscriber       `json:",inline"`
 	KeyID            string    `json:"key_id" format:"uuid"`
@@ -39,7 +36,6 @@ const (
 
 type contextKey string
 
-// Correctly define MsgIDKey with a variable, not a const
 var MsgIDKey = contextKey("message_id")
 
 type Role string
@@ -51,7 +47,6 @@ const (
 	RoleRegistery Role = "registery"
 )
 
-// validRoles ensures only allowed values are accepted
 var validRoles = map[Role]bool{
 	RoleBAP:       true,
 	RoleBPP:       true,
@@ -59,7 +54,6 @@ var validRoles = map[Role]bool{
 	RoleRegistery: true,
 }
 
-// Custom YAML unmarshalling to validate Role names
 func (r *Role) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	var roleName string
 	if err := unmarshal(&roleName); err != nil {
@@ -91,10 +85,9 @@ type StepContext struct {
 }
 
 func (ctx *StepContext) WithContext(newCtx context.Context) {
-	ctx.Context = newCtx // Update the existing context, keeping all other fields unchanged.
+	ctx.Context = newCtx
 }
 
-// Status represents the status of an acknowledgment.
 type Status string
 
 const (
@@ -102,18 +95,13 @@ const (
 	StatusNACK Status = "NACK"
 )
 
-// Ack represents an acknowledgment response.
 type Ack struct {
-	Status Status `json:"status"` // ACK or NACK
+	Status Status `json:"status"`
 }
-
-// Message represents the message object in the response.
 type Message struct {
 	Ack   Ack    `json:"ack"`
 	Error *Error `json:"error,omitempty"`
 }
-
-// Response represents the main response structure.
 type Response struct {
 	Message Message `json:"message"`
 }
