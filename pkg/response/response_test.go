@@ -165,3 +165,10 @@ func compareJSON(expected, actual map[string]interface{}) bool {
 	actualBytes, _ := json.Marshal(actual)
 	return bytes.Equal(expectedBytes, actualBytes)
 }
+
+
+func TestSendAck_WriteError(t *testing.T) {
+	w := &errorResponseWriter{}
+	SendAck(w)
+	// No need to assert, just ensure it doesn't panic
+}
