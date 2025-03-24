@@ -17,6 +17,10 @@ type Config struct {
 	Role      string
 }
 
+type BecknRequest struct {
+	Context map[string]any `json:"context"`
+}
+
 type contextKeyType string
 
 const contextKey = "context"
@@ -28,42 +32,35 @@ func NewUUIDSetter(cfg *Config) (func(http.Handler) http.Handler, error) {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-			var data map[string]any
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				http.Error(w, "Failed to read request body", http.StatusInternalServerError)
 				return
 			}
-			if err := json.Unmarshal(body, &data); err != nil {
+			var req BecknRequest
+			if err := json.Unmarshal(body, &req); err != nil {
 				http.Error(w, "Failed to decode request body", http.StatusBadRequest)
 				return
 			}
-			contextRaw := data[contextKey]
-			if contextRaw == nil {
+			if req.Context == nil {
 				http.Error(w, fmt.Sprintf("%s field not found.", contextKey), http.StatusBadRequest)
-				return
-			}
-			contextData, ok := contextRaw.(map[string]any)
-			if !ok {
-				http.Error(w, fmt.Sprintf("%s field is not a map.", contextKey), http.StatusBadRequest)
 				return
 			}
 			var subID any
 			switch cfg.Role {
 			case "bap":
-				subID = contextData["bap_id"]
+				subID = req.Context["bap_id"]
 			case "bpp":
-				subID = contextData["bpp_id"]
+				subID = req.Context["bpp_id"]
 			}
 			ctx := context.WithValue(r.Context(), subscriberIDKey, subID)
 			for _, key := range cfg.CheckKeys {
 				value := uuid.NewString()
-				updatedValue := update(contextData, key, value)
+				updatedValue := update(req.Context, key, value)
 				ctx = context.WithValue(ctx, contextKeyType(key), updatedValue)
 			}
-			data[contextKey] = contextData
-			updatedBody, err := json.Marshal(data)
+			reqData := map[string]any{"context": req.Context}
+			updatedBody, err := json.Marshal(reqData)
 			if err != nil {
 				http.Error(w, "Failed to marshal updated JSON", http.StatusInternalServerError)
 				return
