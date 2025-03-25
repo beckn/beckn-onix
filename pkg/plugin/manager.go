@@ -12,13 +12,12 @@ import (
 
 // Config represents the plugin manager configuration.
 type Config struct {
-	Root            string       `yaml:"root"`
-	Signer          PluginConfig `yaml:"signer"`
-	Verifier        PluginConfig `yaml:"verifier"`
-	Decrypter       PluginConfig `yaml:"decrypter"`
-	Encrypter       PluginConfig `yaml:"encrypter"`
-	Publisher       PluginConfig `yaml:"publisher"`
-	SchemaValidator PluginConfig `yaml:"schemaValidator"`
+	Root      string       `yaml:"root"`
+	Signer    PluginConfig `yaml:"signer"`
+	Verifier  PluginConfig `yaml:"verifier"`
+	Decrypter PluginConfig `yaml:"decrypter"`
+	Encrypter PluginConfig `yaml:"encrypter"`
+	Publisher PluginConfig `yaml:"publisher"`
 }
 
 // PluginConfig represents configuration details for a plugin.
@@ -34,7 +33,6 @@ type Manager struct {
 	dp  definition.DecrypterProvider
 	ep  definition.EncrypterProvider
 	pb  definition.PublisherProvider
-	svp definition.SchemaValidatorProvider
 	cfg *Config
 }
 
@@ -74,13 +72,7 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 		return nil, fmt.Errorf("failed to load encryption plugin: %w", err)
 	}
 
-	// Load schema validation plugin.
-	svp, err := provider[definition.SchemaValidatorProvider](cfg.Root, cfg.Encrypter.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load schema validation plugin: %w", err)
-	}
-
-	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, dp: dp, svp: svp, cfg: cfg}, nil
+	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, dp: dp, cfg: cfg}, nil
 }
 
 // provider loads a plugin dynamically and retrieves its provider instance.
@@ -176,17 +168,4 @@ func (m *Manager) Publisher(ctx context.Context) (definition.Publisher, error) {
 		return nil, fmt.Errorf("failed to initialize publisher: %w", err)
 	}
 	return publisher, nil
-}
-
-// Encrypter retrieves the encryption plugin instance.
-func (m *Manager) SchemaValidation(ctx context.Context) (definition.SchemaValidator, func() error, error) {
-	if m.svp == nil {
-		return nil, nil, fmt.Errorf("schema validation plugin provider not loaded")
-	}
-
-	schemaValidator, close, err := m.svp.New(ctx, m.cfg.SchemaValidator.Config)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to initialize schema validator: %w", err)
-	}
-	return schemaValidator, close, nil
 }
