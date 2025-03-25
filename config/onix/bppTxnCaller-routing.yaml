@@ -1,0 +1,4 @@
+routes:
+  - action: on_search
+    type: url
+    target: http://localhost:8080/bap/reciever/on_search

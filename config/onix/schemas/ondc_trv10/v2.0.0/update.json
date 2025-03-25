@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "update",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../core/v1.1.0/update.json#"
+    },
+    {
+      "$ref": "./init.json#/allOf/1"
+    },
+    {
+      "properties": {
+        "message": {
+          "type": "object",
+          "properties": {
+            "order": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": ["id"]
+            },
+            "update_target": {
+              "type": "string",
+              "pattern": "^[^,]+(,[^,]+)*$"
+            }
+          }
+        }
+      }
+    }     
+  ]
+}

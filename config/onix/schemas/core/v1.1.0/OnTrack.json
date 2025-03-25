@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "OnTrack",
+  "type": "object",
+  "properties": {
+    "context": {
+      "allOf": [
+        {
+          "$ref": "./definitions.json#/$defs/Context"
+        },
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "on_track"
+              ]
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      ]
+    },
+    "message": {
+      "type": "object",
+      "properties": {
+        "tracking": {
+          "$ref": "./definitions.json#/$defs/Tracking"
+        }
+      },
+      "required": [
+        "tracking"
+      ]
+    },
+    "error": {
+      "$ref": "./definitions.json#/$defs/Error"
+    }
+  },
+  "required": [
+    "context"
+  ]
+}

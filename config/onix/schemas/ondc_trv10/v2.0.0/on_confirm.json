@@ -1,0 +1,314 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "on_confirm",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../core/v1.1.0/on_confirm.json#"
+    },
+    {
+      "$ref": "./init.json#/allOf/1"
+    },
+    {
+      "properties": {
+        "message": {
+          "properties": {
+            "order": {
+              "properties": {
+                "provider": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["id"]
+                }
+              },
+              "required": ["provider"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "$ref": "./confirm.json#/allOf/5"
+    },
+    {
+      "properties": {
+        "message": {
+          "properties": {
+            "order": {
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "fulfillment_ids": {
+                        "minItems": 1
+                      },
+                      "location_ids": {
+                        "minItems": 1
+                      }
+                    },
+                    "required": ["fulfillment_ids", "location_ids"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "$ref": "./confirm.json#/allOf/4/allOf/1"
+    },
+    {
+      "properties": {
+        "message": {
+          "properties": {
+            "order": {
+              "properties": {
+                "fulfillments": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": ["DELIVERY"]
+                      }
+                    },
+                    "required": ["type"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "allOf": [
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "quote": {
+                      "type": "object",
+                      "properties": {
+                        "price": {
+                          "type": "object",
+                          "properties": {
+                            "currency": {
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string",
+                              "pattern": "^\\d+(\\.\\d{1,2})?$"
+                            }
+                          },
+                          "required": ["currency", "value"]
+                        },
+                        "breakup": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "price": {
+                                "type": "object",
+                                "properties": {
+                                  "currency": {
+                                    "type": "string"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "pattern": "^\\d+(\\.\\d{1,2})?$"
+                                  }
+                                },
+                                "required": ["currency", "value"]
+                              },
+                              "title": {
+                                "type": "string",
+                                "enum": [
+                                  "BASE_FARE",
+                                  "DISTANCE_FARE",
+                                  "TAX",
+                                  "DISCOUNT",
+                                  "WAITING_CHARGE"
+                                ]
+                              }
+                            },
+                            "required": ["price", "title"]
+                          }
+                        }
+                      },
+                      "required": ["price", "breakup"]
+                    }
+                  },
+                  "required": ["quote"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "quote": {
+                      "properties": {
+                        "breakup": {
+                          "allOf": [
+                            {
+                              "contains": {
+                                "type": "object",
+                                "properties": {
+                                  "title": {
+                                    "const": "BASE_FARE"
+                                  },
+                                  "price": {
+                                    "type": "object",
+                                    "properties": {
+                                      "value": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": ["value"]
+                                  }
+                                },
+                                "required": ["title", "price"]
+                              }
+                            },
+                            {
+                              "contains": {
+                                "type": "object",
+                                "properties": {
+                                  "title": {
+                                    "const": "DISTANCE_FARE"
+                                  },
+                                  "price": {
+                                    "type": "object",
+                                    "properties": {
+                                      "value": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": ["value"]
+                                  }
+                                },
+                                "required": ["title", "price"]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "$ref": "./confirm.json#/allOf/6"
+    },
+    {
+      "allOf": [
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "cancellation_terms": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "fulfillment_state": {
+                            "type": "object",
+                            "properties": {
+                              "descriptor": {
+                                "type": "object",
+                                "properties": {
+                                  "code": {
+                                    "type": "string",
+                                    "enum": [
+                                      "RIDE_ASSIGNED",
+                                      "RIDE_ENROUTE_PICKUP",
+                                      "RIDE_ARRIVED_PICKUP",
+                                      "RIDE_STARTED"
+                                    ]
+                                  }
+                                },
+                                "required": ["code"]
+                              }
+                            },
+                            "required": ["descriptor"]
+                          },
+                          "cancellation_fee": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "percentage": {
+                                    "type": "string",
+                                    "pattern": "^(100(\\.0{1,2})?|([0-9]{1,2})(\\.\\d{1,2})?)$"
+                                  }
+                                },
+                                "required": ["percentage"]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "amount": {
+                                    "type": "object",
+                                    "properties": {
+                                      "value": {
+                                        "type": "string",
+                                        "pattern": "^[+-]?(\\d+(\\.\\d*)?|\\.\\d+)$"
+                                      },
+                                      "currency": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": ["currency", "value"]
+                                  }
+                                },
+                                "required": ["amount"]
+                              }
+                            ]
+                          }
+                        },
+                        "required": ["fulfillment_state", "cancellation_fee"]
+                      }
+                    }
+                  },
+                  "required": ["cancellation_terms"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "message": {
+              "type": "object"
+            }
+          },
+          "required": ["message"]
+        }
+      ]
+    }
+  ]
+}

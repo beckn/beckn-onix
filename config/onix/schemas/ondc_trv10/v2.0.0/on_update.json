@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "on_update",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../core/v1.1.0/on_update.json#"
+    },
+    {
+      "$ref": "./init.json#/allOf/1"
+    }
+  ]
+}
