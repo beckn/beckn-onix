@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "update",
+  "type": "object",
+  "properties": {
+    "context": {
+      "allOf": [
+        {
+          "$ref": "./definitions.json#/$defs/Context"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "enum": [
+                "update"
+              ]
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      ]
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "update_target": {
+          "description": "Comma separated values of order objects being updated. For example: ```\"update_target\":\"item,billing,fulfillment\"```",
+          "type": "string"
+        },
+        "order": {
+          "description": "Updated order object",
+          "allOf": [
+            {
+              "$ref": "./definitions.json#/$defs/Order"
+            }
+          ]
+        }
+      },
+      "required": [
+        "update_target",
+        "order"
+      ]
+    }
+  },
+  "required": [
+    "message",
+    "context"
+  ]
+}

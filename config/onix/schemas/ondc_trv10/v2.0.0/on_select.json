@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "on_select",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../core/v1.1.0/on_select.json#"
+    },
+    {
+      "$ref": "./init.json#/allOf/1"
+    },
+    {
+      "$ref": "./on_init.json#/allOf/2"
+    },
+    {
+      "$ref": "./confirm.json#/allOf/5"
+    },
+    {
+      "$ref": "./on_init.json#/allOf/5"
+    },
+    {
+      "allOf": [
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "fulfillments": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "required": ["id"]
+                      }
+                    }
+                  },
+                  "required": ["fulfillments"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "fulfillments": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "state": {
+                            "type": "object",
+                            "properties": {
+                              "descriptor": {
+                                "type": "object",
+                                "properties": {
+                                  "code": {
+                                    "type": "string",
+                                    "enum": [
+                                      "RIDE_ASSIGNED",
+                                      "RIDE_ENROUTE_PICKUP",
+                                      "RIDE_ARRIVED_PICKUP",
+                                      "RIDE_STARTED",
+                                      "RIDE_ENDED",
+                                      "RIDE_CANCELLED"
+                                    ]
+                                  }
+                                },
+                                "required": ["code"]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "fulfillments": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "properties": {
+                          "stops": {
+                            "items": {
+                              "properties": {
+                                "authorization": {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "enum": ["OTP"]
+                                    },
+                                    "token": {
+                                      "type": "string",
+                                      "pattern": "^-?\\d+(\\.\\d+)?$"
+                                    }
+                                  },
+                                  "required": ["type", "token"]
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "fulfillments": {
+                      "items": {
+                        "properties": {
+                          "stops": {
+                            "type": "array",
+                            "minItems": 2,
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "location": {
+                                  "type": "object",
+                                  "properties": {
+                                    "gps": { "type": "string" }
+                                  },
+                                  "required": ["gps"]
+                                },
+                                "type": {
+                                  "enum": ["START", "END"]
+                                }
+                              },
+                              "required": ["location", "type"]
+                            }
+                          }
+                        },
+                        "required": ["stops"]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "message": {
+              "properties": {
+                "order": {
+                  "properties": {
+                    "fulfillments": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "vehicle": {
+                            "properties": {
+                              "category": {
+                                "type": "string",
+                                "enum": ["AUTO_RICKSHAW", "CAB"]
+                              }
+                            },
+                            "required": ["category"]
+                          }
+                        },
+                        "required": ["vehicle"]
+                      }
+                    }
+                  },
+                  "required": ["fulfillments"]
+                }
+              }
+            }
+          }
+        }        
+      ]
+    },
+    {
+      "$ref": "./on_init.json#/allOf/7"
+    },
+    {
+      "properties": {
+        "message": {
+          "properties": {
+            "order": {
+              "properties": {
+                "fulfillments": {
+                  "type": "array",
+                  "items": {
+                    "allOf": [
+                      {
+                        "not": {
+                          "required": ["agent"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "$ref": "./on_init.json#/allOf/8"
+    }
+  ]
+}

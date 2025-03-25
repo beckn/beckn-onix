@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cancel",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../core/v1.1.0/cancel.json#"
+    },
+    {
+      "$ref": "init.json#/allOf/2"
+    },
+    {
+      "properties": {
+        "message": {
+          "type": "object",
+          "properties": {
+            "order_id": {
+              "type": "string"
+            },
+            "descriptor": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "enum": ["SOFT_CANCEL", "CONFIRM_CANCEL"]
+                }
+              },
+              "required": ["code"]
+            },
+            "cancellation_reason_id": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            }
+          },
+          "required": ["order_id", "descriptor", "cancellation_reason_id"]
+        }
+      }
+    }    
+  ]
+}
