@@ -17,7 +17,7 @@ type Config struct {
 	Role      string
 }
 
-type BecknRequest struct {
+type becknRequest struct {
 	Context map[string]any `json:"context"`
 }
 
@@ -37,7 +37,7 @@ func NewUUIDSetter(cfg *Config) (func(http.Handler) http.Handler, error) {
 				http.Error(w, "Failed to read request body", http.StatusInternalServerError)
 				return
 			}
-			var req BecknRequest
+			var req becknRequest
 			if err := json.Unmarshal(body, &req); err != nil {
 				http.Error(w, "Failed to decode request body", http.StatusBadRequest)
 				return
