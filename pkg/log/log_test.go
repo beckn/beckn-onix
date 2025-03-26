@@ -43,7 +43,7 @@ func setupLogger(t *testing.T, l Level) string {
 				},
 			},
 		},
-		ContextKeys: []any{"userID", "requestID"},
+		ContextKeys: []string{"userID", "requestID"},
 	}
 	err = InitLogger(config)
 	if err != nil {
