@@ -17,7 +17,9 @@ import (
 )
 
 type Level string
+
 type DestinationType string
+
 type Destination struct {
 	Type   DestinationType   `yaml:"type"`
 	Config map[string]string `yaml:"config"`
@@ -47,9 +49,9 @@ var logLevels = map[Level]zerolog.Level{
 }
 
 type Config struct {
-	level        Level         `yaml:"level"`
-	destinations []Destination `yaml:"destinations"`
-	contextKeys  []any         `yaml:"contextKeys"`
+	Level        Level         `yaml:"level"`
+	Destinations []Destination `yaml:"destinations"`
+	ContextKeys  []any         `yaml:"contextKeys"`
 }
 
 var (
@@ -64,16 +66,16 @@ var (
 	ErrMissingFilePath   = errors.New("file path missing in destination config for file logging")
 )
 
-func (config *Config) Validate() error {
-	if _, exists := logLevels[config.level]; !exists {
+func (config *Config) validate() error {
+	if _, exists := logLevels[config.Level]; !exists {
 		return ErrInvalidLogLevel
 	}
 
-	if len(config.destinations) == 0 {
+	if len(config.Destinations) == 0 {
 		return ErrLogDestinationNil
 	}
 
-	for _, dest := range config.destinations {
+	for _, dest := range config.Destinations {
 		switch dest.Type {
 		case Stdout:
 		case File:
@@ -96,11 +98,10 @@ func (config *Config) Validate() error {
 }
 
 var defaultConfig = Config{
-	level: InfoLevel,
-	destinations: []Destination{
+	Level: InfoLevel,
+	Destinations: []Destination{
 		{Type: Stdout},
 	},
-	contextKeys: []any{"userID", "requestID"},
 }
 
 func init() {
@@ -110,7 +111,7 @@ func init() {
 func getLogger(config Config) (zerolog.Logger, error) {
 	var newLogger zerolog.Logger
 	var writers []io.Writer
-	for _, dest := range config.destinations {
+	for _, dest := range config.Destinations {
 		switch dest.Type {
 		case Stdout:
 			writers = append(writers, os.Stdout)
@@ -120,20 +121,14 @@ func getLogger(config Config) (zerolog.Logger, error) {
 			if err := os.MkdirAll(dir, os.ModePerm); err != nil {
 				return newLogger, fmt.Errorf("failed to create log directory: %v", err)
 			}
-
-			fmt.Printf("writing test log to file: %v\n", config)
 			lumberjackLogger := &lumberjack.Logger{
 				Filename:   filePath,
-				MaxSize:    500, // Default size in MB if not overridden
-				MaxBackups: 15,  // Number of backups
-				MaxAge:     30,  // Days to retain
 				Compress:   false,
 			}
 			absPath, err := filepath.Abs(filePath)
 			if err != nil {
 				return newLogger, fmt.Errorf("failed to get absolute path: %v", err)
 			}
-			fmt.Printf("Attempting to write logs to: %s\n", absPath)
 			lumberjackLogger.Filename = absPath
 
 			setConfigValue := func(key string, target *int) {
@@ -159,30 +154,27 @@ func getLogger(config Config) (zerolog.Logger, error) {
 		}
 	}()
 	newLogger = zerolog.New(multiwriter).
-		Level(logLevels[config.level]).
+		Level(logLevels[config.Level]).
 		With().
 		Timestamp().
-		Caller().
 		Logger()
 
 	cfg = config
 	return newLogger, nil
 }
+
 func InitLogger(c Config) error {
 	var initErr error
 	once.Do(func() {
-		if err := c.Validate(); err != nil {
+		if initErr = c.validate(); initErr != nil {
 			return
 		}
 
 		logger, initErr = getLogger(c)
-		if initErr != nil {
-			return
-		}
 	})
 	return initErr
-
 }
+
 func Debug(ctx context.Context, msg string) {
 	logEvent(ctx, zerolog.DebugLevel, msg, nil)
 }
@@ -246,6 +238,7 @@ func logEvent(ctx context.Context, level zerolog.Level, msg string, err error) {
 	addCtx(ctx, event)
 	event.Msg(msg)
 }
+
 func Request(ctx context.Context, r *http.Request, body []byte) {
 	event := logger.Info()
 	addCtx(ctx, event)
@@ -257,13 +250,13 @@ func Request(ctx context.Context, r *http.Request, body []byte) {
 }
 
 func addCtx(ctx context.Context, event *zerolog.Event) {
-	for _, key := range cfg.contextKeys {
+	for _, key := range cfg.ContextKeys {
 		val, ok := ctx.Value(key).(string)
 		if !ok {
 			continue
 		}
 		keyStr := key.(string)
-		event.Str(keyStr, val)
+		event.Any(keyStr, val)
 	}
 }
 

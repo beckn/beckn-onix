@@ -30,8 +30,8 @@ func setupLogger(t *testing.T, l Level) string {
 	}
 
 	config := Config{
-		level: l,
-		destinations: []Destination{
+		Level: l,
+		Destinations: []Destination{
 			{
 				Type: File,
 				Config: map[string]string{
@@ -43,7 +43,7 @@ func setupLogger(t *testing.T, l Level) string {
 				},
 			},
 		},
-		contextKeys: []any{"userID", "requestID"},
+		ContextKeys: []any{"userID", "requestID"},
 	}
 	err = InitLogger(config)
 	if err != nil {
@@ -403,8 +403,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "Valid config with Stdout",
 			config: Config{
-				level: InfoLevel,
-				destinations: []Destination{
+				Level: InfoLevel,
+				Destinations: []Destination{
 					{Type: Stdout},
 				},
 			},
@@ -413,8 +413,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "Valid config with File destination and valid path",
 			config: Config{
-				level: InfoLevel,
-				destinations: []Destination{
+				Level: InfoLevel,
+				Destinations: []Destination{
 					{
 						Type: File,
 						Config: map[string]string{
@@ -431,8 +431,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "Error: Invalid log level",
 			config: Config{
-				level: "invalid",
-				destinations: []Destination{
+				Level: "invalid",
+				Destinations: []Destination{
 					{Type: Stdout},
 				},
 			},
@@ -441,16 +441,16 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "Error: No destinations provided",
 			config: Config{
-				level:        InfoLevel,
-				destinations: []Destination{},
+				Level:        InfoLevel,
+				Destinations: []Destination{},
 			},
 			wantErr: ErrLogDestinationNil,
 		},
 		{
 			name: "Error: Invalid destination type",
 			config: Config{
-				level: InfoLevel,
-				destinations: []Destination{
+				Level: InfoLevel,
+				Destinations: []Destination{
 					{Type: "unknown"},
 				},
 			},
@@ -459,8 +459,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "Error: Missing file path for file destination",
 			config: Config{
-				level: InfoLevel,
-				destinations: []Destination{
+				Level: InfoLevel,
+				Destinations: []Destination{
 					{
 						Type: File,
 						Config: map[string]string{
@@ -474,8 +474,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "Error: Invalid maxSize value in file destination",
 			config: Config{
-				level: InfoLevel,
-				destinations: []Destination{
+				Level: InfoLevel,
+				Destinations: []Destination{
 					{
 						Type: File,
 						Config: map[string]string{
@@ -490,8 +490,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "Error: Invalid maxBackups value in file destination",
 			config: Config{
-				level: InfoLevel,
-				destinations: []Destination{
+				Level: InfoLevel,
+				Destinations: []Destination{
 					{
 						Type: File,
 						Config: map[string]string{
@@ -506,8 +506,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "Error: Invalid maxAge value in file destination",
 			config: Config{
-				level: InfoLevel,
-				destinations: []Destination{
+				Level: InfoLevel,
+				Destinations: []Destination{
 					{
 						Type: File,
 						Config: map[string]string{
@@ -523,7 +523,7 @@ func TestValidateConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
+			err := tt.config.validate()
 			if (err == nil) != (tt.wantErr == nil) {
 				t.Errorf("validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
