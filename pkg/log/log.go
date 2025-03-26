@@ -51,7 +51,7 @@ var logLevels = map[Level]zerolog.Level{
 type Config struct {
 	Level        Level         `yaml:"level"`
 	Destinations []Destination `yaml:"destinations"`
-	ContextKeys  []any         `yaml:"contextKeys"`
+	ContextKeys  []string      `yaml:"contextKeys"`
 }
 
 var (
@@ -122,8 +122,8 @@ func getLogger(config Config) (zerolog.Logger, error) {
 				return newLogger, fmt.Errorf("failed to create log directory: %v", err)
 			}
 			lumberjackLogger := &lumberjack.Logger{
-				Filename:   filePath,
-				Compress:   false,
+				Filename: filePath,
+				Compress: false,
 			}
 			absPath, err := filepath.Abs(filePath)
 			if err != nil {
@@ -255,7 +255,7 @@ func addCtx(ctx context.Context, event *zerolog.Event) {
 		if !ok {
 			continue
 		}
-		keyStr := key.(string)
+		keyStr := key
 		event.Any(keyStr, val)
 	}
 }
