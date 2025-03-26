@@ -32,11 +32,7 @@ func NewUUIDSetter(cfg *Config) (func(http.Handler) http.Handler, error) {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				http.Error(w, "Failed to read request body", http.StatusInternalServerError)
-				return
-			}
+			body, _ := io.ReadAll(r.Body)
 			var req becknRequest
 			if err := json.Unmarshal(body, &req); err != nil {
 				http.Error(w, "Failed to decode request body", http.StatusBadRequest)
@@ -60,11 +56,7 @@ func NewUUIDSetter(cfg *Config) (func(http.Handler) http.Handler, error) {
 				ctx = context.WithValue(ctx, contextKeyType(key), updatedValue)
 			}
 			reqData := map[string]any{"context": req.Context}
-			updatedBody, err := json.Marshal(reqData)
-			if err != nil {
-				http.Error(w, "Failed to marshal updated JSON", http.StatusInternalServerError)
-				return
-			}
+			updatedBody, _ := json.Marshal(reqData)
 			r.Body = io.NopCloser(bytes.NewBuffer(updatedBody))
 			r.ContentLength = int64(len(updatedBody))
 			r = r.WithContext(ctx)
