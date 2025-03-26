@@ -19,8 +19,8 @@ import (
 	"github.com/beckn/beckn-onix/pkg/plugin"
 )
 
-// config struct holds all configurations.
-type config struct {
+// Config struct holds all configurations.
+type Config struct {
 	AppName       string                `yaml:"appName"`
 	Log           log.Config            `yaml:"log"`
 	PluginManager *plugin.ManagerConfig `yaml:"pluginManager"`
@@ -40,6 +40,7 @@ type timeoutConfig struct {
 }
 
 var configPath string
+var runFunc = run
 
 func main() {
 	// Define and parse command-line flags.
@@ -50,14 +51,14 @@ func main() {
 	log.Infof(context.Background(), "Starting application with config: %s", configPath)
 
 	// Run the application within a context.
-	if err := run(context.Background(), configPath); err != nil {
+	if err := runFunc(context.Background(), configPath); err != nil {
 		log.Fatalf(context.Background(), err, "Application failed: %v", err)
 	}
 	log.Infof(context.Background(), "Application finished")
 }
 
 // initConfig loads and validates the configuration.
-func initConfig(ctx context.Context, path string) (*config, error) {
+func initConfig(ctx context.Context, path string) (*Config, error) {
 	// Open the configuration file.
 	file, err := os.Open(path)
 	if err != nil {
@@ -66,7 +67,7 @@ func initConfig(ctx context.Context, path string) (*config, error) {
 	defer file.Close()
 
 	// Decode the YAML configuration.
-	var cfg config
+	var cfg Config
 	if err := yaml.NewDecoder(file).Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("could not decode config: %w", err)
 	}
@@ -80,7 +81,7 @@ func initConfig(ctx context.Context, path string) (*config, error) {
 }
 
 // validateConfig validates the configuration.
-func validateConfig(cfg *config) error {
+func validateConfig(cfg *Config) error {
 	if strings.TrimSpace(cfg.AppName) == "" {
 		return fmt.Errorf("missing app name")
 	}
@@ -91,7 +92,7 @@ func validateConfig(cfg *config) error {
 }
 
 // newServer creates and initializes the HTTP server.
-func newServer(ctx context.Context, mgr handler.PluginManager, cfg *config) (http.Handler, error) {
+func newServer(ctx context.Context, mgr handler.PluginManager, cfg *Config) (http.Handler, error) {
 	mux := http.NewServeMux()
 	err := module.Register(ctx, cfg.Modules, mux, mgr)
 	if err != nil {
@@ -99,6 +100,10 @@ func newServer(ctx context.Context, mgr handler.PluginManager, cfg *config) (htt
 	}
 	return mux, nil
 }
+
+var newManagerFunc = plugin.NewManager
+var newServerFunc = newServer
+var initLoggerFunc = log.InitLogger
 
 // run encapsulates the application logic.
 func run(ctx context.Context, configPath string) error {
@@ -109,13 +114,13 @@ func run(ctx context.Context, configPath string) error {
 		return fmt.Errorf("failed to initialize config: %w", err)
 	}
 	log.Infof(ctx, "Initializing logger with config: %+v", cfg.Log)
-	if err := log.InitLogger(cfg.Log); err != nil {
+	if err := initLoggerFunc(cfg.Log); err != nil {
 		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
 
 	// Initialize plugin manager.
 	log.Infof(ctx, "Initializing plugin manager")
-	mgr, closer, err := plugin.NewManager(ctx, cfg.PluginManager)
+	mgr, closer, err := newManagerFunc(ctx, cfg.PluginManager)
 	if err != nil {
 		return fmt.Errorf("failed to create plugin manager: %w", err)
 	}
@@ -124,7 +129,7 @@ func run(ctx context.Context, configPath string) error {
 
 	// Initialize HTTP server.
 	log.Infof(ctx, "Initializing HTTP server")
-	srv, err := newServer(ctx, mgr, cfg)
+	srv, err := newServerFunc(ctx, mgr, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to initialize server: %w", err)
 	}

@@ -1,3 +1,0 @@
-routes:
-  - action: search
-    target: https://bpp-adapter-903496459467.asia-southeast1.run.app/reciever
