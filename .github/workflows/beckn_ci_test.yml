@@ -67,8 +67,8 @@ jobs:
             echo "Checking coverage for $coverage_file"
             coverage=$(go tool cover -func=$coverage_file | grep total | awk '{print $3}' | sed 's/%//')
             echo "Coverage for $coverage_file: $coverage%"
-            if (( $(echo "$coverage < 80" | bc -l) )); then
-              echo "Coverage for $coverage_file is below 80%. Failing the job."
+            if (( $(echo "$coverage < 90" | bc -l) )); then
+              echo "Coverage for $coverage_file is below 90%. Failing the job."
               exit 1
             fi
           done
