@@ -61,13 +61,14 @@ func TestNack(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := http.NewRequest("GET", "/", nil)
+			req, err := http.NewRequest("GET", "/", nil)
 			if err != nil {
 				t.Fatal(err) // For tests
 			}
 			rr := httptest.NewRecorder()
+			ctx := context.WithValue(req.Context(), model.MsgIDKey, "12345")
 
-			nack(rr, tt.err, tt.status)
+			nack(rr, tt.err, tt.status, ctx)
 
 			if rr.Code != tt.status {
 				t.Errorf("expected status code %d, got %d", tt.status, rr.Code)
@@ -77,6 +78,7 @@ func TestNack(t *testing.T) {
 			if body != tt.expected {
 				t.Errorf("expected body %s, got %s", tt.expected, body)
 			}
+			
 		})
 	}
 }
@@ -166,9 +168,7 @@ func compareJSON(expected, actual map[string]interface{}) bool {
 	return bytes.Equal(expectedBytes, actualBytes)
 }
 
-
 func TestSendAck_WriteError(t *testing.T) {
 	w := &errorResponseWriter{}
 	SendAck(w)
-	// No need to assert, just ensure it doesn't panic
 }

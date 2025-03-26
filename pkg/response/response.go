@@ -12,11 +12,6 @@ import (
 
 type ErrorType string
 
-const (
-	SchemaValidationErrorType ErrorType = "SCHEMA_VALIDATION_ERROR"
-	InvalidRequestErrorType   ErrorType = "INVALID_REQUEST"
-)
-
 type errorResponseWriter struct{}
 
 func (e *errorResponseWriter) Header() http.Header {
@@ -53,7 +48,7 @@ func SendAck(w http.ResponseWriter) {
 	}
 }
 
-func nack(w http.ResponseWriter, err *model.Error, status int) {
+func nack(w http.ResponseWriter, err *model.Error, status int, ctx context.Context) {
 	resp := &model.Response{
 		Message: model.Message{
 			Ack: model.Ack{
@@ -64,14 +59,17 @@ func nack(w http.ResponseWriter, err *model.Error, status int) {
 	}
 	data, jsonErr := json.Marshal(resp)
 	if jsonErr != nil {
-		http.Error(w, "failed to marshal response", http.StatusInternalServerError)
+		fmt.Printf("Error marshaling response: %v, MessageID: %s", jsonErr, ctx.Value(model.MsgIDKey))
+		http.Error(w, fmt.Sprintf("Internal server error, MessageID: %s", ctx.Value(model.MsgIDKey)), http.StatusInternalServerError)
 		return
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, er := w.Write(data)
 	if er != nil {
-		http.Error(w, "failed to write response", http.StatusInternalServerError)
+		fmt.Printf("Error writing response: %v, MessageID: %s", er, ctx.Value(model.MsgIDKey))
+		http.Error(w, fmt.Sprintf("Internal server error, MessageID: %s", ctx.Value(model.MsgIDKey)), http.StatusInternalServerError)
 		return
 	}
 }
@@ -91,19 +89,19 @@ func SendNack(ctx context.Context, w http.ResponseWriter, err error) {
 
 	switch {
 	case errors.As(err, &schemaErr):
-		nack(w, schemaErr.BecknError(), http.StatusBadRequest)
+		nack(w, schemaErr.BecknError(), http.StatusBadRequest, ctx)
 		return
 	case errors.As(err, &signErr):
-		nack(w, signErr.BecknError(), http.StatusUnauthorized)
+		nack(w, signErr.BecknError(), http.StatusUnauthorized, ctx)
 		return
 	case errors.As(err, &badReqErr):
-		nack(w, badReqErr.BecknError(), http.StatusBadRequest)
+		nack(w, badReqErr.BecknError(), http.StatusBadRequest, ctx)
 		return
 	case errors.As(err, &notFoundErr):
-		nack(w, notFoundErr.BecknError(), http.StatusNotFound)
+		nack(w, notFoundErr.BecknError(), http.StatusNotFound, ctx)
 		return
 	default:
-		nack(w, internalServerError(ctx), http.StatusInternalServerError)
+		nack(w, internalServerError(ctx), http.StatusInternalServerError, ctx)
 		return
 	}
 }

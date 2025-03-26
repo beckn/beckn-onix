@@ -6,20 +6,24 @@ import (
 	"strings"
 )
 
+// Error represents an error response.
 type Error struct {
 	Code    string `json:"code"`
 	Paths   string `json:"paths,omitempty"`
 	Message string `json:"message"`
 }
 
+// Error implements the error interface for the Error struct.
 func (e *Error) Error() string {
 	return fmt.Sprintf("Error: Code=%s, Path=%s, Message=%s", e.Code, e.Paths, e.Message)
 }
 
+// SchemaValidationErr represents a collection of schema validation failures.
 type SchemaValidationErr struct {
 	Errors []Error
 }
 
+// Error implements the error interface for SchemaValidationErr.
 func (e *SchemaValidationErr) Error() string {
 	var errorMessages []string
 	for _, err := range e.Errors {
@@ -35,6 +39,8 @@ func (e *SchemaValidationErr) BecknError() *Error {
 			Message: "Schema validation error.",
 		}
 	}
+
+	// Collect all error paths and messages
 	var paths []string
 	var messages []string
 	for _, err := range e.Errors {
@@ -51,6 +57,7 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	}
 }
 
+// SignalidationErr represents a collection of schema validation failures.
 type SignValidationErr struct {
 	error
 }
@@ -70,6 +77,7 @@ func (e *SignValidationErr) BecknError() *Error {
 	}
 }
 
+// SignalidationErr represents a collection of schema validation failures.
 type BadReqErr struct {
 	error
 }
@@ -89,6 +97,7 @@ func (e *BadReqErr) BecknError() *Error {
 	}
 }
 
+// SignalidationErr represents a collection of schema validation failures.
 type NotFoundErr struct {
 	error
 }
