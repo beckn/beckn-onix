@@ -19,8 +19,10 @@ func TestError_Error(t *testing.T) {
 	actual := err.Error()
 
 	if actual != expected {
-		t.Errorf("expected %s, got %s", expected, actual)
+		t.Errorf("err.Error() = %s, want %s",
+			actual, expected)
 	}
+
 }
 
 func TestSchemaValidationErr_Error(t *testing.T) {
@@ -35,7 +37,8 @@ func TestSchemaValidationErr_Error(t *testing.T) {
 	actual := schemaErr.Error()
 
 	if actual != expected {
-		t.Errorf("expected %s, got %s", expected, actual)
+		t.Errorf("err.Error() = %s, want %s",
+			actual, expected)
 	}
 }
 
@@ -49,7 +52,8 @@ func TestSchemaValidationErr_BecknError(t *testing.T) {
 	beErr := schemaErr.BecknError()
 	expected := "Bad Request"
 	if beErr.Code != expected {
-		t.Errorf("expected %s, got %s", expected, beErr.Code)
+		t.Errorf("err.Error() = %s, want %s",
+			beErr.Code, expected)
 	}
 }
 
@@ -59,15 +63,18 @@ func TestSignValidationErr_BecknError(t *testing.T) {
 
 	expectedMsg := "Signature Validation Error: signature failed"
 	if beErr.Message != expectedMsg {
-		t.Errorf("expected %s, got %s", expectedMsg, beErr.Message)
+		t.Errorf("err.Error() = %s, want %s",
+			beErr.Message, expectedMsg)
 	}
+
 }
 
 func TestNewSignValidationErrf(t *testing.T) {
 	signErr := NewSignValidationErrf("error %s", "signature failed")
 	expected := "error signature failed"
 	if signErr.Error() != expected {
-		t.Errorf("expected %s, got %s", expected, signErr.Error())
+		t.Errorf("err.Error() = %s, want %s",
+			signErr.Error(), expected)
 	}
 }
 
@@ -76,7 +83,8 @@ func TestNewSignValidationErr(t *testing.T) {
 	signErr := NewSignValidationErr(err)
 
 	if signErr.Error() != err.Error() {
-		t.Errorf("expected %s, got %s", err.Error(), signErr.Error())
+		t.Errorf("err.Error() = %s, want %s", err.Error(),
+			signErr.Error())
 	}
 }
 

@@ -36,7 +36,7 @@ const (
 
 type contextKey string
 
-var MsgIDKey = contextKey("message_id")
+const MsgIDKey = contextKey("message_id")
 
 type Role string
 
