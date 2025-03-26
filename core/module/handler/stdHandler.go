@@ -189,7 +189,7 @@ func loadKeyManager(ctx context.Context, mgr PluginManager, cache definition.Cac
 }
 
 // initPlugins initializes required plugins for the processor.
-func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *pluginCfg, regURL string) error {
+func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *PluginCfg, regURL string) error {
 	var err error
 	if h.cache, err = loadPlugin(ctx, "Cache", cfg.Cache, mgr.Cache); err != nil {
 		return err

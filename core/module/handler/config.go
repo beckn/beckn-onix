@@ -44,8 +44,8 @@ const (
 	HandlerTypeLookup Type = "lookUp"
 )
 
-// pluginCfg holds the configuration for various plugins.
-type pluginCfg struct {
+// PluginCfg holds the configuration for various plugins.
+type PluginCfg struct {
 	SchemaValidator *plugin.Config  `yaml:"schemaValidator,omitempty"`
 	SignValidator   *plugin.Config  `yaml:"signValidator,omitempty"`
 	Publisher       *plugin.Config  `yaml:"publisher,omitempty"`
@@ -59,7 +59,7 @@ type pluginCfg struct {
 
 // Config holds the configuration for request processing handlers.
 type Config struct {
-	Plugins      pluginCfg `yaml:"plugins"`
+	Plugins      PluginCfg `yaml:"plugins"`
 	Steps        []string
 	Type         Type
 	RegistryURL  string `yaml:"registryUrl"`
