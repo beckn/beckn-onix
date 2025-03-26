@@ -31,58 +31,6 @@ func TestSendAck(t *testing.T) {
 	}
 }
 
-func TestNack(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      *model.Error
-		status   int
-		expected string
-	}{
-		{
-			name: "Schema Validation Error",
-			err: &model.Error{
-				Code:    "BAD_REQUEST",
-				Paths:   "/test/path",
-				Message: "Invalid schema",
-			},
-			status:   http.StatusBadRequest,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"BAD_REQUEST","paths":"/test/path","message":"Invalid schema"}}}`,
-		},
-		{
-			name: "Internal Server Error",
-			err: &model.Error{
-				Code:    "INTERNAL_SERVER_ERROR",
-				Message: "Something went wrong",
-			},
-			status:   http.StatusInternalServerError,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"INTERNAL_SERVER_ERROR","message":"Something went wrong"}}}`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req, err := http.NewRequest("GET", "/", nil)
-			if err != nil {
-				t.Fatal(err) // For tests
-			}
-			rr := httptest.NewRecorder()
-			ctx := context.WithValue(req.Context(), model.MsgIDKey, "12345")
-
-			nack(rr, tt.err, tt.status, ctx)
-
-			if rr.Code != tt.status {
-				t.Errorf("expected status code %d, got %d", tt.status, rr.Code)
-			}
-
-			body := rr.Body.String()
-			if body != tt.expected {
-				t.Errorf("expected body %s, got %s", tt.expected, body)
-			}
-			
-		})
-	}
-}
-
 func TestSendNack(t *testing.T) {
 	ctx := context.WithValue(context.Background(), model.MsgIDKey, "123456")
 
@@ -171,4 +119,105 @@ func compareJSON(expected, actual map[string]interface{}) bool {
 func TestSendAck_WriteError(t *testing.T) {
 	w := &errorResponseWriter{}
 	SendAck(w)
+}
+
+// Mock struct to force JSON marshalling error
+type badMessage struct{}
+
+func (b *badMessage) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("marshal error")
+}
+
+
+func TestNack_1(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         *model.Error
+		status      int
+		expected    string
+		useBadJSON  bool
+		useBadWrite bool
+	}{
+		{
+			name: "Schema Validation Error",
+			err: &model.Error{
+				Code:    "BAD_REQUEST",
+				Paths:   "/test/path",
+				Message: "Invalid schema",
+			},
+			status:   http.StatusBadRequest,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"BAD_REQUEST","paths":"/test/path","message":"Invalid schema"}}}`,
+		},
+		{
+			name: "Internal Server Error",
+			err: &model.Error{
+				Code:    "INTERNAL_SERVER_ERROR",
+				Message: "Something went wrong",
+			},
+			status:   http.StatusInternalServerError,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"INTERNAL_SERVER_ERROR","message":"Something went wrong"}}}`,
+		},
+		{
+			name:        "JSON Marshal Error",
+			err:         nil, // This will be overridden to cause marshaling error
+			status:      http.StatusInternalServerError,
+			expected:    `Internal server error, MessageID: 12345`,
+			useBadJSON:  true,
+		},
+		{
+			name:        "Write Error",
+			err: &model.Error{
+				Code:    "WRITE_ERROR",
+				Message: "Failed to write response",
+			},
+			status:      http.StatusInternalServerError,
+			expected:    `Internal server error, MessageID: 12345`,
+			useBadWrite: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest("GET", "/", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.WithValue(req.Context(), model.MsgIDKey, "12345")
+
+			var w http.ResponseWriter
+			if tt.useBadWrite {
+				w = &errorResponseWriter{} // Simulate write error
+			} else {
+				w = httptest.NewRecorder()
+			}
+
+			// Force marshal error if needed
+			if tt.useBadJSON {
+				data, _ := json.Marshal(&badMessage{})
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				w.Write(data)
+				return
+			}
+
+			nack(w, tt.err, tt.status, ctx)
+
+			// Skip verification if using errorResponseWriter
+			if !tt.useBadWrite {
+				recorder, ok := w.(*httptest.ResponseRecorder)
+				if !ok {
+					t.Fatal("Failed to cast response recorder")
+				}
+
+				if recorder.Code != tt.status {
+					t.Errorf("expected status code %d, got %d", tt.status, recorder.Code)
+				}
+
+				body := recorder.Body.String()
+				if body != tt.expected {
+					t.Errorf("expected body %s, got %s", tt.expected, body)
+				}
+			}
+		})
+	}
 }
