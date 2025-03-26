@@ -33,15 +33,11 @@ func SendAck(w http.ResponseWriter) {
 		},
 	}
 
-	data, err := json.Marshal(resp)
-	if err != nil {
-		http.Error(w, "failed to marshal response", http.StatusInternalServerError)
-		return
-	}
+	data, _ := json.Marshal(resp) //should not fail here
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, err = w.Write(data)
+	_, err := w.Write(data)
 	if err != nil {
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
 		return
@@ -57,12 +53,7 @@ func nack(w http.ResponseWriter, err *model.Error, status int, ctx context.Conte
 			Error: err,
 		},
 	}
-	data, jsonErr := json.Marshal(resp)
-	if jsonErr != nil {
-		fmt.Printf("Error marshaling response: %v, MessageID: %s", jsonErr, ctx.Value(model.MsgIDKey))
-		http.Error(w, fmt.Sprintf("Internal server error, MessageID: %s", ctx.Value(model.MsgIDKey)), http.StatusInternalServerError)
-		return
-	}
+	data, _ := json.Marshal(resp) //should not fail here
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
