@@ -1,0 +1,4 @@
+routes:
+  - action: search
+    type: publisher
+    target: bapNetworkReciever
