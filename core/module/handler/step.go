@@ -164,18 +164,3 @@ func (b *broadcastStep) Run(ctx *model.StepContext) error {
 	// TODO: Implement broadcast logic if needed
 	return nil
 }
-
-// subscribeStep is a stub for subscription handling.
-type subscribeStep struct{}
-
-// Run is a placeholder for future implementation.
-func (s *subscribeStep) Run(ctx *model.StepContext) error {
-	// TODO: Implement subscription logic if needed
-	return nil
-}
-
-// tracingStep wraps a Step with OpenTelemetry tracing
-type tracingStep struct {
-	step definition.Step
-	name string
-}

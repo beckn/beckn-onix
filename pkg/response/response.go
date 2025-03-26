@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/beckn/beckn-onix/pkg/log"
 	"github.com/beckn/beckn-onix/pkg/model"
 )
 
@@ -48,7 +49,10 @@ func SendAck(w http.ResponseWriter) {
 	// Set headers and write response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write(data)
+	if _, err := w.Write(data); err != nil {
+		log.Error(context.Background(), err, "failed to write ack response")
+	}
+
 }
 
 // nack sends a negative acknowledgment (NACK) response with an error message.
@@ -73,7 +77,10 @@ func nack(w http.ResponseWriter, err *model.Error, status int) {
 	// Set headers and write response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status) // Assuming NACK means a bad request
-	w.Write(data)
+	if _, err := w.Write(data); err != nil {
+		log.Error(context.Background(), err, "failed to write nack response")
+	}
+
 }
 
 func internalServerError(ctx context.Context) *model.Error {

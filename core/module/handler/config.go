@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/beckn/beckn-onix/pkg/log"
 	"github.com/beckn/beckn-onix/pkg/model"
 	"github.com/beckn/beckn-onix/pkg/plugin"
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
@@ -112,6 +113,8 @@ func (s *Step) UnmarshalYAML(unmarshal func(interface{}) error) error {
 func DummyHandler(ctx context.Context, mgr PluginManager, cfg *Config) (http.Handler, error) {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Dummy Handler Response"))
+		if _, err := w.Write([]byte("Dummy Handler Response")); err != nil {
+			log.Error(context.Background(), err, "failed to write nack response")
+		}
 	}), nil
 }

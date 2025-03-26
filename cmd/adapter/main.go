@@ -109,7 +109,9 @@ func run(ctx context.Context, configPath string) error {
 		return fmt.Errorf("failed to initialize config: %w", err)
 	}
 	log.Infof(ctx, "Initializing logger with config: %+v", cfg.Log)
-	log.InitLogger(cfg.Log)
+	if err := log.InitLogger(cfg.Log); err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
 
 	// Initialize plugin manager.
 	log.Infof(ctx, "Initializing plugin manager")
