@@ -8,12 +8,11 @@ import (
 	"testing"
 )
 
-func TestNewUUIDSetter(t *testing.T) {
+func TestNewUUIDSetter_SuccessCases(t *testing.T) {
 	tests := []struct {
 		name         string
 		config       *Config
 		requestBody  map[string]any
-		expectedCode int
 		expectedKeys []string
 		role         string
 	}{
@@ -30,7 +29,6 @@ func TestNewUUIDSetter(t *testing.T) {
 					"bap_id":         "bap-123",
 				},
 			},
-			expectedCode: http.StatusOK,
 			expectedKeys: []string{"transaction_id", "message_id", "bap_id"},
 			role:         "bap",
 		},
@@ -47,10 +45,79 @@ func TestNewUUIDSetter(t *testing.T) {
 					"bpp_id":         "bpp-456",
 				},
 			},
-			expectedCode: http.StatusOK,
 			expectedKeys: []string{"transaction_id", "message_id", "bpp_id"},
 			role:         "bpp",
 		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			middleware, err := NewUUIDSetter(tt.config)
+			if err != nil {
+				t.Fatalf("Unexpected error while creating middleware: %v", err)
+			}
+
+			bodyBytes, _ := json.Marshal(tt.requestBody)
+			req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+
+			rec := httptest.NewRecorder()
+
+			dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ctx := r.Context()
+				w.WriteHeader(http.StatusOK)
+				
+				subID, ok := ctx.Value(subscriberIDKey).(string)
+				if !ok {
+					http.Error(w, "Subscriber ID not found", http.StatusInternalServerError)
+					return
+				}
+
+				response := map[string]any{"subscriber_id": subID}
+				if err := json.NewEncoder(w).Encode(response); err != nil {
+					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+					return
+				}
+			})
+
+			middleware(dummyHandler).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Errorf("Expected status code 200, but got %d", rec.Code)
+				return
+			}
+
+			var responseBody map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &responseBody); err != nil {
+				t.Fatal("Failed to unmarshal response body:", err)
+			}
+
+			expectedSubIDKey := "bap_id"
+			if tt.role == "bpp" {
+				expectedSubIDKey = "bpp_id"
+			}
+
+			subID, ok := responseBody["subscriber_id"].(string)
+			if !ok {
+				t.Error("subscriber_id not found in response")
+				return
+			}
+
+			expectedSubID := tt.requestBody["context"].(map[string]any)[expectedSubIDKey]
+			if subID != expectedSubID {
+				t.Errorf("Expected subscriber_id %v, but got %v", expectedSubID, subID)
+			}
+		})
+	}
+}
+
+func TestNewUUIDSetter_ErrorCases(t *testing.T) {
+	tests := []struct {
+		name         string
+		config       *Config
+		requestBody  map[string]any
+		expectedCode int
+	}{
 		{
 			name: "Missing context key",
 			config: &Config{
@@ -82,57 +149,29 @@ func TestNewUUIDSetter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			middleware, err := NewUUIDSetter(tt.config)
-			if tt.config == nil || len(tt.config.CheckKeys) == 0 {
+			if tt.config == nil {
 				if err == nil {
-					t.Fatal("Expected an error, but got none")
+					t.Error("Expected an error for nil config, but got none")
 				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("Unexpected error while creating middleware: %v", err)
 			}
+
 			bodyBytes, _ := json.Marshal(tt.requestBody)
 			req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(bodyBytes))
 			req.Header.Set("Content-Type", "application/json")
+
 			rec := httptest.NewRecorder()
 			dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				ctx := r.Context()
 				w.WriteHeader(http.StatusOK)
-				if subID, ok := ctx.Value(subscriberIDKey).(string); ok {
-					response := map[string]any{
-						"subscriber_id": subID,
-					}
-					if err := json.NewEncoder(w).Encode(response); err != nil {
-						http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-						return
-					}
-				} else {
-					http.Error(w, "Subscriber ID not found", http.StatusInternalServerError)
-					return
-				}
 			})
+
 			middleware(dummyHandler).ServeHTTP(rec, req)
+
 			if rec.Code != tt.expectedCode {
 				t.Errorf("Expected status code %d, but got %d", tt.expectedCode, rec.Code)
-			}
-			if rec.Code == http.StatusOK {
-				var responseBody map[string]any
-				if err := json.Unmarshal(rec.Body.Bytes(), &responseBody); err != nil {
-					t.Fatal("Failed to unmarshal response body:", err)
-				}
-				expectedSubIDKey := "bap_id"
-				if tt.role == "bpp" {
-					expectedSubIDKey = "bpp_id"
-				}
-
-				if subID, ok := responseBody["subscriber_id"].(string); ok {
-					expectedSubID := tt.requestBody["context"].(map[string]any)[expectedSubIDKey]
-					if subID != expectedSubID {
-						t.Errorf("Expected subscriber_id %v, but got %v", expectedSubID, subID)
-					}
-				} else {
-					t.Error("subscriber_id not found in response")
-				}
 			}
 		})
 	}
