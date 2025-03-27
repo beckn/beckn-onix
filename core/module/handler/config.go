@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/beckn/beckn-onix/pkg/log"
 	"github.com/beckn/beckn-onix/pkg/model"
 	"github.com/beckn/beckn-onix/pkg/plugin"
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
@@ -25,24 +24,12 @@ type PluginManager interface {
 	SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)
 }
 
-// Provider represents a function that initializes an HTTP handler using a PluginManager.
-type Provider func(ctx context.Context, mgr PluginManager, cfg *Config) (http.Handler, error)
-
 // Type defines different handler types for processing requests.
 type Type string
 
 const (
 	// HandlerTypeStd represents the standard handler type used for general request processing.
 	HandlerTypeStd Type = "std"
-
-	// HandlerTypeRegSub represents the registry subscriber handler type for handling registry subscription requests.
-	HandlerTypeRegSub Type = "regSub"
-
-	// HandlerTypeNPSub represents the network participant subscriber handler type for handling network participant subscription requests.
-	HandlerTypeNPSub Type = "npSub"
-
-	// HandlerTypeLookup represents the lookup handler type used for resolving service details.
-	HandlerTypeLookup Type = "lookUp"
 )
 
 // PluginCfg holds the configuration for various plugins.
@@ -107,14 +94,4 @@ func (s *Step) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 	*s = step
 	return nil
-}
-
-// DummyHandler is a basic HTTP handler that returns a fixed response.
-func DummyHandler(ctx context.Context, mgr PluginManager, cfg *Config) (http.Handler, error) {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte("Dummy Handler Response")); err != nil {
-			log.Error(context.Background(), err, "failed to write nack response")
-		}
-	}), nil
 }

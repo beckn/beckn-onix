@@ -16,21 +16,12 @@ type Config struct {
 	Handler handler.Config
 }
 
+// Provider represents a function that initializes an HTTP handler using a PluginManager.
+type Provider func(ctx context.Context, mgr handler.PluginManager, cfg *handler.Config) (http.Handler, error)
+
 // handlerProviders maintains a mapping of handler types to their respective providers.
-var handlerProviders = map[handler.Type]handler.Provider{
+var handlerProviders = map[handler.Type]Provider{
 	handler.HandlerTypeStd: handler.NewStdHandler,
-}
-
-// GetDummyHandlerProviders returns a dummy handler provider mapping for testing purposes.
-func GetDummyHandlerProviders() map[handler.Type]handler.Provider {
-	return map[handler.Type]handler.Provider{
-		handler.HandlerTypeStd: handler.DummyHandler,
-	}
-}
-
-// getHandlerProviders is a function to retrieve handler providers, which can be overridden for testing.
-var getHandlerProviders = func() map[handler.Type]handler.Provider {
-	return handlerProviders
 }
 
 // Register initializes and registers handlers based on the provided configuration.
@@ -38,11 +29,9 @@ var getHandlerProviders = func() map[handler.Type]handler.Provider {
 // and registers the handlers with the HTTP multiplexer.
 func Register(ctx context.Context, mCfgs []Config, mux *http.ServeMux, mgr handler.PluginManager) error {
 	log.Debugf(ctx, "Registering modules with config: %#v", mCfgs)
-
-	providers := getHandlerProviders()
 	// Iterate over the handlers in the configuration.
 	for _, c := range mCfgs {
-		rmp, ok := providers[c.Handler.Type]
+		rmp, ok := handlerProviders[c.Handler.Type]
 		if !ok {
 			return fmt.Errorf("invalid module : %s", c.Name)
 		}

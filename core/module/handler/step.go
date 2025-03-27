@@ -155,12 +155,3 @@ func (s *addRouteStep) Run(ctx *model.StepContext) error {
 	log.Debugf(ctx, "ctx.Route to %#v", ctx.Route)
 	return nil
 }
-
-// broadcastStep is a stub for broadcasting.
-type broadcastStep struct{}
-
-// Run is a placeholder for future implementation.
-func (b *broadcastStep) Run(ctx *model.StepContext) error {
-	// TODO: Implement broadcast logic if needed
-	return nil
-}
