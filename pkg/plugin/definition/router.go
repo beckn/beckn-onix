@@ -7,7 +7,7 @@ import (
 
 // Route defines the structure for the Route returned.
 type Route struct {
-	TargetType  string // "url" or "msgq"
+	TargetType  string // "url" or "msgq" or "bap" or "bpp"
 	PublisherID string // For message queues
 	URL         string // For API calls
 }
