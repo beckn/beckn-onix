@@ -88,6 +88,13 @@ func validateConfig(cfg *Config) error {
 	if cfg == nil {
 		return errors.New("config cannot be nil")
 	}
+
+	// Check if CheckKeys is empty
+	if len(cfg.CheckKeys) == 0 {
+		return errors.New("checkKeys cannot be empty")
+	}
+
+	// Validate that CheckKeys does not contain empty strings
 	for _, key := range cfg.CheckKeys {
 		if key == "" {
 			return errors.New("checkKeys cannot contain empty strings")
