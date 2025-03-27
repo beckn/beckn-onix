@@ -73,22 +73,6 @@ func (m *MockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Con
 	return nil, nil
 }
 
-// testConfigContent defines a mock configuration used in tests.
-const testConfigContent = `
-appName: "TestApp"
-http:
-  port: "8080"
-  timeout:
-    read: 5
-    write: 5
-    idle: 10
-`
-
-// initLogger is a mock function to initialize the logger.
-var initLogger = func(cfg *Config) error {
-	return nil
-}
-
 // mockRun is a mock implementation of the `run` function, simulating a successful run.
 func mockRun(ctx context.Context, configPath string) error {
 	return nil // Simulate a successful run
@@ -110,7 +94,9 @@ func TestMainFunction(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ExitOnError)
 	fs.StringVar(&configPath, "config", "../../config/clientSideHandler-config.yaml", "Path to the configuration file")
 
-	fs.Parse(os.Args[1:])
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		t.Fatalf("Failed to parse flags: %v", err)
+	}
 	main()
 }
 
@@ -378,7 +364,7 @@ func TestNewServerSuccess(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{
 				Modules: tt.modules,
-				HTTP: httpConfig{
+				HTTP: timeouts{
 					Port: "8080",
 					Timeout: timeoutConfig{
 						Read:  5,
@@ -423,7 +409,7 @@ func TestNewServerFailure(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{
 				Modules: tt.modules,
-				HTTP: httpConfig{
+				HTTP: timeouts{
 					Port: "8080",
 					Timeout: timeoutConfig{
 						Read:  5,
@@ -455,7 +441,7 @@ func TestValidateConfigSuccess(t *testing.T) {
 			name: "Valid Config",
 			cfg: Config{
 				AppName: "TestApp",
-				HTTP: httpConfig{
+				HTTP: timeouts{
 					Port: "8080",
 				},
 			},
@@ -483,7 +469,7 @@ func TestValidateConfigFailure(t *testing.T) {
 			name: "Missing AppName",
 			cfg: Config{
 				AppName: "",
-				HTTP: httpConfig{
+				HTTP: timeouts{
 					Port: "8080",
 				},
 			},
@@ -493,7 +479,7 @@ func TestValidateConfigFailure(t *testing.T) {
 			name: "Missing Port",
 			cfg: Config{
 				AppName: "TestApp",
-				HTTP: httpConfig{
+				HTTP: timeouts{
 					Port: "",
 				},
 			},

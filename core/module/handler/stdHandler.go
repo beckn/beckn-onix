@@ -230,35 +230,6 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 		steps[c.ID] = step
 	}
 
-	// Register processing steps
-	for _, step := range cfg.Steps {
-		var s definition.Step
-		var err error
-
-		switch step {
-		case "sign":
-			s, err = newSignStep(h.signer, h.km)
-		case "validateSign":
-			s, err = newValidateSignStep(h.signValidator, h.km)
-		case "validateSchema":
-			s, err = newValidateSchemaStep(h.schemaValidator)
-		case "addRoute":
-			s, err = newRouteStep(h.router)
-		case "broadcast":
-			s = &broadcastStep{}
-		default:
-			if customStep, exists := steps[step]; exists {
-				s = customStep
-			} else {
-				return fmt.Errorf("unrecognized step: %s", step)
-			}
-		}
-
-		if err != nil {
-			return err
-		}
-		h.steps = append(h.steps, s)
-	}
 	log.Infof(ctx, "Processor steps initialized: %v", cfg.Steps)
 	return nil
 }
