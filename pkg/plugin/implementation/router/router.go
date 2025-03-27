@@ -24,26 +24,33 @@ type routingConfig struct {
 	RoutingRules []routingRule `yaml:"routingRules"`
 }
 
-// Router implements Router interface
+// Router implements Router interface.
 type Router struct {
-	config *Config
-	rules  []routingRule
+	rules map[string]map[string]map[string]*definition.Route // domain -> version -> endpoint -> route
 }
 
 // RoutingRule represents a single routing rule.
 type routingRule struct {
-	Domain      string   `yaml:"domain"`
-	Version     string   `yaml:"version"`
-	RoutingType string   `yaml:"routingType"` // "url", "msgq", "bpp", or "bap"
-	Target      target   `yaml:"target,omitempty"`
-	Endpoints   []string `yaml:"endpoints"`
+	Domain     string   `yaml:"domain"`
+	Version    string   `yaml:"version"`
+	TargetType string   `yaml:"targetType"` // "url", "msgq", "bpp", or "bap"
+	Target     target   `yaml:"target,omitempty"`
+	Endpoints  []string `yaml:"endpoints"`
 }
 
 // Target contains destination-specific details.
 type target struct {
-	URL     string `yaml:"url,omitempty"`      // URL for "url" or gateway endpoint for "bpp"/"bap"
-	TopicID string `yaml:"topic_id,omitempty"` // For "msgq" type
+	URL         string `yaml:"url,omitempty"`         // URL for "url" or gateway endpoint for "bpp"/"bap"
+	PublisherID string `yaml:"publisherId,omitempty"` // For "msgq" type
 }
+
+// TargetType defines possible target destinations.
+const (
+	targetTypeURL  = "url"  // Route to a specific URL
+	targetTypeMSGQ = "msgq" // Route to a message queue
+	targetTypeBPP  = "bpp"  // Route to a BPP endpoint
+	targetTypeBAP  = "bap"  // Route to a BAP endpoint
+)
 
 // New initializes a new Router instance with the provided configuration.
 // It loads and validates the routing rules from the specified YAML file.
@@ -54,24 +61,24 @@ func New(ctx context.Context, config *Config) (*Router, func() error, error) {
 		return nil, nil, fmt.Errorf("config cannot be nil")
 	}
 	router := &Router{
-		config: config,
+		rules: make(map[string]map[string]map[string]*definition.Route),
 	}
 
 	// Load rules at bootup
-	if err := router.loadRules(); err != nil {
+	if err := router.loadRules(config.RoutingConfig); err != nil {
 		return nil, nil, fmt.Errorf("failed to load routing rules: %w", err)
 	}
 	return router, nil, nil
 }
 
 // LoadRules reads and parses routing rules from the YAML configuration file.
-func (r *Router) loadRules() error {
-	if r.config.RoutingConfig == "" {
+func (r *Router) loadRules(configPath string) error {
+	if configPath == "" {
 		return fmt.Errorf("routingConfig path is empty")
 	}
-	data, err := os.ReadFile(r.config.RoutingConfig)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return fmt.Errorf("error reading config file at %s: %w", r.config.RoutingConfig, err)
+		return fmt.Errorf("error reading config file at %s: %w", configPath, err)
 	}
 	var config routingConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
@@ -82,36 +89,74 @@ func (r *Router) loadRules() error {
 	if err := validateRules(config.RoutingRules); err != nil {
 		return fmt.Errorf("invalid routing rules: %w", err)
 	}
-	r.rules = config.RoutingRules
+	// Build the optimized rule map
+	for _, rule := range config.RoutingRules {
+		// Initialize domain map if not exists
+		if _, ok := r.rules[rule.Domain]; !ok {
+			r.rules[rule.Domain] = make(map[string]map[string]*definition.Route)
+		}
+
+		// Initialize version map if not exists
+		if _, ok := r.rules[rule.Domain][rule.Version]; !ok {
+			r.rules[rule.Domain][rule.Version] = make(map[string]*definition.Route)
+		}
+
+		// Add all endpoints for this rule
+		for _, endpoint := range rule.Endpoints {
+			var route *definition.Route
+			switch rule.TargetType {
+			case targetTypeMSGQ:
+				route = &definition.Route{
+					TargetType:  rule.TargetType,
+					PublisherID: rule.Target.PublisherID,
+				}
+			case targetTypeURL:
+				route = &definition.Route{
+					TargetType: rule.TargetType,
+					URL:        rule.Target.URL,
+				}
+			case targetTypeBPP, targetTypeBAP:
+				route = &definition.Route{
+					TargetType: rule.TargetType,
+					URL:        rule.Target.URL, // Fallback URL if URI not provided in request
+				}
+			}
+
+			fmt.Print(r.rules)
+
+			r.rules[rule.Domain][rule.Version][endpoint] = route
+		}
+	}
+
 	return nil
 }
 
 // validateRules performs basic validation on the loaded routing rules.
 func validateRules(rules []routingRule) error {
 	for _, rule := range rules {
-		// Ensure domain, version, and routingType are present
-		if rule.Domain == "" || rule.Version == "" || rule.RoutingType == "" {
-			return fmt.Errorf("invalid rule: domain, version, and routingType are required")
+		// Ensure domain, version, and TargetType are present
+		if rule.Domain == "" || rule.Version == "" || rule.TargetType == "" {
+			return fmt.Errorf("invalid rule: domain, version, and targetType are required")
 		}
 
-		// Validate based on routingType
-		switch rule.RoutingType {
-		case "url":
+		// Validate based on TargetType
+		switch rule.TargetType {
+		case targetTypeURL:
 			if rule.Target.URL == "" {
-				return fmt.Errorf("invalid rule: url is required for routingType 'url'")
+				return fmt.Errorf("invalid rule: url is required for targetType 'url'")
 			}
 			if _, err := url.ParseRequestURI(rule.Target.URL); err != nil {
 				return fmt.Errorf("invalid URL in rule: %w", err)
 			}
-		case "msgq":
-			if rule.Target.TopicID == "" {
-				return fmt.Errorf("invalid rule: topicId is required for routingType 'msgq'")
+		case targetTypeMSGQ:
+			if rule.Target.PublisherID == "" {
+				return fmt.Errorf("invalid rule: publisherID is required for targetType 'msgq'")
 			}
-		case "bpp", "bap":
+		case targetTypeBPP, targetTypeBAP:
 			// No target validation needed for bpp/bap, as they use URIs from the request body
 			continue
 		default:
-			return fmt.Errorf("invalid rule: unknown routingType '%s'", rule.RoutingType)
+			return fmt.Errorf("invalid rule: unknown targetType '%s'", rule.TargetType)
 		}
 	}
 	return nil
@@ -125,8 +170,8 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*definit
 		Context struct {
 			Domain  string `json:"domain"`
 			Version string `json:"version"`
-			BppURI  string `json:"bpp_uri,omitempty"`
-			BapURI  string `json:"bap_uri,omitempty"`
+			BPPURI  string `json:"bpp_uri,omitempty"`
+			BAPURI  string `json:"bap_uri,omitempty"`
 		} `json:"context"`
 	}
 	if err := json.Unmarshal(body, &requestBody); err != nil {
@@ -136,69 +181,52 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*definit
 	// Extract the endpoint from the URL
 	endpoint := path.Base(url.Path)
 
-	// Collect all matching rules for the domain and version
-	matchingRules := r.getMatchingRules(requestBody.Context.Domain, requestBody.Context.Version)
-
-	// If no matching rules are found, return an error
-	if len(matchingRules) == 0 {
-		return nil, fmt.Errorf("no matching routing rule found for domain %s and version %s", requestBody.Context.Domain, requestBody.Context.Version)
+	// Lookup route in the optimized map
+	domainRules, ok := r.rules[requestBody.Context.Domain]
+	if !ok {
+		return nil, fmt.Errorf("no routing rules found for domain %s", requestBody.Context.Domain)
 	}
 
-	// Match the rule
-	for _, rule := range matchingRules {
-		for _, ep := range rule.Endpoints {
-			if strings.EqualFold(ep, endpoint) {
-				switch rule.RoutingType {
-				case "msgq":
-					return &definition.Route{
-						RoutingType: rule.RoutingType,
-						TopicID:     rule.Target.TopicID,
-					}, nil
-				case "url":
-					return &definition.Route{
-						RoutingType: rule.RoutingType,
-						TargetURL:   rule.Target.URL,
-					}, nil
-				case "bpp":
-					return handleRouting(rule, requestBody.Context.BppURI, endpoint, "bpp")
-				case "bap":
-					return handleRouting(rule, requestBody.Context.BapURI, endpoint, "bap")
-				default:
-					return nil, fmt.Errorf("unsupported routingType: %s", rule.RoutingType)
-				}
-			}
+	versionRules, ok := domainRules[requestBody.Context.Version]
+	if !ok {
+		return nil, fmt.Errorf("no routing rules found for domain %s version %s", requestBody.Context.Domain, requestBody.Context.Version)
+	}
+
+	route, ok := versionRules[endpoint]
+	if !ok {
+		return nil, fmt.Errorf("endpoint '%s' is not supported for domain %s and version %s in routing config",
+			endpoint, requestBody.Context.Domain, requestBody.Context.Version)
+	}
+
+	// Handle BPP/BAP routing with request URIs
+	switch route.TargetType {
+	case targetTypeBPP:
+		uri := strings.TrimSpace(requestBody.Context.BPPURI)
+		target := strings.TrimSpace(route.URL)
+		if len(uri) != 0 {
+			target = uri
+		}
+		if len(target) == 0 {
+			return nil, fmt.Errorf("could not determine destination for endpoint '%s': neither request contained a BPP URI nor was a default URL configured in routing rules", endpoint)
+		}
+		route = &definition.Route{
+			TargetType: route.TargetType,
+			URL:        target,
+		}
+	case targetTypeBAP:
+		uri := strings.TrimSpace(requestBody.Context.BAPURI)
+		target := strings.TrimSpace(route.URL)
+		if len(uri) != 0 {
+			target = uri
+		}
+		if len(target) == 0 {
+			return nil, fmt.Errorf("could not determine destination for endpoint '%s': neither request contained a BAP URI nor was a default URL configured in routing rules", endpoint)
+		}
+		route = &definition.Route{
+			TargetType: route.TargetType,
+			URL:        target,
 		}
 	}
 
-	// If domain and version match but endpoint is not found, return an error
-	return nil, fmt.Errorf("endpoint '%s' is not supported for domain %s and version %s", endpoint, requestBody.Context.Domain, requestBody.Context.Version)
-}
-
-// getMatchingRules returns all rules that match the given domain and version
-func (r *Router) getMatchingRules(domain, version string) []routingRule {
-	var matchingRules []routingRule
-	for _, rule := range r.rules {
-		if rule.Domain == domain && rule.Version == version {
-			matchingRules = append(matchingRules, rule)
-		}
-	}
-	return matchingRules
-}
-
-// handleRouting handles routing for bap and bpp routing type
-func handleRouting(rule routingRule, uri, endpoint string, routingType string) (*definition.Route, error) {
-	if uri == "" {
-		if rule.Target.URL != "" {
-			return &definition.Route{
-				RoutingType: routingType,
-				TargetURL:   rule.Target.URL,
-			}, nil
-		} else {
-			return nil, fmt.Errorf("no target URI or URL found for %s routing type and %s endpoint", routingType, endpoint)
-		}
-	}
-	return &definition.Route{
-		RoutingType: routingType,
-		TargetURL:   uri,
-	}, nil
+	return route, nil
 }
