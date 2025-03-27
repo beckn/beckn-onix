@@ -17,82 +17,81 @@ pluginManager:
   root: /app/plugins
   remoteRoot: /mnt/gcs/plugins/plugins_bundle.zip
 modules:
-  - name: bppTxnReciever
-    path: /bpp/reciever/
+  - name: bapTxnReciever
+    path: /bap/reciever/
     handler:
       type: std
-      role: bpp
-      subscriberId: bpp1
+      role: bap
       registryUrl: http://localhost:8080/reg
       plugins:
         keyManager:
           id: secretskeymanager
           config:
-            projectID: trusty-relic-370809
+            projectID: ${projectID}
         cache:
           id: redis
           config:
-            addr: 10.81.192.4:6379
-        # schemaValidator:
-        #   id: schemavalidator
-        #   config:
-        #     schemaDir: /mnt/gcs/configs/schemas
+            addr: 192.168.1.1:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: /mnt/gcs/configs/schemas
         signValidator:
           id: signvalidator
         publisher:
           id: publisher
           config:
-            project: trusty-relic-370809
+            project: ${projectID}
             topic: bapNetworkReciever
         router:
           id: router
           config:
-            routingConfigPath: /mnt/gcs/configs/bppTxnReciever-routing.yaml
+            routingConfigPath: /mnt/gcs/configs/bapTxnReciever-routing.yaml
         middleware:
           - id: reqpreprocessor
             config:
               uuidKeys: transaction_id,message_id
-              role: bpp
+              role: bap
       steps:
         - validateSign
         - addRoute
-        # - validateSchema
-  - name: bppTxnCaller
-    path: /bpp/caller/
+        - validateSchema
+  - name: bapTxnCaller
+    path: /bap/caller/
     handler:
       type: std
-      role: bpp
       registryUrl: http://localhost:8080/reg
+      role: bap
       plugins:
         keyManager:
           id: secretskeymanager
           config:
-            projectID: trusty-relic-370809
+            projectID: ${projectID}
         cache:
           id: redis
           config:
-            addr: 10.81.192.4:6379
-        # schemaValidator:
-        #   id: schemavalidator
-        #   config:
-        #     schemaDir: /mnt/gcs/configs/schemas
+            addr: 192.168.1.1:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: /mnt/gcs/configs/schemas
         signer:
           id: signer
         publisher:
           id: publisher
           config:
-            project: trusty-relic-370809
+            project: ${projectID}
             topic: bapNetworkReciever
         router:
           id: router
           config:
-            routingConfigPath: /mnt/gcs/configs/bppTxnCaller-routing.yaml
+            routingConfigPath: /mnt/gcs/configs/bapTxnCaller-routing.yaml
         middleware:
           - id: reqpreprocessor
             config:
               uuidKeys: transaction_id,message_id
-              role: bpp
+              role: bap
       steps:
-        # - validateSchema
+        - validateSchema
         - addRoute
         - sign

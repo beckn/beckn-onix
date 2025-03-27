@@ -22,31 +22,26 @@ modules:
     handler:
       type: std
       role: bap
-      trace:
-        # validateSign: true
-        # addRoute: true
-        # validateSchema: true
-        # reqpreprocessor: true
       registryUrl: http://localhost:8080/reg
       plugins:
         keyManager:
           id: secretskeymanager
           config:
-            projectID: trusty-relic-370809
+            projectID: ${projectID}
         cache:
           id: redis
           config:
             addr: 10.81.192.4:6379
-        # schemaValidator:
-        #   id: schemavalidator
-        #   config:
-        #     schemaDir: /mnt/gcs/configs/schemas
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: /mnt/gcs/configs/schemas
         signValidator:
           id: signvalidator
         publisher:
           id: publisher
           config:
-            project: trusty-relic-370809
+            project: ${projectID}
             topic: bapNetworkReciever
         router:
           id: router
@@ -60,7 +55,7 @@ modules:
       steps:
         - validateSign
         - addRoute
-        # - validateSchema
+        - validateSchema
   - name: bapTxnCaller
     path: /bap/caller/
     handler:
@@ -71,21 +66,21 @@ modules:
         keyManager:
           id: secretskeymanager
           config:
-            projectID: trusty-relic-370809
+            projectID: ${projectID}
         cache:
           id: redis
           config:
-            addr: 10.81.192.4:6379
-        # schemaValidator:
-        #   id: schemavalidator
-        #   config:
-        #     schemaDir: /mnt/gcs/configs/schemas
+            addr: 192.168.1.1:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: /mnt/gcs/configs/schemas
         signer:
           id: signer
         publisher:
           id: publisher
           config:
-            project: trusty-relic-370809
+            project: ${projectID}
             topic: bapNetworkReciever
         router:
           id: router
@@ -97,7 +92,7 @@ modules:
               uuidKeys: transaction_id,message_id
               role: bap
       steps:
-        # - validateSchema
+        - validateSchema
         - addRoute
         - sign
   - name: bppTxnReciever
@@ -111,21 +106,21 @@ modules:
         keyManager:
           id: secretskeymanager
           config:
-            projectID: trusty-relic-370809
+            projectID: ${projectID}
         cache:
           id: redis
           config:
-            addr: 10.81.192.4:6379
-        # schemaValidator:
-        #   id: schemavalidator
-        #   config:
-        #     schemaDir: /mnt/gcs/configs/schemas
+            addr: 192.168.1.1:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: /mnt/gcs/configs/schemas
         signValidator:
           id: signvalidator
         publisher:
           id: publisher
           config:
-            project: trusty-relic-370809
+            project: ${projectID}
             topic: bapNetworkReciever
         router:
           id: router
@@ -139,7 +134,7 @@ modules:
       steps:
         - validateSign
         - addRoute
-        # - validateSchema
+        - validateSchema
   - name: bppTxnCaller
     path: /bpp/caller/
     handler:
@@ -150,21 +145,21 @@ modules:
         keyManager:
           id: secretskeymanager
           config:
-            projectID: trusty-relic-370809
+            projectID: ${projectID}
         cache:
           id: redis
           config:
-            addr: 10.81.192.4:6379
-        # schemaValidator:
-        #   id: schemavalidator
-        #   config:
-        #     schemaDir: /mnt/gcs/configs/schemas
+            addr: 192.168.1.1:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: /mnt/gcs/configs/schemas
         signer:
           id: signer
         publisher:
           id: publisher
           config:
-            project: trusty-relic-370809
+            project: ${projectID}
             topic: bapNetworkReciever
         router:
           id: router
@@ -176,6 +171,6 @@ modules:
               uuidKeys: transaction_id,message_id
               role: bpp
       steps:
-        # - validateSchema
+        - validateSchema
         - addRoute
         - sign
