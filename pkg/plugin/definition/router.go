@@ -5,19 +5,19 @@ import (
 	"net/url"
 )
 
-// Route defines the structure for the Route returned
+// Route defines the structure for the Route returned.
 type Route struct {
-	RoutingType string // "url" or "msgq"
-	TopicID     string // For message queues
-	TargetURL   string // For API calls
+	TargetType  string // "url" or "msgq"
+	PublisherID string // For message queues
+	URL         string // For API calls
 }
 
-// RouterProvider initializes the a new Router instance with the given config
+// RouterProvider initializes the a new Router instance with the given config.
 type RouterProvider interface {
 	New(ctx context.Context, config map[string]string) (Router, func() error, error)
 }
 
-// Router defines the interface for routing requests
+// Router defines the interface for routing requests.
 type Router interface {
 	// Route determines the routing destination based on the request context.
 	Route(ctx context.Context, url *url.URL, body []byte) (*Route, error)

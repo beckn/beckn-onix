@@ -1,7 +1,7 @@
 routingRules:
   - domain: "ONDC:TRV10"
     version: "2.0.0"
-    routingType: "url"
+    targetType: "url"
     target:
       url: "https://services-backend/trv/v1"
     endpoints:
@@ -13,15 +13,15 @@ routingRules:
 
   - domain: "ONDC:TRV10"
     version: "2.0.0"
-    routingType: "msgq"
+    targetType: "msgq"
     target:
-      topic_id: "trv_topic_id1"
+      publisherId: "trv_topic_id1"
     endpoints:
       - search
 
   - domain: "ONDC:TRV11"
     version: "2.0.0"
-    routingType: "url"
+    targetType: "url"
     target:
       url: "https://services-backend/trv/v1"
     endpoints:

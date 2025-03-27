@@ -15,35 +15,19 @@ var testData embed.FS
 
 func setupTestConfig(t *testing.T, yamlFileName string) string {
 	t.Helper()
+	configDir := t.TempDir()
 
-	// Create a temporary directory for the routing rules
-	configDir, err := os.MkdirTemp("", "routing_rules")
+	content, err := testData.ReadFile("testData/" + yamlFileName)
 	if err != nil {
-		t.Fatalf("Failed to create temp directory: %v", err)
+		t.Fatalf("ReadFile() err = %v, want nil", err)
 	}
 
-	// Read the YAML file content
-	yamlContent := readYAMLFile(t, yamlFileName)
-
-	// Write the routing rules to a file
-	rulesFilePath := filepath.Join(configDir, "routing_rules.yaml")
-	if err := os.WriteFile(rulesFilePath, []byte(yamlContent), 0644); err != nil {
-		t.Fatalf("Failed to write routing rules file: %v", err)
+	rulesPath := filepath.Join(configDir, "routing_rules.yaml")
+	if err := os.WriteFile(rulesPath, content, 0644); err != nil {
+		t.Fatalf("WriteFile() err = %v, want nil", err)
 	}
 
-	return rulesFilePath
-}
-
-func readYAMLFile(t *testing.T, fileName string) string {
-	t.Helper()
-
-	// Read the YAML file
-	content, err := testData.ReadFile("testData/" + fileName)
-	if err != nil {
-		t.Fatalf("Failed to read YAML file: %v", err)
-	}
-
-	return string(content)
+	return rulesPath
 }
 
 // setupRouter is a helper function to create router instance.
@@ -78,35 +62,35 @@ func TestNew(t *testing.T) {
 
 			// Define test cases
 			tests := []struct {
-				name          string
-				config        *Config
-				expectedError string
+				name    string
+				config  *Config
+				wantErr string
 			}{
 				{
 					name: "Valid configuration",
 					config: &Config{
 						RoutingConfig: rulesFilePath,
 					},
-					expectedError: "",
+					wantErr: "",
 				},
 				{
-					name:          "Empty config",
-					config:        nil,
-					expectedError: "config cannot be nil",
+					name:    "Empty config",
+					config:  nil,
+					wantErr: "config cannot be nil",
 				},
 				{
 					name: "Empty routing config path",
 					config: &Config{
 						RoutingConfig: "",
 					},
-					expectedError: "routingConfig path is empty",
+					wantErr: "routingConfig path is empty",
 				},
 				{
 					name: "Routing config file does not exist",
 					config: &Config{
 						RoutingConfig: "/nonexistent/path/to/rules.yaml",
 					},
-					expectedError: "error reading config file",
+					wantErr: "error reading config file",
 				},
 			}
 
@@ -115,22 +99,22 @@ func TestNew(t *testing.T) {
 					router, _, err := New(ctx, tt.config)
 
 					// Check for expected error
-					if tt.expectedError != "" {
-						if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
-							t.Errorf("expected error %q, got %v", tt.expectedError, err)
+					if tt.wantErr != "" {
+						if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+							t.Errorf("New(%v) = %v, want error containing %q", tt.config, err, tt.wantErr)
 						}
 						return
 					}
 
 					// Ensure no error occurred
 					if err != nil {
-						t.Errorf("unexpected error: %v", err)
+						t.Errorf("New(%v) = %v, want nil error", tt.config, err)
 						return
 					}
 
 					// Ensure the router and close function are not nil
 					if router == nil {
-						t.Error("expected a non-nil Router instance, got nil")
+						t.Errorf("New(%v, %v) = nil router, want non-nil", ctx, tt.config)
 					}
 				})
 			}
@@ -148,9 +132,9 @@ func TestValidateRulesSuccess(t *testing.T) {
 			name: "Valid rules with url routing",
 			rules: []routingRule{
 				{
-					Domain:      "retail",
-					Version:     "1.0.0",
-					RoutingType: "url",
+					Domain:     "retail",
+					Version:    "1.0.0",
+					TargetType: "url",
 					Target: target{
 						URL: "https://example.com/api",
 					},
@@ -162,11 +146,11 @@ func TestValidateRulesSuccess(t *testing.T) {
 			name: "Valid rules with msgq routing",
 			rules: []routingRule{
 				{
-					Domain:      "retail",
-					Version:     "1.0.0",
-					RoutingType: "msgq",
+					Domain:     "retail",
+					Version:    "1.0.0",
+					TargetType: "msgq",
 					Target: target{
-						TopicID: "example_topic",
+						PublisherID: "example_topic",
 					},
 					Endpoints: []string{"on_search", "on_select"},
 				},
@@ -176,9 +160,9 @@ func TestValidateRulesSuccess(t *testing.T) {
 			name: "Valid rules with bpp routing to gateway",
 			rules: []routingRule{
 				{
-					Domain:      "retail",
-					Version:     "1.0.0",
-					RoutingType: "bpp",
+					Domain:     "retail",
+					Version:    "1.0.0",
+					TargetType: "bpp",
 					Target: target{
 						URL: "https://mock_gateway.com/api",
 					},
@@ -190,10 +174,10 @@ func TestValidateRulesSuccess(t *testing.T) {
 			name: "Valid rules with bpp routing",
 			rules: []routingRule{
 				{
-					Domain:      "retail",
-					Version:     "1.0.0",
-					RoutingType: "bpp",
-					Endpoints:   []string{"select"},
+					Domain:     "retail",
+					Version:    "1.0.0",
+					TargetType: "bpp",
+					Endpoints:  []string{"select"},
 				},
 			},
 		},
@@ -201,10 +185,10 @@ func TestValidateRulesSuccess(t *testing.T) {
 			name: "Valid rules with bap routing",
 			rules: []routingRule{
 				{
-					Domain:      "retail",
-					Version:     "1.0.0",
-					RoutingType: "bap",
-					Endpoints:   []string{"select"},
+					Domain:     "retail",
+					Version:    "1.0.0",
+					TargetType: "bap",
+					Endpoints:  []string{"select"},
 				},
 			},
 		},
@@ -214,7 +198,7 @@ func TestValidateRulesSuccess(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateRules(tt.rules)
 			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+				t.Errorf("validateRules(%v) = %v, want nil error", tt.rules, err)
 			}
 		})
 	}
@@ -223,40 +207,40 @@ func TestValidateRulesSuccess(t *testing.T) {
 // TestValidateRulesFailure tests the validate function for failure cases.
 func TestValidateRulesFailure(t *testing.T) {
 	tests := []struct {
-		name        string
-		rules       []routingRule
-		expectedErr string
+		name    string
+		rules   []routingRule
+		wantErr string
 	}{
 		{
 			name: "Missing domain",
 			rules: []routingRule{
 				{
-					Version:     "1.0.0",
-					RoutingType: "url",
+					Version:    "1.0.0",
+					TargetType: "url",
 					Target: target{
 						URL: "https://example.com/api",
 					},
 					Endpoints: []string{"search", "select"},
 				},
 			},
-			expectedErr: "invalid rule: domain, version, and routingType are required",
+			wantErr: "invalid rule: domain, version, and targetType are required",
 		},
 		{
 			name: "Missing version",
 			rules: []routingRule{
 				{
-					Domain:      "retail",
-					RoutingType: "url",
+					Domain:     "retail",
+					TargetType: "url",
 					Target: target{
 						URL: "https://example.com/api",
 					},
 					Endpoints: []string{"search", "select"},
 				},
 			},
-			expectedErr: "invalid rule: domain, version, and routingType are required",
+			wantErr: "invalid rule: domain, version, and targetType are required",
 		},
 		{
-			name: "Missing routingType",
+			name: "Missing targetType",
 			rules: []routingRule{
 				{
 					Domain:  "retail",
@@ -267,62 +251,60 @@ func TestValidateRulesFailure(t *testing.T) {
 					Endpoints: []string{"search", "select"},
 				},
 			},
-			expectedErr: "invalid rule: domain, version, and routingType are required",
+			wantErr: "invalid rule: domain, version, and targetType are required",
 		},
 		{
-			name: "Invalid routingType",
+			name: "Invalid targetType",
 			rules: []routingRule{
 				{
-					Domain:      "retail",
-					Version:     "1.0.0",
-					RoutingType: "invalid",
+					Domain:     "retail",
+					Version:    "1.0.0",
+					TargetType: "invalid",
 					Target: target{
 						URL: "https://example.com/api",
 					},
 					Endpoints: []string{"search", "select"},
 				},
 			},
-			expectedErr: "invalid rule: unknown routingType 'invalid'",
+			wantErr: "invalid rule: unknown targetType 'invalid'",
 		},
 		{
-			name: "Missing url for routingType: url",
+			name: "Missing url for targetType: url",
 			rules: []routingRule{
 				{
-					Domain:      "retail",
-					Version:     "1.0.0",
-					RoutingType: "url",
-					Target:      target{
+					Domain:     "retail",
+					Version:    "1.0.0",
+					TargetType: "url",
+					Target:     target{
 						// URL is missing
 					},
 					Endpoints: []string{"search", "select"},
 				},
 			},
-			expectedErr: "invalid rule: url is required for routingType 'url'",
+			wantErr: "invalid rule: url is required for targetType 'url'",
 		},
 		{
-			name: "Missing topic_id for routingType: msgq",
+			name: "Missing topic_id for targetType: msgq",
 			rules: []routingRule{
 				{
-					Domain:      "retail",
-					Version:     "1.0.0",
-					RoutingType: "msgq",
-					Target:      target{
-						// TopicID is missing
+					Domain:     "retail",
+					Version:    "1.0.0",
+					TargetType: "msgq",
+					Target:     target{
+						// PublisherID is missing
 					},
 					Endpoints: []string{"search", "select"},
 				},
 			},
-			expectedErr: "invalid rule: topicId is required for routingType 'msgq'",
+			wantErr: "invalid rule: publisherID is required for targetType 'msgq'",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateRules(tt.rules)
-			if err == nil {
-				t.Errorf("expected error: %v, got nil", tt.expectedErr)
-			} else if err.Error() != tt.expectedErr {
-				t.Errorf("expected error: %v, got: %v", tt.expectedErr, err)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("validateRules(%v) = %v, want error containing %q", tt.rules, err, tt.wantErr)
 			}
 		})
 	}
@@ -387,7 +369,7 @@ func TestRouteSuccess(t *testing.T) {
 
 			// Ensure no error occurred
 			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+				t.Errorf("router.Route(%v, %v, %v) = %v, want nil error", ctx, parsedURL, []byte(tt.body), err)
 			}
 		})
 	}
@@ -399,39 +381,39 @@ func TestRouteFailure(t *testing.T) {
 
 	// Define failure test cases
 	tests := []struct {
-		name          string
-		configFile    string
-		url           string
-		body          string
-		expectedError string
+		name       string
+		configFile string
+		url        string
+		body       string
+		wantErr    string
 	}{
 		{
-			name:          "Unsupported endpoint",
-			configFile:    "bpp_receiver.yaml",
-			url:           "https://example.com/v1/ondc/unsupported",
-			body:          `{"context": {"domain": "ONDC:TRV11", "version": "2.0.0"}}`,
-			expectedError: "endpoint 'unsupported' is not supported for domain ONDC:TRV11 and version 2.0.0",
+			name:       "Unsupported endpoint",
+			configFile: "bpp_receiver.yaml",
+			url:        "https://example.com/v1/ondc/unsupported",
+			body:       `{"context": {"domain": "ONDC:TRV11", "version": "2.0.0"}}`,
+			wantErr:    "endpoint 'unsupported' is not supported for domain ONDC:TRV11 and version 2.0.0",
 		},
 		{
-			name:          "No matching rule",
-			configFile:    "bpp_receiver.yaml",
-			url:           "https://example.com/v1/ondc/select",
-			body:          `{"context": {"domain": "ONDC:SRV11", "version": "2.0.0"}}`,
-			expectedError: "no matching routing rule found for domain ONDC:SRV11 and version 2.0.0",
+			name:       "No matching rule",
+			configFile: "bpp_receiver.yaml",
+			url:        "https://example.com/v1/ondc/select",
+			body:       `{"context": {"domain": "ONDC:SRV11", "version": "2.0.0"}}`,
+			wantErr:    "no routing rules found for domain ONDC:SRV11",
 		},
 		{
-			name:          "Missing bap_uri for bap routing",
-			configFile:    "bpp_caller.yaml",
-			url:           "https://example.com/v1/ondc/on_search",
-			body:          `{"context": {"domain": "ONDC:TRV10", "version": "2.0.0"}}`,
-			expectedError: "no target URI or URL found for bap routing type and on_search endpoint",
+			name:       "Missing bap_uri for bap routing",
+			configFile: "bpp_caller.yaml",
+			url:        "https://example.com/v1/ondc/on_search",
+			body:       `{"context": {"domain": "ONDC:TRV10", "version": "2.0.0"}}`,
+			wantErr:    "could not determine destination for endpoint 'on_search': neither request contained a BAP URI nor was a default URL configured in routing rules",
 		},
 		{
-			name:          "Missing bpp_uri for bpp routing",
-			configFile:    "bap_caller.yaml",
-			url:           "https://example.com/v1/ondc/select",
-			body:          `{"context": {"domain": "ONDC:TRV10", "version": "2.0.0"}}`,
-			expectedError: "no target URI or URL found for bpp routing type and select endpoint",
+			name:       "Missing bpp_uri for bpp routing",
+			configFile: "bap_caller.yaml",
+			url:        "https://example.com/v1/ondc/select",
+			body:       `{"context": {"domain": "ONDC:TRV10", "version": "2.0.0"}}`,
+			wantErr:    "could not determine destination for endpoint 'select': neither request contained a BPP URI nor was a default URL configured in routing rules",
 		},
 	}
 
@@ -444,8 +426,8 @@ func TestRouteFailure(t *testing.T) {
 			_, err := router.Route(ctx, parsedURL, []byte(tt.body))
 
 			// Check for expected error
-			if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("expected error %q, got %v", tt.expectedError, err)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Route(%q, %q) = %v, want error containing %q", tt.url, tt.body, err, tt.wantErr)
 			}
 		})
 	}

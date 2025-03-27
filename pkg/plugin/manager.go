@@ -18,7 +18,6 @@ type Config struct {
 	Decrypter PluginConfig `yaml:"decrypter"`
 	Encrypter PluginConfig `yaml:"encrypter"`
 	Publisher PluginConfig `yaml:"publisher"`
-	Router    PluginConfig `yaml:"router"`
 }
 
 // PluginConfig represents configuration details for a plugin.
@@ -34,7 +33,6 @@ type Manager struct {
 	dp  definition.DecrypterProvider
 	ep  definition.EncrypterProvider
 	pb  definition.PublisherProvider
-	rp  definition.RouterProvider
 	cfg *Config
 }
 
@@ -74,13 +72,7 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 		return nil, fmt.Errorf("failed to load encryption plugin: %w", err)
 	}
 
-	// Load router plugin.
-	rp, err := provider[definition.RouterProvider](cfg.Root, cfg.Router.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load encryption plugin: %w", err)
-	}
-
-	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, dp: dp, rp: rp, cfg: cfg}, nil
+	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, dp: dp, cfg: cfg}, nil
 }
 
 // provider loads a plugin dynamically and retrieves its provider instance.
@@ -176,18 +168,4 @@ func (m *Manager) Publisher(ctx context.Context) (definition.Publisher, error) {
 		return nil, fmt.Errorf("failed to initialize publisher: %w", err)
 	}
 	return publisher, nil
-}
-
-// Router retrieves the router plugin instances.
-func (m *Manager) Router(ctx context.Context) (definition.Router, func() error, error) {
-	if m.rp == nil {
-		return nil, nil, fmt.Errorf("router plugin provider not loaded")
-
-	}
-	schemaValidator, close, err := m.rp.New(ctx, m.cfg.Router.Config)
-	if err != nil {
-
-		return nil, nil, fmt.Errorf("failed to initialize schema validator: %v", err)
-	}
-	return schemaValidator, close, nil
 }
