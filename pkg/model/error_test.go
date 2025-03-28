@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"net/http"
 
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v2"
@@ -181,4 +182,19 @@ func TestRole_UnmarshalYAML_InvalidRole(t *testing.T) {
 	err := yaml.Unmarshal(yamlData, &role)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid Role")
+}
+
+func TestSchemaValidationErr_BecknError_NoErrors(t *testing.T) {
+	schemaValidationErr := &SchemaValidationErr{Errors: nil}
+	beErr := schemaValidationErr.BecknError()
+
+	expectedMsg := "Schema validation error."
+	expectedCode := http.StatusText(http.StatusBadRequest)
+
+	if beErr.Message != expectedMsg {
+		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
+	}
+	if beErr.Code != expectedCode {
+		t.Errorf("beErr.Code = %s, want %s", beErr.Code, expectedCode)
+	}
 }
