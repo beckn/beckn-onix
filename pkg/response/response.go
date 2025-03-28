@@ -3,26 +3,22 @@ package response
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+
 	"strings"
+
+	"github.com/beckn/beckn-onix/pkg/model"
 )
 
-type ErrorType string
-
-const (
-	SchemaValidationErrorType ErrorType = "SCHEMA_VALIDATION_ERROR"
-	InvalidRequestErrorType   ErrorType = "INVALID_REQUEST"
-)
-
-type BecknRequest struct {
-	Context map[string]interface{} `json:"context,omitempty"`
-}
 
 type Error struct {
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
 	Paths   string `json:"paths,omitempty"`
 }
+
 
 // SchemaValidationErr represents a collection of schema validation failures.
 type SchemaValidationErr struct {
@@ -45,114 +41,75 @@ type Message struct {
 	Error *Error `json:"error,omitempty"`
 }
 
-type BecknResponse struct {
-	Context map[string]interface{} `json:"context,omitempty"`
-	Message Message                `json:"message,omitempty"`
-}
-
-type ClientFailureBecknResponse struct {
-	Context map[string]interface{} `json:"context,omitempty"`
-	Error   *Error                 `json:"error,omitempty"`
-}
-
-var errorMap = map[ErrorType]Error{
-	SchemaValidationErrorType: {
-		Code:    "400",
-		Message: "Schema validation failed",
-	},
-	InvalidRequestErrorType: {
-		Code:    "401",
-		Message: "Invalid request format",
-	},
-}
-
-var DefaultError = Error{
-	Code:    "500",
-	Message: "Internal server error",
-}
-
-func Nack(ctx context.Context, tp ErrorType, paths string, body []byte) ([]byte, error) {
-	var req BecknRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, fmt.Errorf("failed to parse request: %w", err)
-	}
-
-	errorObj, ok := errorMap[tp]
-	if paths != "" {
-		errorObj.Paths = paths
-	}
-
-	var response BecknResponse
-
-	if !ok {
-		response = BecknResponse{
-			Context: req.Context,
-			Message: Message{
-				Ack: struct {
-					Status string `json:"status,omitempty"`
-				}{
-					Status: "NACK",
-				},
-				Error: &DefaultError,
-			},
-		}
-	} else {
-		response = BecknResponse{
-			Context: req.Context,
-			Message: Message{
-				Ack: struct {
-					Status string `json:"status,omitempty"`
-				}{
-					Status: "NACK",
-				},
-				Error: &errorObj,
-			},
-		}
-	}
-
-	return json.Marshal(response)
-}
-
-func Ack(ctx context.Context, body []byte) ([]byte, error) {
-	var req BecknRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, fmt.Errorf("failed to parse request: %w", err)
-	}
-
-	response := BecknResponse{
-		Context: req.Context,
-		Message: Message{
-			Ack: struct {
-				Status string `json:"status,omitempty"`
-			}{
-				Status: "ACK",
+func SendAck(w http.ResponseWriter) {
+	resp := &model.Response{
+		Message: model.Message{
+			Ack: model.Ack{
+				Status: model.StatusACK,
 			},
 		},
 	}
 
-	return json.Marshal(response)
+	data, _ := json.Marshal(resp) //should not fail here
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, err := w.Write(data)
+	if err != nil {
+		http.Error(w, "failed to write response", http.StatusInternalServerError)
+		return
+	}
 }
 
-func HandleClientFailure(ctx context.Context, tp ErrorType, body []byte) ([]byte, error) {
-	var req BecknRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, fmt.Errorf("failed to parse request: %w", err)
+func nack(w http.ResponseWriter, err *model.Error, status int, ctx context.Context) {
+	resp := &model.Response{
+		Message: model.Message{
+			Ack: model.Ack{
+				Status: model.StatusNACK,
+			},
+			Error: err,
+		},
 	}
+	data, _ := json.Marshal(resp) //should not fail here
 
-	errorObj, ok := errorMap[tp]
-	var response ClientFailureBecknResponse
-
-	if !ok {
-		response = ClientFailureBecknResponse{
-			Context: req.Context,
-			Error:   &DefaultError,
-		}
-	} else {
-		response = ClientFailureBecknResponse{
-			Context: req.Context,
-			Error:   &errorObj,
-		}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, er := w.Write(data)
+	if er != nil {
+		fmt.Printf("Error writing response: %v, MessageID: %s", er, ctx.Value(model.MsgIDKey))
+		http.Error(w, fmt.Sprintf("Internal server error, MessageID: %s", ctx.Value(model.MsgIDKey)), http.StatusInternalServerError)
+		return
 	}
+}
 
-	return json.Marshal(response)
+func internalServerError(ctx context.Context) *model.Error {
+	return &model.Error{
+		Code:    http.StatusText(http.StatusInternalServerError),
+		Message: fmt.Sprintf("Internal server error, MessageID: %s", ctx.Value(model.MsgIDKey)),
+	}
+}
+
+func SendNack(ctx context.Context, w http.ResponseWriter, err error) {
+	var schemaErr *model.SchemaValidationErr
+	var signErr *model.SignValidationErr
+	var badReqErr *model.BadReqErr
+	var notFoundErr *model.NotFoundErr
+
+	switch {
+	case errors.As(err, &schemaErr):
+		nack(w, schemaErr.BecknError(), http.StatusBadRequest, ctx)
+		return
+	case errors.As(err, &signErr):
+		nack(w, signErr.BecknError(), http.StatusUnauthorized, ctx)
+		return
+	case errors.As(err, &badReqErr):
+		nack(w, badReqErr.BecknError(), http.StatusBadRequest, ctx)
+		return
+	case errors.As(err, &notFoundErr):
+		nack(w, notFoundErr.BecknError(), http.StatusNotFound, ctx)
+		return
+	default:
+		nack(w, internalServerError(ctx), http.StatusInternalServerError, ctx)
+		return
+	}
 }
