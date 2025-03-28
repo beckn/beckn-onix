@@ -234,7 +234,7 @@ func TestNack_1(t *testing.T) {
 				return
 			}
 
-			nack(w, tt.err, tt.status, ctx)
+			nack(ctx, w, tt.err, tt.status)
 			if !tt.useBadWrite {
 				recorder, ok := w.(*httptest.ResponseRecorder)
 				if !ok {

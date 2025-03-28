@@ -366,7 +366,7 @@ func TestNewServerSuccess(t *testing.T) {
 				Modules: tt.modules,
 				HTTP: timeouts{
 					Port: "8080",
-					Timeout: timeoutConfig{
+					Timeouts: timeoutConfig{
 						Read:  5,
 						Write: 5,
 						Idle:  10,
@@ -411,7 +411,7 @@ func TestNewServerFailure(t *testing.T) {
 				Modules: tt.modules,
 				HTTP: timeouts{
 					Port: "8080",
-					Timeout: timeoutConfig{
+					Timeouts: timeoutConfig{
 						Read:  5,
 						Write: 5,
 						Idle:  10,

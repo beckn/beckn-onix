@@ -12,10 +12,16 @@ import (
 	"github.com/beckn/beckn-onix/pkg/model"
 )
 
+// Error represents a standardized error response used across the system.
 type Error struct {
-	Code    string `json:"code,omitempty"`
+	// Code is a short, machine-readable error code.
+	Code string `json:"code,omitempty"`
+
+	// Message provides a human-readable description of the error.
 	Message string `json:"message,omitempty"`
-	Paths   string `json:"paths,omitempty"`
+
+	// Paths indicates the specific field(s) or endpoint(s) related to the error.
+	Paths string `json:"paths,omitempty"`
 }
 
 // SchemaValidationErr represents a collection of schema validation failures.
@@ -32,13 +38,18 @@ func (e *SchemaValidationErr) Error() string {
 	return strings.Join(errorMessages, "; ")
 }
 
+// Message represents a standard message structure with acknowledgment and error information.
 type Message struct {
+	// Ack contains the acknowledgment status of the response.
 	Ack struct {
 		Status string `json:"status,omitempty"`
 	} `json:"ack,omitempty"`
+
+	// Error holds error details if any occurred during processing.
 	Error *Error `json:"error,omitempty"`
 }
 
+// SendAck sends an acknowledgment response (ACK) to the client.
 func SendAck(w http.ResponseWriter) {
 	resp := &model.Response{
 		Message: model.Message{
@@ -59,7 +70,8 @@ func SendAck(w http.ResponseWriter) {
 	}
 }
 
-func nack(w http.ResponseWriter, err *model.Error, status int, ctx context.Context) {
+// nack sends a negative acknowledgment (NACK) response with an error message.
+func nack(ctx context.Context, w http.ResponseWriter, err *model.Error, status int) {
 	resp := &model.Response{
 		Message: model.Message{
 			Ack: model.Ack{
@@ -80,6 +92,7 @@ func nack(w http.ResponseWriter, err *model.Error, status int, ctx context.Conte
 	}
 }
 
+// internalServerError generates an internal server error response.
 func internalServerError(ctx context.Context) *model.Error {
 	return &model.Error{
 		Code:    http.StatusText(http.StatusInternalServerError),
@@ -87,6 +100,7 @@ func internalServerError(ctx context.Context) *model.Error {
 	}
 }
 
+// SendNack processes different types of errors and sends an appropriate NACK response.
 func SendNack(ctx context.Context, w http.ResponseWriter, err error) {
 	var schemaErr *model.SchemaValidationErr
 	var signErr *model.SignValidationErr
@@ -95,19 +109,19 @@ func SendNack(ctx context.Context, w http.ResponseWriter, err error) {
 
 	switch {
 	case errors.As(err, &schemaErr):
-		nack(w, schemaErr.BecknError(), http.StatusBadRequest, ctx)
+		nack(ctx, w, schemaErr.BecknError(), http.StatusBadRequest)
 		return
 	case errors.As(err, &signErr):
-		nack(w, signErr.BecknError(), http.StatusUnauthorized, ctx)
+		nack(ctx, w, signErr.BecknError(), http.StatusUnauthorized)
 		return
 	case errors.As(err, &badReqErr):
-		nack(w, badReqErr.BecknError(), http.StatusBadRequest, ctx)
+		nack(ctx, w, badReqErr.BecknError(), http.StatusBadRequest)
 		return
 	case errors.As(err, &notFoundErr):
-		nack(w, notFoundErr.BecknError(), http.StatusNotFound, ctx)
+		nack(ctx, w, notFoundErr.BecknError(), http.StatusNotFound)
 		return
 	default:
-		nack(w, internalServerError(ctx), http.StatusInternalServerError, ctx)
+		nack(ctx, w, internalServerError(ctx), http.StatusInternalServerError)
 		return
 	}
 }

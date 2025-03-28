@@ -40,14 +40,20 @@ const (
 
 type contextKey string
 
+// MsgIDKey is the context key used to store and retrieve the message ID in a request context.
 const MsgIDKey = contextKey("message_id")
 
+// Role defines the type of participant in the network.
 type Role string
 
 const (
-	RoleBAP       Role = "bap"
-	RoleBPP       Role = "bpp"
-	RoleGateway   Role = "gateway"
+	// RoleBAP represents a Buyer App Participant (BAP) in the network.
+	RoleBAP Role = "bap"
+	// RoleBPP represents a Buyer Platform Participant (BPP) in the network.
+	RoleBPP Role = "bpp"
+	// RoleGateway represents a Gateway that facilitates communication in the network.
+	RoleGateway Role = "gateway"
+	// RoleRegistery represents the Registry that maintains network participant details.
 	RoleRegistery Role = "registery"
 )
 
@@ -91,22 +97,32 @@ type StepContext struct {
 	RespHeader http.Header
 }
 
+// WithContext updates the existing StepContext with a new context.
 func (ctx *StepContext) WithContext(newCtx context.Context) {
 	ctx.Context = newCtx
 }
 
+// Status represents the acknowledgment status in a response.
 type Status string
 
 const (
-	StatusACK  Status = "ACK"
+	// StatusACK indicates a successful acknowledgment.
+	StatusACK Status = "ACK"
+	// StatusNACK indicates a negative acknowledgment or failure.
 	StatusNACK Status = "NACK"
 )
 
+// Ack represents an acknowledgment response.
 type Ack struct {
+	// Status holds the acknowledgment status (ACK/NACK).
 	Status Status `json:"status"`
 }
+
+// Message represents the structure of a response message.
 type Message struct {
-	Ack   Ack    `json:"ack"`
+	// Ack contains the acknowledgment status.
+	Ack Ack `json:"ack"`
+	// Error holds error details, if any, in the response.
 	Error *Error `json:"error,omitempty"`
 }
 

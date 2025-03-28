@@ -24,7 +24,7 @@ type Config struct {
 // RegisteryClient encapsulates the logic for calling the subscribe and lookup endpoints.
 type RegisteryClient struct {
 	Config *Config
-	Client *retryablehttp.Client // Retryable HTTP Client
+	Client *retryablehttp.Client
 }
 
 // NewRegisteryClient creates a new instance of Client.

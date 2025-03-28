@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -74,17 +73,17 @@ func (s *validateSignStep) Run(ctx *model.StepContext) error {
 	if len(headerValue) != 0 {
 		if err := s.validate(ctx, headerValue); err != nil {
 			ctx.RespHeader.Set(model.UnaAuthorizedHeaderGateway, unauthHeader)
-			return model.NewSignValidationErrf("failed to validate %s: %w", model.AuthHeaderGateway, err)
+			return model.NewSignValidationErr(fmt.Errorf("failed to validate %s: %w", model.AuthHeaderGateway, err))
 		}
 	}
 	headerValue = ctx.Request.Header.Get(model.AuthHeaderSubscriber)
 	if len(headerValue) == 0 {
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
-		return model.NewSignValidationErrf("%s missing", model.UnaAuthorizedHeaderSubscriber)
+		return model.NewSignValidationErr(fmt.Errorf("%s missing", model.UnaAuthorizedHeaderSubscriber))
 	}
 	if err := s.validate(ctx, headerValue); err != nil {
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
-		return model.NewSignValidationErrf("failed to validate %s: %w", model.AuthHeaderSubscriber, err)
+		return model.NewSignValidationErr(fmt.Errorf("failed to validate %s: %w", model.AuthHeaderSubscriber, err))
 	}
 	return nil
 }
@@ -113,15 +112,6 @@ type validateSchemaStep struct {
 	validator definition.SchemaValidator
 }
 
-// newValidateSchemaStep creates and returns the validateSchema step after validation
-func newValidateSchemaStep(schemaValidator definition.SchemaValidator) (definition.Step, error) {
-	if schemaValidator == nil {
-		return nil, fmt.Errorf("invalid config: SchemaValidator plugin not configured")
-	}
-	log.Debug(context.Background(), "adding schema validator")
-	return &validateSchemaStep{validator: schemaValidator}, nil
-}
-
 // Run executes the schema validation step.
 func (s *validateSchemaStep) Run(ctx *model.StepContext) error {
 	if err := s.validator.Validate(ctx, ctx.Request.URL, ctx.Body); err != nil {
@@ -135,14 +125,6 @@ type addRouteStep struct {
 	router definition.Router
 }
 
-// newRouteStep initializes and returns a new routing step.
-func newRouteStep(router definition.Router) (definition.Step, error) {
-	if router == nil {
-		return nil, fmt.Errorf("invalid config: Router plugin not configured")
-	}
-	return &addRouteStep{router: router}, nil
-}
-
 // Run executes the routing step.
 func (s *addRouteStep) Run(ctx *model.StepContext) error {
 	route, err := s.router.Route(ctx, ctx.Request.URL, ctx.Body)
@@ -150,8 +132,5 @@ func (s *addRouteStep) Run(ctx *model.StepContext) error {
 		return fmt.Errorf("failed to determine route: %w", err)
 	}
 	log.Debugf(ctx, "Routing to %#v", route)
-	ctx.Route = route
-
-	log.Debugf(ctx, "ctx.Route to %#v", ctx.Route)
 	return nil
 }

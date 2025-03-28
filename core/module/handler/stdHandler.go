@@ -38,11 +38,11 @@ func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config) (http.Ha
 		SubscriberID: cfg.SubscriberID,
 		role:         cfg.Role,
 	}
-	// Initialize plugins
+	// Initialize plugins.
 	if err := h.initPlugins(ctx, mgr, &cfg.Plugins, cfg.RegistryURL); err != nil {
 		return nil, fmt.Errorf("failed to initialize plugins: %w", err)
 	}
-	// Initialize steps
+	// Initialize steps.
 	if err := h.initSteps(ctx, mgr, cfg); err != nil {
 		return nil, fmt.Errorf("failed to initialize steps: %w", err)
 	}
@@ -59,7 +59,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Request(r.Context(), r, ctx.Body)
 
-	// Execute processing steps
+	// Execute processing steps.
 	for _, step := range h.steps {
 		if err := step.Run(ctx); err != nil {
 			log.Errorf(ctx, err, "%T.run(%v):%v", step, ctx, err)
@@ -67,14 +67,14 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Restore request body before forwarding or publishing
+	// Restore request body before forwarding or publishing.
 	r.Body = io.NopCloser(bytes.NewReader(ctx.Body))
 	if ctx.Route == nil {
 		response.SendAck(w)
 		return
 	}
 
-	// Handle routing based on the defined route type
+	// Handle routing based on the defined route type.
 	route(ctx, r, w, h.publisher)
 }
 

@@ -1,4 +1,4 @@
-package schemaValidator
+package schemavalidator
 
 import (
 	"context"
