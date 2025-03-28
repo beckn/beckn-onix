@@ -143,12 +143,12 @@ func TestValidateRulesSuccess(t *testing.T) {
 			},
 		},
 		{
-			name: "Valid rules with msgq routing",
+			name: "Valid rules with publisher routing",
 			rules: []routingRule{
 				{
 					Domain:     "retail",
 					Version:    "1.0.0",
-					TargetType: "msgq",
+					TargetType: "publisher",
 					Target: target{
 						PublisherID: "example_topic",
 					},
@@ -284,19 +284,64 @@ func TestValidateRulesFailure(t *testing.T) {
 			wantErr: "invalid rule: url is required for targetType 'url'",
 		},
 		{
-			name: "Missing topic_id for targetType: msgq",
+			name: "Invalid URL format for targetType: url",
 			rules: []routingRule{
 				{
 					Domain:     "retail",
 					Version:    "1.0.0",
-					TargetType: "msgq",
+					TargetType: "url",
+					Target: target{
+						URL: "htp://invalid-url.com", // Invalid scheme
+					},
+					Endpoints: []string{"search"},
+				},
+			},
+			wantErr: "invalid URL - htp://invalid-url.com: URL 'htp://invalid-url.com' must use https scheme",
+		},
+		{
+			name: "Missing topic_id for targetType: publisher",
+			rules: []routingRule{
+				{
+					Domain:     "retail",
+					Version:    "1.0.0",
+					TargetType: "publisher",
 					Target:     target{
 						// PublisherID is missing
 					},
 					Endpoints: []string{"search", "select"},
 				},
 			},
-			wantErr: "invalid rule: publisherID is required for targetType 'msgq'",
+			wantErr: "invalid rule: publisherID is required for targetType 'publisher'",
+		},
+		{
+			name: "Invalid URL for BPP targetType",
+			rules: []routingRule{
+				{
+					Domain:     "retail",
+					Version:    "1.0.0",
+					TargetType: "bpp",
+					Target: target{
+						URL: "htp://invalid-url.com", // Invalid URL
+					},
+					Endpoints: []string{"search"},
+				},
+			},
+			wantErr: "invalid URL - htp://invalid-url.com defined in routing config for target type bpp",
+		},
+		{
+			name: "Invalid URL for BAP targetType",
+			rules: []routingRule{
+				{
+					Domain:     "retail",
+					Version:    "1.0.0",
+					TargetType: "bap",
+					Target: target{
+						URL: "http://[invalid].com", // Invalid host
+					},
+					Endpoints: []string{"search"},
+				},
+			},
+			wantErr: "invalid URL - http://[invalid].com defined in routing config for target type bap",
 		},
 	}
 
@@ -340,7 +385,7 @@ func TestRouteSuccess(t *testing.T) {
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "2.0.0"}}`,
 		},
 		{
-			name:       "Valid domain, version, and endpoint (msgq routing)",
+			name:       "Valid domain, version, and endpoint (publisher routing)",
 			configFile: "bpp_receiver.yaml",
 			url:        "https://example.com/v1/ondc/search",
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "2.0.0"}}`,
@@ -414,6 +459,13 @@ func TestRouteFailure(t *testing.T) {
 			url:        "https://example.com/v1/ondc/select",
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "2.0.0"}}`,
 			wantErr:    "could not determine destination for endpoint 'select': neither request contained a BPP URI nor was a default URL configured in routing rules",
+		},
+		{
+			name:       "Invalid bpp_uri format in request",
+			configFile: "bap_caller.yaml",
+			url:        "https://example.com/v1/ondc/select",
+			body:       `{"context": {"domain": "ONDC:TRV10", "version": "2.0.0", "bpp_uri": "htp://invalid-url"}}`, // Invalid scheme (htp instead of http)
+			wantErr:    "invalid BPP URI - htp://invalid-url in request body for select: URL 'htp://invalid-url' must use https scheme",
 		},
 	}
 
