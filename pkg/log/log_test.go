@@ -14,8 +14,6 @@ import (
 	"time"
 )
 
-const testLogFilePath = "./test_logs/test.log"
-
 type ctxKey any
 
 var requestID ctxKey = "requestID"
@@ -23,11 +21,10 @@ var userID ctxKey = "userID"
 
 func setupLogger(t *testing.T, l level) string {
 	t.Helper()
-	dir := filepath.Dir(testLogFilePath)
-	err := os.MkdirAll(dir, os.ModePerm)
-	if err != nil {
-		t.Fatalf("failed to create test log directory: %v", err)
-	}
+
+	// Create a temporary directory for logs.
+	tempDir := t.TempDir()
+	testLogFilePath := filepath.Join(tempDir, "test.log")
 
 	config := Config{
 		Level: l,
@@ -45,10 +42,13 @@ func setupLogger(t *testing.T, l level) string {
 		},
 		ContextKeys: []string{"userID", "requestID"},
 	}
-	err = InitLogger(config)
+
+	// Initialize logger with the given config
+	err := InitLogger(config)
 	if err != nil {
 		t.Fatalf("failed to initialize logger: %v", err)
 	}
+	
 	return testLogFilePath
 }
 
@@ -72,6 +72,7 @@ func parseLogLine(t *testing.T, line string) map[string]interface{} {
 }
 
 func TestDebug(t *testing.T) {
+	t.Helper()
 	logPath := setupLogger(t, DebugLevel)
 	ctx := context.WithValue(context.Background(), userID, "12345")
 	Debug(ctx, "Debug message")
