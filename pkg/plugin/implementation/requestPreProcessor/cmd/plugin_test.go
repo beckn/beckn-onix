@@ -25,7 +25,7 @@ func TestProviderNew(t *testing.T) {
 			expectedError:  true,
 			expectedStatus: http.StatusOK,
 			prepareRequest: func(req *http.Request) {
-				// Add minimal required headers
+				// Add minimal required headers.
 				req.Header.Set("context", "test-context")
 				req.Header.Set("transaction_id", "test-transaction")
 			},
@@ -38,7 +38,7 @@ func TestProviderNew(t *testing.T) {
 			expectedError:  false,
 			expectedStatus: http.StatusOK,
 			prepareRequest: func(req *http.Request) {
-				// Add headers matching the check keys
+				// Add headers matching the check keys.
 				req.Header.Set("context", "test-context")
 				req.Header.Set("transaction_id", "test-transaction")
 			},
