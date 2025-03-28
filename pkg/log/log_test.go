@@ -22,6 +22,7 @@ var requestID ctxKey = "requestID"
 var userID ctxKey = "userID"
 
 func setupLogger(t *testing.T, l level) string {
+	t.Helper()
 	dir := filepath.Dir(testLogFilePath)
 	err := os.MkdirAll(dir, os.ModePerm)
 	if err != nil {
@@ -52,6 +53,7 @@ func setupLogger(t *testing.T, l level) string {
 }
 
 func readLogFile(t *testing.T, logPath string) []string {
+	t.Helper()
 	b, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("failed to read log file: %v", err)
@@ -60,6 +62,7 @@ func readLogFile(t *testing.T, logPath string) []string {
 }
 
 func parseLogLine(t *testing.T, line string) map[string]interface{} {
+	t.Helper()
 	var logEntry map[string]interface{}
 	err := json.Unmarshal([]byte(line), &logEntry)
 	if err != nil {
