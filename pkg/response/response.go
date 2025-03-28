@@ -12,14 +12,6 @@ import (
 	"github.com/beckn/beckn-onix/pkg/model"
 )
 
-type ErrorType string
-
-type errorResponseWriter struct{}
-
-
-func (e *errorResponseWriter) Write([]byte) (int, error) {
-	return 0, errors.New("write error")
-}
 
 type Error struct {
 	Code    string `json:"code,omitempty"`
@@ -27,7 +19,6 @@ type Error struct {
 	Paths   string `json:"paths,omitempty"`
 }
 
-func (e *errorResponseWriter) WriteHeader(statusCode int) {}
 
 // SchemaValidationErr represents a collection of schema validation failures.
 type SchemaValidationErr struct {

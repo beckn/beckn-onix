@@ -12,6 +12,14 @@ import (
 	"github.com/beckn/beckn-onix/pkg/model"
 )
 
+type errorResponseWriter struct{}
+
+// TODO: Optimize the cases by removing these
+func (e *errorResponseWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write error")
+}
+func (e *errorResponseWriter) WriteHeader(statusCode int) {}
+
 func (e *errorResponseWriter) Header() http.Header {
 	return http.Header{}
 }
@@ -213,12 +221,16 @@ func TestNack_1(t *testing.T) {
 				w = httptest.NewRecorder()
 			}
 
-			// Force marshal error if needed
+			// TODO: Fix this approach , should not be used like this.
 			if tt.useBadJSON {
 				data, _ := json.Marshal(&badMessage{})
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tt.status)
-				w.Write(data)
+				_, err := w.Write(data)
+				if err != nil {
+					http.Error(w, "Failed to write response", http.StatusInternalServerError)
+					return
+				}
 				return
 			}
 
