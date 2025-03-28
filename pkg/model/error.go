@@ -13,7 +13,7 @@ type Error struct {
 	Message string `json:"message"`
 }
 
-// Error implements the error interface for the Error struct.
+// This implements the error interface for the Error struct.
 func (e *Error) Error() string {
 	return fmt.Sprintf("Error: Code=%s, Path=%s, Message=%s", e.Code, e.Paths, e.Message)
 }
@@ -23,7 +23,7 @@ type SchemaValidationErr struct {
 	Errors []Error
 }
 
-// Error implements the error interface for SchemaValidationErr.
+// This implements the error interface for SchemaValidationErr.
 func (e *SchemaValidationErr) Error() string {
 	var errorMessages []string
 	for _, err := range e.Errors {
@@ -57,19 +57,17 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	}
 }
 
-// SignalidationErr represents a collection of schema validation failures.
+// SignValidationErr represents a collection of schema validation failures.
 type SignValidationErr struct {
 	error
 }
 
-func NewSignValidationErrf(format string, a ...any) *SignValidationErr {
-	return &SignValidationErr{fmt.Errorf(format, a...)}
-}
-
+// NewSignValidationErr creates a new instance of SignValidationErr from an error.
 func NewSignValidationErr(e error) *SignValidationErr {
 	return &SignValidationErr{e}
 }
 
+// BecknError converts the SignValidationErr to an instance of Error.
 func (e *SignValidationErr) BecknError() *Error {
 	return &Error{
 		Code:    http.StatusText(http.StatusUnauthorized),
@@ -77,19 +75,17 @@ func (e *SignValidationErr) BecknError() *Error {
 	}
 }
 
-// SignalidationErr represents a collection of schema validation failures.
+// SignValidationErr represents a collection of schema validation failures.
 type BadReqErr struct {
 	error
 }
 
+// NewBadReqErr creates a new instance of BadReqErr from an error.
 func NewBadReqErr(err error) *BadReqErr {
 	return &BadReqErr{err}
 }
 
-func NewBadReqErrf(format string, a ...any) *BadReqErr {
-	return &BadReqErr{fmt.Errorf(format, a...)}
-}
-
+// BecknError converts the BadReqErr to an instance of Error.
 func (e *BadReqErr) BecknError() *Error {
 	return &Error{
 		Code:    http.StatusText(http.StatusBadRequest),
@@ -97,19 +93,17 @@ func (e *BadReqErr) BecknError() *Error {
 	}
 }
 
-// SignalidationErr represents a collection of schema validation failures.
+// SignValidationErr represents a collection of schema validation failures.
 type NotFoundErr struct {
 	error
 }
 
+// NewNotFoundErr creates a new instance of NotFoundErr from an error.
 func NewNotFoundErr(err error) *NotFoundErr {
 	return &NotFoundErr{err}
 }
 
-func NewNotFoundErrf(format string, a ...any) *NotFoundErr {
-	return &NotFoundErr{fmt.Errorf(format, a...)}
-}
-
+// BecknError converts the NotFoundErr to an instance of Error.
 func (e *NotFoundErr) BecknError() *Error {
 	return &Error{
 		Code:    http.StatusText(http.StatusNotFound),

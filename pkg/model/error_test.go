@@ -2,11 +2,27 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v2"
 )
+
+// NewSignValidationErrf formats an error message according to a format specifier and arguments,and returns a new instance of SignValidationErr.
+func NewSignValidationErrf(format string, a ...any) *SignValidationErr {
+	return &SignValidationErr{fmt.Errorf(format, a...)}
+}
+
+// NewNotFoundErrf formats an error message according to a format specifier and arguments, and returns a new instance of NotFoundErr.
+func NewNotFoundErrf(format string, a ...any) *NotFoundErr {
+	return &NotFoundErr{fmt.Errorf(format, a...)}
+}
+
+// NewBadReqErrf formats an error message according to a format specifier and arguments, and returns a new instance of BadReqErr.
+func NewBadReqErrf(format string, a ...any) *BadReqErr {
+	return &BadReqErr{fmt.Errorf(format, a...)}
+}
 
 func TestError_Error(t *testing.T) {
 	err := &Error{
@@ -154,7 +170,7 @@ func TestRole_UnmarshalYAML_ValidRole(t *testing.T) {
 	yamlData := []byte("bap")
 
 	err := yaml.Unmarshal(yamlData, &role)
-	assert.NoError(t, err)
+	assert.NoError(t, err) //TODO: should replace assert here
 	assert.Equal(t, RoleBAP, role)
 }
 
