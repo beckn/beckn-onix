@@ -32,44 +32,21 @@ func setupTestConfig(t *testing.T) string {
 	return tempPath
 }
 
-// TestRouterProviderSuccess tests the RouterProvider implementation for success cases.
+// TestRouterProviderSuccess tests successful router creation.
 func TestRouterProviderSuccess(t *testing.T) {
 	rulesFilePath := setupTestConfig(t)
 	defer os.RemoveAll(filepath.Dir(rulesFilePath))
 
-	// Define test cases
-	tests := []struct {
-		name    string
-		ctx     context.Context
-		config  map[string]string
-		wantErr bool
-	}{
-		{
-			name: "Valid configuration",
-			ctx:  context.Background(),
-			config: map[string]string{
-				"routingConfig": rulesFilePath,
-			},
-			wantErr: false,
-		},
+	provider := RouterProvider{}
+	router, _, err := provider.New(context.Background(), map[string]string{
+		"routingConfig": rulesFilePath,
+	})
+
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			provider := RouterProvider{}
-			router, _, err := provider.New(tt.ctx, tt.config)
-
-			// Ensure no error occurred
-			if (err != nil) != tt.wantErr {
-				t.Errorf("New(%v, %v) error = %v, wantErr %v", tt.ctx, tt.config, err, tt.wantErr)
-				return
-			}
-
-			// Ensure the router and close function are not nil
-			if router == nil {
-				t.Errorf("New(%v, %v) = nil router, want non-nil", tt.ctx, tt.config)
-			}
-		})
+	if router == nil {
+		t.Error("New() returned nil router, want non-nil")
 	}
 }
 
@@ -114,8 +91,9 @@ func TestRouterProviderFailure(t *testing.T) {
 
 			// Check for expected error
 			if err == nil {
-				t.Errorf("New(%v, %v) = nil error, want error containing %q", tt.ctx, tt.config, tt.wantErr)
-			} else if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("New(%v, %v) = nil error, want error containing %q", tt.ctx, tt.config, tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
 				t.Errorf("New(%v, %v) = %v, want error containing %q", tt.ctx, tt.config, err, tt.wantErr)
 			}
 		})
