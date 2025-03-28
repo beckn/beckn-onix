@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"strings"
+
 	"github.com/beckn/beckn-onix/pkg/model"
 )
 
@@ -14,15 +16,39 @@ type ErrorType string
 
 type errorResponseWriter struct{}
 
-func (e *errorResponseWriter) Header() http.Header {
-	return http.Header{}
-}
 
 func (e *errorResponseWriter) Write([]byte) (int, error) {
 	return 0, errors.New("write error")
 }
 
+type Error struct {
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+	Paths   string `json:"paths,omitempty"`
+}
+
 func (e *errorResponseWriter) WriteHeader(statusCode int) {}
+
+// SchemaValidationErr represents a collection of schema validation failures.
+type SchemaValidationErr struct {
+	Errors []Error
+}
+
+// Error implements the error interface for SchemaValidationErr.
+func (e *SchemaValidationErr) Error() string {
+	var errorMessages []string
+	for _, err := range e.Errors {
+		errorMessages = append(errorMessages, fmt.Sprintf("%s: %s", err.Paths, err.Message))
+	}
+	return strings.Join(errorMessages, "; ")
+}
+
+type Message struct {
+	Ack struct {
+		Status string `json:"status,omitempty"`
+	} `json:"ack,omitempty"`
+	Error *Error `json:"error,omitempty"`
+}
 
 func SendAck(w http.ResponseWriter) {
 	resp := &model.Response{
