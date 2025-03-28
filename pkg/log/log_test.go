@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -19,12 +20,34 @@ type ctxKey any
 var requestID ctxKey = "requestID"
 var userID ctxKey = "userID"
 
+const testLogFilePath = "./test_logs/test.log"
+
+func TestMain(m *testing.M) {
+	// Create a single temporary directory for all tests
+	var err error
+	dir := filepath.Dir(testLogFilePath)
+	err = os.MkdirAll(dir, os.ModePerm)
+	if err != nil {
+		panic("failed to create test log directory: " + err.Error())
+	}
+
+	// Run all tests
+	code := m.Run()
+
+	// Cleanup: Remove the log directory after all tests finish
+	err = os.RemoveAll(dir)
+	if err != nil {
+		println("failed to clean up test log directory: ", err.Error())
+	}
+
+	// Exit with the appropriate exit code
+	os.Exit(code)
+}
+
 func setupLogger(t *testing.T, l level) string {
 	t.Helper()
 
 	// Create a temporary directory for logs.
-	tempDir := t.TempDir()
-	testLogFilePath := filepath.Join(tempDir, "test.log")
 
 	config := Config{
 		Level: l,
@@ -48,7 +71,7 @@ func setupLogger(t *testing.T, l level) string {
 	if err != nil {
 		t.Fatalf("failed to initialize logger: %v", err)
 	}
-	
+
 	return testLogFilePath
 }
 
@@ -80,16 +103,27 @@ func TestDebug(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
+	expected := map[string]interface{}{
+		"level":   "debug",
+		"userID":  "12345",
+		"message": "Debug message",
+	}
+
 	var found bool
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
-		if logEntry["level"] == "debug" && strings.Contains(logEntry["message"].(string), "Debug message") {
+
+		// Ignore 'time' while comparing
+		delete(logEntry, "time")
+
+		if reflect.DeepEqual(expected, logEntry) {
 			found = true
 			break
 		}
 	}
+
 	if !found {
-		t.Errorf("expected Debug message, but it was not found in logs")
+		t.Errorf("Expected Debug message, but it was not found in logs")
 	}
 }
 
@@ -101,10 +135,20 @@ func TestInfo(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
+	expected := map[string]interface{}{
+		"level":   "info",
+		"userID":  "12345",
+		"message": "Info message",
+	}
+
 	var found bool
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
-		if logEntry["level"] == "info" && strings.Contains(logEntry["message"].(string), "Info message") {
+
+		// Ignore 'time' while comparing
+		delete(logEntry, "time")
+
+		if reflect.DeepEqual(expected, logEntry) {
 			found = true
 			break
 		}
@@ -123,10 +167,17 @@ func TestWarn(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
+	expected := map[string]interface{}{
+		"level":   "warn",
+		"userID":  "12345",
+		"message": "Warning message",
+	}
+
 	var found bool
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
-		if logEntry["level"] == "warn" && strings.Contains(logEntry["message"].(string), "Warning message") {
+		delete(logEntry, "time")
+		if reflect.DeepEqual(expected, logEntry) {
 			found = true
 			break
 		}
@@ -144,10 +195,20 @@ func TestError(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
+	expected := map[string]interface{}{
+		"level":   "error",
+		"userID":  "12345",
+		"message": "Error message",
+		"error":   "test error",
+	}
+
 	var found bool
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
-		if logEntry["level"] == "error" && strings.Contains(logEntry["message"].(string), "Error message") {
+		// Ignore 'time' while comparing
+		delete(logEntry, "time")
+
+		if reflect.DeepEqual(expected, logEntry) {
 			found = true
 			break
 		}
@@ -222,10 +283,20 @@ func TestFatal(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
+	expected := map[string]interface{}{
+		"level":   "fatal",
+		"userID":  "12345",
+		"message": "Fatal message",
+		"error":   "fatal error",
+	}
+
 	var found bool
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
-		if logEntry["level"] == "fatal" && strings.Contains(logEntry["message"].(string), "Fatal message") {
+		// Ignore 'time' while comparing
+		delete(logEntry, "time")
+
+		if reflect.DeepEqual(expected, logEntry) {
 			found = true
 			break
 		}
@@ -243,10 +314,20 @@ func TestPanic(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
+	expected := map[string]interface{}{
+		"level":   "panic",
+		"userID":  "12345",
+		"message": "Panic message",
+		"error":   "panic error",
+	}
+
 	var found bool
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
-		if logEntry["level"] == "panic" && strings.Contains(logEntry["message"].(string), "Panic message") {
+		// Ignore 'time' while comparing
+		delete(logEntry, "time")
+
+		if reflect.DeepEqual(expected, logEntry) {
 			found = true
 			break
 		}
@@ -264,10 +345,20 @@ func TestDebugf(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
+	expected := map[string]interface{}{
+		"level":   "debug",
+		"userID":  "12345",
+		"message": "Debugf message: test",
+	}
+
 	var found bool
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
-		if logEntry["level"] == "debug" && strings.Contains(logEntry["message"].(string), "Debugf message") {
+		t.Log(line)
+		// Ignore 'time' while comparing
+		delete(logEntry, "time")
+
+		if reflect.DeepEqual(expected, logEntry) {
 			found = true
 			break
 		}
@@ -285,10 +376,19 @@ func TestInfof(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
+	expected := map[string]interface{}{
+		"level":   "info",
+		"userID":  "12345",
+		"message": "Infof message: test",
+	}
+
 	var found bool
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
-		if logEntry["level"] == "info" && strings.Contains(logEntry["message"].(string), "Infof message") {
+		// Ignore 'time' while comparing
+		delete(logEntry, "time")
+
+		if reflect.DeepEqual(expected, logEntry) {
 			found = true
 			break
 		}
@@ -306,10 +406,19 @@ func TestWarnf(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
+	expected := map[string]interface{}{
+		"level":   "warn",
+		"userID":  "12345",
+		"message": "Warnf message: test",
+	}
+
 	var found bool
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
-		if logEntry["level"] == "warn" && strings.Contains(logEntry["message"].(string), "Warnf message") {
+		// Ignore 'time' while comparing
+		delete(logEntry, "time")
+
+		if reflect.DeepEqual(expected, logEntry) {
 			found = true
 			break
 		}
@@ -328,10 +437,20 @@ func TestErrorf(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
+	expected := map[string]interface{}{
+		"level":   "error",
+		"userID":  "12345",
+		"message": "Errorf message: test",
+		"error":   "error message",
+	}
+
 	var found bool
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
-		if logEntry["level"] == "error" && strings.Contains(logEntry["message"].(string), "Errorf message") {
+		// Ignore 'time' while comparing
+		delete(logEntry, "time")
+
+		if reflect.DeepEqual(expected, logEntry) {
 			found = true
 			break
 		}
@@ -350,10 +469,20 @@ func TestFatalf(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
+	expected := map[string]interface{}{
+		"level":   "fatal",
+		"userID":  "12345",
+		"message": "Fatalf message: test",
+		"error":   "fatal error",
+	}
+
 	var found bool
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
-		if logEntry["level"] == "fatal" && strings.Contains(logEntry["message"].(string), "Fatalf message") {
+		// Ignore 'time' while comparing
+		delete(logEntry, "time")
+
+		if reflect.DeepEqual(expected, logEntry) {
 			found = true
 			break
 		}
@@ -373,10 +502,20 @@ func TestPanicf(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
+	expected := map[string]interface{}{
+		"level":   "panic",
+		"userID":  "12345",
+		"message": "Panicf message: test",
+		"error":   "panic error",
+	}
+
 	var found bool
 	for _, line := range lines {
 		logEntry := parseLogLine(t, line)
-		if logEntry["level"] == "panic" && strings.Contains(logEntry["message"].(string), "Panicf message") {
+		// Ignore 'time' while comparing
+		delete(logEntry, "time")
+
+		if reflect.DeepEqual(expected, logEntry) {
 			found = true
 			break
 		}
