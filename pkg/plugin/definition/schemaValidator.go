@@ -7,7 +7,7 @@ import (
 
 // SchemaValidator interface for schema validation.
 type SchemaValidator interface {
-	Validate(ctx context.Context, url *url.URL, reqBody []byte) error
+	Validate(ctx context.Context, url *url.URL, payload []byte) error
 }
 
 // SchemaValidatorProvider interface for creating validators.

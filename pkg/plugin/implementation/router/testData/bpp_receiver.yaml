@@ -1,0 +1,28 @@
+routingRules:
+  - domain: ONDC:TRV10
+    version: 2.0.0
+    targetType: url
+    target:
+      url: https://services-backend/trv/v1
+    endpoints:
+      - select
+      - init
+      - confirm
+      - status
+      - cancel
+  - domain: ONDC:TRV10
+    version: 2.0.0
+    targetType: publisher
+    target:
+      publisherId: trv_topic_id1
+    endpoints:
+      - search
+  - domain: ONDC:TRV11
+    version: 2.0.0
+    targetType: url
+    target:
+      url: https://services-backend/trv/v1
+    endpoints:
+      - select
+      - init
+      - confirm
