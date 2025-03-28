@@ -10,17 +10,17 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// NewSignValidationErrf formats an error message according to a format specifier and arguments,and returns a new instance of SignValidationErr.
+// NewSignValidationErrf creates a new SignValidationErr with a formatted error message.
 func NewSignValidationErrf(format string, a ...any) *SignValidationErr {
 	return &SignValidationErr{fmt.Errorf(format, a...)}
 }
 
-// NewNotFoundErrf formats an error message according to a format specifier and arguments, and returns a new instance of NotFoundErr.
+// NewNotFoundErrf creates a new NotFoundErr with a formatted error message.
 func NewNotFoundErrf(format string, a ...any) *NotFoundErr {
 	return &NotFoundErr{fmt.Errorf(format, a...)}
 }
 
-// NewBadReqErrf formats an error message according to a format specifier and arguments, and returns a new instance of BadReqErr.
+// NewBadReqErrf creates a new BadReqErr with a formatted error message.
 func NewBadReqErrf(format string, a ...any) *BadReqErr {
 	return &BadReqErr{fmt.Errorf(format, a...)}
 }
