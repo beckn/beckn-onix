@@ -301,3 +301,17 @@ func compareContexts(c1, c2 map[string]interface{}) bool {
 
 	return reflect.DeepEqual(c1, c2)
 }
+
+func TestSchemaValidationErr_Error(t *testing.T) {
+	validationErrors := []Error{
+		{Paths: "name", Message: "Name is required"},
+		{Paths: "email", Message: "Invalid email format"},
+	}
+	err := SchemaValidationErr{Errors: validationErrors}
+	expected := "name: Name is required; email: Invalid email format"
+	if err.Error() != expected {
+		t.Errorf("err.Error() = %s, want %s",
+			err.Error(), expected)
+
+	}
+}
