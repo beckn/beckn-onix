@@ -28,4 +28,4 @@ func (rp RouterProvider) New(ctx context.Context, config map[string]string) (def
 }
 
 // Provider is the exported symbol that the plugin manager will look for.
-var Provider definition.RouterProvider = RouterProvider{}
+var Provider = RouterProvider{}

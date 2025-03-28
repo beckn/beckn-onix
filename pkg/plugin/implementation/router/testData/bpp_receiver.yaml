@@ -10,15 +10,13 @@ routingRules:
       - confirm
       - status
       - cancel
-
   - domain: "ONDC:TRV10"
     version: "2.0.0"
-    targetType: "msgq"
+    targetType: "publisher"
     target:
       publisherId: "trv_topic_id1"
     endpoints:
       - search
-
   - domain: "ONDC:TRV11"
     version: "2.0.0"
     targetType: "url"

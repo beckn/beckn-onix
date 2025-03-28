@@ -7,9 +7,9 @@ import (
 
 // Route defines the structure for the Route returned.
 type Route struct {
-	TargetType  string // "url" or "msgq" or "bap" or "bpp"
-	PublisherID string // For message queues
-	URL         string // For API calls
+	TargetType  string   // "url" or "msgq" or "bap" or "bpp"
+	PublisherID string   // For message queues
+	URL         *url.URL // For API calls
 }
 
 // RouterProvider initializes the a new Router instance with the given config.
