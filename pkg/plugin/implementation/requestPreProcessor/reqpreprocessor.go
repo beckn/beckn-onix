@@ -71,6 +71,7 @@ func update(wrapper map[string]any, key string, value any) any {
 		wrapper[key] = value
 		return value
 	}
+
 	return field
 }
 func isEmpty(v any) bool {
@@ -89,12 +90,12 @@ func validateConfig(cfg *Config) error {
 		return errors.New("config cannot be nil")
 	}
 
-	// Check if CheckKeys is empty
+	// Check if CheckKeys is empty.
 	if len(cfg.CheckKeys) == 0 {
 		return errors.New("checkKeys cannot be empty")
 	}
 
-	// Validate that CheckKeys does not contain empty strings
+	// Validate that CheckKeys does not contain empty strings.
 	for _, key := range cfg.CheckKeys {
 		if key == "" {
 			return errors.New("checkKeys cannot contain empty strings")

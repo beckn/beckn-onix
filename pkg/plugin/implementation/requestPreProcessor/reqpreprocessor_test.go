@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestNewUUIDSetter_SuccessCases(t *testing.T) {
+func TestNewUUIDSetterSuccessCases(t *testing.T) {
 	tests := []struct {
 		name         string
 		config       *Config
@@ -111,7 +111,7 @@ func TestNewUUIDSetter_SuccessCases(t *testing.T) {
 	}
 }
 
-func TestNewUUIDSetter_ErrorCases(t *testing.T) {
+func TestNewUUIDSetterErrorCases(t *testing.T) {
 	tests := []struct {
 		name         string
 		config       *Config
