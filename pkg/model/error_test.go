@@ -94,7 +94,8 @@ func TestBadReqErr_BecknError(t *testing.T) {
 
 	expectedMsg := "BAD Request: invalid input"
 	if beErr.Message != expectedMsg {
-		t.Errorf("expected %s, got %s", expectedMsg, beErr.Message)
+		t.Errorf("err.Error() = %s, want %s",
+			beErr.Message, expectedMsg)
 	}
 }
 
@@ -102,7 +103,8 @@ func TestNewBadReqErrf(t *testing.T) {
 	badReqErr := NewBadReqErrf("invalid field %s", "name")
 	expected := "invalid field name"
 	if badReqErr.Error() != expected {
-		t.Errorf("expected %s, got %s", expected, badReqErr.Error())
+		t.Errorf("err.Error() = %s, want %s",
+			badReqErr, expected)
 	}
 }
 
@@ -111,8 +113,10 @@ func TestNewBadReqErr(t *testing.T) {
 	badReqErr := NewBadReqErr(err)
 
 	if badReqErr.Error() != err.Error() {
-		t.Errorf("expected %s, got %s", err.Error(), badReqErr.Error())
+		t.Errorf("err.Error() = %s, want %s",
+			badReqErr.Error(), err.Error())
 	}
+
 }
 
 func TestNotFoundErr_BecknError(t *testing.T) {
@@ -121,7 +125,8 @@ func TestNotFoundErr_BecknError(t *testing.T) {
 
 	expectedMsg := "Endpoint not found: resource not found"
 	if beErr.Message != expectedMsg {
-		t.Errorf("expected %s, got %s", expectedMsg, beErr.Message)
+		t.Errorf("err.Error() = %s, want %s",
+			beErr.Message, expectedMsg)
 	}
 }
 
@@ -129,7 +134,8 @@ func TestNewNotFoundErrf(t *testing.T) {
 	notFoundErr := NewNotFoundErrf("resource %s not found", "user")
 	expected := "resource user not found"
 	if notFoundErr.Error() != expected {
-		t.Errorf("expected %s, got %s", expected, notFoundErr.Error())
+		t.Errorf("err.Error() = %s, want %s",
+			notFoundErr.Error(), expected)
 	}
 }
 
@@ -138,7 +144,8 @@ func TestNewNotFoundErr(t *testing.T) {
 	notFoundErr := NewNotFoundErr(err)
 
 	if notFoundErr.Error() != err.Error() {
-		t.Errorf("expected %s, got %s", err.Error(), notFoundErr.Error())
+		t.Errorf("err.Error() = %s, want %s",
+			notFoundErr.Error(), err.Error())
 	}
 }
 

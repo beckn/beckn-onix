@@ -12,6 +12,10 @@ import (
 	"github.com/beckn/beckn-onix/pkg/model"
 )
 
+func (e *errorResponseWriter) Header() http.Header {
+	return http.Header{}
+}
+
 func TestSendAck(t *testing.T) {
 	_, err := http.NewRequest("GET", "/", nil)
 	if err != nil {
@@ -22,12 +26,14 @@ func TestSendAck(t *testing.T) {
 	SendAck(rr)
 
 	if rr.Code != http.StatusOK {
-		t.Errorf("expected status code %d, got %d", http.StatusOK, rr.Code)
+		t.Errorf("wanted status code %d, got %d", http.StatusOK, rr.Code)
 	}
 
 	expected := `{"message":{"ack":{"status":"ACK"}}}`
 	if rr.Body.String() != expected {
-		t.Errorf("expected body %s, got %s", expected, rr.Body.String())
+		t.Errorf("err.Error() = %s, want %s",
+			rr.Body.String(), expected)
+
 	}
 }
 
@@ -88,7 +94,7 @@ func TestSendNack(t *testing.T) {
 			SendNack(ctx, rr, tt.err)
 
 			if rr.Code != tt.status {
-				t.Errorf("expected status code %d, got %d", tt.status, rr.Code)
+				t.Errorf("wanted status code %d, got %d", tt.status, rr.Code)
 			}
 
 			var actual map[string]interface{}
@@ -104,9 +110,26 @@ func TestSendNack(t *testing.T) {
 			}
 
 			if !compareJSON(expected, actual) {
-				t.Errorf("expected body %s, got %s", tt.expected, rr.Body.String())
+				t.Errorf("err.Error() = %s, want %s",
+					actual, expected)
 			}
+
 		})
+	}
+}
+
+func TestSchemaValidationErr_Error(t *testing.T) {
+	// Create sample validation errors
+	validationErrors := []Error{
+		{Paths: "name", Message: "Name is required"},
+		{Paths: "email", Message: "Invalid email format"},
+	}
+	err := SchemaValidationErr{Errors: validationErrors}
+	expected := "name: Name is required; email: Invalid email format"
+	if err.Error() != expected {
+		t.Errorf("err.Error() = %s, want %s",
+			err.Error(), expected)
+
 	}
 }
 
@@ -127,7 +150,6 @@ type badMessage struct{}
 func (b *badMessage) MarshalJSON() ([]byte, error) {
 	return nil, errors.New("marshal error")
 }
-
 
 func TestNack_1(t *testing.T) {
 	tests := []struct {
@@ -158,14 +180,14 @@ func TestNack_1(t *testing.T) {
 			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"INTERNAL_SERVER_ERROR","message":"Something went wrong"}}}`,
 		},
 		{
-			name:        "JSON Marshal Error",
-			err:         nil, // This will be overridden to cause marshaling error
-			status:      http.StatusInternalServerError,
-			expected:    `Internal server error, MessageID: 12345`,
-			useBadJSON:  true,
+			name:       "JSON Marshal Error",
+			err:        nil, // This will be overridden to cause marshaling error
+			status:     http.StatusInternalServerError,
+			expected:   `Internal server error, MessageID: 12345`,
+			useBadJSON: true,
 		},
 		{
-			name:        "Write Error",
+			name: "Write Error",
 			err: &model.Error{
 				Code:    "WRITE_ERROR",
 				Message: "Failed to write response",
@@ -201,8 +223,6 @@ func TestNack_1(t *testing.T) {
 			}
 
 			nack(w, tt.err, tt.status, ctx)
-
-			// Skip verification if using errorResponseWriter
 			if !tt.useBadWrite {
 				recorder, ok := w.(*httptest.ResponseRecorder)
 				if !ok {
@@ -210,12 +230,13 @@ func TestNack_1(t *testing.T) {
 				}
 
 				if recorder.Code != tt.status {
-					t.Errorf("expected status code %d, got %d", tt.status, recorder.Code)
+					t.Errorf("wanted status code %d, got %d", tt.status, recorder.Code)
 				}
 
 				body := recorder.Body.String()
 				if body != tt.expected {
-					t.Errorf("expected body %s, got %s", tt.expected, body)
+					t.Errorf("err.Error() = %s, want %s",
+						body, tt.expected)
 				}
 			}
 		})
