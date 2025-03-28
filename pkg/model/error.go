@@ -6,24 +6,24 @@ import (
 	"strings"
 )
 
-// Error represents an error response.
+// Error represents a standard error response.
 type Error struct {
 	Code    string `json:"code"`
 	Paths   string `json:"paths,omitempty"`
 	Message string `json:"message"`
 }
 
-// Error implements the error interface for the Error struct.
+// This implements the error interface for the Error struct.
 func (e *Error) Error() string {
 	return fmt.Sprintf("Error: Code=%s, Path=%s, Message=%s", e.Code, e.Paths, e.Message)
 }
 
-// SchemaValidationErr represents a collection of schema validation failures.
+// SchemaValidationErr occurs when schema validation errors are encountered.
 type SchemaValidationErr struct {
 	Errors []Error
 }
 
-// Error implements the error interface for SchemaValidationErr.
+// This implements the error interface for SchemaValidationErr.
 func (e *SchemaValidationErr) Error() string {
 	var errorMessages []string
 	for _, err := range e.Errors {
@@ -32,7 +32,7 @@ func (e *SchemaValidationErr) Error() string {
 	return strings.Join(errorMessages, "; ")
 }
 
-// BecknError converts SchemaValidationErr into a Beckn-compliant Error response.
+// BecknError converts the SchemaValidationErr to an instance of Error.
 func (e *SchemaValidationErr) BecknError() *Error {
 	if len(e.Errors) == 0 {
 		return &Error{
@@ -58,22 +58,17 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	}
 }
 
-// SignValidationErr represents an error that occurs during signature validation.
+// SignValidationErr occurs when signature validation fails.
 type SignValidationErr struct {
 	error
 }
 
-// NewSignValidationErrf creates a new SignValidationErr with a formatted message.
-func NewSignValidationErrf(format string, a ...any) *SignValidationErr {
-	return &SignValidationErr{fmt.Errorf(format, a...)}
-}
-
-// NewSignValidationErr creates a new SignValidationErr from an existing error.
+// NewSignValidationErr creates a new instance of SignValidationErr from an error.
 func NewSignValidationErr(e error) *SignValidationErr {
 	return &SignValidationErr{e}
 }
 
-// BecknError converts SignValidationErr into a Beckn-compliant Error response.
+// BecknError converts the SignValidationErr to an instance of Error.
 func (e *SignValidationErr) BecknError() *Error {
 	return &Error{
 		Code:    http.StatusText(http.StatusUnauthorized),
@@ -81,22 +76,17 @@ func (e *SignValidationErr) BecknError() *Error {
 	}
 }
 
-// BadReqErr represents an error related to a bad request.
+// BadReqErr occurs when a bad request is encountered.
 type BadReqErr struct {
 	error
 }
 
-// NewBadReqErr creates a new BadReqErr from an existing error.
+// NewBadReqErr creates a new instance of BadReqErr from an error.
 func NewBadReqErr(err error) *BadReqErr {
 	return &BadReqErr{err}
 }
 
-// NewBadReqErrf creates a new BadReqErr with a formatted message.
-func NewBadReqErrf(format string, a ...any) *BadReqErr {
-	return &BadReqErr{fmt.Errorf(format, a...)}
-}
-
-// BecknError converts BadReqErr into a Beckn-compliant Error response.
+// BecknError converts the BadReqErr to an instance of Error.
 func (e *BadReqErr) BecknError() *Error {
 	return &Error{
 		Code:    http.StatusText(http.StatusBadRequest),
@@ -104,22 +94,17 @@ func (e *BadReqErr) BecknError() *Error {
 	}
 }
 
-// NotFoundErr represents an error for a missing resource or endpoint.
+// NotFoundErr occurs when a requested endpoint is not found.
 type NotFoundErr struct {
 	error
 }
 
-// NewNotFoundErr creates a new NotFoundErr from an existing error.
+// NewNotFoundErr creates a new instance of NotFoundErr from an error.
 func NewNotFoundErr(err error) *NotFoundErr {
 	return &NotFoundErr{err}
 }
 
-// NewNotFoundErrf creates a new NotFoundErr with a formatted message.
-func NewNotFoundErrf(format string, a ...any) *NotFoundErr {
-	return &NotFoundErr{fmt.Errorf(format, a...)}
-}
-
-// BecknError converts NotFoundErr into a Beckn-compliant Error response.
+// BecknError converts the NotFoundErr to an instance of Error.
 func (e *NotFoundErr) BecknError() *Error {
 	return &Error{
 		Code:    http.StatusText(http.StatusNotFound),

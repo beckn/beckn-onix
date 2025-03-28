@@ -38,27 +38,19 @@ const (
 	UnaAuthorizedHeaderGateway    string = "Proxy-Authenticate"
 )
 
-// MsgIDKey represents the key for the message ID.
-const MsgIDKey = "message_id"
+type contextKey string
 
-// Role defines different roles in the network.
+const MsgIDKey = contextKey("message_id")
+
 type Role string
 
 const (
-	// RoleBAP represents a Buyer App Participant.
-	RoleBAP Role = "bap"
-
-	// RoleBPP represents a Buyer Platform Participant.
-	RoleBPP Role = "bpp"
-
-	// RoleGateway represents a Network Gateway.
-	RoleGateway Role = "gateway"
-
-	// RoleRegistery represents a Registry Service.
+	RoleBAP       Role = "bap"
+	RoleBPP       Role = "bpp"
+	RoleGateway   Role = "gateway"
 	RoleRegistery Role = "registery"
 )
 
-// validRoles ensures only allowed values are accepted
 var validRoles = map[Role]bool{
 	RoleBAP:       true,
 	RoleBPP:       true,
@@ -99,28 +91,20 @@ type StepContext struct {
 	RespHeader http.Header
 }
 
-// WithContext updates the context in StepContext while keeping other fields unchanged.
 func (ctx *StepContext) WithContext(newCtx context.Context) {
-	ctx.Context = newCtx // Update the existing context, keeping all other fields unchanged.
+	ctx.Context = newCtx
 }
 
-// Status represents the status of an acknowledgment.
 type Status string
 
 const (
-	// StatusACK indicates a successful acknowledgment.
-	StatusACK Status = "ACK"
-
-	// StatusNACK indicates a negative acknowledgment.
+	StatusACK  Status = "ACK"
 	StatusNACK Status = "NACK"
 )
 
-// Ack represents an acknowledgment response.
 type Ack struct {
-	Status Status `json:"status"` // ACK or NACK
+	Status Status `json:"status"`
 }
-
-// Message represents the message object in the response.
 type Message struct {
 	Ack   Ack    `json:"ack"`
 	Error *Error `json:"error,omitempty"`
