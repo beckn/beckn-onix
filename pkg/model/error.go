@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Error represents an error response.
+// Error represents a standard error response.
 type Error struct {
 	Code    string `json:"code"`
 	Paths   string `json:"paths,omitempty"`
@@ -18,7 +18,7 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("Error: Code=%s, Path=%s, Message=%s", e.Code, e.Paths, e.Message)
 }
 
-// SchemaValidationErr represents a collection of schema validation failures.
+// SchemaValidationErr occurs when schema validation errors are encountered.
 type SchemaValidationErr struct {
 	Errors []Error
 }
@@ -32,6 +32,7 @@ func (e *SchemaValidationErr) Error() string {
 	return strings.Join(errorMessages, "; ")
 }
 
+// BecknError converts the SchemaValidationErr to an instance of Error.
 func (e *SchemaValidationErr) BecknError() *Error {
 	if len(e.Errors) == 0 {
 		return &Error{
@@ -57,7 +58,7 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	}
 }
 
-// SignValidationErr represents a collection of schema validation failures.
+// SignValidationErr occurs when signature validation fails.
 type SignValidationErr struct {
 	error
 }
@@ -75,7 +76,7 @@ func (e *SignValidationErr) BecknError() *Error {
 	}
 }
 
-// SignValidationErr represents a collection of schema validation failures.
+// BadReqErr occurs when a bad request is encountered.
 type BadReqErr struct {
 	error
 }
@@ -93,7 +94,7 @@ func (e *BadReqErr) BecknError() *Error {
 	}
 }
 
-// SignValidationErr represents a collection of schema validation failures.
+// NotFoundErr occurs when a requested endpoint is not found.
 type NotFoundErr struct {
 	error
 }
