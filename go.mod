@@ -11,10 +11,14 @@ require (
 )
 
 require (
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/google/uuid v1.6.0
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/stretchr/testify v1.10.0
 	github.com/zenazn/pkcs7pad v0.0.0-20170308005700-253a5b1f0e03
-	golang.org/x/text v0.23.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1
 )
 
-require gopkg.in/yaml.v3 v3.0.1
+require golang.org/x/text v0.23.0 // indirect
 
 require golang.org/x/sys v0.31.0 // indirect
