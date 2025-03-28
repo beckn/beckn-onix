@@ -48,11 +48,12 @@ func generateSignature(signingString []byte, privateKeyBase64 string) ([]byte, e
 		return nil, fmt.Errorf("error decoding private key: %w", err)
 	}
 
-	if len(privateKeyBytes) != ed25519.PrivateKeySize {
-		return nil, errors.New("invalid private key length")
+	if len(privateKeyBytes) != ed25519.SeedSize {
+		return nil, errors.New("invalid seed length")
 	}
 
-	privateKey := ed25519.PrivateKey(privateKeyBytes)
+	// Generate the private key from the seed
+	privateKey := ed25519.NewKeyFromSeed(privateKeyBytes)
 	return ed25519.Sign(privateKey, signingString), nil
 }
 
