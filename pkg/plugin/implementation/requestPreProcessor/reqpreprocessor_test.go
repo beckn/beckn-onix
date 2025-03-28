@@ -19,8 +19,8 @@ func TestNewUUIDSetterSuccessCases(t *testing.T) {
 		{
 			name: "Valid keys, update missing keys with bap role",
 			config: &Config{
-				CheckKeys: []string{"transaction_id", "message_id"},
-				Role:      "bap",
+				ContextKeys: []string{"transaction_id", "message_id"},
+				Role:        "bap",
 			},
 			requestBody: map[string]any{
 				"context": map[string]any{
@@ -35,8 +35,8 @@ func TestNewUUIDSetterSuccessCases(t *testing.T) {
 		{
 			name: "Valid keys, do not update existing keys with bpp role",
 			config: &Config{
-				CheckKeys: []string{"transaction_id", "message_id"},
-				Role:      "bpp",
+				ContextKeys: []string{"transaction_id", "message_id"},
+				Role:        "bpp",
 			},
 			requestBody: map[string]any{
 				"context": map[string]any{
@@ -66,7 +66,7 @@ func TestNewUUIDSetterSuccessCases(t *testing.T) {
 			dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				ctx := r.Context()
 				w.WriteHeader(http.StatusOK)
-				
+
 				subID, ok := ctx.Value(subscriberIDKey).(string)
 				if !ok {
 					http.Error(w, "Subscriber ID not found", http.StatusInternalServerError)
@@ -121,7 +121,7 @@ func TestNewUUIDSetterErrorCases(t *testing.T) {
 		{
 			name: "Missing context key",
 			config: &Config{
-				CheckKeys: []string{"transaction_id"},
+				ContextKeys: []string{"transaction_id"},
 			},
 			requestBody: map[string]any{
 				"otherKey": "value",
@@ -131,7 +131,7 @@ func TestNewUUIDSetterErrorCases(t *testing.T) {
 		{
 			name: "Invalid context type",
 			config: &Config{
-				CheckKeys: []string{"transaction_id"},
+				ContextKeys: []string{"transaction_id"},
 			},
 			requestBody: map[string]any{
 				"context": "not-a-map",

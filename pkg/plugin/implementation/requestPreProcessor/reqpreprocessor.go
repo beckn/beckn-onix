@@ -13,8 +13,8 @@ import (
 )
 
 type Config struct {
-	CheckKeys []string
-	Role      string
+	ContextKeys []string
+	Role        string
 }
 
 type becknRequest struct {
@@ -50,7 +50,7 @@ func NewUUIDSetter(cfg *Config) (func(http.Handler) http.Handler, error) {
 				subID = req.Context["bpp_id"]
 			}
 			ctx := context.WithValue(r.Context(), subscriberIDKey, subID)
-			for _, key := range cfg.CheckKeys {
+			for _, key := range cfg.ContextKeys {
 				value := uuid.NewString()
 				updatedValue := update(req.Context, key, value)
 				ctx = context.WithValue(ctx, contextKeyType(key), updatedValue)
@@ -90,15 +90,15 @@ func validateConfig(cfg *Config) error {
 		return errors.New("config cannot be nil")
 	}
 
-	// Check if CheckKeys is empty.
-	if len(cfg.CheckKeys) == 0 {
-		return errors.New("checkKeys cannot be empty")
+	// Check if ContextKeys is empty.
+	if len(cfg.ContextKeys) == 0 {
+		return errors.New("ContextKeys cannot be empty")
 	}
 
-	// Validate that CheckKeys does not contain empty strings.
-	for _, key := range cfg.CheckKeys {
+	// Validate that ContextKeys does not contain empty strings.
+	for _, key := range cfg.ContextKeys {
 		if key == "" {
-			return errors.New("checkKeys cannot contain empty strings")
+			return errors.New("ContextKeys cannot contain empty strings")
 		}
 	}
 	return nil
