@@ -1,0 +1,23 @@
+routingRules:
+  - domain: ONDC:TRV10
+    version: 2.0.0
+    targetType: bap
+    endpoints:
+      - on_search
+      - on_select
+      - on_init
+      - on_confirm
+      - on_status
+      - on_update
+      - on_cancel
+  - domain: ONDC:TRV11
+    version: 2.0.0
+    targetType: bap
+    endpoints:
+      - on_search
+      - on_select
+      - on_init
+      - on_confirm
+      - on_status
+      - on_update
+      - on_cancel
