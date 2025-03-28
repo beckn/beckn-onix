@@ -61,14 +61,14 @@ func (v *SchemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 	}
 
 	// Extract domain, version, and endpoint from the payload and uri.
-	cxt_domain := payloadData.Context.Domain
+	cxtDomain := payloadData.Context.Domain
 	version := payloadData.Context.Version
 	version = fmt.Sprintf("v%s", version)
 
 	endpoint := path.Base(url.String())
 	// ToDo Add debug log here
 	fmt.Println("Handling request for endpoint:", endpoint)
-	domain := strings.ToLower(cxt_domain)
+	domain := strings.ToLower(cxtDomain)
 	domain = strings.ReplaceAll(domain, ":", "_")
 
 	// Construct the schema file name.
