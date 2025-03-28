@@ -25,12 +25,12 @@ type Config struct {
 	Log           log.Config            `yaml:"log"`
 	PluginManager *plugin.ManagerConfig `yaml:"pluginManager"`
 	Modules       []module.Config       `yaml:"modules"`
-	HTTP          timeouts              `yaml:"http"` // Nest http config
+	HTTP          timeouts              `yaml:"http"`
 }
 
 type timeouts struct {
-	Port    string        `yaml:"port"`
-	Timeout timeoutConfig `yaml:"timeout"`
+	Port     string        `yaml:"port"`
+	Timeouts timeoutConfig `yaml:"timeout"`
 }
 
 type timeoutConfig struct {
@@ -138,9 +138,9 @@ func run(ctx context.Context, configPath string) error {
 	httpServer := &http.Server{
 		Addr:         net.JoinHostPort("", cfg.HTTP.Port),
 		Handler:      srv,
-		ReadTimeout:  cfg.HTTP.Timeout.Read * time.Second, // Use timeouts from config
-		WriteTimeout: cfg.HTTP.Timeout.Write * time.Second,
-		IdleTimeout:  cfg.HTTP.Timeout.Idle * time.Second,
+		ReadTimeout:  cfg.HTTP.Timeouts.Read * time.Second,
+		WriteTimeout: cfg.HTTP.Timeouts.Write * time.Second,
+		IdleTimeout:  cfg.HTTP.Timeouts.Idle * time.Second,
 	}
 
 	// Start HTTP server.

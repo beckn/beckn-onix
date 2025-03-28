@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	definition "github.com/beckn/beckn-onix/pkg/plugin/definition"
-	schemaValidator "github.com/beckn/beckn-onix/pkg/plugin/implementation/schemaValidator"
+	schemaValidator "github.com/beckn/beckn-onix/pkg/plugin/implementation/schemavalidator"
 )
 
 // schemaValidatorProvider provides instances of schemaValidator.

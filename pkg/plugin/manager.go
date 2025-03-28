@@ -149,8 +149,15 @@ func (m *Manager) Router(ctx context.Context, cfg *Config) (definition.Router, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	return rp.New(ctx, cfg.Config)
-
+	router, closer, err := rp.New(ctx, cfg.Config)
+	if closer != nil {
+		m.addCloser(func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return router, nil
 }
 
 func (m *Manager) Middleware(ctx context.Context, cfg *Config) (func(http.Handler) http.Handler, error) {

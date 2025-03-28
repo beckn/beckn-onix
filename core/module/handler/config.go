@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"github.com/beckn/beckn-onix/pkg/model"
@@ -10,7 +9,7 @@ import (
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
 )
 
-// PluginManager defines the methods required for managing plugins in stdHandler.
+// PluginManager defines an interface for managing plugins dynamically.
 type PluginManager interface {
 	Middleware(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error)
 	SignValidator(ctx context.Context, cfg *plugin.Config) (definition.Verifier, error)
@@ -53,45 +52,4 @@ type Config struct {
 	RegistryURL  string `yaml:"registryUrl"`
 	Role         model.Role
 	SubscriberID string `yaml:"subscriberId"`
-	Trace        map[string]bool
-}
-
-// Step represents a named processing step.
-type Step string
-
-const (
-	// StepInitialize represents the initialization phase of the request processing pipeline.
-	StepInitialize Step = "initialize"
-
-	// StepValidate represents the validation phase, where input data is checked for correctness.
-	StepValidate Step = "validate"
-
-	// StepProcess represents the core processing phase of the request.
-	StepProcess Step = "process"
-
-	// StepFinalize represents the finalization phase, where the response is prepared and sent.
-	StepFinalize Step = "finalize"
-)
-
-// validSteps ensures only allowed step values are used.
-var validSteps = map[Step]bool{
-	StepInitialize: true,
-	StepValidate:   true,
-	StepProcess:    true,
-	StepFinalize:   true,
-}
-
-// UnmarshalYAML customizes YAML unmarshalling for Step to enforce valid values.
-func (s *Step) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	var stepName string
-	if err := unmarshal(&stepName); err != nil {
-		return err
-	}
-
-	step := Step(stepName)
-	if !validSteps[step] {
-		return fmt.Errorf("invalid step: %s", stepName)
-	}
-	*s = step
-	return nil
 }
