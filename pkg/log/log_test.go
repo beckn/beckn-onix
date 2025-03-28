@@ -1,7 +1,6 @@
 package log
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -22,7 +21,7 @@ type ctxKey any
 var requestID ctxKey = "requestID"
 var userID ctxKey = "userID"
 
-func setupLogger(t *testing.T, l Level) string {
+func setupLogger(t *testing.T, l level) string {
 	dir := filepath.Dir(testLogFilePath)
 	err := os.MkdirAll(dir, os.ModePerm)
 	if err != nil {
@@ -31,7 +30,7 @@ func setupLogger(t *testing.T, l Level) string {
 
 	config := Config{
 		Level: l,
-		Destinations: []Destination{
+		Destinations: []destination{
 			{
 				Type: File,
 				Config: map[string]string{
@@ -53,21 +52,11 @@ func setupLogger(t *testing.T, l Level) string {
 }
 
 func readLogFile(t *testing.T, logPath string) []string {
-	file, err := os.Open(logPath)
+	b, err := os.ReadFile(logPath)
 	if err != nil {
-		t.Fatalf("failed to open log file: %v", err)
-	}
-	defer file.Close()
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	if err := scanner.Err(); err != nil {
 		t.Fatalf("failed to read log file: %v", err)
 	}
-
-	return lines
+	return strings.Split(string(b), "\n")
 }
 
 func parseLogLine(t *testing.T, line string) map[string]interface{} {
@@ -404,7 +393,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "Valid config with Stdout",
 			config: Config{
 				Level: InfoLevel,
-				Destinations: []Destination{
+				Destinations: []destination{
 					{Type: Stdout},
 				},
 			},
@@ -414,7 +403,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "Valid config with File destination and valid path",
 			config: Config{
 				Level: InfoLevel,
-				Destinations: []Destination{
+				Destinations: []destination{
 					{
 						Type: File,
 						Config: map[string]string{
@@ -432,7 +421,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "Error: Invalid log level",
 			config: Config{
 				Level: "invalid",
-				Destinations: []Destination{
+				Destinations: []destination{
 					{Type: Stdout},
 				},
 			},
@@ -442,7 +431,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "Error: No destinations provided",
 			config: Config{
 				Level:        InfoLevel,
-				Destinations: []Destination{},
+				Destinations: []destination{},
 			},
 			wantErr: ErrLogDestinationNil,
 		},
@@ -450,7 +439,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "Error: Invalid destination type",
 			config: Config{
 				Level: InfoLevel,
-				Destinations: []Destination{
+				Destinations: []destination{
 					{Type: "unknown"},
 				},
 			},
@@ -460,7 +449,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "Error: Missing file path for file destination",
 			config: Config{
 				Level: InfoLevel,
-				Destinations: []Destination{
+				Destinations: []destination{
 					{
 						Type: File,
 						Config: map[string]string{
@@ -475,7 +464,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "Error: Invalid maxSize value in file destination",
 			config: Config{
 				Level: InfoLevel,
-				Destinations: []Destination{
+				Destinations: []destination{
 					{
 						Type: File,
 						Config: map[string]string{
@@ -491,7 +480,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "Error: Invalid maxBackups value in file destination",
 			config: Config{
 				Level: InfoLevel,
-				Destinations: []Destination{
+				Destinations: []destination{
 					{
 						Type: File,
 						Config: map[string]string{
@@ -507,7 +496,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "Error: Invalid maxAge value in file destination",
 			config: Config{
 				Level: InfoLevel,
-				Destinations: []Destination{
+				Destinations: []destination{
 					{
 						Type: File,
 						Config: map[string]string{

@@ -16,30 +16,30 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-type Level string
+type level string
 
-type DestinationType string
+type destinationType string
 
-type Destination struct {
-	Type   DestinationType   `yaml:"type"`
+type destination struct {
+	Type   destinationType   `yaml:"type"`
 	Config map[string]string `yaml:"config"`
 }
 
 const (
-	Stdout DestinationType = "stdout"
-	File   DestinationType = "file"
+	Stdout destinationType = "stdout"
+	File   destinationType = "file"
 )
 
 const (
-	DebugLevel Level = "debug"
-	InfoLevel  Level = "info"
-	WarnLevel  Level = "warn"
-	ErrorLevel Level = "error"
-	FatalLevel Level = "fatal"
-	PanicLevel Level = "panic"
+	DebugLevel level = "debug"
+	InfoLevel  level = "info"
+	WarnLevel  level = "warn"
+	ErrorLevel level = "error"
+	FatalLevel level = "fatal"
+	PanicLevel level = "panic"
 )
 
-var logLevels = map[Level]zerolog.Level{
+var logLevels = map[level]zerolog.Level{
 	DebugLevel: zerolog.DebugLevel,
 	InfoLevel:  zerolog.InfoLevel,
 	WarnLevel:  zerolog.WarnLevel,
@@ -49,8 +49,8 @@ var logLevels = map[Level]zerolog.Level{
 }
 
 type Config struct {
-	Level        Level         `yaml:"level"`
-	Destinations []Destination `yaml:"destinations"`
+	Level        level         `yaml:"level"`
+	Destinations []destination `yaml:"destinations"`
 	ContextKeys  []string      `yaml:"contextKeys"`
 }
 
@@ -99,7 +99,7 @@ func (config *Config) validate() error {
 
 var defaultConfig = Config{
 	Level: InfoLevel,
-	Destinations: []Destination{
+	Destinations: []destination{
 		{Type: Stdout},
 	},
 }
