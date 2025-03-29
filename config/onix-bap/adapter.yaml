@@ -1,0 +1,97 @@
+appName: "onix"
+log:
+  level: debug
+  destinations:
+    - type: stdout
+  contextKeys:
+    - transaction_id
+    - message_id
+    - subscriber_id
+http:
+  port: 8080
+  timeout:
+    read: 30
+    write: 30
+    idle: 30
+pluginManager:
+  root: /app/plugins
+  remoteRoot: /mnt/gcs/plugins/plugins_bundle.zip
+modules:
+  - name: bapTxnReciever
+    path: /bap/reciever/
+    handler:
+      type: std
+      role: bap
+      registryUrl: http://localhost:8080/reg
+      plugins:
+        keyManager:
+          id: secretskeymanager
+          config:
+            projectID: ${projectID}
+        cache:
+          id: redis
+          config:
+            addr: 192.168.1.1:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: /mnt/gcs/configs/schemas
+        signValidator:
+          id: signvalidator
+        publisher:
+          id: publisher
+          config:
+            project: ${projectID}
+            topic: bapNetworkReciever
+        router:
+          id: router
+          config:
+            routingConfigPath: /mnt/gcs/configs/bapTxnReciever-routing.yaml
+        middleware:
+          - id: reqpreprocessor
+            config:
+              uuidKeys: transaction_id,message_id
+              role: bap
+      steps:
+        - validateSign
+        - addRoute
+        - validateSchema
+  - name: bapTxnCaller
+    path: /bap/caller/
+    handler:
+      type: std
+      registryUrl: http://localhost:8080/reg
+      role: bap
+      plugins:
+        keyManager:
+          id: secretskeymanager
+          config:
+            projectID: ${projectID}
+        cache:
+          id: redis
+          config:
+            addr: 192.168.1.1:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: /mnt/gcs/configs/schemas
+        signer:
+          id: signer
+        publisher:
+          id: publisher
+          config:
+            project: ${projectID}
+            topic: bapNetworkReciever
+        router:
+          id: router
+          config:
+            routingConfigPath: /mnt/gcs/configs/bapTxnCaller-routing.yaml
+        middleware:
+          - id: reqpreprocessor
+            config:
+              uuidKeys: transaction_id,message_id
+              role: bap
+      steps:
+        - validateSchema
+        - addRoute
+        - sign
