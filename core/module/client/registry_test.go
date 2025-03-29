@@ -1,0 +1,261 @@
+package client
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/beckn/beckn-onix/pkg/model"
+	"github.com/stretchr/testify/require"
+)
+
+// MockRegistryClient is a mock implementation of the RegistryClient.
+type MockRegistryClient struct {
+	SubscribeFunc func(ctx context.Context, subscription *model.Subscription) error
+}
+
+// Subscribe calls the mock Subscribe function.
+func (m *MockRegistryClient) Subscribe(ctx context.Context, subscription *model.Subscription) error {
+	return m.SubscribeFunc(ctx, subscription)
+}
+
+// TestSubscribeSuccess verifies that the Subscribe function succeeds when the server responds with HTTP 200.
+func TestSubscribeSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("{}"))
+	}))
+	defer server.Close()
+
+	client := NewRegisteryClient(&Config{
+		RegisteryURL: server.URL,
+		RetryMax:     3,
+		RetryWaitMin: time.Millisecond * 100,
+		RetryWaitMax: time.Millisecond * 500,
+	})
+
+	subscription := &model.Subscription{
+		KeyID:            "test-key",
+		SigningPublicKey: "test-signing-key",
+		EncrPublicKey:    "test-encryption-key",
+		ValidFrom:        time.Now(),
+		ValidUntil:       time.Now().Add(24 * time.Hour),
+		Status:           "SUBSCRIBED",
+	}
+
+	err := client.Subscribe(context.Background(), subscription)
+	require.NoError(t, err)
+}
+
+// TestSubscribeFailureWithMock tests different failure scenarios using a mock client.
+func TestSubscribeFailureWithMock(t *testing.T) {
+	tests := []struct {
+		name        string
+		mockError   error
+		expectError bool
+	}{
+		{
+			name:        "Failed subscription - Internal Server Error",
+			mockError:   errors.New("internal server error"),
+			expectError: true,
+		},
+		{
+			name:        "Failed subscription - Bad Request",
+			mockError:   errors.New("bad request"),
+			expectError: true,
+		},
+		{
+			name:        "Request Timeout",
+			mockError:   context.DeadlineExceeded,
+			expectError: true,
+		},
+		{
+			name:        "Network Failure",
+			mockError:   errors.New("network failure"),
+			expectError: true,
+		},
+		{
+			name:        "JSON Marshalling Failure",
+			mockError:   errors.New("json marshalling failure"),
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &MockRegistryClient{
+				SubscribeFunc: func(ctx context.Context, subscription *model.Subscription) error {
+					return tt.mockError
+				},
+			}
+
+			subscription := &model.Subscription{
+				KeyID:            "test-key",
+				SigningPublicKey: "test-signing-key",
+				EncrPublicKey:    "test-encryption-key",
+				ValidFrom:        time.Now(),
+				ValidUntil:       time.Now().Add(24 * time.Hour),
+				Status:           "SUBSCRIBED",
+			}
+
+			if tt.name == "JSON Marshalling Failure" {
+				invalidSubscription := &model.Subscription{}
+				invalidSubscription.ValidFrom = time.Unix(0, 0) // Invalid zero timestamp
+				subscription = invalidSubscription
+			}
+
+			err := mockClient.Subscribe(context.Background(), subscription)
+			if tt.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestLookupSuccess tests successful lookup scenarios.
+func TestLookupSuccess(t *testing.T) {
+	tests := []struct {
+		name         string
+		responseBody interface{}
+		responseCode int
+	}{
+		{
+			name: "Successful lookup",
+			responseBody: []model.Subscription{
+				{
+					Subscriber: model.Subscriber{
+						SubscriberID: "123",
+					},
+					KeyID:            "test-key",
+					SigningPublicKey: "test-signing-key",
+					EncrPublicKey:    "test-encryption-key",
+					ValidFrom:        time.Now(),
+					ValidUntil:       time.Now().Add(24 * time.Hour),
+					Status:           "SUBSCRIBED",
+				},
+			},
+			responseCode: http.StatusOK,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.responseCode)
+				if tc.responseBody != nil {
+					bodyBytes, _ := json.Marshal(tc.responseBody)
+					w.Write(bodyBytes)
+				}
+			}))
+			defer server.Close()
+
+			config := &Config{
+				RegisteryURL: server.URL,
+				RetryMax:     1,
+				RetryWaitMin: 1 * time.Millisecond,
+				RetryWaitMax: 2 * time.Millisecond,
+			}
+			rClient := NewRegisteryClient(config)
+			ctx := context.Background()
+			subscription := &model.Subscription{
+				Subscriber: model.Subscriber{
+					SubscriberID: "123",
+				},
+				KeyID:            "test-key",
+				SigningPublicKey: "test-signing-key",
+				EncrPublicKey:    "test-encryption-key",
+				ValidFrom:        time.Now(),
+				ValidUntil:       time.Now().Add(24 * time.Hour),
+				Status:           "SUBSCRIBED",
+			}
+
+			result, err := rClient.Lookup(ctx, subscription)
+			require.NoError(t, err)
+			require.NotEmpty(t, result)
+			require.Equal(t, subscription.Subscriber.SubscriberID, result[0].Subscriber.SubscriberID)
+		})
+	}
+}
+
+// TestLookupFailure tests failure scenarios for the Lookup function.
+func TestLookupFailure(t *testing.T) {
+	tests := []struct {
+		name         string
+		responseBody interface{}
+		responseCode int
+		setupMock    func(*httptest.Server)
+	}{
+		{
+			name:         "Lookup failure - non 200 status",
+			responseBody: "Internal Server Error",
+			responseCode: http.StatusInternalServerError,
+		},
+		{
+			name:         "Invalid JSON response",
+			responseBody: "Invalid JSON",
+			responseCode: http.StatusOK,
+		},
+		{
+			name: "Server timeout",
+			setupMock: func(server *httptest.Server) {
+				server.Config.WriteTimeout = 1 * time.Millisecond // Force timeout
+			},
+		},
+		{
+			name:         "Empty response body",
+			responseBody: "",
+			responseCode: http.StatusOK,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.responseCode != 0 { // Prevent WriteHeader(0) error
+					w.WriteHeader(tc.responseCode)
+				}
+				if tc.responseBody != nil {
+					if str, ok := tc.responseBody.(string); ok {
+						w.Write([]byte(str))
+					} else {
+						bodyBytes, _ := json.Marshal(tc.responseBody)
+						w.Write(bodyBytes)
+					}
+				}
+			}))
+			defer server.Close()
+
+			if tc.setupMock != nil {
+				tc.setupMock(server)
+			}
+
+			config := &Config{
+				RegisteryURL: server.URL,
+				RetryMax:     0, // Prevent excessive retries
+				RetryWaitMin: 1 * time.Millisecond,
+				RetryWaitMax: 2 * time.Millisecond,
+			}
+			rClient := NewRegisteryClient(config)
+			ctx := context.Background()
+			subscription := &model.Subscription{
+				Subscriber:       model.Subscriber{},
+				KeyID:            "test-key",
+				SigningPublicKey: "test-signing-key",
+				EncrPublicKey:    "test-encryption-key",
+				ValidFrom:        time.Now(),
+				ValidUntil:       time.Now().Add(24 * time.Hour),
+				Status:           "SUBSCRIBED",
+			}
+
+			result, err := rClient.Lookup(ctx, subscription)
+			require.Error(t, err)
+			require.Empty(t, result)
+		})
+	}
+}
