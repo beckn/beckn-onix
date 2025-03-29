@@ -81,9 +81,9 @@ func (r *Role) UnmarshalYAML(unmarshal func(interface{}) error) error {
 
 // Route represents a network route for message processing.
 type Route struct {
-	Type      string
-	URL       *url.URL
-	Publisher string
+	TargetType  string   // "url" or "msgq" or "bap" or "bpp"
+	PublisherID string   // For message queues
+	URL         *url.URL // For API calls
 }
 
 // StepContext holds context information for a request processing step.

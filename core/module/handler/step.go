@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -112,6 +113,15 @@ type validateSchemaStep struct {
 	validator definition.SchemaValidator
 }
 
+// newValidateSchemaStep creates and returns the validateSchema step after validation.
+func newValidateSchemaStep(schemaValidator definition.SchemaValidator) (definition.Step, error) {
+	if schemaValidator == nil {
+		return nil, fmt.Errorf("invalid config: SchemaValidator plugin not configured")
+	}
+	log.Debug(context.Background(), "adding schema validator")
+	return &validateSchemaStep{validator: schemaValidator}, nil
+}
+
 // Run executes the schema validation step.
 func (s *validateSchemaStep) Run(ctx *model.StepContext) error {
 	if err := s.validator.Validate(ctx, ctx.Request.URL, ctx.Body); err != nil {
@@ -125,6 +135,14 @@ type addRouteStep struct {
 	router definition.Router
 }
 
+// newRouteStep creates and returns the addRoute step after validation.
+func newRouteStep(router definition.Router) (definition.Step, error) {
+	if router == nil {
+		return nil, fmt.Errorf("invalid config: Router plugin not configured")
+	}
+	return &addRouteStep{router: router}, nil
+}
+
 // Run executes the routing step.
 func (s *addRouteStep) Run(ctx *model.StepContext) error {
 	route, err := s.router.Route(ctx, ctx.Request.URL, ctx.Body)
@@ -132,5 +150,20 @@ func (s *addRouteStep) Run(ctx *model.StepContext) error {
 		return fmt.Errorf("failed to determine route: %w", err)
 	}
 	log.Debugf(ctx, "Routing to %#v", route)
+	ctx.Route = &model.Route{
+		TargetType:  route.TargetType,
+		PublisherID: route.PublisherID,
+		URL:         route.URL,
+	}
+	log.Debugf(ctx, "ctx.Route to %#v", ctx.Route)
+	return nil
+}
+
+// broadcastStep is a stub implementation of a step that handles broadcasting messages.
+type broadcastStep struct{}
+
+// Run executes the broadcast step.
+func (b *broadcastStep) Run(ctx *model.StepContext) error {
+	// TODO: Implement broadcast logic if needed
 	return nil
 }

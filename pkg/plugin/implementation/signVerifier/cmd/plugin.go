@@ -5,8 +5,7 @@ import (
 	"errors"
 
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
-
-	verifier "github.com/beckn/beckn-onix/pkg/plugin/implementation/signVerifier"
+	"github.com/beckn/beckn-onix/pkg/plugin/implementation/signverifier"
 )
 
 // VerifierProvider provides instances of Verifier.
@@ -18,7 +17,7 @@ func (vp VerifierProvider) New(ctx context.Context, config map[string]string) (d
 		return nil, nil, errors.New("context cannot be nil")
 	}
 
-	return verifier.New(ctx, &verifier.Config{})
+	return signverifier.New(ctx, &signverifier.Config{})
 }
 
 // Provider is the exported symbol that the plugin manager will look for.

@@ -111,7 +111,7 @@ func (h *stdHandler) subID(ctx context.Context) string {
 // route handles request forwarding or message publishing based on the routing type.
 func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb definition.Publisher) {
 	log.Debugf(ctx, "Routing to ctx.Route to %#v", ctx.Route)
-	switch ctx.Route.Type {
+	switch ctx.Route.TargetType {
 	case "url":
 		log.Infof(ctx.Context, "Forwarding request to URL: %s", ctx.Route.URL)
 		proxy(r, w, ctx.Route.URL)
@@ -123,7 +123,7 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 			response.SendNack(ctx, w, err)
 			return
 		}
-		log.Infof(ctx.Context, "Publishing message to: %s", ctx.Route.Publisher)
+		log.Infof(ctx.Context, "Publishing message to: %s", ctx.Route.PublisherID)
 		if err := pb.Publish(ctx, ctx.Body); err != nil {
 			log.Errorf(ctx.Context, err, "Failed to publish message")
 			http.Error(w, "Error publishing message", http.StatusInternalServerError)
@@ -131,7 +131,7 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 			return
 		}
 	default:
-		err := fmt.Errorf("unknown route type: %s", ctx.Route.Type)
+		err := fmt.Errorf("unknown route type: %s", ctx.Route.TargetType)
 		log.Errorf(ctx.Context, err, "Invalid configuration:%v", err)
 		response.SendNack(ctx, w, err)
 		return
@@ -230,6 +230,35 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 		steps[c.ID] = step
 	}
 
+	// Register processing steps
+	for _, step := range cfg.Steps {
+		var s definition.Step
+		var err error
+
+		switch step {
+		case "sign":
+			s, err = newSignStep(h.signer, h.km)
+		case "validateSign":
+			s, err = newValidateSignStep(h.signValidator, h.km)
+		case "validateSchema":
+			s, err = newValidateSchemaStep(h.schemaValidator)
+		case "addRoute":
+			s, err = newRouteStep(h.router)
+		case "broadcast":
+			s = &broadcastStep{}
+		default:
+			if customStep, exists := steps[step]; exists {
+				s = customStep
+			} else {
+				return fmt.Errorf("unrecognized step: %s", step)
+			}
+		}
+
+		if err != nil {
+			return err
+		}
+		h.steps = append(h.steps, s)
+	}
 	log.Infof(ctx, "Processor steps initialized: %v", cfg.Steps)
 	return nil
 }
