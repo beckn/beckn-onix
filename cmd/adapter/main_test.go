@@ -24,8 +24,7 @@ type MockPluginManager struct {
 
 // Middleware returns a middleware function based on the provided configuration.
 func (m *MockPluginManager) Middleware(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error) {
-	args := m.Called(ctx, cfg)
-	return args.Get(0).(func(http.Handler) http.Handler), args.Error(1)
+	return nil, nil
 }
 
 // SignValidator returns a mock implementation of the Verifier interface.
