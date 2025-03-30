@@ -9,7 +9,8 @@ import (
 	"path"
 	"strings"
 
-	definition "github.com/beckn/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn/beckn-onix/pkg/log"
+	"github.com/beckn/beckn-onix/pkg/model"
 
 	"gopkg.in/yaml.v3"
 )
@@ -26,7 +27,7 @@ type routingConfig struct {
 
 // Router implements Router interface.
 type Router struct {
-	rules map[string]map[string]map[string]*definition.Route // domain -> version -> endpoint -> route
+	rules map[string]map[string]map[string]*model.Route // domain -> version -> endpoint -> route
 }
 
 // RoutingRule represents a single routing rule.
@@ -61,7 +62,7 @@ func New(ctx context.Context, config *Config) (*Router, func() error, error) {
 		return nil, nil, fmt.Errorf("config cannot be nil")
 	}
 	router := &Router{
-		rules: make(map[string]map[string]map[string]*definition.Route),
+		rules: make(map[string]map[string]map[string]*model.Route),
 	}
 
 	// Load rules at bootup
@@ -117,20 +118,20 @@ func (r *Router) loadRules(configPath string) error {
 	for _, rule := range config.RoutingRules {
 		// Initialize domain map if not exists
 		if _, ok := r.rules[rule.Domain]; !ok {
-			r.rules[rule.Domain] = make(map[string]map[string]*definition.Route)
+			r.rules[rule.Domain] = make(map[string]map[string]*model.Route)
 		}
 
 		// Initialize version map if not exists
 		if _, ok := r.rules[rule.Domain][rule.Version]; !ok {
-			r.rules[rule.Domain][rule.Version] = make(map[string]*definition.Route)
+			r.rules[rule.Domain][rule.Version] = make(map[string]*model.Route)
 		}
 
 		// Add all endpoints for this rule
 		for _, endpoint := range rule.Endpoints {
-			var route *definition.Route
+			var route *model.Route
 			switch rule.TargetType {
 			case targetTypePublisher:
-				route = &definition.Route{
+				route = &model.Route{
 					TargetType:  rule.TargetType,
 					PublisherID: rule.Target.PublisherID,
 				}
@@ -139,7 +140,7 @@ func (r *Router) loadRules(configPath string) error {
 				if err != nil {
 					return fmt.Errorf("invalid URL in rule: %w", err)
 				}
-				route = &definition.Route{
+				route = &model.Route{
 					TargetType: rule.TargetType,
 					URL:        parsedURL,
 				}
@@ -151,7 +152,7 @@ func (r *Router) loadRules(configPath string) error {
 						return fmt.Errorf("invalid URL in rule: %w", err)
 					}
 				}
-				route = &definition.Route{
+				route = &model.Route{
 					TargetType: rule.TargetType,
 					URL:        parsedURL,
 				}
@@ -199,8 +200,12 @@ func validateRules(rules []routingRule) error {
 }
 
 // Route determines the routing destination based on the request context.
-func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*definition.Route, error) {
+func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.Route, error) {
+	if r == nil {
 
+		log.Debug(ctx, "In Router :Router not set")
+	}
+	log.Debugf(ctx, "In Router: Routing request with url %v and body: %s", url, string(body))
 	// Parse the body to extract domain and version
 	var requestBody struct {
 		Context struct {
@@ -213,9 +218,16 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*definit
 	if err := json.Unmarshal(body, &requestBody); err != nil {
 		return nil, fmt.Errorf("error parsing request body: %w", err)
 	}
+	log.Debugf(ctx, "In Router: Routing request with %v and body: %#s", url, requestBody)
 
 	// Extract the endpoint from the URL
 	endpoint := path.Base(url.Path)
+
+	if r.rules == nil {
+
+		log.Debug(ctx, "In Router :Routing rules not set")
+	}
+	log.Debugf(ctx, "In Router :Routing rules len :%d", len(r.rules))
 
 	// Lookup route in the optimized map
 	domainRules, ok := r.rules[requestBody.Context.Domain]
@@ -244,7 +256,7 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*definit
 }
 
 // handleProtocolMapping handles both BPP and BAP routing with proper URL construction
-func handleProtocolMapping(route *definition.Route, requestURI, endpoint string) (*definition.Route, error) {
+func handleProtocolMapping(route *model.Route, requestURI, endpoint string) (*model.Route, error) {
 	uri := strings.TrimSpace(requestURI)
 	var targetURL *url.URL
 	if len(uri) != 0 {
@@ -268,7 +280,7 @@ func handleProtocolMapping(route *definition.Route, requestURI, endpoint string)
 		}
 	}
 
-	return &definition.Route{
+	return &model.Route{
 		TargetType: targetTypeURL,
 		URL:        targetURL,
 	}, nil
