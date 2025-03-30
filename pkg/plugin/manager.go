@@ -112,10 +112,11 @@ func (m *Manager) Publisher(ctx context.Context, cfg *Config) (definition.Publis
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	p, err := pp.New(ctx, cfg.Config)
+	p, closer, err := pp.New(ctx, cfg.Config)
 	if err != nil {
 		return nil, err
 	}
+	m.addCloser(closer)
 	return p, nil
 }
 
@@ -256,8 +257,8 @@ func (m *Manager) Decryptor(ctx context.Context, cfg *Config) (definition.Decryp
 	return decrypter, nil
 }
 
-func (m *Manager) SignValidator(ctx context.Context, cfg *Config) (definition.Verifier, error) {
-	svp, err := provider[definition.VerifierProvider](m.plugins, cfg.ID)
+func (m *Manager) SignValidator(ctx context.Context, cfg *Config) (definition.SignValidator, error) {
+	svp, err := provider[definition.SignValidatorProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}

@@ -25,7 +25,7 @@ func TestDecrypterProviderSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := DecrypterProvider{}
+			provider := decrypterProvider{}
 			decrypter, cleanup, err := provider.New(tt.ctx, tt.config)
 
 			// Check error.

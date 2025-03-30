@@ -7,47 +7,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"strings"
-
 	"github.com/beckn/beckn-onix/pkg/model"
 )
-
-// Error represents a standardized error response used across the system.
-type Error struct {
-	// Code is a short, machine-readable error code.
-	Code string `json:"code,omitempty"`
-
-	// Message provides a human-readable description of the error.
-	Message string `json:"message,omitempty"`
-
-	// Paths indicates the specific field(s) or endpoint(s) related to the error.
-	Paths string `json:"paths,omitempty"`
-}
-
-// SchemaValidationErr represents a collection of schema validation failures.
-type SchemaValidationErr struct {
-	Errors []Error
-}
-
-// Error implements the error interface for SchemaValidationErr.
-func (e *SchemaValidationErr) Error() string {
-	var errorMessages []string
-	for _, err := range e.Errors {
-		errorMessages = append(errorMessages, fmt.Sprintf("%s: %s", err.Paths, err.Message))
-	}
-	return strings.Join(errorMessages, "; ")
-}
-
-// Message represents a standard message structure with acknowledgment and error information.
-type Message struct {
-	// Ack contains the acknowledgment status of the response.
-	Ack struct {
-		Status string `json:"status,omitempty"`
-	} `json:"ack,omitempty"`
-
-	// Error holds error details if any occurred during processing.
-	Error *Error `json:"error,omitempty"`
-}
 
 // SendAck sends an acknowledgment response (ACK) to the client.
 func SendAck(w http.ResponseWriter) {

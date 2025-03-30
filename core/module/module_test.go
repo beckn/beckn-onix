@@ -23,7 +23,7 @@ func (m *mockPluginManager) Middleware(ctx context.Context, cfg *plugin.Config) 
 }
 
 // SignValidator returns a mock verifier implementation.
-func (m *mockPluginManager) SignValidator(ctx context.Context, cfg *plugin.Config) (definition.Verifier, error) {
+func (m *mockPluginManager) SignValidator(ctx context.Context, cfg *plugin.Config) (definition.SignValidator, error) {
 	return nil, nil
 }
 
