@@ -86,6 +86,14 @@ type Route struct {
 	URL         *url.URL // For API calls
 }
 
+type Keyset struct {
+	UniqueKeyID    string
+	SigningPrivate string
+	SigningPublic  string
+	EncrPrivate    string
+	EncrPublic     string
+}
+
 // StepContext holds context information for a request processing step.
 type StepContext struct {
 	context.Context

@@ -21,4 +21,4 @@ func (p SignerProvider) New(ctx context.Context, config map[string]string) (defi
 }
 
 // Provider is the exported symbol that the plugin manager will look for.
-var Provider definition.SignerProvider = SignerProvider{}
+var Provider = SignerProvider{}

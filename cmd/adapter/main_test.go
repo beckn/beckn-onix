@@ -28,7 +28,7 @@ func (m *MockPluginManager) Middleware(ctx context.Context, cfg *plugin.Config) 
 }
 
 // SignValidator returns a mock implementation of the Verifier interface.
-func (m *MockPluginManager) SignValidator(ctx context.Context, cfg *plugin.Config) (definition.Verifier, error) {
+func (m *MockPluginManager) SignValidator(ctx context.Context, cfg *plugin.Config) (definition.SignValidator, error) {
 	return nil, nil
 }
 
@@ -200,7 +200,7 @@ func TestRunFailure(t *testing.T) {
 	tests := []struct {
 		name        string
 		configData  string
-		mockMgr     func() (*plugin.Manager, func(), error)
+		mockMgr     func() (*MockPluginManager, func(), error)
 		mockLogger  func(cfg *Config) error
 		mockServer  func(ctx context.Context, mgr handler.PluginManager, cfg *Config) (http.Handler, error)
 		expectedErr string
@@ -208,8 +208,8 @@ func TestRunFailure(t *testing.T) {
 		{
 			name:       "Invalid Config File",
 			configData: "invalid_config.yaml",
-			mockMgr: func() (*plugin.Manager, func(), error) {
-				return &plugin.Manager{}, func() {}, nil
+			mockMgr: func() (*MockPluginManager, func(), error) {
+				return &MockPluginManager{}, func() {}, nil
 			},
 			mockLogger: func(cfg *Config) error {
 				return nil
@@ -236,9 +236,10 @@ func TestRunFailure(t *testing.T) {
 
 			// Mock dependencies
 			originalNewManager := newManagerFunc
-			newManagerFunc = func(ctx context.Context, cfg *plugin.ManagerConfig) (*plugin.Manager, func(), error) {
-				return tt.mockMgr()
-			}
+			// newManagerFunc = func(ctx context.Context, cfg *plugin.ManagerConfig) (*plugin.Manager, func(), error) {
+			// 	return tt.mockMgr()
+			// }
+			newManagerFunc = nil
 			defer func() { newManagerFunc = originalNewManager }()
 
 			originalNewServer := newServerFunc

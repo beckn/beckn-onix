@@ -21,7 +21,7 @@ import (
 type stdHandler struct {
 	signer          definition.Signer
 	steps           []definition.Step
-	signValidator   definition.Verifier
+	signValidator   definition.SignValidator
 	cache           definition.Cache
 	km              definition.KeyManager
 	schemaValidator definition.SchemaValidator
@@ -108,13 +108,15 @@ func (h *stdHandler) subID(ctx context.Context) string {
 	return h.SubscriberID
 }
 
+var proxyFunc = proxy
+
 // route handles request forwarding or message publishing based on the routing type.
 func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb definition.Publisher) {
 	log.Debugf(ctx, "Routing to ctx.Route to %#v", ctx.Route)
 	switch ctx.Route.TargetType {
 	case "url":
 		log.Infof(ctx.Context, "Forwarding request to URL: %s", ctx.Route.URL)
-		proxy(r, w, ctx.Route.URL)
+		proxyFunc(r, w, ctx.Route.URL)
 		return
 	case "publisher":
 		if pb == nil {
@@ -124,7 +126,7 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 			return
 		}
 		log.Infof(ctx.Context, "Publishing message to: %s", ctx.Route.PublisherID)
-		if err := pb.Publish(ctx, ctx.Body); err != nil {
+		if err := pb.Publish(ctx, ctx.Route.PublisherID, ctx.Body); err != nil {
 			log.Errorf(ctx.Context, err, "Failed to publish message")
 			http.Error(w, "Error publishing message", http.StatusInternalServerError)
 			response.SendNack(ctx, w, err)

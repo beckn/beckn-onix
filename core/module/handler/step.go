@@ -52,12 +52,12 @@ func (s *signStep) Run(ctx *model.StepContext) error {
 
 // validateSignStep represents the signature validation step.
 type validateSignStep struct {
-	validator definition.Verifier
+	validator definition.SignValidator
 	km        definition.KeyManager
 }
 
 // newValidateSignStep initializes and returns a new validate sign step.
-func newValidateSignStep(signValidator definition.Verifier, km definition.KeyManager) (definition.Step, error) {
+func newValidateSignStep(signValidator definition.SignValidator, km definition.KeyManager) (definition.Step, error) {
 	if signValidator == nil {
 		return nil, fmt.Errorf("invalid config: SignValidator plugin not configured")
 	}
@@ -102,7 +102,7 @@ func (s *validateSignStep) validate(ctx *model.StepContext, value string) error 
 	if err != nil {
 		return fmt.Errorf("failed to get validation key: %w", err)
 	}
-	if _, err := s.validator.Verify(ctx, ctx.Body, []byte(value), key); err != nil {
+	if err := s.validator.Validate(ctx, ctx.Body, value, key); err != nil {
 		return fmt.Errorf("sign validation failed: %w", err)
 	}
 	return nil

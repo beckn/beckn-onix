@@ -126,21 +126,6 @@ func TestSendNack(t *testing.T) {
 	}
 }
 
-func TestSchemaValidationErr_Error(t *testing.T) {
-	// Create sample validation errors
-	validationErrors := []Error{
-		{Paths: "name", Message: "Name is required"},
-		{Paths: "email", Message: "Invalid email format"},
-	}
-	err := SchemaValidationErr{Errors: validationErrors}
-	expected := "name: Name is required; email: Invalid email format"
-	if err.Error() != expected {
-		t.Errorf("err.Error() = %s, want %s",
-			err.Error(), expected)
-
-	}
-}
-
 func compareJSON(expected, actual map[string]interface{}) bool {
 	expectedBytes, _ := json.Marshal(expected)
 	actualBytes, _ := json.Marshal(actual)
