@@ -41,13 +41,24 @@ func (s *signStep) Run(ctx *model.StepContext) error {
 	if err != nil {
 		return fmt.Errorf("failed to sign request: %w", err)
 	}
-	authHeader := fmt.Sprintf("Signature keyId=\"%s|%s|ed25519\",algorithm=\"ed25519\",created=\"%d\",expires=\"%d\",headers=\"(created) (expires) digest\",signature=\"%s\"", ctx.SubID, keyID, createdAt, validTill, sign)
+
+	authHeader := s.generateAuthHeader(ctx.SubID, keyID, createdAt, validTill, sign)
+
 	header := model.AuthHeaderSubscriber
 	if ctx.Role == model.RoleGateway {
 		header = model.AuthHeaderGateway
 	}
 	ctx.Request.Header.Set(header, authHeader)
 	return nil
+}
+
+// generateAuthHeader constructs the authorization header for the signed request.
+// It includes key ID, algorithm, creation time, expiration time, required headers, and signature.
+func (s *signStep) generateAuthHeader(subID, keyID string, createdAt, validTill int64, signature string) string {
+	return fmt.Sprintf(
+		"Signature keyId=\"%s|%s|ed25519\",algorithm=\"ed25519\",created=\"%d\",expires=\"%d\",headers=\"(created) (expires) digest\",signature=\"%s\"",
+		subID, keyID, createdAt, validTill, signature,
+	)
 }
 
 // validateSignStep represents the signature validation step.
@@ -135,8 +146,8 @@ type addRouteStep struct {
 	router definition.Router
 }
 
-// newRouteStep creates and returns the addRoute step after validation.
-func newRouteStep(router definition.Router) (definition.Step, error) {
+// newAddRouteStep creates and returns the addRoute step after validation.
+func newAddRouteStep(router definition.Router) (definition.Step, error) {
 	if router == nil {
 		return nil, fmt.Errorf("invalid config: Router plugin not configured")
 	}
@@ -149,13 +160,11 @@ func (s *addRouteStep) Run(ctx *model.StepContext) error {
 	if err != nil {
 		return fmt.Errorf("failed to determine route: %w", err)
 	}
-	log.Debugf(ctx, "Routing to %#v", route)
 	ctx.Route = &model.Route{
 		TargetType:  route.TargetType,
 		PublisherID: route.PublisherID,
 		URL:         route.URL,
 	}
-	log.Debugf(ctx, "ctx.Route to %#v", ctx.Route)
 	return nil
 }
 

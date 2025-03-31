@@ -21,22 +21,22 @@ type Config struct {
 	RetryWaitMax time.Duration
 }
 
-// RegisteryClient encapsulates the logic for calling the subscribe and lookup endpoints.
-type RegisteryClient struct {
-	Config *Config
-	Client *retryablehttp.Client
+// registryClient encapsulates the logic for calling the subscribe and lookup endpoints.
+type registryClient struct {
+	config *Config
+	client *retryablehttp.Client
 }
 
 // NewRegisteryClient creates a new instance of Client.
-func NewRegisteryClient(config *Config) *RegisteryClient {
+func NewRegisteryClient(config *Config) *registryClient {
 	retryClient := retryablehttp.NewClient()
 
-	return &RegisteryClient{Config: config, Client: retryClient}
+	return &registryClient{config: config, client: retryClient}
 }
 
 // Subscribe calls the /subscribe endpoint with retry.
-func (c *RegisteryClient) Subscribe(ctx context.Context, subscription *model.Subscription) error {
-	subscribeURL := fmt.Sprintf("%s/subscribe", c.Config.RegisteryURL)
+func (c *registryClient) Subscribe(ctx context.Context, subscription *model.Subscription) error {
+	subscribeURL := fmt.Sprintf("%s/subscribe", c.config.RegisteryURL)
 
 	jsonData, err := json.Marshal(subscription)
 	if err != nil {
@@ -49,7 +49,7 @@ func (c *RegisteryClient) Subscribe(ctx context.Context, subscription *model.Sub
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.Client.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request with retry: %w", err)
 	}
@@ -62,8 +62,8 @@ func (c *RegisteryClient) Subscribe(ctx context.Context, subscription *model.Sub
 }
 
 // Lookup calls the /lookup endpoint with retry and returns a slice of Subscription.
-func (c *RegisteryClient) Lookup(ctx context.Context, subscription *model.Subscription) ([]model.Subscription, error) {
-	lookupURL := fmt.Sprintf("%s/lookUp", c.Config.RegisteryURL)
+func (c *registryClient) Lookup(ctx context.Context, subscription *model.Subscription) ([]model.Subscription, error) {
+	lookupURL := fmt.Sprintf("%s/lookUp", c.config.RegisteryURL)
 
 	jsonData, err := json.Marshal(subscription)
 	if err != nil {
@@ -76,7 +76,7 @@ func (c *RegisteryClient) Lookup(ctx context.Context, subscription *model.Subscr
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.Client.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request with retry: %w", err)
 	}

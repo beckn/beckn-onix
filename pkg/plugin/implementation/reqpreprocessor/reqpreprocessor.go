@@ -13,9 +13,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// Config holds the configuration settings for the application.
 type Config struct {
-	ContextKeys []string
-	Role        string
+	ContextKeys []string // ContextKeys is a list of context keys used for request processing.
+	Role        string   // Role specifies the role of the entity (e.g., subscriber, gateway).
 }
 
 type becknRequest struct {
@@ -25,6 +26,8 @@ type becknRequest struct {
 const contextKey = "context"
 const subscriberIDKey = "subscriber_id"
 
+// NewPreProcessor creates a middleware that processes incoming HTTP requests by extracting
+// and modifying the request context based on the provided configuration.
 func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
@@ -51,6 +54,7 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 			}
 			if subID != nil {
 				log.Debugf(ctx, "adding subscriberId to request:%s, %v", subscriberIDKey, subID)
+				// TODO: Add a ContextKey type in model and use it here instead of raw context key.
 				ctx = context.WithValue(ctx, subscriberIDKey, subID)
 			}
 			for _, key := range cfg.ContextKeys {

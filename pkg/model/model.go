@@ -81,17 +81,18 @@ func (r *Role) UnmarshalYAML(unmarshal func(interface{}) error) error {
 
 // Route represents a network route for message processing.
 type Route struct {
-	TargetType  string   // "url" or "msgq" or "bap" or "bpp"
+	TargetType  string   // "url" or "publisher"
 	PublisherID string   // For message queues
 	URL         *url.URL // For API calls
 }
 
+// Keyset represents a collection of cryptographic keys used for signing and encryption.
 type Keyset struct {
-	UniqueKeyID    string
-	SigningPrivate string
-	SigningPublic  string
-	EncrPrivate    string
-	EncrPublic     string
+	UniqueKeyID    string // UniqueKeyID is the identifier for the key pair.
+	SigningPrivate string // SigningPrivate is the private key used for signing operations.
+	SigningPublic  string // SigningPublic is the public key corresponding to the signing private key.
+	EncrPrivate    string // EncrPrivate is the private key used for encryption operations.
+	EncrPublic     string // EncrPublic is the public key corresponding to the encryption private key.
 }
 
 // StepContext holds context information for a request processing step.

@@ -46,42 +46,37 @@ func TestSubscribeSuccess(t *testing.T) {
 		ValidUntil:       time.Now().Add(24 * time.Hour),
 		Status:           "SUBSCRIBED",
 	}
-
 	err := client.Subscribe(context.Background(), subscription)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Subscribe() failed with error: %v", err)
+	}
 }
 
-// TestSubscribeFailureWithMock tests different failure scenarios using a mock client.
-func TestSubscribeFailureWithMock(t *testing.T) {
+// TestSubscribeFailure tests different failure scenarios using a mock client.
+func TestSubscribeFailure(t *testing.T) {
 	tests := []struct {
-		name        string
-		mockError   error
-		expectError bool
+		name      string
+		mockError error
 	}{
 		{
-			name:        "Failed subscription - Internal Server Error",
-			mockError:   errors.New("internal server error"),
-			expectError: true,
+			name:      "Failed subscription - Internal Server Error",
+			mockError: errors.New("internal server error"),
 		},
 		{
-			name:        "Failed subscription - Bad Request",
-			mockError:   errors.New("bad request"),
-			expectError: true,
+			name:      "Failed subscription - Bad Request",
+			mockError: errors.New("bad request"),
 		},
 		{
-			name:        "Request Timeout",
-			mockError:   context.DeadlineExceeded,
-			expectError: true,
+			name:      "Request Timeout",
+			mockError: context.DeadlineExceeded,
 		},
 		{
-			name:        "Network Failure",
-			mockError:   errors.New("network failure"),
-			expectError: true,
+			name:      "Network Failure",
+			mockError: errors.New("network failure"),
 		},
 		{
-			name:        "JSON Marshalling Failure",
-			mockError:   errors.New("json marshalling failure"),
-			expectError: true,
+			name:      "JSON Marshalling Failure",
+			mockError: errors.New("json marshalling failure"),
 		},
 	}
 
@@ -103,67 +98,21 @@ func TestSubscribeFailureWithMock(t *testing.T) {
 			}
 
 			if tt.name == "JSON Marshalling Failure" {
-				invalidSubscription := &model.Subscription{}
-				invalidSubscription.ValidFrom = time.Unix(0, 0) // Invalid zero timestamp
-				subscription = invalidSubscription
+				subscription = &model.Subscription{} // Example of an invalid object
 			}
 
 			err := mockClient.Subscribe(context.Background(), subscription)
-			if tt.expectError {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
+			require.Error(t, err) // Directly checking for an error since all cases should fail
 		})
 	}
 }
 
 // TestLookupSuccess tests successful lookup scenarios.
 func TestLookupSuccess(t *testing.T) {
-	tests := []struct {
-		name         string
-		responseBody interface{}
-		responseCode int
-	}{
-		{
-			name: "Successful lookup",
-			responseBody: []model.Subscription{
-				{
-					Subscriber: model.Subscriber{
-						SubscriberID: "123",
-					},
-					KeyID:            "test-key",
-					SigningPublicKey: "test-signing-key",
-					EncrPublicKey:    "test-encryption-key",
-					ValidFrom:        time.Now(),
-					ValidUntil:       time.Now().Add(24 * time.Hour),
-					Status:           "SUBSCRIBED",
-				},
-			},
-			responseCode: http.StatusOK,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(tc.responseCode)
-				if tc.responseBody != nil {
-					bodyBytes, _ := json.Marshal(tc.responseBody)
-					w.Write(bodyBytes)
-				}
-			}))
-			defer server.Close()
-
-			config := &Config{
-				RegisteryURL: server.URL,
-				RetryMax:     1,
-				RetryWaitMin: 1 * time.Millisecond,
-				RetryWaitMax: 2 * time.Millisecond,
-			}
-			rClient := NewRegisteryClient(config)
-			ctx := context.Background()
-			subscription := &model.Subscription{
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		response := []model.Subscription{
+			{
 				Subscriber: model.Subscriber{
 					SubscriberID: "123",
 				},
@@ -173,14 +122,37 @@ func TestLookupSuccess(t *testing.T) {
 				ValidFrom:        time.Now(),
 				ValidUntil:       time.Now().Add(24 * time.Hour),
 				Status:           "SUBSCRIBED",
-			}
+			},
+		}
+		bodyBytes, _ := json.Marshal(response)
+		w.Write(bodyBytes)
+	}))
+	defer server.Close()
 
-			result, err := rClient.Lookup(ctx, subscription)
-			require.NoError(t, err)
-			require.NotEmpty(t, result)
-			require.Equal(t, subscription.Subscriber.SubscriberID, result[0].Subscriber.SubscriberID)
-		})
+	config := &Config{
+		RegisteryURL: server.URL,
+		RetryMax:     1,
+		RetryWaitMin: 1 * time.Millisecond,
+		RetryWaitMax: 2 * time.Millisecond,
 	}
+	rClient := NewRegisteryClient(config)
+	ctx := context.Background()
+	subscription := &model.Subscription{
+		Subscriber: model.Subscriber{
+			SubscriberID: "123",
+		},
+		KeyID:            "test-key",
+		SigningPublicKey: "test-signing-key",
+		EncrPublicKey:    "test-encryption-key",
+		ValidFrom:        time.Now(),
+		ValidUntil:       time.Now().Add(24 * time.Hour),
+		Status:           "SUBSCRIBED",
+	}
+
+	result, err := rClient.Lookup(ctx, subscription)
+	require.NoError(t, err)
+	require.NotEmpty(t, result)
+	require.Equal(t, subscription.Subscriber.SubscriberID, result[0].Subscriber.SubscriberID)
 }
 
 // TestLookupFailure tests failure scenarios for the Lookup function.
