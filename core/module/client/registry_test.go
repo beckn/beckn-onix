@@ -27,7 +27,9 @@ func (m *MockRegistryClient) Subscribe(ctx context.Context, subscription *model.
 func TestSubscribeSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
+		if _, err := w.Write([]byte("{}")); err != nil {
+			t.Errorf("failed to write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -125,7 +127,9 @@ func TestLookupSuccess(t *testing.T) {
 			},
 		}
 		bodyBytes, _ := json.Marshal(response)
-		w.Write(bodyBytes)
+		if _, err := w.Write(bodyBytes); err != nil {
+			t.Errorf("failed to write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -194,10 +198,14 @@ func TestLookupFailure(t *testing.T) {
 				}
 				if tc.responseBody != nil {
 					if str, ok := tc.responseBody.(string); ok {
-						w.Write([]byte(str))
+						if _, err := w.Write([]byte(str)); err != nil {
+							t.Errorf("failed to write response: %v", err)
+						}
 					} else {
 						bodyBytes, _ := json.Marshal(tc.responseBody)
-						w.Write(bodyBytes)
+						if _, err := w.Write(bodyBytes); err != nil {
+							t.Errorf("failed to write response: %v", err)
+						}
 					}
 				}
 			}))

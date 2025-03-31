@@ -9,7 +9,6 @@ import (
 	"path"
 	"strings"
 
-	"github.com/beckn/beckn-onix/pkg/log"
 	"github.com/beckn/beckn-onix/pkg/model"
 
 	"gopkg.in/yaml.v3"
@@ -213,7 +212,6 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.R
 	if err := json.Unmarshal(body, &requestBody); err != nil {
 		return nil, fmt.Errorf("error parsing request body: %w", err)
 	}
-	log.Debugf(ctx, "In Router: Routing request with %v and body: %v", url, requestBody)
 
 	// Extract the endpoint from the URL
 	endpoint := path.Base(url.Path)
