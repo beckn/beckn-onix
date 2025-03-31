@@ -17,15 +17,19 @@ import (
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
 )
 
+// TODO: Add unit tests for the plugin manager functions to ensure proper functionality and error handling.
+
+// Manager is responsible for managing dynamically loaded plugins.
 type Manager struct {
-	plugins map[string]*plugin.Plugin
-	closers []func()
+	plugins map[string]*plugin.Plugin // plugins holds the dynamically loaded plugins.
+	closers []func()                  // closers contains functions to release resources when the manager is closed.
 }
 
 func validateMgrCfg(cfg *ManagerConfig) error {
 	return nil
 }
 
+// NewManager initializes a new Manager instance by loading plugins from the specified configuration.
 func NewManager(ctx context.Context, cfg *ManagerConfig) (*Manager, func(), error) {
 	if err := validateMgrCfg(cfg); err != nil {
 		return nil, nil, fmt.Errorf("Invalid config: %w", err)
@@ -64,14 +68,10 @@ func plugins(ctx context.Context, cfg *ManagerConfig) (map[string]*plugin.Plugin
 
 		if strings.HasSuffix(d.Name(), ".so") {
 			id := strings.TrimSuffix(d.Name(), ".so") // Extract plugin ID
-
-			log.Debugf(ctx, "Loading plugin: %s", id)
-			start := time.Now()
-			p, err := plugin.Open(path) // Use the full path
+			p, elapsed, err := loadPlugin(ctx, path, id)
 			if err != nil {
-				return fmt.Errorf("failed to open plugin %s: %w", id, err)
+				return err
 			}
-			elapsed := time.Since(start)
 			plugins[id] = p
 			log.Debugf(ctx, "Loaded plugin: %s in %s", id, elapsed)
 		}
@@ -83,6 +83,20 @@ func plugins(ctx context.Context, cfg *ManagerConfig) (map[string]*plugin.Plugin
 	}
 
 	return plugins, nil
+}
+
+// loadPlugin attempts to load a plugin from the given path and logs the execution time.
+func loadPlugin(ctx context.Context, path, id string) (*plugin.Plugin, time.Duration, error) {
+	log.Debugf(ctx, "Loading plugin: %s", id)
+	start := time.Now()
+
+	p, err := plugin.Open(path)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to open plugin %s: %w", id, err)
+	}
+
+	elapsed := time.Since(start)
+	return p, elapsed, nil
 }
 
 func provider[T any](plugins map[string]*plugin.Plugin, id string) (T, error) {
@@ -105,8 +119,8 @@ func provider[T any](plugins map[string]*plugin.Plugin, id string) (T, error) {
 	return pp, nil
 }
 
-// GetPublisher returns a Publisher instance based on the provided configuration.
-// It reuses the loaded provider.
+// Publisher returns a Publisher instance based on the provided configuration.
+// It reuses the loaded provider and registers a cleanup function.
 func (m *Manager) Publisher(ctx context.Context, cfg *Config) (definition.Publisher, error) {
 	pp, err := provider[definition.PublisherProvider](m.plugins, cfg.ID)
 	if err != nil {
@@ -120,12 +134,15 @@ func (m *Manager) Publisher(ctx context.Context, cfg *Config) (definition.Publis
 	return p, nil
 }
 
+// addCloser appends a cleanup function to the Manager's closers list.
 func (m *Manager) addCloser(closer func()) {
 	if closer != nil {
 		m.closers = append(m.closers, closer)
 	}
 }
 
+// SchemaValidator returns a SchemaValidator instance based on the provided configuration.
+// It registers a cleanup function for resource management.
 func (m *Manager) SchemaValidator(ctx context.Context, cfg *Config) (definition.SchemaValidator, error) {
 	vp, err := provider[definition.SchemaValidatorProvider](m.plugins, cfg.ID)
 	if err != nil {
@@ -145,12 +162,17 @@ func (m *Manager) SchemaValidator(ctx context.Context, cfg *Config) (definition.
 	return v, nil
 }
 
+// Router returns a Router instance based on the provided configuration.
+// It registers a cleanup function for resource management.
 func (m *Manager) Router(ctx context.Context, cfg *Config) (definition.Router, error) {
 	rp, err := provider[definition.RouterProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
 	router, closer, err := rp.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
 	if closer != nil {
 		m.addCloser(func() {
 			if err := closer(); err != nil {
@@ -161,6 +183,7 @@ func (m *Manager) Router(ctx context.Context, cfg *Config) (definition.Router, e
 	return router, nil
 }
 
+// Middleware returns an HTTP middleware function based on the provided configuration.
 func (m *Manager) Middleware(ctx context.Context, cfg *Config) (func(http.Handler) http.Handler, error) {
 	mwp, err := provider[definition.MiddlewareProvider](m.plugins, cfg.ID)
 	if err != nil {
@@ -169,6 +192,7 @@ func (m *Manager) Middleware(ctx context.Context, cfg *Config) (func(http.Handle
 	return mwp.New(ctx, cfg.Config)
 }
 
+// Step returns a Step instance based on the provided configuration.
 func (m *Manager) Step(ctx context.Context, cfg *Config) (definition.Step, error) {
 	sp, err := provider[definition.StepProvider](m.plugins, cfg.ID)
 	if err != nil {
@@ -181,6 +205,8 @@ func (m *Manager) Step(ctx context.Context, cfg *Config) (definition.Step, error
 	return step, error
 }
 
+// Cache returns a Cache instance based on the provided configuration.
+// It registers a cleanup function for resource management.
 func (m *Manager) Cache(ctx context.Context, cfg *Config) (definition.Cache, error) {
 	cp, err := provider[definition.CacheProvider](m.plugins, cfg.ID)
 	if err != nil {
@@ -198,6 +224,8 @@ func (m *Manager) Cache(ctx context.Context, cfg *Config) (definition.Cache, err
 	return c, nil
 }
 
+// Signer returns a Signer instance based on the provided configuration.
+// It registers a cleanup function for resource management.
 func (m *Manager) Signer(ctx context.Context, cfg *Config) (definition.Signer, error) {
 	sp, err := provider[definition.SignerProvider](m.plugins, cfg.ID)
 	if err != nil {
@@ -216,6 +244,9 @@ func (m *Manager) Signer(ctx context.Context, cfg *Config) (definition.Signer, e
 	}
 	return s, nil
 }
+
+// Encryptor returns an Encrypter instance based on the provided configuration.
+// It registers a cleanup function for resource management.
 func (m *Manager) Encryptor(ctx context.Context, cfg *Config) (definition.Encrypter, error) {
 	ep, err := provider[definition.EncrypterProvider](m.plugins, cfg.ID)
 	if err != nil {
@@ -235,6 +266,8 @@ func (m *Manager) Encryptor(ctx context.Context, cfg *Config) (definition.Encryp
 	return encrypter, nil
 }
 
+// Decryptor returns a Decrypter instance based on the provided configuration.
+// It registers a cleanup function for resource management.
 func (m *Manager) Decryptor(ctx context.Context, cfg *Config) (definition.Decrypter, error) {
 	dp, err := provider[definition.DecrypterProvider](m.plugins, cfg.ID)
 	if err != nil {
@@ -257,6 +290,8 @@ func (m *Manager) Decryptor(ctx context.Context, cfg *Config) (definition.Decryp
 	return decrypter, nil
 }
 
+// SignValidator returns a SignValidator instance based on the provided configuration.
+// It registers a cleanup function for resource management.
 func (m *Manager) SignValidator(ctx context.Context, cfg *Config) (definition.SignValidator, error) {
 	svp, err := provider[definition.SignValidatorProvider](m.plugins, cfg.ID)
 	if err != nil {

@@ -201,11 +201,6 @@ func validateRules(rules []routingRule) error {
 
 // Route determines the routing destination based on the request context.
 func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.Route, error) {
-	if r == nil {
-
-		log.Debug(ctx, "In Router :Router not set")
-	}
-	log.Debugf(ctx, "In Router: Routing request with url %v and body: %s", url, string(body))
 	// Parse the body to extract domain and version
 	var requestBody struct {
 		Context struct {
@@ -218,16 +213,10 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.R
 	if err := json.Unmarshal(body, &requestBody); err != nil {
 		return nil, fmt.Errorf("error parsing request body: %w", err)
 	}
-	log.Debugf(ctx, "In Router: Routing request with %v and body: %#s", url, requestBody)
+	log.Debugf(ctx, "In Router: Routing request with %v and body: %v", url, requestBody)
 
 	// Extract the endpoint from the URL
 	endpoint := path.Base(url.Path)
-
-	if r.rules == nil {
-
-		log.Debug(ctx, "In Router :Routing rules not set")
-	}
-	log.Debugf(ctx, "In Router :Routing rules len :%d", len(r.rules))
 
 	// Lookup route in the optimized map
 	domainRules, ok := r.rules[requestBody.Context.Domain]
