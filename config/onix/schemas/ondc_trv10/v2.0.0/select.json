@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "select",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../core/v1.1.0/select.json#"
+    },
+    {
+      "$ref": "./init.json#/allOf/1"
+    },
+    {
+      "$ref": "./init.json#/allOf/2"
+    }
+  ]
+}

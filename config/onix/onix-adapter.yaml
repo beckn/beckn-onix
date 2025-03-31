@@ -1,0 +1,225 @@
+appName: "onix"
+log:
+  level: debug
+  destinations:
+    - type: stdout
+  contextKeys:
+    - transaction_id
+    - message_id
+    - subscriber_id
+http:
+  port: 8080
+  timeout:
+    read: 30
+    write: 30
+    idle: 30
+pluginManager:
+  root: /app/plugins
+  remoteRoot: /mnt/gcs/plugins/plugins_bundle.zip
+modules:
+  - name: bapTxnReceiver
+    path: /bap/receiver/
+    handler:
+      type: std
+      role: bap
+      registryUrl: http://localhost:8080/reg
+      plugins:
+        keyManager:
+          id: secretskeymanager
+          config:
+            projectID: trusty-relic-370809
+        cache:
+          id: redis
+          config:
+            addr: 10.81.192.4:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: /mnt/gcs/configs/schemas
+        signValidator:
+          id: signvalidator
+        publisher:
+          id: publisher
+          config:
+            project: trusty-relic-370809
+            topic: bapNetworkReciever
+        router:
+          id: router
+          config:
+            routingConfig: /mnt/gcs/configs/bapTxnReceiver-routing.yaml
+        middleware:
+          - id: reqpreprocessor
+            config:
+              contextKeys: transaction_id,message_id
+              role: bap
+      steps:
+        - validateSign
+        - addRoute
+        # - validateSchema
+  - name: bapTxnCaller
+    path: /bap/caller/
+    handler:
+      type: std
+      registryUrl: http://localhost:8080/reg
+      role: bap
+      plugins:
+        keyManager:
+          id: secretskeymanager
+          config:
+            projectID: trusty-relic-370809
+        cache:
+          id: redis
+          config:
+            addr: 10.81.192.4:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: /mnt/gcs/configs/schemas
+        signer:
+          id: signer
+        publisher:
+          id: publisher
+          config:
+            project: trusty-relic-370809
+            topic: bapNetworkReciever
+        router:
+          id: router
+          config:
+            routingConfig: /mnt/gcs/configs/bapTxnCaller-routing.yaml
+        middleware:
+          - id: reqpreprocessor
+            config:
+              contextKeys: transaction_id,message_id
+              role: bap
+      steps:
+        # - validateSchema
+        - addRoute
+        - sign
+  - name: bapSubscribeCaller
+    path: /bap/subscribe
+    handler:
+      type: npSub
+      role: bap
+      registryUrl: http://localhost:8080/reg
+      plugins:
+        keyManager:
+          id: secretskeymanager
+          config:
+            projectID: trusty-relic-370809
+        cache:
+          id: redis
+          config:
+            addr: 10.81.192.4:6379
+  - name: bppTxnReceiver
+    path: /bpp/receiver/
+    handler:
+      type: std
+      role: bpp
+      registryUrl: http://localhost:8080/reg
+      plugins:
+        keyManager:
+          id: secretskeymanager
+          config:
+            projectID: trusty-relic-370809
+        cache:
+          id: redis
+          config:
+            addr: 10.81.192.4:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: /mnt/gcs/configs/schemas
+        signValidator:
+          id: signvalidator
+        publisher:
+          id: publisher
+          config:
+            project: trusty-relic-370809
+            topic: bapNetworkReciever
+        router:
+          id: router
+          config:
+            routingConfig: /mnt/gcs/configs/bppTxnReceiver-routing.yaml
+        middleware:
+          - id: reqpreprocessor
+            config:
+              contextKeys: transaction_id,message_id
+              role: bpp
+      steps:
+        - validateSign
+        - addRoute
+        # - validateSchema
+  - name: bppTxnCaller
+    path: /bpp/caller/
+    handler:
+      type: std
+      role: bpp
+      registryUrl: http://localhost:8080/reg
+      plugins:
+        keyManager:
+          id: secretskeymanager
+          config:
+            projectID: trusty-relic-370809
+        cache:
+          id: redis
+          config:
+            addr: 10.81.192.4:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: /mnt/gcs/configs/schemas
+        signer:
+          id: signer
+        publisher:
+          id: publisher
+          config:
+            project: trusty-relic-370809
+            topic: bapNetworkReciever
+        router:
+          id: router
+          config:
+            routingConfig: /mnt/gcs/configs/bppTxnCaller-routing.yaml
+        middleware:
+          - id: reqpreprocessor
+            config:
+              contextKeys: transaction_id,message_id
+              role: bpp
+      steps:
+        # - validateSchema
+        - addRoute
+        - sign
+  - name: bppSubscribeCaller
+    path: /bpp/subscribe
+    handler:
+      type: npSub
+      role: bpp
+      registryUrl: http://localhost:8080/reg
+      plugins:
+        keyManager:
+          id: secretskeymanager
+          config:
+            projectID: trusty-relic-370809
+        cache:
+          id: redis
+          config:
+            addr: 10.81.192.4:6379
+  - name: regSubscribeReceiver
+    path: /reg/subscribe
+    handler:
+      type: regSub
+      role: registery
+      plugins:
+        cache:
+          id: redis
+          config:
+            addr: 10.81.192.4:6379
+  - name: regLookUpReceiver
+    path: /reg/lookUp
+    handler:
+      type: lookUp
+      role: registery
+      plugins:
+        cache:
+          id: redis
+          config:
+            addr: 10.81.192.4:6379

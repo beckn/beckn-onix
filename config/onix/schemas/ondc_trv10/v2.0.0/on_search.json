@@ -1,0 +1,644 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "on_search",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../core/v1.1.0/on_search.json#"
+    },
+    {
+      "$ref": "./init.json#/allOf/1"
+    },
+    {
+      "properties": {
+        "message": {
+          "type": "object",
+          "properties": {
+            "catalog": {
+              "type": "object",
+              "properties": {
+                "descriptor": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "images": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                },
+                "providers": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "descriptor": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "images": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "minItems": 1
+                          }
+                        },
+                        "required": [
+                          "name"
+                        ]
+                      },
+                      "fulfillments": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "vehicle": {
+                              "type": "object",
+                              "properties": {
+                                "category": {
+                                  "type": "string",
+                                  "enum": [
+                                    "AUTO_RICKSHAW",
+                                    "CAB"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "category"
+                              ]
+                            },
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "DELIVERY"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "vehicle",
+                            "type"
+                          ]
+                        }
+                      },
+                      "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "descriptor": {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "code": {
+                                  "type": "string",
+                                  "enum": [
+                                    "RIDE"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "code"
+                              ]
+                            },
+                            "price": {
+                              "type": "object",
+                              "properties": {
+                                "value": {
+                                  "type": "string",
+                                  "pattern": "^-?\\d+(\\.\\d+)?$"
+                                }
+                              },
+                              "required": [
+                                "value",
+                                "currency"
+                              ]
+                            },
+                            "fulfillment_ids": {
+                              "type": "array",
+                              "minItems": 1
+                            },
+                            "payment_ids": {
+                              "type": "array",
+                              "minItems": 1
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "descriptor",
+                            "price",
+                            "fulfillment_ids"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "items",
+                      "fulfillments"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "providers"
+              ]
+            }
+          },
+          "required": [
+            "catalog"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "message": {
+          "properties": {
+            "order": {
+              "properties": {
+                "payments": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "collected_by": {
+                        "type": "string",
+                        "enum": [
+                          "BAP",
+                          "BPP"
+                        ]
+                      },
+                      "tags": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "descriptor": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "enum": [
+                                    "SETTLEMENT_TERMS",
+                                    "BUYER_FINDER_FEES"
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          "required": [
+                            "descriptor"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "collected_by",
+                      "tags"
+                    ],
+                    "allOf": [
+                      {
+                        "if": {
+                          "allOf": [
+                            {
+                              "properties": {
+                                "collected_by": {
+                                  "const": "BAP"
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        "then": {
+                          "properties": {
+                            "tags": {
+                              "items": {
+                                "if": {
+                                  "properties": {
+                                    "descriptor": {
+                                      "properties": {
+                                        "code": {
+                                          "const": "SETTLEMENT_TERMS"
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "then": {
+                                  "properties": {
+                                    "list": {
+                                      "allOf": [
+                                        {
+                                          "contains": {
+                                            "type": "object",
+                                            "properties": {
+                                              "descriptor": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "code": {
+                                                    "const": "STATIC_TERMS"
+                                                  }
+                                                }
+                                              },
+                                              "value": {
+                                                "type": "string",
+                                                "format": "uri"
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "contains": {
+                                            "type": "object",
+                                            "properties": {
+                                              "descriptor": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "code": {
+                                                    "const": "SETTLEMENT_TYPE"
+                                                  }
+                                                }
+                                              },
+                                              "value": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "upi",
+                                                  "neft",
+                                                  "rtgs",
+                                                  "UPI",
+                                                  "NEFT",
+                                                  "RTGS"
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "contains": {
+                                            "type": "object",
+                                            "properties": {
+                                              "descriptor": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "code": {
+                                                    "const": "DELAY_INTEREST"
+                                                  }
+                                                }
+                                              },
+                                              "value": {
+                                                "type": "string",
+                                                "pattern": "^\\d+(\\.\\d{1,2})?$"
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "contains": {
+                                            "type": "object",
+                                            "properties": {
+                                              "descriptor": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "code": {
+                                                    "const": "MANDATORY_ARBITRATION"
+                                                  }
+                                                }
+                                              },
+                                              "value": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "true",
+                                                  "false"
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "contains": {
+                                            "type": "object",
+                                            "properties": {
+                                              "descriptor": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "code": {
+                                                    "const": "COURT_JURISDICTION"
+                                                  }
+                                                }
+                                              },
+                                              "value": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "if": {
+                          "allOf": [
+                            {
+                              "properties": {
+                                "collected_by": {
+                                  "const": "BPP"
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        "then": {
+                          "properties": {
+                            "tags": {
+                              "items": {
+                                "if": {
+                                  "properties": {
+                                    "descriptor": {
+                                      "properties": {
+                                        "code": {
+                                          "const": "SETTLEMENT_TERMS"
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "then": {
+                                  "properties": {
+                                    "list": {
+                                      "allOf": [
+                                        {
+                                          "contains": {
+                                            "type": "object",
+                                            "properties": {
+                                              "descriptor": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "code": {
+                                                    "const": "STATIC_TERMS"
+                                                  }
+                                                }
+                                              },
+                                              "value": {
+                                                "type": "string",
+                                                "format": "uri"
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "contains": {
+                                            "type": "object",
+                                            "properties": {
+                                              "descriptor": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "code": {
+                                                    "const": "SETTLEMENT_TYPE"
+                                                  }
+                                                }
+                                              },
+                                              "value": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "upi",
+                                                  "neft",
+                                                  "rtgs",
+                                                  "UPI",
+                                                  "NEFT",
+                                                  "RTGS"
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "contains": {
+                                            "type": "object",
+                                            "properties": {
+                                              "descriptor": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "code": {
+                                                    "const": "DELAY_INTEREST"
+                                                  }
+                                                }
+                                              },
+                                              "value": {
+                                                "type": "string",
+                                                "pattern": "^\\d+(\\.\\d{1,2})?$"
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "contains": {
+                                            "type": "object",
+                                            "properties": {
+                                              "descriptor": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "code": {
+                                                    "const": "MANDATORY_ARBITRATION"
+                                                  }
+                                                }
+                                              },
+                                              "value": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "true",
+                                                  "false"
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "contains": {
+                                            "type": "object",
+                                            "properties": {
+                                              "descriptor": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "code": {
+                                                    "const": "COURT_JURISDICTION"
+                                                  }
+                                                }
+                                              },
+                                              "value": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "contains": {
+                                            "type": "object",
+                                            "properties": {
+                                              "descriptor": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "code": {
+                                                    "const": "SETTLEMENT_BASIS"
+                                                  }
+                                                }
+                                              },
+                                              "value": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "DELIVERY"
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "contains": {
+                                            "type": "object",
+                                            "properties": {
+                                              "descriptor": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "code": {
+                                                    "const": "SETTLEMENT_WINDOW"
+                                                  }
+                                                }
+                                              },
+                                              "value": {
+                                                "type": "string"
+                                              }
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "payments"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "message": {
+          "properties": {
+            "catalog": {
+              "properties": {
+                "providers": {
+                  "items": {
+                    "properties": {
+                      "fulfillments": {
+                        "items": {
+                          "properties": {
+                            "stops": {
+                              "allOf": [
+                                {
+                                  "contains": {
+                                    "type": "object",
+                                    "properties": {
+                                      "location": {
+                                        "type": "object",
+                                        "properties": {
+                                          "gps": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "gps"
+                                        ]
+                                      },
+                                      "type": {
+                                        "const": "START"
+                                      }
+                                    },
+                                    "required": [
+                                      "location",
+                                      "type"
+                                    ]
+                                  }
+                                },
+                                {
+                                  "contains": {
+                                    "type": "object",
+                                    "properties": {
+                                      "location": {
+                                        "type": "object",
+                                        "properties": {
+                                          "gps": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "gps"
+                                        ]
+                                      },
+                                      "type": {
+                                        "const": "END"
+                                      }
+                                    },
+                                    "required": [
+                                      "location",
+                                      "type"
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "stops"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

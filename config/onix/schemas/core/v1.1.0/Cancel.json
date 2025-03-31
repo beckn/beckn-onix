@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cancel",
+  "type": "object",
+  "properties": {
+    "context": {
+      "allOf": [
+        {
+          "$ref": "definitions.json#/$defs/Context"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "enum": [
+                "cancel"
+              ]
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      ]
+    }
+    
+  },
+  "required": [
+    "message",
+    "context"
+  ]
+}

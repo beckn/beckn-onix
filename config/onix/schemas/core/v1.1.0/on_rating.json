@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "on_rating",
+  "type": "object",
+  "properties": {
+    "context": {
+      "allOf": [
+        {
+          "$ref": "./definitions.json#/$defs/Context"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "enum": [
+                "on_rating"
+              ]
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      ]
+    },
+    "message": {
+      "type": "object",
+      "properties": {
+        "feedback_form": {
+          "description": "A feedback form to allow the user to provide additional information on the rating provided",
+          "allOf": [
+            {
+              "$ref": "./definitions.json#/$defs/XInput"
+            }
+          ]
+        }
+      }
+    },
+    "error": {
+      "$ref": "./definitions.json#/$defs/Error"
+    }
+  },
+  "required": [
+    "context",
+    "message"
+  ]
+}

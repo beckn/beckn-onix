@@ -13,7 +13,8 @@ import (
 )
 
 type Config struct {
-	Role string
+	ContextKeys []string
+	Role        string
 }
 
 type keyType string

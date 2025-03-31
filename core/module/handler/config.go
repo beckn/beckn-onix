@@ -28,7 +28,10 @@ type Type string
 
 const (
 	// HandlerTypeStd represents the standard handler type used for general request processing.
-	HandlerTypeStd Type = "std"
+	HandlerTypeStd    Type = "std"
+	HandlerTypeRegSub Type = "regSub"
+	HandlerTypeNPSub  Type = "npSub"
+	HandlerTypeLookup Type = "lookUp"
 )
 
 // PluginCfg holds the configuration for various plugins.

@@ -1,0 +1,2459 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "definitions.json",
+    "$defs": {
+      "Ack": {
+        "$id": "Ack",
+        "description": "Describes the acknowledgement sent in response to an API call. If the implementation uses HTTP/S, then Ack must be returned in the same session. Every API call to a BPP must be responded to with an Ack whether the BPP intends to respond with a callback or not. This has one property called `status` that indicates the status of the Acknowledgement.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "The status of the acknowledgement. If the request passes the validation criteria of the BPP, then this is set to ACK. If a BPP responds with status = `ACK` to a request, it is required to respond with a callback. If the request fails the validation criteria, then this is set to NACK. Additionally, if a BPP does not intend to respond with a callback even after the request meets the validation criteria, it should set this value to `NACK`.",
+            "enum": [
+              "ACK",
+              "NACK"
+            ]
+          },
+          "tags": {
+            "description": "A list of tags containing any additional information sent along with the Acknowledgement.",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/TagGroup"
+            }
+          }
+        }
+      },
+      "AddOn": {
+        "$id": "AddOn",
+        "description": "Describes an additional item offered as a value-addition to a product or service. This does not exist independently in a catalog and is always associated with an item.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Provider-defined ID of the add-on",
+            "type": "string"
+          },
+          "descriptor": {
+            "$ref": "definitions.json#/$defs/Descriptor"
+          },
+          "price": {
+            "$ref": "definitions.json#/$defs/Price"
+          },
+          "quantity": {
+            "$ref": "definitions.json#/$defs/ItemQuantity"
+          }
+        }
+      },
+      "Address": {
+        "$id": "Address",
+        "description": "Describes a postal address.",
+        "type": "string"
+      },
+      "Agent": {
+        "$id": "Agent",
+        "description": "Describes the direct performer, driver or executor that fulfills an order. It is usually a person. But in some rare cases, it could be a non-living entity like a drone, or a bot. Some examples of agents are Doctor in the healthcare sector, a driver in the mobility sector, or a delivery person in the logistics sector. This object can be set at any stage of the order lifecycle. This can be set at the discovery stage when the BPP wants to provide details on the agent fulfilling the order, like in healthcare, where the doctor's name appears during search. This object can also used to search for a particular person that the customer wants fulfilling an order. Sometimes, this object gets instantiated after the order is confirmed, like in the case of on-demand taxis, where the driver is assigned after the user confirms the ride.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "person": {
+            "$ref": "definitions.json#/$defs/Person"
+          },
+          "contact": {
+            "$ref": "definitions.json#/$defs/Contact"
+          },
+          "organization": {
+            "$ref": "definitions.json#/$defs/Organization"
+          },
+          "rating": {
+            "$ref": "definitions.json#/$defs/Rating/properties/value"
+          }
+        }
+      },
+      "Authorization": {
+        "$id": "Authorization",
+        "description": "Describes an authorization mechanism used to start or end the fulfillment of an order. For example, in the mobility sector, the driver may require a one-time password to initiate the ride. In the healthcare sector, a patient may need to provide a password to open a video conference link during a teleconsultation.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "description": "Type of authorization mechanism used. The allowed values for this field can be published as part of the network policy.",
+            "type": "string"
+          },
+          "token": {
+            "description": "Token used for authorization. This is typically generated at the BPP. The BAP can send this value to the user via any channel that it uses to authenticate the user like SMS, Email, Push notification, or in-app rendering.",
+            "type": "string"
+          },
+          "valid_from": {
+            "description": "Timestamp in RFC3339 format from which token is valid",
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_to": {
+            "description": "Timestamp in RFC3339 format until which token is valid",
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "description": "Status of the token",
+            "type": "string"
+          }
+        }
+      },
+      "Billing": {
+        "$id": "Billing",
+        "description": "Describes the billing details of an entity.<br>This has properties like name,organization,address,email,phone,time,tax_number, created_at,updated_at",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "Name of the billable entity",
+            "type": "string"
+          },
+          "organization": {
+            "description": "Details of the organization being billed.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Organization"
+              }
+            ]
+          },
+          "address": {
+            "description": "The address of the billable entity",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Address"
+              }
+            ]
+          },
+          "state": {
+            "description": "The state where the billable entity resides. This is important for state-level tax calculation",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/State"
+              }
+            ]
+          },
+          "city": {
+            "description": "The city where the billable entity resides.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/City"
+              }
+            ]
+          },
+          "email": {
+            "description": "Email address where the bill is sent to",
+            "type": "string",
+            "format": "email"
+          },
+          "phone": {
+            "description": "Phone number of the billable entity",
+            "type": "string"
+          },
+          "time": {
+            "description": "Details regarding the billing period",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Time"
+              }
+            ]
+          },
+          "tax_id": {
+            "description": "ID of the billable entity as recognized by the taxation authority",
+            "type": "string"
+          }
+        }
+      },
+      "Cancellation": {
+        "$id": "Cancellation",
+        "description": "Describes a cancellation event",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "time": {
+            "description": "Date-time when the order was cancelled by the buyer",
+            "type": "string",
+            "format": "date-time"
+          },
+          "cancelled_by": {
+            "type": "string",
+            "enum": [
+              "CONSUMER",
+              "PROVIDER"
+            ]
+          },
+          "reason": {
+            "description": "The reason for cancellation",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Option"
+              }
+            ]
+          },
+          "additional_description": {
+            "description": "Any additional information regarding the nature of cancellation",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Descriptor"
+              }
+            ]
+          }
+        }
+      },
+      "CancellationTerm": {
+        "$id": "CancellationTerm",
+        "description": "Describes the cancellation terms of an item or an order. This can be referenced at an item or order level. Item-level cancellation terms can override the terms at the order level.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "fulfillment_state": {
+            "description": "The state of fulfillment during which this term is applicable.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/FulfillmentState"
+              }
+            ]
+          },
+          "reason_required": {
+            "description": "Indicates whether a reason is required to cancel the order",
+            "type": "boolean"
+          },
+          "cancel_by": {
+            "description": "Information related to the time of cancellation.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Time"
+              }
+            ]
+          },
+          "cancellation_fee": {
+            "$ref": "definitions.json#/$defs/Fee"
+          },
+          "xinput": {
+            "$ref": "definitions.json#/$defs/XInput"
+          },
+          "external_ref": {
+            "$ref": "definitions.json#/$defs/MediaFile"
+          }
+        }
+      },
+      "Catalog": {
+        "$id": "Catalog",
+        "description": "Describes the products or services offered by a BPP. This is typically sent as the response to a search intent from a BAP. The payment terms, offers and terms of fulfillment supported by the BPP can also be included here. The BPP can show hierarchical nature of products/services in its catalog using the parent_category_id in categories. The BPP can also send a ttl (time to live) in the context which is the duration for which a BAP can cache the catalog and use the cached catalog.  <br>This has properties like bbp/descriptor,bbp/categories,bbp/fulfillments,bbp/payments,bbp/offers,bbp/providers and exp<br>This is used in the following situations.<br><ul><li>This is typically used in the discovery stage when the BPP sends the details of the products and services it offers as response to a search intent from the BAP. </li></ul>",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "descriptor": {
+            "$ref": "definitions.json#/$defs/Descriptor"
+          },
+          "fulfillments": {
+            "description": "Fulfillment modes offered at the BPP level. This is used when a BPP itself offers fulfillments on behalf of the providers it has onboarded.",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Fulfillment"
+            }
+          },
+          "payments": {
+            "description": "Payment terms offered by the BPP for all transactions. This can be overriden at the provider level.",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Payment"
+            }
+          },
+          "offers": {
+            "description": "Offers at the BPP-level. This is common across all providers onboarded by the BPP.",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Offer"
+            }
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Provider"
+            }
+          },
+          "exp": {
+            "description": "Timestamp after which catalog will expire",
+            "type": "string",
+            "format": "date-time"
+          },
+          "ttl": {
+            "description": "Duration in seconds after which this catalog will expire",
+            "type": "string"
+          }
+        }
+      },
+      "Category": {
+        "$id": "Category",
+        "description": "A label under which a collection of items can be grouped.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "ID of the category",
+            "type": "string"
+          },
+          "parent_category_id": {
+            "$ref": "definitions.json#/$defs/Category/properties/id"
+          },
+          "descriptor": {
+            "$ref": "definitions.json#/$defs/Descriptor"
+          },
+          "time": {
+            "$ref": "definitions.json#/$defs/Time"
+          },
+          "ttl": {
+            "description": "Time to live for an instance of this schema"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/TagGroup"
+            }
+          }
+        }
+      },
+      "Circle": {
+        "$id": "Circle",
+        "description": "Describes a circular region of a specified radius centered at a specified GPS coordinate.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "gps": {
+            "$ref": "definitions.json#/$defs/Gps"
+          },
+          "radius": {
+            "$ref": "definitions.json#/$defs/Scalar"
+          }
+        }
+      },
+      "City": {
+        "$id": "City",
+        "description": "Describes a city",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "Name of the city",
+            "type": "string"
+          },
+          "code": {
+            "description": "City code",
+            "type": "string"
+          }
+        }
+      },
+      "Contact": {
+        "$id": "Contact",
+        "description": "Describes the contact information of an entity",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "phone": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "jcard": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "A Jcard object as per draft-ietf-jcardcal-jcard-03 specification"
+          }
+        }
+      },
+      "Context": {
+        "$id": "Context",
+        "description": "Every API call in beckn protocol has a context. It provides a high-level overview to the receiver about the nature of the intended transaction. Typically, it is the BAP that sets the transaction context based on the consumer's location and action on their UI. But sometimes, during unsolicited callbacks, the BPP also sets the transaction context but it is usually the same as the context of a previous full-cycle, request-callback interaction between the BAP and the BPP. The context object contains four types of fields. <ol><li>Demographic information about the transaction using fields like `domain`, `country`, and `region`.</li><li>Addressing details like the sending and receiving platform's ID and API URL.</li><li>Interoperability information like the protocol version that implemented by the sender and,</li><li>Transaction details like the method being called at the receiver's endpoint, the transaction_id that represents an end-to-end user session at the BAP, a message ID to pair requests with callbacks, a timestamp to capture sending times, a ttl to specifiy the validity of the request, and a key to encrypt information if necessary.</li></ol> This object must be passed in every interaction between a BAP and a BPP. In HTTP/S implementations, it is not necessary to send the context during the synchronous response. However, in asynchronous protocols, the context must be sent during all interactions,",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "description": "Domain code that is relevant to this transaction context",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Domain/properties/code",
+                "type": "string"
+              }
+            ]
+          },
+          "location": {
+            "description": "The location where the transaction is intended to be fulfilled.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Location"
+              }
+            ]
+          },
+          "action": {
+            "description": "The Beckn protocol method being called by the sender and executed at the receiver.",
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "description": "Version of transaction protocol being used by the sender."
+          },
+          "bap_id": {
+            "description": "Subscriber ID of the BAP",
+            "allOf": [
+              {
+                "description": "A globally unique identifier of the platform, Typically it is the fully qualified domain name (FQDN) of the platform.",
+                "type": "string"
+              }
+            ]
+          },
+          "bap_uri": {
+            "description": "Subscriber URL of the BAP for accepting callbacks from BPPs.",
+            "allOf": [
+              {
+                "description": "The callback URL of the Subscriber. This should necessarily contain the same domain name as set in `subscriber_id``.",
+                "type": "string",
+                "format": "uri"
+              }
+            ]
+          },
+          "bpp_id": {
+            "description": "Subscriber ID of the BPP",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Context/properties/bap_id/allOf/0"
+              }
+            ]
+          },
+          "bpp_uri": {
+            "description": "Subscriber URL of the BPP for accepting calls from BAPs.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Context/properties/bap_uri/allOf/0"
+              }
+            ]
+          },
+          "transaction_id": {
+            "description": "This is a unique value which persists across all API calls from `search` through `confirm`. This is done to indicate an active user session across multiple requests. The BPPs can use this value to push personalized recommendations, and dynamic offerings related to an ongoing transaction despite being unaware of the user active on the BAP.",
+            "type": "string",
+            "format": "uuid"
+          },
+          "message_id": {
+            "description": "This is a unique value which persists during a request / callback cycle. Since beckn protocol APIs are asynchronous, BAPs need a common value to match an incoming callback from a BPP to an earlier call. This value can also be used to ignore duplicate messages coming from the BPP. It is recommended to generate a fresh message_id for every new interaction. When sending unsolicited callbacks, BPPs must generate a new message_id.",
+            "type": "string",
+            "format": "uuid"
+          },
+          "timestamp": {
+            "description": "Time of request generation in RFC3339 format",
+            "type": "string",
+            "format": "date-time"
+          },
+          "key": {
+            "description": "The encryption public key of the sender",
+            "type": "string"
+          },
+          "ttl": {
+            "description": "The duration in ISO8601 format after timestamp for which this message holds valid",
+            "type": "string"
+          }
+        }
+      },
+      "Country": {
+        "$id": "Country",
+        "description": "Describes a country",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the country"
+          },
+          "code": {
+            "type": "string",
+            "description": "Country code as per ISO 3166-1 and ISO 3166-2 format"
+          }
+        }
+      },
+      "Credential": {
+        "$id": "Credential",
+        "description": "Describes a credential of an entity - Person or Organization",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "default": "VerifiableCredential"
+          },
+          "url": {
+            "description": "URL of the credential",
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "Customer": {
+        "$id": "Customer",
+        "description": "Describes a customer buying/availing a product or a service",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "person": {
+            "$ref": "definitions.json#/$defs/Person"
+          },
+          "contact": {
+            "$ref": "definitions.json#/$defs/Contact"
+          }
+        }
+      },
+      "DecimalValue": {
+        "$id": "DecimalValue",
+        "description": "Describes a numerical value in decimal form",
+        "type": "string",
+        "pattern": "[+-]?([0-9]*[.])?[0-9]+"
+      },
+      "Descriptor": {
+        "$id": "Descriptor",
+        "description": "Physical description of something.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "short_desc": {
+            "type": "string"
+          },
+          "long_desc": {
+            "type": "string"
+          },
+          "additional_desc": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "content_type": {
+                "type": "string",
+                "enum": [
+                  "text/plain",
+                  "text/html",
+                  "application/json"
+                ]
+              }
+            }
+          },
+          "media": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/MediaFile"
+            }
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Image"
+            }
+          }
+        }
+      },
+      "Domain": {
+        "$id": "Domain",
+        "description": "Described the industry sector or sub-sector. The network policy should contain codes for all the industry sectors supported by the network. Domains can be created in varying levels of granularity. The granularity of a domain can be decided by the participants of the network. Too broad domains will result in irrelevant search broadcast calls to BPPs that don't have services supporting the domain. Too narrow domains will result in a large number of registry entries for each BPP. It is recommended that network facilitators actively collaborate with various working groups and network participants to carefully choose domain codes keeping in mind relevance, performance, and opportunity cost. It is recommended that networks choose broad domains like mobility, logistics, healthcare etc, and progressively granularize them as and when the number of network participants for each domain grows large.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "Name of the domain",
+            "type": "string"
+          },
+          "code": {
+            "description": "Standard code representing the domain. The standard is usually published as part of the network policy. Furthermore, the network facilitator should also provide a mechanism to provide the supported domains of a network."
+          },
+          "additional_info": {
+            "description": "A url that contains addtional information about that domain.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/MediaFile"
+              }
+            ]
+          }
+        }
+      },
+      "Duration": {
+        "$id": "Duration",
+        "description": "Describes duration as per ISO8601 format",
+        "type": "string"
+      },
+      "Error": {
+        "$id": "Error",
+        "description": "Describes an error object that is returned by a BAP, BPP or BG as a response or callback to an action by another network participant. This object is sent when any request received by a network participant is unacceptable. This object can be sent either during Ack or with the callback.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Standard error code. For full list of error codes, refer to docs/protocol-drafts/BECKN-005-ERROR-CODES-DRAFT-01.md of this repo\""
+          },
+          "paths": {
+            "type": "string",
+            "description": "Path to json schema generating the error. Used only during json schema validation errors"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human readable message describing the error. Used mainly for logging. Not recommended to be shown to the user."
+          }
+        }
+      },
+      "Fee": {
+        "$id": "Fee",
+        "description": "A fee applied on a particular entity",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "percentage": {
+            "description": "Percentage of a value",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/DecimalValue"
+              }
+            ]
+          },
+          "amount": {
+            "description": "A fixed value",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Price"
+              }
+            ]
+          }
+        }
+      },
+      "Form": {
+        "$id": "Form",
+        "description": "Describes a form",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The form identifier.",
+            "type": "string"
+          },
+          "url": {
+            "description": "The URL from where the form can be fetched. The content fetched from the url must be processed as per the mime_type specified in this object. Once fetched, the rendering platform can choosed to render the form as-is as an embeddable element; or process it further to blend with the theme of the application. In case the interface is non-visual, the the render can process the form data and reproduce it as per the standard specified in the form.",
+            "type": "string",
+            "format": "uri"
+          },
+          "data": {
+            "description": "The form submission data",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "mime_type": {
+            "description": "This field indicates the nature and format of the form received by querying the url. MIME types are defined and standardized in IETF's RFC 6838.",
+            "type": "string",
+            "enum": [
+              "text/html",
+              "application/html",
+              "application/xml"
+            ]
+          },
+          "resubmit": {
+            "type": "boolean"
+          },
+          "multiple_sumbissions": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Fulfillment": {
+        "$id": "Fulfillment",
+        "description": "Describes how a an order will be rendered/fulfilled to the end-customer",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Unique reference ID to the fulfillment of an order",
+            "type": "string"
+          },
+          "type": {
+            "description": "A code that describes the mode of fulfillment. This is typically set when there are multiple ways an order can be fulfilled. For example, a retail order can be fulfilled either via store pickup or a home delivery. Similarly, a medical consultation can be provided either in-person or via tele-consultation. The network policy must publish standard fulfillment type codes for the different modes of fulfillment.",
+            "type": "string"
+          },
+          "rateable": {
+            "description": "Whether the fulfillment can be rated or not",
+            "type": "boolean"
+          },
+          "rating": {
+            "description": "The rating value of the fulfullment service.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Rating/properties/value"
+              }
+            ]
+          },
+          "state": {
+            "description": "The current state of fulfillment. The BPP must set this value whenever the state of the order fulfillment changes and fire an unsolicited `on_status` call.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/FulfillmentState"
+              }
+            ]
+          },
+          "tracking": {
+            "type": "boolean",
+            "description": "Indicates whether the fulfillment allows tracking",
+            "default": false
+          },
+          "customer": {
+            "description": "The person that will ultimately receive the order",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Customer"
+              }
+            ]
+          },
+          "agent": {
+            "description": "The agent that is currently handling the fulfillment of the order",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Agent"
+              }
+            ]
+          },
+          "contact": {
+            "$ref": "definitions.json#/$defs/Contact"
+          },
+          "vehicle": {
+            "$ref": "definitions.json#/$defs/Vehicle"
+          },
+          "stops": {
+            "description": "The list of logical stops encountered during the fulfillment of an order.",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Stop"
+            }
+          },
+          "path": {
+            "description": "The physical path taken by the agent that can be rendered on a map. The allowed format of this property can be set by the network.",
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/TagGroup"
+            }
+          }
+        }
+      },
+      "FulfillmentState": {
+        "$id": "FulfillmentState",
+        "description": "Describes the state of fulfillment",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "descriptor": {
+            "$ref": "definitions.json#/$defs/Descriptor"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_by": {
+            "type": "string",
+            "description": "ID of entity which changed the state"
+          }
+        }
+      },
+      "Gps": {
+        "$id": "Gps",
+        "description": "Describes a GPS coordinate",
+        "type": "string",
+        "pattern": "^[-+]?([1-8]?\\d(\\.\\d+)?|90(\\.0+)?),\\s*[-+]?(180(\\.0+)?|((1[0-7]\\d)|([1-9]?\\d))(\\.\\d+)?)$"
+      },
+      "Image": {
+        "$id": "Image",
+        "description": "Describes an image",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "description": "URL to the image. This can be a data url or an remote url",
+            "type": "string",
+            "format": "uri"
+          },
+          "size_type": {
+            "description": "The size of the image. The network policy can define the default dimensions of each type",
+            "type": "string",
+            "enum": [
+              "xs",
+              "sm",
+              "md",
+              "lg",
+              "xl",
+              "custom"
+            ]
+          },
+          "width": {
+            "description": "Width of the image in pixels",
+            "type": "string"
+          },
+          "height": {
+            "description": "Height of the image in pixels",
+            "type": "string"
+          }
+        }
+      },
+      "Intent": {
+        "$id": "Intent",
+        "description": "The intent to buy or avail a product or a service. The BAP can declare the intent of the consumer containing <ul><li>What they want (A product, service, offer)</li><li>Who they want (A seller, service provider, agent etc)</li><li>Where they want it and where they want it from</li><li>When they want it (start and end time of fulfillment</li><li>How they want to pay for it</li></ul><br>This has properties like descriptor,provider,fulfillment,payment,category,offer,item,tags<br>This is typically used by the BAP to send the purpose of the user's search to the BPP. This will be used by the BPP to find products or services it offers that may match the user's intent.<br>For example, in Mobility, the mobility consumer declares a mobility intent. In this case, the mobility consumer declares information that describes various aspects of their journey like,<ul><li>Where would they like to begin their journey (intent.fulfillment.start.location)</li><li>Where would they like to end their journey (intent.fulfillment.end.location)</li><li>When would they like to begin their journey (intent.fulfillment.start.time)</li><li>When would they like to end their journey (intent.fulfillment.end.time)</li><li>Who is the transport service provider they would like to avail services from (intent.provider)</li><li>Who is traveling (This is not recommended in public networks) (intent.fulfillment.customer)</li><li>What kind of fare product would they like to purchase (intent.item)</li><li>What add-on services would they like to avail</li><li>What offers would they like to apply on their booking (intent.offer)</li><li>What category of services would they like to avail (intent.category)</li><li>What additional luggage are they carrying</li><li>How would they like to pay for their journey (intent.payment)</li></ul><br>For example, in health domain, a consumer declares the intent for a lab booking the describes various aspects of their booking like,<ul><li>Where would they like to get their scan/test done (intent.fulfillment.start.location)</li><li>When would they like to get their scan/test done (intent.fulfillment.start.time)</li><li>When would they like to get the results of their test/scan (intent.fulfillment.end.time)</li><li>Who is the service provider they would like to avail services from (intent.provider)</li><li>Who is getting the test/scan (intent.fulfillment.customer)</li><li>What kind of test/scan would they like to purchase (intent.item)</li><li>What category of services would they like to avail (intent.category)</li><li>How would they like to pay for their journey (intent.payment)</li></ul>",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "descriptor": {
+            "description": "A raw description of the search intent. Free text search strings, raw audio, etc can be sent in this object.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Descriptor"
+              }
+            ]
+          },
+          "provider": {
+            "description": "The provider from which the customer wants to place to the order from",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Provider"
+              }
+            ]
+          },
+          "fulfillment": {
+            "description": "Details on how the customer wants their order fulfilled",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Fulfillment"
+              }
+            ]
+          },
+          "payment": {
+            "description": "Details on how the customer wants to pay for the order",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Payment"
+              }
+            ]
+          },
+          "category": {
+            "description": "Details on the item category",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Category"
+              }
+            ]
+          },
+          "offer": {
+            "description": "details on the offer the customer wants to avail",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Offer"
+              }
+            ]
+          },
+          "item": {
+            "description": "Details of the item that the consumer wants to order",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Item"
+              }
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/TagGroup"
+            }
+          }
+        }
+      },
+      "ItemQuantity": {
+        "$id": "ItemQuantity",
+        "description": "Describes the count or amount of an item",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "allocated": {
+            "description": "This represents the exact quantity allocated for purchase of the item.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "measure": {
+                "$ref": "definitions.json#/$defs/Scalar"
+              }
+            }
+          },
+          "available": {
+            "description": "This represents the exact quantity available for purchase of the item. The buyer can only purchase multiples of this",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "measure": {
+                "$ref": "definitions.json#/$defs/Scalar"
+              }
+            }
+          },
+          "maximum": {
+            "description": "This represents the maximum quantity allowed for purchase of the item",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "measure": {
+                "$ref": "definitions.json#/$defs/Scalar"
+              }
+            }
+          },
+          "minimum": {
+            "description": "This represents the minimum quantity allowed for purchase of the item",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "measure": {
+                "$ref": "definitions.json#/$defs/Scalar"
+              }
+            }
+          },
+          "selected": {
+            "description": "This represents the quantity selected for purchase of the item",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "measure": {
+                "$ref": "definitions.json#/$defs/Scalar"
+              }
+            }
+          },
+          "unitized": {
+            "description": "This represents the quantity available in a single unit of the item",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1
+              },
+              "measure": {
+                "$ref": "definitions.json#/$defs/Scalar"
+              }
+            }
+          }
+        }
+      },
+      "Item": {
+        "$id": "Item",
+        "description": "Describes a product or a service offered to the end consumer by the provider. In the mobility sector, it can represent a fare product like one way journey. In the logistics sector, it can represent the delivery service offering. In the retail domain it can represent a product like a grocery item.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "ID of the item.",
+            "type": "string"
+          },
+          "parent_item_id": {
+            "description": "ID of the item, this item is a variant of",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Item/properties/id"
+              }
+            ]
+          },
+          "parent_item_quantity": {
+            "description": "The number of units of the parent item this item is a multiple of",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/ItemQuantity"
+              }
+            ]
+          },
+          "descriptor": {
+            "description": "Physical description of the item",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Descriptor"
+              }
+            ]
+          },
+          "creator": {
+            "description": "The creator of this item",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Organization"
+              }
+            ]
+          },
+          "price": {
+            "description": "The price of this item, if it has intrinsic value",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Price"
+              }
+            ]
+          },
+          "quantity": {
+            "description": "The selling quantity of the item",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/ItemQuantity"
+              }
+            ]
+          },
+          "category_ids": {
+            "description": "Categories this item can be listed under",
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "definitions.json#/$defs/Category/properties/id"
+                }
+              ]
+            }
+          },
+          "fulfillment_ids": {
+            "description": "Modes through which this item can be fulfilled",
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "definitions.json#/$defs/Fulfillment/properties/id"
+                }
+              ]
+            }
+          },
+          "location_ids": {
+            "description": "Provider Locations this item is available in",
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "definitions.json#/$defs/Location/properties/id"
+                }
+              ]
+            }
+          },
+          "payment_ids": {
+            "description": "Payment modalities through which this item can be ordered",
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "definitions.json#/$defs/Payment/properties/id"
+                }
+              ]
+            }
+          },
+          "add_ons": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/AddOn"
+            }
+          },
+          "cancellation_terms": {
+            "description": "Cancellation terms of this item",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/CancellationTerm"
+            }
+          },
+          "refund_terms": {
+            "description": "Refund terms of this item",
+            "type": "array",
+            "items": {
+              "description": "Refund term of an item or an order",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "fulfillment_state": {
+                  "description": "The state of fulfillment during which this term is applicable.",
+                  "allOf": [
+                    {
+                      "$ref": "definitions.json#/$defs/State"
+                    }
+                  ]
+                },
+                "refund_eligible": {
+                  "description": "Indicates if cancellation will result in a refund",
+                  "type": "boolean"
+                },
+                "refund_within": {
+                  "description": "Time within which refund will be processed after successful cancellation.",
+                  "allOf": [
+                    {
+                      "$ref": "definitions.json#/$defs/Time"
+                    }
+                  ]
+                },
+                "refund_amount": {
+                  "$ref": "definitions.json#/$defs/Price"
+                }
+              }
+            }
+          },
+          "replacement_terms": {
+            "description": "Terms that are applicable be met when this item is replaced",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/ReplacementTerm"
+            }
+          },
+          "return_terms": {
+            "description": "Terms that are applicable when this item is returned",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/ReturnTerm"
+            }
+          },
+          "xinput": {
+            "description": "Additional input required from the customer to purchase / avail this item",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/XInput"
+              }
+            ]
+          },
+          "time": {
+            "description": "Temporal attributes of this item. This property is used when the item exists on the catalog only for a limited period of time.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Time"
+              }
+            ]
+          },
+          "rateable": {
+            "description": "Whether this item can be rated",
+            "type": "boolean"
+          },
+          "rating": {
+            "description": "The rating of the item",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Rating/properties/value"
+              }
+            ]
+          },
+          "matched": {
+            "description": "Whether this item is an exact match of the request",
+            "type": "boolean"
+          },
+          "related": {
+            "description": "Whether this item is a related item to the exactly matched item",
+            "type": "boolean"
+          },
+          "recommended": {
+            "description": "Whether this item is a recommended item to a response",
+            "type": "boolean"
+          },
+          "ttl": {
+            "description": "Time to live in seconds for an instance of this schema",
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/TagGroup"
+            }
+          }
+        }
+      },
+      "Location": {
+        "$id": "Location",
+        "description": "The physical location of something",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "descriptor": {
+            "$ref": "definitions.json#/$defs/Descriptor"
+          },
+          "map_url": {
+            "description": "The url to the map of the location. This can be a globally recognized map url or the one specified by the network policy.",
+            "type": "string",
+            "format": "uri"
+          },
+          "gps": {
+            "description": "The GPS co-ordinates of this location.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Gps"
+              }
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "address": {
+            "description": "The address of this location.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Address"
+              }
+            ]
+          },
+          "city": {
+            "description": "The city this location is, or is located within",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/City"
+              }
+            ]
+          },
+          "district": {
+            "description": "The state this location is, or is located within",
+            "type": "string"
+          },
+          "state": {
+            "description": "The state this location is, or is located within",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/State"
+              }
+            ]
+          },
+          "country": {
+            "description": "The country this location is, or is located within",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Country"
+              }
+            ]
+          },
+          "area_code": {
+            "type": "string"
+          },
+          "circle": {
+            "$ref": "definitions.json#/$defs/Circle"
+          },
+          "polygon": {
+            "description": "The boundary polygon of this location",
+            "type": "string"
+          },
+          "3dspace": {
+            "description": "The three dimensional region describing this location",
+            "type": "string"
+          },
+          "rating": {
+            "description": "The rating of this location",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Rating/properties/value"
+              }
+            ]
+          }
+        }
+      },
+      "MediaFile": {
+        "$id": "MediaFile",
+        "description": "This object contains a url to a media file.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mimetype": {
+            "description": "indicates the nature and format of the document, file, or assortment of bytes. MIME types are defined and standardized in IETF's RFC 6838",
+            "type": "string"
+          },
+          "url": {
+            "description": "The URL of the file",
+            "type": "string",
+            "format": "uri"
+          },
+          "signature": {
+            "description": "The digital signature of the file signed by the sender",
+            "type": "string"
+          },
+          "dsa": {
+            "description": "The signing algorithm used by the sender",
+            "type": "string"
+          }
+        }
+      },
+      "Offer": {
+        "$id": "Offer",
+        "description": "An offer associated with a catalog. This is typically used to promote a particular product and enable more purchases.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "descriptor": {
+            "$ref": "definitions.json#/$defs/Descriptor"
+          },
+          "location_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Location/properties/id"
+            }
+          },
+          "category_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Category/properties/id"
+            }
+          },
+          "item_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Item/properties/id"
+            }
+          },
+          "time": {
+            "$ref": "definitions.json#/$defs/Time"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/TagGroup"
+            }
+          }
+        }
+      },
+      "Option": {
+        "$id": "Option",
+        "description": "Describes a selectable option",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "descriptor": {
+            "$ref": "definitions.json#/$defs/Descriptor"
+          }
+        }
+      },
+      "Order": {
+        "$id": "Order",
+        "description": "Describes a legal purchase order. It contains the complete details of the legal contract created between the buyer and the seller.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Human-readable ID of the order. This is generated at the BPP layer. The BPP can either generate order id within its system or forward the order ID created at the provider level."
+          },
+          "ref_order_ids": {
+            "description": "A list of order IDs to link this order to previous orders.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "ID of a previous order"
+            }
+          },
+          "status": {
+            "description": "Status of the order. Allowed values can be defined by the network policy",
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "COMPLETE",
+              "CANCELLED",
+              "COMPLETED",
+              "SOFT_CANCEL"
+            ]
+          },
+          "type": {
+            "description": "This is used to indicate the type of order being created to BPPs. Sometimes orders can be linked to previous orders, like a replacement order in a retail domain. A follow-up consultation in healthcare domain. A single order part of a subscription order. The list of order types can be standardized at the network level.",
+            "type": "string",
+            "default": "DEFAULT",
+            "enum": [
+              "DRAFT",
+              "DEFAULT"
+            ]
+          },
+          "provider": {
+            "description": "Details of the provider whose catalog items have been selected.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Provider"
+              }
+            ]
+          },
+          "items": {
+            "description": "The items purchased / availed in this order",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Item"
+            }
+          },
+          "add_ons": {
+            "description": "The add-ons purchased / availed in this order",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/AddOn"
+            }
+          },
+          "offers": {
+            "description": "The offers applied in this order",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Offer"
+            }
+          },
+          "billing": {
+            "description": "The billing details of this order",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Billing"
+              }
+            ]
+          },
+          "fulfillments": {
+            "description": "The fulfillments involved in completing this order",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Fulfillment"
+            }
+          },
+          "cancellation": {
+            "description": "The cancellation details of this order",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Cancellation"
+              }
+            ]
+          },
+          "cancellation_terms": {
+            "description": "Cancellation terms of this item",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/CancellationTerm"
+            }
+          },
+          "documents": {
+            "type": "array",
+            "items": {
+              "description": "Documnents associated to the order",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "descriptor": {
+                  "$ref": "definitions.json#/$defs/Descriptor"
+                },
+                "mime_type": {
+                  "description": "This field indicates the nature and format of the form received by querying the url. MIME types are defined and standardized in IETF's RFC 6838.",
+                  "type": "string",
+                  "enum": [
+                    "text/html",
+                    "application/html",
+                    "application/xml",
+                    "application/pdf"
+                  ]
+                },
+                "url": {
+                  "description": "The URL from where the form can be fetched. The content fetched from the url must be processed as per the mime_type specified in this object.",
+                  "type": "string",
+                  "format": "uri"
+                }
+              }
+            }
+          },
+          "refund_terms": {
+            "description": "Refund terms of this item",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Item/properties/refund_terms/items"
+            }
+          },
+          "replacement_terms": {
+            "description": "Replacement terms of this item",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/ReplacementTerm"
+            }
+          },
+          "return_terms": {
+            "description": "Return terms of this item",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/ReturnTerm"
+            }
+          },
+          "quote": {
+            "description": "The mutually agreed upon quotation for this order.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Quotation"
+              }
+            ]
+          },
+          "payments": {
+            "description": "The terms of settlement for this order",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Payment"
+            }
+          },
+          "created_at": {
+            "description": "The date-time of creation of this order",
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "description": "The date-time of updated of this order",
+            "type": "string",
+            "format": "date-time"
+          },
+          "xinput": {
+            "description": "Additional input required from the customer to confirm this order",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/XInput"
+              }
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/TagGroup"
+            }
+          }
+        }
+      },
+      "Organization": {
+        "$id": "Organization",
+        "description": "An organization. Usually a recognized business entity.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "descriptor": {
+            "$ref": "definitions.json#/$defs/Descriptor"
+          },
+          "address": {
+            "description": "The postal address of the organization",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Address"
+              }
+            ]
+          },
+          "state": {
+            "description": "The state where the organization's address is registered",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/State"
+              }
+            ]
+          },
+          "city": {
+            "description": "The city where the the organization's address is registered",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/City"
+              }
+            ]
+          },
+          "contact": {
+            "$ref": "definitions.json#/$defs/Contact"
+          }
+        }
+      },
+      "Payment": {
+        "$id": "Payment",
+        "description": "Describes the terms of settlement between the BAP and the BPP for a single transaction. When instantiated, this object contains <ol><li>the amount that has to be settled,</li><li>The payment destination destination details</li><li>When the settlement should happen, and</li><li>A transaction reference ID</li></ol>. During a transaction, the BPP reserves the right to decide the terms of payment. However, the BAP can send its terms to the BPP first. If the BPP does not agree to those terms, it must overwrite the terms and return them to the BAP. If overridden, the BAP must either agree to the terms sent by the BPP in order to preserve the provider's autonomy, or abort the transaction. In case of such disagreements, the BAP and the BPP can perform offline negotiations on the payment terms. Once an agreement is reached, the BAP and BPP can resume transactions.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "ID of the payment term that can be referred at an item or an order level in a catalog",
+            "type": "string"
+          },
+          "collected_by": {
+            "description": "This field indicates who is the collector of payment. The BAP can set this value to 'bap' if it wants to collect the payment first and  settle it to the BPP. If the BPP agrees to those terms, the BPP should not send the payment url. Alternatively, the BPP can set this field with the value 'bpp' if it wants the payment to be made directly.",
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "description": "A payment url to be called by the BAP. If empty, then the payment is to be done offline. The details of payment should be present in the params object. If tl_method = http/get, then the payment details will be sent as url params. Two url param values, ```$transaction_id``` and ```$amount``` are mandatory.",
+            "format": "uri"
+          },
+          "tl_method": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "transaction_id": {
+                "type": "string",
+                "description": "The reference transaction ID associated with a payment activity"
+              },
+              "amount": {
+                "type": "string"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "bank_code": {
+                "type": "string"
+              },
+              "bank_account_number": {
+                "type": "string"
+              },
+              "virtual_payment_address": {
+                "type": "string"
+              },
+              "source_bank_code": {
+                "type": "string"
+              },
+              "source_bank_account_number": {
+                "type": "string"
+              },
+              "source_virtual_payment_address": {
+                "type": "string"
+              }
+            }
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "PRE-ORDER",
+              "PRE-FULFILLMENT",
+              "ON-FULFILLMENT",
+              "POST-FULFILLMENT",
+              "ON-ORDER",
+              "PART-PAYMENT"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PAID",
+              "NOT-PAID"
+            ]
+          },
+          "time": {
+            "$ref": "definitions.json#/$defs/Time"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/TagGroup"
+            }
+          }
+        }
+      },
+      "Person": {
+        "$id": "Person",
+        "description": "Describes a person as any individual",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Describes the identity of the person"
+          },
+          "url": {
+            "description": "Profile url of the person",
+            "type": "string",
+            "format": "uri"
+          },
+          "name": {
+            "description": "the name of the person",
+            "type": "string"
+          },
+          "image": {
+            "$ref": "definitions.json#/$defs/Image"
+          },
+          "age": {
+            "description": "Age of the person",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Duration"
+              }
+            ]
+          },
+          "dob": {
+            "description": "Date of birth of the person",
+            "type": "string",
+            "format": "date"
+          },
+          "gender": {
+            "type": "string",
+            "description": "Gender of something, typically a Person, but possibly also fictional characters, animals, etc. While Male and Female may be used, text strings are also acceptable for people who do not identify as a binary gender.Allowed values for this field can be published in the network policy"
+          },
+          "creds": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Credential"
+            }
+          },
+          "languages": {
+            "type": "array",
+            "items": {
+              "description": "Describes a language known to the person.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "description": "Describes a skill of the person.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/TagGroup"
+            }
+          }
+        }
+      },
+      "Price": {
+        "$id": "Price",
+        "description": "Describes the price of a product or service",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "definitions.json#/$defs/DecimalValue"
+          },
+          "estimated_value": {
+            "$ref": "definitions.json#/$defs/DecimalValue"
+          },
+          "computed_value": {
+            "$ref": "definitions.json#/$defs/DecimalValue"
+          },
+          "listed_value": {
+            "$ref": "definitions.json#/$defs/DecimalValue"
+          },
+          "offered_value": {
+            "$ref": "definitions.json#/$defs/DecimalValue"
+          },
+          "minimum_value": {
+            "$ref": "definitions.json#/$defs/DecimalValue"
+          },
+          "maximum_value": {
+            "$ref": "definitions.json#/$defs/DecimalValue"
+          }
+        }
+      },
+      "Provider": {
+        "$id": "Provider",
+        "description": "Describes the catalog of a business.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Id of the provider"
+          },
+          "descriptor": {
+            "$ref": "definitions.json#/$defs/Descriptor"
+          },
+          "category_id": {
+            "type": "string",
+            "description": "Category Id of the provider at the BPP-level catalog"
+          },
+          "rating": {
+            "$ref": "definitions.json#/$defs/Rating/properties/value"
+          },
+          "time": {
+            "$ref": "definitions.json#/$defs/Time"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Category"
+            }
+          },
+          "fulfillments": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Fulfillment"
+            }
+          },
+          "payments": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Payment"
+            }
+          },
+          "locations": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Location"
+            }
+          },
+          "offers": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Offer"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Item"
+            }
+          },
+          "exp": {
+            "type": "string",
+            "description": "Time after which catalog has to be refreshed",
+            "format": "date-time"
+          },
+          "rateable": {
+            "description": "Whether this provider can be rated or not",
+            "type": "boolean"
+          },
+          "ttl": {
+            "description": "The time-to-live in seconds, for this object. This can be overriden at deeper levels. A value of -1 indicates that this object is not cacheable.",
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/TagGroup"
+            }
+          }
+        }
+      },
+      "Quotation": {
+        "$id": "Quotation",
+        "description": "Describes a quote. It is the estimated price of products or services from the BPP.<br>This has properties like price, breakup, ttl",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "ID of the quote.",
+            "type": "string",
+            "format": "uuid"
+          },
+          "price": {
+            "description": "The total quoted price",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Price"
+              }
+            ]
+          },
+          "breakup": {
+            "description": "the breakup of the total quoted price",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "item": {
+                  "$ref": "definitions.json#/$defs/Item"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "price": {
+                  "$ref": "definitions.json#/$defs/Price"
+                }
+              }
+            }
+          },
+          "ttl": {
+            "$ref": "definitions.json#/$defs/Duration"
+          }
+        }
+      },
+      "Rating": {
+        "$id": "Rating",
+        "description": "Describes the rating of an entity",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "rating_category": {
+            "description": "Category of the entity being rated",
+            "type": "string",
+            "enum": [
+              "Item",
+              "Order",
+              "Fulfillment",
+              "Provider",
+              "Agent",
+              "Support"
+            ]
+          },
+          "id": {
+            "description": "Id of the object being rated",
+            "type": "string"
+          },
+          "value": {
+            "description": "Rating value given to the object. This can be a single value or can also contain an inequality operator like gt, gte, lt, lte. This can also contain an inequality expression containing logical operators like && and ||.",
+            "type": "string"
+          }
+        }
+      },
+      "Region": {
+        "$id": "Region",
+        "description": "Describes an arbitrary region of space. The network policy should contain a published list of supported regions by the network.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dimensions": {
+            "description": "The number of dimensions that are used to describe any point inside that region. The most common dimensionality of a region is 2, that represents an area on a map. There are regions on the map that can be approximated to one-dimensional regions like roads, railway lines, or shipping lines. 3 dimensional regions are rarer, but are gaining popularity as flying drones are being adopted for various fulfillment services.",
+            "type": "string",
+            "enum": [
+              "1",
+              "2",
+              "3"
+            ]
+          },
+          "type": {
+            "description": "The type of region. This is used to specify the granularity of the region represented by this object. Various examples of two-dimensional region types are city, country, state, district, and so on. The network policy should contain a list of all possible region types supported by the network.",
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the region as specified on the map where that region exists."
+          },
+          "code": {
+            "type": "string",
+            "description": "A standard code representing the region. This should be interpreted in the same way by all network participants."
+          },
+          "boundary": {
+            "type": "string",
+            "description": "A string representing the boundary of the region. One-dimensional regions are represented by polylines. Two-dimensional regions are represented by polygons, and three-dimensional regions can represented by polyhedra."
+          },
+          "map_url": {
+            "type": "string",
+            "description": "The url to the map of the region. This can be a globally recognized map or the one specified by the network policy."
+          }
+        }
+      },
+      "ReplacementTerm": {
+        "$id": "ReplacementTerm",
+        "description": "The replacement policy of an item or an order",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "fulfillment_state": {
+            "description": "The state of fulfillment during which this term is applicable.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/State"
+              }
+            ]
+          },
+          "replace_within": {
+            "description": "Applicable only for buyer managed returns where the buyer has to replace the item before a certain date-time, failing which they will not be eligible for replacement",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Time"
+              }
+            ]
+          },
+          "external_ref": {
+            "$ref": "definitions.json#/$defs/MediaFile"
+          }
+        }
+      },
+      "ReturnTerm": {
+        "$id": "ReturnTerm",
+        "description": "Describes the return policy of an item or an order",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "fulfillment_state": {
+            "description": "The state of fulfillment during which this term IETF''s applicable.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/State"
+              }
+            ]
+          },
+          "return_eligible": {
+            "description": "Indicates whether the item is eligible for return",
+            "type": "boolean"
+          },
+          "return_time": {
+            "description": "Applicable only for buyer managed returns where the buyer has to return the item to the origin before a certain date-time, failing which they will not be eligible for refund.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Time"
+              }
+            ]
+          },
+          "return_location": {
+            "description": "The location where the item or order must / will be returned to",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Location"
+              }
+            ]
+          },
+          "fulfillment_managed_by": {
+            "description": "The entity that will perform the return",
+            "type": "string",
+            "enum": [
+              "CONSUMER",
+              "PROVIDER"
+            ]
+          }
+        }
+      },
+      "Scalar": {
+        "$id": "Scalar",
+        "description": "Describes a scalar",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "CONSTANT",
+              "VARIABLE"
+            ]
+          },
+          "value": {
+            "$ref": "definitions.json#/$defs/DecimalValue"
+          },
+          "estimated_value": {
+            "$ref": "definitions.json#/$defs/DecimalValue"
+          },
+          "computed_value": {
+            "$ref": "definitions.json#/$defs/DecimalValue"
+          },
+          "range": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "min": {
+                "$ref": "definitions.json#/$defs/DecimalValue"
+              },
+              "max": {
+                "$ref": "definitions.json#/$defs/DecimalValue"
+              }
+            }
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      },
+      "Schedule": {
+        "$id": "Schedule",
+        "description": "Describes schedule as a repeating time period used to describe a regularly recurring event. At a minimum a schedule will specify frequency which describes the interval between occurrences of the event. Additional information can be provided to specify the schedule more precisely. This includes identifying the timestamps(s) of when the event will take place. Schedules may also have holidays to exclude a specific day from the schedule.<br>This has properties like frequency, holidays, times",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "frequency": {
+            "$ref": "definitions.json#/$defs/Duration"
+          },
+          "holidays": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "times": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        }
+      },
+      "State": {
+        "$id": "State",
+        "description": "A bounded geopolitical region of governance inside a country.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the state"
+          },
+          "code": {
+            "type": "string",
+            "description": "State code as per country or international standards"
+          }
+        }
+      },
+      "Stop": {
+        "$id": "Stop",
+        "description": "A logical point in space and time during the fulfillment of an order.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "parent_stop_id": {
+            "type": "string"
+          },
+          "location": {
+            "description": "Location of the stop",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Location"
+              }
+            ]
+          },
+          "type": {
+            "description": "The type of stop. Allowed values of this property can be defined by the network policy.",
+            "type": "string"
+          },
+          "time": {
+            "description": "Timings applicable at the stop.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Time"
+              }
+            ]
+          },
+          "instructions": {
+            "description": "Instructions that need to be followed at the stop",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Descriptor"
+              }
+            ]
+          },
+          "contact": {
+            "description": "Contact details of the stop",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Contact"
+              }
+            ]
+          },
+          "person": {
+            "description": "The details of the person present at the stop",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Person"
+              }
+            ]
+          },
+          "authorization": {
+            "$ref": "definitions.json#/$defs/Authorization"
+          }
+        }
+      },
+      "Support": {
+        "$id": "Support",
+        "description": "Details of customer support",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ref_id": {
+            "type": "string"
+          },
+          "callback_phone": {
+            "type": "string",
+            "format": "phone"
+          },
+          "phone": {
+            "type": "string",
+            "format": "phone"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "Tag": {
+        "$id": "Tag",
+        "description": "Describes a tag. This is used to contain extended metadata. This object can be added as a property to any schema to describe extended attributes. For BAPs, tags can be sent during search to optimize and filter search results. BPPs can use tags to index their catalog to allow better search functionality. Tags are sent by the BPP as part of the catalog response in the `on_search` callback. Tags are also meant for display purposes. Upon receiving a tag, BAPs are meant to render them as name-value pairs. This is particularly useful when rendering tabular information about a product or service.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "descriptor": {
+            "description": "Description of the Tag, can be used to store detailed information.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Descriptor"
+              }
+            ]
+          },
+          "value": {
+            "description": "The value of the tag. This set by the BPP and rendered as-is by the BAP.",
+            "type": "string"
+          },
+          "display": {
+            "description": "This value indicates if the tag is intended for display purposes. If set to `true`, then this tag must be displayed. If it is set to `false`, it should not be displayed. This value can override the group display value.",
+            "type": "boolean"
+          }
+        }
+      },
+      "TagGroup": {
+        "$id": "TagGroup",
+        "description": "A collection of tag objects with group level attributes. For detailed documentation on the Tags and Tag Groups schema go to https://github.com/beckn/protocol-specifications/discussions/316",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "display": {
+            "description": "Indicates the display properties of the tag group. If display is set to false, then the group will not be displayed. If it is set to true, it should be displayed. However, group-level display properties can be overriden by individual tag-level display property. As this schema is purely for catalog display purposes, it is not recommended to send this value during search.",
+            "type": "boolean",
+            "default": true
+          },
+          "descriptor": {
+            "description": "Description of the TagGroup, can be used to store detailed information.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Descriptor"
+              }
+            ]
+          },
+          "list": {
+            "description": "An array of Tag objects listed under this group. This property can be set by BAPs during search to narrow the `search` and achieve more relevant results. When received during `on_search`, BAPs must render this list under the heading described by the `name` property of this schema.",
+            "type": "array",
+            "items": {
+              "$ref": "definitions.json#/$defs/Tag"
+            }
+          }
+        }
+      },
+      "Time": {
+        "$id": "Time",
+        "description": "Describes time in its various forms. It can be a single point in time; duration; or a structured timetable of operations<br>This has properties like label, time stamp,duration,range, days, schedule",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration": {
+            "$ref": "definitions.json#/$defs/Duration"
+          },
+          "range": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "start": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "end": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          "days": {
+            "type": "string",
+            "description": "comma separated values representing days of the week"
+          },
+          "schedule": {
+            "$ref": "definitions.json#/$defs/Schedule"
+          }
+        }
+      },
+      "Tracking": {
+        "$id": "Tracking",
+        "description": "Contains tracking information that can be used by the BAP to track the fulfillment of an order in real-time. which is useful for knowing the location of time sensitive deliveries.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "A unique tracking reference number",
+            "type": "string"
+          },
+          "url": {
+            "description": "A URL to the tracking endpoint. This can be a link to a tracking webpage, a webhook URL created by the BAP where BPP can push the tracking data, or a GET url creaed by the BPP which the BAP can poll to get the tracking data. It can also be a websocket URL where the BPP can push real-time tracking data.",
+            "type": "string",
+            "format": "uri"
+          },
+          "location": {
+            "description": "In case there is no real-time tracking endpoint available, this field will contain the latest location of the entity being tracked. The BPP will update this value everytime the BAP calls the track API.",
+            "allOf": [
+              {
+                "$ref": "definitions.json#/$defs/Location"
+              }
+            ]
+          },
+          "status": {
+            "description": "This value indicates if the tracking is currently active or not. If this value is `active`, then the BAP can begin tracking the order. If this value is `inactive`, the tracking URL is considered to be expired and the BAP should stop tracking the order.",
+            "type": "string",
+            "enum": [
+              "active",
+              "inactive"
+            ]
+          }
+        }
+      },
+      "Vehicle": {
+        "$id": "Vehicle",
+        "description": "Describes a vehicle is a device that is designed or used to transport people or cargo over land, water, air, or through space.<br>This has properties like category, capacity, make, model, size,variant,color,energy_type,registration",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "capacity": {
+            "type": "integer"
+          },
+          "make": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "size": {
+            "type": "string"
+          },
+          "variant": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string"
+          },
+          "energy_type": {
+            "type": "string"
+          },
+          "registration": {
+            "type": "string"
+          },
+          "wheels_count": {
+            "type": "string"
+          },
+          "cargo_volumne": {
+            "type": "string"
+          },
+          "wheelchair_access": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "emission_standard": {
+            "type": "string"
+          }
+        }
+      },
+      "XInput": {
+        "$id": "XInput",
+        "description": "Contains any additional or extended inputs required to confirm an order. This is typically a Form Input. Sometimes, selection of catalog elements is not enough for the BPP to confirm an order. For example, to confirm a flight ticket, the airline requires details of the passengers along with information on baggage, identity, in addition to the class of ticket. Similarly, a logistics company may require details on the nature of shipment in order to confirm the shipping. A recruiting firm may require additional details on the applicant in order to confirm a job application. For all such purposes, the BPP can choose to send this object attached to any object in the catalog that is required to be sent while placing the order. This object can typically be sent at an item level or at the order level. The item level XInput will override the Order level XInput as it indicates a special requirement of information for that particular item. Hence the BAP must render a separate form for the Item and another form at the Order level before confirmation.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "head": {
+            "description": "Provides the header information for the xinput.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "descriptor": {
+                "$ref": "definitions.json#/$defs/Descriptor"
+              },
+              "index": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "min": {
+                    "type": "integer"
+                  },
+                  "cur": {
+                    "type": "integer"
+                  },
+                  "max": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "headings": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "description": "The heading names of the forms"
+                }
+              }
+            }
+          },
+          "form": {
+            "$ref": "definitions.json#/$defs/Form"
+          },
+          "form_response": {
+            "description": "Describes the response to a form submission",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "description": "Contains the status of form submission.",
+                "type": "string"
+              },
+              "signature": {
+                "type": "string"
+              },
+              "submission_id": {
+                "type": "string"
+              },
+              "errors": {
+                "type": "array",
+                "items": {
+                  "$ref": "definitions.json#/$defs/Error"
+                }
+              }
+            }
+          },
+          "required": {
+            "description": "Indicates whether the form data is mandatorily required by the BPP to confirm the order.",
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }

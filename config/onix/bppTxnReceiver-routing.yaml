@@ -1,7 +1,9 @@
 routingRules:
   - domain: ONDC:TRV10
     version: 2.0.0
-    targetType: bpp
+    targetType: publisher
+    target:
+      publisherId: bapNetworkReciever
     endpoints:
       - search
       - select

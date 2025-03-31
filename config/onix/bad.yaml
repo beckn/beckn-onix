@@ -1,0 +1,25 @@
+routingRules:
+  - domain: ONDC:TRV10
+    version: 2.0.0
+    targetType: bpp
+    target:
+      url: http://localhost:8080/bpp/receiver/search
+    endpoints:
+      - search
+  - domain: ONDC:TRV10
+    version: 2.0.0
+    targetType: bpp
+    endpoints:
+      - select
+      - init
+      - confirm
+      - status
+      - cancel
+  - domain: ONDC:TRV12
+    version: 2.0.0
+    targetType: bpp
+    endpoints:
+      - select
+      - init
+      - confirm
+      - status

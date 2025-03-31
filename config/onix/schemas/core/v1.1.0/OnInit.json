@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "OnInit",
+  "type": "object",
+  "properties": {
+    "context": {
+      "allOf": [
+        {
+          "$ref": "./definitions.json#/$defs/Context"
+        },
+        {
+          "properties": {
+            "action": {
+              "enum": [
+                "on_init"
+              ]
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      ]
+    },
+    "message": {
+      "type": "object",
+      "properties": {
+        "order": {
+          "$ref": "./definitions.json#/$defs/Order"
+        }
+      },
+      "required": [
+        "order"
+      ]
+    },
+    "error": {
+      "$ref": "./definitions.json#/$defs/Error"
+    }
+  },
+  "required": [
+    "context"
+  ]
+}
