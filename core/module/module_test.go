@@ -69,45 +69,33 @@ func (m *mockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Con
 
 // TestRegisterSuccess tests scenarios where the handler registration should succeed.
 func TestRegisterSuccess(t *testing.T) {
-	tests := []struct {
-		name        string
-		mCfgs       []Config
-		mockManager *mockPluginManager
-	}{
+	mCfgs := []Config{
 		{
-			name: "successful registration",
-			mCfgs: []Config{
-				{
-					Name: "test-module",
-					Path: "/test",
-					Handler: handler.Config{
-						Type: handler.HandlerTypeStd,
-						Plugins: handler.PluginCfg{
-							Middleware: []plugin.Config{{ID: "mock-middleware"}},
-						},
-					},
-				},
-			},
-			mockManager: &mockPluginManager{
-				middlewareFunc: func(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error) {
-					return func(next http.Handler) http.Handler {
-						return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-							next.ServeHTTP(w, r)
-						})
-					}, nil
+			Name: "test-module",
+			Path: "/test",
+			Handler: handler.Config{
+				Type: handler.HandlerTypeStd,
+				Plugins: handler.PluginCfg{
+					Middleware: []plugin.Config{{ID: "mock-middleware"}},
 				},
 			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mux := http.NewServeMux()
-			err := Register(context.Background(), tt.mCfgs, mux, tt.mockManager)
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-		})
+	mockManager := &mockPluginManager{
+		middlewareFunc: func(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error) {
+			return func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					next.ServeHTTP(w, r)
+				})
+			}, nil
+		},
+	}
+
+	mux := http.NewServeMux()
+	err := Register(context.Background(), mCfgs, mux, mockManager)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 

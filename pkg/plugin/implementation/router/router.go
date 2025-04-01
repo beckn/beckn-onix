@@ -71,30 +71,6 @@ func New(ctx context.Context, config *Config) (*Router, func() error, error) {
 	return router, nil, nil
 }
 
-// parseTargetURL parses a URL string into a url.URL object with strict validation
-func parseTargetURL(urlStr string) (*url.URL, error) {
-	if urlStr == "" {
-		return nil, nil
-	}
-
-	parsed, err := url.Parse(urlStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid URL '%s': %w", urlStr, err)
-	}
-
-	// Enforce scheme requirement
-	if parsed.Scheme == "" {
-		return nil, fmt.Errorf("URL '%s' must include a scheme (http/https)", urlStr)
-	}
-
-	// Optionally validate scheme is http or https
-	if parsed.Scheme != "https" {
-		return nil, fmt.Errorf("URL '%s' must use https scheme", urlStr)
-	}
-
-	return parsed, nil
-}
-
 // LoadRules reads and parses routing rules from the YAML configuration file.
 func (r *Router) loadRules(configPath string) error {
 	if configPath == "" {
@@ -135,7 +111,7 @@ func (r *Router) loadRules(configPath string) error {
 					PublisherID: rule.Target.PublisherID,
 				}
 			case targetTypeURL:
-				parsedURL, err := parseTargetURL(rule.Target.URL)
+				parsedURL, err := url.Parse(rule.Target.URL)
 				if err != nil {
 					return fmt.Errorf("invalid URL in rule: %w", err)
 				}
@@ -146,7 +122,7 @@ func (r *Router) loadRules(configPath string) error {
 			case targetTypeBPP, targetTypeBAP:
 				var parsedURL *url.URL
 				if rule.Target.URL != "" {
-					parsedURL, err = parseTargetURL(rule.Target.URL)
+					parsedURL, err = url.Parse(rule.Target.URL)
 					if err != nil {
 						return fmt.Errorf("invalid URL in rule: %w", err)
 					}
@@ -177,7 +153,7 @@ func validateRules(rules []routingRule) error {
 			if rule.Target.URL == "" {
 				return fmt.Errorf("invalid rule: url is required for targetType 'url'")
 			}
-			if _, err := parseTargetURL(rule.Target.URL); err != nil {
+			if _, err := url.Parse(rule.Target.URL); err != nil {
 				return fmt.Errorf("invalid URL - %s: %w", rule.Target.URL, err)
 			}
 		case targetTypePublisher:
@@ -186,7 +162,7 @@ func validateRules(rules []routingRule) error {
 			}
 		case targetTypeBPP, targetTypeBAP:
 			if rule.Target.URL != "" {
-				if _, err := parseTargetURL(rule.Target.URL); err != nil {
+				if _, err := url.Parse(rule.Target.URL); err != nil {
 					return fmt.Errorf("invalid URL - %s defined in routing config for target type %s: %w", rule.Target.URL, rule.TargetType, err)
 				}
 			}
@@ -243,32 +219,32 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.R
 }
 
 // handleProtocolMapping handles both BPP and BAP routing with proper URL construction
-func handleProtocolMapping(route *model.Route, requestURI, endpoint string) (*model.Route, error) {
-	uri := strings.TrimSpace(requestURI)
-	var targetURL *url.URL
-	if len(uri) != 0 {
-		parsedURL, err := parseTargetURL(uri)
-		if err != nil {
-			return nil, fmt.Errorf("invalid %s URI - %s in request body for %s: %w", strings.ToUpper(route.TargetType), uri, endpoint, err)
-		}
-		targetURL = parsedURL
-	}
-
-	// If no request URI, fall back to configured URL with endpoint appended
-	if targetURL == nil {
+func handleProtocolMapping(route *model.Route, npURI, endpoint string) (*model.Route, error) {
+	target := strings.TrimSpace(npURI)
+	if len(target) == 0 {
 		if route.URL == nil {
 			return nil, fmt.Errorf("could not determine destination for endpoint '%s': neither request contained a %s URI nor was a default URL configured in routing rules", endpoint, strings.ToUpper(route.TargetType))
 		}
-
-		targetURL = &url.URL{
-			Scheme: route.URL.Scheme,
-			Host:   route.URL.Host,
-			Path:   path.Join(route.URL.Path, endpoint),
-		}
+		return &model.Route{
+			TargetType: targetTypeURL,
+			URL: &url.URL{
+				Scheme: route.URL.Scheme,
+				Host:   route.URL.Host,
+				Path:   path.Join(route.URL.Path, endpoint),
+			},
+		}, nil
+	}
+	targetURL, err := url.Parse(target)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s URI - %s in request body for %s: %w", strings.ToUpper(route.TargetType), target, endpoint, err)
 	}
 
 	return &model.Route{
 		TargetType: targetTypeURL,
-		URL:        targetURL,
+		URL: &url.URL{
+			Scheme: targetURL.Scheme,
+			Host:   targetURL.Host,
+			Path:   path.Join(targetURL.Path, endpoint),
+		},
 	}, nil
 }
