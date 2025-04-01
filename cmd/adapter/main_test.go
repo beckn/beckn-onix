@@ -364,7 +364,7 @@ func TestNewServerSuccess(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{
 				Modules: tt.modules,
-				HTTP: timeouts{
+				HTTP: httpConfig{
 					Port: "8080",
 					Timeouts: timeoutConfig{
 						Read:  5,
@@ -409,7 +409,7 @@ func TestNewServerFailure(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{
 				Modules: tt.modules,
-				HTTP: timeouts{
+				HTTP: httpConfig{
 					Port: "8080",
 					Timeouts: timeoutConfig{
 						Read:  5,
@@ -441,7 +441,7 @@ func TestValidateConfigSuccess(t *testing.T) {
 			name: "Valid Config",
 			cfg: Config{
 				AppName: "TestApp",
-				HTTP: timeouts{
+				HTTP: httpConfig{
 					Port: "8080",
 				},
 			},
@@ -469,7 +469,7 @@ func TestValidateConfigFailure(t *testing.T) {
 			name: "Missing AppName",
 			cfg: Config{
 				AppName: "",
-				HTTP: timeouts{
+				HTTP: httpConfig{
 					Port: "8080",
 				},
 			},
@@ -479,7 +479,7 @@ func TestValidateConfigFailure(t *testing.T) {
 			name: "Missing Port",
 			cfg: Config{
 				AppName: "TestApp",
-				HTTP: timeouts{
+				HTTP: httpConfig{
 					Port: "",
 				},
 			},
