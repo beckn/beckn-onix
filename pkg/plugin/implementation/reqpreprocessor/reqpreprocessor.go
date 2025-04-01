@@ -1,4 +1,4 @@
-package requestpreprocessor
+package reqpreprocessor
 
 import (
 	"bytes"
@@ -9,24 +9,26 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/beckn/beckn-onix/pkg/log"
 	"github.com/google/uuid"
 )
 
+// Config holds the configuration settings for the application.
 type Config struct {
-	ContextKeys []string
-	Role        string
+	ContextKeys []string // ContextKeys is a list of context keys used for request processing.
+	Role        string   // Role specifies the role of the entity (e.g., subscriber, gateway).
 }
 
 type becknRequest struct {
 	Context map[string]any `json:"context"`
 }
 
-type contextKeyType string
-
 const contextKey = "context"
-const subscriberIDKey contextKeyType = "subscriber_id"
+const subscriberIDKey = "subscriber_id"
 
-func NewUUIDSetter(cfg *Config) (func(http.Handler) http.Handler, error) {
+// NewPreProcessor creates a middleware that processes incoming HTTP requests by extracting
+// and modifying the request context based on the provided configuration.
+func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
 	}
@@ -34,6 +36,7 @@ func NewUUIDSetter(cfg *Config) (func(http.Handler) http.Handler, error) {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			body, _ := io.ReadAll(r.Body)
 			var req becknRequest
+			ctx := r.Context()
 			if err := json.Unmarshal(body, &req); err != nil {
 				http.Error(w, "Failed to decode request body", http.StatusBadRequest)
 				return
@@ -49,11 +52,15 @@ func NewUUIDSetter(cfg *Config) (func(http.Handler) http.Handler, error) {
 			case "bpp":
 				subID = req.Context["bpp_id"]
 			}
-			ctx := context.WithValue(r.Context(), subscriberIDKey, subID)
+			if subID != nil {
+				log.Debugf(ctx, "adding subscriberId to request:%s, %v", subscriberIDKey, subID)
+				// TODO: Add a ContextKey type in model and use it here instead of raw context key.
+				ctx = context.WithValue(ctx, subscriberIDKey, subID)
+			}
 			for _, key := range cfg.ContextKeys {
 				value := uuid.NewString()
 				updatedValue := update(req.Context, key, value)
-				ctx = context.WithValue(ctx, contextKeyType(key), updatedValue)
+				ctx = context.WithValue(ctx, key, updatedValue)
 			}
 			reqData := map[string]any{"context": req.Context}
 			updatedBody, _ := json.Marshal(reqData)

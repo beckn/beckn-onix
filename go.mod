@@ -1,6 +1,6 @@
 module github.com/beckn/beckn-onix
 
-go 1.24.1
+go 1.24
 
 require (
 	github.com/kr/pretty v0.3.1 // indirect
@@ -10,45 +10,32 @@ require (
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 )
 
-toolchain go1.23.7
+require github.com/stretchr/testify v1.10.0
 
 require (
-	github.com/rs/zerolog v1.33.0
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/google/uuid v1.6.0
+	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/stretchr/testify v1.10.0
-	github.com/zenazn/pkcs7pad v0.0.0-20170308005700-253a5b1f0e03
-	golang.org/x/text v0.23.0 // indirect
-	golang.org/x/crypto v0.36.0
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1
+	github.com/stretchr/objx v0.5.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+require github.com/zenazn/pkcs7pad v0.0.0-20170308005700-253a5b1f0e03
+
 require (
-	cloud.google.com/go v0.119.0 // indirect
-	cloud.google.com/go/auth v0.15.0 // indirect
-	cloud.google.com/go/auth/oauth2adapt v0.2.7 // indirect
-	cloud.google.com/go/compute/metadata v0.6.0 // indirect
-	cloud.google.com/go/iam v1.4.1 // indirect
-	github.com/felixge/httpsnoop v1.0.4 // indirect
-	github.com/go-logr/logr v1.4.2 // indirect
-	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/googleapis/enterprise-certificate-proxy v0.3.5 // indirect
-	github.com/googleapis/gax-go/v2 v2.14.1 // indirect
-	github.com/zenazn/pkcs7pad v0.0.0-20170308005700-253a5b1f0e03
+	github.com/google/uuid v1.6.0
+	golang.org/x/text v0.23.0 // indirect
 )
 
-require golang.org/x/text v0.23.0 // indirect
-
-require golang.org/x/sys v0.31.0 // indirect
 require (
 	github.com/mattn/go-colorable v0.1.13 // indirect
-	github.com/mattn/go-isatty v0.0.19 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
 	golang.org/x/sys v0.31.0 // indirect
 )
+
 require (
-	cloud.google.com/go/pubsub v1.48.0
+	github.com/hashicorp/go-retryablehttp v0.7.7
+	github.com/rs/zerolog v1.34.0
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v2 v2.4.0
 )

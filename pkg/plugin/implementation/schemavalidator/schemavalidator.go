@@ -1,4 +1,4 @@
-package schemaValidator
+package schemavalidator
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	response "github.com/beckn/beckn-onix/pkg/response"
+	"github.com/beckn/beckn-onix/pkg/model"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -23,8 +23,8 @@ type payload struct {
 	} `json:"context"`
 }
 
-// SchemaValidator implements the Validator interface.
-type SchemaValidator struct {
+// schemaValidator implements the Validator interface.
+type schemaValidator struct {
 	config      *Config
 	schemaCache map[string]*jsonschema.Schema
 }
@@ -35,12 +35,12 @@ type Config struct {
 }
 
 // New creates a new ValidatorProvider instance.
-func New(ctx context.Context, config *Config) (*SchemaValidator, func() error, error) {
+func New(ctx context.Context, config *Config) (*schemaValidator, func() error, error) {
 	// Check if config is nil
 	if config == nil {
 		return nil, nil, fmt.Errorf("config cannot be nil")
 	}
-	v := &SchemaValidator{
+	v := &schemaValidator{
 		config:      config,
 		schemaCache: make(map[string]*jsonschema.Schema),
 	}
@@ -53,7 +53,7 @@ func New(ctx context.Context, config *Config) (*SchemaValidator, func() error, e
 }
 
 // Validate validates the given data against the schema.
-func (v *SchemaValidator) Validate(ctx context.Context, url *url.URL, data []byte) error {
+func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byte) error {
 	var payloadData payload
 	err := json.Unmarshal(data, &payloadData)
 	if err != nil {
@@ -61,14 +61,14 @@ func (v *SchemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 	}
 
 	// Extract domain, version, and endpoint from the payload and uri.
-	cxt_domain := payloadData.Context.Domain
+	cxtDomain := payloadData.Context.Domain
 	version := payloadData.Context.Version
 	version = fmt.Sprintf("v%s", version)
 
 	endpoint := path.Base(url.String())
 	// ToDo Add debug log here
 	fmt.Println("Handling request for endpoint:", endpoint)
-	domain := strings.ToLower(cxt_domain)
+	domain := strings.ToLower(cxtDomain)
 	domain = strings.ReplaceAll(domain, ":", "_")
 
 	// Construct the schema file name.
@@ -89,20 +89,20 @@ func (v *SchemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 		// Handle schema validation errors
 		if validationErr, ok := err.(*jsonschema.ValidationError); ok {
 			// Convert validation errors into an array of SchemaValError
-			var schemaErrors []response.Error
+			var schemaErrors []model.Error
 			for _, cause := range validationErr.Causes {
 				// Extract the path and message from the validation error
 				path := strings.Join(cause.InstanceLocation, ".") // JSON path to the invalid field
 				message := cause.Error()                          // Validation error message
 
 				// Append the error to the schemaErrors array
-				schemaErrors = append(schemaErrors, response.Error{
+				schemaErrors = append(schemaErrors, model.Error{
 					Paths:   path,
 					Message: message,
 				})
 			}
 			// Return the array of schema validation errors
-			return &response.SchemaValidationErr{Errors: schemaErrors}
+			return &model.SchemaValidationErr{Errors: schemaErrors}
 		}
 		// Return a generic error for non-validation errors
 		return fmt.Errorf("validation failed: %v", err)
@@ -117,7 +117,7 @@ type ValidatorProvider struct{}
 
 // Initialise initialises the validator provider by compiling all the JSON schema files
 // from the specified directory and storing them in a cache indexed by their schema filenames.
-func (v *SchemaValidator) initialise() error {
+func (v *schemaValidator) initialise() error {
 	schemaDir := v.config.SchemaDir
 	// Check if the directory exists and is accessible.
 	info, err := os.Stat(schemaDir)

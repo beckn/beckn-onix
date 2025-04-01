@@ -1,4 +1,4 @@
-package requestpreprocessor
+package reqpreprocessor
 
 import (
 	"bytes"
@@ -52,7 +52,7 @@ func TestNewUUIDSetterSuccessCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			middleware, err := NewUUIDSetter(tt.config)
+			middleware, err := NewPreProcessor(tt.config)
 			if err != nil {
 				t.Fatalf("Unexpected error while creating middleware: %v", err)
 			}
@@ -148,7 +148,7 @@ func TestNewUUIDSetterErrorCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			middleware, err := NewUUIDSetter(tt.config)
+			middleware, err := NewPreProcessor(tt.config)
 			if tt.config == nil {
 				if err == nil {
 					t.Error("Expected an error for nil config, but got none")
