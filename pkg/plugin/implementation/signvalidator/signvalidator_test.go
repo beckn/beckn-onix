@@ -1,4 +1,4 @@
-package verifier
+package signvalidator
 
 import (
 	"context"
@@ -52,13 +52,10 @@ func TestVerifySuccess(t *testing.T) {
 				`", signature="` + signature + `"`
 
 			verifier, close, _ := New(context.Background(), &Config{})
-			valid, err := verifier.Verify(context.Background(), tt.body, []byte(header), publicKeyBase64)
+			err := verifier.Validate(context.Background(), tt.body, header, publicKeyBase64)
 
 			if err != nil {
 				t.Fatalf("Expected no error, but got: %v", err)
-			}
-			if !valid {
-				t.Fatal("Expected signature verification to succeed")
 			}
 			if close != nil {
 				if err := close(); err != nil {
@@ -135,13 +132,10 @@ func TestVerifyFailure(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			verifier, close, _ := New(context.Background(), &Config{})
-			valid, err := verifier.Verify(context.Background(), tt.body, []byte(tt.header), tt.pubKey)
+			err := verifier.Validate(context.Background(), tt.body, tt.header, tt.pubKey)
 
 			if err == nil {
 				t.Fatal("Expected an error but got none")
-			}
-			if valid {
-				t.Fatal("Expected verification to fail")
 			}
 			if close != nil {
 				if err := close(); err != nil {

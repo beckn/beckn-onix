@@ -1,4 +1,4 @@
-package verifier
+package signvalidator
 
 import (
 	"context"
@@ -16,36 +16,36 @@ import (
 type Config struct {
 }
 
-// Verifier implements the Verifier interface.
-type Verifier struct {
+// validator implements the validator interface.
+type validator struct {
 	config *Config
 }
 
 // New creates a new Verifier instance.
-func New(ctx context.Context, config *Config) (*Verifier, func() error, error) {
-	v := &Verifier{config: config}
+func New(ctx context.Context, config *Config) (*validator, func() error, error) {
+	v := &validator{config: config}
 
-	return v, v.Close, nil
+	return v, nil, nil
 }
 
 // Verify checks the signature for the given payload and public key.
-func (v *Verifier) Verify(ctx context.Context, body []byte, header []byte, publicKeyBase64 string) (bool, error) {
-	createdTimestamp, expiredTimestamp, signature, err := parseAuthHeader(string(header))
+func (v *validator) Validate(ctx context.Context, body []byte, header string, publicKeyBase64 string) error {
+	createdTimestamp, expiredTimestamp, signature, err := parseAuthHeader(header)
 	if err != nil {
 		// TODO: Return appropriate error code when Error Code Handling Module is ready
-		return false, fmt.Errorf("error parsing header: %w", err)
+		return fmt.Errorf("error parsing header: %w", err)
 	}
 
 	signatureBytes, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil {
 		// TODO: Return appropriate error code when Error Code Handling Module is ready
-		return false, fmt.Errorf("error decoding signature: %w", err)
+		return fmt.Errorf("error decoding signature: %w", err)
 	}
 
 	currentTime := time.Now().Unix()
 	if createdTimestamp > currentTime || currentTime > expiredTimestamp {
 		// TODO: Return appropriate error code when Error Code Handling Module is ready
-		return false, fmt.Errorf("signature is expired or not yet valid")
+		return fmt.Errorf("signature is expired or not yet valid")
 	}
 
 	createdTime := time.Unix(createdTimestamp, 0)
@@ -56,15 +56,15 @@ func (v *Verifier) Verify(ctx context.Context, body []byte, header []byte, publi
 	decodedPublicKey, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 	if err != nil {
 		// TODO: Return appropriate error code when Error Code Handling Module is ready
-		return false, fmt.Errorf("error decoding public key: %w", err)
+		return fmt.Errorf("error decoding public key: %w", err)
 	}
 
 	if !ed25519.Verify(ed25519.PublicKey(decodedPublicKey), []byte(signingString), signatureBytes) {
 		// TODO: Return appropriate error code when Error Code Handling Module is ready
-		return false, fmt.Errorf("signature verification failed")
+		return fmt.Errorf("signature verification failed")
 	}
 
-	return true, nil
+	return nil
 }
 
 // parseAuthHeader extracts signature values from the Authorization header.
@@ -112,9 +112,4 @@ func hash(payload []byte, createdTimestamp, expiredTimestamp int64) string {
 	digestB64 := base64.StdEncoding.EncodeToString(hashSum)
 
 	return fmt.Sprintf("(created): %d\n(expires): %d\ndigest: BLAKE-512=%s", createdTimestamp, expiredTimestamp, digestB64)
-}
-
-// Close releases resources (mock implementation returning nil).
-func (v *Verifier) Close() error {
-	return nil
 }

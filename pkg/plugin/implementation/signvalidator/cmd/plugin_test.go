@@ -7,7 +7,7 @@ import (
 
 // TestVerifierProviderSuccess tests successful creation of a verifier.
 func TestVerifierProviderSuccess(t *testing.T) {
-	provider := VerifierProvider{}
+	provider := provider{}
 
 	tests := []struct {
 		name   string
@@ -52,7 +52,7 @@ func TestVerifierProviderSuccess(t *testing.T) {
 
 // TestVerifierProviderFailure tests cases where verifier creation should fail.
 func TestVerifierProviderFailure(t *testing.T) {
-	provider := VerifierProvider{}
+	provider := provider{}
 
 	tests := []struct {
 		name    string

@@ -34,7 +34,7 @@ func TestProviderNew(t *testing.T) {
 		{
 			name: "With Check Keys",
 			config: map[string]string{
-				"ContextKeys": "message_id,transaction_id",
+				"contextKeys": "message_id,transaction_id",
 			},
 			expectedError:  false,
 			expectedStatus: http.StatusOK,

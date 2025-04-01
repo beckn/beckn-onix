@@ -25,11 +25,13 @@ type destination struct {
 	Config map[string]string `yaml:"config"`
 }
 
+// Destination types for logging output.
 const (
 	Stdout destinationType = "stdout"
 	File   destinationType = "file"
 )
 
+// Log levels define the severity of log messages.
 const (
 	DebugLevel level = "debug"
 	InfoLevel  level = "info"
@@ -48,6 +50,7 @@ var logLevels = map[level]zerolog.Level{
 	PanicLevel: zerolog.PanicLevel,
 }
 
+// Config represents the configuration for logging.
 type Config struct {
 	Level        level         `yaml:"level"`
 	Destinations []destination `yaml:"destinations"`
@@ -60,6 +63,7 @@ var (
 	once   sync.Once
 )
 
+// Logger instance and configuration.
 var (
 	ErrInvalidLogLevel   = errors.New("invalid log level")
 	ErrLogDestinationNil = errors.New("log Destinations cant be empty")
@@ -163,6 +167,8 @@ func getLogger(config Config) (zerolog.Logger, error) {
 	return newLogger, nil
 }
 
+// InitLogger initializes the logger with the given configuration.
+// It ensures that the logger is initialized only once using sync.Once.
 func InitLogger(c Config) error {
 	var initErr error
 	once.Do(func() {
@@ -175,60 +181,74 @@ func InitLogger(c Config) error {
 	return initErr
 }
 
+// Debug logs a debug-level message with the provided context.
 func Debug(ctx context.Context, msg string) {
 	logEvent(ctx, zerolog.DebugLevel, msg, nil)
 }
 
+// Debugf logs a formatted debug-level message with the provided context.
 func Debugf(ctx context.Context, format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	logEvent(ctx, zerolog.DebugLevel, msg, nil)
 }
 
+// Info logs an info-level message with the provided context.
 func Info(ctx context.Context, msg string) {
 	logEvent(ctx, zerolog.InfoLevel, msg, nil)
 }
 
+// Infof logs a formatted info-level message with the provided context.
 func Infof(ctx context.Context, format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	logEvent(ctx, zerolog.InfoLevel, msg, nil)
 }
 
+// Warn logs a warning-level message with the provided context.
 func Warn(ctx context.Context, msg string) {
 	logEvent(ctx, zerolog.WarnLevel, msg, nil)
 }
 
+// Warnf logs a formatted warning-level message with the provided context.
 func Warnf(ctx context.Context, format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	logEvent(ctx, zerolog.WarnLevel, msg, nil)
 }
 
+// Error logs an error-level message along with an error object.
 func Error(ctx context.Context, err error, msg string) {
 	logEvent(ctx, zerolog.ErrorLevel, msg, err)
 }
 
+// Errorf logs a formatted error-level message along with an error object.
 func Errorf(ctx context.Context, err error, format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	logEvent(ctx, zerolog.ErrorLevel, msg, err)
 }
 
+// Fatal logs a fatal-level message along with an error object and exits the application.
 func Fatal(ctx context.Context, err error, msg string) {
 	logEvent(ctx, zerolog.FatalLevel, msg, err)
 }
 
+// Fatalf logs a formatted fatal-level message along with an error object and exits the application.
 func Fatalf(ctx context.Context, err error, format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	logEvent(ctx, zerolog.FatalLevel, msg, err)
 }
 
+// Panic logs a panic-level message along with an error object and panics.
 func Panic(ctx context.Context, err error, msg string) {
 	logEvent(ctx, zerolog.PanicLevel, msg, err)
 }
 
+// Panicf logs a formatted panic-level message along with an error object and panics.
 func Panicf(ctx context.Context, err error, format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 	logEvent(ctx, zerolog.PanicLevel, msg, err)
 }
 
+// logEvent logs an event at the specified log level with an optional error message.
+// It adds contextual information before logging the message.
 func logEvent(ctx context.Context, level zerolog.Level, msg string, err error) {
 	event := logger.WithLevel(level)
 
@@ -239,6 +259,7 @@ func logEvent(ctx context.Context, level zerolog.Level, msg string, err error) {
 	event.Msg(msg)
 }
 
+// Request logs details of an incoming HTTP request, including method, URL, body, and remote address.
 func Request(ctx context.Context, r *http.Request, body []byte) {
 	event := logger.Info()
 	addCtx(ctx, event)
@@ -249,6 +270,7 @@ func Request(ctx context.Context, r *http.Request, body []byte) {
 		Msg("HTTP Request")
 }
 
+// addCtx adds context values to the log event based on configured context keys.
 func addCtx(ctx context.Context, event *zerolog.Event) {
 	for _, key := range cfg.ContextKeys {
 		val, ok := ctx.Value(key).(string)
@@ -260,6 +282,7 @@ func addCtx(ctx context.Context, event *zerolog.Event) {
 	}
 }
 
+// Response logs details of an outgoing HTTP response, including method, URL, status code, and response time.
 func Response(ctx context.Context, r *http.Request, statusCode int, responseTime time.Duration) {
 	event := logger.Info()
 	addCtx(ctx, event)
