@@ -25,10 +25,10 @@ type Config struct {
 	Log           log.Config            `yaml:"log"`
 	PluginManager *plugin.ManagerConfig `yaml:"pluginManager"`
 	Modules       []module.Config       `yaml:"modules"`
-	HTTP          timeouts              `yaml:"http"`
+	HTTP          httpConfig            `yaml:"http"`
 }
 
-type timeouts struct {
+type httpConfig struct {
 	Port     string        `yaml:"port"`
 	Timeouts timeoutConfig `yaml:"timeout"`
 }
@@ -103,7 +103,6 @@ func newServer(ctx context.Context, mgr handler.PluginManager, cfg *Config) (htt
 
 var newManagerFunc = plugin.NewManager
 var newServerFunc = newServer
-var initLoggerFunc = log.InitLogger
 
 // run encapsulates the application logic.
 func run(ctx context.Context, configPath string) error {
@@ -114,7 +113,7 @@ func run(ctx context.Context, configPath string) error {
 		return fmt.Errorf("failed to initialize config: %w", err)
 	}
 	log.Infof(ctx, "Initializing logger with config: %+v", cfg.Log)
-	if err := initLoggerFunc(cfg.Log); err != nil {
+	if err := log.InitLogger(cfg.Log); err != nil {
 		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
 

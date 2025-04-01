@@ -13,16 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockRegistryClient is a mock implementation of the RegistryClient.
-type MockRegistryClient struct {
-	SubscribeFunc func(ctx context.Context, subscription *model.Subscription) error
-}
-
-// Subscribe calls the mock Subscribe function.
-func (m *MockRegistryClient) Subscribe(ctx context.Context, subscription *model.Subscription) error {
-	return m.SubscribeFunc(ctx, subscription)
-}
-
 // TestSubscribeSuccess verifies that the Subscribe function succeeds when the server responds with HTTP 200.
 func TestSubscribeSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,11 +74,11 @@ func TestSubscribeFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockClient := &MockRegistryClient{
-				SubscribeFunc: func(ctx context.Context, subscription *model.Subscription) error {
-					return tt.mockError
-				},
-			}
+			client := NewRegisteryClient(&Config{
+				RetryMax:     1,
+				RetryWaitMin: 1 * time.Millisecond,
+				RetryWaitMax: 2 * time.Millisecond,
+			})
 
 			subscription := &model.Subscription{
 				KeyID:            "test-key",
@@ -103,7 +93,7 @@ func TestSubscribeFailure(t *testing.T) {
 				subscription = &model.Subscription{} // Example of an invalid object
 			}
 
-			err := mockClient.Subscribe(context.Background(), subscription)
+			err := client.Subscribe(context.Background(), subscription)
 			require.Error(t, err) // Directly checking for an error since all cases should fail
 		})
 	}
@@ -217,7 +207,7 @@ func TestLookupFailure(t *testing.T) {
 
 			config := &Config{
 				RegisteryURL: server.URL,
-				RetryMax:     0, // Prevent excessive retries
+				RetryMax:     0,
 				RetryWaitMin: 1 * time.Millisecond,
 				RetryWaitMax: 2 * time.Millisecond,
 			}
