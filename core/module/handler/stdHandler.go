@@ -246,8 +246,6 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			s, err = newValidateSchemaStep(h.schemaValidator)
 		case "addRoute":
 			s, err = newAddRouteStep(h.router)
-		case "broadcast":
-			s = &broadcastStep{}
 		default:
 			if customStep, exists := steps[step]; exists {
 				s = customStep

@@ -167,12 +167,3 @@ func (s *addRouteStep) Run(ctx *model.StepContext) error {
 	}
 	return nil
 }
-
-// broadcastStep is a stub implementation of a step that handles broadcasting messages.
-type broadcastStep struct{}
-
-// Run executes the broadcast step.
-func (b *broadcastStep) Run(ctx *model.StepContext) error {
-	// TODO: Implement broadcast logic if needed
-	return nil
-}
