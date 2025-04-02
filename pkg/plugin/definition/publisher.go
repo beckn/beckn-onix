@@ -10,5 +10,5 @@ type Publisher interface {
 
 type PublisherProvider interface {
 	// New initializes a new publisher instance with the given configuration.
-	New(ctx context.Context, config map[string]string) (Publisher, func(), error)
+	New(ctx context.Context, config map[string]string) (Publisher, func() error, error)
 }

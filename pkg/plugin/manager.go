@@ -130,7 +130,13 @@ func (m *Manager) Publisher(ctx context.Context, cfg *Config) (definition.Publis
 	if err != nil {
 		return nil, err
 	}
-	m.addCloser(closer)
+	if closer != nil {
+		m.addCloser(func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
 	return p, nil
 }
 
