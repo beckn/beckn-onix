@@ -3,11 +3,13 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"plugin"
 	"strings"
 
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
+	"gopkg.in/yaml.v2"
 )
 
 // Config represents the plugin manager configuration.
@@ -18,6 +20,7 @@ type Config struct {
 	Decrypter PluginConfig `yaml:"decrypter"`
 	Encrypter PluginConfig `yaml:"encrypter"`
 	Publisher PluginConfig `yaml:"publisher"`
+	Registery PluginConfig `yaml:"registery"`
 }
 
 // PluginConfig represents configuration details for a plugin.
@@ -33,6 +36,7 @@ type Manager struct {
 	dp  definition.DecrypterProvider
 	ep  definition.EncrypterProvider
 	pb  definition.PublisherProvider
+	rp  definition.RegistryLookupProvider
 	cfg *Config
 }
 
@@ -71,8 +75,13 @@ func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load encryption plugin: %w", err)
 	}
+	// Load encryption plugin.
+	rp, err := provider[definition.RegistryLookupProvider](cfg.Root, cfg.Registery.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load registery plugin: %w", err)
+	}
 
-	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, dp: dp, cfg: cfg}, nil
+	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, dp: dp, rp: rp, cfg: cfg}, nil
 }
 
 // provider loads a plugin dynamically and retrieves its provider instance.
@@ -168,4 +177,33 @@ func (m *Manager) Publisher(ctx context.Context) (definition.Publisher, error) {
 		return nil, fmt.Errorf("failed to initialize publisher: %w", err)
 	}
 	return publisher, nil
+}
+
+// RegistryLookup retrieves the registryLookup plugin instance.
+func (m *Manager) RegistryLookup(ctx context.Context) (definition.RegistryLookup, func() error, error) {
+	if m.rp == nil {
+		return nil, nil, fmt.Errorf("registry lookup plugin provider not loaded")
+	}
+	registry, close, err := m.rp.New(ctx, m.cfg.Registery.Config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize registry lookup: %w", err)
+	}
+	return registry, close, nil
+}
+
+// LoadConfig loads the configuration from a YAML file.
+func LoadConfig(path string) (*Config, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open config file: %w", err)
+	}
+	defer file.Close()
+
+	var cfg Config
+	decoder := yaml.NewDecoder(file)
+	if err := decoder.Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to decode config file: %w", err)
+	}
+
+	return &cfg, nil
 }
