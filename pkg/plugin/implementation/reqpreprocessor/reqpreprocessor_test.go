@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/beckn/beckn-onix/pkg/model"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewUUIDSetterSuccessCases(t *testing.T) {
@@ -177,4 +178,56 @@ func TestNewUUIDSetterErrorCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Mock configuration
+var testConfig = &Config{
+	Role:        "bap",
+	ContextKeys: []string{"message_id"},
+}
+
+// Mock request payload
+var testPayload = `{
+	"context": {
+		"message_id": "test-msg-id",
+		"bap_id": "test-bap-id"
+	}
+}`
+
+// Mock handler to capture processed request context
+func captureContextHandler(t *testing.T, expectedMsgID string, expectedSubID string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Retrieve values from context
+		msgID, ok := r.Context().Value(model.MsgIDKey).(string)
+		require.True(t, ok, "message_id should be set")
+		require.Equal(t, expectedMsgID, msgID, "message_id should match")
+
+		subID, ok := r.Context().Value(model.SubscriberIDKey).(string)
+		require.True(t, ok, "subscriber_id should be set")
+		require.Equal(t, expectedSubID, subID, "subscriber_id should match")
+
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+// Test NewPreProcessor middleware
+func TestNewPreProcessor(t *testing.T) {
+	preProcessor, err := NewPreProcessor(testConfig)
+	require.NoError(t, err)
+
+	// Create test request
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewBufferString(testPayload))
+	req.Header.Set("Content-Type", "application/json")
+
+	// Create response recorder
+	recorder := httptest.NewRecorder()
+
+	// Wrap handler with middleware
+	handler := preProcessor(captureContextHandler(t, "test-msg-id", "test-bap-id"))
+
+	// Serve request
+	handler.ServeHTTP(recorder, req)
+
+	// Check response status
+	require.Equal(t, http.StatusOK, recorder.Code, "Middleware should process correctly")
 }
