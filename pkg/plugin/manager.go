@@ -1,209 +1,387 @@
 package plugin
 
 import (
+	"archive/zip"
 	"context"
 	"fmt"
+	"io"
+	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"plugin"
 	"strings"
+	"time"
 
+	"github.com/beckn/beckn-onix/pkg/log"
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
-	"gopkg.in/yaml.v2"
 )
 
-// Config represents the plugin manager configuration.
-type Config struct {
-	Root      string       `yaml:"root"`
-	Signer    PluginConfig `yaml:"signer"`
-	Verifier  PluginConfig `yaml:"verifier"`
-	Decrypter PluginConfig `yaml:"decrypter"`
-	Encrypter PluginConfig `yaml:"encrypter"`
-	Publisher PluginConfig `yaml:"publisher"`
-	Registery PluginConfig `yaml:"registery"`
-}
+// TODO: Add unit tests for the plugin manager functions to ensure proper functionality and error handling.
 
-// PluginConfig represents configuration details for a plugin.
-type PluginConfig struct {
-	ID     string            `yaml:"id"`
-	Config map[string]string `yaml:"config"`
-}
-
-// Manager handles dynamic plugin loading and management.
+// Manager is responsible for managing dynamically loaded plugins.
 type Manager struct {
-	sp  definition.SignerProvider
-	vp  definition.VerifierProvider
-	dp  definition.DecrypterProvider
-	ep  definition.EncrypterProvider
-	pb  definition.PublisherProvider
-	rp  definition.RegistryLookupProvider
-	cfg *Config
+	plugins map[string]*plugin.Plugin // plugins holds the dynamically loaded plugins.
+	closers []func()                  // closers contains functions to release resources when the manager is closed.
 }
 
-// NewManager initializes a new Manager with the given configuration file.
-func NewManager(ctx context.Context, cfg *Config) (*Manager, error) {
-	if cfg == nil {
-		return nil, fmt.Errorf("configuration cannot be nil")
-	}
-
-	// Load signer plugin.
-	sp, err := provider[definition.SignerProvider](cfg.Root, cfg.Signer.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load signer plugin: %w", err)
-	}
-
-	// Load publisher plugin.
-	pb, err := provider[definition.PublisherProvider](cfg.Root, cfg.Publisher.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load publisher plugin: %w", err)
-	}
-
-	// Load verifier plugin.
-	vp, err := provider[definition.VerifierProvider](cfg.Root, cfg.Verifier.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load Verifier plugin: %w", err)
-	}
-
-	// Load decrypter plugin.
-	dp, err := provider[definition.DecrypterProvider](cfg.Root, cfg.Decrypter.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load Decrypter plugin: %w", err)
-	}
-
-	// Load encryption plugin.
-	ep, err := provider[definition.EncrypterProvider](cfg.Root, cfg.Encrypter.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load encryption plugin: %w", err)
-	}
-	// Load encryption plugin.
-	rp, err := provider[definition.RegistryLookupProvider](cfg.Root, cfg.Registery.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load registery plugin: %w", err)
-	}
-
-	return &Manager{sp: sp, vp: vp, pb: pb, ep: ep, dp: dp, rp: rp, cfg: cfg}, nil
+func validateMgrCfg(cfg *ManagerConfig) error {
+	return nil
 }
 
-// provider loads a plugin dynamically and retrieves its provider instance.
-func provider[T any](root, id string) (T, error) {
+// NewManager initializes a new Manager instance by loading plugins from the specified configuration.
+func NewManager(ctx context.Context, cfg *ManagerConfig) (*Manager, func(), error) {
+	if err := validateMgrCfg(cfg); err != nil {
+		return nil, nil, fmt.Errorf("Invalid config: %w", err)
+	}
+	log.Debugf(ctx, "RemoteRoot : %s", cfg.RemoteRoot)
+	if len(cfg.RemoteRoot) != 0 {
+		log.Debugf(ctx, "Unzipping files from  : %s to : %s", cfg.RemoteRoot, cfg.Root)
+		if err := unzip(cfg.RemoteRoot, cfg.Root); err != nil {
+			return nil, nil, err
+		}
+	}
+	plugins, err := plugins(ctx, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	closers := []func(){}
+	return &Manager{plugins: plugins, closers: closers}, func() {
+		for _, closer := range closers {
+			closer()
+		}
+	}, nil
+}
+
+func plugins(ctx context.Context, cfg *ManagerConfig) (map[string]*plugin.Plugin, error) {
+	plugins := make(map[string]*plugin.Plugin)
+
+	err := filepath.WalkDir(cfg.Root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if d.IsDir() {
+			return nil // Skip directories
+		}
+
+		if strings.HasSuffix(d.Name(), ".so") {
+			id := strings.TrimSuffix(d.Name(), ".so") // Extract plugin ID
+			p, elapsed, err := loadPlugin(ctx, path, id)
+			if err != nil {
+				return err
+			}
+			plugins[id] = p
+			log.Debugf(ctx, "Loaded plugin: %s in %s", id, elapsed)
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return plugins, nil
+}
+
+// loadPlugin attempts to load a plugin from the given path and logs the execution time.
+func loadPlugin(ctx context.Context, path, id string) (*plugin.Plugin, time.Duration, error) {
+	log.Debugf(ctx, "Loading plugin: %s", id)
+	start := time.Now()
+
+	p, err := plugin.Open(path)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to open plugin %s: %w", id, err)
+	}
+
+	elapsed := time.Since(start)
+	return p, elapsed, nil
+}
+
+func provider[T any](plugins map[string]*plugin.Plugin, id string) (T, error) {
 	var zero T
-	if len(strings.TrimSpace(id)) == 0 {
-		return zero, nil
+	pgn, ok := plugins[id]
+	if !ok {
+		return zero, fmt.Errorf("plugin %s not found", id)
 	}
-
-	p, err := plugin.Open(pluginPath(root, id))
+	provider, err := pgn.Lookup("Provider")
 	if err != nil {
-		return zero, fmt.Errorf("failed to open plugin %s: %w", id, err)
+		return zero, fmt.Errorf("failed to lookup Provider for %s: %w", id, err)
 	}
+	log.Debugf(context.Background(), "Provider type: %T\n", provider)
 
-	symbol, err := p.Lookup("Provider")
-	if err != nil {
-		return zero, fmt.Errorf("failed to find Provider symbol in plugin %s: %w", id, err)
-	}
-
-	prov, ok := symbol.(*T)
+	pp, ok := provider.(T)
 	if !ok {
 		return zero, fmt.Errorf("failed to cast Provider for %s", id)
 	}
-
-	return *prov, nil
+	log.Debugf(context.Background(), "Casting successful for: %s", provider)
+	return pp, nil
 }
 
-// pluginPath constructs the path to the plugin shared object file.
-func pluginPath(root, id string) string {
-	return filepath.Join(root, id+".so")
-}
-
-// Signer retrieves the signing plugin instance.
-func (m *Manager) Signer(ctx context.Context) (definition.Signer, func() error, error) {
-	if m.sp == nil {
-		return nil, nil, fmt.Errorf("signing plugin provider not loaded")
-	}
-
-	signer, close, err := m.sp.New(ctx, m.cfg.Signer.Config)
+// Publisher returns a Publisher instance based on the provided configuration.
+// It reuses the loaded provider and registers a cleanup function.
+func (m *Manager) Publisher(ctx context.Context, cfg *Config) (definition.Publisher, error) {
+	pp, err := provider[definition.PublisherProvider](m.plugins, cfg.ID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to initialize signer: %w", err)
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	return signer, close, nil
+	p, closer, err := pp.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.addCloser(func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return p, nil
 }
 
-// Verifier retrieves the verification plugin instance.
-func (m *Manager) Verifier(ctx context.Context) (definition.Verifier, func() error, error) {
-	if m.vp == nil {
-		return nil, nil, fmt.Errorf("Verifier plugin provider not loaded")
+// addCloser appends a cleanup function to the Manager's closers list.
+func (m *Manager) addCloser(closer func()) {
+	if closer != nil {
+		m.closers = append(m.closers, closer)
 	}
-
-	Verifier, close, err := m.vp.New(ctx, m.cfg.Verifier.Config)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to initialize Verifier: %w", err)
-	}
-	return Verifier, close, nil
 }
 
-// Decrypter retrieves the decryption plugin instance.
-func (m *Manager) Decrypter(ctx context.Context) (definition.Decrypter, func() error, error) {
-	if m.dp == nil {
-		return nil, nil, fmt.Errorf("decrypter plugin provider not loaded")
-	}
-
-	decrypter, close, err := m.dp.New(ctx, m.cfg.Decrypter.Config)
+// SchemaValidator returns a SchemaValidator instance based on the provided configuration.
+// It registers a cleanup function for resource management.
+func (m *Manager) SchemaValidator(ctx context.Context, cfg *Config) (definition.SchemaValidator, error) {
+	vp, err := provider[definition.SchemaValidatorProvider](m.plugins, cfg.ID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to initialize Decrypter: %w", err)
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	return decrypter, close, nil
+	v, closer, err := vp.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.addCloser(func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return v, nil
 }
 
-// Encrypter retrieves the encryption plugin instance.
-func (m *Manager) Encrypter(ctx context.Context) (definition.Encrypter, func() error, error) {
-	if m.ep == nil {
-		return nil, nil, fmt.Errorf("encryption plugin provider not loaded")
-	}
-
-	encrypter, close, err := m.ep.New(ctx, m.cfg.Encrypter.Config)
+// Router returns a Router instance based on the provided configuration.
+// It registers a cleanup function for resource management.
+func (m *Manager) Router(ctx context.Context, cfg *Config) (definition.Router, error) {
+	rp, err := provider[definition.RouterProvider](m.plugins, cfg.ID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to initialize encrypter: %w", err)
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	return encrypter, close, nil
+	router, closer, err := rp.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.addCloser(func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return router, nil
 }
 
-// Publisher retrieves the publisher plugin instance.
-func (m *Manager) Publisher(ctx context.Context) (definition.Publisher, error) {
-	if m.pb == nil {
-		return nil, fmt.Errorf("publisher plugin provider not loaded")
-	}
-
-	publisher, err := m.pb.New(ctx, m.cfg.Publisher.Config)
+// Middleware returns an HTTP middleware function based on the provided configuration.
+func (m *Manager) Middleware(ctx context.Context, cfg *Config) (func(http.Handler) http.Handler, error) {
+	mwp, err := provider[definition.MiddlewareProvider](m.plugins, cfg.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize publisher: %w", err)
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	return publisher, nil
+	return mwp.New(ctx, cfg.Config)
 }
 
-// RegistryLookup retrieves the registryLookup plugin instance.
-func (m *Manager) RegistryLookup(ctx context.Context) (definition.RegistryLookup, func() error, error) {
-	if m.rp == nil {
-		return nil, nil, fmt.Errorf("registry lookup plugin provider not loaded")
-	}
-	registry, close, err := m.rp.New(ctx, m.cfg.Registery.Config)
+// Step returns a Step instance based on the provided configuration.
+func (m *Manager) Step(ctx context.Context, cfg *Config) (definition.Step, error) {
+	sp, err := provider[definition.StepProvider](m.plugins, cfg.ID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to initialize registry lookup: %w", err)
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	return registry, close, nil
+	step, closer, error := sp.New(ctx, cfg.Config)
+	if closer != nil {
+		m.closers = append(m.closers, closer)
+	}
+	return step, error
 }
 
-// LoadConfig loads the configuration from a YAML file.
-func LoadConfig(path string) (*Config, error) {
-	file, err := os.Open(path)
+// Cache returns a Cache instance based on the provided configuration.
+// It registers a cleanup function for resource management.
+func (m *Manager) Cache(ctx context.Context, cfg *Config) (definition.Cache, error) {
+	cp, err := provider[definition.CacheProvider](m.plugins, cfg.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open config file: %w", err)
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	defer file.Close()
+	c, close, err := cp.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	m.addCloser(func() {
+		if err := close(); err != nil {
+			panic(err)
+		}
+	})
+	return c, nil
+}
 
-	var cfg Config
-	decoder := yaml.NewDecoder(file)
-	if err := decoder.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to decode config file: %w", err)
+// Signer returns a Signer instance based on the provided configuration.
+// It registers a cleanup function for resource management.
+func (m *Manager) Signer(ctx context.Context, cfg *Config) (definition.Signer, error) {
+	sp, err := provider[definition.SignerProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	s, closer, err := sp.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.addCloser(func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return s, nil
+}
+
+// Encryptor returns an Encrypter instance based on the provided configuration.
+// It registers a cleanup function for resource management.
+func (m *Manager) Encryptor(ctx context.Context, cfg *Config) (definition.Encrypter, error) {
+	ep, err := provider[definition.EncrypterProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	encrypter, closer, err := ep.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.addCloser(func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return encrypter, nil
+}
+
+// Decryptor returns a Decrypter instance based on the provided configuration.
+// It registers a cleanup function for resource management.
+func (m *Manager) Decryptor(ctx context.Context, cfg *Config) (definition.Decrypter, error) {
+	dp, err := provider[definition.DecrypterProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
 
-	return &cfg, nil
+	decrypter, closer, err := dp.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+
+	if closer != nil {
+		m.addCloser(func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+
+	return decrypter, nil
+}
+
+// SignValidator returns a SignValidator instance based on the provided configuration.
+// It registers a cleanup function for resource management.
+func (m *Manager) SignValidator(ctx context.Context, cfg *Config) (definition.SignValidator, error) {
+	svp, err := provider[definition.SignValidatorProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	v, closer, err := svp.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.addCloser(func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return v, nil
+}
+
+// KeyManager returns a KeyManager instance based on the provided configuration.
+// It reuses the loaded provider.
+func (m *Manager) KeyManager(ctx context.Context, cache definition.Cache, rClient definition.RegistryLookup, cfg *Config) (definition.KeyManager, error) {
+
+	kmp, err := provider[definition.KeyManagerProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	km, close, err := kmp.New(ctx, cache, rClient, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	m.addCloser(func() {
+		if err := close(); err != nil {
+			panic(err)
+		}
+	})
+	return km, nil
+}
+
+// Validator implements handler.PluginManager.
+func (m *Manager) Validator(ctx context.Context, cfg *Config) (definition.SchemaValidator, error) {
+	panic("unimplemented")
+}
+
+// Unzip extracts a ZIP file to the specified destination
+func unzip(src, dest string) error {
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	// Ensure the destination directory exists
+	if err := os.MkdirAll(dest, 0755); err != nil {
+		return err
+	}
+
+	for _, f := range r.File {
+
+		fpath := filepath.Join(dest, f.Name)
+		// Ensure directory exists
+		log.Debugf(context.Background(), "Pain : fpath: %s,filepath.Dir(fpath): %s", fpath, filepath.Dir(fpath))
+		if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+			return err
+		}
+		// Open the file inside the zip
+		srcFile, err := f.Open()
+		if err != nil {
+			return err
+		}
+		defer srcFile.Close()
+
+		// Create the destination file
+		dstFile, err := os.Create(fpath)
+		if err != nil {
+			return err
+		}
+		defer dstFile.Close()
+
+		// Copy file contents
+		if _, err := io.Copy(dstFile, srcFile); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

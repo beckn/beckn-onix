@@ -23,7 +23,7 @@ type Signer struct {
 func New(ctx context.Context, config *Config) (*Signer, func() error, error) {
 	s := &Signer{config: config}
 
-	return s, s.Close, nil
+	return s, nil, nil
 }
 
 // hash generates a signing string using BLAKE-512 hashing.
@@ -48,11 +48,12 @@ func generateSignature(signingString []byte, privateKeyBase64 string) ([]byte, e
 		return nil, fmt.Errorf("error decoding private key: %w", err)
 	}
 
-	if len(privateKeyBytes) != ed25519.PrivateKeySize {
-		return nil, errors.New("invalid private key length")
+	if len(privateKeyBytes) != ed25519.SeedSize {
+		return nil, errors.New("invalid seed length")
 	}
 
-	privateKey := ed25519.PrivateKey(privateKeyBytes)
+	// Generate the private key from the seed
+	privateKey := ed25519.NewKeyFromSeed(privateKeyBytes)
 	return ed25519.Sign(privateKey, signingString), nil
 }
 
@@ -69,9 +70,4 @@ func (s *Signer) Sign(ctx context.Context, body []byte, privateKeyBase64 string,
 	}
 
 	return base64.StdEncoding.EncodeToString(signature), nil
-}
-
-// Close releases resources (mock implementation returning nil).
-func (s *Signer) Close() error {
-	return nil
 }

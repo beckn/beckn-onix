@@ -1,0 +1,25 @@
+FROM golang:1.24-bullseye AS builder
+
+WORKDIR /app
+COPY cmd/adapter  ./cmd/adapter
+COPY core/ ./core
+COPY pkg/ ./pkg
+COPY go.mod .
+COPY go.sum .
+RUN go mod download
+
+RUN go build -o server cmd/adapter/main.go
+
+# Create a minimal runtime image
+FROM cgr.dev/chainguard/wolfi-base
+# ✅ Alpine is removed; using minimal Debian
+WORKDIR /app
+
+# Copy only the built binary and plugin
+COPY --from=builder /app/server .
+
+# Expose port 8080
+EXPOSE 8080
+
+# Run the Go server with the config flag from environment variable.
+CMD ["sh", "-c", "./server --config=${CONFIG_FILE}"]

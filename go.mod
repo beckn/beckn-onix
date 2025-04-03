@@ -1,17 +1,22 @@
 module github.com/beckn/beckn-onix
 
-go 1.24.1
+go 1.24
 
 require (
 	github.com/hashicorp/go-retryablehttp v0.7.7
+	github.com/kr/pretty v0.3.1 // indirect
+	github.com/rogpeppe/go-internal v1.13.1 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.1
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/crypto v0.36.0
 	gopkg.in/yaml.v2 v2.4.0
+	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect)
 )
 
+require github.com/zenazn/pkcs7pad v0.0.0-20170308005700-253a5b1f0e03
+
 require (
-	github.com/zenazn/pkcs7pad v0.0.0-20170308005700-253a5b1f0e03
+	github.com/google/uuid v1.6.0
 	golang.org/x/text v0.23.0 // indirect
 )
 
@@ -22,4 +27,15 @@ require (
 	github.com/stretchr/objx v0.5.2 // indirect
 	golang.org/x/sys v0.31.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
+	golang.org/x/sys v0.31.0 // indirect
+)
+
+require (
+	github.com/hashicorp/go-retryablehttp v0.7.7
+	github.com/rs/zerolog v1.34.0
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
+	gopkg.in/yaml.v2 v2.4.0
+
 )

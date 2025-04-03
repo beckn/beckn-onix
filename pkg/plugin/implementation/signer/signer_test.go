@@ -12,7 +12,7 @@ import (
 // generateTestKeys generates a test private and public key pair in base64 encoding.
 func generateTestKeys() (string, string) {
 	publicKey, privateKey, _ := ed25519.GenerateKey(nil)
-	return base64.StdEncoding.EncodeToString(privateKey), base64.StdEncoding.EncodeToString(publicKey)
+	return base64.StdEncoding.EncodeToString(privateKey.Seed()), base64.StdEncoding.EncodeToString(publicKey)
 }
 
 // TestSignSuccess tests the Sign method with valid inputs to ensure it produces a valid signature.
@@ -82,7 +82,7 @@ func TestSignFailure(t *testing.T) {
 			privateKey:      base64.StdEncoding.EncodeToString([]byte("short_key")),
 			createdAt:       time.Now().Unix(),
 			expiresAt:       time.Now().Unix() + 3600,
-			expectErrString: "invalid private key length",
+			expectErrString: "invalid seed length",
 		},
 	}
 

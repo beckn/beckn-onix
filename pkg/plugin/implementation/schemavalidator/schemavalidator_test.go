@@ -1,4 +1,4 @@
-package schemaValidator
+package schemavalidator
 
 import (
 	"context"
@@ -272,7 +272,7 @@ func TestValidator_Initialise(t *testing.T) {
 			}
 
 			config := &Config{SchemaDir: schemaDir}
-			v := &SchemaValidator{
+			v := &schemaValidator{
 				config:      config,
 				schemaCache: make(map[string]*jsonschema.Schema),
 			}
