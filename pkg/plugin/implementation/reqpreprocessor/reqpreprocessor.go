@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/beckn/beckn-onix/pkg/log"
+	"github.com/beckn/beckn-onix/pkg/model"
 	"github.com/google/uuid"
 )
 
@@ -24,7 +25,6 @@ type becknRequest struct {
 }
 
 const contextKey = "context"
-const subscriberIDKey = "subscriber_id"
 
 // NewPreProcessor creates a middleware that processes incoming HTTP requests by extracting
 // and modifying the request context based on the provided configuration.
@@ -53,14 +53,14 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				subID = req.Context["bpp_id"]
 			}
 			if subID != nil {
-				log.Debugf(ctx, "adding subscriberId to request:%s, %v", subscriberIDKey, subID)
+				log.Debugf(ctx, "adding subscriberId to request:%s, %v", model.SubscriberIDKey, subID)
 				// TODO: Add a ContextKey type in model and use it here instead of raw context key.
-				ctx = context.WithValue(ctx, subscriberIDKey, subID)
+				ctx = context.WithValue(ctx, model.SubscriberIDKey, subID)
 			}
 			for _, key := range cfg.ContextKeys {
 				value := uuid.NewString()
 				updatedValue := update(req.Context, key, value)
-				ctx = context.WithValue(ctx, key, updatedValue)
+				ctx = context.WithValue(ctx, model.ContextKey(key), updatedValue)
 			}
 			reqData := map[string]any{"context": req.Context}
 			updatedBody, _ := json.Marshal(reqData)
