@@ -13,8 +13,7 @@ import (
 )
 
 type Config struct {
-	ContextKeys []string
-	Role        string
+	Role string
 }
 
 const contextKey = "context"
@@ -49,7 +48,7 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 			case "bap":
 				subID = reqContext["bap_id"]
 			case "bpp":
-				subID = reqContext["bap_id"]
+				subID = reqContext["bpp_id"]
 			}
 			if subID != nil {
 				log.Debugf(ctx, "adding subscriberId to request:%s, %v", subscriberIDKey, subID)
@@ -69,16 +68,8 @@ func validateConfig(cfg *Config) error {
 		return errors.New("config cannot be nil")
 	}
 
-	// Check if ContextKeys is empty.
-	if len(cfg.ContextKeys) == 0 {
-		return errors.New("ContextKeys cannot be empty")
-	}
-
-	// Validate that ContextKeys does not contain empty strings.
-	for _, key := range cfg.ContextKeys {
-		if key == "" {
-			return errors.New("ContextKeys cannot contain empty strings")
-		}
+	if cfg.Role != "bap" && cfg.Role != "bpp" {
+		return errors.New("role must be either 'bap' or 'bpp'")
 	}
 	return nil
 }
