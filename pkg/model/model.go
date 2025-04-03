@@ -38,10 +38,13 @@ const (
 	UnaAuthorizedHeaderGateway    string = "Proxy-Authenticate"
 )
 
-type contextKey string
+type ContextKey string
 
 // MsgIDKey is the context key used to store and retrieve the message ID in a request context.
-const MsgIDKey = contextKey("message_id")
+const MsgIDKey = ContextKey("message_id")
+
+// SubscriberIDKey is the context key used to store and retrieve the subscriber ID in a request context.
+const SubscriberIDKey = ContextKey("subscriber_id")
 
 // Role defines the type of participant in the network.
 type Role string

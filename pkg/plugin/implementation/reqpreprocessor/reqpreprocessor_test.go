@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/beckn/beckn-onix/pkg/model"
 )
 
 func TestNewUUIDSetterSuccessCases(t *testing.T) {
@@ -67,7 +69,7 @@ func TestNewUUIDSetterSuccessCases(t *testing.T) {
 				ctx := r.Context()
 				w.WriteHeader(http.StatusOK)
 
-				subID, ok := ctx.Value(subscriberIDKey).(string)
+				subID, ok := ctx.Value(model.SubscriberIDKey).(string)
 				if !ok {
 					http.Error(w, "Subscriber ID not found", http.StatusInternalServerError)
 					return
