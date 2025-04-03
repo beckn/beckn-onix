@@ -105,7 +105,7 @@ func (s *validateSignStep) validate(ctx *model.StepContext, value string) error 
 	headerParts := strings.Split(value, "|")
 	ids := strings.Split(headerParts[0], "\"")
 	if len(ids) < 2 || len(headerParts) < 3 {
-		return fmt.Errorf("malformed sign header")
+		return model.NewBadReqErr(fmt.Errorf("malformed sign header"))
 	}
 	subID := ids[1]
 	keyID := headerParts[1]
@@ -114,7 +114,7 @@ func (s *validateSignStep) validate(ctx *model.StepContext, value string) error 
 		return fmt.Errorf("failed to get validation key: %w", err)
 	}
 	if err := s.validator.Validate(ctx, ctx.Body, value, key); err != nil {
-		return fmt.Errorf("sign validation failed: %w", err)
+		return model.NewSignValidationErr(fmt.Errorf("sign validation failed: %w", err))
 	}
 	return nil
 }
@@ -136,7 +136,7 @@ func newValidateSchemaStep(schemaValidator definition.SchemaValidator) (definiti
 // Run executes the schema validation step.
 func (s *validateSchemaStep) Run(ctx *model.StepContext) error {
 	if err := s.validator.Validate(ctx, ctx.Request.URL, ctx.Body); err != nil {
-		return fmt.Errorf("schema validation failed: %w", err)
+		return err.(*model.SchemaValidationErr).BecknError()
 	}
 	return nil
 }
