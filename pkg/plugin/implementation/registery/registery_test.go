@@ -21,9 +21,9 @@ func TestRegistryLookupSuccess(t *testing.T) {
 	}{
 		{
 			name:           "Success - Valid subscription",
-			subscription:   &model.Subscription{ID: "1"},
-			mockResponse:   `[{"id": "1"}]`,
-			expectedResult: []model.Subscription{{ID: "1"}},
+			subscription:   &model.Subscription{KeyID: "1"},
+			mockResponse:   `[{"subscriber_id": "", "url": "", "type": "", "domain": "", "key_id": "1", "signing_public_key": "", "encr_public_key": "", "valid_from": "0001-01-01T00:00:00Z", "valid_until": "0001-01-01T00:00:00Z", "status": "", "created": "0001-01-01T00:00:00Z", "updated": "0001-01-01T00:00:00Z", "nonce": ""}]`,
+			expectedResult: []model.Subscription{{KeyID: "1"}},
 		},
 	}
 

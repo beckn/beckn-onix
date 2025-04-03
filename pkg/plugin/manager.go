@@ -385,3 +385,25 @@ func unzip(src, dest string) error {
 
 	return nil
 }
+
+// RegistryLookup retrieves the registryLookup plugin instance.
+func (m *Manager) RegistryLookup(ctx context.Context, cfg *Config) (definition.RegistryLookup, error) {
+	rp, err := provider[definition.RegistryLookupProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	registry, closer, err := rp.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+
+	if closer != nil {
+		m.addCloser(func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+
+	return registry, nil
+}
