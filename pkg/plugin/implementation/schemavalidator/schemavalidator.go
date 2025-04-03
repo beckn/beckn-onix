@@ -39,7 +39,7 @@ type Config struct {
 func New(ctx context.Context, config *Config) (*schemaValidator, func() error, error) {
 	// Check if config is nil
 	if config == nil {
-		return nil, nil, fmt.Errorf("config cannot be nil")
+		return nil, nil, model.NewBadReqErr(errors.New("config cannot be nil"))
 	}
 	v := &schemaValidator{
 		config:      config,
@@ -105,8 +105,7 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 			// Return the array of schema validation errors
 			return &model.SchemaValidationErr{Errors: schemaErrors}
 		}
-		// Return a generic error for non-validation errors
-		return fmt.Errorf("validation failed: %v", err)
+		return model.NewBadReqErr(err)
 	}
 
 	// Return nil if validation succeeds
@@ -191,7 +190,7 @@ func (v *schemaValidator) initialise() error {
 
 	// Start processing from the root schema directory.
 	if err := processDir(schemaDir); err != nil {
-		return fmt.Errorf("failed to read schema directory: %v", err)
+		return model.NewNotFoundErr(err)
 	}
 
 	return nil
