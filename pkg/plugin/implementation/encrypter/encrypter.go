@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	"github.com/beckn/beckn-onix/pkg/model"
 	"github.com/zenazn/pkcs7pad"
 )
 
@@ -23,12 +24,12 @@ func New(ctx context.Context) (*encrypter, func() error, error) {
 func (e *encrypter) Encrypt(ctx context.Context, data string, privateKeyBase64, publicKeyBase64 string) (string, error) {
 	privateKeyBytes, err := base64.StdEncoding.DecodeString(privateKeyBase64)
 	if err != nil {
-		return "", fmt.Errorf("invalid private key: %w", err)
+		return "", model.NewBadReqErr(err)
 	}
 
 	publicKeyBytes, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 	if err != nil {
-		return "", fmt.Errorf("invalid public key: %w", err)
+		return "", model.NewBadReqErr(err)
 	}
 
 	// Convert the input string to a byte slice.
@@ -50,11 +51,11 @@ func createAESCipher(privateKey, publicKey []byte) (cipher.Block, error) {
 	x25519Curve := ecdh.X25519()
 	x25519PrivateKey, err := x25519Curve.NewPrivateKey(privateKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create private key: %w", err)
+		return nil, model.NewBadReqErr(err)
 	}
 	x25519PublicKey, err := x25519Curve.NewPublicKey(publicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create public key: %w", err)
+		return nil, model.NewBadReqErr(err)
 	}
 	sharedSecret, err := x25519PrivateKey.ECDH(x25519PublicKey)
 	if err != nil {

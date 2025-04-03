@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/beckn/beckn-onix/pkg/model"
 	"golang.org/x/crypto/blake2b"
 )
 
@@ -32,7 +33,7 @@ func hash(payload []byte, createdAt, expiresAt int64) (string, error) {
 
 	_, err := hasher.Write(payload)
 	if err != nil {
-		return "", fmt.Errorf("failed to hash payload: %w", err)
+		return "", model.NewBadReqErr(err)
 	}
 
 	hashSum := hasher.Sum(nil)
@@ -45,11 +46,11 @@ func hash(payload []byte, createdAt, expiresAt int64) (string, error) {
 func generateSignature(signingString []byte, privateKeyBase64 string) ([]byte, error) {
 	privateKeyBytes, err := base64.StdEncoding.DecodeString(privateKeyBase64)
 	if err != nil {
-		return nil, fmt.Errorf("error decoding private key: %w", err)
+		return nil, model.NewBadReqErr(err)
 	}
 
 	if len(privateKeyBytes) != ed25519.SeedSize {
-		return nil, errors.New("invalid seed length")
+		return nil, model.NewBadReqErr(errors.New("invalid seed length"))
 	}
 
 	// Generate the private key from the seed
