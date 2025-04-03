@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/beckn/beckn-onix/pkg/log"
 	"github.com/beckn/beckn-onix/pkg/model"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -39,7 +40,7 @@ type Config struct {
 func New(ctx context.Context, config *Config) (*schemaValidator, func() error, error) {
 	// Check if config is nil
 	if config == nil {
-		return nil, nil, model.NewBadReqErr(errors.New("config cannot be nil"))
+		return nil, nil, fmt.Errorf("config cannot be nil")
 	}
 	v := &schemaValidator{
 		config:      config,
@@ -58,7 +59,7 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 	var payloadData payload
 	err := json.Unmarshal(data, &payloadData)
 	if err != nil {
-		return fmt.Errorf("failed to parse JSON payload: %v", err)
+		return model.NewBadReqErr(fmt.Errorf("failed to parse JSON payload: %v", err))
 	}
 
 	// Extract domain, version, and endpoint from the payload and uri.
@@ -67,8 +68,7 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 	version = fmt.Sprintf("v%s", version)
 
 	endpoint := path.Base(url.String())
-	// ToDo Add debug log here
-	fmt.Println("Handling request for endpoint:", endpoint)
+	log.Debugf(ctx, "Handling request for endpoint: %s", endpoint)
 	domain := strings.ToLower(cxtDomain)
 	domain = strings.ReplaceAll(domain, ":", "_")
 
@@ -78,12 +78,12 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 	// Retrieve the schema from the cache.
 	schema, exists := v.schemaCache[schemaFileName]
 	if !exists {
-		return model.NewNotFoundErr(errors.New("schema not found for domain"))
+		return model.NewBadReqErr(errors.New("schema not found for domain"))
 	}
 
 	var jsonData any
 	if err := json.Unmarshal(data, &jsonData); err != nil {
-		return model.NewBadReqErr(err)
+		return model.NewBadReqErr(fmt.Errorf("failed to parse JSON data: %v", err))
 	}
 	err = schema.Validate(jsonData)
 	if err != nil {
@@ -105,7 +105,7 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 			// Return the array of schema validation errors
 			return &model.SchemaValidationErr{Errors: schemaErrors}
 		}
-		return model.NewBadReqErr(err)
+		return model.NewBadReqErr(fmt.Errorf("validation failed: %v", err))
 	}
 
 	// Return nil if validation succeeds
@@ -190,7 +190,7 @@ func (v *schemaValidator) initialise() error {
 
 	// Start processing from the root schema directory.
 	if err := processDir(schemaDir); err != nil {
-		return model.NewNotFoundErr(err)
+		return fmt.Errorf("failed to read schema directory: %v", err)
 	}
 
 	return nil

@@ -33,7 +33,7 @@ func hash(payload []byte, createdAt, expiresAt int64) (string, error) {
 
 	_, err := hasher.Write(payload)
 	if err != nil {
-		return "", model.NewBadReqErr(err)
+		return "", fmt.Errorf("failed to hash payload: %w", err)
 	}
 
 	hashSum := hasher.Sum(nil)
@@ -46,7 +46,7 @@ func hash(payload []byte, createdAt, expiresAt int64) (string, error) {
 func generateSignature(signingString []byte, privateKeyBase64 string) ([]byte, error) {
 	privateKeyBytes, err := base64.StdEncoding.DecodeString(privateKeyBase64)
 	if err != nil {
-		return nil, model.NewBadReqErr(err)
+		return nil, fmt.Errorf("error decoding private key: %w", err)
 	}
 
 	if len(privateKeyBytes) != ed25519.SeedSize {
