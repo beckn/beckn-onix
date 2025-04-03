@@ -16,8 +16,12 @@ type Config struct {
 	Role string
 }
 
-const contextKey = "context"
-const subscriberIDKey = "subscriber_id"
+type keyType string
+
+const (
+	contextKey      keyType = "context"
+	subscriberIDKey keyType = "subscriber_id"
+)
 
 func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 	if err := validateConfig(cfg); err != nil {
