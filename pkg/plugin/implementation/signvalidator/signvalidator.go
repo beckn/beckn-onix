@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -34,7 +33,7 @@ func New(ctx context.Context, config *Config) (*validator, func() error, error) 
 func (v *validator) Validate(ctx context.Context, body []byte, header string, publicKeyBase64 string) error {
 	createdTimestamp, expiredTimestamp, signature, err := parseAuthHeader(header)
 	if err != nil {
-		return model.NewBadReqErr(err)
+		return model.NewBadReqErr(fmt.Errorf("error parsing header: %w", err))
 	}
 
 	signatureBytes, err := base64.StdEncoding.DecodeString(signature)
@@ -44,7 +43,7 @@ func (v *validator) Validate(ctx context.Context, body []byte, header string, pu
 
 	currentTime := time.Now().Unix()
 	if createdTimestamp > currentTime || currentTime > expiredTimestamp {
-		return model.NewSignValidationErr(errors.New("signature is expired or not yet valid"))
+		return model.NewSignValidationErr(fmt.Errorf("signature is expired or not yet valid"))
 	}
 
 	createdTime := time.Unix(createdTimestamp, 0)
@@ -54,11 +53,11 @@ func (v *validator) Validate(ctx context.Context, body []byte, header string, pu
 
 	decodedPublicKey, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 	if err != nil {
-		return model.NewBadReqErr(err)
+		return model.NewBadReqErr(fmt.Errorf("error decoding public key: %w", err))
 	}
 
 	if !ed25519.Verify(ed25519.PublicKey(decodedPublicKey), []byte(signingString), signatureBytes) {
-		return model.NewSignValidationErr(errors.New("signature verification failed"))
+		return model.NewSignValidationErr(fmt.Errorf("signature verification failed"))
 	}
 
 	return nil
@@ -88,13 +87,13 @@ func parseAuthHeader(header string) (int64, int64, string, error) {
 
 	expiredTimestamp, err := strconv.ParseInt(signatureMap["expires"], 10, 64)
 	if err != nil {
-		return 0, 0, "", model.NewSignValidationErr(err)
+		return 0, 0, "", model.NewSignValidationErr(fmt.Errorf("invalid expires timestamp: %w", err))
 	}
 
 	signature := signatureMap["signature"]
 	if signature == "" {
 		// TODO: Return appropriate error code when Error Code Handling Module is ready
-		return 0, 0, "", model.NewSignValidationErr(errors.New("signature missing in header"))
+		return 0, 0, "", model.NewSignValidationErr(fmt.Errorf("signature missing in header"))
 	}
 
 	return createdTimestamp, expiredTimestamp, signature, nil
