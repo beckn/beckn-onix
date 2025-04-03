@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/beckn/beckn-onix/pkg/model"
 	"golang.org/x/crypto/blake2b"
 )
 
@@ -50,7 +49,7 @@ func generateSignature(signingString []byte, privateKeyBase64 string) ([]byte, e
 	}
 
 	if len(privateKeyBytes) != ed25519.SeedSize {
-		return nil, model.NewBadReqErr(errors.New("invalid seed length"))
+		return nil, errors.New("invalid seed length")
 	}
 
 	// Generate the private key from the seed
