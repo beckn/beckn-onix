@@ -3,6 +3,7 @@ package schemavalidator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -77,12 +78,12 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 	// Retrieve the schema from the cache.
 	schema, exists := v.schemaCache[schemaFileName]
 	if !exists {
-		return fmt.Errorf("schema not found for domain: %s", schemaFileName)
+		return model.NewNotFoundErr(errors.New("schema not found for domain"))
 	}
 
 	var jsonData any
 	if err := json.Unmarshal(data, &jsonData); err != nil {
-		return fmt.Errorf("failed to parse JSON data: %v", err)
+		return model.NewBadReqErr(err)
 	}
 	err = schema.Validate(jsonData)
 	if err != nil {
