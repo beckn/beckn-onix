@@ -99,7 +99,7 @@ func TestRegisterSuccess(t *testing.T) {
 	}
 }
 
-// TestRegisterFailure tests scenarios where the handler registration should fail.
+// TestRegisterFailure tests scenarios where the handler registration should fail..
 func TestRegisterFailure(t *testing.T) {
 	tests := []struct {
 		name        string
