@@ -51,7 +51,7 @@ func Register(ctx context.Context, mCfgs []Config, mux *http.ServeMux, mgr handl
 }
 
 // addMiddleware applies middleware plugins to the provided handler in reverse order.
-// It retrieves middleware instances from the plugin manager and chains them to the handler.
+// It retrieves middleware instances from the plugin manager and chains them to the handler..
 func addMiddleware(ctx context.Context, mgr handler.PluginManager, handler http.Handler, hCfg *handler.Config) (http.Handler, error) {
 	mws := hCfg.Plugins.Middleware
 	log.Debugf(ctx, "Applying %d middleware(s) to the handler", len(mws))
