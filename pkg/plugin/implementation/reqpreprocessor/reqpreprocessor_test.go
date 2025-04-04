@@ -73,11 +73,11 @@ func TestNewPreProcessorSuccessCases(t *testing.T) {
 
 			dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				ctx := r.Context()
-				gotSubID = ctx.Value(model.SubscriberIDKey)
+				gotSubID = ctx.Value(model.ContextKeySubscriberID)
 				w.WriteHeader(http.StatusOK)
 
 				// Verify subscriber ID
-				subID := ctx.Value(model.SubscriberIDKey)
+				subID := ctx.Value(model.ContextKeySubscriberID)
 				if subID == nil {
 					t.Errorf("Expected subscriber ID but got none %s", ctx)
 					return
@@ -233,53 +233,37 @@ func TestNewPreProcessorErrorCases(t *testing.T) {
 	}
 }
 
-// Mock handler to capture processed request context
-func captureContextHandler(t *testing.T, expectedSubID string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Retrieve subscriber_id from context
-		subID, ok := r.Context().Value(model.SubscriberIDKey).(string)
-		if !ok {
-			t.Error("subscriber_id should be set in context")
-		} else if subID != expectedSubID {
-			t.Errorf("expected subscriber_id %s, got %s", expectedSubID, subID)
-		}
+func TestNewPreProcessorAddsSubscriberIDToContext(t *testing.T) {
+	cfg := &Config{Role: "bap"}
+	middleware, err := NewPreProcessor(cfg)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
 
+	samplePayload := map[string]interface{}{
+		"context": map[string]interface{}{
+			"bap_id": "bap.example.com",
+		},
+	}
+	bodyBytes, _ := json.Marshal(samplePayload)
+
+	var receivedSubscriberID interface{}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedSubscriberID = r.Context().Value(model.ContextKeySubscriberID)
 		w.WriteHeader(http.StatusOK)
 	})
-}
 
-// Test NewPreProcessor middleware
-func TestNewPreProcessor(t *testing.T) {
-	testConfig := &Config{
-		Role: "bap",
-	}
-
-	testPayload := `{
-		"context": {
-			"bap_id": "test-bap-id"
-		}
-	}`
-
-	preProcessor, err := NewPreProcessor(testConfig)
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-
-	// Create test request
-	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewBufferString(testPayload))
+	req := httptest.NewRequest("POST", "/", strings.NewReader(string(bodyBytes)))
 	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
 
-	// Create response recorder
-	recorder := httptest.NewRecorder()
+	middleware(handler).ServeHTTP(rr, req)
 
-	// Wrap handler with middleware
-	handler := preProcessor(captureContextHandler(t, "test-bap-id"))
-
-	// Serve request
-	handler.ServeHTTP(recorder, req)
-
-	// Check response status
-	if recorder.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected status 200 OK, got %d", rr.Code)
+	}
+	if receivedSubscriberID != "bap.example.com" {
+		t.Errorf("Expected subscriber ID 'bap.example.com', got %v", receivedSubscriberID)
 	}
 }

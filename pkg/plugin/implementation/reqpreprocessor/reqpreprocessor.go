@@ -13,12 +13,16 @@ import (
 	"github.com/beckn/beckn-onix/pkg/model"
 )
 
+// Config represents the configuration for the request preprocessor middleware.
 type Config struct {
 	Role string
 }
 
-const contextKey = "context"
+// contextKeyContext is the typed context key for request context.
+var contextKeyContext = model.ContextKey("context")
 
+// NewPreProcessor returns a middleware that processes the incoming request,
+// extracts the context field from the body, and adds relevant values (like subscriber ID).
 func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
@@ -40,7 +44,7 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 			// Extract context from request.
 			reqContext, ok := req["context"].(map[string]interface{})
 			if !ok {
-				http.Error(w, fmt.Sprintf("%s field not found or invalid.", contextKey), http.StatusBadRequest)
+				http.Error(w, fmt.Sprintf("%s field not found or invalid.", contextKeyContext), http.StatusBadRequest)
 				return
 			}
 			var subID any
@@ -51,8 +55,8 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				subID = reqContext["bpp_id"]
 			}
 			if subID != nil {
-				log.Debugf(ctx, "adding subscriberId to request:%s, %v", model.SubscriberIDKey, subID)
-				ctx = context.WithValue(ctx, model.SubscriberIDKey, subID)
+				log.Debugf(ctx, "adding subscriberId to request:%s, %v", model.ContextKeySubscriberID, subID)
+				ctx = context.WithValue(ctx, model.ContextKeySubscriberID, subID)
 			}
 
 			r.Body = io.NopCloser(bytes.NewBuffer(body))

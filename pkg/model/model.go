@@ -38,14 +38,18 @@ const (
 	UnaAuthorizedHeaderGateway    string = "Proxy-Authenticate"
 )
 
+// ContextKey is a custom type used as a key for storing and retrieving values in a context.
 type ContextKey string
 
 const (
-	// MsgIDKey is the context key used to store and retrieve the message ID in a request context.
-	MsgIDKey = ContextKey("message_id")
+	// ContextKeyMsgID is the context key used to store and retrieve the message ID in a request context.
+	ContextKeyMsgID ContextKey = "message_id"
 
-	// SubscriberIDKey is the context key used to store and retrieve the subscriber ID in a request context.
-	SubscriberIDKey = ContextKey("subscriber_id")
+	// ContextKeySubscriberID is the context key used to store and retrieve the subscriber ID in a request context.
+	ContextKeySubscriberID ContextKey = "subscriber_id"
+
+	// ContextKeyModelID is the context key for storing and retrieving the model ID from a request context.
+	ContextKeyModelID ContextKey = "model_id"
 )
 
 // Role defines the type of participant in the network.
