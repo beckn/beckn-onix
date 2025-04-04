@@ -47,8 +47,8 @@ func nack(ctx context.Context, w http.ResponseWriter, err *model.Error, status i
 	w.WriteHeader(status)
 	_, er := w.Write(data)
 	if er != nil {
-		fmt.Printf("Error writing response: %v, MessageID: %s", er, ctx.Value(model.MsgIDKey))
-		http.Error(w, fmt.Sprintf("Internal server error, MessageID: %s", ctx.Value(model.MsgIDKey)), http.StatusInternalServerError)
+		fmt.Printf("Error writing response: %v, MessageID: %s", er, ctx.Value(model.ContextKeyMsgID))
+		http.Error(w, fmt.Sprintf("Internal server error, MessageID: %s", ctx.Value(model.ContextKeyMsgID)), http.StatusInternalServerError)
 		return
 	}
 }
@@ -57,7 +57,7 @@ func nack(ctx context.Context, w http.ResponseWriter, err *model.Error, status i
 func internalServerError(ctx context.Context) *model.Error {
 	return &model.Error{
 		Code:    http.StatusText(http.StatusInternalServerError),
-		Message: fmt.Sprintf("Internal server error, MessageID: %s", ctx.Value(model.MsgIDKey)),
+		Message: fmt.Sprintf("Internal server error, MessageID: %s", ctx.Value(model.ContextKeyMsgID)),
 	}
 }
 
