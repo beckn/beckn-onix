@@ -233,19 +233,6 @@ func TestNewPreProcessorErrorCases(t *testing.T) {
 	}
 }
 
-// Mock configuration
-var testConfig = &Config{
-	Role: "bap",
-}
-
-// Mock request payload
-var testPayload = `{
-	"context": {
-		"message_id": "test-msg-id",
-		"bap_id": "test-bap-id"
-	}
-}`
-
 // Mock handler to capture processed request context
 func captureContextHandler(t *testing.T, expectedSubID string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
