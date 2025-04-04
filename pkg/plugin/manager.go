@@ -19,10 +19,14 @@ import (
 
 // TODO: Add unit tests for the plugin manager functions to ensure proper functionality and error handling.
 
+type onixPlugin interface {
+	Lookup(string) (plugin.Symbol, error)
+}
+
 // Manager is responsible for managing dynamically loaded plugins.
 type Manager struct {
-	plugins map[string]*plugin.Plugin // plugins holds the dynamically loaded plugins.
-	closers []func()                  // closers contains functions to release resources when the manager is closed.
+	plugins map[string]onixPlugin // plugins holds the dynamically loaded plugins.
+	closers []func()              // closers contains functions to release resources when the manager is closed.
 }
 
 func validateMgrCfg(cfg *ManagerConfig) error {
@@ -54,8 +58,8 @@ func NewManager(ctx context.Context, cfg *ManagerConfig) (*Manager, func(), erro
 	}, nil
 }
 
-func plugins(ctx context.Context, cfg *ManagerConfig) (map[string]*plugin.Plugin, error) {
-	plugins := make(map[string]*plugin.Plugin)
+func plugins(ctx context.Context, cfg *ManagerConfig) (map[string]onixPlugin, error) {
+	plugins := make(map[string]onixPlugin)
 
 	err := filepath.WalkDir(cfg.Root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -86,7 +90,7 @@ func plugins(ctx context.Context, cfg *ManagerConfig) (map[string]*plugin.Plugin
 }
 
 // loadPlugin attempts to load a plugin from the given path and logs the execution time.
-func loadPlugin(ctx context.Context, path, id string) (*plugin.Plugin, time.Duration, error) {
+func loadPlugin(ctx context.Context, path, id string) (onixPlugin, time.Duration, error) {
 	log.Debugf(ctx, "Loading plugin: %s", id)
 	start := time.Now()
 
@@ -99,7 +103,7 @@ func loadPlugin(ctx context.Context, path, id string) (*plugin.Plugin, time.Dura
 	return p, elapsed, nil
 }
 
-func provider[T any](plugins map[string]*plugin.Plugin, id string) (T, error) {
+func provider[T any](plugins map[string]onixPlugin, id string) (T, error) {
 	var zero T
 	pgn, ok := plugins[id]
 	if !ok {
@@ -131,20 +135,13 @@ func (m *Manager) Publisher(ctx context.Context, cfg *Config) (definition.Publis
 		return nil, err
 	}
 	if closer != nil {
-		m.addCloser(func() {
+		m.closers = append(m.closers, func() {
 			if err := closer(); err != nil {
 				panic(err)
 			}
 		})
 	}
 	return p, nil
-}
-
-// addCloser appends a cleanup function to the Manager's closers list.
-func (m *Manager) addCloser(closer func()) {
-	if closer != nil {
-		m.closers = append(m.closers, closer)
-	}
 }
 
 // SchemaValidator returns a SchemaValidator instance based on the provided configuration.
@@ -159,7 +156,7 @@ func (m *Manager) SchemaValidator(ctx context.Context, cfg *Config) (definition.
 		return nil, err
 	}
 	if closer != nil {
-		m.addCloser(func() {
+		m.closers = append(m.closers, func() {
 			if err := closer(); err != nil {
 				panic(err)
 			}
@@ -180,7 +177,7 @@ func (m *Manager) Router(ctx context.Context, cfg *Config) (definition.Router, e
 		return nil, err
 	}
 	if closer != nil {
-		m.addCloser(func() {
+		m.closers = append(m.closers, func() {
 			if err := closer(); err != nil {
 				panic(err)
 			}
@@ -218,15 +215,17 @@ func (m *Manager) Cache(ctx context.Context, cfg *Config) (definition.Cache, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	c, close, err := cp.New(ctx, cfg.Config)
+	c, closer, err := cp.New(ctx, cfg.Config)
 	if err != nil {
 		return nil, err
 	}
-	m.addCloser(func() {
-		if err := close(); err != nil {
-			panic(err)
-		}
-	})
+	if closer != nil {
+		m.closers = append(m.closers, func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
 	return c, nil
 }
 
@@ -242,7 +241,7 @@ func (m *Manager) Signer(ctx context.Context, cfg *Config) (definition.Signer, e
 		return nil, err
 	}
 	if closer != nil {
-		m.addCloser(func() {
+		m.closers = append(m.closers, func() {
 			if err := closer(); err != nil {
 				panic(err)
 			}
@@ -263,7 +262,7 @@ func (m *Manager) Encryptor(ctx context.Context, cfg *Config) (definition.Encryp
 		return nil, err
 	}
 	if closer != nil {
-		m.addCloser(func() {
+		m.closers = append(m.closers, func() {
 			if err := closer(); err != nil {
 				panic(err)
 			}
@@ -286,7 +285,7 @@ func (m *Manager) Decryptor(ctx context.Context, cfg *Config) (definition.Decryp
 	}
 
 	if closer != nil {
-		m.addCloser(func() {
+		m.closers = append(m.closers, func() {
 			if err := closer(); err != nil {
 				panic(err)
 			}
@@ -308,7 +307,7 @@ func (m *Manager) SignValidator(ctx context.Context, cfg *Config) (definition.Si
 		return nil, err
 	}
 	if closer != nil {
-		m.addCloser(func() {
+		m.closers = append(m.closers, func() {
 			if err := closer(); err != nil {
 				panic(err)
 			}
@@ -325,15 +324,17 @@ func (m *Manager) KeyManager(ctx context.Context, cache definition.Cache, rClien
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	km, close, err := kmp.New(ctx, cache, rClient, cfg.Config)
+	km, closer, err := kmp.New(ctx, cache, rClient, cfg.Config)
 	if err != nil {
 		return nil, err
 	}
-	m.addCloser(func() {
-		if err := close(); err != nil {
-			panic(err)
-		}
-	})
+	if closer != nil {
+		m.closers = append(m.closers, func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
 	return km, nil
 }
 
