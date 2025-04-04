@@ -16,57 +16,46 @@ import (
 // Mock implementations for testing
 type mockPublisher struct {
 	definition.Publisher
-	err error
 }
 
 type mockSchemaValidator struct {
 	definition.SchemaValidator
-	err error
 }
 
 type mockRouter struct {
 	definition.Router
-	err error
 }
 
 type mockMiddleware struct {
 	definition.MiddlewareProvider
-	err error
 }
 
 type mockStep struct {
 	definition.Step
-	err error
 }
 
 type mockCache struct {
 	definition.Cache
-	err error
 }
 
 type mockSigner struct {
 	definition.Signer
-	err error
 }
 
 type mockEncrypter struct {
 	definition.Encrypter
-	err error
 }
 
 type mockDecrypter struct {
 	definition.Decrypter
-	err error
 }
 
 type mockSignValidator struct {
 	definition.SignValidator
-	err error
 }
 
 type mockKeyManager struct {
 	definition.KeyManager
-	err error
 }
 
 // Mock providers
