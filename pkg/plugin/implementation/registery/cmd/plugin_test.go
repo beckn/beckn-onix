@@ -66,13 +66,13 @@ func TestRegistryLookupProviderFailure(t *testing.T) {
 			if err == nil {
 				t.Errorf("Expected error but got none")
 			} else if err.Error() != tt.expectedErr {
-				t.Errorf("Expected error '%s', got '%s'", tt.expectedErr, err.Error())
+				t.Fatalf("Expected error '%s', got '%s'", tt.expectedErr, err.Error())
 			}
 			if client != nil {
-				t.Errorf("Expected client to be nil but got a non-nil client")
+				t.Fatal("Expected client to be nil but got a non-nil client")
 			}
 			if cleanup != nil {
-				t.Errorf("Expected cleanup function to be nil but got a non-nil function")
+				t.Fatal("Expected cleanup function to be nil but got a non-nil function")
 			}
 		})
 	}

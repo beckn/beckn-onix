@@ -43,8 +43,8 @@ func parseConfig(config map[string]string) (*Config, error) {
 // convertToRegisteryConfig converts your custom Config to registery.Config.
 func convertToRegisteryConfig(cfg *Config) *registery.Config {
 	return &registery.Config{
-		RegistryURL: cfg.RegistryURL,
-		RetryMax:    cfg.RetryMax,
+		LookupURL: cfg.RegistryURL,
+		RetryMax:  cfg.RetryMax,
 	}
 }
 
