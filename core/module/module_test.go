@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/beckn/beckn-onix/core/module/handler"
@@ -97,6 +98,26 @@ func TestRegisterSuccess(t *testing.T) {
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
+
+	// Create a request and a response recorder
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+
+	// Create a handler that extracts context
+	var capturedModuleName any
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedModuleName = r.Context().Value("module_name")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	wrappedHandler := moduleCtxMiddleware("test-module", testHandler)
+	wrappedHandler.ServeHTTP(rec, req)
+
+	// Now verify if module name exists in context
+	if capturedModuleName != "test-module" {
+		t.Errorf("expected module_name in context to be 'test-module', got %v", capturedModuleName)
+	}
+
 }
 
 // TestRegisterFailure tests scenarios where the handler registration should fail.
