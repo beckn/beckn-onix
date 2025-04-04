@@ -17,8 +17,6 @@ import (
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
 )
 
-// TODO: Add unit tests for the plugin manager functions to ensure proper functionality and error handling.
-
 type onixPlugin interface {
 	Lookup(string) (plugin.Symbol, error)
 }
