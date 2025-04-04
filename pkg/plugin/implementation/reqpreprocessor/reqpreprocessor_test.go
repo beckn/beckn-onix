@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/beckn/beckn-onix/pkg/model"
-	"github.com/stretchr/testify/require"
 )
 
 // ToDo Separate Middleware creation and execution.
@@ -74,11 +73,11 @@ func TestNewPreProcessorSuccessCases(t *testing.T) {
 
 			dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				ctx := r.Context()
-				gotSubID = ctx.Value(subscriberIDKey)
+				gotSubID = ctx.Value(model.SubscriberIDKey)
 				w.WriteHeader(http.StatusOK)
 
 				// Verify subscriber ID
-				subID := ctx.Value(subscriberIDKey)
+				subID := ctx.Value(model.SubscriberIDKey)
 				if subID == nil {
 					t.Errorf("Expected subscriber ID but got none %s", ctx)
 					return
@@ -236,8 +235,7 @@ func TestNewPreProcessorErrorCases(t *testing.T) {
 
 // Mock configuration
 var testConfig = &Config{
-	Role:        "bap",
-	ContextKeys: []string{"message_id"},
+	Role: "bap",
 }
 
 // Mock request payload
@@ -249,16 +247,15 @@ var testPayload = `{
 }`
 
 // Mock handler to capture processed request context
-func captureContextHandler(t *testing.T, expectedMsgID string, expectedSubID string) http.Handler {
+func captureContextHandler(t *testing.T, expectedSubID string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Retrieve values from context
-		msgID, ok := r.Context().Value(model.MsgIDKey).(string)
-		require.True(t, ok, "message_id should be set")
-		require.Equal(t, expectedMsgID, msgID, "message_id should match")
-
+		// Retrieve subscriber_id from context
 		subID, ok := r.Context().Value(model.SubscriberIDKey).(string)
-		require.True(t, ok, "subscriber_id should be set")
-		require.Equal(t, expectedSubID, subID, "subscriber_id should match")
+		if !ok {
+			t.Error("subscriber_id should be set in context")
+		} else if subID != expectedSubID {
+			t.Errorf("expected subscriber_id %s, got %s", expectedSubID, subID)
+		}
 
 		w.WriteHeader(http.StatusOK)
 	})
@@ -266,8 +263,20 @@ func captureContextHandler(t *testing.T, expectedMsgID string, expectedSubID str
 
 // Test NewPreProcessor middleware
 func TestNewPreProcessor(t *testing.T) {
+	testConfig := &Config{
+		Role: "bap",
+	}
+
+	testPayload := `{
+		"context": {
+			"bap_id": "test-bap-id"
+		}
+	}`
+
 	preProcessor, err := NewPreProcessor(testConfig)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
 
 	// Create test request
 	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewBufferString(testPayload))
@@ -277,11 +286,13 @@ func TestNewPreProcessor(t *testing.T) {
 	recorder := httptest.NewRecorder()
 
 	// Wrap handler with middleware
-	handler := preProcessor(captureContextHandler(t, "test-msg-id", "test-bap-id"))
+	handler := preProcessor(captureContextHandler(t, "test-bap-id"))
 
 	// Serve request
 	handler.ServeHTTP(recorder, req)
 
 	// Check response status
-	require.Equal(t, http.StatusOK, recorder.Code, "Middleware should process correctly")
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
 }
