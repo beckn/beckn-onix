@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/beckn/beckn-onix/pkg/model"
 	"golang.org/x/crypto/blake2b"
 )
 
@@ -32,20 +33,17 @@ func New(ctx context.Context, config *Config) (*validator, func() error, error) 
 func (v *validator) Validate(ctx context.Context, body []byte, header string, publicKeyBase64 string) error {
 	createdTimestamp, expiredTimestamp, signature, err := parseAuthHeader(header)
 	if err != nil {
-		// TODO: Return appropriate error code when Error Code Handling Module is ready
-		return fmt.Errorf("error parsing header: %w", err)
+		return model.NewSignValidationErr(fmt.Errorf("error parsing header: %w", err))
 	}
 
 	signatureBytes, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil {
-		// TODO: Return appropriate error code when Error Code Handling Module is ready
 		return fmt.Errorf("error decoding signature: %w", err)
 	}
 
 	currentTime := time.Now().Unix()
 	if createdTimestamp > currentTime || currentTime > expiredTimestamp {
-		// TODO: Return appropriate error code when Error Code Handling Module is ready
-		return fmt.Errorf("signature is expired or not yet valid")
+		return model.NewSignValidationErr(fmt.Errorf("signature is expired or not yet valid"))
 	}
 
 	createdTime := time.Unix(createdTimestamp, 0)
@@ -55,13 +53,11 @@ func (v *validator) Validate(ctx context.Context, body []byte, header string, pu
 
 	decodedPublicKey, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 	if err != nil {
-		// TODO: Return appropriate error code when Error Code Handling Module is ready
-		return fmt.Errorf("error decoding public key: %w", err)
+		return model.NewSignValidationErr(fmt.Errorf("error decoding public key: %w", err))
 	}
 
 	if !ed25519.Verify(ed25519.PublicKey(decodedPublicKey), []byte(signingString), signatureBytes) {
-		// TODO: Return appropriate error code when Error Code Handling Module is ready
-		return fmt.Errorf("signature verification failed")
+		return model.NewSignValidationErr(fmt.Errorf("signature verification failed"))
 	}
 
 	return nil
@@ -91,14 +87,13 @@ func parseAuthHeader(header string) (int64, int64, string, error) {
 
 	expiredTimestamp, err := strconv.ParseInt(signatureMap["expires"], 10, 64)
 	if err != nil {
-		// TODO: Return appropriate error code when Error Code Handling Module is ready
-		return 0, 0, "", fmt.Errorf("invalid expires timestamp: %w", err)
+		return 0, 0, "", model.NewSignValidationErr(fmt.Errorf("invalid expires timestamp: %w", err))
 	}
 
 	signature := signatureMap["signature"]
 	if signature == "" {
 		// TODO: Return appropriate error code when Error Code Handling Module is ready
-		return 0, 0, "", fmt.Errorf("signature missing in header")
+		return 0, 0, "", model.NewSignValidationErr(fmt.Errorf("signature missing in header"))
 	}
 
 	return createdTimestamp, expiredTimestamp, signature, nil
