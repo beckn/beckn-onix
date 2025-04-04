@@ -1419,6 +1419,9 @@ func TestUnzipSuccess(t *testing.T) {
 					t.Fatalf("Failed to create file in zip: %v", err)
 				}
 				_, err = testFile.Write([]byte("test content"))
+				if err != nil {
+					t.Fatalf("Failed to write to file: %v", err)
+				}
 
 				zipWriter.Close()
 				zipFile.Close()
@@ -1465,6 +1468,9 @@ func TestUnzipSuccess(t *testing.T) {
 					t.Fatalf("Failed to create file in zip: %v", err)
 				}
 				_, err = testFile.Write([]byte("subdirectory content"))
+				if err != nil {
+					t.Fatalf("Failed to write to file: %v", err)
+				}
 
 				zipWriter.Close()
 				zipFile.Close()
@@ -1518,6 +1524,9 @@ func TestUnzipSuccess(t *testing.T) {
 						t.Fatalf("Failed to create file in zip: %v", err)
 					}
 					_, err = testFile.Write([]byte(content))
+					if err != nil {
+						t.Fatalf("Failed to write to file: %v", err)
+					}
 				}
 
 				zipWriter.Close()
@@ -1631,6 +1640,9 @@ func TestUnzipFailure(t *testing.T) {
 					t.Fatalf("Failed to create file in zip: %v", err)
 				}
 				_, err = testFile.Write([]byte("test content"))
+				if err != nil {
+					t.Fatalf("Failed to write to file: %v", err)
+				}
 
 				zipWriter.Close()
 				zipFile.Close()
@@ -1670,6 +1682,9 @@ func TestUnzipFailure(t *testing.T) {
 					t.Fatalf("Failed to create file in zip: %v", err)
 				}
 				_, err = testFile.Write([]byte("test content"))
+				if err != nil {
+					t.Fatalf("Failed to write to file: %v", err)
+				}
 
 				zipWriter.Close()
 				zipFile.Close()
