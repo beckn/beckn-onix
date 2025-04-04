@@ -18,8 +18,7 @@ type Config struct {
 	Role string
 }
 
-// contextKeyContext is the typed context key for request context.
-var contextKeyContext = model.ContextKey("context")
+const contextKey = "context"
 
 // NewPreProcessor returns a middleware that processes the incoming request,
 // extracts the context field from the body, and adds relevant values (like subscriber ID).
@@ -44,7 +43,7 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 			// Extract context from request.
 			reqContext, ok := req["context"].(map[string]interface{})
 			if !ok {
-				http.Error(w, fmt.Sprintf("%s field not found or invalid.", contextKeyContext), http.StatusBadRequest)
+				http.Error(w, fmt.Sprintf("%s field not found or invalid.", contextKey), http.StatusBadRequest)
 				return
 			}
 			var subID any
