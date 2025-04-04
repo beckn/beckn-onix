@@ -252,7 +252,7 @@ type mockRegistryLookup struct {
 }
 
 // TestNewManager_Success tests the successful scenarios of the NewManager function
-func TestNewManager_Success(t *testing.T) {
+func TestNewManagerSuccess(t *testing.T) {
 	tests := []struct {
 		name string
 		cfg  *ManagerConfig
@@ -312,7 +312,7 @@ func TestNewManager_Success(t *testing.T) {
 }
 
 // TestNewManager_Failure tests the failure scenarios of the NewManager function
-func TestNewManager_Failure(t *testing.T) {
+func TestNewManagerFailure(t *testing.T) {
 	tests := []struct {
 		name          string
 		cfg           *ManagerConfig
@@ -474,7 +474,7 @@ func TestPublisherFailure(t *testing.T) {
 }
 
 // TestManager_SchemaValidator_Success tests the successful scenarios of the SchemaValidator method
-func TestManagerSchemaValidatorSuccess(t *testing.T) {
+func TestSchemaValidatorSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
 		cfg    *Config
@@ -511,19 +511,19 @@ func TestManagerSchemaValidatorSuccess(t *testing.T) {
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
-			if validator == nil {
-				t.Error("expected non-nil validator, got nil")
+			if validator != tt.plugin.validator {
+				t.Error("validator does not match expected instance")
 			}
 		})
 	}
 }
 
 // TestManager_SchemaValidator_Failure tests the failure scenarios of the SchemaValidator method
-func TestManagerSchemaValidatorFailure(t *testing.T) {
+func TestSchemaValidatorFailure(t *testing.T) {
 	tests := []struct {
 		name          string
 		cfg           *Config
-		plugin        *mockSchemaValidatorProvider
+		plugin        definition.SchemaValidatorProvider
 		expectedError string
 	}{
 		{
@@ -580,7 +580,7 @@ func TestManagerSchemaValidatorFailure(t *testing.T) {
 }
 
 // TestManager_Router_Success tests the successful scenarios of the Router method
-func TestManagerRouterSuccess(t *testing.T) {
+func TestRouterSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
 		cfg    *Config
@@ -628,7 +628,7 @@ func TestManagerRouterSuccess(t *testing.T) {
 }
 
 // TestManager_Router_Failure tests the failure scenarios of the Router method
-func TestManagerRouterFailure(t *testing.T) {
+func TestRouterFailure(t *testing.T) {
 	tests := []struct {
 		name          string
 		cfg           *Config
@@ -689,7 +689,7 @@ func TestManagerRouterFailure(t *testing.T) {
 }
 
 // TestManager_Step_Success tests the successful scenarios of the Step method
-func TestManagerStepSuccess(t *testing.T) {
+func TestStepSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
 		cfg    *Config
@@ -737,7 +737,7 @@ func TestManagerStepSuccess(t *testing.T) {
 }
 
 // TestManager_Step_Failure tests the failure scenarios of the Step method
-func TestManagerStepFailure(t *testing.T) {
+func TestStepFailure(t *testing.T) {
 	tests := []struct {
 		name          string
 		cfg           *Config
@@ -798,7 +798,7 @@ func TestManagerStepFailure(t *testing.T) {
 }
 
 // TestManager_Cache_Success tests the successful scenarios of the Cache method
-func TestManagerCacheSuccess(t *testing.T) {
+func TestCacheSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
 		cfg    *Config
@@ -843,7 +843,7 @@ func TestManagerCacheSuccess(t *testing.T) {
 }
 
 // TestManager_Cache_Failure tests the failure scenarios of the Cache method
-func TestManagerCacheFailure(t *testing.T) {
+func TestCacheFailure(t *testing.T) {
 	tests := []struct {
 		name          string
 		cfg           *Config
@@ -904,7 +904,7 @@ func TestManagerCacheFailure(t *testing.T) {
 }
 
 // TestManager_Signer_Success tests the successful scenarios of the Signer method
-func TestManagerSignerSuccess(t *testing.T) {
+func TestSignerSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
 		cfg    *Config
@@ -949,7 +949,7 @@ func TestManagerSignerSuccess(t *testing.T) {
 }
 
 // TestManager_Signer_Failure tests the failure scenarios of the Signer method
-func TestManagerSignerFailure(t *testing.T) {
+func TestSignerFailure(t *testing.T) {
 	tests := []struct {
 		name          string
 		cfg           *Config
@@ -1010,7 +1010,7 @@ func TestManagerSignerFailure(t *testing.T) {
 }
 
 // TestManager_Encryptor_Success tests the successful scenarios of the Encryptor method
-func TestManagerEncryptorSuccess(t *testing.T) {
+func TestEncryptorSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
 		cfg    *Config
@@ -1055,7 +1055,7 @@ func TestManagerEncryptorSuccess(t *testing.T) {
 }
 
 // TestManager_Encryptor_Failure tests the failure scenarios of the Encryptor method
-func TestManagerEncryptorFailure(t *testing.T) {
+func TestEncryptorFailure(t *testing.T) {
 	tests := []struct {
 		name          string
 		cfg           *Config
@@ -1116,7 +1116,7 @@ func TestManagerEncryptorFailure(t *testing.T) {
 }
 
 // TestManager_Decryptor_Success tests the successful scenarios of the Decryptor method
-func TestManagerDecryptorSuccess(t *testing.T) {
+func TestDecryptorSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
 		cfg    *Config
@@ -1161,7 +1161,7 @@ func TestManagerDecryptorSuccess(t *testing.T) {
 }
 
 // TestManager_Decryptor_Failure tests the failure scenarios of the Decryptor method
-func TestManagerDecryptorFailure(t *testing.T) {
+func TestDecryptorFailure(t *testing.T) {
 	tests := []struct {
 		name          string
 		cfg           *Config
@@ -1222,7 +1222,7 @@ func TestManagerDecryptorFailure(t *testing.T) {
 }
 
 // TestManager_SignValidator tests the SignValidator method of the Manager
-func TestManagerSignValidator(t *testing.T) {
+func TestSignValidator(t *testing.T) {
 	tests := []struct {
 		name    string
 		cfg     *Config
@@ -1274,7 +1274,7 @@ func TestManagerSignValidator(t *testing.T) {
 }
 
 // TestManager_KeyManager_Success tests the successful scenarios of the KeyManager method
-func TestManagerKeyManagerSuccess(t *testing.T) {
+func TestKeyManagerSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
 		cfg    *Config
@@ -1323,7 +1323,7 @@ func TestManagerKeyManagerSuccess(t *testing.T) {
 }
 
 // TestManager_KeyManager_Failure tests the failure scenarios of the KeyManager method
-func TestManagerKeyManagerFailure(t *testing.T) {
+func TestKeyManagerFailure(t *testing.T) {
 	tests := []struct {
 		name          string
 		cfg           *Config
@@ -1721,7 +1721,7 @@ func TestUnzipFailure(t *testing.T) {
 }
 
 // TestManager_CloserCleanup tests the cleanup functionality of closer functions
-func TestManagerCloserCleanup(t *testing.T) {
+func TestCloserCleanup(t *testing.T) {
 	// Create a manager
 	m := &Manager{
 		closers: make([]func(), 0),
@@ -1783,7 +1783,7 @@ func TestManagerCloserCleanup(t *testing.T) {
 }
 
 // TestManager_CloserManagement_Success tests the successful scenarios of closer management
-func TestManagerCloserManagementSuccess(t *testing.T) {
+func TestCloserManagementSuccess(t *testing.T) {
 	tests := []struct {
 		name            string
 		initialClosers  []func()
@@ -1863,7 +1863,7 @@ func TestManagerCloserManagementSuccess(t *testing.T) {
 }
 
 // TestManager_CloserManagement_Failure tests the failure scenarios of closer management
-func TestManagerCloserManagementFailure(t *testing.T) {
+func TestCloserManagementFailure(t *testing.T) {
 	tests := []struct {
 		name          string
 		newCloser     func() error
@@ -2445,7 +2445,7 @@ func TestProviderFailure(t *testing.T) {
 }
 
 // TestManagerMiddlewareSuccess tests the successful scenarios of the Middleware method
-func TestManagerMiddlewareSuccess(t *testing.T) {
+func TestMiddlewareSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
 		cfg    *Config
@@ -2490,7 +2490,7 @@ func TestManagerMiddlewareSuccess(t *testing.T) {
 }
 
 // TestManagerMiddlewareFailure tests the failure scenarios of the Middleware method
-func TestManagerMiddlewareFailure(t *testing.T) {
+func TestMiddlewareFailure(t *testing.T) {
 	tests := []struct {
 		name          string
 		cfg           *Config
