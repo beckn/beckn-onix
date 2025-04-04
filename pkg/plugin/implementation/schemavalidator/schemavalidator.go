@@ -105,15 +105,12 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 			// Return the array of schema validation errors
 			return &model.SchemaValidationErr{Errors: schemaErrors}
 		}
-		return model.NewBadReqErr(fmt.Errorf("validation failed: %v", err))
+		return fmt.Errorf("validation failed: %v", err)
 	}
 
 	// Return nil if validation succeeds
 	return nil
 }
-
-// ValidatorProvider provides instances of Validator.
-type ValidatorProvider struct{}
 
 // Initialise initialises the validator provider by compiling all the JSON schema files
 // from the specified directory and storing them in a cache indexed by their schema filenames.

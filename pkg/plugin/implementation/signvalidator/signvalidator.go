@@ -33,7 +33,7 @@ func New(ctx context.Context, config *Config) (*validator, func() error, error) 
 func (v *validator) Validate(ctx context.Context, body []byte, header string, publicKeyBase64 string) error {
 	createdTimestamp, expiredTimestamp, signature, err := parseAuthHeader(header)
 	if err != nil {
-		return model.NewBadReqErr(fmt.Errorf("error parsing header: %w", err))
+		return model.NewSignValidationErr(fmt.Errorf("error parsing header: %w", err))
 	}
 
 	signatureBytes, err := base64.StdEncoding.DecodeString(signature)
@@ -53,7 +53,7 @@ func (v *validator) Validate(ctx context.Context, body []byte, header string, pu
 
 	decodedPublicKey, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 	if err != nil {
-		return model.NewBadReqErr(fmt.Errorf("error decoding public key: %w", err))
+		return model.NewSignValidationErr(fmt.Errorf("error decoding public key: %w", err))
 	}
 
 	if !ed25519.Verify(ed25519.PublicKey(decodedPublicKey), []byte(signingString), signatureBytes) {
