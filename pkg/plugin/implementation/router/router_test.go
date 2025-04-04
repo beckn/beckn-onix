@@ -291,12 +291,12 @@ func TestValidateRulesFailure(t *testing.T) {
 					Version:    "1.0.0",
 					TargetType: "url",
 					Target: target{
-						URL: "htp://invalid-url.com", // Invalid scheme
+						URL: "htp:// invalid-url.com", // Invalid scheme
 					},
 					Endpoints: []string{"search"},
 				},
 			},
-			wantErr: "invalid URI htp://invalid-url.com in request body for url: URL 'htp://invalid-url.com' must use https scheme",
+			wantErr: `invalid URI htp:// invalid-url.com in request body for url: invalid URL - htp:// invalid-url.com: parse "htp:// invalid-url.com": invalid character " " in host name`,
 		},
 		{
 			name: "Missing topic_id for targetType: publisher",
