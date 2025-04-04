@@ -251,24 +251,6 @@ type mockRegistryLookup struct {
 	definition.RegistryLookup
 }
 
-// mockValidator is a mock implementation of the Validator interface
-type mockValidator struct {
-	definition.Cache
-}
-
-// mockValidatorProvider is a mock implementation of the ValidatorProvider interface
-type mockValidatorProvider struct {
-	validator *mockValidator
-	err       error
-}
-
-func (m *mockValidatorProvider) New(ctx context.Context, config map[string]string) (definition.Cache, func() error, error) {
-	if m.err != nil {
-		return nil, nil, m.err
-	}
-	return m.validator, func() error { return nil }, nil
-}
-
 // TestNewManager_Success tests the successful scenarios of the NewManager function
 func TestNewManager_Success(t *testing.T) {
 	tests := []struct {
@@ -814,116 +796,6 @@ func TestManagerStepFailure(t *testing.T) {
 		})
 	}
 }
-
-// TestManager_Validator_Success tests the successful scenarios of the Validator method
-// func TestManagerValidatorSuccess(t *testing.T) {
-// 	tests := []struct {
-// 		name   string
-// 		cfg    *Config
-// 		plugin *mockValidatorProvider
-// 	}{
-// 		{
-// 			name: "successful validator creation",
-// 			cfg: &Config{
-// 				ID:     "test-validator",
-// 				Config: map[string]string{},
-// 			},
-// 			plugin: &mockValidatorProvider{
-// 				validator: &mockValidator{},
-// 			},
-// 		},
-// 	}
-
-// 	for _, tt := range tests {
-// 		t.Run(tt.name, func(t *testing.T) {
-// 			// Create a manager with the mock plugin
-// 			m := &Manager{
-// 				plugins: map[string]onixPlugin{
-// 					tt.cfg.ID: &mockPlugin{
-// 						symbol: tt.plugin,
-// 					},
-// 				},
-// 				closers: []func(){},
-// 			}
-
-// 			// Call Validator and expect a panic
-// 			defer func() {
-// 				if r := recover(); r != nil {
-// 					if r != "unimplemented" {
-// 						t.Errorf("expected panic with 'unimplemented', got %v", r)
-// 					}
-// 				} else {
-// 					t.Error("expected panic, got none")
-// 				}
-// 			}()
-
-// 			// This should panic
-// 			_, err = m.Validator(context.Background(), tt.cfg)
-// 		})
-// 	}
-// }
-
-// // TestManager_Validator_Failure tests the failure scenarios of the Validator method
-// func TestManagerValidatorFailure(t *testing.T) {
-// 	tests := []struct {
-// 		name          string
-// 		cfg           *Config
-// 		plugin        *mockValidatorProvider
-// 		expectedError string
-// 	}{
-// 		{
-// 			name: "provider error",
-// 			cfg: &Config{
-// 				ID:     "test-validator",
-// 				Config: map[string]string{},
-// 			},
-// 			plugin: &mockValidatorProvider{
-// 				err: errors.New("provider error"),
-// 			},
-// 			expectedError: "provider error",
-// 		},
-// 		{
-// 			name: "plugin not found",
-// 			cfg: &Config{
-// 				ID:     "nonexistent-validator",
-// 				Config: map[string]string{},
-// 			},
-// 			plugin:        nil,
-// 			expectedError: "plugin nonexistent-validator not found",
-// 		},
-// 	}
-
-// 	for _, tt := range tests {
-// 		t.Run(tt.name, func(t *testing.T) {
-// 			// Create a manager with the mock plugin
-// 			m := &Manager{
-// 				plugins: make(map[string]onixPlugin),
-// 				closers: []func(){},
-// 			}
-
-// 			// Only add the plugin if it's not nil
-// 			if tt.plugin != nil {
-// 				m.plugins[tt.cfg.ID] = &mockPlugin{
-// 					symbol: tt.plugin,
-// 				}
-// 			}
-
-// 			// Call Validator and expect a panic
-// 			defer func() {
-// 				if r := recover(); r != nil {
-// 					if r != "unimplemented" {
-// 						t.Errorf("expected panic with 'unimplemented', got %v", r)
-// 					}
-// 				} else {
-// 					t.Error("expected panic, got none")
-// 				}
-// 			}()
-
-// 			// This should panic
-// 			m.Validator(context.Background(), tt.cfg)
-// 		})
-// 	}
-// }
 
 // TestManager_Cache_Success tests the successful scenarios of the Cache method
 func TestManagerCacheSuccess(t *testing.T) {
@@ -1758,7 +1630,7 @@ func TestUnzipFailure(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create file in zip: %v", err)
 				}
-				testFile.Write([]byte("test content"))
+				_, err = testFile.Write([]byte("test content"))
 
 				zipWriter.Close()
 				zipFile.Close()
@@ -1797,7 +1669,7 @@ func TestUnzipFailure(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create file in zip: %v", err)
 				}
-				testFile.Write([]byte("test content"))
+				_, err = testFile.Write([]byte("test content"))
 
 				zipWriter.Close()
 				zipFile.Close()
