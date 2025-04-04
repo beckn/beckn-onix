@@ -7,7 +7,7 @@ log:
     - transaction_id
     - message_id
     - subscriber_id
-    - module_name
+    - module_id
 http:
   port: 8080
   timeout:
