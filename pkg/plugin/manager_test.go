@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"plugin"
@@ -150,15 +151,18 @@ func (m *mockRouterProvider) New(ctx context.Context, config map[string]string) 
 }
 
 type mockMiddlewareProvider struct {
-	provider *mockMiddleware
-	err      error
+	middleware func(http.Handler) http.Handler
+	err        error
 }
 
-func (m *mockMiddlewareProvider) New(ctx context.Context, config map[string]string) (definition.MiddlewareProvider, func() error, error) {
+func (m *mockMiddlewareProvider) New(ctx context.Context, config map[string]string) (func(http.Handler) http.Handler, error) {
 	if m.err != nil {
-		return nil, nil, m.err
+		return nil, m.err
 	}
-	return m.provider, func() error { return nil }, nil
+	if m.middleware == nil {
+		m.middleware = func(h http.Handler) http.Handler { return h }
+	}
+	return m.middleware, nil
 }
 
 type mockStepProvider struct {
@@ -2563,6 +2567,112 @@ func TestProviderFailure(t *testing.T) {
 			}
 			if gotRouter != nil {
 				t.Error("provider() expected nil provider")
+			}
+		})
+	}
+}
+
+// TestManagerMiddlewareSuccess tests the successful scenarios of the Middleware method
+func TestManagerMiddlewareSuccess(t *testing.T) {
+	tests := []struct {
+		name   string
+		cfg    *Config
+		plugin *mockMiddlewareProvider
+	}{
+		{
+			name: "successful middleware creation",
+			cfg: &Config{
+				ID:     "test-middleware",
+				Config: map[string]string{},
+			},
+			plugin: &mockMiddlewareProvider{
+				middleware: func(h http.Handler) http.Handler { return h },
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a manager with the mock plugin
+			m := &Manager{
+				plugins: map[string]onixPlugin{
+					tt.cfg.ID: &mockPlugin{
+						symbol: tt.plugin,
+					},
+				},
+				closers: []func(){},
+			}
+
+			// Call Middleware
+			middleware, err := m.Middleware(context.Background(), tt.cfg)
+
+			// Check success case
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if middleware == nil {
+				t.Error("expected non-nil middleware, got nil")
+			}
+		})
+	}
+}
+
+// TestManagerMiddlewareFailure tests the failure scenarios of the Middleware method
+func TestManagerMiddlewareFailure(t *testing.T) {
+	tests := []struct {
+		name          string
+		cfg           *Config
+		plugin        *mockMiddlewareProvider
+		expectedError string
+	}{
+		{
+			name: "provider error",
+			cfg: &Config{
+				ID:     "test-middleware",
+				Config: map[string]string{},
+			},
+			plugin: &mockMiddlewareProvider{
+				err: errors.New("provider error"),
+			},
+			expectedError: "provider error",
+		},
+		{
+			name: "plugin not found",
+			cfg: &Config{
+				ID:     "nonexistent-middleware",
+				Config: map[string]string{},
+			},
+			plugin:        nil,
+			expectedError: "plugin nonexistent-middleware not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a manager with the mock plugin
+			m := &Manager{
+				plugins: make(map[string]onixPlugin),
+				closers: []func(){},
+			}
+
+			// Only add the plugin if it's not nil
+			if tt.plugin != nil {
+				m.plugins[tt.cfg.ID] = &mockPlugin{
+					symbol: tt.plugin,
+				}
+			}
+
+			// Call Middleware
+			middleware, err := m.Middleware(context.Background(), tt.cfg)
+
+			// Check error
+			if err == nil {
+				t.Error("expected error, got nil")
+			} else if !strings.Contains(err.Error(), tt.expectedError) {
+				t.Errorf("error = %v, want error containing %q", err, tt.expectedError)
+			}
+			if middleware != nil {
+				t.Error("expected nil middleware, got non-nil")
 			}
 		})
 	}
