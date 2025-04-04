@@ -9,11 +9,12 @@ import (
 	"testing"
 )
 
+// ToDo Separate Middleware creation and execution.
 func TestNewPreProcessorSuccessCases(t *testing.T) {
 	tests := []struct {
 		name        string
 		config      *Config
-		requestBody map[string]interface{}
+		requestBody map[string]any
 		expectedID  string
 	}{
 		{
