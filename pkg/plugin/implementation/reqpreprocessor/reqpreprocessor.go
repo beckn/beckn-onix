@@ -17,8 +17,6 @@ type Config struct {
 	Role string
 }
 
-type keyType string
-
 const contextKey = "context"
 
 func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
@@ -39,7 +37,7 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				return
 			}
 
-			// Extract context from request
+			// Extract context from request.
 			reqContext, ok := req["context"].(map[string]interface{})
 			if !ok {
 				http.Error(w, fmt.Sprintf("%s field not found or invalid.", contextKey), http.StatusBadRequest)
