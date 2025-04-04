@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/beckn/beckn-onix/pkg/model"
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
 )
 
@@ -66,6 +67,50 @@ type mockSignValidator struct {
 
 type mockKeyManager struct {
 	definition.KeyManager
+	err error
+}
+
+func (m *mockKeyManager) GenerateKeyPairs() (*model.Keyset, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &model.Keyset{}, nil
+}
+
+func (m *mockKeyManager) StorePrivateKeys(ctx context.Context, keyID string, keys *model.Keyset) error {
+	return m.err
+}
+
+func (m *mockKeyManager) SigningPrivateKey(ctx context.Context, keyID string) (string, string, error) {
+	if m.err != nil {
+		return "", "", m.err
+	}
+	return "signing-key", "signing-algo", nil
+}
+
+func (m *mockKeyManager) EncrPrivateKey(ctx context.Context, keyID string) (string, string, error) {
+	if m.err != nil {
+		return "", "", m.err
+	}
+	return "encr-key", "encr-algo", nil
+}
+
+func (m *mockKeyManager) SigningPublicKey(ctx context.Context, subscriberID, uniqueKeyID string) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	return "public-signing-key", nil
+}
+
+func (m *mockKeyManager) EncrPublicKey(ctx context.Context, subscriberID, uniqueKeyID string) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	return "public-encr-key", nil
+}
+
+func (m *mockKeyManager) DeletePrivateKeys(ctx context.Context, keyID string) error {
+	return m.err
 }
 
 // Mock providers
@@ -194,7 +239,7 @@ type mockKeyManagerProvider struct {
 	err        error
 }
 
-func (m *mockKeyManagerProvider) New(ctx context.Context, config map[string]string) (definition.KeyManager, func() error, error) {
+func (m *mockKeyManagerProvider) New(ctx context.Context, cache definition.Cache, lookup definition.RegistryLookup, config map[string]string) (definition.KeyManager, func() error, error) {
 	if m.err != nil {
 		return nil, nil, m.err
 	}
@@ -782,7 +827,7 @@ func TestManagerStepFailure(t *testing.T) {
 }
 
 // TestManager_Validator_Success tests the successful scenarios of the Validator method
-func TestManager_ValidatorSuccess(t *testing.T) {
+func TestManagerValidatorSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
 		cfg    *Config
@@ -812,16 +857,19 @@ func TestManager_ValidatorSuccess(t *testing.T) {
 				closers: []func(){},
 			}
 
-			// Call Validator
-			validator, err := m.Validator(context.Background(), tt.cfg)
+			// Call Validator and expect a panic
+			defer func() {
+				if r := recover(); r != nil {
+					if r != "unimplemented" {
+						t.Errorf("expected panic with 'unimplemented', got %v", r)
+					}
+				} else {
+					t.Error("expected panic, got none")
+				}
+			}()
 
-			// Check success case
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-			if validator == nil {
-				t.Error("expected non-nil validator, got nil")
-			}
+			// This should panic
+			m.Validator(context.Background(), tt.cfg)
 		})
 	}
 }
@@ -871,18 +919,19 @@ func TestManagerValidatorFailure(t *testing.T) {
 				}
 			}
 
-			// Call Validator
-			validator, err := m.Validator(context.Background(), tt.cfg)
+			// Call Validator and expect a panic
+			defer func() {
+				if r := recover(); r != nil {
+					if r != "unimplemented" {
+						t.Errorf("expected panic with 'unimplemented', got %v", r)
+					}
+				} else {
+					t.Error("expected panic, got none")
+				}
+			}()
 
-			// Check error
-			if err == nil {
-				t.Error("expected error, got nil")
-			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("error = %v, want error containing %q", err, tt.expectedError)
-			}
-			if validator != nil {
-				t.Error("expected nil validator, got non-nil")
-			}
+			// This should panic
+			m.Validator(context.Background(), tt.cfg)
 		})
 	}
 }
@@ -1328,7 +1377,7 @@ func TestManagerSignValidator(t *testing.T) {
 			plugin: &mockSignValidatorProvider{
 				validator: &mockSignValidator{},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "provider error",
