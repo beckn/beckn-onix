@@ -153,6 +153,10 @@ func validateRules(rules []routingRule) error {
 			if rule.Target.URL == "" {
 				return fmt.Errorf("invalid rule: url is required for targetType 'url'")
 			}
+			// Validate HTTPS scheme
+			if err := isValidHTTPSURL(rule.Target.URL); err != nil {
+				return fmt.Errorf("invalid URI %s in request body for url: %v", rule.Target.URL, err)
+			}
 			if _, err := url.Parse(rule.Target.URL); err != nil {
 				return fmt.Errorf("invalid URL - %s: %w", rule.Target.URL, err)
 			}
@@ -162,6 +166,9 @@ func validateRules(rules []routingRule) error {
 			}
 		case targetTypeBPP, targetTypeBAP:
 			if rule.Target.URL != "" {
+				if err := isValidHTTPSURL(rule.Target.URL); err != nil {
+					return fmt.Errorf("invalid URI %s in request body for %s: %v", rule.Target.URL, rule.TargetType, err)
+				}
 				if _, err := url.Parse(rule.Target.URL); err != nil {
 					return fmt.Errorf("invalid URL - %s defined in routing config for target type %s: %w", rule.Target.URL, rule.TargetType, err)
 				}
@@ -234,6 +241,9 @@ func handleProtocolMapping(route *model.Route, npURI, endpoint string) (*model.R
 			},
 		}, nil
 	}
+	if err := isValidHTTPSURL(target); err != nil {
+		return nil, fmt.Errorf("invalid %s URI - %s in request body for %s: %v", strings.ToUpper(route.TargetType), target, endpoint, err)
+	}
 	targetURL, err := url.Parse(target)
 	if err != nil {
 		return nil, fmt.Errorf("invalid %s URI - %s in request body for %s: %w", strings.ToUpper(route.TargetType), target, endpoint, err)
@@ -247,4 +257,16 @@ func handleProtocolMapping(route *model.Route, npURI, endpoint string) (*model.R
 			Path:   path.Join(targetURL.Path, endpoint),
 		},
 	}, nil
+}
+
+// isValidHTTPSURL ensures the provided URL is a valid HTTPS URL.
+func isValidHTTPSURL(rawURL string) error {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL - %s: %v", rawURL, err)
+	}
+	if parsedURL.Scheme != "https" {
+		return fmt.Errorf("URL '%s' must use https scheme", rawURL)
+	}
+	return nil
 }
