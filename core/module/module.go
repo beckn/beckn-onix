@@ -44,6 +44,7 @@ func Register(ctx context.Context, mCfgs []Config, mux *http.ServeMux, mgr handl
 			return fmt.Errorf("failed to add middleware: %w", err)
 
 		}
+		h = moduleCtxMiddleware(c.Name, h)
 		log.Debugf(ctx, "Registering handler %s, of type %s @ %s", c.Name, c.Handler.Type, c.Path)
 		mux.Handle(c.Path, h)
 	}
@@ -70,4 +71,11 @@ func addMiddleware(ctx context.Context, mgr handler.PluginManager, handler http.
 
 	log.Debugf(ctx, "Middleware chain setup completed")
 	return handler, nil
+}
+
+func moduleCtxMiddleware(moduleName string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), "module_name", moduleName)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
