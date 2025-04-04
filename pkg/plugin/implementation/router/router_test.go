@@ -296,7 +296,7 @@ func TestValidateRulesFailure(t *testing.T) {
 					Endpoints: []string{"search"},
 				},
 			},
-			wantErr: "invalid URL - htp://invalid-url.com: URL 'htp://invalid-url.com' must use https scheme",
+			wantErr: "invalid URI htp://invalid-url.com in request body for url: URL 'htp://invalid-url.com' must use https scheme",
 		},
 		{
 			name: "Missing topic_id for targetType: publisher",
@@ -326,7 +326,7 @@ func TestValidateRulesFailure(t *testing.T) {
 					Endpoints: []string{"search"},
 				},
 			},
-			wantErr: "invalid URL - htp://invalid-url.com defined in routing config for target type bpp",
+			wantErr: "invalid URI htp://invalid-url.com in request body for bpp: URL 'htp://invalid-url.com' must use https scheme",
 		},
 		{
 			name: "Invalid URL for BAP targetType",
@@ -341,7 +341,7 @@ func TestValidateRulesFailure(t *testing.T) {
 					Endpoints: []string{"search"},
 				},
 			},
-			wantErr: "invalid URL - http://[invalid].com defined in routing config for target type bap",
+			wantErr: "invalid URI http://[invalid].com in request body for bap",
 		},
 	}
 
