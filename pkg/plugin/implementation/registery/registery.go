@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/beckn/beckn-onix/pkg/model"
 
@@ -21,13 +22,18 @@ type RegistryLookup struct {
 
 // Config struct for RegistryLookupClient.
 type Config struct {
-	RegistryURL string
+	RegistryURL  string
+	RetryWaitMin time.Duration
+	RetryWaitMax time.Duration
+	RetryMax     int
 }
 
 // New creates a new registryLookup instance with the given configuration.
 func New(ctx context.Context, config *Config) (*RegistryLookup, func() error, error) {
 	client := retryablehttp.NewClient()
-	client.RetryMax = 5
+	client.RetryWaitMin = config.RetryWaitMin
+	client.RetryWaitMax = config.RetryWaitMax
+	client.RetryMax = config.RetryMax
 
 	r := &RegistryLookup{
 		Client: client,
@@ -35,7 +41,6 @@ func New(ctx context.Context, config *Config) (*RegistryLookup, func() error, er
 	}
 
 	return r, nil, nil
-	//return &registryLookup{}, nil, nil
 }
 
 // Lookup calls the /lookup endpoint with retry and returns a slice of Subscription.

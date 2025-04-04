@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -76,7 +75,7 @@ func stringPtr(s string) *string {
 }
 
 // Failure test cases for the RegistryLookup Lookup method
-func TestRegistryLookupFailureNew(t *testing.T) {
+func TestRegistryLookupFailure(t *testing.T) {
 	subscription := &model.Subscription{
 		Subscriber:       model.Subscriber{},
 		KeyID:            "test-key",
@@ -98,7 +97,7 @@ func TestRegistryLookupFailureNew(t *testing.T) {
 			name:           "Failed to send request with retry",
 			subscription:   subscription,
 			mockResponse:   stringPtr(`[]`),
-			mockStatusCode: http.StatusInternalServerError, // Simulate server error
+			mockStatusCode: http.StatusInternalServerError,
 			expectedError:  "failed to send request with retry",
 		},
 		{
@@ -106,14 +105,14 @@ func TestRegistryLookupFailureNew(t *testing.T) {
 			subscription:   subscription,
 			mockResponse:   stringPtr(`failed to unmarshal response body`),
 			mockStatusCode: http.StatusOK,
-			expectedError:  "failed to unmarshal response body",
+			expectedError:  "failed to unmarshal response body: invalid character 'i' in literal false (expecting 'l')",
 		},
 		{
 			name:           "Lookup request failed with status",
 			subscription:   subscription,
 			mockResponse:   stringPtr(`[]`),
 			mockStatusCode: http.StatusBadRequest,
-			expectedError:  "lookup request failed with status",
+			expectedError:  "lookup request failed with status: 400 Bad Request",
 		},
 	}
 
@@ -122,12 +121,8 @@ func TestRegistryLookupFailureNew(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create the mock server
 			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(tt.mockStatusCode) // Set mock status code
-				//_, _ = w.Write([]byte(tt.mockResponse)) // Set the mock response body
-				if tt.mockResponse != nil {
-					_, _ = w.Write([]byte(*tt.mockResponse)) // Set the mock response body
-				}
-
+				w.WriteHeader(tt.mockStatusCode)
+				_, _ = w.Write([]byte(*tt.mockResponse))
 			}))
 			defer mockServer.Close()
 
@@ -140,16 +135,16 @@ func TestRegistryLookupFailureNew(t *testing.T) {
 
 			// Call the Lookup method
 			_, err := lookup.Lookup(context.Background(), tt.subscription)
-			if err == nil {
-				t.Errorf("Expected error but got none")
-			} else if !contains(err.Error(), tt.expectedError) {
-				t.Errorf("Expected error '%s', got '%s'", tt.expectedError, err.Error())
+			if err != nil {
+				// Compare the entire error message
+				if err.Error() != tt.expectedError {
+					t.Fatalf("Expected error '%s', got '%s'", tt.expectedError, err.Error())
+				}
+				return // Exit the test if the error matches
 			}
+
+			// If no error occurred, fail the test
+			t.Fatal("Expected error but got none")
 		})
 	}
-}
-
-// Helper function to check if error message contains a substring
-func contains(s, substr string) bool {
-	return strings.Contains(s, substr)
 }
