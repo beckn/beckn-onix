@@ -3,8 +3,8 @@ package model
 import (
 	"errors"
 	"fmt"
-	"testing"
 	"net/http"
+	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v2"
