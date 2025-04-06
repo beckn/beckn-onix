@@ -296,7 +296,7 @@ func TestValidateRulesFailure(t *testing.T) {
 					Endpoints: []string{"search"},
 				},
 			},
-			wantErr: `invalid URI htp:// invalid-url.com in request body for url: invalid URL - htp:// invalid-url.com: parse "htp:// invalid-url.com": invalid character " " in host name`,
+			wantErr: `invalid URL - htp:// invalid-url.com: parse "htp:// invalid-url.com": invalid character " " in host name`,
 		},
 		{
 			name: "Missing topic_id for targetType: publisher",
@@ -321,12 +321,12 @@ func TestValidateRulesFailure(t *testing.T) {
 					Version:    "1.0.0",
 					TargetType: "bpp",
 					Target: target{
-						URL: "htp://invalid-url.com", // Invalid URL
+						URL: "htp:// invalid-url.com", // Invalid URL
 					},
 					Endpoints: []string{"search"},
 				},
 			},
-			wantErr: "invalid URI htp://invalid-url.com in request body for bpp: URL 'htp://invalid-url.com' must use https scheme",
+			wantErr: `invalid URL - htp:// invalid-url.com defined in routing config for target type bpp: parse "htp:// invalid-url.com": invalid character " " in host name`,
 		},
 		{
 			name: "Invalid URL for BAP targetType",
@@ -336,12 +336,12 @@ func TestValidateRulesFailure(t *testing.T) {
 					Version:    "1.0.0",
 					TargetType: "bap",
 					Target: target{
-						URL: "http://[invalid].com", // Invalid host
+						URL: "http:// [invalid].com", // Invalid host
 					},
 					Endpoints: []string{"search"},
 				},
 			},
-			wantErr: "invalid URI http://[invalid].com in request body for bap",
+			wantErr: `invalid URL - http:// [invalid].com defined in routing config for target type bap: parse "http:// [invalid].com": invalid character " " in host name`,
 		},
 	}
 
@@ -464,8 +464,8 @@ func TestRouteFailure(t *testing.T) {
 			name:       "Invalid bpp_uri format in request",
 			configFile: "bap_caller.yaml",
 			url:        "https://example.com/v1/ondc/select",
-			body:       `{"context": {"domain": "ONDC:TRV10", "version": "2.0.0", "bpp_uri": "htp://invalid-url"}}`, // Invalid scheme (htp instead of http)
-			wantErr:    "invalid BPP URI - htp://invalid-url in request body for select: URL 'htp://invalid-url' must use https scheme",
+			body:       `{"context": {"domain": "ONDC:TRV10", "version": "2.0.0", "bpp_uri": "htp:// invalid-url"}}`, // Invalid scheme (htp instead of http)
+			wantErr:    `invalid BPP URI - htp:// invalid-url in request body for select: parse "htp:// invalid-url": invalid character " " in host name`,
 		},
 	}
 

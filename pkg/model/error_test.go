@@ -3,8 +3,8 @@ package model
 import (
 	"errors"
 	"fmt"
-	"testing"
 	"net/http"
+	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v2"
@@ -196,5 +196,56 @@ func TestSchemaValidationErr_BecknError_NoErrors(t *testing.T) {
 	}
 	if beErr.Code != expectedCode {
 		t.Errorf("beErr.Code = %s, want %s", beErr.Code, expectedCode)
+	}
+}
+
+func TestParseContextKey_ValidKeys(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected ContextKey
+	}{
+		{"message_id", ContextKeyMsgID},
+		{"subscriber_id", ContextKeySubscriberID},
+		{"model_id", ContextKeyModelID},
+	}
+
+	for _, tt := range tests {
+		key, err := ParseContextKey(tt.input)
+		if err != nil {
+			t.Errorf("unexpected error for input %s: %v", tt.input, err)
+		}
+		if key != tt.expected {
+			t.Errorf("expected %s, got %s", tt.expected, key)
+		}
+	}
+}
+
+func TestParseContextKey_InvalidKey(t *testing.T) {
+	_, err := ParseContextKey("invalid_key")
+	if err == nil {
+		t.Error("expected error for invalid context key, got nil")
+	}
+}
+
+func TestContextKey_UnmarshalYAML_Valid(t *testing.T) {
+	yamlData := []byte("message_id")
+	var key ContextKey
+
+	err := yaml.Unmarshal(yamlData, &key)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if key != ContextKeyMsgID {
+		t.Errorf("expected %s, got %s", ContextKeyMsgID, key)
+	}
+}
+
+func TestContextKey_UnmarshalYAML_Invalid(t *testing.T) {
+	yamlData := []byte("invalid_key")
+	var key ContextKey
+
+	err := yaml.Unmarshal(yamlData, &key)
+	if err == nil {
+		t.Error("expected error for invalid context key, got nil")
 	}
 }

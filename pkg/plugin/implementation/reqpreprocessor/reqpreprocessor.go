@@ -15,7 +15,8 @@ import (
 
 // Config represents the configuration for the request preprocessor middleware.
 type Config struct {
-	Role string
+	Role        string
+	ContextKeys []string
 }
 
 const contextKey = "context"
@@ -57,7 +58,12 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				log.Debugf(ctx, "adding subscriberId to request:%s, %v", model.ContextKeySubscriberID, subID)
 				ctx = context.WithValue(ctx, model.ContextKeySubscriberID, subID)
 			}
-
+			for _, key := range cfg.ContextKeys {
+				ctxKey, _ := model.ParseContextKey(key)
+				if v, ok := reqContext[key]; ok {
+					ctx = context.WithValue(ctx, ctxKey, v)
+				}
+			}
 			r.Body = io.NopCloser(bytes.NewBuffer(body))
 			r.ContentLength = int64(len(body))
 			r = r.WithContext(ctx)
@@ -73,6 +79,12 @@ func validateConfig(cfg *Config) error {
 
 	if cfg.Role != "bap" && cfg.Role != "bpp" {
 		return errors.New("role must be either 'bap' or 'bpp'")
+	}
+
+	for _, key := range cfg.ContextKeys {
+		if _, err := model.ParseContextKey(key); err != nil {
+			return err
+		}
 	}
 	return nil
 }
