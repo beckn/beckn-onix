@@ -131,7 +131,7 @@ dist
 .pnp.*
 
 # Ignore compiled shared object files
-*.so
+# *.so
 
 # Ignore coverage output files
 coverage.out
