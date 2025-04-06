@@ -260,21 +260,21 @@ func TestNewManagerSuccess(t *testing.T) {
 		{
 			name: "valid config with empty root",
 			cfg: &ManagerConfig{
-				Root:       t.TempDir(),
+				Root:       "./testdata",
 				RemoteRoot: "",
 			},
 		},
 		{
 			name: "valid config with root path",
 			cfg: &ManagerConfig{
-				Root:       t.TempDir(),
+				Root:       "./testdata",
 				RemoteRoot: "",
 			},
 		},
 		{
 			name: "valid config with remote root",
 			cfg: &ManagerConfig{
-				Root:       t.TempDir(),
+				Root:       "./testdata",
 				RemoteRoot: "",
 			},
 		},
@@ -404,6 +404,7 @@ func TestPublisherSuccess(t *testing.T) {
 			if p != tt.mockPublisher {
 				t.Errorf("Manager.Publisher() did not return the correct publisher")
 			}
+
 		})
 	}
 }
