@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/beckn/beckn-onix/pkg/model"
 	"github.com/rs/zerolog"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -52,9 +53,9 @@ var logLevels = map[level]zerolog.Level{
 
 // Config represents the configuration for logging.
 type Config struct {
-	Level        level         `yaml:"level"`
-	Destinations []destination `yaml:"destinations"`
-	ContextKeys  []string      `yaml:"contextKeys"`
+	Level        level              `yaml:"level"`
+	Destinations []destination      `yaml:"destinations"`
+	ContextKeys  []model.ContextKey `yaml:"contextKeys"`
 }
 
 var (
@@ -277,7 +278,7 @@ func addCtx(ctx context.Context, event *zerolog.Event) {
 		if !ok {
 			continue
 		}
-		keyStr := key
+		keyStr := string(key)
 		event.Any(keyStr, val)
 	}
 }

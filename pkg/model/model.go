@@ -42,6 +42,9 @@ const (
 type ContextKey string
 
 const (
+	// ContextKeyTxnID is the context key used to store and retrieve the transaction ID in a request context.
+	ContextKeyTxnID ContextKey = "transaction_id"
+
 	// ContextKeyMsgID is the context key used to store and retrieve the message ID in a request context.
 	ContextKeyMsgID ContextKey = "message_id"
 
@@ -51,6 +54,38 @@ const (
 	// ContextKeyModelID is the context key for storing and retrieving the model ID from a request context.
 	ContextKeyModelID ContextKey = "model_id"
 )
+
+var contextKeys = map[string]ContextKey{
+	"message_id":    ContextKeyMsgID,
+	"subscriber_id": ContextKeySubscriberID,
+	"model_id":      ContextKeyModelID,
+}
+
+// ParseContextKey converts a string into a valid ContextKey.
+func ParseContextKey(v string) (ContextKey, error) {
+	key, ok := contextKeys[v]
+	if !ok {
+		return "", fmt.Errorf("invalid context key: %s", key)
+	}
+	return key, nil
+}
+
+// UnmarshalYAML ensures that only known context keys are accepted during YAML unmarshalling.
+func (k *ContextKey) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var keyStr string
+	if err := unmarshal(&keyStr); err != nil {
+		return err
+	}
+
+	parsedKey, err := ParseContextKey(keyStr)
+	if err != nil {
+		return err
+	}
+
+	*k = parsedKey
+	return nil
+
+}
 
 // Role defines the type of participant in the network.
 type Role string
