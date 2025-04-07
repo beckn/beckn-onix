@@ -131,7 +131,7 @@ func (m *Manager) Publisher(ctx context.Context, cfg *Config) (definition.Publis
 		return nil, err
 	}
 	if closer != nil {
-		m.addCloser(func() {
+		m.closers = append(m.closers, func() {
 			if err := closer(); err != nil {
 				panic(err)
 			}
