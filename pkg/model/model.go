@@ -16,6 +16,10 @@ type Subscriber struct {
 	Domain       string `json:"domain"`
 }
 
+type ContextKey string
+
+const ContextKeyModuleId ContextKey = "module_id"
+
 // Subscription represents subscription details of a network participant.
 type Subscription struct {
 	Subscriber       `json:",inline"`
