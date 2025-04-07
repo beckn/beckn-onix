@@ -151,7 +151,6 @@ func (m *mockRouterProvider) New(ctx context.Context, config map[string]string) 
 type mockMiddlewareProvider struct {
 	middleware func(http.Handler) http.Handler
 	err        error
-	errFunc    func() error
 }
 
 func (m *mockMiddlewareProvider) New(ctx context.Context, config map[string]string) (func(http.Handler) http.Handler, error) {
