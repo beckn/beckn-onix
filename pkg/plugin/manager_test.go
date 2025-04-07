@@ -4,9 +4,9 @@ import (
 	"archive/zip"
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"plugin"
 	"strings"
@@ -124,6 +124,7 @@ func (m *mockPublisherProvider) New(ctx context.Context, config map[string]strin
 type mockSchemaValidatorProvider struct {
 	validator *mockSchemaValidator
 	err       error
+	errFunc   func() error
 }
 
 func (m *mockSchemaValidatorProvider) New(ctx context.Context, config map[string]string) (definition.SchemaValidator, func() error, error) {
@@ -135,8 +136,9 @@ func (m *mockSchemaValidatorProvider) New(ctx context.Context, config map[string
 
 // Mock providers for additional interfaces
 type mockRouterProvider struct {
-	router *mockRouter
-	err    error
+	router  *mockRouter
+	err     error
+	errFunc func() error
 }
 
 func (m *mockRouterProvider) New(ctx context.Context, config map[string]string) (definition.Router, func() error, error) {
@@ -149,6 +151,7 @@ func (m *mockRouterProvider) New(ctx context.Context, config map[string]string) 
 type mockMiddlewareProvider struct {
 	middleware func(http.Handler) http.Handler
 	err        error
+	errFunc    func() error
 }
 
 func (m *mockMiddlewareProvider) New(ctx context.Context, config map[string]string) (func(http.Handler) http.Handler, error) {
@@ -162,8 +165,9 @@ func (m *mockMiddlewareProvider) New(ctx context.Context, config map[string]stri
 }
 
 type mockStepProvider struct {
-	step *mockStep
-	err  error
+	step    *mockStep
+	err     error
+	errFunc func() error
 }
 
 func (m *mockStepProvider) New(ctx context.Context, config map[string]string) (definition.Step, func(), error) {
@@ -175,8 +179,9 @@ func (m *mockStepProvider) New(ctx context.Context, config map[string]string) (d
 
 // Mock providers for additional interfaces
 type mockCacheProvider struct {
-	cache *mockCache
-	err   error
+	cache   *mockCache
+	err     error
+	errFunc func() error
 }
 
 func (m *mockCacheProvider) New(ctx context.Context, config map[string]string) (definition.Cache, func() error, error) {
@@ -187,8 +192,9 @@ func (m *mockCacheProvider) New(ctx context.Context, config map[string]string) (
 }
 
 type mockSignerProvider struct {
-	signer *mockSigner
-	err    error
+	signer  *mockSigner
+	err     error
+	errFunc func() error
 }
 
 func (m *mockSignerProvider) New(ctx context.Context, config map[string]string) (definition.Signer, func() error, error) {
@@ -201,6 +207,7 @@ func (m *mockSignerProvider) New(ctx context.Context, config map[string]string) 
 type mockEncrypterProvider struct {
 	encrypter *mockEncrypter
 	err       error
+	errFunc   func() error
 }
 
 func (m *mockEncrypterProvider) New(ctx context.Context, config map[string]string) (definition.Encrypter, func() error, error) {
@@ -213,6 +220,7 @@ func (m *mockEncrypterProvider) New(ctx context.Context, config map[string]strin
 type mockDecrypterProvider struct {
 	decrypter *mockDecrypter
 	err       error
+	errFunc   func() error
 }
 
 func (m *mockDecrypterProvider) New(ctx context.Context, config map[string]string) (definition.Decrypter, func() error, error) {
@@ -225,6 +233,7 @@ func (m *mockDecrypterProvider) New(ctx context.Context, config map[string]strin
 type mockSignValidatorProvider struct {
 	validator *mockSignValidator
 	err       error
+	errFunc   func() error
 }
 
 func (m *mockSignValidatorProvider) New(ctx context.Context, config map[string]string) (definition.SignValidator, func() error, error) {
@@ -237,6 +246,7 @@ func (m *mockSignValidatorProvider) New(ctx context.Context, config map[string]s
 type mockKeyManagerProvider struct {
 	keyManager *mockKeyManager
 	err        error
+	errFunc    func() error
 }
 
 func (m *mockKeyManagerProvider) New(ctx context.Context, cache definition.Cache, lookup definition.RegistryLookup, config map[string]string) (definition.KeyManager, func() error, error) {
@@ -251,8 +261,21 @@ type mockRegistryLookup struct {
 	definition.RegistryLookup
 }
 
-// TestNewManager_Success tests the successful scenarios of the NewManager function
+// TestNewManagerSuccess tests the successful scenarios of the NewManager function
 func TestNewManagerSuccess(t *testing.T) {
+	// Build the dummy plugin first
+	cmd := exec.Command("go", "build", "-buildmode=plugin", "-o", "./testdata/dummy.so", "./testdata/dummy.go")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to build dummy plugin: %v", err)
+	}
+
+	// Clean up the .so file after test completes
+	t.Cleanup(func() {
+		if err := os.Remove("./testdata/dummy.so"); err != nil && !os.IsNotExist(err) {
+			t.Logf("Failed to remove dummy.so: %v", err)
+		}
+	})
+
 	tests := []struct {
 		name string
 		cfg  *ManagerConfig
@@ -260,19 +283,26 @@ func TestNewManagerSuccess(t *testing.T) {
 		{
 			name: "valid config with empty root",
 			cfg: &ManagerConfig{
-				Root:       "./testdata",
+				Root:       t.TempDir(),
 				RemoteRoot: "",
 			},
 		},
 		{
 			name: "valid config with root path",
 			cfg: &ManagerConfig{
-				Root:       "./testdata",
+				Root:       t.TempDir(),
 				RemoteRoot: "",
 			},
 		},
 		{
 			name: "valid config with remote root",
+			cfg: &ManagerConfig{
+				Root:       t.TempDir(),
+				RemoteRoot: "",
+			},
+		},
+		{
+			name: "valid config with so file",
 			cfg: &ManagerConfig{
 				Root:       "./testdata",
 				RemoteRoot: "",
@@ -311,7 +341,7 @@ func TestNewManagerSuccess(t *testing.T) {
 	}
 }
 
-// TestNewManager_Failure tests the failure scenarios of the NewManager function
+// TestNewManagerFailure tests the failure scenarios of the NewManager function
 func TestNewManagerFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -381,15 +411,15 @@ func TestPublisherSuccess(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			errFunc := func() error { return nil }
 			m := &Manager{
-				closers: []func(){},
 				plugins: map[string]onixPlugin{
 					tt.publisherID: &mockPlugin{
 						symbol: &mockPublisherProvider{
 							publisher: tt.mockPublisher,
-							err:       errFunc(),
+							errFunc:   errFunc,
 						},
 					},
 				},
+				closers: []func(){},
 			}
 
 			p, err := m.Publisher(context.Background(), &Config{
@@ -404,6 +434,12 @@ func TestPublisherSuccess(t *testing.T) {
 			if p != tt.mockPublisher {
 				t.Errorf("Manager.Publisher() did not return the correct publisher")
 			}
+
+			if len(m.closers) != 1 {
+				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+			}
+
+			m.closers[0]()
 
 		})
 	}
@@ -428,10 +464,8 @@ func TestPublisherFailure(t *testing.T) {
 			publisherID: "error-provider",
 			plugins: map[string]onixPlugin{
 				"error-provider": &mockPlugin{
-					symbol: &mockPublisherProvider{
-						publisher: nil,
-						err:       errors.New("provider error"),
-					},
+					symbol: nil,
+					err:    errors.New("provider error"),
 				},
 			},
 			expectedError: "provider error",
@@ -474,7 +508,7 @@ func TestPublisherFailure(t *testing.T) {
 	}
 }
 
-// TestManager_SchemaValidator_Success tests the successful scenarios of the SchemaValidator method
+// TestSchemaValidatorSuccess tests the successful scenarios of the SchemaValidator method
 func TestSchemaValidatorSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -489,6 +523,7 @@ func TestSchemaValidatorSuccess(t *testing.T) {
 			},
 			plugin: &mockSchemaValidatorProvider{
 				validator: &mockSchemaValidator{},
+				errFunc:   func() error { return nil },
 			},
 		},
 	}
@@ -515,11 +550,17 @@ func TestSchemaValidatorSuccess(t *testing.T) {
 			if validator != tt.plugin.validator {
 				t.Error("validator does not match expected instance")
 			}
+
+			if len(m.closers) != 1 {
+				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+			}
+
+			m.closers[0]()
 		})
 	}
 }
 
-// TestManager_SchemaValidator_Failure tests the failure scenarios of the SchemaValidator method
+// TestSchemaValidatorFailure tests the failure scenarios of the SchemaValidator method
 func TestSchemaValidatorFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -580,7 +621,7 @@ func TestSchemaValidatorFailure(t *testing.T) {
 	}
 }
 
-// TestManager_Router_Success tests the successful scenarios of the Router method
+// TestRouterSuccess tests the successful scenarios of the Router method
 func TestRouterSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -594,7 +635,8 @@ func TestRouterSuccess(t *testing.T) {
 				Config: map[string]string{},
 			},
 			plugin: &mockRouterProvider{
-				router: &mockRouter{},
+				router:  &mockRouter{},
+				errFunc: func() error { return nil },
 			},
 		},
 	}
@@ -624,11 +666,17 @@ func TestRouterSuccess(t *testing.T) {
 			if router != tt.plugin.router {
 				t.Error("router does not match expected instance")
 			}
+
+			if len(m.closers) != 1 {
+				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+			}
+
+			m.closers[0]()
 		})
 	}
 }
 
-// TestManager_Router_Failure tests the failure scenarios of the Router method
+// TestRouterFailure tests the failure scenarios of the Router method
 func TestRouterFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -689,7 +737,7 @@ func TestRouterFailure(t *testing.T) {
 	}
 }
 
-// TestManager_Step_Success tests the successful scenarios of the Step method
+// TestStepSuccess tests the successful scenarios of the Step method
 func TestStepSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -703,7 +751,8 @@ func TestStepSuccess(t *testing.T) {
 				Config: map[string]string{},
 			},
 			plugin: &mockStepProvider{
-				step: &mockStep{},
+				step:    &mockStep{},
+				errFunc: func() error { return nil },
 			},
 		},
 	}
@@ -733,11 +782,17 @@ func TestStepSuccess(t *testing.T) {
 			if step != tt.plugin.step {
 				t.Error("step does not match expected instance")
 			}
+
+			if len(m.closers) != 1 {
+				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+			}
+
+			m.closers[0]()
 		})
 	}
 }
 
-// TestManager_Step_Failure tests the failure scenarios of the Step method
+// TestStepFailure tests the failure scenarios of the Step method
 func TestStepFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -798,7 +853,7 @@ func TestStepFailure(t *testing.T) {
 	}
 }
 
-// TestManager_Cache_Success tests the successful scenarios of the Cache method
+// TestCacheSuccess tests the successful scenarios of the Cache method
 func TestCacheSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -812,7 +867,8 @@ func TestCacheSuccess(t *testing.T) {
 				Config: map[string]string{},
 			},
 			plugin: &mockCacheProvider{
-				cache: &mockCache{},
+				cache:   &mockCache{},
+				errFunc: func() error { return nil },
 			},
 		},
 	}
@@ -839,11 +895,17 @@ func TestCacheSuccess(t *testing.T) {
 			if cache == nil {
 				t.Error("expected non-nil cache, got nil")
 			}
+
+			if len(m.closers) != 1 {
+				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+			}
+
+			m.closers[0]()
 		})
 	}
 }
 
-// TestManager_Cache_Failure tests the failure scenarios of the Cache method
+// TestCacheFailure tests the failure scenarios of the Cache method
 func TestCacheFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -904,7 +966,7 @@ func TestCacheFailure(t *testing.T) {
 	}
 }
 
-// TestManager_Signer_Success tests the successful scenarios of the Signer method
+// TestSignerSuccess tests the successful scenarios of the Signer method
 func TestSignerSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -918,7 +980,8 @@ func TestSignerSuccess(t *testing.T) {
 				Config: map[string]string{},
 			},
 			plugin: &mockSignerProvider{
-				signer: &mockSigner{},
+				signer:  &mockSigner{},
+				errFunc: func() error { return nil },
 			},
 		},
 	}
@@ -945,11 +1008,17 @@ func TestSignerSuccess(t *testing.T) {
 			if signer == nil {
 				t.Error("expected non-nil signer, got nil")
 			}
+
+			if len(m.closers) != 1 {
+				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+			}
+
+			m.closers[0]()
 		})
 	}
 }
 
-// TestManager_Signer_Failure tests the failure scenarios of the Signer method
+// TestSignerFailure tests the failure scenarios of the Signer method
 func TestSignerFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1010,7 +1079,7 @@ func TestSignerFailure(t *testing.T) {
 	}
 }
 
-// TestManager_Encryptor_Success tests the successful scenarios of the Encryptor method
+// TestEncryptorSuccess tests the successful scenarios of the Encryptor method
 func TestEncryptorSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -1025,6 +1094,7 @@ func TestEncryptorSuccess(t *testing.T) {
 			},
 			plugin: &mockEncrypterProvider{
 				encrypter: &mockEncrypter{},
+				errFunc:   func() error { return nil },
 			},
 		},
 	}
@@ -1051,11 +1121,17 @@ func TestEncryptorSuccess(t *testing.T) {
 			if encrypter == nil {
 				t.Error("expected non-nil encrypter, got nil")
 			}
+
+			if len(m.closers) != 1 {
+				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+			}
+
+			m.closers[0]()
 		})
 	}
 }
 
-// TestManager_Encryptor_Failure tests the failure scenarios of the Encryptor method
+// TestEncryptorFailure tests the failure scenarios of the Encryptor method
 func TestEncryptorFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1116,7 +1192,7 @@ func TestEncryptorFailure(t *testing.T) {
 	}
 }
 
-// TestManager_Decryptor_Success tests the successful scenarios of the Decryptor method
+// TestDecryptorSuccess tests the successful scenarios of the Decryptor method
 func TestDecryptorSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -1131,6 +1207,7 @@ func TestDecryptorSuccess(t *testing.T) {
 			},
 			plugin: &mockDecrypterProvider{
 				decrypter: &mockDecrypter{},
+				errFunc:   func() error { return nil },
 			},
 		},
 	}
@@ -1157,11 +1234,17 @@ func TestDecryptorSuccess(t *testing.T) {
 			if decrypter == nil {
 				t.Error("expected non-nil decrypter, got nil")
 			}
+
+			if len(m.closers) != 1 {
+				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+			}
+
+			m.closers[0]()
 		})
 	}
 }
 
-// TestManager_Decryptor_Failure tests the failure scenarios of the Decryptor method
+// TestDecryptorFailure tests the failure scenarios of the Decryptor method
 func TestDecryptorFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1222,13 +1305,12 @@ func TestDecryptorFailure(t *testing.T) {
 	}
 }
 
-// TestManager_SignValidator tests the SignValidator method of the Manager
-func TestSignValidator(t *testing.T) {
+// TestSignValidatorSuccess tests the successful scenarios of the SignValidator method
+func TestSignValidatorSuccess(t *testing.T) {
 	tests := []struct {
-		name    string
-		cfg     *Config
-		plugin  *mockSignValidatorProvider
-		wantErr bool
+		name   string
+		cfg    *Config
+		plugin *mockSignValidatorProvider
 	}{
 		{
 			name: "successful sign validator creation",
@@ -1238,25 +1320,14 @@ func TestSignValidator(t *testing.T) {
 			},
 			plugin: &mockSignValidatorProvider{
 				validator: &mockSignValidator{},
+				errFunc:   func() error { return nil },
 			},
-			wantErr: false,
-		},
-		{
-			name: "provider error",
-			cfg: &Config{
-				ID:     "test-sign-validator",
-				Config: map[string]string{},
-			},
-			plugin: &mockSignValidatorProvider{
-				err: errors.New("provider error"),
-			},
-			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
+			// Create a manager with the mock plugin
 			m := &Manager{
 				plugins: map[string]onixPlugin{
 					tt.cfg.ID: &mockPlugin{
@@ -1266,15 +1337,91 @@ func TestSignValidator(t *testing.T) {
 				closers: []func(){},
 			}
 
-			_, err := m.SignValidator(ctx, tt.cfg)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Manager.SignValidator() error = %v, wantErr %v", err, tt.wantErr)
+			// Call SignValidator
+			validator, err := m.SignValidator(context.Background(), tt.cfg)
+
+			// Check success case
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if validator == nil {
+				t.Error("expected non-nil validator, got nil")
+			}
+			if validator != tt.plugin.validator {
+				t.Error("validator does not match expected instance")
+			}
+
+			if len(m.closers) != 1 {
+				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+			}
+
+			m.closers[0]()
+		})
+	}
+}
+
+// TestSignValidatorFailure tests the failure scenarios of the SignValidator method
+func TestSignValidatorFailure(t *testing.T) {
+	tests := []struct {
+		name          string
+		cfg           *Config
+		plugin        *mockSignValidatorProvider
+		expectedError string
+	}{
+		{
+			name: "provider error",
+			cfg: &Config{
+				ID:     "test-sign-validator",
+				Config: map[string]string{},
+			},
+			plugin: &mockSignValidatorProvider{
+				err: errors.New("provider error"),
+			},
+			expectedError: "provider error",
+		},
+		{
+			name: "plugin not found",
+			cfg: &Config{
+				ID:     "nonexistent-sign-validator",
+				Config: map[string]string{},
+			},
+			plugin:        nil,
+			expectedError: "plugin nonexistent-sign-validator not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a manager with the mock plugin
+			m := &Manager{
+				plugins: make(map[string]onixPlugin),
+				closers: []func(){},
+			}
+
+			// Only add the plugin if it's not nil
+			if tt.plugin != nil {
+				m.plugins[tt.cfg.ID] = &mockPlugin{
+					symbol: tt.plugin,
+				}
+			}
+
+			// Call SignValidator
+			validator, err := m.SignValidator(context.Background(), tt.cfg)
+
+			// Check error
+			if err == nil {
+				t.Error("expected error, got nil")
+			} else if !strings.Contains(err.Error(), tt.expectedError) {
+				t.Errorf("error = %v, want error containing %q", err, tt.expectedError)
+			}
+			if validator != nil {
+				t.Error("expected nil validator, got non-nil")
 			}
 		})
 	}
 }
 
-// TestManager_KeyManager_Success tests the successful scenarios of the KeyManager method
+// TestKeyManagerSuccess tests the successful scenarios of the KeyManager method
 func TestKeyManagerSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -1289,6 +1436,7 @@ func TestKeyManagerSuccess(t *testing.T) {
 			},
 			plugin: &mockKeyManagerProvider{
 				keyManager: &mockKeyManager{},
+				errFunc:    func() error { return nil },
 			},
 		},
 	}
@@ -1319,11 +1467,17 @@ func TestKeyManagerSuccess(t *testing.T) {
 			if keyManager == nil {
 				t.Error("expected non-nil key manager, got nil")
 			}
+
+			if len(m.closers) != 1 {
+				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+			}
+
+			m.closers[0]()
 		})
 	}
 }
 
-// TestManager_KeyManager_Failure tests the failure scenarios of the KeyManager method
+// TestKeyManagerFailure tests the failure scenarios of the KeyManager method
 func TestKeyManagerFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1388,7 +1542,7 @@ func TestKeyManagerFailure(t *testing.T) {
 	}
 }
 
-// TestUnzip_Success tests the successful scenarios of the unzip function
+// TestUnzipSuccess tests the successful scenarios of the unzip function
 func TestUnzipSuccess(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1578,7 +1732,7 @@ func TestUnzipSuccess(t *testing.T) {
 	}
 }
 
-// TestUnzip_Failure tests the failure scenarios of the unzip function
+// TestUnzipFailure tests the failure scenarios of the unzip function
 func TestUnzipFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1717,229 +1871,6 @@ func TestUnzipFailure(t *testing.T) {
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
 				t.Errorf("unzip() error = %v, want error containing %q", err, tt.expectedError)
 			}
-		})
-	}
-}
-
-// TestManager_CloserCleanup tests the cleanup functionality of closer functions
-func TestCloserCleanup(t *testing.T) {
-	// Create a manager
-	m := &Manager{
-		closers: make([]func(), 0),
-	}
-
-	// Track if closers were called
-	closer1Called := false
-	closer2Called := false
-	closer3Called := false
-
-	// Add closers using the same pattern as in manager.go
-	m.closers = append(m.closers, func() {
-		if err := func() error {
-			closer1Called = true
-			return nil
-		}(); err != nil {
-			panic(err)
-		}
-	})
-
-	m.closers = append(m.closers, func() {
-		if err := func() error {
-			closer2Called = true
-			return nil
-		}(); err != nil {
-			panic(err)
-		}
-	})
-
-	m.closers = append(m.closers, func() {
-		if err := func() error {
-			closer3Called = true
-			return nil
-		}(); err != nil {
-			panic(err)
-		}
-	})
-
-	// Verify closers were added
-	if len(m.closers) != 3 {
-		t.Errorf("Expected 3 closers, got %d", len(m.closers))
-	}
-
-	// Execute all closers
-	for _, closer := range m.closers {
-		closer()
-	}
-
-	// Verify all closers were called
-	if !closer1Called {
-		t.Errorf("Closer 1 was not called")
-	}
-	if !closer2Called {
-		t.Errorf("Closer 2 was not called")
-	}
-	if !closer3Called {
-		t.Errorf("Closer 3 was not called")
-	}
-}
-
-// TestManager_CloserManagement_Success tests the successful scenarios of closer management
-func TestCloserManagementSuccess(t *testing.T) {
-	tests := []struct {
-		name            string
-		initialClosers  []func()
-		newCloser       func() error
-		expectedCount   int
-		verifyExecution bool
-	}{
-		{
-			name:            "add first closer to empty list",
-			initialClosers:  []func(){},
-			newCloser:       func() error { return nil },
-			expectedCount:   1,
-			verifyExecution: true,
-		},
-		{
-			name:            "add closer to existing list",
-			initialClosers:  []func(){func() {}},
-			newCloser:       func() error { return nil },
-			expectedCount:   2,
-			verifyExecution: true,
-		},
-		{
-			name:            "ignore nil closer",
-			initialClosers:  []func(){func() {}},
-			newCloser:       nil,
-			expectedCount:   1,
-			verifyExecution: false,
-		},
-		{
-			name:            "add multiple closers sequentially",
-			initialClosers:  []func(){func() {}, func() {}},
-			newCloser:       func() error { return nil },
-			expectedCount:   3,
-			verifyExecution: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with initial closers
-			m := &Manager{
-				closers: make([]func(), 0, len(tt.initialClosers)),
-			}
-			m.closers = append(m.closers, tt.initialClosers...)
-
-			// Track if the new closer was called
-			closerCalled := false
-
-			// Add the new closer if it's not nil
-			if tt.newCloser != nil {
-				m.closers = append(m.closers, func() {
-					if err := func() error {
-						closerCalled = true
-						return tt.newCloser()
-					}(); err != nil {
-						panic(err)
-					}
-				})
-			}
-
-			// Verify the number of closers
-			if len(m.closers) != tt.expectedCount {
-				t.Errorf("got %d closers, want %d", len(m.closers), tt.expectedCount)
-			}
-
-			// Execute all closers
-			for _, closer := range m.closers {
-				closer()
-			}
-
-			// Verify the new closer was called if expected
-			if tt.verifyExecution && !closerCalled {
-				t.Error("new closer was not called")
-			}
-		})
-	}
-}
-
-// TestManager_CloserManagement_Failure tests the failure scenarios of closer management
-func TestCloserManagementFailure(t *testing.T) {
-	tests := []struct {
-		name          string
-		newCloser     func() error
-		expectedError string
-	}{
-		{
-			name: "closer returns error",
-			newCloser: func() error {
-				return fmt.Errorf("intentional error")
-			},
-			expectedError: "intentional error",
-		},
-		{
-			name: "closer panics with string",
-			newCloser: func() error {
-				panic("intentional panic")
-			},
-			expectedError: "intentional panic",
-		},
-		{
-			name: "closer panics with error",
-			newCloser: func() error {
-				panic(fmt.Errorf("panic error"))
-			},
-			expectedError: "panic error",
-		},
-		{
-			name: "closer panics with nil",
-			newCloser: func() error {
-				panic(nil)
-			},
-			expectedError: "panic called with nil argument",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager
-			m := &Manager{
-				closers: make([]func(), 0),
-			}
-
-			// Add the closer that will fail
-			m.closers = append(m.closers, func() {
-				if err := tt.newCloser(); err != nil {
-					panic(err)
-				}
-			})
-
-			// Execute the closer and verify it panics
-			defer func() {
-				r := recover()
-				if r == nil {
-					t.Error("expected panic but got none")
-					return
-				}
-
-				// Convert panic value to string for comparison
-				var errStr string
-				switch v := r.(type) {
-				case error:
-					errStr = v.Error()
-				case string:
-					errStr = v
-				default:
-					errStr = "panic called with nil argument"
-				}
-
-				if errStr != tt.expectedError {
-					t.Errorf("got panic %q, want %q", errStr, tt.expectedError)
-				}
-			}()
-
-			// This should panic
-			m.closers[0]()
 		})
 	}
 }
