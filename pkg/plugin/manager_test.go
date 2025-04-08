@@ -25,7 +25,7 @@ func (m *mockPlugin) Lookup(str string) (plugin.Symbol, error) {
 	return m.symbol, m.err
 }
 
-// Mock implementations for testing
+// Mock implementations for testing.
 type mockPublisher struct {
 	definition.Publisher
 }
@@ -110,7 +110,7 @@ func (m *mockKeyManager) DeletePrivateKeys(ctx context.Context, keyID string) er
 	return m.err
 }
 
-// Mock providers
+// Mock providers.
 type mockPublisherProvider struct {
 	publisher definition.Publisher
 	err       error
@@ -134,7 +134,7 @@ func (m *mockSchemaValidatorProvider) New(ctx context.Context, config map[string
 	return m.validator, func() error { return nil }, nil
 }
 
-// Mock providers for additional interfaces
+// Mock providers for additional interfaces.
 type mockRouterProvider struct {
 	router  *mockRouter
 	err     error
@@ -176,7 +176,7 @@ func (m *mockStepProvider) New(ctx context.Context, config map[string]string) (d
 	return m.step, func() {}, nil
 }
 
-// Mock providers for additional interfaces
+// Mock providers for additional interfaces.
 type mockCacheProvider struct {
 	cache   *mockCache
 	err     error
@@ -255,20 +255,20 @@ func (m *mockKeyManagerProvider) New(ctx context.Context, cache definition.Cache
 	return m.keyManager, func() error { return nil }, nil
 }
 
-// Mock registry lookup for testing
+// Mock registry lookup for testing.
 type mockRegistryLookup struct {
 	definition.RegistryLookup
 }
 
-// TestNewManagerSuccess tests the successful scenarios of the NewManager function
+// TestNewManagerSuccess tests the successful scenarios of the NewManager function.
 func TestNewManagerSuccess(t *testing.T) {
-	// Build the dummy plugin first
+	// Build the dummy plugin first.
 	cmd := exec.Command("go", "build", "-buildmode=plugin", "-o", "./testdata/dummy.so", "./testdata/dummy.go")
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("Failed to build dummy plugin: %v", err)
 	}
 
-	// Clean up the .so file after test completes
+	// Clean up the .so file after test completes.
 	t.Cleanup(func() {
 		if err := os.Remove("./testdata/dummy.so"); err != nil && !os.IsNotExist(err) {
 			t.Logf("Failed to remove dummy.so: %v", err)
@@ -326,7 +326,7 @@ func TestNewManagerSuccess(t *testing.T) {
 				return
 			}
 
-			// Verify manager fields
+			// Verify manager fields.
 			if m.plugins == nil {
 				t.Error("NewManager() returned manager with nil plugins map")
 			}
@@ -334,13 +334,13 @@ func TestNewManagerSuccess(t *testing.T) {
 				t.Error("NewManager() returned manager with nil closers slice")
 			}
 
-			// Call cleanup to ensure it doesn't panic
+			// Call cleanup to ensure it doesn't panic.
 			cleanup()
 		})
 	}
 }
 
-// TestNewManagerFailure tests the failure scenarios of the NewManager function
+// TestNewManagerFailure tests the failure scenarios of the NewManager function.
 func TestNewManagerFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -444,7 +444,7 @@ func TestPublisherSuccess(t *testing.T) {
 	}
 }
 
-// TestPublisherFailure tests the failure scenarios of the Publisher method
+// TestPublisherFailure tests the failure scenarios of the Publisher method.
 func TestPublisherFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -507,7 +507,7 @@ func TestPublisherFailure(t *testing.T) {
 	}
 }
 
-// TestSchemaValidatorSuccess tests the successful scenarios of the SchemaValidator method
+// TestSchemaValidatorSuccess tests the successful scenarios of the SchemaValidator method.
 func TestSchemaValidatorSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -529,7 +529,7 @@ func TestSchemaValidatorSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: map[string]onixPlugin{
 					tt.cfg.ID: &mockPlugin{
@@ -539,10 +539,10 @@ func TestSchemaValidatorSuccess(t *testing.T) {
 				closers: []func(){},
 			}
 
-			// Call SchemaValidator
+			// Call SchemaValidator.
 			validator, err := m.SchemaValidator(context.Background(), tt.cfg)
 
-			// Check success case
+			// Check success case.
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -559,7 +559,7 @@ func TestSchemaValidatorSuccess(t *testing.T) {
 	}
 }
 
-// TestSchemaValidatorFailure tests the failure scenarios of the SchemaValidator method
+// TestSchemaValidatorFailure tests the failure scenarios of the SchemaValidator method.
 func TestSchemaValidatorFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -591,23 +591,23 @@ func TestSchemaValidatorFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: make(map[string]onixPlugin),
 				closers: []func(){},
 			}
 
-			// Only add the plugin if it's not nil
+			// Only add the plugin if it's not nil.
 			if tt.plugin != nil {
 				m.plugins[tt.cfg.ID] = &mockPlugin{
 					symbol: tt.plugin,
 				}
 			}
 
-			// Call SchemaValidator
+			// Call SchemaValidator.
 			validator, err := m.SchemaValidator(context.Background(), tt.cfg)
 
-			// Check error
+			// Check error.
 			if err == nil {
 				t.Error("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
@@ -620,7 +620,7 @@ func TestSchemaValidatorFailure(t *testing.T) {
 	}
 }
 
-// TestRouterSuccess tests the successful scenarios of the Router method
+// TestRouterSuccess tests the successful scenarios of the Router method.
 func TestRouterSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -642,7 +642,7 @@ func TestRouterSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: map[string]onixPlugin{
 					tt.cfg.ID: &mockPlugin{
@@ -652,10 +652,10 @@ func TestRouterSuccess(t *testing.T) {
 				closers: []func(){},
 			}
 
-			// Call Router
+			// Call Router.
 			router, err := m.Router(context.Background(), tt.cfg)
 
-			// Check success case
+			// Check success case.
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -675,7 +675,7 @@ func TestRouterSuccess(t *testing.T) {
 	}
 }
 
-// TestRouterFailure tests the failure scenarios of the Router method
+// TestRouterFailure tests the failure scenarios of the Router method.
 func TestRouterFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -707,23 +707,23 @@ func TestRouterFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: make(map[string]onixPlugin),
 				closers: []func(){},
 			}
 
-			// Only add the plugin if it's not nil
+			// Only add the plugin if it's not nil.
 			if tt.plugin != nil {
 				m.plugins[tt.cfg.ID] = &mockPlugin{
 					symbol: tt.plugin,
 				}
 			}
 
-			// Call Router
+			// Call Router.
 			router, err := m.Router(context.Background(), tt.cfg)
 
-			// Check error
+			// Check error.
 			if err == nil {
 				t.Error("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
@@ -736,7 +736,7 @@ func TestRouterFailure(t *testing.T) {
 	}
 }
 
-// TestStepSuccess tests the successful scenarios of the Step method
+// TestStepSuccess tests the successful scenarios of the Step method.
 func TestStepSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -758,7 +758,7 @@ func TestStepSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: map[string]onixPlugin{
 					tt.cfg.ID: &mockPlugin{
@@ -768,10 +768,10 @@ func TestStepSuccess(t *testing.T) {
 				closers: []func(){},
 			}
 
-			// Call Step
+			// Call Step.
 			step, err := m.Step(context.Background(), tt.cfg)
 
-			// Check success case
+			// Check success case.
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -791,7 +791,7 @@ func TestStepSuccess(t *testing.T) {
 	}
 }
 
-// TestStepFailure tests the failure scenarios of the Step method
+// TestStepFailure tests the failure scenarios of the Step method.
 func TestStepFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -823,23 +823,23 @@ func TestStepFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: make(map[string]onixPlugin),
 				closers: []func(){},
 			}
 
-			// Only add the plugin if it's not nil
+			// Only add the plugin if it's not nil.
 			if tt.plugin != nil {
 				m.plugins[tt.cfg.ID] = &mockPlugin{
 					symbol: tt.plugin,
 				}
 			}
 
-			// Call Step
+			// Call Step.
 			step, err := m.Step(context.Background(), tt.cfg)
 
-			// Check error
+			// Check error.
 			if err == nil {
 				t.Error("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
@@ -852,7 +852,7 @@ func TestStepFailure(t *testing.T) {
 	}
 }
 
-// TestCacheSuccess tests the successful scenarios of the Cache method
+// TestCacheSuccess tests the successful scenarios of the Cache method.
 func TestCacheSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -874,7 +874,7 @@ func TestCacheSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: map[string]onixPlugin{
 					tt.cfg.ID: &mockPlugin{
@@ -884,10 +884,10 @@ func TestCacheSuccess(t *testing.T) {
 				closers: []func(){},
 			}
 
-			// Call Cache
+			// Call Cache.
 			cache, err := m.Cache(context.Background(), tt.cfg)
 
-			// Check success case
+			// Check success case.
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -904,7 +904,7 @@ func TestCacheSuccess(t *testing.T) {
 	}
 }
 
-// TestCacheFailure tests the failure scenarios of the Cache method
+// TestCacheFailure tests the failure scenarios of the Cache method.
 func TestCacheFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -936,23 +936,23 @@ func TestCacheFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: make(map[string]onixPlugin),
 				closers: []func(){},
 			}
 
-			// Only add the plugin if it's not nil
+			// Only add the plugin if it's not nil.
 			if tt.plugin != nil {
 				m.plugins[tt.cfg.ID] = &mockPlugin{
 					symbol: tt.plugin,
 				}
 			}
 
-			// Call Cache
+			// Call Cache.
 			cache, err := m.Cache(context.Background(), tt.cfg)
 
-			// Check error
+			// Check error.
 			if err == nil {
 				t.Error("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
@@ -965,7 +965,7 @@ func TestCacheFailure(t *testing.T) {
 	}
 }
 
-// TestSignerSuccess tests the successful scenarios of the Signer method
+// TestSignerSuccess tests the successful scenarios of the Signer method.
 func TestSignerSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -987,7 +987,7 @@ func TestSignerSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: map[string]onixPlugin{
 					tt.cfg.ID: &mockPlugin{
@@ -997,10 +997,10 @@ func TestSignerSuccess(t *testing.T) {
 				closers: []func(){},
 			}
 
-			// Call Signer
+			// Call Signer.
 			signer, err := m.Signer(context.Background(), tt.cfg)
 
-			// Check success case
+			// Check success case.
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -1017,7 +1017,7 @@ func TestSignerSuccess(t *testing.T) {
 	}
 }
 
-// TestSignerFailure tests the failure scenarios of the Signer method
+// TestSignerFailure tests the failure scenarios of the Signer method.
 func TestSignerFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1049,23 +1049,23 @@ func TestSignerFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: make(map[string]onixPlugin),
 				closers: []func(){},
 			}
 
-			// Only add the plugin if it's not nil
+			// Only add the plugin if it's not nil.
 			if tt.plugin != nil {
 				m.plugins[tt.cfg.ID] = &mockPlugin{
 					symbol: tt.plugin,
 				}
 			}
 
-			// Call Signer
+			// Call Signer.
 			signer, err := m.Signer(context.Background(), tt.cfg)
 
-			// Check error
+			// Check error.
 			if err == nil {
 				t.Error("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
@@ -1078,7 +1078,7 @@ func TestSignerFailure(t *testing.T) {
 	}
 }
 
-// TestEncryptorSuccess tests the successful scenarios of the Encryptor method
+// TestEncryptorSuccess tests the successful scenarios of the Encryptor method.
 func TestEncryptorSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -1100,7 +1100,7 @@ func TestEncryptorSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: map[string]onixPlugin{
 					tt.cfg.ID: &mockPlugin{
@@ -1110,10 +1110,10 @@ func TestEncryptorSuccess(t *testing.T) {
 				closers: []func(){},
 			}
 
-			// Call Encryptor
+			// Call Encryptor.
 			encrypter, err := m.Encryptor(context.Background(), tt.cfg)
 
-			// Check success case
+			// Check success case.
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -1130,7 +1130,7 @@ func TestEncryptorSuccess(t *testing.T) {
 	}
 }
 
-// TestEncryptorFailure tests the failure scenarios of the Encryptor method
+// TestEncryptorFailure tests the failure scenarios of the Encryptor method.
 func TestEncryptorFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1162,23 +1162,23 @@ func TestEncryptorFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: make(map[string]onixPlugin),
 				closers: []func(){},
 			}
 
-			// Only add the plugin if it's not nil
+			// Only add the plugin if it's not nil.
 			if tt.plugin != nil {
 				m.plugins[tt.cfg.ID] = &mockPlugin{
 					symbol: tt.plugin,
 				}
 			}
 
-			// Call Encryptor
+			// Call Encryptor.
 			encrypter, err := m.Encryptor(context.Background(), tt.cfg)
 
-			// Check error
+			// Check error.
 			if err == nil {
 				t.Error("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
@@ -1191,7 +1191,7 @@ func TestEncryptorFailure(t *testing.T) {
 	}
 }
 
-// TestDecryptorSuccess tests the successful scenarios of the Decryptor method
+// TestDecryptorSuccess tests the successful scenarios of the Decryptor method.
 func TestDecryptorSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -1213,7 +1213,7 @@ func TestDecryptorSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: map[string]onixPlugin{
 					tt.cfg.ID: &mockPlugin{
@@ -1223,10 +1223,10 @@ func TestDecryptorSuccess(t *testing.T) {
 				closers: []func(){},
 			}
 
-			// Call Decryptor
+			// Call Decryptor.
 			decrypter, err := m.Decryptor(context.Background(), tt.cfg)
 
-			// Check success case
+			// Check success case.
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -1243,7 +1243,7 @@ func TestDecryptorSuccess(t *testing.T) {
 	}
 }
 
-// TestDecryptorFailure tests the failure scenarios of the Decryptor method
+// TestDecryptorFailure tests the failure scenarios of the Decryptor method.
 func TestDecryptorFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1275,23 +1275,23 @@ func TestDecryptorFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: make(map[string]onixPlugin),
 				closers: []func(){},
 			}
 
-			// Only add the plugin if it's not nil
+			// Only add the plugin if it's not nil.
 			if tt.plugin != nil {
 				m.plugins[tt.cfg.ID] = &mockPlugin{
 					symbol: tt.plugin,
 				}
 			}
 
-			// Call Decryptor
+			// Call Decryptor.
 			decrypter, err := m.Decryptor(context.Background(), tt.cfg)
 
-			// Check error
+			// Check error.
 			if err == nil {
 				t.Error("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
@@ -1304,7 +1304,7 @@ func TestDecryptorFailure(t *testing.T) {
 	}
 }
 
-// TestSignValidatorSuccess tests the successful scenarios of the SignValidator method
+// TestSignValidatorSuccess tests the successful scenarios of the SignValidator method.
 func TestSignValidatorSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -1326,7 +1326,7 @@ func TestSignValidatorSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: map[string]onixPlugin{
 					tt.cfg.ID: &mockPlugin{
@@ -1336,10 +1336,10 @@ func TestSignValidatorSuccess(t *testing.T) {
 				closers: []func(){},
 			}
 
-			// Call SignValidator
+			// Call SignValidator.
 			validator, err := m.SignValidator(context.Background(), tt.cfg)
 
-			// Check success case
+			// Check success case.
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -1359,7 +1359,7 @@ func TestSignValidatorSuccess(t *testing.T) {
 	}
 }
 
-// TestSignValidatorFailure tests the failure scenarios of the SignValidator method
+// TestSignValidatorFailure tests the failure scenarios of the SignValidator method.
 func TestSignValidatorFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1391,23 +1391,23 @@ func TestSignValidatorFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: make(map[string]onixPlugin),
 				closers: []func(){},
 			}
 
-			// Only add the plugin if it's not nil
+			// Only add the plugin if it's not nil.
 			if tt.plugin != nil {
 				m.plugins[tt.cfg.ID] = &mockPlugin{
 					symbol: tt.plugin,
 				}
 			}
 
-			// Call SignValidator
+			// Call SignValidator.
 			validator, err := m.SignValidator(context.Background(), tt.cfg)
 
-			// Check error
+			// Check error.
 			if err == nil {
 				t.Error("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
@@ -1420,7 +1420,7 @@ func TestSignValidatorFailure(t *testing.T) {
 	}
 }
 
-// TestKeyManagerSuccess tests the successful scenarios of the KeyManager method
+// TestKeyManagerSuccess tests the successful scenarios of the KeyManager method.
 func TestKeyManagerSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -1442,7 +1442,7 @@ func TestKeyManagerSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: map[string]onixPlugin{
 					tt.cfg.ID: &mockPlugin{
@@ -1452,14 +1452,14 @@ func TestKeyManagerSuccess(t *testing.T) {
 				closers: []func(){},
 			}
 
-			// Create mock cache and registry lookup
+			// Create mock cache and registry lookup.
 			mockCache := &mockCache{}
 			mockRegistry := &mockRegistryLookup{}
 
-			// Call KeyManager
+			// Call KeyManager.
 			keyManager, err := m.KeyManager(context.Background(), mockCache, mockRegistry, tt.cfg)
 
-			// Check success case
+			// Check success case.
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -1476,7 +1476,7 @@ func TestKeyManagerSuccess(t *testing.T) {
 	}
 }
 
-// TestKeyManagerFailure tests the failure scenarios of the KeyManager method
+// TestKeyManagerFailure tests the failure scenarios of the KeyManager method.
 func TestKeyManagerFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1508,27 +1508,27 @@ func TestKeyManagerFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: make(map[string]onixPlugin),
 				closers: []func(){},
 			}
 
-			// Only add the plugin if it's not nil
+			// Only add the plugin if it's not nil.
 			if tt.plugin != nil {
 				m.plugins[tt.cfg.ID] = &mockPlugin{
 					symbol: tt.plugin,
 				}
 			}
 
-			// Create mock cache and registry lookup
+			// Create mock cache and registry lookup.
 			mockCache := &mockCache{}
 			mockRegistry := &mockRegistryLookup{}
 
-			// Call KeyManager
+			// Call KeyManager.
 			keyManager, err := m.KeyManager(context.Background(), mockCache, mockRegistry, tt.cfg)
 
-			// Check error
+			// Check error.
 			if err == nil {
 				t.Error("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
@@ -1541,23 +1541,23 @@ func TestKeyManagerFailure(t *testing.T) {
 	}
 }
 
-// TestUnzipSuccess tests the successful scenarios of the unzip function
+// TestUnzipSuccess tests the successful scenarios of the unzip function.
 func TestUnzipSuccess(t *testing.T) {
 	tests := []struct {
 		name       string
-		setupFunc  func() (string, string, func()) // returns src, dest, cleanup
+		setupFunc  func() (string, string, func()) // returns src, dest, cleanup.
 		verifyFunc func(t *testing.T, dest string)
 	}{
 		{
 			name: "extract single file",
 			setupFunc: func() (string, string, func()) {
-				// Create a temporary directory for the test
+				// Create a temporary directory for the test.
 				tempDir, err := os.MkdirTemp("", "unzip-test-*")
 				if err != nil {
 					t.Fatalf("Failed to create temp dir: %v", err)
 				}
 
-				// Create a zip file with a single test file
+				// Create a zip file with a single test file.
 				zipPath := filepath.Join(tempDir, "test.zip")
 				zipFile, err := os.Create(zipPath)
 				if err != nil {
@@ -1567,7 +1567,7 @@ func TestUnzipSuccess(t *testing.T) {
 				zipWriter := zip.NewWriter(zipFile)
 				defer zipWriter.Close()
 
-				// Add a test file to the zip
+				// Add a test file to the zip.
 				testFile, err := zipWriter.Create("test.txt")
 				if err != nil {
 					t.Fatalf("Failed to create file in zip: %v", err)
@@ -1580,14 +1580,14 @@ func TestUnzipSuccess(t *testing.T) {
 				zipWriter.Close()
 				zipFile.Close()
 
-				// Create destination directory
+				// Create destination directory.
 				destDir := filepath.Join(tempDir, "extracted")
 				return zipPath, destDir, func() {
 					os.RemoveAll(tempDir)
 				}
 			},
 			verifyFunc: func(t *testing.T, dest string) {
-				// Verify the extracted file exists and has correct content
+				// Verify the extracted file exists and has correct content.
 				content, err := os.ReadFile(filepath.Join(dest, "test.txt"))
 				if err != nil {
 					t.Errorf("Failed to read extracted file: %v", err)
@@ -1600,13 +1600,13 @@ func TestUnzipSuccess(t *testing.T) {
 		{
 			name: "extract file in subdirectory",
 			setupFunc: func() (string, string, func()) {
-				// Create a temporary directory for the test
+				// Create a temporary directory for the test.
 				tempDir, err := os.MkdirTemp("", "unzip-test-*")
 				if err != nil {
 					t.Fatalf("Failed to create temp dir: %v", err)
 				}
 
-				// Create a zip file with a file in a subdirectory
+				// Create a zip file with a file in a subdirectory.
 				zipPath := filepath.Join(tempDir, "test.zip")
 				zipFile, err := os.Create(zipPath)
 				if err != nil {
@@ -1616,7 +1616,7 @@ func TestUnzipSuccess(t *testing.T) {
 				zipWriter := zip.NewWriter(zipFile)
 				defer zipWriter.Close()
 
-				// Add a file in a subdirectory
+				// Add a file in a subdirectory.
 				testFile, err := zipWriter.Create("subdir/test.txt")
 				if err != nil {
 					t.Fatalf("Failed to create file in zip: %v", err)
@@ -1629,14 +1629,14 @@ func TestUnzipSuccess(t *testing.T) {
 				zipWriter.Close()
 				zipFile.Close()
 
-				// Create destination directory
+				// Create destination directory.
 				destDir := filepath.Join(tempDir, "extracted")
 				return zipPath, destDir, func() {
 					os.RemoveAll(tempDir)
 				}
 			},
 			verifyFunc: func(t *testing.T, dest string) {
-				// Verify the extracted file in subdirectory exists and has correct content
+				// Verify the extracted file in subdirectory exists and has correct content.
 				content, err := os.ReadFile(filepath.Join(dest, "subdir/test.txt"))
 				if err != nil {
 					t.Errorf("Failed to read extracted file in subdirectory: %v", err)
@@ -1649,13 +1649,13 @@ func TestUnzipSuccess(t *testing.T) {
 		{
 			name: "extract multiple files",
 			setupFunc: func() (string, string, func()) {
-				// Create a temporary directory for the test
+				// Create a temporary directory for the test.
 				tempDir, err := os.MkdirTemp("", "unzip-test-*")
 				if err != nil {
 					t.Fatalf("Failed to create temp dir: %v", err)
 				}
 
-				// Create a zip file with multiple files
+				// Create a zip file with multiple files.
 				zipPath := filepath.Join(tempDir, "test.zip")
 				zipFile, err := os.Create(zipPath)
 				if err != nil {
@@ -1665,7 +1665,7 @@ func TestUnzipSuccess(t *testing.T) {
 				zipWriter := zip.NewWriter(zipFile)
 				defer zipWriter.Close()
 
-				// Add multiple files to the zip
+				// Add multiple files to the zip.
 				files := map[string]string{
 					"file1.txt":        "content of file 1",
 					"file2.txt":        "content of file 2",
@@ -1686,14 +1686,14 @@ func TestUnzipSuccess(t *testing.T) {
 				zipWriter.Close()
 				zipFile.Close()
 
-				// Create destination directory
+				// Create destination directory.
 				destDir := filepath.Join(tempDir, "extracted")
 				return zipPath, destDir, func() {
 					os.RemoveAll(tempDir)
 				}
 			},
 			verifyFunc: func(t *testing.T, dest string) {
-				// Verify all extracted files exist and have correct content
+				// Verify all extracted files exist and have correct content.
 				expectedFiles := map[string]string{
 					"file1.txt":        "content of file 1",
 					"file2.txt":        "content of file 2",
@@ -1715,27 +1715,27 @@ func TestUnzipSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup test environment
+			// Setup test environment.
 			src, dest, cleanup := tt.setupFunc()
 			defer cleanup()
 
-			// Run the test
+			// Run the test.
 			err := unzip(src, dest)
 			if err != nil {
 				t.Errorf("unzip() error = %v, want nil", err)
 			}
 
-			// Verify the result
+			// Verify the result.
 			tt.verifyFunc(t, dest)
 		})
 	}
 }
 
-// TestUnzipFailure tests the failure scenarios of the unzip function
+// TestUnzipFailure tests the failure scenarios of the unzip function.
 func TestUnzipFailure(t *testing.T) {
 	tests := []struct {
 		name          string
-		setupFunc     func() (string, string, func()) // returns src, dest, cleanup
+		setupFunc     func() (string, string, func()) // returns src, dest, cleanup.
 		expectedError string
 	}{
 		{
@@ -1759,7 +1759,7 @@ func TestUnzipFailure(t *testing.T) {
 					t.Fatalf("Failed to create temp dir: %v", err)
 				}
 
-				// Create an invalid zip file
+				// Create an invalid zip file.
 				zipPath := filepath.Join(tempDir, "invalid.zip")
 				if err := os.WriteFile(zipPath, []byte("not a zip file"), 0644); err != nil {
 					t.Fatalf("Failed to create invalid zip file: %v", err)
@@ -1779,7 +1779,7 @@ func TestUnzipFailure(t *testing.T) {
 					t.Fatalf("Failed to create temp dir: %v", err)
 				}
 
-				// Create a valid zip file
+				// Create a valid zip file.
 				zipPath := filepath.Join(tempDir, "test.zip")
 				zipFile, err := os.Create(zipPath)
 				if err != nil {
@@ -1801,7 +1801,7 @@ func TestUnzipFailure(t *testing.T) {
 				zipWriter.Close()
 				zipFile.Close()
 
-				// Create a file instead of a directory to cause the error
+				// Create a file instead of a directory to cause the error.
 				destPath := filepath.Join(tempDir, "extracted")
 				if err := os.WriteFile(destPath, []byte("not a directory"), 0644); err != nil {
 					t.Fatalf("Failed to create file at destination: %v", err)
@@ -1821,7 +1821,7 @@ func TestUnzipFailure(t *testing.T) {
 					t.Fatalf("Failed to create temp dir: %v", err)
 				}
 
-				// Create a zip file with a file that would be extracted to a read-only location
+				// Create a zip file with a file that would be extracted to a read-only location.
 				zipPath := filepath.Join(tempDir, "test.zip")
 				zipFile, err := os.Create(zipPath)
 				if err != nil {
@@ -1843,7 +1843,7 @@ func TestUnzipFailure(t *testing.T) {
 				zipWriter.Close()
 				zipFile.Close()
 
-				// Create a read-only directory
+				// Create a read-only directory.
 				destDir := filepath.Join(tempDir, "extracted")
 				if err := os.MkdirAll(destDir, 0555); err != nil {
 					t.Fatalf("Failed to create read-only directory: %v", err)
@@ -1859,11 +1859,11 @@ func TestUnzipFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup test environment
+			// Setup test environment.
 			src, dest, cleanup := tt.setupFunc()
 			defer cleanup()
 
-			// Run the test
+			// Run the test.
 			err := unzip(src, dest)
 			if err == nil {
 				t.Errorf("unzip() error = nil, want error containing %q", tt.expectedError)
@@ -1874,7 +1874,7 @@ func TestUnzipFailure(t *testing.T) {
 	}
 }
 
-// TestValidateMgrCfgSuccess tests the successful scenarios of the validateMgrCfg function
+// TestValidateMgrCfgSuccess tests the successful scenarios of the validateMgrCfg function.
 func TestValidateMgrCfgSuccess(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1916,18 +1916,18 @@ func TestValidateMgrCfgSuccess(t *testing.T) {
 func TestLoadPluginSuccess(t *testing.T) {
 	tests := []struct {
 		name      string
-		setupFunc func() (string, string, func()) // returns path, id, cleanup
+		setupFunc func() (string, string, func()) // returns path, id, cleanup.
 	}{
 		{
 			name: "load valid plugin",
 			setupFunc: func() (string, string, func()) {
-				// Create a temporary directory for the test
+				// Create a temporary directory for the test.
 				tempDir, err := os.MkdirTemp("", "plugin-test-*")
 				if err != nil {
 					t.Fatalf("Failed to create temp dir: %v", err)
 				}
 
-				// Create a mock plugin file (we can't create a real .so file in tests)
+				// Create a mock plugin file (we can't create a real .so file in tests).
 				pluginPath := filepath.Join(tempDir, "test-plugin.so")
 				if err := os.WriteFile(pluginPath, []byte("mock plugin content"), 0644); err != nil {
 					t.Fatalf("Failed to create mock plugin file: %v", err)
@@ -1942,14 +1942,14 @@ func TestLoadPluginSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Skip the test since we can't create real .so files in tests
+			// Skip the test since we can't create real .so files in tests.
 			t.Skip("Cannot create real .so files in tests")
 
-			// Setup test environment
+			// Setup test environment.
 			path, id, cleanup := tt.setupFunc()
 			defer cleanup()
 
-			// Run the test
+			// Run the test.
 			p, elapsed, err := loadPlugin(context.Background(), path, id)
 			if err != nil {
 				t.Errorf("loadPlugin() error = %v, want nil", err)
@@ -1964,11 +1964,11 @@ func TestLoadPluginSuccess(t *testing.T) {
 	}
 }
 
-// TestLoadPluginFailure tests the failure scenarios of the loadPlugin function
+// TestLoadPluginFailure tests the failure scenarios of the loadPlugin function.
 func TestLoadPluginFailure(t *testing.T) {
 	tests := []struct {
 		name          string
-		setupFunc     func() (string, string, func()) // returns path, id, cleanup
+		setupFunc     func() (string, string, func()) // returns path, id, cleanup.
 		expectedError string
 	}{
 		{
@@ -1992,7 +1992,7 @@ func TestLoadPluginFailure(t *testing.T) {
 					t.Fatalf("Failed to create temp dir: %v", err)
 				}
 
-				// Create an invalid plugin file
+				// Create an invalid plugin file.
 				pluginPath := filepath.Join(tempDir, "invalid.so")
 				if err := os.WriteFile(pluginPath, []byte("not a valid plugin"), 0644); err != nil {
 					t.Fatalf("Failed to create invalid plugin file: %v", err)
@@ -2008,11 +2008,11 @@ func TestLoadPluginFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup test environment
+			// Setup test environment.
 			path, id, cleanup := tt.setupFunc()
 			defer cleanup()
 
-			// Run the test
+			// Run the test.
 			p, elapsed, err := loadPlugin(context.Background(), path, id)
 			if err == nil {
 				t.Errorf("loadPlugin() error = nil, want error containing %q", tt.expectedError)
@@ -2029,17 +2029,17 @@ func TestLoadPluginFailure(t *testing.T) {
 	}
 }
 
-// TestPluginsSuccess tests the successful scenarios of the plugins function
+// TestPluginsSuccess tests the successful scenarios of the plugins function.
 func TestPluginsSuccess(t *testing.T) {
 	tests := []struct {
 		name      string
-		setupFunc func() (*ManagerConfig, func()) // returns config and cleanup
+		setupFunc func() (*ManagerConfig, func()) // returns config and cleanup.
 		wantCount int
 	}{
 		{
 			name: "empty directory",
 			setupFunc: func() (*ManagerConfig, func()) {
-				// Create a temporary directory for the test
+				// Create a temporary directory for the test.
 				tempDir, err := os.MkdirTemp("", "plugins-test-*")
 				if err != nil {
 					t.Fatalf("Failed to create temp dir: %v", err)
@@ -2059,13 +2059,13 @@ func TestPluginsSuccess(t *testing.T) {
 		{
 			name: "directory with non-plugin files",
 			setupFunc: func() (*ManagerConfig, func()) {
-				// Create a temporary directory for the test
+				// Create a temporary directory for the test.
 				tempDir, err := os.MkdirTemp("", "plugins-test-*")
 				if err != nil {
 					t.Fatalf("Failed to create temp dir: %v", err)
 				}
 
-				// Create some non-plugin files
+				// Create some non-plugin files.
 				files := []string{
 					"file1.txt",
 					"file2.json",
@@ -2091,13 +2091,13 @@ func TestPluginsSuccess(t *testing.T) {
 		{
 			name: "directory with subdirectories",
 			setupFunc: func() (*ManagerConfig, func()) {
-				// Create a temporary directory for the test
+				// Create a temporary directory for the test.
 				tempDir, err := os.MkdirTemp("", "plugins-test-*")
 				if err != nil {
 					t.Fatalf("Failed to create temp dir: %v", err)
 				}
 
-				// Create some subdirectories
+				// Create some subdirectories.
 				dirs := []string{
 					"dir1",
 					"dir2/subdir",
@@ -2123,11 +2123,11 @@ func TestPluginsSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup test environment
+			// Setup test environment.
 			cfg, cleanup := tt.setupFunc()
 			defer cleanup()
 
-			// Run the test
+			// Run the test.
 			got, err := plugins(context.Background(), cfg)
 			if err != nil {
 				t.Errorf("plugins() error = %v, want nil", err)
@@ -2139,11 +2139,11 @@ func TestPluginsSuccess(t *testing.T) {
 	}
 }
 
-// TestPluginsFailure tests the failure scenarios of the plugins function
+// TestPluginsFailure tests the failure scenarios of the plugins function.
 func TestPluginsFailure(t *testing.T) {
 	tests := []struct {
 		name          string
-		setupFunc     func() (*ManagerConfig, func()) // returns config and cleanup
+		setupFunc     func() (*ManagerConfig, func()) // returns config and cleanup.
 		expectedError string
 	}{
 		{
@@ -2153,7 +2153,7 @@ func TestPluginsFailure(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create temp dir: %v", err)
 				}
-				os.RemoveAll(tempDir) // Remove the directory to cause an error
+				os.RemoveAll(tempDir) // Remove the directory to cause an error.
 
 				cfg := &ManagerConfig{
 					Root:       tempDir,
@@ -2167,13 +2167,13 @@ func TestPluginsFailure(t *testing.T) {
 		{
 			name: "permission denied",
 			setupFunc: func() (*ManagerConfig, func()) {
-				// Create a temporary directory for the test
+				// Create a temporary directory for the test.
 				tempDir, err := os.MkdirTemp("", "plugins-test-*")
 				if err != nil {
 					t.Fatalf("Failed to create temp dir: %v", err)
 				}
 
-				// Remove read permission from the directory
+				// Remove read permission from the directory.
 				if err := os.Chmod(tempDir, 0); err != nil {
 					t.Fatalf("Failed to change directory permissions: %v", err)
 				}
@@ -2184,7 +2184,7 @@ func TestPluginsFailure(t *testing.T) {
 				}
 
 				return cfg, func() {
-					err = os.Chmod(tempDir, 0755) // Restore permissions before cleanup
+					err = os.Chmod(tempDir, 0755) // Restore permissions before cleanup.
 					os.RemoveAll(tempDir)
 				}
 			},
@@ -2194,11 +2194,11 @@ func TestPluginsFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup test environment
+			// Setup test environment.
 			cfg, cleanup := tt.setupFunc()
 			defer cleanup()
 
-			// Run the test
+			// Run the test.
 			got, err := plugins(context.Background(), cfg)
 			if err == nil {
 				t.Errorf("plugins() error = nil, want error containing %q", tt.expectedError)
@@ -2212,7 +2212,7 @@ func TestPluginsFailure(t *testing.T) {
 	}
 }
 
-// TestProviderSuccess tests the successful scenarios of the provider function
+// TestProviderSuccess tests the successful scenarios of the provider function.
 func TestProviderSuccess(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -2263,7 +2263,7 @@ func TestProviderSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Run the test
+			// Run the test.
 			switch tt.wantType.(type) {
 			case *definition.PublisherProvider:
 				got, err := provider[definition.PublisherProvider](tt.plugins, tt.id)
@@ -2296,7 +2296,7 @@ func TestProviderSuccess(t *testing.T) {
 	}
 }
 
-// TestProviderFailure tests the failure scenarios of the provider function
+// TestProviderFailure tests the failure scenarios of the provider function.
 func TestProviderFailure(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -2325,7 +2325,7 @@ func TestProviderFailure(t *testing.T) {
 			name: "invalid provider type",
 			plugins: map[string]onixPlugin{
 				"test-plugin": &mockPlugin{
-					symbol: &struct{}{}, // Invalid type
+					symbol: &struct{}{}, // Invalid type.
 					err:    nil,
 				},
 			},
@@ -2336,7 +2336,7 @@ func TestProviderFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Test with PublisherProvider type
+			// Test with PublisherProvider type.
 			got, err := provider[definition.PublisherProvider](tt.plugins, tt.id)
 			if err == nil {
 				t.Error("provider() expected error, got nil")
@@ -2348,7 +2348,7 @@ func TestProviderFailure(t *testing.T) {
 				t.Error("provider() expected nil provider")
 			}
 
-			// Test with SchemaValidatorProvider type
+			// Test with SchemaValidatorProvider type.
 			gotValidator, err := provider[definition.SchemaValidatorProvider](tt.plugins, tt.id)
 			if err == nil {
 				t.Error("provider() expected error, got nil")
@@ -2360,7 +2360,7 @@ func TestProviderFailure(t *testing.T) {
 				t.Error("provider() expected nil provider")
 			}
 
-			// Test with RouterProvider type
+			// Test with RouterProvider type.
 			gotRouter, err := provider[definition.RouterProvider](tt.plugins, tt.id)
 			if err == nil {
 				t.Error("provider() expected error, got nil")
@@ -2375,7 +2375,7 @@ func TestProviderFailure(t *testing.T) {
 	}
 }
 
-// TestManagerMiddlewareSuccess tests the successful scenarios of the Middleware method
+// TestManagerMiddlewareSuccess tests the successful scenarios of the Middleware method.
 func TestMiddlewareSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -2396,7 +2396,7 @@ func TestMiddlewareSuccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: map[string]onixPlugin{
 					tt.cfg.ID: &mockPlugin{
@@ -2406,10 +2406,10 @@ func TestMiddlewareSuccess(t *testing.T) {
 				closers: []func(){},
 			}
 
-			// Call Middleware
+			// Call Middleware.
 			middleware, err := m.Middleware(context.Background(), tt.cfg)
 
-			// Check success case
+			// Check success case.
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -2420,7 +2420,7 @@ func TestMiddlewareSuccess(t *testing.T) {
 	}
 }
 
-// TestManagerMiddlewareFailure tests the failure scenarios of the Middleware method
+// TestManagerMiddlewareFailure tests the failure scenarios of the Middleware method.
 func TestMiddlewareFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -2452,23 +2452,23 @@ func TestMiddlewareFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin
+			// Create a manager with the mock plugin.
 			m := &Manager{
 				plugins: make(map[string]onixPlugin),
 				closers: []func(){},
 			}
 
-			// Only add the plugin if it's not nil
+			// Only add the plugin if it's not nil.
 			if tt.plugin != nil {
 				m.plugins[tt.cfg.ID] = &mockPlugin{
 					symbol: tt.plugin,
 				}
 			}
 
-			// Call Middleware
+			// Call Middleware.
 			middleware, err := m.Middleware(context.Background(), tt.cfg)
 
-			// Check error
+			// Check error.
 			if err == nil {
 				t.Error("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
