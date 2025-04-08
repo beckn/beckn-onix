@@ -895,6 +895,10 @@ func TestCacheSuccess(t *testing.T) {
 				t.Error("expected non-nil cache, got nil")
 			}
 
+			if cache != tt.plugin.cache {
+				t.Error("cache does not match expected instance")
+			}
+
 			if len(m.closers) != 1 {
 				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
 			}
@@ -1006,6 +1010,10 @@ func TestSignerSuccess(t *testing.T) {
 			}
 			if signer == nil {
 				t.Error("expected non-nil signer, got nil")
+			}
+
+			if signer != tt.plugin.signer {
+				t.Error("signer does not match expected instance")
 			}
 
 			if len(m.closers) != 1 {
@@ -1121,6 +1129,10 @@ func TestEncryptorSuccess(t *testing.T) {
 				t.Error("expected non-nil encrypter, got nil")
 			}
 
+			if encrypter != tt.plugin.encrypter {
+				t.Error("encrypter does not match expected instance")
+			}
+
 			if len(m.closers) != 1 {
 				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
 			}
@@ -1232,6 +1244,10 @@ func TestDecryptorSuccess(t *testing.T) {
 			}
 			if decrypter == nil {
 				t.Error("expected non-nil decrypter, got nil")
+			}
+
+			if decrypter != tt.plugin.decrypter {
+				t.Error("decrypter does not match expected instance")
 			}
 
 			if len(m.closers) != 1 {
@@ -1465,6 +1481,10 @@ func TestKeyManagerSuccess(t *testing.T) {
 			}
 			if keyManager == nil {
 				t.Error("expected non-nil key manager, got nil")
+			}
+
+			if keyManager != tt.plugin.keyManager {
+				t.Error("key manager does not match expected instance")
 			}
 
 			if len(m.closers) != 1 {
