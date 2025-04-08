@@ -178,12 +178,12 @@ func loadKeyManager(ctx context.Context, mgr PluginManager, cache definition.Cac
 		return nil, nil
 	}
 	if cache == nil {
-		return nil, model.NewBadReqErr(fmt.Errorf("failed to load KeyManager plugin (%s): Cache plugin not configured", cfg.ID))
+		return nil, fmt.Errorf("failed to load KeyManager plugin (%s): Cache plugin not configured", cfg.ID)
 	}
 	rClient := client.NewRegisteryClient(&client.Config{RegisteryURL: regURL})
 	km, err := mgr.KeyManager(ctx, cache, rClient, cfg)
 	if err != nil {
-		return nil, model.NewBadReqErr(fmt.Errorf("failed to load cache plugin (%s): %w", cfg.ID, err))
+		return nil, fmt.Errorf("failed to load cache plugin (%s): %w", cfg.ID, err)
 	}
 
 	log.Debugf(ctx, "Loaded Keymanager plugin: %s", cfg.ID)
