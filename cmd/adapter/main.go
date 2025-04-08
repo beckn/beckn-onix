@@ -16,7 +16,6 @@ import (
 	"github.com/beckn/beckn-onix/core/module"
 	"github.com/beckn/beckn-onix/core/module/handler"
 	"github.com/beckn/beckn-onix/pkg/log"
-	"github.com/beckn/beckn-onix/pkg/model"
 	"github.com/beckn/beckn-onix/pkg/plugin"
 )
 
@@ -97,7 +96,7 @@ func newServer(ctx context.Context, mgr handler.PluginManager, cfg *Config) (htt
 	mux := http.NewServeMux()
 	err := module.Register(ctx, cfg.Modules, mux, mgr)
 	if err != nil {
-		return nil, model.NewBadReqErr(fmt.Errorf("failed to register modules: %w", err))
+		return nil, fmt.Errorf("failed to register modules: %w", err)
 	}
 	return mux, nil
 }
