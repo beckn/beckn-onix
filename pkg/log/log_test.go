@@ -69,7 +69,7 @@ func setupLogger(t *testing.T, l level) string {
 			model.ContextKeyTxnID,
 			model.ContextKeyMsgID,
 			model.ContextKeySubscriberID,
-			model.ContextKeyModelID,
+			model.ContextKeyModuleID,
 		},
 	}
 

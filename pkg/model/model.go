@@ -51,21 +51,22 @@ const (
 	// ContextKeySubscriberID is the context key used to store and retrieve the subscriber ID in a request context.
 	ContextKeySubscriberID ContextKey = "subscriber_id"
 
-	// ContextKeyModelID is the context key for storing and retrieving the model ID from a request context.
-	ContextKeyModelID ContextKey = "model_id"
+	// ContextKeyModuleID is the context key for storing and retrieving the model ID from a request context.
+	ContextKeyModuleID ContextKey = "module_id"
 )
 
 var contextKeys = map[string]ContextKey{
-	"message_id":    ContextKeyMsgID,
-	"subscriber_id": ContextKeySubscriberID,
-	"model_id":      ContextKeyModelID,
+	"transaction_id": ContextKeyTxnID,
+	"message_id":     ContextKeyMsgID,
+	"subscriber_id":  ContextKeySubscriberID,
+	"module_id":      ContextKeyModuleID,
 }
 
 // ParseContextKey converts a string into a valid ContextKey.
 func ParseContextKey(v string) (ContextKey, error) {
 	key, ok := contextKeys[v]
 	if !ok {
-		return "", fmt.Errorf("invalid context key: %s", key)
+		return "", fmt.Errorf("invalid context key: %s", v)
 	}
 	return key, nil
 }
