@@ -10,19 +10,19 @@ import (
 	"net/http"
 
 	"github.com/beckn/beckn-onix/pkg/log"
+	"github.com/beckn/beckn-onix/pkg/model"
 )
 
+// Config represents the configuration for the request preprocessor middleware.
 type Config struct {
-	Role string
+	Role        string
+	ContextKeys []string
 }
 
-type keyType string
+const contextKey = "context"
 
-const (
-	contextKey      keyType = "context"
-	subscriberIDKey keyType = "subscriber_id"
-)
-
+// NewPreProcessor returns a middleware that processes the incoming request,
+// extracts the context field from the body, and adds relevant values (like subscriber ID).
 func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
@@ -41,7 +41,7 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				return
 			}
 
-			// Extract context from request
+			// Extract context from request.
 			reqContext, ok := req["context"].(map[string]interface{})
 			if !ok {
 				http.Error(w, fmt.Sprintf("%s field not found or invalid.", contextKey), http.StatusBadRequest)
@@ -55,10 +55,15 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				subID = reqContext["bpp_id"]
 			}
 			if subID != nil {
-				log.Debugf(ctx, "adding subscriberId to request:%s, %v", subscriberIDKey, subID)
-				ctx = context.WithValue(ctx, subscriberIDKey, subID)
+				log.Debugf(ctx, "adding subscriberId to request:%s, %v", model.ContextKeySubscriberID, subID)
+				ctx = context.WithValue(ctx, model.ContextKeySubscriberID, subID)
 			}
-
+			for _, key := range cfg.ContextKeys {
+				ctxKey, _ := model.ParseContextKey(key)
+				if v, ok := reqContext[key]; ok {
+					ctx = context.WithValue(ctx, ctxKey, v)
+				}
+			}
 			r.Body = io.NopCloser(bytes.NewBuffer(body))
 			r.ContentLength = int64(len(body))
 			r = r.WithContext(ctx)
@@ -74,6 +79,12 @@ func validateConfig(cfg *Config) error {
 
 	if cfg.Role != "bap" && cfg.Role != "bpp" {
 		return errors.New("role must be either 'bap' or 'bpp'")
+	}
+
+	for _, key := range cfg.ContextKeys {
+		if _, err := model.ParseContextKey(key); err != nil {
+			return err
+		}
 	}
 	return nil
 }

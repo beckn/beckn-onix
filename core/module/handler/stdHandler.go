@@ -101,7 +101,7 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 
 // subID retrieves the subscriber ID from the request context.
 func (h *stdHandler) subID(ctx context.Context) string {
-	rSubID, ok := ctx.Value("subscriber_id").(string)
+	rSubID, ok := ctx.Value(model.ContextKeySubscriberID).(string)
 	if ok {
 		return rSubID
 	}
