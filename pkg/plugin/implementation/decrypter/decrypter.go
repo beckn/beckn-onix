@@ -9,6 +9,8 @@ import (
 	"fmt"
 
 	"github.com/zenazn/pkcs7pad"
+
+	"github.com/beckn/beckn-onix/pkg/model"
 )
 
 // decrypter implements the Decrypter interface and handles the decryption process.
@@ -24,18 +26,18 @@ func New(ctx context.Context) (*decrypter, func() error, error) {
 func (d *decrypter) Decrypt(ctx context.Context, encryptedData, privateKeyBase64, publicKeyBase64 string) (string, error) {
 	privateKeyBytes, err := base64.StdEncoding.DecodeString(privateKeyBase64)
 	if err != nil {
-		return "", fmt.Errorf("invalid private key: %w", err)
+		return "", model.NewBadReqErr(fmt.Errorf("invalid private key: %w", err))
 	}
 
 	publicKeyBytes, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 	if err != nil {
-		return "", fmt.Errorf("invalid public key: %w", err)
+		return "", model.NewBadReqErr(fmt.Errorf("invalid public key: %w", err))
 	}
 
 	// Decode the Base64 encoded encrypted data.
 	messageByte, err := base64.StdEncoding.DecodeString(encryptedData)
 	if err != nil {
-		return "", fmt.Errorf("failed to decode encrypted data: %w", err)
+		return "", model.NewBadReqErr(fmt.Errorf("failed to decode encrypted data: %w", err))
 	}
 
 	aesCipher, err := createAESCipher(privateKeyBytes, publicKeyBytes)
