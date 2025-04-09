@@ -16,10 +16,6 @@ type Subscriber struct {
 	Domain       string `json:"domain"`
 }
 
-type ContextKey string
-
-const ContextKeyModuleId ContextKey = "module_id"
-
 // Subscription represents subscription details of a network participant.
 type Subscription struct {
 	Subscriber       `json:",inline"`
@@ -42,10 +38,55 @@ const (
 	UnaAuthorizedHeaderGateway    string = "Proxy-Authenticate"
 )
 
-type contextKey string
+// ContextKey is a custom type used as a key for storing and retrieving values in a context.
+type ContextKey string
 
-// MsgIDKey is the context key used to store and retrieve the message ID in a request context.
-const MsgIDKey = contextKey("message_id")
+const (
+	// ContextKeyTxnID is the context key used to store and retrieve the transaction ID in a request context.
+	ContextKeyTxnID ContextKey = "transaction_id"
+
+	// ContextKeyMsgID is the context key used to store and retrieve the message ID in a request context.
+	ContextKeyMsgID ContextKey = "message_id"
+
+	// ContextKeySubscriberID is the context key used to store and retrieve the subscriber ID in a request context.
+	ContextKeySubscriberID ContextKey = "subscriber_id"
+
+	// ContextKeyModuleID is the context key for storing and retrieving the model ID from a request context.
+	ContextKeyModuleID ContextKey = "module_id"
+)
+
+var contextKeys = map[string]ContextKey{
+	"transaction_id": ContextKeyTxnID,
+	"message_id":     ContextKeyMsgID,
+	"subscriber_id":  ContextKeySubscriberID,
+	"module_id":      ContextKeyModuleID,
+}
+
+// ParseContextKey converts a string into a valid ContextKey.
+func ParseContextKey(v string) (ContextKey, error) {
+	key, ok := contextKeys[v]
+	if !ok {
+		return "", fmt.Errorf("invalid context key: %s", v)
+	}
+	return key, nil
+}
+
+// UnmarshalYAML ensures that only known context keys are accepted during YAML unmarshalling.
+func (k *ContextKey) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var keyStr string
+	if err := unmarshal(&keyStr); err != nil {
+		return err
+	}
+
+	parsedKey, err := ParseContextKey(keyStr)
+	if err != nil {
+		return err
+	}
+
+	*k = parsedKey
+	return nil
+
+}
 
 // Role defines the type of participant in the network.
 type Role string

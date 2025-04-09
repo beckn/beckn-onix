@@ -107,7 +107,7 @@ func TestRegisterSuccess(t *testing.T) {
 	// Create a handler that extracts context
 	var capturedModuleName any
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedModuleName = r.Context().Value(model.ContextKeyModuleId)
+		capturedModuleName = r.Context().Value(model.ContextKeyModuleID)
 		w.WriteHeader(http.StatusOK)
 	})
 

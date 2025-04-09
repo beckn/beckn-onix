@@ -46,7 +46,7 @@ func TestSendAck(t *testing.T) {
 }
 
 func TestSendNack(t *testing.T) {
-	ctx := context.WithValue(context.Background(), model.MsgIDKey, "123456")
+	ctx := context.WithValue(context.Background(), model.ContextKeyMsgID, "123456")
 
 	tests := []struct {
 		name     string
@@ -197,7 +197,7 @@ func TestNack_1(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx := context.WithValue(req.Context(), model.MsgIDKey, "12345")
+			ctx := context.WithValue(req.Context(), model.ContextKeyMsgID, "12345")
 
 			var w http.ResponseWriter
 			if tt.useBadWrite {

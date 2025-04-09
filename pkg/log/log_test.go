@@ -13,12 +13,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/beckn/beckn-onix/pkg/model"
 )
 
 type ctxKey any
 
 var requestID ctxKey = "requestID"
-var userID ctxKey = "userID"
 
 const testLogFilePath = "./test_logs/test.log"
 
@@ -63,7 +64,12 @@ func setupLogger(t *testing.T, l level) string {
 				},
 			},
 		},
-		ContextKeys: []string{"userID", "requestID"},
+		ContextKeys: []model.ContextKey{
+			model.ContextKeyTxnID,
+			model.ContextKeyMsgID,
+			model.ContextKeySubscriberID,
+			model.ContextKeyModuleID,
+		},
 	}
 
 	// Initialize logger with the given config
@@ -97,16 +103,16 @@ func parseLogLine(t *testing.T, line string) map[string]interface{} {
 func TestDebug(t *testing.T) {
 	t.Helper()
 	logPath := setupLogger(t, DebugLevel)
-	ctx := context.WithValue(context.Background(), userID, "12345")
+	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "12345")
 	Debug(ctx, "Debug message")
 	lines := readLogFile(t, logPath)
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
 	expected := map[string]interface{}{
-		"level":   "debug",
-		"userID":  "12345",
-		"message": "Debug message",
+		"level":         "debug",
+		"subscriber_id": "12345",
+		"message":       "Debug message",
 	}
 
 	var found bool
@@ -129,16 +135,16 @@ func TestDebug(t *testing.T) {
 
 func TestInfo(t *testing.T) {
 	logPath := setupLogger(t, InfoLevel)
-	ctx := context.WithValue(context.Background(), userID, "12345")
+	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "12345")
 	Info(ctx, "Info message")
 	lines := readLogFile(t, logPath)
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
 	expected := map[string]interface{}{
-		"level":   "info",
-		"userID":  "12345",
-		"message": "Info message",
+		"level":         "info",
+		"subscriber_id": "12345",
+		"message":       "Info message",
 	}
 
 	var found bool
@@ -161,16 +167,16 @@ func TestInfo(t *testing.T) {
 
 func TestWarn(t *testing.T) {
 	logPath := setupLogger(t, WarnLevel)
-	ctx := context.WithValue(context.Background(), userID, "12345")
+	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "12345")
 	Warn(ctx, "Warning message")
 	lines := readLogFile(t, logPath)
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
 	expected := map[string]interface{}{
-		"level":   "warn",
-		"userID":  "12345",
-		"message": "Warning message",
+		"level":         "warn",
+		"subscriber_id": "12345",
+		"message":       "Warning message",
 	}
 
 	var found bool
@@ -189,17 +195,17 @@ func TestWarn(t *testing.T) {
 
 func TestError(t *testing.T) {
 	logPath := setupLogger(t, ErrorLevel)
-	ctx := context.WithValue(context.Background(), userID, "12345")
+	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "12345")
 	Error(ctx, fmt.Errorf("test error"), "Error message")
 	lines := readLogFile(t, logPath)
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
 	expected := map[string]interface{}{
-		"level":   "error",
-		"userID":  "12345",
-		"message": "Error message",
-		"error":   "test error",
+		"level":         "error",
+		"subscriber_id": "12345",
+		"message":       "Error message",
+		"error":         "test error",
 	}
 
 	var found bool
@@ -277,17 +283,17 @@ func TestResponse(t *testing.T) {
 
 func TestFatal(t *testing.T) {
 	logPath := setupLogger(t, FatalLevel)
-	ctx := context.WithValue(context.Background(), userID, "12345")
+	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "12345")
 	Fatal(ctx, fmt.Errorf("fatal error"), "Fatal message")
 	lines := readLogFile(t, logPath)
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
 	expected := map[string]interface{}{
-		"level":   "fatal",
-		"userID":  "12345",
-		"message": "Fatal message",
-		"error":   "fatal error",
+		"level":         "fatal",
+		"subscriber_id": "12345",
+		"message":       "Fatal message",
+		"error":         "fatal error",
 	}
 
 	var found bool
@@ -308,17 +314,17 @@ func TestFatal(t *testing.T) {
 
 func TestPanic(t *testing.T) {
 	logPath := setupLogger(t, PanicLevel)
-	ctx := context.WithValue(context.Background(), userID, "12345")
+	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "12345")
 	Panic(ctx, fmt.Errorf("panic error"), "Panic message")
 	lines := readLogFile(t, logPath)
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
 	expected := map[string]interface{}{
-		"level":   "panic",
-		"userID":  "12345",
-		"message": "Panic message",
-		"error":   "panic error",
+		"level":         "panic",
+		"subscriber_id": "12345",
+		"message":       "Panic message",
+		"error":         "panic error",
 	}
 
 	var found bool
@@ -339,16 +345,16 @@ func TestPanic(t *testing.T) {
 
 func TestDebugf(t *testing.T) {
 	logPath := setupLogger(t, DebugLevel)
-	ctx := context.WithValue(context.Background(), userID, "12345")
+	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "12345")
 	Debugf(ctx, "Debugf message: %s", "test")
 	lines := readLogFile(t, logPath)
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
 	expected := map[string]interface{}{
-		"level":   "debug",
-		"userID":  "12345",
-		"message": "Debugf message: test",
+		"level":         "debug",
+		"subscriber_id": "12345",
+		"message":       "Debugf message: test",
 	}
 
 	var found bool
@@ -370,16 +376,16 @@ func TestDebugf(t *testing.T) {
 
 func TestInfof(t *testing.T) {
 	logPath := setupLogger(t, InfoLevel)
-	ctx := context.WithValue(context.Background(), userID, "12345")
+	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "12345")
 	Infof(ctx, "Infof message: %s", "test")
 	lines := readLogFile(t, logPath)
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
 	expected := map[string]interface{}{
-		"level":   "info",
-		"userID":  "12345",
-		"message": "Infof message: test",
+		"level":         "info",
+		"subscriber_id": "12345",
+		"message":       "Infof message: test",
 	}
 
 	var found bool
@@ -400,16 +406,16 @@ func TestInfof(t *testing.T) {
 
 func TestWarnf(t *testing.T) {
 	logPath := setupLogger(t, WarnLevel)
-	ctx := context.WithValue(context.Background(), userID, "12345")
+	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "12345")
 	Warnf(ctx, "Warnf message: %s", "test")
 	lines := readLogFile(t, logPath)
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
 	expected := map[string]interface{}{
-		"level":   "warn",
-		"userID":  "12345",
-		"message": "Warnf message: test",
+		"level":         "warn",
+		"subscriber_id": "12345",
+		"message":       "Warnf message: test",
 	}
 
 	var found bool
@@ -430,7 +436,7 @@ func TestWarnf(t *testing.T) {
 
 func TestErrorf(t *testing.T) {
 	logPath := setupLogger(t, ErrorLevel)
-	ctx := context.WithValue(context.Background(), userID, "12345")
+	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "12345")
 	err := fmt.Errorf("error message")
 	Errorf(ctx, err, "Errorf message: %s", "test")
 	lines := readLogFile(t, logPath)
@@ -438,10 +444,10 @@ func TestErrorf(t *testing.T) {
 		t.Fatal("No logs were written.")
 	}
 	expected := map[string]interface{}{
-		"level":   "error",
-		"userID":  "12345",
-		"message": "Errorf message: test",
-		"error":   "error message",
+		"level":         "error",
+		"subscriber_id": "12345",
+		"message":       "Errorf message: test",
+		"error":         "error message",
 	}
 
 	var found bool
@@ -462,7 +468,7 @@ func TestErrorf(t *testing.T) {
 
 func TestFatalf(t *testing.T) {
 	logPath := setupLogger(t, FatalLevel)
-	ctx := context.WithValue(context.Background(), userID, "12345")
+	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "12345")
 	err := fmt.Errorf("fatal error")
 	Fatalf(ctx, err, "Fatalf message: %s", "test")
 	lines := readLogFile(t, logPath)
@@ -470,10 +476,10 @@ func TestFatalf(t *testing.T) {
 		t.Fatal("No logs were written.")
 	}
 	expected := map[string]interface{}{
-		"level":   "fatal",
-		"userID":  "12345",
-		"message": "Fatalf message: test",
-		"error":   "fatal error",
+		"level":         "fatal",
+		"subscriber_id": "12345",
+		"message":       "Fatalf message: test",
+		"error":         "fatal error",
 	}
 
 	var found bool
@@ -494,7 +500,7 @@ func TestFatalf(t *testing.T) {
 
 func TestPanicf(t *testing.T) {
 	logPath := setupLogger(t, PanicLevel)
-	ctx := context.WithValue(context.Background(), userID, "12345")
+	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "12345")
 	err := fmt.Errorf("panic error")
 	Panicf(ctx, err, "Panicf message: %s", "test")
 	lines := readLogFile(t, logPath)
@@ -503,10 +509,10 @@ func TestPanicf(t *testing.T) {
 		t.Fatal("No logs were written.")
 	}
 	expected := map[string]interface{}{
-		"level":   "panic",
-		"userID":  "12345",
-		"message": "Panicf message: test",
-		"error":   "panic error",
+		"level":         "panic",
+		"subscriber_id": "12345",
+		"message":       "Panicf message: test",
+		"error":         "panic error",
 	}
 
 	var found bool

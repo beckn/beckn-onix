@@ -76,7 +76,7 @@ func addMiddleware(ctx context.Context, mgr handler.PluginManager, handler http.
 
 func moduleCtxMiddleware(moduleName string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := context.WithValue(r.Context(), model.ContextKeyModuleId, moduleName)
+		ctx := context.WithValue(r.Context(), model.ContextKeyModuleID, moduleName)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/beckn/beckn-onix/pkg/model"
 )
 
 // ToDo Separate Middleware creation and execution.
@@ -71,11 +73,11 @@ func TestNewPreProcessorSuccessCases(t *testing.T) {
 
 			dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				ctx := r.Context()
-				gotSubID = ctx.Value(subscriberIDKey)
+				gotSubID = ctx.Value(model.ContextKeySubscriberID)
 				w.WriteHeader(http.StatusOK)
 
 				// Verify subscriber ID
-				subID := ctx.Value(subscriberIDKey)
+				subID := ctx.Value(model.ContextKeySubscriberID)
 				if subID == nil {
 					t.Errorf("Expected subscriber ID but got none %s", ctx)
 					return
@@ -228,5 +230,40 @@ func TestNewPreProcessorErrorCases(t *testing.T) {
 				t.Errorf("Expected status code %d, but got %d", tt.expectedCode, rec.Code)
 			}
 		})
+	}
+}
+
+func TestNewPreProcessorAddsSubscriberIDToContext(t *testing.T) {
+	cfg := &Config{Role: "bap"}
+	middleware, err := NewPreProcessor(cfg)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	samplePayload := map[string]interface{}{
+		"context": map[string]interface{}{
+			"bap_id": "bap.example.com",
+		},
+	}
+	bodyBytes, _ := json.Marshal(samplePayload)
+
+	var receivedSubscriberID interface{}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedSubscriberID = r.Context().Value(model.ContextKeySubscriberID)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest("POST", "/", strings.NewReader(string(bodyBytes)))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	middleware(handler).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected status 200 OK, got %d", rr.Code)
+	}
+	if receivedSubscriberID != "bap.example.com" {
+		t.Errorf("Expected subscriber ID 'bap.example.com', got %v", receivedSubscriberID)
 	}
 }
