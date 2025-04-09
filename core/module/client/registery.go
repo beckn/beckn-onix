@@ -40,7 +40,7 @@ func (c *registryClient) Subscribe(ctx context.Context, subscription *model.Subs
 
 	jsonData, err := json.Marshal(subscription)
 	if err != nil {
-		return fmt.Errorf("failed to marshal subscription data: %w", err)
+		return model.NewBadReqErr(fmt.Errorf("failed to marshal subscription data: %w", err))
 	}
 
 	req, err := retryablehttp.NewRequest("POST", subscribeURL, bytes.NewBuffer(jsonData))
@@ -67,7 +67,7 @@ func (c *registryClient) Lookup(ctx context.Context, subscription *model.Subscri
 
 	jsonData, err := json.Marshal(subscription)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal subscription data: %w", err)
+		return nil, model.NewBadReqErr(fmt.Errorf("failed to marshal subscription data: %w", err))
 	}
 
 	req, err := retryablehttp.NewRequest("POST", lookupURL, bytes.NewBuffer(jsonData))
