@@ -20,7 +20,6 @@ import (
 type ctxKey any
 
 var requestID ctxKey = "requestID"
-var userID ctxKey = "userID"
 
 const testLogFilePath = "./test_logs/test.log"
 
