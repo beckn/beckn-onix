@@ -28,6 +28,9 @@ type Manager struct {
 }
 
 func validateMgrCfg(cfg *ManagerConfig) error {
+	if cfg.Root == "" {
+		return fmt.Errorf("Root path cannot be empty")
+	}
 	return nil
 }
 

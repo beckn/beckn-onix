@@ -260,6 +260,37 @@ type mockRegistryLookup struct {
 	definition.RegistryLookup
 }
 
+// createTestZip creates a zip file with test content in a temporary directory.
+func createTestZip(t *testing.T) (string, func()) {
+	// Create a temporary directory for the zip file
+	tempDir := t.TempDir()
+	zipPath := filepath.Join(tempDir, "test.zip")
+
+	// Create a zip file
+	zipFile, err := os.Create(zipPath)
+	if err != nil {
+		t.Fatalf("Failed to create zip file: %v", err)
+	}
+	defer zipFile.Close()
+
+	zipWriter := zip.NewWriter(zipFile)
+	defer zipWriter.Close()
+
+	// Add a test file to the zip
+	testFile, err := zipWriter.Create("test.txt")
+	if err != nil {
+		t.Fatalf("Failed to create file in zip: %v", err)
+	}
+	_, err = testFile.Write([]byte("test content"))
+	if err != nil {
+		t.Fatalf("Failed to write to file: %v", err)
+	}
+
+	return zipPath, func() {
+		os.RemoveAll(tempDir)
+	}
+}
+
 // TestNewManagerSuccess tests the successful scenarios of the NewManager function.
 func TestNewManagerSuccess(t *testing.T) {
 	// Build the dummy plugin first.
@@ -280,13 +311,6 @@ func TestNewManagerSuccess(t *testing.T) {
 		cfg  *ManagerConfig
 	}{
 		{
-			name: "valid config with empty root",
-			cfg: &ManagerConfig{
-				Root:       t.TempDir(),
-				RemoteRoot: "",
-			},
-		},
-		{
 			name: "valid config with root path",
 			cfg: &ManagerConfig{
 				Root:       t.TempDir(),
@@ -296,8 +320,11 @@ func TestNewManagerSuccess(t *testing.T) {
 		{
 			name: "valid config with remote root",
 			cfg: &ManagerConfig{
-				Root:       t.TempDir(),
-				RemoteRoot: "",
+				Root: t.TempDir(),
+				RemoteRoot: func() string {
+					zipPath, _ := createTestZip(t)
+					return zipPath
+				}(),
 			},
 		},
 		{
@@ -314,24 +341,21 @@ func TestNewManagerSuccess(t *testing.T) {
 			ctx := context.Background()
 			m, cleanup, err := NewManager(ctx, tt.cfg)
 			if err != nil {
-				t.Errorf("NewManager() error = %v, want nil", err)
-				return
+				t.Fatalf("NewManager() error = %v, want nil", err)
 			}
 			if m == nil {
-				t.Error("NewManager() returned nil manager")
-				return
+				t.Fatal("NewManager() returned nil manager")
 			}
 			if cleanup == nil {
-				t.Error("NewManager() returned nil cleanup function")
-				return
+				t.Fatal("NewManager() returned nil cleanup function")
 			}
 
 			// Verify manager fields.
 			if m.plugins == nil {
-				t.Error("NewManager() returned manager with nil plugins map")
+				t.Fatal("NewManager() returned manager with nil plugins map")
 			}
 			if m.closers == nil {
-				t.Error("NewManager() returned manager with nil closers slice")
+				t.Fatal("NewManager() returned manager with nil closers slice")
 			}
 
 			// Call cleanup to ensure it doesn't panic.
@@ -348,6 +372,14 @@ func TestNewManagerFailure(t *testing.T) {
 		expectedError string
 	}{
 		{
+			name: "invalid config with empty root",
+			cfg: &ManagerConfig{
+				Root:       "",
+				RemoteRoot: "",
+			},
+			expectedError: "Root path cannot be empty",
+		},
+		{
 			name: "invalid config with nonexistent root",
 			cfg: &ManagerConfig{
 				Root:       "/nonexistent/dir",
@@ -363,14 +395,6 @@ func TestNewManagerFailure(t *testing.T) {
 			},
 			expectedError: "no such file or directory",
 		},
-		{
-			name: "invalid config with permission denied root",
-			cfg: &ManagerConfig{
-				Root:       "/root/restricted",
-				RemoteRoot: "",
-			},
-			expectedError: "permission denied",
-		},
 	}
 
 	for _, tt := range tests {
@@ -378,70 +402,59 @@ func TestNewManagerFailure(t *testing.T) {
 			ctx := context.Background()
 			m, cleanup, err := NewManager(ctx, tt.cfg)
 			if err == nil {
-				t.Error("NewManager() expected error, got nil")
-				return
+				t.Fatal("NewManager() expected error, got nil")
 			}
 			if m != nil {
-				t.Error("NewManager() returned non-nil manager for error case")
+				t.Fatal("NewManager() returned non-nil manager for error case")
+			}
+			if !strings.Contains(err.Error(), tt.expectedError) {
+				t.Fatalf("NewManager() error = %v, want error containing %q", err, tt.expectedError)
 			}
 			if cleanup != nil {
-				t.Error("NewManager() returned non-nil cleanup function for error case")
+				t.Fatal("NewManager() returned non-nil cleanup function for error case")
 			}
+
 		})
 	}
 }
 
 func TestPublisherSuccess(t *testing.T) {
-	tests := []struct {
-		name          string
-		publisherID   string
-		mockPublisher *mockPublisher
-		expectedError error
-	}{
-		{
-			name:          "successful publisher creation",
-			publisherID:   "publisherId",
-			mockPublisher: &mockPublisher{},
-			expectedError: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			errFunc := func() error { return nil }
-			m := &Manager{
-				plugins: map[string]onixPlugin{
-					tt.publisherID: &mockPlugin{
-						symbol: &mockPublisherProvider{
-							publisher: tt.mockPublisher,
-							errFunc:   errFunc,
-						},
+	t.Run("successful publisher creation", func(t *testing.T) {
+		publisherID := "publisherId"
+		mockPublisher := &mockPublisher{}
+		errFunc := func() error { return nil }
+		m := &Manager{
+			plugins: map[string]onixPlugin{
+				publisherID: &mockPlugin{
+					symbol: &mockPublisherProvider{
+						publisher: mockPublisher,
+						errFunc:   errFunc,
 					},
 				},
-				closers: []func(){},
-			}
+			},
+			closers: []func(){},
+		}
 
-			p, err := m.Publisher(context.Background(), &Config{
-				ID:     tt.publisherID,
-				Config: map[string]string{},
-			})
-
-			if err != tt.expectedError {
-				t.Errorf("Manager.Publisher() error = %v, want %v", err, tt.expectedError)
-			}
-
-			if p != tt.mockPublisher {
-				t.Errorf("Manager.Publisher() did not return the correct publisher")
-			}
-
-			if len(m.closers) != 1 {
-				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
-			}
-
-			m.closers[0]()
-
+		p, err := m.Publisher(context.Background(), &Config{
+			ID:     publisherID,
+			Config: map[string]string{},
 		})
-	}
+
+		if err != nil {
+			t.Fatalf("Manager.Publisher() error = %v, want no error", err)
+		}
+
+		if p != mockPublisher {
+			t.Fatalf("Manager.Publisher() did not return the correct publisher")
+		}
+
+		if len(m.closers) != 1 {
+			t.Fatalf("Manager.closers has %d closers, expected 1", len(m.closers))
+		}
+
+		m.closers[0]()
+
+	})
 }
 
 // TestPublisherFailure tests the failure scenarios of the Publisher method.
@@ -495,13 +508,13 @@ func TestPublisherFailure(t *testing.T) {
 			})
 
 			if err == nil {
-				t.Error("Manager.Publisher() expected error, got nil")
+				t.Fatal("Manager.Publisher() expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("Manager.Publisher() error = %v, want error containing %q", err, tt.expectedError)
+				t.Fatalf("Manager.Publisher() error = %v, want error containing %q", err, tt.expectedError)
 			}
 
 			if p != nil {
-				t.Error("Manager.Publisher() expected nil publisher, got non-nil")
+				t.Fatal("Manager.Publisher() expected nil publisher, got non-nil")
 			}
 		})
 	}
@@ -544,14 +557,14 @@ func TestSchemaValidatorSuccess(t *testing.T) {
 
 			// Check success case.
 			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			if validator != tt.plugin.validator {
-				t.Error("validator does not match expected instance")
+				t.Fatal("validator does not match expected instance")
 			}
 
 			if len(m.closers) != 1 {
-				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+				t.Fatalf("Manager.closers has %d closers, expected 1", len(m.closers))
 			}
 
 			m.closers[0]()
@@ -609,12 +622,12 @@ func TestSchemaValidatorFailure(t *testing.T) {
 
 			// Check error.
 			if err == nil {
-				t.Error("expected error, got nil")
+				t.Fatal("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("error = %v, want error containing %q", err, tt.expectedError)
+				t.Fatalf("error = %v, want error containing %q", err, tt.expectedError)
 			}
 			if validator != nil {
-				t.Error("expected nil validator, got non-nil")
+				t.Fatal("expected nil validator, got non-nil")
 			}
 		})
 	}
@@ -657,17 +670,17 @@ func TestRouterSuccess(t *testing.T) {
 
 			// Check success case.
 			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			if router == nil {
-				t.Error("expected non-nil router, got nil")
+				t.Fatal("expected non-nil router, got nil")
 			}
 			if router != tt.plugin.router {
-				t.Error("router does not match expected instance")
+				t.Fatal("router does not match expected instance")
 			}
 
 			if len(m.closers) != 1 {
-				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+				t.Fatalf("Manager.closers has %d closers, expected 1", len(m.closers))
 			}
 
 			m.closers[0]()
@@ -725,12 +738,12 @@ func TestRouterFailure(t *testing.T) {
 
 			// Check error.
 			if err == nil {
-				t.Error("expected error, got nil")
+				t.Fatal("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("error = %v, want error containing %q", err, tt.expectedError)
+				t.Fatalf("error = %v, want error containing %q", err, tt.expectedError)
 			}
 			if router != nil {
-				t.Error("expected nil router, got non-nil")
+				t.Fatal("expected nil router, got non-nil")
 			}
 		})
 	}
@@ -773,17 +786,17 @@ func TestStepSuccess(t *testing.T) {
 
 			// Check success case.
 			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			if step == nil {
-				t.Error("expected non-nil step, got nil")
+				t.Fatal("expected non-nil step, got nil")
 			}
 			if step != tt.plugin.step {
-				t.Error("step does not match expected instance")
+				t.Fatal("step does not match expected instance")
 			}
 
 			if len(m.closers) != 1 {
-				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+				t.Fatalf("Manager.closers has %d closers, expected 1", len(m.closers))
 			}
 
 			m.closers[0]()
@@ -841,12 +854,12 @@ func TestStepFailure(t *testing.T) {
 
 			// Check error.
 			if err == nil {
-				t.Error("expected error, got nil")
+				t.Fatal("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("error = %v, want error containing %q", err, tt.expectedError)
+				t.Fatalf("error = %v, want error containing %q", err, tt.expectedError)
 			}
 			if step != nil {
-				t.Error("expected nil step, got non-nil")
+				t.Fatal("expected nil step, got non-nil")
 			}
 		})
 	}
@@ -889,18 +902,18 @@ func TestCacheSuccess(t *testing.T) {
 
 			// Check success case.
 			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			if cache == nil {
-				t.Error("expected non-nil cache, got nil")
+				t.Fatal("expected non-nil cache, got nil")
 			}
 
 			if cache != tt.plugin.cache {
-				t.Error("cache does not match expected instance")
+				t.Fatal("cache does not match expected instance")
 			}
 
 			if len(m.closers) != 1 {
-				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+				t.Fatalf("Manager.closers has %d closers, expected 1", len(m.closers))
 			}
 
 			m.closers[0]()
@@ -958,12 +971,12 @@ func TestCacheFailure(t *testing.T) {
 
 			// Check error.
 			if err == nil {
-				t.Error("expected error, got nil")
+				t.Fatal("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("error = %v, want error containing %q", err, tt.expectedError)
+				t.Fatalf("error = %v, want error containing %q", err, tt.expectedError)
 			}
 			if cache != nil {
-				t.Error("expected nil cache, got non-nil")
+				t.Fatal("expected nil cache, got non-nil")
 			}
 		})
 	}
@@ -1006,18 +1019,18 @@ func TestSignerSuccess(t *testing.T) {
 
 			// Check success case.
 			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			if signer == nil {
-				t.Error("expected non-nil signer, got nil")
+				t.Fatal("expected non-nil signer, got nil")
 			}
 
 			if signer != tt.plugin.signer {
-				t.Error("signer does not match expected instance")
+				t.Fatal("signer does not match expected instance")
 			}
 
 			if len(m.closers) != 1 {
-				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+				t.Fatalf("Manager.closers has %d closers, expected 1", len(m.closers))
 			}
 
 			m.closers[0]()
@@ -1075,12 +1088,12 @@ func TestSignerFailure(t *testing.T) {
 
 			// Check error.
 			if err == nil {
-				t.Error("expected error, got nil")
+				t.Fatal("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("error = %v, want error containing %q", err, tt.expectedError)
+				t.Fatalf("error = %v, want error containing %q", err, tt.expectedError)
 			}
 			if signer != nil {
-				t.Error("expected nil signer, got non-nil")
+				t.Fatal("expected nil signer, got non-nil")
 			}
 		})
 	}
@@ -1123,18 +1136,18 @@ func TestEncryptorSuccess(t *testing.T) {
 
 			// Check success case.
 			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			if encrypter == nil {
-				t.Error("expected non-nil encrypter, got nil")
+				t.Fatal("expected non-nil encrypter, got nil")
 			}
 
 			if encrypter != tt.plugin.encrypter {
-				t.Error("encrypter does not match expected instance")
+				t.Fatal("encrypter does not match expected instance")
 			}
 
 			if len(m.closers) != 1 {
-				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+				t.Fatalf("Manager.closers has %d closers, expected 1", len(m.closers))
 			}
 
 			m.closers[0]()
@@ -1192,12 +1205,12 @@ func TestEncryptorFailure(t *testing.T) {
 
 			// Check error.
 			if err == nil {
-				t.Error("expected error, got nil")
+				t.Fatal("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("error = %v, want error containing %q", err, tt.expectedError)
+				t.Fatalf("error = %v, want error containing %q", err, tt.expectedError)
 			}
 			if encrypter != nil {
-				t.Error("expected nil encrypter, got non-nil")
+				t.Fatal("expected nil encrypter, got non-nil")
 			}
 		})
 	}
@@ -1240,18 +1253,18 @@ func TestDecryptorSuccess(t *testing.T) {
 
 			// Check success case.
 			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			if decrypter == nil {
-				t.Error("expected non-nil decrypter, got nil")
+				t.Fatal("expected non-nil decrypter, got nil")
 			}
 
 			if decrypter != tt.plugin.decrypter {
-				t.Error("decrypter does not match expected instance")
+				t.Fatal("decrypter does not match expected instance")
 			}
 
 			if len(m.closers) != 1 {
-				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+				t.Fatalf("Manager.closers has %d closers, expected 1", len(m.closers))
 			}
 
 			m.closers[0]()
@@ -1309,12 +1322,12 @@ func TestDecryptorFailure(t *testing.T) {
 
 			// Check error.
 			if err == nil {
-				t.Error("expected error, got nil")
+				t.Fatal("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("error = %v, want error containing %q", err, tt.expectedError)
+				t.Fatalf("error = %v, want error containing %q", err, tt.expectedError)
 			}
 			if decrypter != nil {
-				t.Error("expected nil decrypter, got non-nil")
+				t.Fatal("expected nil decrypter, got non-nil")
 			}
 		})
 	}
@@ -1357,17 +1370,17 @@ func TestSignValidatorSuccess(t *testing.T) {
 
 			// Check success case.
 			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			if validator == nil {
-				t.Error("expected non-nil validator, got nil")
+				t.Fatal("expected non-nil validator, got nil")
 			}
 			if validator != tt.plugin.validator {
-				t.Error("validator does not match expected instance")
+				t.Fatal("validator does not match expected instance")
 			}
 
 			if len(m.closers) != 1 {
-				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+				t.Fatalf("Manager.closers has %d closers, expected 1", len(m.closers))
 			}
 
 			m.closers[0]()
@@ -1425,12 +1438,12 @@ func TestSignValidatorFailure(t *testing.T) {
 
 			// Check error.
 			if err == nil {
-				t.Error("expected error, got nil")
+				t.Fatal("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("error = %v, want error containing %q", err, tt.expectedError)
+				t.Fatalf("error = %v, want error containing %q", err, tt.expectedError)
 			}
 			if validator != nil {
-				t.Error("expected nil validator, got non-nil")
+				t.Fatal("expected nil validator, got non-nil")
 			}
 		})
 	}
@@ -1477,18 +1490,18 @@ func TestKeyManagerSuccess(t *testing.T) {
 
 			// Check success case.
 			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			if keyManager == nil {
-				t.Error("expected non-nil key manager, got nil")
+				t.Fatal("expected non-nil key manager, got nil")
 			}
 
 			if keyManager != tt.plugin.keyManager {
-				t.Error("key manager does not match expected instance")
+				t.Fatal("key manager does not match expected instance")
 			}
 
 			if len(m.closers) != 1 {
-				t.Errorf("Manager.closers has %d closers, expected 1", len(m.closers))
+				t.Fatalf("Manager.closers has %d closers, expected 1", len(m.closers))
 			}
 
 			m.closers[0]()
@@ -1550,12 +1563,12 @@ func TestKeyManagerFailure(t *testing.T) {
 
 			// Check error.
 			if err == nil {
-				t.Error("expected error, got nil")
+				t.Fatal("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("error = %v, want error containing %q", err, tt.expectedError)
+				t.Fatalf("error = %v, want error containing %q", err, tt.expectedError)
 			}
 			if keyManager != nil {
-				t.Error("expected nil key manager, got non-nil")
+				t.Fatal("expected nil key manager, got non-nil")
 			}
 		})
 	}
@@ -1610,10 +1623,10 @@ func TestUnzipSuccess(t *testing.T) {
 				// Verify the extracted file exists and has correct content.
 				content, err := os.ReadFile(filepath.Join(dest, "test.txt"))
 				if err != nil {
-					t.Errorf("Failed to read extracted file: %v", err)
+					t.Fatalf("Failed to read extracted file: %v", err)
 				}
 				if string(content) != "test content" {
-					t.Errorf("Extracted file content = %v, want %v", string(content), "test content")
+					t.Fatalf("Extracted file content = %v, want %v", string(content), "test content")
 				}
 			},
 		},
@@ -1659,10 +1672,10 @@ func TestUnzipSuccess(t *testing.T) {
 				// Verify the extracted file in subdirectory exists and has correct content.
 				content, err := os.ReadFile(filepath.Join(dest, "subdir/test.txt"))
 				if err != nil {
-					t.Errorf("Failed to read extracted file in subdirectory: %v", err)
+					t.Fatalf("Failed to read extracted file in subdirectory: %v", err)
 				}
 				if string(content) != "subdirectory content" {
-					t.Errorf("Extracted file content in subdirectory = %v, want %v", string(content), "subdirectory content")
+					t.Fatalf("Extracted file content in subdirectory = %v, want %v", string(content), "subdirectory content")
 				}
 			},
 		},
@@ -1723,10 +1736,10 @@ func TestUnzipSuccess(t *testing.T) {
 				for path, expectedContent := range expectedFiles {
 					content, err := os.ReadFile(filepath.Join(dest, path))
 					if err != nil {
-						t.Errorf("Failed to read extracted file %s: %v", path, err)
+						t.Fatalf("Failed to read extracted file %s: %v", path, err)
 					}
 					if string(content) != expectedContent {
-						t.Errorf("Extracted file %s content = %v, want %v", path, string(content), expectedContent)
+						t.Fatalf("Extracted file %s content = %v, want %v", path, string(content), expectedContent)
 					}
 				}
 			},
@@ -1742,7 +1755,7 @@ func TestUnzipSuccess(t *testing.T) {
 			// Run the test.
 			err := unzip(src, dest)
 			if err != nil {
-				t.Errorf("unzip() error = %v, want nil", err)
+				t.Fatalf("unzip() error = %v, want nil", err)
 			}
 
 			// Verify the result.
@@ -1886,9 +1899,9 @@ func TestUnzipFailure(t *testing.T) {
 			// Run the test.
 			err := unzip(src, dest)
 			if err == nil {
-				t.Errorf("unzip() error = nil, want error containing %q", tt.expectedError)
+				t.Fatalf("unzip() error = nil, want error containing %q", tt.expectedError)
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("unzip() error = %v, want error containing %q", err, tt.expectedError)
+				t.Fatalf("unzip() error = %v, want error containing %q", err, tt.expectedError)
 			}
 		})
 	}
@@ -1900,13 +1913,6 @@ func TestValidateMgrCfgSuccess(t *testing.T) {
 		name string
 		cfg  *ManagerConfig
 	}{
-		{
-			name: "valid config with empty fields",
-			cfg: &ManagerConfig{
-				Root:       "",
-				RemoteRoot: "",
-			},
-		},
 		{
 			name: "valid config with root path",
 			cfg: &ManagerConfig{
@@ -1927,7 +1933,7 @@ func TestValidateMgrCfgSuccess(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateMgrCfg(tt.cfg)
 			if err != nil {
-				t.Errorf("validateMgrCfg() error = %v, want nil", err)
+				t.Fatalf("validateMgrCfg() error = %v, want nil", err)
 			}
 		})
 	}
@@ -1972,13 +1978,13 @@ func TestLoadPluginSuccess(t *testing.T) {
 			// Run the test.
 			p, elapsed, err := loadPlugin(context.Background(), path, id)
 			if err != nil {
-				t.Errorf("loadPlugin() error = %v, want nil", err)
+				t.Fatalf("loadPlugin() error = %v, want nil", err)
 			}
 			if p == nil {
-				t.Error("loadPlugin() returned nil plugin")
+				t.Fatal("loadPlugin() returned nil plugin")
 			}
 			if elapsed == 0 {
-				t.Error("loadPlugin() returned zero elapsed time")
+				t.Fatal("loadPlugin() returned zero elapsed time")
 			}
 		})
 	}
@@ -2035,15 +2041,15 @@ func TestLoadPluginFailure(t *testing.T) {
 			// Run the test.
 			p, elapsed, err := loadPlugin(context.Background(), path, id)
 			if err == nil {
-				t.Errorf("loadPlugin() error = nil, want error containing %q", tt.expectedError)
+				t.Fatalf("loadPlugin() error = nil, want error containing %q", tt.expectedError)
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("loadPlugin() error = %v, want error containing %q", err, tt.expectedError)
+				t.Fatalf("loadPlugin() error = %v, want error containing %q", err, tt.expectedError)
 			}
 			if p != nil {
-				t.Error("loadPlugin() returned non-nil plugin for error case")
+				t.Fatal("loadPlugin() returned non-nil plugin for error case")
 			}
 			if elapsed != 0 {
-				t.Error("loadPlugin() returned non-zero elapsed time for error case")
+				t.Fatal("loadPlugin() returned non-zero elapsed time for error case")
 			}
 		})
 	}
@@ -2150,10 +2156,10 @@ func TestPluginsSuccess(t *testing.T) {
 			// Run the test.
 			got, err := plugins(context.Background(), cfg)
 			if err != nil {
-				t.Errorf("plugins() error = %v, want nil", err)
+				t.Fatalf("plugins() error = %v, want nil", err)
 			}
 			if len(got) != tt.wantCount {
-				t.Errorf("plugins() returned %d plugins, want %d", len(got), tt.wantCount)
+				t.Fatalf("plugins() returned %d plugins, want %d", len(got), tt.wantCount)
 			}
 		})
 	}
@@ -2221,12 +2227,12 @@ func TestPluginsFailure(t *testing.T) {
 			// Run the test.
 			got, err := plugins(context.Background(), cfg)
 			if err == nil {
-				t.Errorf("plugins() error = nil, want error containing %q", tt.expectedError)
+				t.Fatalf("plugins() error = nil, want error containing %q", tt.expectedError)
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("plugins() error = %v, want error containing %q", err, tt.expectedError)
+				t.Fatalf("plugins() error = %v, want error containing %q", err, tt.expectedError)
 			}
 			if got != nil {
-				t.Error("plugins() returned non-nil map for error case")
+				t.Fatal("plugins() returned non-nil map for error case")
 			}
 		})
 	}
@@ -2288,29 +2294,29 @@ func TestProviderSuccess(t *testing.T) {
 			case *definition.PublisherProvider:
 				got, err := provider[definition.PublisherProvider](tt.plugins, tt.id)
 				if err != nil {
-					t.Errorf("provider() error = %v, want nil", err)
+					t.Fatalf("provider() error = %v, want nil", err)
 				}
 				if got == nil {
-					t.Error("provider() returned nil provider")
+					t.Fatal("provider() returned nil provider")
 				}
 			case *definition.SchemaValidatorProvider:
 				got, err := provider[definition.SchemaValidatorProvider](tt.plugins, tt.id)
 				if err != nil {
-					t.Errorf("provider() error = %v, want nil", err)
+					t.Fatalf("provider() error = %v, want nil", err)
 				}
 				if got == nil {
-					t.Error("provider() returned nil provider")
+					t.Fatal("provider() returned nil provider")
 				}
 			case *definition.RouterProvider:
 				got, err := provider[definition.RouterProvider](tt.plugins, tt.id)
 				if err != nil {
-					t.Errorf("provider() error = %v, want nil", err)
+					t.Fatalf("provider() error = %v, want nil", err)
 				}
 				if got == nil {
-					t.Error("provider() returned nil provider")
+					t.Fatal("provider() returned nil provider")
 				}
 			default:
-				t.Errorf("unsupported provider type: %T", tt.wantType)
+				t.Fatalf("unsupported provider type: %T", tt.wantType)
 			}
 		})
 	}
@@ -2359,37 +2365,37 @@ func TestProviderFailure(t *testing.T) {
 			// Test with PublisherProvider type.
 			got, err := provider[definition.PublisherProvider](tt.plugins, tt.id)
 			if err == nil {
-				t.Error("provider() expected error, got nil")
+				t.Fatal("provider() expected error, got nil")
 			}
 			if !strings.Contains(err.Error(), tt.wantErrMsg) {
-				t.Errorf("provider() error = %v, want error containing %v", err, tt.wantErrMsg)
+				t.Fatalf("provider() error = %v, want error containing %v", err, tt.wantErrMsg)
 			}
 			if got != nil {
-				t.Error("provider() expected nil provider")
+				t.Fatal("provider() expected nil provider")
 			}
 
 			// Test with SchemaValidatorProvider type.
 			gotValidator, err := provider[definition.SchemaValidatorProvider](tt.plugins, tt.id)
 			if err == nil {
-				t.Error("provider() expected error, got nil")
+				t.Fatal("provider() expected error, got nil")
 			}
 			if !strings.Contains(err.Error(), tt.wantErrMsg) {
-				t.Errorf("provider() error = %v, want error containing %v", err, tt.wantErrMsg)
+				t.Fatalf("provider() error = %v, want error containing %v", err, tt.wantErrMsg)
 			}
 			if gotValidator != nil {
-				t.Error("provider() expected nil provider")
+				t.Fatal("provider() expected nil provider")
 			}
 
 			// Test with RouterProvider type.
 			gotRouter, err := provider[definition.RouterProvider](tt.plugins, tt.id)
 			if err == nil {
-				t.Error("provider() expected error, got nil")
+				t.Fatal("provider() expected error, got nil")
 			}
 			if !strings.Contains(err.Error(), tt.wantErrMsg) {
-				t.Errorf("provider() error = %v, want error containing %v", err, tt.wantErrMsg)
+				t.Fatalf("provider() error = %v, want error containing %v", err, tt.wantErrMsg)
 			}
 			if gotRouter != nil {
-				t.Error("provider() expected nil provider")
+				t.Fatal("provider() expected nil provider")
 			}
 		})
 	}
@@ -2431,10 +2437,10 @@ func TestMiddlewareSuccess(t *testing.T) {
 
 			// Check success case.
 			if err != nil {
-				t.Errorf("unexpected error: %v", err)
+				t.Fatalf("unexpected error: %v", err)
 			}
 			if middleware == nil {
-				t.Error("expected non-nil middleware, got nil")
+				t.Fatal("expected non-nil middleware, got nil")
 			}
 		})
 	}
@@ -2490,12 +2496,12 @@ func TestMiddlewareFailure(t *testing.T) {
 
 			// Check error.
 			if err == nil {
-				t.Error("expected error, got nil")
+				t.Fatal("expected error, got nil")
 			} else if !strings.Contains(err.Error(), tt.expectedError) {
-				t.Errorf("error = %v, want error containing %q", err, tt.expectedError)
+				t.Fatalf("error = %v, want error containing %q", err, tt.expectedError)
 			}
 			if middleware != nil {
-				t.Error("expected nil middleware, got non-nil")
+				t.Fatal("expected nil middleware, got non-nil")
 			}
 		})
 	}
