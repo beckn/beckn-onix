@@ -78,7 +78,7 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 	// Retrieve the schema from the cache.
 	schema, exists := v.schemaCache[schemaFileName]
 	if !exists {
-		return model.NewBadReqErr(errors.New("schema not found for domain"))
+		return model.NewBadReqErr(errors.New(fmt.Sprintf("schema not found for domain: %s", domain)))
 	}
 
 	var jsonData any
