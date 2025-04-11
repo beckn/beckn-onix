@@ -67,6 +67,20 @@ func TestProviderNew(t *testing.T) {
 				req.Header.Set("transaction_id", "test-transaction")
 			},
 		},
+		{
+			name: "passing the contextKeys",
+			config: map[string]string{
+				"role":        "bpp",
+				"contextKeys": "transaction_id,message_id",
+			},
+			expectedError:  false,
+			expectedStatus: http.StatusOK,
+			prepareRequest: func(req *http.Request) {
+				req.Header.Set("context", "test-context")
+				req.Header.Set("transaction_id", "test-transaction")
+				req.Header.Set("bpp_id", "bpp1")
+			},
+		},
 	}
 
 	for _, tc := range testCases {
