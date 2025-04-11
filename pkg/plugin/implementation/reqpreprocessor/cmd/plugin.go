@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/beckn/beckn-onix/pkg/plugin/implementation/reqpreprocessor"
 )
@@ -13,6 +14,9 @@ func (p provider) New(ctx context.Context, c map[string]string) (func(http.Handl
 	config := &reqpreprocessor.Config{}
 	if role, ok := c["role"]; ok {
 		config.Role = role
+	}
+	if contextKeys, ok := c["contextKeys"]; ok {
+		config.ContextKeys = strings.Split(contextKeys, ",")
 	}
 	return reqpreprocessor.NewPreProcessor(config)
 }
