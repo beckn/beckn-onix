@@ -101,51 +101,26 @@ func TestMainFunction(t *testing.T) {
 }
 
 func TestRunSuccess(t *testing.T) {
-	tests := []struct {
-		name       string
-		configPath string
-		mockMgr    func() (*plugin.Manager, func(), error)
-		mockLogger func(cfg *Config) error
-		mockServer func(ctx context.Context, mgr handler.PluginManager, cfg *Config) (http.Handler, error)
-	}{
-		{
-			name:       "Valid Config",
-			configPath: "../test/validConfig.yaml",
-			mockMgr: func() (*plugin.Manager, func(), error) {
-				return &plugin.Manager{}, func() {}, nil
-			},
-			mockLogger: func(cfg *Config) error {
-				return nil
-			},
-			mockServer: func(ctx context.Context, mgr handler.PluginManager, cfg *Config) (http.Handler, error) {
-				return http.NewServeMux(), nil
-			},
-		},
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	configPath := "../test/validConfig.yaml"
+
+	// Mock dependencies
+	originalNewManager := newManagerFunc
+	newManagerFunc = func(ctx context.Context, cfg *plugin.ManagerConfig) (*plugin.Manager, func(), error) {
+		return &plugin.Manager{}, func() {}, nil
 	}
+	defer func() { newManagerFunc = originalNewManager }()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
+	originalNewServer := newServerFunc
+	newServerFunc = func(ctx context.Context, mgr handler.PluginManager, cfg *Config) (http.Handler, error) {
+		return http.NewServeMux(), nil
+	}
+	defer func() { newServerFunc = originalNewServer }()
 
-			// Mock dependencies
-			originalNewManager := newManagerFunc
-			newManagerFunc = func(ctx context.Context, cfg *plugin.ManagerConfig) (*plugin.Manager, func(), error) {
-				return tt.mockMgr()
-			}
-			defer func() { newManagerFunc = originalNewManager }()
-
-			originalNewServer := newServerFunc
-			newServerFunc = func(ctx context.Context, mgr handler.PluginManager, cfg *Config) (http.Handler, error) {
-				return tt.mockServer(ctx, mgr, cfg)
-			}
-			defer func() { newServerFunc = originalNewServer }()
-
-			// Run the app using static config file
-			if err := run(ctx, filepath.Clean(tt.configPath)); err != nil {
-				t.Errorf("Expected no error, but got: %v", err)
-			}
-		})
+	if err := run(ctx, filepath.Clean(configPath)); err != nil {
+		t.Errorf("Expected no error, but got: %v", err)
 	}
 }
 
