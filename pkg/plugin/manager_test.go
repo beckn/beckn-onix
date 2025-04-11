@@ -261,7 +261,8 @@ type mockRegistryLookup struct {
 }
 
 // createTestZip creates a zip file with test content in a temporary directory.
-func createTestZip(t *testing.T) (string, func()) {
+func createTestZip(t *testing.T) string {
+	t.Helper()
 	// Create a temporary directory for the zip file
 	tempDir := t.TempDir()
 	zipPath := filepath.Join(tempDir, "test.zip")
@@ -286,9 +287,7 @@ func createTestZip(t *testing.T) (string, func()) {
 		t.Fatalf("Failed to write to file: %v", err)
 	}
 
-	return zipPath, func() {
-		os.RemoveAll(tempDir)
-	}
+	return zipPath
 }
 
 // TestNewManagerSuccess tests the successful scenarios of the NewManager function.
@@ -322,7 +321,7 @@ func TestNewManagerSuccess(t *testing.T) {
 			cfg: &ManagerConfig{
 				Root: t.TempDir(),
 				RemoteRoot: func() string {
-					zipPath, _ := createTestZip(t)
+					zipPath := createTestZip(t)
 					return zipPath
 				}(),
 			},
@@ -377,7 +376,7 @@ func TestNewManagerFailure(t *testing.T) {
 				Root:       "",
 				RemoteRoot: "",
 			},
-			expectedError: "Root path cannot be empty",
+			expectedError: "root path cannot be empty",
 		},
 		{
 			name: "invalid config with nonexistent root",
@@ -635,57 +634,45 @@ func TestSchemaValidatorFailure(t *testing.T) {
 
 // TestRouterSuccess tests the successful scenarios of the Router method.
 func TestRouterSuccess(t *testing.T) {
-	tests := []struct {
-		name   string
-		cfg    *Config
-		plugin *mockRouterProvider
-	}{
-		{
-			name: "successful router creation",
-			cfg: &Config{
-				ID:     "test-router",
-				Config: map[string]string{},
-			},
-			plugin: &mockRouterProvider{
-				router:  &mockRouter{},
-				errFunc: func() error { return nil },
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create a manager with the mock plugin.
-			m := &Manager{
-				plugins: map[string]onixPlugin{
-					tt.cfg.ID: &mockPlugin{
-						symbol: tt.plugin,
-					},
+	t.Run("successful router creation", func(t *testing.T) {
+		cfg := &Config{
+			ID:     "test-router",
+			Config: map[string]string{},
+		}
+		plugin := &mockRouterProvider{
+			router:  &mockRouter{},
+			errFunc: func() error { return nil },
+		}
+		// Create a manager with the mock plugin.
+		m := &Manager{
+			plugins: map[string]onixPlugin{
+				cfg.ID: &mockPlugin{
+					symbol: plugin,
 				},
-				closers: []func(){},
-			}
+			},
+			closers: []func(){},
+		}
 
-			// Call Router.
-			router, err := m.Router(context.Background(), tt.cfg)
+		// Call Router.
+		router, err := m.Router(context.Background(), cfg)
 
-			// Check success case.
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if router == nil {
-				t.Fatal("expected non-nil router, got nil")
-			}
-			if router != tt.plugin.router {
-				t.Fatal("router does not match expected instance")
-			}
+		// Check success case.
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if router == nil {
+			t.Fatal("expected non-nil router, got nil")
+		}
+		if router != plugin.router {
+			t.Fatal("router does not match expected instance")
+		}
 
-			if len(m.closers) != 1 {
-				t.Fatalf("Manager.closers has %d closers, expected 1", len(m.closers))
-			}
+		if len(m.closers) != 1 {
+			t.Fatalf("Manager.closers has %d closers, expected 1", len(m.closers))
+		}
 
-			m.closers[0]()
-		})
-	}
+		m.closers[0]()
+	})
 }
 
 // TestRouterFailure tests the failure scenarios of the Router method.
