@@ -22,10 +22,7 @@ require (
 
 require github.com/zenazn/pkcs7pad v0.0.0-20170308005700-253a5b1f0e03
 
-require (
-	github.com/google/uuid v1.6.0
-	golang.org/x/text v0.23.0 // indirect
-)
+require golang.org/x/text v0.23.0 // indirect
 
 require (
 	github.com/mattn/go-colorable v0.1.13 // indirect

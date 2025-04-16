@@ -6,6 +6,7 @@ import (
 	"flag"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -99,99 +100,27 @@ func TestMainFunction(t *testing.T) {
 	main()
 }
 
-// TestRunSuccess tests the successful execution of the run function with different configurations.
 func TestRunSuccess(t *testing.T) {
-	tests := []struct {
-		name       string
-		configData string
-		mockMgr    func() (*plugin.Manager, func(), error)
-		mockLogger func(cfg *Config) error
-		mockServer func(ctx context.Context, mgr handler.PluginManager, cfg *Config) (http.Handler, error)
-	}{
-		{
-			name:       "Valid Config",
-			configData: "valid_config.yaml",
-			mockMgr: func() (*plugin.Manager, func(), error) {
-				return &plugin.Manager{}, func() {}, nil
-			},
-			mockLogger: func(cfg *Config) error {
-				return nil
-			},
-			mockServer: func(ctx context.Context, mgr handler.PluginManager, cfg *Config) (http.Handler, error) {
-				return http.NewServeMux(), nil
-			},
-		},
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	configPath := "../test/validConfig.yaml"
+
+	// Mock dependencies
+	originalNewManager := newManagerFunc
+	newManagerFunc = func(ctx context.Context, cfg *plugin.ManagerConfig) (*plugin.Manager, func(), error) {
+		return &plugin.Manager{}, func() {}, nil
 	}
+	defer func() { newManagerFunc = originalNewManager }()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
+	originalNewServer := newServerFunc
+	newServerFunc = func(ctx context.Context, mgr handler.PluginManager, cfg *Config) (http.Handler, error) {
+		return http.NewServeMux(), nil
+	}
+	defer func() { newServerFunc = originalNewServer }()
 
-			testFilePath := tt.configData
-			mockConfig := `appName: "testAdapter"
-log:
-  level: debug
-  destinations:
-    - type: stdout
-  context_keys:
-    - transaction_id
-    - message_id
-http:
-  port: 8080
-  timeout:
-    read: 30
-    write: 30
-    idle: 30
-plugin:
-  root: "/mock/plugins"
-  pluginZipPath: "/mock/plugins/plugins_bundle.zip"
-  plugins:
-    - testPlugin1
-    - testPlugin2
-modules:
-  - name: testModule
-    type: transaction
-    path: /testPath
-    targetType: msgQ
-    plugin:
-      schemaValidator:
-        id: testValidator
-      publisher:
-        id: testPublisher
-        config:
-          project: test-project
-          topic: test-topic
-      router:
-        id: testRouter
-        config:
-          routingConfigPath: "/mock/configs/testRouting-config.yaml"`
-
-			err := os.WriteFile(testFilePath, []byte(mockConfig), 0644)
-			if err != nil {
-				t.Errorf("Failed to create test config file: %v", err)
-			}
-			defer os.Remove(testFilePath)
-
-			// Mock dependencies
-			originalNewManager := newManagerFunc
-			newManagerFunc = func(ctx context.Context, cfg *plugin.ManagerConfig) (*plugin.Manager, func(), error) {
-				return tt.mockMgr()
-			}
-			defer func() { newManagerFunc = originalNewManager }()
-
-			originalNewServer := newServerFunc
-			newServerFunc = func(ctx context.Context, mgr handler.PluginManager, cfg *Config) (http.Handler, error) {
-				return tt.mockServer(ctx, mgr, cfg)
-			}
-			defer func() { newServerFunc = originalNewServer }()
-
-			// Run function
-			err = run(ctx, testFilePath)
-			if err != nil {
-				t.Errorf("Expected no error, but got: %v", err)
-			}
-		})
+	if err := run(ctx, filepath.Clean(configPath)); err != nil {
+		t.Errorf("Expected no error, but got: %v", err)
 	}
 }
 
