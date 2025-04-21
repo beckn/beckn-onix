@@ -24,8 +24,7 @@ func parseConfig(config map[string]string) (*Config, error) {
 		return nil, errors.New("config must contain 'registeryURL'")
 	}
 
-	// Default values
-	retryMax := 3
+	var retryMax int
 
 	// Parse RetryMax
 	if val, ok := config["retryMax"]; ok {
