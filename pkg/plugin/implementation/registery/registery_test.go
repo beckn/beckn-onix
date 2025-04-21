@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,7 +82,7 @@ func TestRegistryLookupFailure(t *testing.T) {
 			subscription:   subscription,
 			mockResponse:   []byte{},
 			mockStatusCode: http.StatusInternalServerError,
-			expectedError:  "failed to send request with retry: POST http://127.0.0.1:59748/lookUp giving up after 5 attempt(s)",
+			expectedError:  "failed to send request with retry",
 		},
 		{
 			name:           "Failed to unmarshal response body",
@@ -120,10 +121,10 @@ func TestRegistryLookupFailure(t *testing.T) {
 			_, err := lookup.Lookup(context.Background(), tt.subscription)
 			if err != nil {
 				// Compare the entire error message
-				if err.Error() != tt.expectedError {
-					t.Fatalf("Expected error '%s', got '%s'", tt.expectedError, err.Error())
+				if !strings.Contains(err.Error(), tt.expectedError) {
+					t.Fatalf("Expected error to contain '%s', got '%s'", tt.expectedError, err.Error())
 				}
-				return // Exit the test if the error matches
+								return // Exit the test if the error matches
 			}
 
 			// If no error occurred, fail the test
