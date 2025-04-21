@@ -111,3 +111,21 @@ func (e *NotFoundErr) BecknError() *Error {
 		Message: "Endpoint not found: " + e.Error(),
 	}
 }
+
+// MethodNotAllowedErr occurs when an HTTP method other than POST is used.
+type MethodNotAllowedErr struct {
+	Method string
+}
+
+// Error implements the error interface for MethodNotAllowedErr.
+func (e *MethodNotAllowedErr) Error() string {
+	return fmt.Sprintf("method %s not allowed", e.Method)
+}
+
+// BecknError converts the MethodNotAllowedErr to an instance of the custom Beckn Error type.
+func (e *MethodNotAllowedErr) BecknError() *Error {
+	return &Error{
+		Code:    http.StatusText(http.StatusMethodNotAllowed),
+		Message: fmt.Sprintf("The HTTP method '%s' is not allowed. Only POST is supported.", e.Method),
+	}
+}

@@ -68,6 +68,7 @@ func SendNack(ctx context.Context, w http.ResponseWriter, err error) {
 	var signErr *model.SignValidationErr
 	var badReqErr *model.BadReqErr
 	var notFoundErr *model.NotFoundErr
+	var methodErr *model.MethodNotAllowedErr
 
 	switch {
 	case errors.As(err, &schemaErr):
@@ -81,6 +82,9 @@ func SendNack(ctx context.Context, w http.ResponseWriter, err error) {
 		return
 	case errors.As(err, &notFoundErr):
 		nack(ctx, w, notFoundErr.BecknError(), http.StatusNotFound)
+		return
+	case errors.As(err, &methodErr):
+		nack(ctx, w, methodErr.BecknError(), http.StatusMethodNotAllowed)
 		return
 	default:
 		nack(ctx, w, internalServerError(ctx), http.StatusInternalServerError)
