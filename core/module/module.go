@@ -7,6 +7,7 @@ import (
 
 	"github.com/beckn/beckn-onix/core/module/handler"
 	"github.com/beckn/beckn-onix/pkg/log"
+	"github.com/beckn/beckn-onix/pkg/model"
 )
 
 // Config represents the configuration for a module.
@@ -44,6 +45,7 @@ func Register(ctx context.Context, mCfgs []Config, mux *http.ServeMux, mgr handl
 			return fmt.Errorf("failed to add middleware: %w", err)
 
 		}
+		h = moduleCtxMiddleware(c.Name, h)
 		log.Debugf(ctx, "Registering handler %s, of type %s @ %s", c.Name, c.Handler.Type, c.Path)
 		mux.Handle(c.Path, h)
 	}
@@ -70,4 +72,11 @@ func addMiddleware(ctx context.Context, mgr handler.PluginManager, handler http.
 
 	log.Debugf(ctx, "Middleware chain setup completed")
 	return handler, nil
+}
+
+func moduleCtxMiddleware(moduleName string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), model.ContextKeyModuleID, moduleName)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }

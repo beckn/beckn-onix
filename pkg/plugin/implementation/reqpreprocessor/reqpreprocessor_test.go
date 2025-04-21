@@ -5,48 +5,51 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/beckn/beckn-onix/pkg/model"
 )
 
-func TestNewUUIDSetterSuccessCases(t *testing.T) {
+// ToDo Separate Middleware creation and execution.
+func TestNewPreProcessorSuccessCases(t *testing.T) {
 	tests := []struct {
-		name         string
-		config       *Config
-		requestBody  map[string]any
-		expectedKeys []string
-		role         string
+		name        string
+		config      *Config
+		requestBody map[string]any
+		expectedID  string
 	}{
 		{
-			name: "Valid keys, update missing keys with bap role",
+			name: "BAP role with valid context",
 			config: &Config{
-				ContextKeys: []string{"transaction_id", "message_id"},
-				Role:        "bap",
+				Role: "bap",
 			},
-			requestBody: map[string]any{
-				"context": map[string]any{
-					"transaction_id": "",
-					"message_id":     nil,
-					"bap_id":         "bap-123",
+			requestBody: map[string]interface{}{
+				"context": map[string]interface{}{
+					"bap_id":     "bap-123",
+					"message_id": "msg-123",
+				},
+				"message": map[string]interface{}{
+					"key": "value",
 				},
 			},
-			expectedKeys: []string{"transaction_id", "message_id", "bap_id"},
-			role:         "bap",
+			expectedID: "bap-123",
 		},
 		{
-			name: "Valid keys, do not update existing keys with bpp role",
+			name: "BPP role with valid context",
 			config: &Config{
-				ContextKeys: []string{"transaction_id", "message_id"},
-				Role:        "bpp",
+				Role: "bpp",
 			},
-			requestBody: map[string]any{
-				"context": map[string]any{
-					"transaction_id": "existing-transaction",
-					"message_id":     "existing-message",
-					"bpp_id":         "bpp-456",
+			requestBody: map[string]interface{}{
+				"context": map[string]interface{}{
+					"bpp_id":     "bpp-456",
+					"message_id": "msg-456",
+				},
+				"message": map[string]interface{}{
+					"key": "value",
 				},
 			},
-			expectedKeys: []string{"transaction_id", "message_id", "bpp_id"},
-			role:         "bpp",
+			expectedID: "bpp-456",
 		},
 	}
 
@@ -54,29 +57,40 @@ func TestNewUUIDSetterSuccessCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			middleware, err := NewPreProcessor(tt.config)
 			if err != nil {
-				t.Fatalf("Unexpected error while creating middleware: %v", err)
+				t.Fatalf("NewPreProcessor() error = %v", err)
 			}
 
-			bodyBytes, _ := json.Marshal(tt.requestBody)
+			bodyBytes, err := json.Marshal(tt.requestBody)
+			if err != nil {
+				t.Fatalf("Failed to marshal request body: %v", err)
+			}
 			req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(bodyBytes))
 			req.Header.Set("Content-Type", "application/json")
 
 			rec := httptest.NewRecorder()
 
+			var gotSubID interface{}
+
 			dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				ctx := r.Context()
+				gotSubID = ctx.Value(model.ContextKeySubscriberID)
 				w.WriteHeader(http.StatusOK)
 
-				subID, ok := ctx.Value(subscriberIDKey).(string)
-				if !ok {
-					http.Error(w, "Subscriber ID not found", http.StatusInternalServerError)
+				// Verify subscriber ID
+				subID := ctx.Value(model.ContextKeySubscriberID)
+				if subID == nil {
+					t.Errorf("Expected subscriber ID but got none %s", ctx)
 					return
 				}
 
-				response := map[string]any{"subscriber_id": subID}
-				if err := json.NewEncoder(w).Encode(response); err != nil {
-					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-					return
+				// Verify the correct ID was set based on role
+				expectedKey := "bap_id"
+				if tt.config.Role == "bpp" {
+					expectedKey = "bpp_id"
+				}
+				expectedID := tt.requestBody["context"].(map[string]interface{})[expectedKey]
+				if subID != expectedID {
+					t.Errorf("Expected subscriber ID %v, got %v", expectedID, subID)
 				}
 			})
 
@@ -87,71 +101,113 @@ func TestNewUUIDSetterSuccessCases(t *testing.T) {
 				return
 			}
 
-			var responseBody map[string]any
-			if err := json.Unmarshal(rec.Body.Bytes(), &responseBody); err != nil {
-				t.Fatal("Failed to unmarshal response body:", err)
-			}
-
-			expectedSubIDKey := "bap_id"
-			if tt.role == "bpp" {
-				expectedSubIDKey = "bpp_id"
-			}
-
-			subID, ok := responseBody["subscriber_id"].(string)
-			if !ok {
-				t.Error("subscriber_id not found in response")
+			// Verify subscriber ID
+			if gotSubID == nil {
+				t.Error("Expected subscriber_id to be set in context but got nil")
 				return
 			}
 
-			expectedSubID := tt.requestBody["context"].(map[string]any)[expectedSubIDKey]
-			if subID != expectedSubID {
-				t.Errorf("Expected subscriber_id %v, but got %v", expectedSubID, subID)
+			subID, ok := gotSubID.(string)
+			if !ok {
+				t.Errorf("Expected subscriber_id to be string, got %T", gotSubID)
+				return
+			}
+
+			if subID != tt.expectedID {
+				t.Errorf("Expected subscriber_id %q, got %q", tt.expectedID, subID)
 			}
 		})
 	}
 }
 
-func TestNewUUIDSetterErrorCases(t *testing.T) {
+func TestNewPreProcessorErrorCases(t *testing.T) {
 	tests := []struct {
 		name         string
 		config       *Config
-		requestBody  map[string]any
+		requestBody  interface{}
 		expectedCode int
+		expectErr    bool
+		errMsg       string
 	}{
 		{
-			name: "Missing context key",
+			name: "Missing context",
 			config: &Config{
-				ContextKeys: []string{"transaction_id"},
+				Role: "bap",
 			},
 			requestBody: map[string]any{
 				"otherKey": "value",
 			},
 			expectedCode: http.StatusBadRequest,
+			expectErr:    false,
+			errMsg:       "context field not found or invalid",
 		},
 		{
 			name: "Invalid context type",
 			config: &Config{
-				ContextKeys: []string{"transaction_id"},
+				Role: "bap",
 			},
 			requestBody: map[string]any{
 				"context": "not-a-map",
 			},
 			expectedCode: http.StatusBadRequest,
+			expectErr:    false,
+			errMsg:       "context field not found or invalid",
 		},
 		{
 			name:         "Nil config",
 			config:       nil,
 			requestBody:  map[string]any{},
 			expectedCode: http.StatusInternalServerError,
+			expectErr:    true,
+			errMsg:       "config cannot be nil",
+		},
+		{
+			name: "Invalid role",
+			config: &Config{
+				Role: "invalid-role",
+			},
+			requestBody: map[string]interface{}{
+				"context": map[string]interface{}{
+					"bap_id": "bap-123",
+				},
+			},
+			expectedCode: http.StatusInternalServerError,
+			expectErr:    true,
+			errMsg:       "role must be either 'bap' or 'bpp'",
+		},
+		{
+			name: "Missing subscriber ID",
+			config: &Config{
+				Role: "bap",
+			},
+			requestBody: map[string]interface{}{
+				"context": map[string]interface{}{
+					"message_id": "msg-123",
+				},
+			},
+			expectedCode: http.StatusOK,
+			expectErr:    false,
+		},
+		{
+			name: "Invalid JSON body",
+			config: &Config{
+				Role: "bap",
+			},
+			requestBody:  "{invalid-json}",
+			expectedCode: http.StatusBadRequest,
+			expectErr:    false,
+			errMsg:       "failed to decode request body",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			middleware, err := NewPreProcessor(tt.config)
-			if tt.config == nil {
+			if tt.expectErr {
 				if err == nil {
-					t.Error("Expected an error for nil config, but got none")
+					t.Errorf("Expected an error for NewPreProcessor(%s), but got none", tt.config)
+				} else if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("Expected error to contain %q, got %v", tt.errMsg, err)
 				}
 				return
 			}
@@ -174,5 +230,40 @@ func TestNewUUIDSetterErrorCases(t *testing.T) {
 				t.Errorf("Expected status code %d, but got %d", tt.expectedCode, rec.Code)
 			}
 		})
+	}
+}
+
+func TestNewPreProcessorAddsSubscriberIDToContext(t *testing.T) {
+	cfg := &Config{Role: "bap"}
+	middleware, err := NewPreProcessor(cfg)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	samplePayload := map[string]interface{}{
+		"context": map[string]interface{}{
+			"bap_id": "bap.example.com",
+		},
+	}
+	bodyBytes, _ := json.Marshal(samplePayload)
+
+	var receivedSubscriberID interface{}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedSubscriberID = r.Context().Value(model.ContextKeySubscriberID)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest("POST", "/", strings.NewReader(string(bodyBytes)))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	middleware(handler).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected status 200 OK, got %d", rr.Code)
+	}
+	if receivedSubscriberID != "bap.example.com" {
+		t.Errorf("Expected subscriber ID 'bap.example.com', got %v", receivedSubscriberID)
 	}
 }

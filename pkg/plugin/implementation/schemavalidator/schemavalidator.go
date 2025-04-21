@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/beckn/beckn-onix/pkg/log"
 	"github.com/beckn/beckn-onix/pkg/model"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -57,7 +58,7 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 	var payloadData payload
 	err := json.Unmarshal(data, &payloadData)
 	if err != nil {
-		return fmt.Errorf("failed to parse JSON payload: %v", err)
+		return model.NewBadReqErr(fmt.Errorf("failed to parse JSON payload: %v", err))
 	}
 
 	// Extract domain, version, and endpoint from the payload and uri.
@@ -66,8 +67,7 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 	version = fmt.Sprintf("v%s", version)
 
 	endpoint := path.Base(url.String())
-	// ToDo Add debug log here
-	fmt.Println("Handling request for endpoint:", endpoint)
+	log.Debugf(ctx, "Handling request for endpoint: %s", endpoint)
 	domain := strings.ToLower(cxtDomain)
 	domain = strings.ReplaceAll(domain, ":", "_")
 
@@ -77,12 +77,12 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 	// Retrieve the schema from the cache.
 	schema, exists := v.schemaCache[schemaFileName]
 	if !exists {
-		return fmt.Errorf("schema not found for domain: %s", schemaFileName)
+		return model.NewBadReqErr(fmt.Errorf("schema not found for domain: %s", domain))
 	}
 
 	var jsonData any
 	if err := json.Unmarshal(data, &jsonData); err != nil {
-		return fmt.Errorf("failed to parse JSON data: %v", err)
+		return model.NewBadReqErr(fmt.Errorf("failed to parse JSON data: %v", err))
 	}
 	err = schema.Validate(jsonData)
 	if err != nil {
@@ -104,16 +104,12 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 			// Return the array of schema validation errors
 			return &model.SchemaValidationErr{Errors: schemaErrors}
 		}
-		// Return a generic error for non-validation errors
 		return fmt.Errorf("validation failed: %v", err)
 	}
 
 	// Return nil if validation succeeds
 	return nil
 }
-
-// ValidatorProvider provides instances of Validator.
-type ValidatorProvider struct{}
 
 // Initialise initialises the validator provider by compiling all the JSON schema files
 // from the specified directory and storing them in a cache indexed by their schema filenames.

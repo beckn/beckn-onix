@@ -32,9 +32,9 @@ func TestProviderNew(t *testing.T) {
 			},
 		},
 		{
-			name: "With Check Keys",
+			name: "Success with BPP role",
 			config: map[string]string{
-				"contextKeys": "message_id,transaction_id",
+				"role": "bpp",
 			},
 			expectedError:  false,
 			expectedStatus: http.StatusOK,
@@ -42,6 +42,43 @@ func TestProviderNew(t *testing.T) {
 				// Add headers matching the check keys.
 				req.Header.Set("context", "test-context")
 				req.Header.Set("transaction_id", "test-transaction")
+				req.Header.Set("bpp_id", "bpp-456")
+			},
+		},
+		{
+			name:   "Missing role configuration",
+			config: map[string]string{
+				// No role specified
+			},
+			expectedError: true,
+			prepareRequest: func(req *http.Request) {
+				req.Header.Set("context", "test-context")
+				req.Header.Set("transaction_id", "test-transaction")
+			},
+		},
+		{
+			name: "Invalid role configuration",
+			config: map[string]string{
+				"role": "invalid-role",
+			},
+			expectedError: true,
+			prepareRequest: func(req *http.Request) {
+				req.Header.Set("context", "test-context")
+				req.Header.Set("transaction_id", "test-transaction")
+			},
+		},
+		{
+			name: "passing the contextKeys",
+			config: map[string]string{
+				"role":        "bpp",
+				"contextKeys": "transaction_id,message_id",
+			},
+			expectedError:  false,
+			expectedStatus: http.StatusOK,
+			prepareRequest: func(req *http.Request) {
+				req.Header.Set("context", "test-context")
+				req.Header.Set("transaction_id", "test-transaction")
+				req.Header.Set("bpp_id", "bpp1")
 			},
 		},
 	}

@@ -1,0 +1,37 @@
+appName: "testAdapter"
+log:
+  level: debug
+  destinations:
+    - type: stdout
+  context_keys:
+    - transaction_id
+    - message_id
+http:
+  port: 8080
+  timeout:
+    read: 30
+    write: 30
+    idle: 30
+plugin:
+  root: "/mock/plugins"
+  pluginZipPath: "/mock/plugins/plugins_bundle.zip"
+  plugins:
+    - testPlugin1
+    - testPlugin2
+modules:
+  - name: testModule
+    type: transaction
+    path: /testPath
+    targetType: msgQ
+    plugin:
+      schemaValidator:
+        id: testValidator
+      publisher:
+        id: testPublisher
+        config:
+          project: test-project
+          topic: test-topic
+      router:
+        id: testRouter
+        config:
+          routingConfigPath: "/mock/configs/testRouting-config.yaml"
