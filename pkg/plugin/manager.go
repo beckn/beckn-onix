@@ -400,11 +400,9 @@ func (m *Manager) RegistryLookup(ctx context.Context, cfg *Config) (definition.R
 	}
 
 	if closer != nil {
-		m.addCloser(func() {
-			if err := closer(); err != nil {
-				panic(err)
-			}
-		})
+		if err := closer(); err != nil {
+			panic(err)
+		}
 	}
 
 	return registry, nil
