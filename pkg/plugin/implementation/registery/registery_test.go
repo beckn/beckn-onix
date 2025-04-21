@@ -132,3 +132,58 @@ func TestRegistryLookupFailure(t *testing.T) {
 		})
 	}
 }
+
+
+func TestValidateConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      *Config
+		expectedErr string
+	}{
+		{
+			name:        "Empty LookupURL",
+			config:      &Config{LookupURL: ""},
+			expectedErr: "RegistryURL cannot be empty",
+		},
+		{
+			name:        "Negative RetryWaitMin",
+			config:      &Config{LookupURL: "http://example.com", RetryWaitMin: -1},
+			expectedErr: "RetryWaitMin must be non-negative",
+		},
+		{
+			name:        "Negative RetryWaitMax",
+			config:      &Config{LookupURL: "http://example.com", RetryWaitMin: 0, RetryWaitMax: -1},
+			expectedErr: "RetryWaitMax must be non-negative",
+		},
+		{
+			name:        "RetryWaitMin > RetryWaitMax",
+			config:      &Config{LookupURL: "http://example.com", RetryWaitMin: 5, RetryWaitMax: 3},
+			expectedErr: "RetryWaitMin cannot be greater than RetryWaitMax",
+		},
+		{
+			name:        "Negative RetryMax",
+			config:      &Config{LookupURL: "http://example.com", RetryWaitMin: 1, RetryWaitMax: 2, RetryMax: -1},
+			expectedErr: "RetryMax must be non-negative",
+		},
+		{
+			name:        "Valid config",
+			config:      &Config{LookupURL: "http://example.com", RetryWaitMin: 1, RetryWaitMax: 5, RetryMax: 3},
+			expectedErr: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateConfig(tt.config)
+			if tt.expectedErr == "" {
+				if err != nil {
+					t.Fatalf("Expected no error, got: %v", err)
+				}
+			} else {
+				if err == nil || err.Error() != tt.expectedErr {
+					t.Fatalf("Expected error: %s, got: %v", tt.expectedErr, err)
+				}
+			}
+		})
+	}
+}
