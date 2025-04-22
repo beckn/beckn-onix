@@ -67,8 +67,6 @@ type mockKeyManager struct {
 	err error
 }
 
-type mockRegistry struct{}
-
 type mockRegistryLookupProvider struct {
 	registry definition.RegistryLookup
 	newErr   error
