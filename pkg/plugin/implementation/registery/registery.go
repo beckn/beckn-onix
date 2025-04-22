@@ -68,7 +68,7 @@ func New(ctx context.Context, config *Config) (*registryLookup, func() error, er
 
 // Lookup performs a POST request to the /lookUp endpoint of the registry service with retry logic.
 func (r *registryLookup) Lookup(ctx context.Context, subscription *model.Subscription) ([]model.Subscription, error) {
-	lookupURL := fmt.Sprintf("%s/lookUp", r.config.LookupURL)
+	lookupURL := r.config.LookupURL
 	jsonData, err := json.Marshal(subscription)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal subscription data: %w", err)

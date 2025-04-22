@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"time"
+	"fmt"
+	"net/url"
 
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn/beckn-onix/pkg/plugin/implementation/registery"
@@ -16,29 +19,73 @@ type registryLookupProvider struct{}
 type Config struct {
 	RegistryURL string
 	RetryMax    int
+	LookupURL  string
+	RetryWaitMin time.Duration
+	RetryWaitMax time.Duration
+
 }
 
 func parseConfig(config map[string]string) (*Config, error) {
-	registryURL, ok := config["registeryURL"]
-	if !ok || registryURL == "" {
-		return nil, errors.New("config must contain 'registeryURL'")
-	}
+    // Required fields validation
+    registryURL, ok := config["registeryURL"]
+    if !ok || registryURL == "" {
+        return nil, errors.New("config must contain 'registeryURL'")
+    }
 
-	var retryMax int
+    lookupURL, ok := config["lookupURL"]
+    if !ok || lookupURL == "" {
+        return nil, errors.New("config must contain 'lookupURL'")
+    }
 
-	// Parse RetryMax
-	if val, ok := config["retryMax"]; ok {
-		if parsedVal, err := strconv.Atoi(val); err == nil {
-			retryMax = parsedVal
-		}
-	}
+    // Initialize with default values
+    cfg := &Config{
+        RegistryURL: registryURL,
+        LookupURL:   lookupURL,
+        RetryMax:    3,
+        RetryWaitMin: 1 * time.Second, // Default
+        RetryWaitMax: 5 * time.Second, // Default
+    }
 
-	return &Config{
-		RegistryURL: registryURL,
-		RetryMax:    retryMax,
-	}, nil
+    // Parse RetryMax
+    if val, ok := config["retryMax"]; ok {
+        parsedVal, _ := strconv.Atoi(val)
+        cfg.RetryMax = parsedVal
+    }
+
+    // Parse RetryWaitMin
+    if val, ok := config["retryWaitMin"]; ok {
+        duration, err := time.ParseDuration(val)
+        if err != nil || duration < 0 {
+            return nil, errors.New("retryWaitMin must be a non-negative duration (e.g. '1s')")
+        }
+        cfg.RetryWaitMin = duration
+    }
+
+    // Parse RetryWaitMax
+    if val, ok := config["retryWaitMax"]; ok {
+        duration, err := time.ParseDuration(val)
+        if err != nil || duration < 0 {
+            return nil, errors.New("retryWaitMax must be a non-negative duration (e.g. '5s')")
+        }
+        cfg.RetryWaitMax = duration
+    }
+
+    // Cross-field validation
+    if cfg.RetryWaitMin > cfg.RetryWaitMax {
+        return nil, errors.New("retryWaitMin cannot be greater than retryWaitMax")
+    }
+
+    // URL validation
+    if _, err := url.Parse(cfg.RegistryURL); err != nil {
+        return nil, fmt.Errorf("invalid registeryURL: %w", err)
+    }
+
+    if _, err := url.Parse(cfg.LookupURL); err != nil {
+        return nil, fmt.Errorf("invalid lookupURL: %w", err)
+    }
+
+    return cfg, nil
 }
-
 // convertToRegisteryConfig converts your custom Config to registery.Config.
 func convertToRegisteryConfig(cfg *Config) *registery.Config {
 	return &registery.Config{

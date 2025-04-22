@@ -14,47 +14,34 @@ import (
 )
 
 func TestRegistryLookupSuccess(t *testing.T) {
-	tests := []struct {
-		name           string
-		subscription   *model.Subscription
-		mockResponse   string
-		expectedResult []model.Subscription
-	}{
-		{
-			name:           "Valid subscription",
-			subscription:   &model.Subscription{KeyID: "1"},
-			mockResponse:   `[{"subscriber_id": "", "url": "", "type": "", "domain": "", "key_id": "1", "signing_public_key": "", "encr_public_key": "", "valid_from": "0001-01-01T00:00:00Z", "valid_until": "0001-01-01T00:00:00Z", "status": "", "created": "0001-01-01T00:00:00Z", "updated": "0001-01-01T00:00:00Z", "nonce": ""}]`,
-			expectedResult: []model.Subscription{{KeyID: "1"}},
-		},
+	// Define the input subscription and expected result
+	subscription := &model.Subscription{KeyID: "1"}
+	mockResponse := `[{"subscriber_id": "", "url": "", "type": "", "domain": "", "key_id": "1", "signing_public_key": "", "encr_public_key": "", "valid_from": "0001-01-01T00:00:00Z", "valid_until": "0001-01-01T00:00:00Z", "status": "", "created": "0001-01-01T00:00:00Z", "updated": "0001-01-01T00:00:00Z", "nonce": ""}]`
+	expectedResult := []model.Subscription{{KeyID: "1"}}
+
+	// Create a mock server to simulate the /lookUp endpoint
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(mockResponse))
+	}))
+	defer mockServer.Close()
+
+	// Create a RegistryLookup instance with the mock server URL
+	config := &Config{LookupURL: mockServer.URL}
+	lookup, _, err := New(context.Background(), config)
+	if err != nil {
+		t.Fatalf("Failed to create RegistryLookup: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create a mock server to simulate the /lookUp endpoint
-			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(tt.mockResponse))
-			}))
-			defer mockServer.Close()
+	// Call the Lookup method
+	results, err := lookup.Lookup(context.Background(), subscription)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
 
-			// Create a RegistryLookup instance with the mock server URL
-			config := &Config{LookupURL: mockServer.URL}
-			lookup, _, err := New(context.Background(), config)
-			if err != nil {
-				t.Fatalf("Failed to create RegistryLookup: %v", err)
-			}
-
-			// Call the Lookup method
-			results, err := lookup.Lookup(context.Background(), tt.subscription)
-			if err != nil {
-				t.Errorf("Unexpected error: %v", err)
-			}
-
-			// Check if the results match the expected result using cmp.Diff
-			if diff := cmp.Diff(tt.expectedResult, results); diff != "" {
-				t.Errorf("Mismatch (-expected +got):\n%s", diff)
-			}
-		})
+	// Check if the results match the expected result using cmp.Diff
+	if diff := cmp.Diff(expectedResult, results); diff != "" {
+		t.Errorf("Mismatch (-expected +got):\n%s", diff)
 	}
 }
 
@@ -134,7 +121,22 @@ func TestRegistryLookupFailure(t *testing.T) {
 }
 
 
-func TestValidateConfig(t *testing.T) {
+func TestValidateConfigSuccess(t *testing.T) {
+	config := &Config{
+		LookupURL:    "http://example.com/lookup",
+		RetryWaitMin: 1,
+		RetryWaitMax: 5,
+		RetryMax:     3,
+	}
+
+	err := validateConfig(config)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+}
+
+
+func TestValidateConfigErrors(t *testing.T) {
 	tests := []struct {
 		name        string
 		config      *Config
@@ -147,43 +149,33 @@ func TestValidateConfig(t *testing.T) {
 		},
 		{
 			name:        "Negative RetryWaitMin",
-			config:      &Config{LookupURL: "http://example.com", RetryWaitMin: -1},
+			config:      &Config{LookupURL: "http://example.com/lookup", RetryWaitMin: -1},
 			expectedErr: "RetryWaitMin must be non-negative",
 		},
 		{
 			name:        "Negative RetryWaitMax",
-			config:      &Config{LookupURL: "http://example.com", RetryWaitMin: 0, RetryWaitMax: -1},
+			config:      &Config{LookupURL: "http://example.com/lookup", RetryWaitMin: 0, RetryWaitMax: -1},
 			expectedErr: "RetryWaitMax must be non-negative",
 		},
 		{
 			name:        "RetryWaitMin > RetryWaitMax",
-			config:      &Config{LookupURL: "http://example.com", RetryWaitMin: 5, RetryWaitMax: 3},
+			config:      &Config{LookupURL: "http://example.com/lookup", RetryWaitMin: 5, RetryWaitMax: 3},
 			expectedErr: "RetryWaitMin cannot be greater than RetryWaitMax",
 		},
 		{
 			name:        "Negative RetryMax",
-			config:      &Config{LookupURL: "http://example.com", RetryWaitMin: 1, RetryWaitMax: 2, RetryMax: -1},
+			config:      &Config{LookupURL: "http://example.com/lookup", RetryWaitMin: 1, RetryWaitMax: 2, RetryMax: -1},
 			expectedErr: "RetryMax must be non-negative",
-		},
-		{
-			name:        "Valid config",
-			config:      &Config{LookupURL: "http://example.com", RetryWaitMin: 1, RetryWaitMax: 5, RetryMax: 3},
-			expectedErr: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateConfig(tt.config)
-			if tt.expectedErr == "" {
-				if err != nil {
-					t.Fatalf("Expected no error, got: %v", err)
-				}
-			} else {
-				if err == nil || err.Error() != tt.expectedErr {
-					t.Fatalf("Expected error: %s, got: %v", tt.expectedErr, err)
-				}
+			if err == nil || err.Error() != tt.expectedErr {
+				t.Fatalf("Expected error: %s, got: %v", tt.expectedErr, err)
 			}
 		})
 	}
 }
+

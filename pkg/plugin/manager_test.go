@@ -67,6 +67,14 @@ type mockKeyManager struct {
 	err error
 }
 
+type mockRegistry struct{}
+
+type mockRegistryLookupProvider struct {
+	registry definition.RegistryLookup
+	newErr   error
+	errFunc  func() error
+}
+
 func (m *mockKeyManager) GenerateKeyPairs() (*model.Keyset, error) {
 	if m.err != nil {
 		return nil, m.err
@@ -259,6 +267,14 @@ func (m *mockKeyManagerProvider) New(ctx context.Context, cache definition.Cache
 type mockRegistryLookup struct {
 	definition.RegistryLookup
 }
+
+func (m *mockRegistryLookupProvider) New(ctx context.Context, cfg map[string]string) (definition.RegistryLookup, func() error, error) {
+	if m.newErr != nil {
+		return nil, nil, m.newErr
+	}
+	return m.registry, m.errFunc, nil
+}
+
 
 // createTestZip creates a zip file with test content in a temporary directory.
 func createTestZip(t *testing.T) string {
@@ -2492,4 +2508,95 @@ func TestMiddlewareFailure(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRegistryLookupSuccess(t *testing.T) {
+    cfg := &Config{
+        ID:     "test-registry",
+        Config: map[string]string{},
+    }
+
+    plugin := &mockRegistryLookupProvider{
+        registry: &mockRegistryLookup{},
+        errFunc:  func() error { return nil },
+    }
+
+    m := &Manager{
+        plugins: map[string]onixPlugin{
+            cfg.ID: &mockPlugin{
+                symbol: plugin,
+            },
+        },
+    }
+
+    registry, err := m.RegistryLookup(context.Background(), cfg)
+
+    if err != nil {
+        t.Fatalf("unexpected error: %v", err)
+    }
+    if registry == nil {
+        t.Fatal("expected non-nil registry, got nil")
+    }
+    if registry != plugin.registry {
+        t.Fatal("registry does not match expected instance")
+    }
+}
+
+func TestRegistryLookupFailure(t *testing.T) {
+    tests := []struct {
+        name          string
+        cfg           *Config
+        plugin        *mockRegistryLookupProvider
+        expectedError string
+    }{
+        {
+            name: "provider error",
+            cfg: &Config{
+                ID:     "test-registry",
+                Config: map[string]string{},
+            },
+            plugin: &mockRegistryLookupProvider{
+                newErr: errors.New("provider error"),
+            },
+            expectedError: "provider error",
+        },
+        {
+            name: "plugin not found",
+            cfg: &Config{
+                ID:     "nonexistent-registry",
+                Config: map[string]string{},
+            },
+            plugin:        nil,
+            expectedError: "plugin nonexistent-registry not found",
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            // Create a manager with the mock plugin
+            m := &Manager{
+                plugins: make(map[string]onixPlugin),
+            }
+
+            // Only add the plugin if it's not nil
+            if tt.plugin != nil {
+                m.plugins[tt.cfg.ID] = &mockPlugin{
+                    symbol: tt.plugin,
+                }
+            }
+
+            // Call RegistryLookup
+            registry, err := m.RegistryLookup(context.Background(), tt.cfg)
+
+            // Check error
+            if err == nil {
+                t.Fatal("expected error, got nil")
+            } else if !strings.Contains(err.Error(), tt.expectedError) {
+                t.Fatalf("error = %v, want error containing %q", err, tt.expectedError)
+            }
+            if registry != nil {
+                t.Fatal("expected nil registry, got non-nil")
+            }
+        })
+    }
 }

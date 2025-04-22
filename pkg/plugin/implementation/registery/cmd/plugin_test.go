@@ -2,13 +2,18 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestRegistryLookupProviderSuccess(t *testing.T) {
 	ctx := context.Background()
 	config := map[string]string{
 		"registeryURL": "http://example.com",
+		"lookupURL":    "http://example.com",
 		"retryMax":     "5",
 	}
 
@@ -36,7 +41,7 @@ func TestRegistryLookupProviderFailure(t *testing.T) {
 		{
 			name:        "Nil context",
 			ctx:         nil,
-			config:      map[string]string{"registeryURL": "http://example.com"},
+			config:      map[string]string{"registeryURL": "http://example.com", "lookupURL": "http://example.com"},
 			expectedErr: "context cannot be nil",
 		},
 		{
@@ -69,74 +74,155 @@ func TestRegistryLookupProviderFailure(t *testing.T) {
 	}
 }
 
-func TestParseConfig(t *testing.T) {
+func TestParseConfigSuccess(t *testing.T) {
 	tests := []struct {
 		name        string
 		input       map[string]string
-		expectErr   bool
 		expectedCfg *Config
 	}{
 		{
 			name: "Valid config with retryMax",
 			input: map[string]string{
 				"registeryURL": "http://example.com",
+				"lookupURL":    "http://example.com",
 				"retryMax":     "5",
 			},
-			expectErr: false,
 			expectedCfg: &Config{
-				RegistryURL: "http://example.com",
-				RetryMax:    5,
+				RegistryURL:  "http://example.com",
+				RetryMax:     5,
+				LookupURL:    "http://example.com",
+				RetryWaitMin: 1 * time.Second,
+				RetryWaitMax: 5 * time.Second,
 			},
 		},
 		{
 			name: "Valid config with missing retryMax (defaults to 0)",
 			input: map[string]string{
 				"registeryURL": "http://example.com",
+				"lookupURL":    "http://example.com",
 			},
-			expectErr: false,
 			expectedCfg: &Config{
-				RegistryURL: "http://example.com",
-				RetryMax:    0,
+				RegistryURL:  "http://example.com",
+				RetryMax:     3,
+				LookupURL:    "http://example.com",
+				RetryWaitMin: 1 * time.Second,
+				RetryWaitMax: 5 * time.Second,
 			},
 		},
 		{
 			name: "Valid config with invalid retryMax (defaults to 0)",
 			input: map[string]string{
 				"registeryURL": "http://example.com",
+				"lookupURL":    "http://example.com",
 				"retryMax":     "abc",
 			},
-			expectErr: false,
 			expectedCfg: &Config{
-				RegistryURL: "http://example.com",
-				RetryMax:    0,
+				RegistryURL:  "http://example.com",
+				RetryMax:     0,
+				LookupURL:    "http://example.com",
+				RetryWaitMin: 1 * time.Second,
+				RetryWaitMax: 5 * time.Second,
 			},
 		},
 		{
-			name: "Missing registeryURL",
+			name: "Valid config with retryWaitMin and retryWaitMax",
 			input: map[string]string{
-				"retryMax": "5",
+				"registeryURL": "http://example.com",
+				"lookupURL":    "http://example.com",
+				"retryWaitMin": "2s",
+				"retryWaitMax": "4s",
 			},
-			expectErr: true,
+			expectedCfg: &Config{
+				RegistryURL:  "http://example.com",
+				RetryMax:     3,
+				LookupURL:    "http://example.com",
+				RetryWaitMin: 2 * time.Second,
+				RetryWaitMax: 4 * time.Second,
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg, err := parseConfig(tt.input)
-
-			if tt.expectErr {
-				if err == nil {
-					t.Fatal("Expected error but got none")
-				}
-				return
-			}
-
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			if cfg.RegistryURL != tt.expectedCfg.RegistryURL || cfg.RetryMax != tt.expectedCfg.RetryMax {
-				t.Errorf("Expected config %+v, got %+v", tt.expectedCfg, cfg)
+			if diff := cmp.Diff(tt.expectedCfg, cfg); diff != "" {
+				t.Errorf("Mismatch in config (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseConfigFailures(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       map[string]string
+		expectedErr string
+	}{
+		{
+			name: "missing registryURL",
+			input: map[string]string{
+				"lookupURL": "http://example.com",
+			},
+			expectedErr: "config must contain 'registeryURL'",
+		},
+		{
+			name: "missing lookupURL",
+			input: map[string]string{
+				"registeryURL": "http://example.com",
+			},
+			expectedErr: "config must contain 'lookupURL'",
+		},
+		{
+			name: "negative retryWaitMin",
+			input: map[string]string{
+				"registeryURL": "http://example.com",
+				"lookupURL":    "http://example.com",
+				"retryWaitMin": "-1s",
+			},
+			expectedErr: "retryWaitMin must be a non-negative duration",
+		},
+		{
+			name: "invalid retryWaitMin format",
+			input: map[string]string{
+				"registeryURL": "http://example.com",
+				"lookupURL":    "http://example.com",
+				"retryWaitMin": "not-a-duration",
+			},
+			expectedErr: "retryWaitMin must be a non-negative duration",
+		},
+		{
+			name: "invalid retryWaitMax format",
+			input: map[string]string{
+				"registeryURL": "http://example.com",
+				"lookupURL":    "http://example.com",
+				"retryWaitMax": "not-a-duration",
+			},
+			expectedErr: "retryWaitMax must be a non-negative duration",
+		},
+		{
+			name: "retryWaitMin > retryWaitMax",
+			input: map[string]string{
+				"registeryURL": "http://example.com",
+				"lookupURL":    "http://example.com",
+				"retryWaitMin": "10s",
+				"retryWaitMax": "5s",
+			},
+			expectedErr: "retryWaitMin cannot be greater than retryWaitMax",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseConfig(tt.input)
+			if err == nil {
+				t.Fatal("expected error but got none")
+			}
+			if !strings.Contains(err.Error(), tt.expectedErr) {
+				t.Errorf("expected error containing %q, got %q", tt.expectedErr, err.Error())
 			}
 		})
 	}
