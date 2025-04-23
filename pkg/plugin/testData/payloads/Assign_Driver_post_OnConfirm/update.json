@@ -1,0 +1,38 @@
+{
+    "context": {
+      "action": "update",
+      "bap_id": "example-bap.com",
+      "bap_uri": "https://example-bap.com/prod/trv10",
+      "bpp_id": "example-bpp.com",
+      "bpp_uri": "https://example-bpp.com/prod/trv10",
+      "domain": "ONDC:TRV10",
+      "location": {
+        "city": {
+          "code": "std:080"
+        },
+        "country": {
+          "code": "IND"
+        }
+      },
+      "message_id": "6743e9e2-4fb5-487c-92b7-13ba8018f176",
+      "timestamp": "2023-03-23T04:41:16Z",
+      "transaction_id": "870782be-6757-43f1-945c-8eeaf9536259",
+      "ttl": "PT30S",
+      "version": "2.0.1"
+    },
+    "message": {
+      "update_target": "order",
+      "order": {
+        "billing": {
+          "email": "jane.doe@example.com",
+          "name": "Jane Doe",
+          "phone": "+91-9897867564"
+        },
+        "id": "O1",
+        "provider": {
+          "id": "P1"
+        }
+      }
+    }
+  }
+  

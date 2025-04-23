@@ -1,0 +1,146 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "search",
+    "allOf": [
+      { "$ref": "../../core/v1.1.0/search.json#" }
+    ],
+    "type": "object",
+    "properties": {
+      "context": {
+        "type": "object",
+        "allOf": [
+          {
+            "properties": {
+              "action": {
+                "type": "string"
+              },
+              "location": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "object",
+                    "properties": {
+                      "code": { "type": "string" }
+                    },
+                    "required": ["code"]
+                  },
+                  "country": {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "enum": ["IND"]
+                      }
+                    },
+                    "required": ["code"]
+                  }
+                },
+                "required": ["city", "country"]
+              },
+              "bap_id": {
+                "type": "string"
+              },
+              "bpp_id": {
+                "type": "string"
+              },
+              "ttl": {
+                "type": "string",
+                "format": "duration"
+              },
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "location",
+              "domain",
+              "action",
+              "message_id",
+              "transaction_id",
+              "timestamp",
+              "bap_id",
+              "bap_uri",
+              "ttl"
+            ]
+          }
+        ]
+      },
+      "message": {
+        "type": "object",
+        "properties": {
+          "intent": {
+            "allOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "payment": {
+                    "type": "object",
+                    "properties": {
+                      "collected_by": {
+                        "type": "string",
+                        "enum": ["BPP", "BAP"]
+                      },
+                      "tags": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "descriptor": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "enum": ["SETTLEMENT_TERMS", "BUYER_FINDER_FEES"]
+                                }
+                              }
+                            }
+                          },
+                          "required": ["descriptor"]
+                        }
+                      }
+                    },
+                    "required": ["collected_by"]
+                  },
+                  "fulfillment": {
+                    "type": "object",
+                    "properties": {
+                      "stops": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "location": {
+                              "type": "object",
+                              "properties": {
+                                "gps": { "type": "string" }
+                              },
+                              "required": ["gps"]
+                            },
+                            "type": {
+                              "type": "string",
+                              "enum": ["START", "END"]
+                            }
+                          },
+                          "required": ["location", "type"]
+                        },
+                        "minItems": 2
+                      }
+                    },
+                    "required": ["stops"]
+                  }
+                },
+                "required": ["payment", "fulfillment"]
+              }
+            ]
+          }
+        },
+        "required": ["intent"]
+      }
+    },
+    "required": ["context", "message"]
+  }
+  

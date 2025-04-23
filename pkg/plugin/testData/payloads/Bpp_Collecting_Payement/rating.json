@@ -1,0 +1,28 @@
+{
+  "context": {
+    "action": "rating",
+    "bap_id": "example-bap.com",
+    "bap_uri": "https://example-bap.com/prod/trv10",
+    "bpp_id": "example-bpp.com",
+    "bpp_uri": "https://example-bpp.com/prod/seller",
+    "domain": "ONDC:TRV10",
+    "location": {
+      "city": {
+        "code": "std:080"
+      },
+      "country": {
+        "code": "IND"
+      }
+    },
+    "message_id": "b462a835-97d6-4479-bec8-9660a0f8513e",
+    "timestamp": "2023-03-23T04:46:45Z",
+    "transaction_id": "870782be-6757-43f1-945c-8eeaf9536259",
+    "ttl": "PT30S",
+    "version": "2.0.1"
+  },
+  "message": {
+    "id": "b0462745-f6c9-4100-bbe7-4fa3648b6b40",
+    "rating_category": "DRIVER",
+    "value": 4
+  }
+}

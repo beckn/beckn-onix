@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "support",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "../../core/v1.1.0/support.json#"
+    },
+    {
+      "$ref": "./init.json#/allOf/1"
+    }    
+  ]
+}

@@ -1,4 +1,4 @@
-module beckn-onix
+module github.com/beckn/beckn-onix
 
 go 1.23.4
 

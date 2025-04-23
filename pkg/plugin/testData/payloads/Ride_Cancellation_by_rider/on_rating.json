@@ -1,0 +1,27 @@
+{
+  "context": {
+    "action": "on_rating",
+    "bap_id": "example-bap.com",
+    "bap_uri": "https://example-bap.com/prod/trv10",
+    "bpp_id": "api.beckn.juspay.in/dobpp/beckn/7f7896dd-787e-4a0b-8675-e9e6fe93bb8f",
+    "bpp_uri": "https://example-bpp.com/prod/seller",
+    "domain": "ONDC:TRV10",
+    "location": {
+      "city": {
+        "code": "std:080"
+      },
+      "country": {
+        "code": "IND"
+      }
+    },
+    "message_id": "2a17e268-1dc4-4d1a-98a2-17554a50c7d2",
+    "timestamp": "2023-03-23T05:41:15Z",
+    "transaction_id": "870782be-6757-43f1-945c-8eeaf9536259",
+    "ttl": "PT30S",
+    "version": "2.0.1"
+  },
+  "message": {
+    "feedback_ack": true,
+    "rating_ack": true
+  }
+}

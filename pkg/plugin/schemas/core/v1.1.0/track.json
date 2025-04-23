@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "track",
+  "type": "object",
+  "properties": {
+    "context": {
+      "allOf": [
+        {
+          "$ref": "./definitions.json#/$defs/Context"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "enum": [
+                "track"
+              ]
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      ]
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "order_id": {
+          "$ref": "./definitions.json#/$defs/Order"
+        },
+        "callback_url": {
+          "type": "string",
+          "format": "uri"
+        }
+      },
+      "required": [
+        "order_id"
+      ]
+    }
+  },
+  "required": [
+    "message",
+    "context"
+  ]
+}

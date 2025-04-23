@@ -1,0 +1,550 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "init",
+  "type": "object",
+  "allOf": [
+      {
+          "$ref": "../../core/v1.1.0/init.json#"
+      },
+      {
+          "properties": {
+              "context": {
+                "type": "object",
+                  "allOf": [
+                      {
+                          "$ref": "./search.json#/properties/context/allOf/0"
+                      },
+                      {
+                          
+                          "required": [
+                              "bpp_id",
+                              "bpp_uri"
+                          ]
+                      }
+                  ]
+              }
+          }
+      },
+      {
+          "properties": {
+              "message": {
+                  "properties": {
+                      "order": {
+                          "type": "object",
+                          "properties": {
+                              "provider": {
+                                  "type": "object",
+                                  "properties": {
+                                      "id": {
+                                          "type": "string"
+                                      }
+                                  },
+                                  "required": [
+                                      "id"
+                                  ]
+                              },
+                              "items": {
+                                  "type": "array",
+                                  "items": {
+                                      "type": "object",
+                                      "properties": {
+                                          "id": {
+                                              "type": "string"
+                                          }
+                                      },
+                                      "required": [
+                                          "id"
+                                      ]
+                                  }
+                              }
+                          },
+                          "required": [
+                              "provider",
+                              "items"
+                          ]
+                      }
+                  }
+              }
+          }
+      },
+      {
+          "$ref": "./confirm.json#/allOf/4"
+      },
+      {
+          "$ref": "./on_select.json#/allOf/7"
+      },
+      {
+          "properties": {
+              "message": {
+                  "properties": {
+                      "order": {
+                          "required": [
+                              "fulfillments"
+                          ]
+                      }
+                  }
+              }
+          }
+      },
+      {
+          "properties": {
+              "message": {
+                  "type": "object",
+                  "properties": {
+                      "order": {
+                          "type": "object",
+                          "properties": {
+                              "payments": {
+                                  "type": "array",
+                                  "items": {
+                                      "type": "object",
+                                      "properties": {
+                                          "params": {
+                                              "type": "object",
+                                              "properties": {
+                                                  "amount": {
+                                                      "type": "string",
+                                                      "pattern": "^\\d+(\\.\\d{1,2})?$"
+                                                  }
+                                              }
+                                          },
+                                          "type": {
+                                              "type": "string",
+                                              "enum": [
+                                                  "PRE-ORDER",
+                                                  "ON-FULFILLMENT",
+                                                  "POST-FULFILLMENT"
+                                              ]
+                                          },
+                                          "status": {
+                                              "type": "string",
+                                              "enum": [
+                                                  "PAID",
+                                                  "NOT-PAID"
+                                              ]
+                                          },
+                                          "collected_by": {
+                                              "type": "string",
+                                              "enum": [
+                                                  "BAP",
+                                                  "BPP"
+                                              ]
+                                          },
+                                          "tags": {
+                                              "type": "array",
+                                              "minItems": 2,
+                                              "maxItems": 2,
+                                              "uniqueItems": true,
+                                              "items": {
+                                                  "type": "object",
+                                                  "properties": {
+                                                      "descriptor": {
+                                                          "type": "object",
+                                                          "properties": {
+                                                              "code": {
+                                                                  "type": "string",
+                                                                  "enum": [
+                                                                      "SETTLEMENT_TERMS",
+                                                                      "BUYER_FINDER_FEES"
+                                                                  ]
+                                                              }
+                                                          }
+                                                      }
+                                                  },
+                                                  "required": [
+                                                      "descriptor"
+                                                  ]
+                                              }
+                                          }
+                                      },
+                                      "required": [
+                                          "type",
+                                          "status",
+                                          "collected_by",
+                                          "tags"
+                                      ],
+                                      "allOf": [
+                                          {
+                                              "if": {
+                                                  "allOf": [
+                                                      {
+                                                          "properties": {
+                                                              "collected_by": {
+                                                                  "const": "BAP"
+                                                              }
+                                                          }
+                                                      },
+                                                      {
+                                                          "properties": {
+                                                              "type": {
+                                                                  "const": "PRE-ORDER"
+                                                              }
+                                                          }
+                                                      }
+                                                  ]
+                                              },
+                                              "then": {
+                                                  "properties": {
+                                                      "tags": {
+                                                          "items": {
+                                                              "if": {
+                                                                  "properties": {
+                                                                      "descriptor": {
+                                                                          "properties": {
+                                                                              "code": {
+                                                                                  "const": "SETTLEMENT_TERMS"
+                                                                              }
+                                                                          }
+                                                                      }
+                                                                  }
+                                                              },
+                                                              "then": {
+                                                                  "properties": {
+                                                                      "list": {
+                                                                          "allOf": [
+                                                                              {
+                                                                                  "contains": {
+                                                                                      "type": "object",
+                                                                                      "properties": {
+                                                                                          "descriptor": {
+                                                                                              "type": "object",
+                                                                                              "properties": {
+                                                                                                  "code": {
+                                                                                                      "const": "STATIC_TERMS"
+                                                                                                  }
+                                                                                              }
+                                                                                          },
+                                                                                          "value": {
+                                                                                              "type": "string",
+                                                                                              "format": "uri"
+                                                                                          }
+                                                                                      }
+                                                                                  }
+                                                                              },
+                                                                              {
+                                                                                  "contains": {
+                                                                                      "type": "object",
+                                                                                      "properties": {
+                                                                                          "descriptor": {
+                                                                                              "type": "object",
+                                                                                              "properties": {
+                                                                                                  "code": {
+                                                                                                      "const": "SETTLEMENT_BASIS"
+                                                                                                  }
+                                                                                              }
+                                                                                          },
+                                                                                          "value": {
+                                                                                              "type": "string",
+                                                                                              "enum": [
+                                                                                                  "DELIVERY"
+                                                                                              ]
+                                                                                          }
+                                                                                      }
+                                                                                  }
+                                                                              },
+                                                                              {
+                                                                                  "contains": {
+                                                                                      "type": "object",
+                                                                                      "properties": {
+                                                                                          "descriptor": {
+                                                                                              "type": "object",
+                                                                                              "properties": {
+                                                                                                  "code": {
+                                                                                                      "const": "SETTLEMENT_WINDOW"
+                                                                                                  }
+                                                                                              }
+                                                                                          },
+                                                                                          "value": {
+                                                                                              "type": "string"
+                                                                                          }
+                                                                                      }
+                                                                                  }
+                                                                              },
+                                                                              {
+                                                                                  "contains": {
+                                                                                      "type": "object",
+                                                                                      "properties": {
+                                                                                          "descriptor": {
+                                                                                              "type": "object",
+                                                                                              "properties": {
+                                                                                                  "code": {
+                                                                                                      "const": "DELAY_INTEREST"
+                                                                                                  }
+                                                                                              }
+                                                                                          },
+                                                                                          "value": {
+                                                                                              "type": "string",
+                                                                                              "pattern": "^\\d+(\\.\\d{1,2})?$"
+                                                                                          }
+                                                                                      }
+                                                                                  }
+                                                                              }
+                                                                          ]
+                                                                      }
+                                                                  }
+                                                              }
+                                                          }
+                                                      }
+                                                  }
+                                              }
+                                          },
+                                          {
+                                              "if": {
+                                                  "allOf": [
+                                                      {
+                                                          "properties": {
+                                                              "collected_by": {
+                                                                  "const": "BPP"
+                                                              }
+                                                          }
+                                                      },
+                                                      {
+                                                          "properties": {
+                                                              "type": {
+                                                                  "const": "PRE-ORDER"
+                                                              }
+                                                          }
+                                                      }
+                                                  ]
+                                              },
+                                              "then": {
+                                                  "properties": {
+                                                      "tags": {
+                                                          "items": {
+                                                              "if": {
+                                                                  "properties": {
+                                                                      "descriptor": {
+                                                                          "properties": {
+                                                                              "code": {
+                                                                                  "const": "SETTLEMENT_TERMS"
+                                                                              }
+                                                                          }
+                                                                      }
+                                                                  }
+                                                              },
+                                                              "then": {
+                                                                  "properties": {
+                                                                      "list": {
+                                                                          "allOf": [
+                                                                              {
+                                                                                  "contains": {
+                                                                                      "type": "object",
+                                                                                      "properties": {
+                                                                                          "descriptor": {
+                                                                                              "type": "object",
+                                                                                              "properties": {
+                                                                                                  "code": {
+                                                                                                      "const": "STATIC_TERMS"
+                                                                                                  }
+                                                                                              }
+                                                                                          },
+                                                                                          "value": {
+                                                                                              "type": "string",
+                                                                                              "format": "uri"
+                                                                                          }
+                                                                                      }
+                                                                                  }
+                                                                              },
+                                                                              {
+                                                                                  "contains": {
+                                                                                      "type": "object",
+                                                                                      "properties": {
+                                                                                          "descriptor": {
+                                                                                              "type": "object",
+                                                                                              "properties": {
+                                                                                                  "code": {
+                                                                                                      "const": "SETTLEMENT_BASIS"
+                                                                                                  }
+                                                                                              }
+                                                                                          },
+                                                                                          "value": {
+                                                                                              "type": "string",
+                                                                                              "enum": [
+                                                                                                  "DELIVERY"
+                                                                                              ]
+                                                                                          }
+                                                                                      }
+                                                                                  }
+                                                                              },
+                                                                              {
+                                                                                  "contains": {
+                                                                                      "type": "object",
+                                                                                      "properties": {
+                                                                                          "descriptor": {
+                                                                                              "type": "object",
+                                                                                              "properties": {
+                                                                                                  "code": {
+                                                                                                      "const": "SETTLEMENT_WINDOW"
+                                                                                                  }
+                                                                                              }
+                                                                                          },
+                                                                                          "value": {
+                                                                                              "type": "string"
+                                                                                          }
+                                                                                      }
+                                                                                  }
+                                                                              }
+                                                                          ]
+                                                                      }
+                                                                  }
+                                                              }
+                                                          }
+                                                      }
+                                                  }
+                                              }
+                                          },
+                                          {
+                                              "if": {
+                                                  "allOf": [
+                                                      {
+                                                          "properties": {
+                                                              "collected_by": {
+                                                                  "const": "BPP"
+                                                              }
+                                                          }
+                                                      },
+                                                      {
+                                                          "properties": {
+                                                              "type": {
+                                                                  "const": "ON-FULFILLMENT"
+                                                              }
+                                                          }
+                                                      }
+                                                  ]
+                                              },
+                                              "then": {
+                                                  "properties": {
+                                                      "tags": {
+                                                          "items": {
+                                                              "if": {
+                                                                  "properties": {
+                                                                      "descriptor": {
+                                                                          "properties": {
+                                                                              "code": {
+                                                                                  "const": "SETTLEMENT_TERMS"
+                                                                              }
+                                                                          }
+                                                                      }
+                                                                  }
+                                                              },
+                                                              "then": {
+                                                                  "properties": {
+                                                                      "list": {
+                                                                          "allOf": [
+                                                                              {
+                                                                                  "contains": {
+                                                                                      "type": "object",
+                                                                                      "properties": {
+                                                                                          "descriptor": {
+                                                                                              "type": "object",
+                                                                                              "properties": {
+                                                                                                  "code": {
+                                                                                                      "const": "STATIC_TERMS"
+                                                                                                  }
+                                                                                              }
+                                                                                          },
+                                                                                          "value": {
+                                                                                              "type": "string",
+                                                                                              "format": "uri"
+                                                                                          }
+                                                                                      }
+                                                                                  }
+                                                                              },
+                                                                              {
+                                                                                  "contains": {
+                                                                                      "type": "object",
+                                                                                      "properties": {
+                                                                                          "descriptor": {
+                                                                                              "type": "object",
+                                                                                              "properties": {
+                                                                                                  "code": {
+                                                                                                      "const": "SETTLEMENT_BASIS"
+                                                                                                  }
+                                                                                              }
+                                                                                          },
+                                                                                          "value": {
+                                                                                              "type": "string",
+                                                                                              "enum": [
+                                                                                                  "DELIVERY"
+                                                                                              ]
+                                                                                          }
+                                                                                      }
+                                                                                  }
+                                                                              },
+                                                                              {
+                                                                                  "contains": {
+                                                                                      "type": "object",
+                                                                                      "properties": {
+                                                                                          "descriptor": {
+                                                                                              "type": "object",
+                                                                                              "properties": {
+                                                                                                  "code": {
+                                                                                                      "const": "SETTLEMENT_WINDOW"
+                                                                                                  }
+                                                                                              }
+                                                                                          },
+                                                                                          "value": {
+                                                                                              "type": "string"
+                                                                                          }
+                                                                                      }
+                                                                                  }
+                                                                              },
+                                                                              {
+                                                                                  "contains": {
+                                                                                      "type": "object",
+                                                                                      "properties": {
+                                                                                          "descriptor": {
+                                                                                              "type": "object",
+                                                                                              "properties": {
+                                                                                                  "code": {
+                                                                                                      "const": "DELAY_INTEREST"
+                                                                                                  }
+                                                                                              }
+                                                                                          },
+                                                                                          "value": {
+                                                                                              "type": "string",
+                                                                                              "pattern": "^\\d+(\\.\\d{1,2})?$"
+                                                                                          }
+                                                                                      }
+                                                                                  }
+                                                                              }
+                                                                          ]
+                                                                      }
+                                                                  }
+                                                              }
+                                                          }
+                                                      }
+                                                  }
+                                              }
+                                          }
+                                      ]
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+      },
+      {
+          "properties": {
+              "message": {
+                  "properties": {
+                      "order": {
+                          "properties": {
+                              "billing": {
+                                  "required": [
+                                      "name"
+                                  ]
+                              }
+                          },
+                          "required": [
+                              "billing"
+                          ]
+                      }
+                  }
+              }
+          }
+      }
+  ]
+}
