@@ -121,11 +121,3 @@ type MethodNotAllowedErr struct {
 func (e *MethodNotAllowedErr) Error() string {
 	return fmt.Sprintf("method %s not allowed", e.Method)
 }
-
-// BecknError converts the MethodNotAllowedErr to an instance of the custom Beckn Error type.
-func (e *MethodNotAllowedErr) BecknError() *Error {
-	return &Error{
-		Code:    http.StatusText(http.StatusMethodNotAllowed),
-		Message: fmt.Sprintf("The HTTP method '%s' is not allowed. Only POST is supported.", e.Method),
-	}
-}

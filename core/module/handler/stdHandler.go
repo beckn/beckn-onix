@@ -54,8 +54,10 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		err := &model.MethodNotAllowedErr{Method: r.Method}
 		log.Errorf(r.Context(), err, "ServeHTTP: method not allowed")
-		w.Header().Set("Allow", http.MethodPost)
-		response.SendNack(r.Context(), w, err)
+		response.SendNack(r.Context(), w, &model.Error{
+			Code:    http.StatusText(http.StatusMethodNotAllowed),
+			Message: fmt.Sprintf("The HTTP method '%s' is not allowed. Only POST is supported.", r.Method),
+		})
 		return
 	}
 	ctx, err := h.stepCtx(r, w.Header())
