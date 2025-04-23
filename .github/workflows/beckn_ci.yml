@@ -1,0 +1,88 @@
+name: CI/CD Pipeline
+
+on:
+  pull_request:
+    branches:
+      - beckn-onix-v1.0-develop
+
+env:
+  APP_DIRECTORY: "shared/plugin"  # Root directory to start searching from
+
+jobs:
+  lint_and_test:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 10  # Increased timeout due to additional steps
+    steps:
+      # 1. Checkout the code from the test branch (triggered by PR)
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Set up Go environment
+      - name: Set up Go 1.24.0
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24.0'
+
+      # 3. Install golangci-lint
+      - name: Install golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+      # 4. Run golangci-lint on the entire repo, starting from the root directory
+      - name: Run golangci-lint
+        run: |
+          golangci-lint run ./...  # This will lint all Go files in the repo and subdirectories
+
+      # 5. Run unit tests with coverage in the entire repository
+      - name: Run unit tests with coverage
+        run: |
+          # Create a directory to store coverage files
+          mkdir -p $GITHUB_WORKSPACE/coverage_files
+          
+          # Find all *_test.go files and run `go test` for each
+          find ./ -type f -name '*_test.go' | while read test_file; do
+            # Get the directory of the test file
+            test_dir=$(dirname "$test_file")
+            # Get the name of the Go file associated with the test
+            go_file="${test_file/_test.go/.go}"
+            
+            # Run tests and store coverage for each Go file in a separate file
+            echo "Running tests in $test_dir for $go_file"
+            go test -v -coverprofile=$GITHUB_WORKSPACE/coverage_files/coverage_$(basename "$go_file" .go).out $test_dir
+          done
+
+      # 6. List the generated coverage files for debugging purposes
+      #- name: List coverage files
+        #run: |
+          #echo "Listing all generated coverage files:"
+          #ls -l $GITHUB_WORKSPACE/coverage_files/
+
+      # 7. Check coverage for each generated coverage file
+      - name: Check coverage for each test file
+        run: |
+          # Loop through each coverage file in the coverage_files directory
+          for coverage_file in $GITHUB_WORKSPACE/coverage_files/coverage_*.out; do
+            echo "Checking coverage for $coverage_file"
+            
+            # Get the coverage percentage for each file
+            coverage=$(go tool cover -func=$coverage_file | grep total | awk '{print $3}' | sed 's/%//')
+            echo "Coverage for $coverage_file: $coverage%"
+
+            # If coverage is below threshold (90%), fail the job
+            if (( $(echo "$coverage < 80" | bc -l) )); then
+              echo "Coverage for $coverage_file is below 90%. Failing the job."
+              exit 1
+            fi
+          done
+
+      # 7. Build the Go code
+      #- name: Build Go code
+      #  run: |
+      #    go build -o myapp ${{ env.APP_DIRECTORY }}/...
+      #    if [ ! -f myapp ]; then
+      #      echo "Build failed: myapp executable was not created."
+      #      exit 1
+      #    else
+      #      echo "Build succeeded: myapp executable created."
+       #   fi

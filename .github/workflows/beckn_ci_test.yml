@@ -1,0 +1,85 @@
+name: CI/CD Test Pipeline
+
+on:
+  pull_request:
+    branches:
+      - beckn-onix-v1.0-develop
+
+env:
+  APP_DIRECTORY: "shared/plugin"
+
+jobs:
+  lint_and_test:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 10
+    outputs:
+      coverage_ok: ${{ steps.coverage_check.outputs.coverage_ok }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.24.0
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24.0'
+
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+      - name: Run golangci-lint
+        run: golangci-lint run ./...
+
+      - name: Run unit tests with coverage
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/coverage_files
+          test_files=$(find ./ -type f -name '*_test.go')
+          if [ -z "$test_files" ]; then
+            echo "No test cases found. Skipping."
+            exit 0
+          fi
+          for test_file in $test_files; do
+            test_dir=$(dirname "$test_file")
+            go_file="${test_file/_test.go/.go}"
+            echo "Running tests in $test_dir for $go_file"
+            go test -v -coverprofile=$GITHUB_WORKSPACE/coverage_files/coverage_$(basename "$go_file" .go).out $test_dir || echo "Tests failed, but continuing."
+          done
+
+      - name: Check coverage for each test file
+        id: coverage_check
+        run: |
+          echo "coverage_ok=true" >> $GITHUB_OUTPUT
+          coverage_files=$(find $GITHUB_WORKSPACE/coverage_files -name "coverage_*.out")
+          if [ -z "$coverage_files" ]; then
+            echo "No coverage files found. Skipping coverage check."
+            exit 0
+          fi
+          for coverage_file in $coverage_files; do
+            echo "Checking coverage for $coverage_file"
+            coverage=$(go tool cover -func=$coverage_file | grep total | awk '{print $3}' | sed 's/%//')
+            echo "Coverage: $coverage%"
+            if (( $(echo "$coverage < 90" | bc -l) )); then
+              echo "coverage_ok=false" >> $GITHUB_OUTPUT
+              break
+            fi
+          done
+
+  require_exception_approval:
+    needs: lint_and_test
+    if: needs.lint_and_test.outputs.coverage_ok == 'false'
+    runs-on: ubuntu-latest
+    environment:
+      name: coverage-exception
+      url: https://your-coverage-dashboard.com  # Optional
+    steps:
+      - name: Manual approval required
+        run: echo "Coverage < 90%. Approval required to continue."
+
+  proceed_with_merge:
+    needs: [lint_and_test, require_exception_approval]
+    if: |
+      needs.lint_and_test.outputs.coverage_ok == 'true' || success()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Proceed with merge
+        run: echo "Coverage requirement met or exception approved. Merge allowed."

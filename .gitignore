@@ -129,3 +129,13 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Ignore compiled shared object files
+*.so
+
+# Ignore coverage output files
+coverage.out
+coverage.html
+
+# Ignore the schema directory used for testing
+/schemas/
