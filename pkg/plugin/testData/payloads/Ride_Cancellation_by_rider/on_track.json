@@ -1,0 +1,32 @@
+{
+  "context": {
+    "action": "on_track",
+    "bap_id": "example-bap.com",
+    "bap_uri": "https://example-bap.com/prod/trv10",
+    "bpp_id": "example-bpp.com",
+    "bpp_uri": "https://example-bpp.com/prod/seller",
+    "domain": "ONDC:TRV10",
+    "location": {
+      "city": {
+        "code": "std:080"
+      },
+      "country": {
+        "code": "IND"
+      }
+    },
+    "message_id": "ec3dea8c-c64c-4f06-b2a0-ec1f9584d7ba",
+    "timestamp": "2023-03-23T05:41:09Z",
+    "transaction_id": "870782be-6757-43f1-945c-8eeaf9536259",
+    "ttl": "PT30S",
+    "version": "2.0.1"
+  },
+  "message": {
+    "tracking": {
+      "status": "active",
+      "location": {
+        "gps": "28.620976, 77.046732",
+        "updated_at": "2023-03-23T05:41:09Z"
+      }
+    }
+  }
+}

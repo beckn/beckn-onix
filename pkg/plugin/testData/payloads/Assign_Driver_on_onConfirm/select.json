@@ -1,0 +1,35 @@
+{
+  "context": {
+    "action": "select",
+    "bap_id": "example-bap.com",
+    "bap_uri": "https://example-bap.com/prod/trv10",
+    "bpp_id": "example-bpp.com",
+    "bpp_uri": "https://example-bpp.com/prod/seller",
+    "domain": "ONDC:TRV10",
+    "location": {
+      "city": {
+        "code": "std:080"
+      },
+      "country": {
+        "code": "IND"
+      }
+    },
+    "message_id": "432fdfd6-0457-47b6-9fac-80cbe5c0a75b",
+    "timestamp": "2023-12-09T13:49:01.460Z",
+    "transaction_id": "870782be-6757-43f1-945c-8eeaf9536259",
+    "ttl": "P120S",
+    "version": "2.0.1"
+  },
+  "message": {
+    "order": {
+      "items": [
+        {
+          "id": "I1"
+        }
+      ],
+      "provider": {
+        "id": "P1"
+      }
+    }
+  }
+}

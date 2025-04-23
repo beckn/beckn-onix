@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "confirm",
+  "type": "object",
+  "properties": {
+    "context": {
+      "allOf": [
+        {
+          "$ref": "definitions.json#/$defs/Context"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "enum": [
+                "confirm"
+              ]
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      ]
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "order": {
+          "$ref": "definitions.json#/$defs/Order"
+        }
+      },
+      "required": [
+        "order"
+      ]
+    }
+  },
+  "required": [
+    "message",
+    "context"
+  ]
+}

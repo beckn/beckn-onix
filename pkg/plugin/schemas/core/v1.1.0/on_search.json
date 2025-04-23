@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "on_search",
+  "type": "object",
+  "properties": {
+    "context": {
+      "allOf": [
+        {
+          "$ref": "./definitions.json#/$defs/Context"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "enum": [
+                "on_search"
+              ]
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      ]
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "catalog": {
+          "$ref": "./definitions.json#/$defs/Catalog"
+        }
+      },
+      "required": [
+        "catalog"
+      ]
+    },
+    "error": {
+      "$ref": "./definitions.json#/$defs/Error"
+    }
+  },
+  "required": [
+    "message",
+    "context"
+  ]
+}
