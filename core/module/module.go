@@ -32,23 +32,28 @@ func Register(ctx context.Context, mCfgs []Config, mux *http.ServeMux, mgr handl
 	log.Debugf(ctx, "Registering modules with config: %#v", mCfgs)
 	// Iterate over the handlers in the configuration.
 	for _, c := range mCfgs {
+		log.Debugf(ctx, "Registering module: %s @ path: %s", c.Name, c.Path)
 		rmp, ok := handlerProviders[c.Handler.Type]
 		if !ok {
+			log.Errorf(ctx, nil, "Unsupported handler type: %s", c.Handler.Type)
 			return fmt.Errorf("invalid module : %s", c.Name)
 		}
 		h, err := rmp(ctx, mgr, &c.Handler)
 		if err != nil {
+			log.Errorf(ctx, err, "Failed to create handler for module: %s", c.Name)
 			return fmt.Errorf("%s : %w", c.Name, err)
 		}
 		h, err = addMiddleware(ctx, mgr, h, &c.Handler)
 		if err != nil {
+			log.Errorf(ctx, err, "Failed to add middleware for module: %s", c.Name)
 			return fmt.Errorf("failed to add middleware: %w", err)
 
 		}
 		h = moduleCtxMiddleware(c.Name, h)
-		log.Debugf(ctx, "Registering handler %s, of type %s @ %s", c.Name, c.Handler.Type, c.Path)
+		log.Infof(ctx, "Handler registered: module=%s, type=%s, path=%s", c.Name, c.Handler.Type, c.Path)
 		mux.Handle(c.Path, h)
 	}
+	log.Infof(ctx, "All modules registered successfully")
 	return nil
 }
 

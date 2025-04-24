@@ -31,14 +31,17 @@ func newSignStep(signer definition.Signer, km definition.KeyManager) (definition
 
 // Run executes the signing step.
 func (s *signStep) Run(ctx *model.StepContext) error {
+	log.Infof(ctx, "Executing sign step for subscriber: %s", ctx.SubID)
 	keyID, key, err := s.km.SigningPrivateKey(ctx, ctx.SubID)
 	if err != nil {
+		log.Errorf(ctx, err, "Unable to fetch private signing key for %s", ctx.SubID)
 		return fmt.Errorf("failed to get signing key: %w", err)
 	}
 	createdAt := time.Now().Unix()
 	validTill := time.Now().Add(5 * time.Minute).Unix()
 	sign, err := s.signer.Sign(ctx, ctx.Body, key, createdAt, validTill)
 	if err != nil {
+		log.Errorf(ctx, err, "Signing failed for subscriber: %s", ctx.SubID)
 		return fmt.Errorf("failed to sign request: %w", err)
 	}
 
@@ -49,6 +52,8 @@ func (s *signStep) Run(ctx *model.StepContext) error {
 		header = model.AuthHeaderGateway
 	}
 	ctx.Request.Header.Set(header, authHeader)
+	log.Debugf(ctx, "Authorization header set for %s: %s", header, authHeader)
+	log.Infof(ctx, "Signing completed for subscriber: %s", ctx.SubID)
 	return nil
 }
 
@@ -80,23 +85,28 @@ func newValidateSignStep(signValidator definition.SignValidator, km definition.K
 
 // Run executes the validation step.
 func (s *validateSignStep) Run(ctx *model.StepContext) error {
+	log.Infof(ctx, "Executing signature validation step for subscriber: %s", ctx.SubID)
 	unauthHeader := fmt.Sprintf("Signature realm=\"%s\",headers=\"(created) (expires) digest\"", ctx.SubID)
 	headerValue := ctx.Request.Header.Get(model.AuthHeaderGateway)
 	if len(headerValue) != 0 {
 		if err := s.validate(ctx, headerValue); err != nil {
+			log.Errorf(ctx, err, "Invalid gateway signature header")
 			ctx.RespHeader.Set(model.UnaAuthorizedHeaderGateway, unauthHeader)
 			return model.NewSignValidationErr(fmt.Errorf("failed to validate %s: %w", model.AuthHeaderGateway, err))
 		}
 	}
 	headerValue = ctx.Request.Header.Get(model.AuthHeaderSubscriber)
 	if len(headerValue) == 0 {
+		log.Warnf(ctx, "Subscriber signature header is missing")
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
 		return model.NewSignValidationErr(fmt.Errorf("%s missing", model.UnaAuthorizedHeaderSubscriber))
 	}
 	if err := s.validate(ctx, headerValue); err != nil {
+		log.Errorf(ctx, err, "Subscriber signature validation failed")
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
 		return model.NewSignValidationErr(fmt.Errorf("failed to validate %s: %w", model.AuthHeaderSubscriber, err))
 	}
+	log.Infof(ctx, "Signature validation successful for subscriber: %s", ctx.SubID)
 	return nil
 }
 
@@ -109,6 +119,7 @@ func (s *validateSignStep) validate(ctx *model.StepContext, value string) error 
 	}
 	subID := ids[1]
 	keyID := headerParts[1]
+	log.Debugf(ctx, "Validating signature for subID: %s, keyID: %s", subID, keyID)
 	key, err := s.km.SigningPublicKey(ctx, subID, keyID)
 	if err != nil {
 		return fmt.Errorf("failed to get validation key: %w", err)
@@ -129,15 +140,18 @@ func newValidateSchemaStep(schemaValidator definition.SchemaValidator) (definiti
 	if schemaValidator == nil {
 		return nil, fmt.Errorf("invalid config: SchemaValidator plugin not configured")
 	}
-	log.Debug(context.Background(), "adding schema validator")
+	log.Debug(context.Background(), "SchemaValidator plugin loaded")
 	return &validateSchemaStep{validator: schemaValidator}, nil
 }
 
 // Run executes the schema validation step.
 func (s *validateSchemaStep) Run(ctx *model.StepContext) error {
+	log.Infof(ctx, "Executing schema validation for URL: %s", ctx.Request.URL.Path)
 	if err := s.validator.Validate(ctx, ctx.Request.URL, ctx.Body); err != nil {
+		log.Errorf(ctx, err, "Schema validation failed")
 		return fmt.Errorf("schema validation failed: %w", err)
 	}
+	log.Infof(ctx, "Schema validation successful")
 	return nil
 }
 
@@ -156,8 +170,10 @@ func newAddRouteStep(router definition.Router) (definition.Step, error) {
 
 // Run executes the routing step.
 func (s *addRouteStep) Run(ctx *model.StepContext) error {
+	log.Infof(ctx, "Executing routing step")
 	route, err := s.router.Route(ctx, ctx.Request.URL, ctx.Body)
 	if err != nil {
+		log.Errorf(ctx, err, "Failed to determine route")
 		return fmt.Errorf("failed to determine route: %w", err)
 	}
 	ctx.Route = &model.Route{
@@ -165,5 +181,6 @@ func (s *addRouteStep) Run(ctx *model.StepContext) error {
 		PublisherID: route.PublisherID,
 		URL:         route.URL,
 	}
+	log.Infof(ctx, "Route determined: TargetType=%s, PublisherID=%s, URL=%v", route.TargetType, route.PublisherID, route.URL)
 	return nil
 }

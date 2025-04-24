@@ -55,15 +55,19 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Errorf(r.Context(), err, "stepCtx(r):%v", err)
 		response.SendNack(r.Context(), w, err)
+		log.Infof(r.Context(), "NACK sent due to stepCtx error")
 		return
 	}
+	log.Infof(ctx, "Request received for path: %s", r.URL.Path)
 	log.Request(r.Context(), r, ctx.Body)
 
 	// Execute processing steps.
 	for _, step := range h.steps {
+		log.Debugf(ctx, "Running step: %T", step)
 		if err := step.Run(ctx); err != nil {
 			log.Errorf(ctx, err, "%T.run(%v):%v", step, ctx, err)
 			response.SendNack(ctx, w, err)
+			log.Infof(ctx, "NACK sent due to step error")
 			return
 		}
 	}
@@ -71,6 +75,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewReader(ctx.Body))
 	if ctx.Route == nil {
 		response.SendAck(w)
+		log.Infof(ctx, "ACK sent")
 		return
 	}
 
