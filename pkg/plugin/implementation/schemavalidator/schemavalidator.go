@@ -19,8 +19,25 @@ import (
 // Payload represents the structure of the data payload with context information.
 type payload struct {
 	Context struct {
-		Domain  string `json:"domain"`
-		Version string `json:"version"`
+		Domain        string `json:"domain"`
+		Version       string `json:"version"`
+		Action        string `json:"action"`
+		BapID         string `json:"bap_id"`
+		BapURI        string `json:"bap_uri"`
+		BppID         string `json:"bpp_id"`
+		BppURI        string `json:"bpp_uri"`
+		MessageID     string `json:"message_id"`
+		TransactionID string `json:"transaction_id"`
+		Timestamp     string `json:"timestamp"`
+		TTL           string `json:"ttl"`
+		Location      struct {
+			Country struct {
+				Code string `json:"code"`
+			} `json:"country"`
+			City struct {
+				Code string `json:"code"`
+			} `json:"city"`
+		} `json:"location"`
 	} `json:"context"`
 }
 
@@ -59,6 +76,10 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 	err := json.Unmarshal(data, &payloadData)
 	if err != nil {
 		return model.NewBadReqErr(fmt.Errorf("failed to parse JSON payload: %v", err))
+	}
+
+	if err := validateContext(payloadData); err != nil {
+		return err
 	}
 
 	// Extract domain, version, and endpoint from the payload and uri.
@@ -109,6 +130,52 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 
 	// Return nil if validation succeeds
 	return nil
+}
+
+func validateContext(p payload) error {
+	// Validate the payload context fields FIRST
+	if p.Context.Domain == "" {
+		return fmt.Errorf("missing field Domain in context")
+	}
+	if p.Context.Version == "" {
+		return fmt.Errorf("missing field Version in context")
+	}
+	if p.Context.Action == "" {
+		return fmt.Errorf("missing field action in context")
+	}
+	if p.Context.BapID == "" {
+		return fmt.Errorf("missing field bpp_id in context")
+	}
+	if p.Context.BapURI == "" {
+		return fmt.Errorf("missing field bpp_uri in context")
+	}
+	if p.Context.BppID == "" {
+		return fmt.Errorf("missing field bpp_id in context")
+	}
+
+	if p.Context.BppURI == "" {
+		return fmt.Errorf("missing field bpp_uri in context")
+	}
+	if p.Context.MessageID == "" {
+		return fmt.Errorf("missing field message_id in context")
+	}
+	if p.Context.TransactionID == "" {
+		return fmt.Errorf("missing field transaction_id in context")
+	}
+	if p.Context.Timestamp == "" {
+		return fmt.Errorf("missing field timestamp in context")
+	}
+	if p.Context.TTL == "" {
+		return fmt.Errorf("missing field ttl in context")
+	}
+	if p.Context.Location.Country.Code == "" {
+		return fmt.Errorf("missing Location.Country.Code in context")
+	}
+	if p.Context.Location.City.Code == "" {
+		return fmt.Errorf("missing field Location.City.Code in context")
+	}
+	return nil
+
 }
 
 // Initialise initialises the validator provider by compiling all the JSON schema files
