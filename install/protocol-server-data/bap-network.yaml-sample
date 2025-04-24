@@ -132,5 +132,14 @@ app:
     syncInterval: 30
     redis_db: 3
 
+  useHMACForWebhook: false
+  sharedKeyForWebhookHMAC: ""
+
   useLayer2Config: USE_LAYER_2_CONFIG
   mandateLayer2Config: MANDATE_LAYER_2_CONFIG
+
+  openAPIValidator:
+    cachedFileLimit: 5
+    initialFilesToCache: ""
+
+  streamOnSearch: false

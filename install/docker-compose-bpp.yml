@@ -1,8 +1,8 @@
 services:
   bpp-client:
-    image: fidedocker/protocol-server
+    image: fidedocker/protocol-server:multiarch
     container_name: bpp-client
-    platform: linux/amd64
+    # platform: linux/amd64
     networks:
       - beckn_network
     ports:
@@ -14,9 +14,9 @@ services:
       - bpp_client_logs_volume:/usr/src/app/logs
 
   bpp-network:
-    image: fidedocker/protocol-server
+    image: fidedocker/protocol-server:multiarch
     container_name: bpp-network
-    platform: linux/amd64
+    # platform: linux/amd64
     networks:
       - beckn_network
     ports:

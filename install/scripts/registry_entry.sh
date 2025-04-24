@@ -45,14 +45,13 @@ create_network_participant() {
 EOF
 )
     echo "json_data: $json_data"
-
     response=$(curl --location "$registry_url/subscribers/subscribe" \
     --header "Authorization: Bearer $api_key" \
     --header "Content-Type: $content_type" \
     --data "$json_data" 2>&1)
     if [ $? -eq 0 ]; then
         
-        echo "${GREEN}Network Participant Entry is created. Please login to registry $registry_url and subscribe you Network Participant.${NC}"
+        echo "${GREEN}Network Participant Entry is created. And subscribed to the registry $registry_url. ${NC}"
     else
         echo "${RED}Error: $response${NC}"
     fi
