@@ -126,6 +126,7 @@ else
     done
 fi
 
-echo "Registering BPP protocol server on the registry"
+# Commenting out the create_network_participant function call from here as it will be called after the container is started
+# echo "Registering BPP protocol server on the registry"
 
-create_network_participant "$registry_url" "application/json" "$bpp_subscriber_id" "$bpp_subscriber_key_id" "$bpp_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type" "$api_key" "$np_domain"
+# create_network_participant "$registry_url" "application/json" "$bpp_subscriber_id" "$bpp_subscriber_key_id" "$bpp_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type" "$api_key" "$np_domain"

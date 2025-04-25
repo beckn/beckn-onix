@@ -1,8 +1,8 @@
 services:
   bap-client:
-    image: fidedocker/protocol-server
+    image: fidedocker/protocol-server:multiarch
     container_name: bap-client
-    platform: linux/amd64
+    # platform: linux/amd64
     networks:
       - beckn_network
     ports:
@@ -14,9 +14,9 @@ services:
       - bap_client_logs_volume:/usr/src/app/logs
 
   bap-network:
-    image: fidedocker/protocol-server
+    image: fidedocker/protocol-server:multiarch
     container_name: bap-network
-    platform: linux/amd64
+    # platform: linux/amd64
     networks:
       - beckn_network
     ports:

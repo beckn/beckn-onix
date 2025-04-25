@@ -18,6 +18,12 @@ if [ $? -eq 0 ]; then
     public_key=$(echo "$public_key" | tr -d '[:space:]')
     private_key=$(echo "$private_key" | tr -d '[:space:]')
 
+    # Export public key as global variable
+    # Export both variables
+    export public_key
+    export public_key_global="$public_key"
+    echo "Public Key inside generate_keys.sh: $public_key"
+
 else
     # Print an error message if the script failed
     echo "${RED}Error: Key generation script failed. Please check the script output.${NC}"

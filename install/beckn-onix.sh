@@ -1,6 +1,7 @@
 #!/bin/bash
 source scripts/variables.sh
 source scripts/get_container_details.sh
+source scripts/registry_entry.sh
 
 # Function to start a specific service inside docker-compose file
 install_package() {
@@ -130,17 +131,23 @@ install_layer2_config() {
 
 # Function to install BAP Protocol Server
 install_bap_protocol_server() {
-    start_support_services
+    start_support_services # Start MongoDB, RabbitMQ, and Redis services
+     # POST containers are started, now update the configuration
     if [[ $1 ]]; then
+        # If parameters are provided, use them to update the configuration
         registry_url=$1
         bap_subscriber_id=$2
         bap_subscriber_key_id=$3
         bap_subscriber_url=$4
-        bash scripts/update_bap_config.sh $registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url $api_key $np_domain
+        source scripts/update_bap_config.sh $registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url $api_key "$np_domain"
     else
-        bash scripts/update_bap_config.sh
+        # If no parameters are provided, use the default configuration
+        source scripts/update_bap_config.sh
     fi
+
+    
     sleep 10
+    
     docker volume create bap_client_config_volume
     docker volume create bap_network_config_volume
     docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_client_config_volume:/target busybox cp /source/bap-client.yml /target/default.yml
@@ -161,26 +168,63 @@ install_bap_protocol_server() {
         install_layer2_config bap-client
         install_layer2_config bap-network
     fi
+
+
+    
+    # Keep trying API call until we get 200 status
+    status_code=0
+    attempt=1
+    max_attempts=10
+    
+    while [ $status_code -ne 200 ]; do
+        echo "Checking BAP protocol server health..."
+        
+        response=$(curl -s -w "%{http_code}" --location "$bap_subscriber_url/health" \
+            -H "Content-Type: application/json")
+            
+        status_code="${response: -3}"
+        
+        if [ $status_code -eq 200 ]; then
+            echo "${GREEN}BAP protocol server is up and running${NC}"
+            break
+        else
+            echo "${YELLOW}BAP protocol server not ready yet (status: $status_code). Retrying in 5 seconds...${NC}"
+            sleep 5
+            ((attempt++))
+        fi
+    done
+    
+   
+
+    echo "${BLUE}Registering BAP protocol server on the registry${NC}"
+    create_network_participant "$registry_url" "application/json" "$bap_subscriber_id" "$bap_subscriber_key_id" "$bap_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type" "$api_key" "$np_domain"
+
+     
     echo "Protocol server BAP installation successful"
 }
 
 # Function to install BPP Protocol Server without Sandbox
 install_bpp_protocol_server() {
-    start_support_services
+    start_support_services # Start MongoDB, RabbitMQ, and Redis services
+    # POST containers are started, now update the configuration 
     echo "${GREEN}................Installing Protocol Server for BPP................${NC}"
 
     if [[ $1 ]]; then
+        # If parameters are provided, use them to update the configuration
         registry_url=$1
         bpp_subscriber_id=$2
         bpp_subscriber_key_id=$3
         bpp_subscriber_url=$4
-        webhook_url=$5
-        bash scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url $api_key $np_domain
+        webhook_url=$5 
+        source scripts/update_bpp_config.sh $registry_url $bpp_subscriber_id $bpp_subscriber_key_id $bpp_subscriber_url $webhook_url $api_key "$np_domain"
+    
     else
-        bash scripts/update_bpp_config.sh
+        # If no parameters are provided, use the default configuration
+        source scripts/update_bpp_config.sh
     fi
 
     sleep 10
+
     docker volume create bpp_client_config_volume
     docker volume create bpp_network_config_volume
     docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bpp_client_config_volume:/target busybox cp /source/bpp-client.yml /target/default.yml
@@ -200,6 +244,33 @@ install_bpp_protocol_server() {
         install_layer2_config bpp-client
         install_layer2_config bpp-network
     fi
+
+    # Keep trying API call until we get 200 status
+    status_code=0
+    attempt=1
+    max_attempts=10
+
+    while [ $status_code -ne 200 ]; do
+        echo "Checking BPP protocol server health..."
+        
+        response=$(curl -s -w "%{http_code}" --location "$bpp_subscriber_url/health" \
+            -H "Content-Type: application/json")
+
+        status_code="${response: -3}"
+        
+        if [ $status_code -eq 200 ]; then
+            echo "${GREEN}BPP protocol server is up and running${NC}"
+            break
+        else
+            echo "${YELLOW}BPP protocol server not ready yet (status: $status_code). Retrying in 5 seconds...${NC}"
+            sleep 5
+            ((attempt++))
+        fi
+    done    
+
+    echo "${BLUE}Registering BPP protocol server on the registry${NC}"
+    create_network_participant "$registry_url" "application/json" "$bpp_subscriber_id" "$bpp_subscriber_key_id" "$bpp_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type" "$api_key" "$np_domain"
+
     echo "Protocol server BPP installation successful"
 }
 
@@ -328,29 +399,32 @@ validate_user() {
     echo      # Move to a new line after input
 
     # Replace '/subscribers' with '/login' for validation
-    local login_url="${registry_url%/subscribers}/login"
-
+    local login_url="${registry_url%/subscribers}/auth/local"
+ 
+    
     # Validate credentials using a POST request
     local response
-    response=$(curl -s -w "%{http_code}" -X POST "$login_url" \
+    response=$(curl -s -w "%{http_code}" --location "$login_url" \
         -H "Content-Type: application/json" \
-        -d '{ "Name" : "'"$username"'", "Password" : "'"$password"'" }')
-
+        -d '{ "identifier": "'"$username"'", "password": "'"$password"'" }')
+   
+   
     # Check if the HTTP response is 200 (success)
     status_code="${response: -3}"
     if [ "$status_code" -eq 200 ]; then
         response_body="${response%???}"
-        api_key=$(echo "$response_body" | jq -r '.api_key')
+        api_key=$(echo "$response_body" | jq -r '.jwt')
+       
         return 0
     else
-        response=$(curl -s -w "%{http_code}" -X POST "$login_url" \
-            -H "Content-Type: application/json" \
-            -d '{ "User" : { "Name" : "'"$username"'", "Password" : "'"$password"'" }}')
+        response=$(curl -s -w "%{http_code}" --location "$login_url" \
+        -H "Content-Type: application/json" \
+        -d '{ "identifier": "'"$username"'", "password": "'"$password"'" }')
 
         status_code="${response: -3}"
         if [ "$status_code" -eq 200 ]; then
             response_body="${response%???}"
-            api_key=$(echo "$response_body" | jq -r '.api_key')
+            api_key=$(echo "$response_body" | jq -r '.jwt')
             return 0
         fi
     fi
@@ -368,15 +442,18 @@ get_np_domain() {
     if [[ "$dchoice" == "Y" || "$dchoice" == "y" ]]; then
         local login_url="${registry_url%/subscribers}"
         read -p "Enter the domain name for $1 : " np_domain
-        domain_present=$(curl -s -H "ApiKey:$api_key" --header 'Content-Type: application/json' $login_url/network_domains/index | jq -r '.[].name' | tr '\n' ' ')
+        echo "login_url: $login_url/network_domains/index"
+   
+        domain_present=$(curl -s --header 'Content-Type: application/json' $login_url/network_domains | jq -r '.[].name' | tr '\n' ' ')
         if echo "$domain_present" | grep -Fqw "$np_domain"; then
+            echo "The domain '$np_domain' is present in the network domains."
             return 0
         else
             echo "${BoldRed}The domain '$np_domain' is NOT present in the network domains.${NC}"
             echo "${BoldGreen}Available network domains: $domain_present ${NC}"
         fi
     else
-        np_domain=" " #If user don't want to add specific domain then save empty string
+        np_domain="*" #If user don't want to add specific domain then save "*"
         return 0
     fi
 }
@@ -430,31 +507,40 @@ completeSetup() {
         install_gateway $registry_url $gateway_url
         ;;
     "BAP")
+        # Display installation header
         echo "${GREEN}................Installing Protocol Server for BAP................${NC}"
 
+        # Step 1: Get BAP Subscriber ID
         read -p "Enter BAP Subscriber ID: " bap_subscriber_id
+        
+        # Step 2: Get and validate BAP Subscriber URL
         while true; do
             read -p "Enter BAP Subscriber URL: " bap_subscriber_url
             if [[ $bap_subscriber_url =~ ^(http|https):// ]]; then
-                break
+                break # Valid URL format, exit loop
             else
                 echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
             fi
         done
 
+        # Step 3: Get and validate Registry URL
         while true; do
             read -p "Enter the registry URL (e.g., https://registry.becknprotocol.io/subscribers): " registry_url
-            if [[ $registry_url =~ ^(http|https):// ]] && [[ $registry_url == */subscribers ]]; then
-                break
+            # Check if URL starts with http/https AND ends with /subscribers
+            if [[ $registry_url =~ ^(http|https):// ]]; then
+                break # Valid URL format, exit loop
             else
                 echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
             fi
         done
+        
+        # Step 4: Validate user credentials
         validate_user
         if [ $? -eq 1 ]; then
             exit
         fi
 
+        # Step 5: Get and validate NP Domain
         get_np_domain $bap_subscriber_id
         if [ $? -eq 1 ]; then
             exit
@@ -466,20 +552,28 @@ completeSetup() {
         layer2_config
         install_package
         install_bap_protocol_server $registry_url $bap_subscriber_id $bap_subscriber_key_id $bap_subscriber_url
+      
+       
         ;;
     "BPP")
-        echo "${GREEN}................Installing Protocol Server for BPP................${NC}"
 
+        # Display installation header
+        echo "${GREEN}................Installing Protocol Server for BPP................${NC}"
+        
+        # Step 1: Get BPP Subscriber ID
         read -p "Enter BPP Subscriber ID: " bpp_subscriber_id
+        
+        # Step 2: Get and validate BPP Subscriber URL
         while true; do
             read -p "Enter BPP Subscriber URL: " bpp_subscriber_url
             if [[ $bpp_subscriber_url =~ ^(http|https):// ]]; then
-                break
+                break # Valid URL format, exit loop
             else
                 echo "${RED}Invalid URL format. Please enter a valid URL starting with http:// or https://.${NC}"
             fi
         done
 
+        # Step 3: Get and validate Webhook URL
         while true; do
             read -p "Enter Webhook URL: " webhook_url
             if [[ $webhook_url =~ ^(http|https):// ]]; then
@@ -489,19 +583,23 @@ completeSetup() {
             fi
         done
 
+        # Step 4: Get and validate Registry URL
         while true; do
             read -p "Enter the registry URL (e.g., https://registry.becknprotocol.io/subscribers): " registry_url
-            if [[ $registry_url =~ ^(http|https):// ]] && [[ $registry_url == */subscribers ]]; then
-                break
+            if [[ $registry_url =~ ^(http|https):// ]]; then
+                break # Valid URL format, exit loop
             else
                 echo "${RED}Please mention /subscribers in your registry URL${NC}"
             fi
         done
+
+        # Step 5: Validate user credentials
         validate_user
         if [ $? -eq 1 ]; then
             exit
         fi
 
+        # Step 6: Get and validate NP Domain
         get_np_domain $bpp_subscriber_id
         if [ $? -eq 1 ]; then
             exit

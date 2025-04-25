@@ -119,6 +119,8 @@ else
     done
 fi
 
-echo "Registering BAP protocol server on the registry"
 
-create_network_participant "$registry_url" "application/json" "$bap_subscriber_id" "$bap_subscriber_key_id" "$bap_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type" "$api_key" "$np_domain"
+# Commenting out the create_network_participant function call from here as it will be called after the container is started
+# echo "Registering BAP protocol server on the registry"
+
+# create_network_participant "$registry_url" "application/json" "$bap_subscriber_id" "$bap_subscriber_key_id" "$bap_subscriber_url" "$public_key" "$public_key" "$valid_from" "$valid_until" "$type" "$api_key" "$np_domain"

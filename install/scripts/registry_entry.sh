@@ -15,32 +15,43 @@ create_network_participant() {
         type="${10}"
         api_key="${11}"
         np_domain="${12}"
-
+    
     json_data=$(cat <<EOF
         {
             "subscriber_id": "$subscriber_id",
-            "pub_key_id": "$pub_key_id",
-            "unique_key_id": "$pub_key_id",
-            "subscriber_url": "$subscriber_url",
-            "domain": "$np_domain",
-            "extended_attributes": {"domains": []},
-            "encr_public_key": "$encr_public_key",
+            "url": "$subscriber_url",
+            "type": "$type",
+            "domain": "${np_domain}",
+            "location": {
+                "city": {
+                    "name": "Bangalore",
+                    "code": "BLR"
+                },
+                "country": {
+                    "name": "India", 
+                    "code": "IN"
+                }
+            },
+            "key_id": "$pub_key_id",
             "signing_public_key": "$signing_public_key",
+            "encr_public_key": "$encr_public_key",
             "valid_from": "$valid_from",
             "valid_until": "$valid_until",
-            "type": "$type",
-            "country": "IND",
-            "status": "SUBSCRIBED"
-        }
+            "created": "$valid_from",
+            "updated": "$valid_from",
+            "nonce": "$pub_key_id"
+}
+        
 EOF
 )
-
-    response=$(curl --location --request POST "$registry_url/register" \
-    --header "ApiKey:$api_key" --header "Content-Type: $content_type" \
-    --data-raw "$json_data" 2>&1)
+    echo "json_data: $json_data"
+    response=$(curl --location "$registry_url/subscribers/subscribe" \
+    --header "Authorization: Bearer $api_key" \
+    --header "Content-Type: $content_type" \
+    --data "$json_data" 2>&1)
     if [ $? -eq 0 ]; then
         
-        echo "${GREEN}Network Participant Entry is created. Please login to registry $registry_url and subscribe you Network Participant.${NC}"
+        echo "${GREEN}Network Participant Entry is created. And subscribed to the registry $registry_url. ${NC}"
     else
         echo "${RED}Error: $response${NC}"
     fi
