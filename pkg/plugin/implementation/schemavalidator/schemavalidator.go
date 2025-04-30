@@ -21,7 +21,6 @@ type payload struct {
 	Context struct {
 		Domain  string `json:"domain"`
 		Version string `json:"version"`
-		Action  string `json:"action"`
 	} `json:"context"`
 }
 
@@ -63,10 +62,10 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 	}
 
 	if payloadData.Context.Domain == "" {
-		return fmt.Errorf("missing field Domain in context")
+		return model.NewBadReqErr(fmt.Errorf("missing field Domain in context"))
 	}
 	if payloadData.Context.Version == "" {
-		return fmt.Errorf("missing field Version in context")
+		return model.NewBadReqErr(fmt.Errorf("missing field Version in context"))
 	}
 
 	// Extract domain, version, and endpoint from the payload and uri.
