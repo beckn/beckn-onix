@@ -29,7 +29,7 @@ var handlerProviders = map[handler.Type]Provider{
 // It iterates over the module configurations, retrieves appropriate handler providers,
 // and registers the handlers with the HTTP multiplexer.
 func Register(ctx context.Context, mCfgs []Config, mux *http.ServeMux, mgr handler.PluginManager) error {
-	log.Debugf(ctx, "Registering modules with config: %#v", mCfgs)
+	log.Infof(ctx, "Registering modules with config: %#v", mCfgs)
 	// Iterate over the handlers in the configuration.
 	for _, c := range mCfgs {
 		rmp, ok := handlerProviders[c.Handler.Type]
@@ -46,7 +46,7 @@ func Register(ctx context.Context, mCfgs []Config, mux *http.ServeMux, mgr handl
 
 		}
 		h = moduleCtxMiddleware(c.Name, h)
-		log.Debugf(ctx, "Registering handler %s, of type %s @ %s", c.Name, c.Handler.Type, c.Path)
+		log.Infof(ctx, "Registering handler %s, of type %s @ %s", c.Name, c.Handler.Type, c.Path)
 		mux.Handle(c.Path, h)
 	}
 	return nil

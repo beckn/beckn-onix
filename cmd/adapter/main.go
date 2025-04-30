@@ -98,6 +98,7 @@ func newServer(ctx context.Context, mgr handler.PluginManager, cfg *Config) (htt
 	if err != nil {
 		return nil, fmt.Errorf("failed to register modules: %w", err)
 	}
+	log.Infof(ctx, "Modules registered successfully")
 	return mux, nil
 }
 

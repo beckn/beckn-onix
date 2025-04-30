@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/beckn/beckn-onix/pkg/log"
 	"github.com/beckn/beckn-onix/pkg/model"
 	"github.com/hashicorp/go-retryablehttp"
 )
@@ -48,7 +49,7 @@ func (c *registryClient) Subscribe(ctx context.Context, subscription *model.Subs
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-
+	log.Infof(ctx, "Request forwarded to %s", subscribeURL)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request with retry: %w", err)
@@ -75,7 +76,7 @@ func (c *registryClient) Lookup(ctx context.Context, subscription *model.Subscri
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-
+	log.Infof(ctx, "Request forwarded to %s", lookupURL)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request with retry: %w", err)

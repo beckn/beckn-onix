@@ -193,29 +193,42 @@ func loadKeyManager(ctx context.Context, mgr PluginManager, cache definition.Cac
 // initPlugins initializes required plugins for the processor.
 func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *PluginCfg, regURL string) error {
 	var err error
+	log.Infof(ctx, "Initializing Cache plugin: %s", cfg.Cache)
 	if h.cache, err = loadPlugin(ctx, "Cache", cfg.Cache, mgr.Cache); err != nil {
 		return err
 	}
+
+	log.Infof(ctx, "Initializing KeyManager plugin: %s", cfg.KeyManager)
 	if h.km, err = loadKeyManager(ctx, mgr, h.cache, cfg.KeyManager, regURL); err != nil {
 		return err
 	}
+
+	log.Infof(ctx, "Initializing SignValidator plugin: %s", cfg.SignValidator)
 	if h.signValidator, err = loadPlugin(ctx, "SignValidator", cfg.SignValidator, mgr.SignValidator); err != nil {
 		return err
 	}
+
+	log.Infof(ctx, "Initializing SchemaValidator plugin: %s", cfg.SchemaValidator)
 	if h.schemaValidator, err = loadPlugin(ctx, "SchemaValidator", cfg.SchemaValidator, mgr.SchemaValidator); err != nil {
 		return err
 	}
+
+	log.Infof(ctx, "Initializing Router plugin: %s", cfg.Router)
 	if h.router, err = loadPlugin(ctx, "Router", cfg.Router, mgr.Router); err != nil {
 		return err
 	}
+
+	log.Infof(ctx, "Initializing Publisher plugin: %s", cfg.Publisher)
 	if h.publisher, err = loadPlugin(ctx, "Publisher", cfg.Publisher, mgr.Publisher); err != nil {
 		return err
 	}
+
+	log.Infof(ctx, "Initializing Signer plugin: %s", cfg.Signer)
 	if h.signer, err = loadPlugin(ctx, "Signer", cfg.Signer, mgr.Signer); err != nil {
 		return err
 	}
 
-	log.Debugf(ctx, "All required plugins successfully loaded for stdHandler")
+	log.Infof(ctx, "All required plugins successfully initialized for stdHandler")
 	return nil
 }
 
