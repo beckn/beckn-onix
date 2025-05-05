@@ -61,6 +61,13 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 		return model.NewBadReqErr(fmt.Errorf("failed to parse JSON payload: %v", err))
 	}
 
+	if payloadData.Context.Domain == "" {
+		return model.NewBadReqErr(fmt.Errorf("missing field Domain in context"))
+	}
+	if payloadData.Context.Version == "" {
+		return model.NewBadReqErr(fmt.Errorf("missing field Version in context"))
+	}
+
 	// Extract domain, version, and endpoint from the payload and uri.
 	cxtDomain := payloadData.Context.Domain
 	version := payloadData.Context.Version
