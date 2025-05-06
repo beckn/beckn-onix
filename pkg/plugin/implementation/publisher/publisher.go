@@ -22,10 +22,15 @@ type Config struct {
 	UseTLS     bool
 }
 
+// Channel defines the interface for publishing messages to RabbitMQ.
+type Channel interface {
+	PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp091.Publishing) error
+}
+
 // Publisher manages the RabbitMQ connection and channel to publish messages.
 type Publisher struct {
 	Conn    *amqp091.Connection
-	Channel *amqp091.Channel
+	Channel Channel
 	Config  *Config
 }
 
