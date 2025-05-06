@@ -1,8 +1,12 @@
 package publisher
 
 import (
+	"context"
+	"errors"
 	"os"
 	"testing"
+
+	"github.com/rabbitmq/amqp091-go"
 )
 
 func TestGetConnURLSuccess(t *testing.T) {
@@ -146,5 +150,71 @@ func TestValidateFailure(t *testing.T) {
 				t.Errorf("expected error for invalid config, got nil")
 			}
 		})
+	}
+}
+
+type mockChannel struct {
+	published bool
+	args      amqp091.Publishing
+	exchange  string
+	key       string
+	fail      bool
+}
+
+func (m *mockChannel) PublishWithContext(
+	_ context.Context,
+	exchange, key string,
+	mandatory, immediate bool,
+	msg amqp091.Publishing,
+) error {
+	if m.fail {
+		return errors.New("mock publish failure")
+	}
+	m.published = true
+	m.args = msg
+	m.exchange = exchange
+	m.key = key
+	return nil
+}
+
+func TestPublishSuccess(t *testing.T) {
+	mockCh := &mockChannel{}
+
+	p := &Publisher{
+		Channel: mockCh,
+		Config: &Config{
+			Exchange:   "mock.exchange",
+			RoutingKey: "mock.key",
+		},
+	}
+
+	err := p.Publish(context.Background(), "", []byte(`{"test": true}`))
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+
+	if !mockCh.published {
+		t.Error("expected message to be published, but it wasn't")
+	}
+
+	if mockCh.exchange != "mock.exchange" || mockCh.key != "mock.key" {
+		t.Errorf("unexpected exchange or key. got (%s, %s)", mockCh.exchange, mockCh.key)
+	}
+}
+
+func TestPublishFailure(t *testing.T) {
+	mockCh := &mockChannel{fail: true}
+
+	p := &Publisher{
+		Channel: mockCh,
+		Config: &Config{
+			Exchange:   "mock.exchange",
+			RoutingKey: "mock.key",
+		},
+	}
+
+	err := p.Publish(context.Background(), "", []byte(`{"test": true}`))
+	if err == nil {
+		t.Error("expected error from failed publish, got nil")
 	}
 }
