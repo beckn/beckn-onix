@@ -228,7 +228,8 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 		return err
 	}
 
-	log.Infof(ctx, "All required plugins successfully initialized for stdHandler")
+	log.Debugf(ctx, "All required plugins successfully loaded for stdHandler")
+	// log.Infof(ctx, "All required plugins successfully initialized for stdHandler")
 	return nil
 }
 
