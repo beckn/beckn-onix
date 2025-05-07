@@ -1,4 +1,4 @@
-package registery
+package registry
 
 import (
 	"context"
@@ -111,7 +111,7 @@ func TestRegistryLookupFailure(t *testing.T) {
 				if !strings.Contains(err.Error(), tt.expectedError) {
 					t.Fatalf("Expected error to contain '%s', got '%s'", tt.expectedError, err.Error())
 				}
-								return // Exit the test if the error matches
+				return // Exit the test if the error matches
 			}
 
 			// If no error occurred, fail the test
@@ -119,7 +119,6 @@ func TestRegistryLookupFailure(t *testing.T) {
 		})
 	}
 }
-
 
 func TestValidateConfigSuccess(t *testing.T) {
 	config := &Config{
@@ -134,7 +133,6 @@ func TestValidateConfigSuccess(t *testing.T) {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 }
-
 
 func TestValidateConfigErrors(t *testing.T) {
 	tests := []struct {
@@ -178,4 +176,3 @@ func TestValidateConfigErrors(t *testing.T) {
 		})
 	}
 }
-
