@@ -400,7 +400,8 @@ validate_user() {
 
     # Replace '/subscribers' with '/login' for validation
     local login_url="${registry_url%/subscribers}/auth/local"
- 
+
+    echo "Login URL: $login_url"
     
     # Validate credentials using a POST request
     local response
