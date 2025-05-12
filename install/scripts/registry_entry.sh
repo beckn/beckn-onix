@@ -24,12 +24,12 @@ create_network_participant() {
             "domain": "${np_domain}",
             "location": {
                 "city": {
-                    "name": "Bangalore",
-                    "code": "BLR"
+                    "name": "*",
+                    "code": "*"
                 },
                 "country": {
-                    "name": "India", 
-                    "code": "IN"
+                    "name": "*", 
+                    "code": "*"
                 }
             },
             "key_id": "$pub_key_id",
