@@ -87,10 +87,15 @@ func TestProviderNew(t *testing.T) {
 
 	// Save original environment variable and restore it after test
 	origPassword := os.Getenv("REDIS_PASSWORD")
-	defer os.Setenv("REDIS_PASSWORD", origPassword)
-
+	defer func() {
+		if err := os.Setenv("REDIS_PASSWORD", origPassword); err != nil {
+			t.Fatalf("Failed to restore REDIS_PASSWORD: %v", err)
+		}
+	}()
 	// Set an empty password for testing
-	os.Setenv("REDIS_PASSWORD", "")
+	if err := os.Setenv("REDIS_PASSWORD", ""); err != nil {
+		t.Fatalf("Failed to set REDIS_PASSWORD: %v", err)
+	}
 
 	tests := []struct {
 		name      string
@@ -140,6 +145,13 @@ func TestProviderIntegration(t *testing.T) {
 	if err := os.Setenv("REDIS_PASSWORD", ""); err != nil {
 		t.Fatalf("Failed to set REDIS_PASSWORD: %v", err)
 	}
+	
+	// Ensure we clean up the environment variable at the end
+	defer func() {
+		if err := os.Unsetenv("REDIS_PASSWORD"); err != nil {
+			t.Fatalf("Failed to unset REDIS_PASSWORD: %v", err)
+		}
+	}()
 
 	// Create provider and test with real Redis
 	provider := cacheProvider{}
@@ -153,7 +165,11 @@ func TestProviderIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create cache: %v", err)
 	}
-	defer cleanup()
+	defer func() {
+		if err := cleanup(); err != nil {
+			t.Fatalf("Failed to clean up Redis client: %v", err)
+		}
+	}()
 
 	// Verify it works by setting and getting a value
 	testKey := "provider_test_key"
