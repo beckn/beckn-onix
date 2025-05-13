@@ -10,12 +10,21 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// RedisClient is an interface for Redis operations that allows mocking
+type RedisClient interface {
+	Get(ctx context.Context, key string) *redis.StringCmd
+	Set(ctx context.Context, key string, value interface{}, ttl time.Duration) *redis.StatusCmd
+	Del(ctx context.Context, keys ...string) *redis.IntCmd
+	FlushDB(ctx context.Context) *redis.StatusCmd
+	Ping(ctx context.Context) *redis.StatusCmd
+}
+
 type Config struct {
 	Addr string
 }
 
 type Cache struct {
-	client *redis.Client
+	client RedisClient
 }
 
 var (
@@ -40,12 +49,7 @@ func New(ctx context.Context, cfg *Config) (*Cache, func() error, error) {
 		return nil, nil, err
 	}
 
-	// Get password from environment variable
 	password := os.Getenv("REDIS_PASSWORD")
-	// Allow empty password for local testing
-	// if password == "" {
-	// 	return nil, nil, ErrCredentialMissing
-	// }
 
 	client := redis.NewClient(&redis.Options{
 		Addr:     cfg.Addr,
