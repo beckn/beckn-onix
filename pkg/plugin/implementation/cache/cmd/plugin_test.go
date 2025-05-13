@@ -137,7 +137,9 @@ func TestProviderIntegration(t *testing.T) {
 	}
 
 	// Set an empty password for testing
-	os.Setenv("REDIS_PASSWORD", "")
+	if err := os.Setenv("REDIS_PASSWORD", ""); err != nil {
+		t.Fatalf("Failed to set REDIS_PASSWORD: %v", err)
+	}
 
 	// Create provider and test with real Redis
 	provider := cacheProvider{}
@@ -156,16 +158,16 @@ func TestProviderIntegration(t *testing.T) {
 	// Verify it works by setting and getting a value
 	testKey := "provider_test_key"
 	testValue := "provider_test_value"
-	
+
 	// Set a value
 	err = cache.Set(ctx, testKey, testValue, 0)
 	assert.NoError(t, err, "Set operation should not fail")
-	
+
 	// Get the value
 	got, err := cache.Get(ctx, testKey)
 	assert.NoError(t, err, "Get operation should not fail")
 	assert.Equal(t, testValue, got, "Should get the value that was set")
-	
+
 	// Clean up
 	err = cache.Delete(ctx, testKey)
 	assert.NoError(t, err, "Delete operation should not fail")
