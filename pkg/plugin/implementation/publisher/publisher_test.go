@@ -235,12 +235,6 @@ func (m *mockChannel) Close() error {
 	return nil
 }
 
-type mockConnection struct{}
-
-func (m *mockConnection) Close() error {
-	return nil
-}
-
 func TestNewPublisherSucess(t *testing.T) {
 	originalDialFunc := DialFunc
 	originalChannelFunc := ChannelFunc
@@ -282,18 +276,6 @@ func TestNewPublisherSucess(t *testing.T) {
 	if err := cleanup(); err != nil {
 		t.Errorf("Cleanup failed: %v", err)
 	}
-}
-
-type mockChannelFailDeclare struct{}
-
-func (m *mockChannelFailDeclare) PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp091.Publishing) error {
-	return nil
-}
-func (m *mockChannelFailDeclare) ExchangeDeclare(name, kind string, durable, autoDelete, internal, noWait bool, args amqp091.Table) error {
-	return fmt.Errorf("simulated exchange declare error")
-}
-func (m *mockChannelFailDeclare) Close() error {
-	return nil
 }
 
 func TestNewPublisherFailures(t *testing.T) {
