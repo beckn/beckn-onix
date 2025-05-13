@@ -41,11 +41,16 @@ func (m *MockRedisClient) Ping(ctx context.Context) *redis.StatusCmd {
 	return args.Get(0).(*redis.StatusCmd)
 }
 
+func (m *MockRedisClient) Close() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
 // TestCache_Get tests the Get method of the Cache type
 func TestCache_Get(t *testing.T) {
 	mockClient := new(MockRedisClient)
 	ctx := context.Background()
-	cache := &Cache{client: mockClient}
+	cache := &Cache{Client: mockClient}
 
 	mockClient.On("Get", ctx, "my-key").Return("my-value", nil)
 
@@ -59,7 +64,7 @@ func TestCache_Get(t *testing.T) {
 func TestCache_Set(t *testing.T) {
 	mockClient := new(MockRedisClient)
 	ctx := context.Background()
-	cache := &Cache{client: mockClient}
+	cache := &Cache{Client: mockClient}
 
 	mockClient.On("Set", ctx, "my-key", "my-value", time.Minute).Return("OK", nil)
 
@@ -72,7 +77,7 @@ func TestCache_Set(t *testing.T) {
 func TestCache_Delete(t *testing.T) {
 	mockClient := new(MockRedisClient)
 	ctx := context.Background()
-	cache := &Cache{client: mockClient}
+	cache := &Cache{Client: mockClient}
 
 	mockClient.On("Del", ctx, []string{"my-key"}).Return(1, nil)
 
@@ -85,7 +90,7 @@ func TestCache_Delete(t *testing.T) {
 func TestCache_Clear(t *testing.T) {
 	mockClient := new(MockRedisClient)
 	ctx := context.Background()
-	cache := &Cache{client: mockClient}
+	cache := &Cache{Client: mockClient}
 
 	mockClient.On("FlushDB", ctx).Return("OK", nil)
 
@@ -175,7 +180,7 @@ func TestNew_ConnectionFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to set REDIS_PASSWORD environment variable: %v", err)
 	}
-	
+
 	defer func() {
 		err := os.Unsetenv("REDIS_PASSWORD")
 		if err != nil {
