@@ -25,6 +25,8 @@ type Config struct {
 // Channel defines the interface for publishing messages to RabbitMQ.
 type Channel interface {
 	PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp091.Publishing) error
+	ExchangeDeclare(name, kind string, durable, autoDelete, internal, noWait bool, args amqp091.Table) error
+	Close() error
 }
 
 // Publisher manages the RabbitMQ connection and channel to publish messages.
@@ -121,4 +123,74 @@ func (p *Publisher) Publish(ctx context.Context, routingKey string, msg []byte) 
 
 	log.Infof(ctx, "Message published successfully to Exchange: %s, RoutingKey: %s", p.Config.Exchange, routingKey)
 	return nil
+}
+
+// DialFunc is a function variable used to establish a connection to RabbitMQ.
+var DialFunc = amqp091.Dial
+
+// ChannelFunc is a function variable used to open a channel on the given RabbitMQ connection.
+var ChannelFunc = func(conn *amqp091.Connection) (Channel, error) {
+	return conn.Channel()
+}
+
+// New initializes a new Publisher with the given config, opens a connection,
+// channel, and declares the exchange. Returns the publisher and a cleanup function.
+func New(cfg *Config) (*Publisher, func() error, error) {
+	// Step 1: Validate config
+	if err := Validate(cfg); err != nil {
+		return nil, nil, err
+	}
+
+	// Step 2: Build connection URL
+	connURL, err := GetConnURL(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %v", ErrConnectionFailed, err)
+	}
+
+	// Step 3: Dial connection
+	conn, err := DialFunc(connURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %v", ErrConnectionFailed, err)
+	}
+
+	// Step 4: Open channel
+	ch, err := ChannelFunc(conn)
+	if err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("%w: %v", ErrChannelFailed, err)
+	}
+
+	// Step 5: Declare exchange
+	if err := ch.ExchangeDeclare(
+		cfg.Exchange,
+		"topic",
+		cfg.Durable,
+		false,
+		false,
+		false,
+		nil,
+	); err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, nil, fmt.Errorf("%w: %v", ErrExchangeDeclare, err)
+	}
+
+	// Step 6: Construct publisher
+	pub := &Publisher{
+		Conn:    conn,
+		Channel: ch,
+		Config:  cfg,
+	}
+
+	cleanup := func() error {
+		if ch != nil {
+			_ = ch.Close()
+		}
+		if conn != nil {
+			return conn.Close()
+		}
+		return nil
+	}
+
+	return pub, cleanup, nil
 }
