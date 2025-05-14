@@ -3,7 +3,6 @@ package publisher
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
@@ -16,12 +15,13 @@ func TestGetConnURLSuccess(t *testing.T) {
 		config *Config
 	}{
 		{
-			name: "Valid config with credentials",
+			name: "Valid config with connection address",
 			config: &Config{
 				Addr:   "localhost:5672",
 				UseTLS: false,
 			},
 		},
+
 		{
 			name: "Valid config with vhost",
 			config: &Config{
@@ -29,11 +29,18 @@ func TestGetConnURLSuccess(t *testing.T) {
 				UseTLS: false,
 			},
 		},
+		{
+			name: "Addr with leading and trailing spaces",
+			config: &Config{
+				Addr:   "  localhost:5672/myvhost  ",
+				UseTLS: false,
+			},
+		},
 	}
 
 	// Set valid credentials
-	os.Setenv("RABBITMQ_USERNAME", "guest")
-	os.Setenv("RABBITMQ_PASSWORD", "guest")
+	t.Setenv("RABBITMQ_USERNAME", "guest")
+	t.Setenv("RABBITMQ_PASSWORD", "guest")
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -74,16 +81,12 @@ func TestGetConnURLFailure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.username == "" {
-				os.Unsetenv("RABBITMQ_USERNAME")
-			} else {
-				os.Setenv("RABBITMQ_USERNAME", tt.username)
+			if tt.username != "" {
+				t.Setenv("RABBITMQ_USERNAME", tt.username)
 			}
 
-			if tt.password == "" {
-				os.Unsetenv("RABBITMQ_PASSWORD")
-			} else {
-				os.Setenv("RABBITMQ_PASSWORD", tt.password)
+			if tt.password != "" {
+				t.Setenv("RABBITMQ_PASSWORD", tt.password)
 			}
 
 			url, err := GetConnURL(tt.config)
@@ -123,24 +126,29 @@ func TestValidateSuccess(t *testing.T) {
 
 func TestValidateFailure(t *testing.T) {
 	tests := []struct {
-		name   string
-		config *Config
+		name         string
+		config       *Config
+		expectedErrr string
 	}{
 		{
-			name:   "Nil config",
-			config: nil,
+			name:         "Nil config",
+			config:       nil,
+			expectedErrr: "config is nil",
 		},
 		{
-			name:   "Missing Addr",
-			config: &Config{Exchange: "ex"},
+			name:         "Missing Addr",
+			config:       &Config{Exchange: "ex"},
+			expectedErrr: "missing config.Addr",
 		},
 		{
-			name:   "Missing Exchange",
-			config: &Config{Addr: "localhost:5672"},
+			name:         "Missing Exchange",
+			config:       &Config{Addr: "localhost:5672"},
+			expectedErrr: "missing config.Exchange",
 		},
 		{
-			name:   "Empty Addr and Exchange",
-			config: &Config{Addr: " ", Exchange: " "},
+			name:         "Empty Addr and Exchange",
+			config:       &Config{Addr: " ", Exchange: " "},
+			expectedErrr: "missing config.Addr",
 		},
 	}
 
@@ -149,6 +157,10 @@ func TestValidateFailure(t *testing.T) {
 			err := Validate(tt.config)
 			if err == nil {
 				t.Errorf("expected error for invalid config, got nil")
+				return
+			}
+			if !strings.Contains(err.Error(), tt.expectedErrr) {
+				t.Errorf("expected error to contain %q, got: %v", tt.expectedErrr, err)
 			}
 		})
 	}
