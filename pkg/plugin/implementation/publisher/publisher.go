@@ -68,8 +68,7 @@ func GetConnURL(cfg *Config) (string, error) {
 	if user == "" || pass == "" {
 		return "", model.NewBadReqErr(fmt.Errorf("missing RabbitMQ credentials in environment"))
 	}
-
-	parts := strings.SplitN(cfg.Addr, "/", 2)
+	parts := strings.SplitN(strings.TrimSpace(cfg.Addr), "/", 2)
 	hostPort := parts[0]
 	vhost := "/"
 	if len(parts) > 1 {
@@ -93,7 +92,8 @@ func GetConnURL(cfg *Config) (string, error) {
 	}
 
 	connURL := fmt.Sprintf("%s://%s:%s@%s/%s", protocol, encodedUser, encodedPass, hostPort, encodedVHost)
-	log.Debugf(context.Background(), "Generated RabbitMQ connection URL: %s", connURL)
+	log.Debugf(context.Background(), "Generated RabbitMQ connection details: protocol=%s, hostPort=%s, vhost=%s", protocol, hostPort, vhost)
+
 	return connURL, nil
 }
 
