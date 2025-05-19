@@ -1,0 +1,30 @@
+name: Deploy Combined Code
+
+on:
+  push:
+    branches: 
+    - develop
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout GitHub repo
+      uses: actions/checkout@v3
+
+    - name: Clone Gerrit repo
+      run: |
+        git config --global user.name "GitHub Action"
+        git config --global user.email "action@example.com"
+        git clone "https://git-bushras.proteantech.in:1%2F%2F0gySUp9lLndbwCgYIARAAGBASNwF-L9IrhrjZRCVj9UivXsqY5SAIPGUi6kQ1iMp4Q2FVQB-_WemoCnDQQPSUTxMxs31i5BWlZg4@open-networks.googlesource.com/onix-dev"
+      env:
+        GIT_SSH_COMMAND: ssh -o StrictHostKeyChecking=no
+
+    - name: Combine and Zip Code
+      run: |
+        mkdir combined
+        cp -r gerrit-code/* combined/
+        cp -r your-github-code/* combined/
+        cd combined
+        zip -r ../deployment.zip .
