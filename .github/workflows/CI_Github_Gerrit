@@ -1,4 +1,4 @@
-name: Clone Configs and Upload to GCS
+upname: Clone Configs and Upload to GCS
 
 on:
   push:
@@ -20,7 +20,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install zip and gsutil
+      - name: Gcloud Setup
         run: |
           sudo apt-get update
           sudo apt-get install -y zip google-cloud-sdk
