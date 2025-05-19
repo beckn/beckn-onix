@@ -1,0 +1,54 @@
+name: Clone Configs and Upload to GCS
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  clone-and-upload:
+    name: Clone and Upload
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
+      GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install zip and gsutil
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip google-cloud-sdk
+
+      - name: Authenticate to Google Cloud
+        run: |
+          echo "${GOOGLE_APPLICATION_CREDENTIALS_JSON}" > /tmp/gcp-creds.json
+          gcloud auth activate-service-account --key-file=/tmp/gcp-creds.json
+          gcloud config set project $(jq -r .project_id /tmp/gcp-creds.json)
+
+      - name: Clone GitHub Repo via PAT
+        run: |
+          git clone https://${{ secrets.GITHUB_USERNAME }}:${{ secrets.GITHUB_PAT }}@${{ secrets.GITHUB_REPO_URL }} github-configs
+
+      - name: Clone Gerrit Repo via PAT
+        run: |
+          git clone https://${{ secrets.GERRIT_USERNAME }}:${{ secrets.GERRIT_PAT }}@${{ secrets.GERRIT_REPO_URL }} gerrit-configs
+
+      - name: Zip Configs
+        run: |
+          zip -r github-configs.zip github-configs
+          zip -r gerrit-configs.zip gerrit-configs
+
+      - name: Clear Existing Contents in GCS Bucket
+        run: |
+          gsutil -m rm -r gs://${GCS_BUCKET}/**
+      
+      - name: Upload Zipped Configs to GCS
+        run: |
+          gsutil cp github-configs.zip gs://${GCS_BUCKET}/
+          gsutil cp gerrit-configs.zip gs://${GCS_BUCKET}/
