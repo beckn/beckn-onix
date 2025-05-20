@@ -8,6 +8,7 @@ jobs:
   build-and-upload:
     runs-on: ubuntu-latest
     env:
+      GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
       PLUGIN_OUTPUT_DIR: ./generated
       ZIP_FILE: plugins_bundle.zip
 
