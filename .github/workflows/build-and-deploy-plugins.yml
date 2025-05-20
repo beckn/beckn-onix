@@ -23,7 +23,7 @@ jobs:
       - name: Clone GitHub and Gerrit plugin repos
         run: |
           # Example GitHub clone
-          git -b beckn-onix-v1.0-develop clone https://github.com/beckn/beckn-onix.git github-repo
+          git clone -b beckn-onix-v1.0-develop clone https://github.com/beckn/beckn-onix.git github-repo
           
           # Example Gerrit clone
           git clone https://open-networks.googlesource.com/onix-dev/
