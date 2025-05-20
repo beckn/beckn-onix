@@ -34,10 +34,17 @@ jobs:
         with:
           project_id: ${{ fromJson(secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON).project_id }}
 
+      - name: Debug GitHub Secrets (safe)
+        run: |
+          echo "USERNAME_GITHUB: '${{ secrets.USERNAME_GITHUB }}'"
+          echo "REPO_URL_GITHUB: '${{ secrets.REPO_URL_GITHUB }}'"
+          echo "PAT_GITHUB is set: ${{ secrets.PAT_GITHUB != '' }}"
+
+
       - name: Clone GitHub Repo via PAT
         run: |
           git clone https://${{ secrets.USERNAME_GITHUB }}:${{ secrets.PAT_GITHUB }}@${{ secrets.REPO_URL_GITHUB }} github-configs
-          echo "Cloning from: https://${{ secrets.USERNAME_GITHUB }}:<TOKEN>@${{ secrets.REPO_URL_GITHUB }}"
+          echo "Cloning from: https://${{ secrets.USERNAME_GITHUB }}:${{ secrets.PAT_GITHUB }}@${{ secrets.REPO_URL_GITHUB }}"
 
       - name: Clone Gerrit Repo via PAT
         run: |
