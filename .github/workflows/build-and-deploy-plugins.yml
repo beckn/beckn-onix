@@ -40,40 +40,42 @@ jobs:
           echo "📂 Deep list of Gerrit repo:"
           find gerrit-repo
 
+
       - name: Build Go plugins in Docker
         run: |
           set -e
-          mkdir -p $PLUGIN_OUTPUT_DIR
+          mkdir -p $PLUGIN_OUTPUT_DIR github-repo/plugins-temp
+      
           BUILD_CMDS=""
-
-          # GitHub Plugins
+      
+          # GitHub plugins
           for dir in github-repo/pkg/plugin/implementation/*; do
             if [ -d "$dir/cmd" ]; then
               plugin=$(basename "$dir")
               BUILD_CMDS+="cd github-repo && go build -buildmode=plugin -buildvcs=false -o ../${PLUGIN_OUTPUT_DIR}/${plugin}.so ./pkg/plugin/implementation/${plugin}/cmd && cd - && "
             fi
           done
-
+      
+          # Copy Gerrit plugins into GitHub repo so they inherit its go.mod
           for dir in gerrit-repo/plugins/*; do
+            plugin=$(basename "$dir")
+            cp -r "$dir" "github-repo/plugins-temp/$plugin"
+          done
+      
+          # Build copied Gerrit plugins
+          for dir in github-repo/plugins-temp/*; do
             if [ -d "$dir/cmd" ]; then
               plugin=$(basename "$dir")
-              BUILD_CMDS+="cd $dir/cmd && go mod init temp/$plugin && go build -buildmode=plugin -o /app/${PLUGIN_OUTPUT_DIR}/${plugin}.so && cd - && "
+              BUILD_CMDS+="cd github-repo && go build -buildmode=plugin -buildvcs=false -o ../${PLUGIN_OUTPUT_DIR}/${plugin}.so ./plugins-temp/${plugin}/cmd && cd - && "
             fi
           done
-
-          # Gerrit Plugins (confirmed path: gerrit-repo/plugins/*/cmd)
-          #for dir in gerrit-repo/plugins/*; do
-          #  if [ -d "$dir/cmd" ]; then
-          #    plugin=$(basename "$dir")
-          #    BUILD_CMDS+="go build -buildmode=plugin -buildvcs=false -o ${PLUGIN_OUTPUT_DIR}/${plugin}.so ./${dir}/cmd && "
-          #  fi
-          #done
-
+      
           BUILD_CMDS=${BUILD_CMDS%" && "}
           echo "🛠️ Running build commands inside Docker:"
           echo "$BUILD_CMDS"
       
           docker run --rm -v "$(pwd)":/app -w /app golang:1.24-bullseye sh -c "$BUILD_CMDS"
+
 
       - name: List zip output
         run: |
