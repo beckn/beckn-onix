@@ -28,45 +28,19 @@ jobs:
           # Example Gerrit clone
           git clone https://open-networks.googlesource.com/onix-dev gerrit-repo
 
-      - name: Build Go plugins in Docker
+      - name: List directory structure
         run: |
-          set -e
-          mkdir -p $PLUGIN_OUTPUT_DIR
-          BUILD_CMDS=""
-
-          # GitHub plugins
-          for dir in pkg/plugin/implementation/*; do
-            plugin=$(basename "$dir")
-            BUILD_CMDS+="go build -buildmode=plugin -buildvcs=false -o ${PLUGIN_OUTPUT_DIR}/${plugin}.so ./${dir}/cmd && "
-          done
-
-          # Gerrit plugins
-          for dir in onix-dev/plugins/*; do
-            plugin=$(basename "$dir")
-            BUILD_CMDS+="go build -buildmode=plugin -buildvcs=false -o ${PLUGIN_OUTPUT_DIR}/${plugin}.so ./${dir}/cmd && "
-          done
-
-          BUILD_CMDS=${BUILD_CMDS%" && "}
-          docker run --rm -v "$(pwd)":/app -w /app golang:1.24-bullseye sh -c "$BUILD_CMDS"
-
-      - name: Zip the plugin binaries
-        run: |
-          cd $PLUGIN_OUTPUT_DIR
-          zip -r ../$ZIP_FILE *.so
-          cd ..
-
-      - name: Authenticate to GCP
-        run: |
-          echo "${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}" > gcloud-key.json
-          gcloud auth activate-service-account --key-file=gcloud-key.json
-          gcloud config set project trusty-relic-370809
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: gcloud-key.json
-
-      - name: Upload to GCS
-        run: |
-          gsutil -m cp -r $ZIP_FILE gs://${GCS_BUCKET}/
-
-      - name: Cleanup
-        run: |
-          rm -rf $PLUGIN_OUTPUT_DIR $ZIP_FILE gcloud-key.json
+          echo "📂 Contents of root:"
+          ls -alh
+      
+          echo "📂 Contents of GitHub repo:"
+          ls -alh github-repo
+      
+          echo "📂 Deep list of GitHub repo:"
+          find github-repo
+      
+          echo "📂 Contents of Gerrit repo:"
+          ls -alh gerrit-repo
+      
+          echo "📂 Deep list of Gerrit repo:"
+          find gerrit-repo
