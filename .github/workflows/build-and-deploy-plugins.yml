@@ -86,7 +86,7 @@ jobs:
 
       - name: Authenticate to GCP
         run: |
-          echo "${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}" > gcloud-key.json
+          echo '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}' > gcloud-key.json
           gcloud auth activate-service-account --key-file=gcloud-key.json
           gcloud config set project trusty-relic-370809
         env:
