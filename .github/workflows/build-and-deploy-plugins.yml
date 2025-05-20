@@ -17,8 +17,8 @@ jobs:
 
       - name: Set up Git
         run: |
-          git config --global url."https://${{ secrets.PAT_GITHUB }}:@github.com/beckn/beckn-onix.git".insteadOf "https://github.com/"
-          git config --global url."https://${{ secrets.GERRIT_USERNAME }}:${{ secrets.GERRIT_PAT }}@open-networks.googlesource.com/onix-dev/".insteadOf "https://gerrit.example.com/"
+          git config --global url."https://${{ secrets.PAT_GITHUB }}:@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://${{ secrets.GERRIT_USERNAME }}:${{ secrets.GERRIT_PAT }}@open-networks.googlesource.com/".insteadOf "https://open-networks.googlesource.com/"
 
       - name: Clone GitHub and Gerrit plugin repos
         run: |
@@ -26,7 +26,7 @@ jobs:
           git clone -b beckn-onix-v1.0-develop https://github.com/beckn/beckn-onix.git github-repo
           
           # Example Gerrit clone
-          git clone https://open-networks.googlesource.com/onix-dev/
+          git clone https://open-networks.googlesource.com/onix-dev gerrit-repo
 
       - name: Build Go plugins in Docker
         run: |
