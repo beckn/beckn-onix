@@ -23,13 +23,16 @@ jobs:
       - name: Install zip and gsutil
         run: |
           sudo apt-get update
-          sudo apt-get install -y zip google-cloud-sdk
+          sudo apt-get install -y zip jq
 
       - name: Authenticate to Google Cloud
-        run: |
-          echo "${GOOGLE_APPLICATION_CREDENTIALS_JSON}" > /tmp/gcp-creds.json
-          gcloud auth activate-service-account --key-file=/tmp/gcp-creds.json
-          gcloud config set project $(jq -r .project_id /tmp/gcp-creds.json)
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}'
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          project_id: ${{ fromJson(secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON).project_id }}
 
       - name: Clone GitHub Repo via PAT
         run: |
