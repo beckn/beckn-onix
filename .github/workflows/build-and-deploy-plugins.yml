@@ -52,13 +52,13 @@ jobs:
           BUILD_CMDS=""
 
           # GitHub plugins
-          for dir in github-repo/pkg/plugin/implementation/*; do
+          for dir in pkg/plugin/implementation/*; do
             plugin=$(basename "$dir")
             BUILD_CMDS+="go build -buildmode=plugin -buildvcs=false -o ${PLUGIN_OUTPUT_DIR}/${plugin}.so ./${dir}/cmd && "
           done
 
           # Gerrit plugins
-          for dir in gerrit-repo/plugins/*; do
+          for dir in plugins/*; do
             plugin=$(basename "$dir")
             BUILD_CMDS+="go build -buildmode=plugin -buildvcs=false -o ${PLUGIN_OUTPUT_DIR}/${plugin}.so ./${dir}/cmd && "
           done
