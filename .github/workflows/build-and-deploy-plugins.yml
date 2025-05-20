@@ -78,11 +78,9 @@ jobs:
           find $PLUGIN_OUTPUT_DIR -name '*.so' || echo "⚠️ No .so files found"
 
 
-
-
-      #- name: List zip output
-      #  run: |
-      #    ls -lh plugins_bundle.zip
+      - name: List zip output
+        run: |
+          ls -lh plugins_bundle.zip
 
 
       - name: Authenticate to GCP
