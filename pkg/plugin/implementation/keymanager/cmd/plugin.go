@@ -9,7 +9,12 @@ import (
 )
 
 // keyManagerProvider implements the plugin provider for the KeyManager plugin.
-type keyManagerProvider struct{}
+type keyManagerProvider struct {
+	newFunc func(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, cfg *keymanager.Config) (definition.KeyManager, func() error, error)
+}
+
+// newKeyManagerFunc is a function type that creates a new KeyManager instance.
+var newKeyManagerFunc = keymanager.New
 
 // New creates and initializes a new KeyManager instance using the provided cache, registry lookup, and configuration.
 func (k *keyManagerProvider) New(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, cfg map[string]string) (definition.KeyManager, func() error, error) {
@@ -18,7 +23,7 @@ func (k *keyManagerProvider) New(ctx context.Context, cache definition.Cache, re
 		KVVersion: cfg["kv_version"],
 	}
 	log.Debugf(ctx, "Keymanager config mapped: %+v", cfg)
-	km, cleanup, err := keymanager.New(ctx, cache, registry, config)
+	km, cleanup, err := newKeyManagerFunc(ctx, cache, registry, config)
 	if err != nil {
 		log.Error(ctx, err, "Failed to initialize KeyManager")
 		return nil, nil, err

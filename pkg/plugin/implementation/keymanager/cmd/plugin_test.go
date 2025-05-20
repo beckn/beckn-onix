@@ -1,0 +1,164 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/beckn/beckn-onix/pkg/model"
+	"github.com/beckn/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn/beckn-onix/pkg/plugin/implementation/keymanager"
+)
+
+// Mock KeyManager implementation
+type mockKeyManager struct{}
+
+func (m *mockKeyManager) SigningPublicKey(ctx context.Context, subscriberID, keyID string) (string, error) {
+	return "mock-signing-public-key", nil
+}
+
+func (m *mockKeyManager) SigningPrivateKey(ctx context.Context, subscriberID string) (string, string, error) {
+	return "mock-key-id", "mock-signing-private-key", nil
+}
+
+func (m *mockKeyManager) EncrPublicKey(ctx context.Context, subscriberID, keyID string) (string, error) {
+	return "mock-encryption-public-key", nil
+}
+
+func (m *mockKeyManager) EncrPrivateKey(ctx context.Context, subscriberID string) (string, string, error) {
+	return "mock-key-id", "mock-encryption-private-key", nil
+}
+
+func (m *mockKeyManager) DeletePrivateKeys(ctx context.Context, subscriberID string) error {
+	return nil
+}
+
+func (m *mockKeyManager) StorePrivateKeys(ctx context.Context, subscriberID string, keys *model.Keyset) error {
+	return nil
+}
+
+func (m *mockKeyManager) GenerateKeyPairs() (*model.Keyset, error) {
+	return &model.Keyset{
+		UniqueKeyID:    "mock-key-id",
+		SigningPrivate: "mock-signing-private-key",
+		SigningPublic:  "mock-signing-public-key",
+		EncrPrivate:    "mock-encryption-private-key",
+		EncrPublic:     "mock-encryption-public-key",
+	}, nil
+}
+
+type mockRegistry struct {
+	LookupFunc func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error)
+}
+
+func (m *mockRegistry) Lookup(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
+	if m.LookupFunc != nil {
+		return m.LookupFunc(ctx, sub)
+	}
+	return []model.Subscription{
+		{
+			Subscriber: model.Subscriber{
+				SubscriberID: sub.SubscriberID,
+				URL:          "https://mock.registry/subscriber",
+				Type:         "BPP",
+				Domain:       "retail",
+			},
+			KeyID:            sub.KeyID,
+			SigningPublicKey: "mock-signing-public-key",
+			EncrPublicKey:    "mock-encryption-public-key",
+			ValidFrom:        time.Now().Add(-time.Hour),
+			ValidUntil:       time.Now().Add(time.Hour),
+			Status:           "SUBSCRIBED",
+			Created:          time.Now().Add(-2 * time.Hour),
+			Updated:          time.Now(),
+			Nonce:            "mock-nonce",
+		},
+	}, nil
+}
+
+type mockCache struct{}
+
+func (m *mockCache) Get(ctx context.Context, key string) (string, error) {
+	return "", nil
+}
+func (m *mockCache) Set(ctx context.Context, key string, value string, ttl time.Duration) error {
+	return nil
+}
+func (m *mockCache) Clear(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockCache) Delete(ctx context.Context, key string) error {
+	return nil
+}
+
+func TestNewSuccess(t *testing.T) {
+	// Setup dummy implementations and variables
+	ctx := context.Background()
+	cache := &mockCache{}
+	registry := &mockRegistry{}
+	cfg := map[string]string{
+		"vault_addr": "http://dummy-vault",
+		"kv_version": "2",
+	}
+
+	cleanupCalled := false
+	fakeCleanup := func() error {
+		cleanupCalled = true
+		return nil
+	}
+
+	newKeyManagerFunc = func(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, cfg *keymanager.Config) (*keymanager.KeyMgr, func() error, error) {
+		// return a mock struct pointer of *keymanager.KeyMgr or a stub instance
+		return &keymanager.KeyMgr{}, fakeCleanup, nil
+	}
+
+	// Create provider and call New
+	provider := &keyManagerProvider{}
+	km, cleanup, err := provider.New(ctx, cache, registry, cfg)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if km == nil {
+		t.Fatal("Expected non-nil KeyManager instance")
+	}
+	if cleanup == nil {
+		t.Fatal("Expected non-nil cleanup function")
+	}
+
+	// Call cleanup and check if it behaves correctly
+	if err := cleanup(); err != nil {
+		t.Fatalf("Expected no error from cleanup, got %v", err)
+	}
+	if !cleanupCalled {
+		t.Error("Expected cleanup function to be called")
+	}
+}
+
+func TestNewFailure(t *testing.T) {
+	// Setup dummy variables
+	ctx := context.Background()
+	cache := &mockCache{}
+	registry := &mockRegistry{}
+	cfg := map[string]string{
+		"vault_addr": "http://dummy-vault",
+		"kv_version": "2",
+	}
+
+	newKeyManagerFunc = func(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, cfg *keymanager.Config) (*keymanager.KeyMgr, func() error, error) {
+		return nil, nil, fmt.Errorf("some error")
+	}
+
+	provider := &keyManagerProvider{}
+	km, cleanup, err := provider.New(ctx, cache, registry, cfg)
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+	if km != nil {
+		t.Error("Expected nil KeyManager on error")
+	}
+	if cleanup != nil {
+		t.Error("Expected nil cleanup function on error")
+	}
+}
