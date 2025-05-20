@@ -323,11 +323,6 @@ func TestGetVaultClient_Success(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{
-			"auth": {
-				"client_token": "mock-token"
-			}
-		}`)
 		if _, err := io.WriteString(w, `{
 			"auth": {
 				"client_token": "mock-token"
