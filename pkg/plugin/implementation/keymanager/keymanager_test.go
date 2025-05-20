@@ -220,33 +220,6 @@ func TestGenerateKeyPairs(t *testing.T) {
 	}
 }
 
-type mockLogical struct {
-	writeFn func(path string, data map[string]interface{}) (*vault.Secret, error)
-}
-
-func (m *mockLogical) Write(path string, data map[string]interface{}) (*vault.Secret, error) {
-	return m.writeFn(path, data)
-}
-
-type mockClient struct {
-	*vault.Client
-	setTokenFn func(string)
-	logicalFn  func() *vault.Logical
-}
-
-func (m *mockClient) SetToken(token string) {
-	if m.setTokenFn != nil {
-		m.setTokenFn(token)
-	}
-}
-
-func (m *mockClient) Logical() *vault.Logical {
-	if m.logicalFn != nil {
-		return m.logicalFn()
-	}
-	return &vault.Logical{}
-}
-
 func TestGetVaultClient_Failures(t *testing.T) {
 	originalNewVaultClient := NewVaultClient
 	defer func() { NewVaultClient = originalNewVaultClient }()
@@ -297,7 +270,9 @@ func TestGetVaultClient_Failures(t *testing.T) {
 				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusOK)
 					w.Header().Set("Content-Type", "application/json")
-					io.WriteString(w, `{ "auth": null }`)
+					if _, err := io.WriteString(w, `{ "auth": null }`); err != nil {
+						t.Fatalf("failed to write response: %v", err)
+					}
 				}))
 			},
 			expectErr: "AppRole login failed: no auth info returned",
@@ -353,6 +328,13 @@ func TestGetVaultClient_Success(t *testing.T) {
 				"client_token": "mock-token"
 			}
 		}`)
+		if _, err := io.WriteString(w, `{
+			"auth": {
+				"client_token": "mock-token"
+			}
+		}`); err != nil {
+			t.Fatalf("failed to write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -809,7 +791,9 @@ func setupMockVaultServer(t *testing.T, kvVersion, keyID string, success bool) *
 				}
 			}`, keyID)
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(resp))
+			if _, err := w.Write([]byte(resp)); err != nil {
+				t.Fatalf("failed to write response: %v", err)
+			}
 		} else {
 			resp := fmt.Sprintf(`{
 				"data": {
@@ -821,7 +805,9 @@ func setupMockVaultServer(t *testing.T, kvVersion, keyID string, success bool) *
 				}
 			}`, keyID)
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(resp))
+			if _, err := w.Write([]byte(resp)); err != nil {
+				t.Fatalf("failed to write response: %v", err)
+			}
 		}
 	})
 

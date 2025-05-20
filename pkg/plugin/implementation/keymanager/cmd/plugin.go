@@ -9,9 +9,7 @@ import (
 )
 
 // keyManagerProvider implements the plugin provider for the KeyManager plugin.
-type keyManagerProvider struct {
-	newFunc func(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, cfg *keymanager.Config) (definition.KeyManager, func() error, error)
-}
+type keyManagerProvider struct{}
 
 // newKeyManagerFunc is a function type that creates a new KeyManager instance.
 var newKeyManagerFunc = keymanager.New

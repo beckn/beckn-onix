@@ -11,43 +11,6 @@ import (
 	"github.com/beckn/beckn-onix/pkg/plugin/implementation/keymanager"
 )
 
-// Mock KeyManager implementation
-type mockKeyManager struct{}
-
-func (m *mockKeyManager) SigningPublicKey(ctx context.Context, subscriberID, keyID string) (string, error) {
-	return "mock-signing-public-key", nil
-}
-
-func (m *mockKeyManager) SigningPrivateKey(ctx context.Context, subscriberID string) (string, string, error) {
-	return "mock-key-id", "mock-signing-private-key", nil
-}
-
-func (m *mockKeyManager) EncrPublicKey(ctx context.Context, subscriberID, keyID string) (string, error) {
-	return "mock-encryption-public-key", nil
-}
-
-func (m *mockKeyManager) EncrPrivateKey(ctx context.Context, subscriberID string) (string, string, error) {
-	return "mock-key-id", "mock-encryption-private-key", nil
-}
-
-func (m *mockKeyManager) DeletePrivateKeys(ctx context.Context, subscriberID string) error {
-	return nil
-}
-
-func (m *mockKeyManager) StorePrivateKeys(ctx context.Context, subscriberID string, keys *model.Keyset) error {
-	return nil
-}
-
-func (m *mockKeyManager) GenerateKeyPairs() (*model.Keyset, error) {
-	return &model.Keyset{
-		UniqueKeyID:    "mock-key-id",
-		SigningPrivate: "mock-signing-private-key",
-		SigningPublic:  "mock-signing-public-key",
-		EncrPrivate:    "mock-encryption-private-key",
-		EncrPublic:     "mock-encryption-public-key",
-	}, nil
-}
-
 type mockRegistry struct {
 	LookupFunc func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error)
 }
