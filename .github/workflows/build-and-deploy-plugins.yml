@@ -79,7 +79,7 @@ jobs:
 
       - name: Upload to GCS
         run: |
-          gsutil -m cp -r *.zip gs://${GCS_BUCKET}/
+          gsutil -m cp -r $ZIP_FILE gs://${GCS_BUCKET}/
 
       - name: Cleanup
         run: |
