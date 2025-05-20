@@ -70,6 +70,13 @@ jobs:
       
           docker run --rm -v "$(pwd)":/app -w /app golang:1.24-bullseye sh -c "$BUILD_CMDS"
 
+      - name: List built plugin files
+        run: |
+          echo "Looking in $PLUGIN_OUTPUT_DIR"
+          ls -lh $PLUGIN_OUTPUT_DIR || echo "⚠️ Directory does not exist"
+          find $PLUGIN_OUTPUT_DIR -name '*.so' || echo "⚠️ No .so files found"
+
+
 
 
       - name: List zip output
