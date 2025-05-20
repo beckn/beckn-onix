@@ -79,9 +79,9 @@ jobs:
 
 
 
-      - name: List zip output
-        run: |
-          ls -lh plugins_bundle.zip
+      #- name: List zip output
+      #  run: |
+      #    ls -lh plugins_bundle.zip
 
 
       - name: Authenticate to GCP
