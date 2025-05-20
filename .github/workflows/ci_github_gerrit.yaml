@@ -37,6 +37,7 @@ jobs:
       - name: Clone GitHub Repo via PAT
         run: |
           git clone https://${{ secrets.USERNAME_GITHUB }}:${{ secrets.PAT_GITHUB }}@${{ secrets.REPO_URL_GITHUB }} github-configs
+          echo "Cloning from: https://${{ secrets.USERNAME_GITHUB }}:<TOKEN>@${{ secrets.REPO_URL_GITHUB }}"
 
       - name: Clone Gerrit Repo via PAT
         run: |
