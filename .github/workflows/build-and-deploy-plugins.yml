@@ -15,18 +15,13 @@ jobs:
       - name: Checkout this repo
         uses: actions/checkout@v4
 
-      - name: Set up Git
-        run: |
-          git config --global url."https://${{ secrets.PAT_GITHUB }}:@github.com/".insteadOf "https://github.com/"
-          git config --global url."https://${{ secrets.GERRIT_USERNAME }}:${{ secrets.GERRIT_PAT }}@open-networks.googlesource.com/".insteadOf "https://open-networks.googlesource.com/"
-
       - name: Clone GitHub and Gerrit plugin repos
         run: |
           # Example GitHub clone
-          git clone -b beckn-onix-v1.0-develop https://github.com/beckn/beckn-onix.git github-repo
+          git clone -b beckn-onix-v1.0-develop https://${{ secrets.PAT_GITHUB }}:@github.com/beckn/beckn-onix.git github-repo
           
           # Example Gerrit clone
-          git clone https://open-networks.googlesource.com/onix-dev gerrit-repo
+          git clone https://${{ secrets.GERRIT_USERNAME }}:${{ secrets.GERRIT_PAT }}@open-networks.googlesource.com/onix-dev gerrit-repo
 
       - name: List directory structure
         run: |
