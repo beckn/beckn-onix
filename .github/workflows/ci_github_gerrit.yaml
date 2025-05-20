@@ -51,7 +51,7 @@ jobs:
 
       - name: Clear Existing Contents in GCS Bucket
         run: |
-          gsutil -m rm -r gs://${GCS_BUCKET}/**
+          gsutil -m cp -r gs://${GCS_BUCKET}/**
       
       - name: Upload Zipped Configs to GCS
         run: |
