@@ -44,7 +44,7 @@ jobs:
       - name: Build Go plugins in Docker
         run: |
           set -e
-          mkdir -p $PLUGIN_OUTPUT_DIR github-repo/plugins-temp
+          mkdir -p $PLUGIN_OUTPUT_DIR
       
           BUILD_CMDS=""
       
@@ -56,17 +56,11 @@ jobs:
             fi
           done
       
-          # Copy Gerrit plugins into GitHub repo so they inherit its go.mod
+          # Gerrit plugins — build in their own repo/module context
           for dir in gerrit-repo/plugins/*; do
-            plugin=$(basename "$dir")
-            cp -r "$dir" "github-repo/plugins-temp/$plugin"
-          done
-      
-          # Build copied Gerrit plugins
-          for dir in github-repo/plugins-temp/*; do
             if [ -d "$dir/cmd" ]; then
               plugin=$(basename "$dir")
-              BUILD_CMDS+="cd github-repo && go build -buildmode=plugin -buildvcs=false -o ../${PLUGIN_OUTPUT_DIR}/${plugin}.so ./plugins-temp/${plugin}/cmd && cd - && "
+              BUILD_CMDS+="cd gerrit-repo && go build -buildmode=plugin -buildvcs=false -o ../${PLUGIN_OUTPUT_DIR}/${plugin}.so ./plugins/${plugin}/cmd && cd - && "
             fi
           done
       
@@ -75,6 +69,7 @@ jobs:
           echo "$BUILD_CMDS"
       
           docker run --rm -v "$(pwd)":/app -w /app golang:1.24-bullseye sh -c "$BUILD_CMDS"
+
 
 
       - name: List zip output
