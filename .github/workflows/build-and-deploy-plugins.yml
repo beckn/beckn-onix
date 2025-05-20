@@ -46,11 +46,11 @@ jobs:
           mkdir -p $PLUGIN_OUTPUT_DIR
           BUILD_CMDS=""
 
-          # GitHub Plugins (confirmed path: github-repo/pkg/plugin/implementation/*/cmd)
+          # GitHub Plugins
           for dir in github-repo/pkg/plugin/implementation/*; do
             if [ -d "$dir/cmd" ]; then
               plugin=$(basename "$dir")
-              BUILD_CMDS+="go build -buildmode=plugin -buildvcs=false -o ${PLUGIN_OUTPUT_DIR}/${plugin}.so ./${dir}/cmd && "
+              BUILD_CMDS+="cd github-repo && go build -buildmode=plugin -buildvcs=false -o ../${PLUGIN_OUTPUT_DIR}/${plugin}.so ./pkg/plugin/implementation/${plugin}/cmd && cd - && "
             fi
           done
           
