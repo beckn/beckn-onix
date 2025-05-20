@@ -77,6 +77,11 @@ jobs:
           ls -lh $PLUGIN_OUTPUT_DIR || echo "⚠️ Directory does not exist"
           find $PLUGIN_OUTPUT_DIR -name '*.so' || echo "⚠️ No .so files found"
 
+          echo "Creating zip archive..."
+          cd "$PLUGIN_OUTPUT_DIR"
+          zip -r "../$ZIP_FILE" *.so
+          echo "Created $ZIP_FILE"
+          cd ..
 
       - name: List zip output
         run: |
