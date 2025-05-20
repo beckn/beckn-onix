@@ -33,7 +33,7 @@ jobs:
 
       - name: Clone GitHub Repo via PAT
         run: |
-          git clone https://${{ secrets.GITHUB_USERNAME }}:${{ secrets.GITHUB_PAT }}@${{ secrets.GITHUB_REPO_URL }} github-configs
+          git clone https://${{ secrets.USERNAME_GITHUB }}:${{ secrets.PAT_GITHUB }}@${{ secrets.REPO_URL_GITHUB }} github-configs
 
       - name: Clone Gerrit Repo via PAT
         run: |
