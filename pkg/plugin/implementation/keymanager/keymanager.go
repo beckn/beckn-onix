@@ -70,6 +70,11 @@ func ValidateCfg(cfg *Config) error {
 	return nil
 }
 
+// getVaultClient is a function that creates a new Vault client.
+// This is exported for testing purposes.
+var getVaultClient = GetVaultClient
+
+// New creates a new KeyMgr instance with the provided configuration, cache, and registry lookup.
 func New(ctx context.Context, cache definition.Cache, registryLookup definition.RegistryLookup, cfg *Config) (*KeyMgr, func() error, error) {
 	log.Info(ctx, "Initializing KeyManager plugin")
 	// Validate configuration.
@@ -91,7 +96,7 @@ func New(ctx context.Context, cache definition.Cache, registryLookup definition.
 
 	// Initialize Vault client.
 	log.Debugf(ctx, "Creating Vault client with address: %s", cfg.VaultAddr)
-	vaultClient, err := GetVaultClient(ctx, cfg.VaultAddr)
+	vaultClient, err := getVaultClient(ctx, cfg.VaultAddr)
 	if err != nil {
 		log.Errorf(ctx, err, "Failed to create Vault client at address: %s", cfg.VaultAddr)
 		return nil, nil, fmt.Errorf("failed to create vault client: %w", err)
@@ -120,6 +125,10 @@ func New(ctx context.Context, cache definition.Cache, registryLookup definition.
 	return km, cleanup, nil
 }
 
+// NewVaultClient creates a new Vault client instance.
+// This function is exported for testing purposes.
+var NewVaultClient = vault.NewClient
+
 // GetVaultClient creates and authenticates a Vault client using AppRole.
 func GetVaultClient(ctx context.Context, vaultAddr string) (*vault.Client, error) {
 	roleID := os.Getenv("VAULT_ROLE_ID")
@@ -133,7 +142,7 @@ func GetVaultClient(ctx context.Context, vaultAddr string) (*vault.Client, error
 	config := vault.DefaultConfig()
 	config.Address = vaultAddr
 
-	client, err := vault.NewClient(config)
+	client, err := NewVaultClient(config)
 	if err != nil {
 		log.Error(ctx, err, "failed to create Vault client")
 		return nil, fmt.Errorf("failed to create Vault client: %w", err)
@@ -160,19 +169,25 @@ func GetVaultClient(ctx context.Context, vaultAddr string) (*vault.Client, error
 	return client, nil
 }
 
+var (
+	ed25519KeyGenFunc = ed25519.GenerateKey
+	x25519KeyGenFunc  = ecdh.X25519().GenerateKey
+	uuidGenFunc       = uuid.NewRandom
+)
+
 // GenerateKeyPairs generates a new signing (Ed25519) and encryption (X25519) key pair.
 func (km *KeyMgr) GenerateKeyPairs() (*model.Keyset, error) {
-	signingPublic, signingPrivate, err := ed25519.GenerateKey(rand.Reader)
+	signingPublic, signingPrivate, err := ed25519KeyGenFunc(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate signing key pair: %w", err)
 	}
 
-	encrPrivateKey, err := ecdh.X25519().GenerateKey(rand.Reader)
+	encrPrivateKey, err := x25519KeyGenFunc(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate encryption key pair: %w", err)
 	}
 	encrPublicKey := encrPrivateKey.PublicKey().Bytes()
-	uuid, err := uuid.NewRandom()
+	uuid, err := uuidGenFunc()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate unique key id uuid: %w", err)
 	}
