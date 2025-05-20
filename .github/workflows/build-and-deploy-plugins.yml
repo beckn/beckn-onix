@@ -53,14 +53,21 @@ jobs:
               BUILD_CMDS+="cd github-repo && go build -buildmode=plugin -buildvcs=false -o ../${PLUGIN_OUTPUT_DIR}/${plugin}.so ./pkg/plugin/implementation/${plugin}/cmd && cd - && "
             fi
           done
-          
-          # Gerrit Plugins (confirmed path: gerrit-repo/plugins/*/cmd)
+
           for dir in gerrit-repo/plugins/*; do
             if [ -d "$dir/cmd" ]; then
               plugin=$(basename "$dir")
-              BUILD_CMDS+="go build -buildmode=plugin -buildvcs=false -o ${PLUGIN_OUTPUT_DIR}/${plugin}.so ./${dir}/cmd && "
+              BUILD_CMDS+="cd $dir/cmd && go mod init temp/$plugin && go build -buildmode=plugin -o /app/${PLUGIN_OUTPUT_DIR}/${plugin}.so && cd - && "
             fi
           done
+
+          # Gerrit Plugins (confirmed path: gerrit-repo/plugins/*/cmd)
+          #for dir in gerrit-repo/plugins/*; do
+          #  if [ -d "$dir/cmd" ]; then
+          #    plugin=$(basename "$dir")
+          #    BUILD_CMDS+="go build -buildmode=plugin -buildvcs=false -o ${PLUGIN_OUTPUT_DIR}/${plugin}.so ./${dir}/cmd && "
+          #  fi
+          #done
 
           BUILD_CMDS=${BUILD_CMDS%" && "}
           echo "🛠️ Running build commands inside Docker:"
