@@ -13,7 +13,6 @@ import (
 	"github.com/beckn/beckn-onix/pkg/log"
 	"github.com/beckn/beckn-onix/pkg/model"
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
-	"github.com/google/uuid"
 )
 
 // SubscribeRequest represents the incoming /subscribe request
@@ -49,22 +48,6 @@ type subscribeStep struct {
 	registryURL string
 }
 
-// newSubscribeStep creates a new subscribe step with required dependencies
-func newSubscribeStep(km definition.KeyManager, signer definition.Signer, registryURL string) (definition.Step, error) {
-	if km == nil {
-		return nil, fmt.Errorf("invalid config: KeyManager plugin not configured")
-	}
-	if registryURL == "" {
-		return nil, fmt.Errorf("invalid config: Registry URL not configured")
-	}
-
-	return &subscribeStep{
-		km:          km,
-		signer:      signer,
-		registryURL: registryURL,
-	}, nil
-}
-
 // Run executes the subscribe step logic
 func (s *subscribeStep) Run(ctx *model.StepContext) error {
 	// Parse the request body
@@ -84,12 +67,7 @@ func (s *subscribeStep) Run(ctx *model.StepContext) error {
 		return fmt.Errorf("failed to generate key pairs: %w", err)
 	}
 
-	// Use provided key ID or generate a new one
-	if req.KeyID == "" {
-		req.KeyID = uuid.New().String()
-	}
 	keySet.UniqueKeyID = req.KeyID
-
 	// Set validity period - use default 1 year if not specified
 	validFrom := time.Now()
 	validUntil := validFrom.Add(365 * 24 * time.Hour) // Default 1 year
@@ -99,8 +77,10 @@ func (s *subscribeStep) Run(ctx *model.StepContext) error {
 	}
 
 	// Generate message ID for correlation
-	messageID := uuid.New().String()
-
+	messageID := req.KeyID // use key_id for correlation if no better ID available
+	if messageID == "" {
+		return fmt.Errorf("Message ID Empty")
+	}
 	// Create registry subscription request
 	registryReq := s.createRegistryRequest(&req, keySet, messageID, validFrom, validUntil)
 
