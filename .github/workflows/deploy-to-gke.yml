@@ -1,0 +1,44 @@
+name: Deploy to GKE
+
+on:
+  workflow_dispatch:
+    inputs:
+      service_name:
+        description: 'Name of the Kubernetes service to deploy'
+        required: true
+        type: string
+      cluster_name:
+        description: 'Name of the GKE cluster'
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      REGION: ${{ secrets.GCP_REGION }}
+      GKE_CLUSTER: ${{ github.event.inputs.cluster_name }}
+      SERVICE_NAME: ${{ github.event.inputs.service_name }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v3
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up GKE credentials
+        uses: google-github-actions/get-gke-credentials@v1
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.REGION }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Deploy to GKE
+        run: |
+          echo "Deploying service $SERVICE_NAME to cluster $GKE_CLUSTER"
+          kubectl set image deployment/$SERVICE_NAME $SERVICE_NAME=gcr.io/$PROJECT_ID/$SERVICE_NAME:latest --record
