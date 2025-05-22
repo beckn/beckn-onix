@@ -50,7 +50,9 @@ func (m *mockRegistry) Lookup(ctx context.Context, sub *model.Subscription) ([]m
 	}, nil
 }
 
-type mockCache struct{}
+type mockCache struct {
+	GetFunc func(ctx context.Context, key string) (string, error)
+}
 
 func (m *mockCache) Get(ctx context.Context, key string) (string, error) {
 	return "", nil
@@ -193,7 +195,7 @@ func TestGenerateKeyPairs(t *testing.T) {
 			}
 
 			km := &KeyMgr{}
-			keyset, err := km.GenerateKeyPairs()
+			keyset, err := km.GenerateKeyset()
 
 			if tt.expectErr {
 				if err == nil {
@@ -589,7 +591,7 @@ func TestStorePrivateKeysSuccess(t *testing.T) {
 				KvVersion:   tt.kvVersion,
 			}
 
-			err = km.StorePrivateKeys(ctx, tt.keyID, tt.keys)
+			err = km.InsertKeyset(ctx, tt.keyID, tt.keys)
 			if err != nil {
 				t.Errorf("expected no error, got %v", err)
 			}
@@ -667,7 +669,7 @@ func TestStorePrivateKeysFailure(t *testing.T) {
 				KvVersion:   tt.kvVersion,
 			}
 
-			err = km.StorePrivateKeys(ctx, tt.keyID, tt.keys)
+			err = km.InsertKeyset(ctx, tt.keyID, tt.keys)
 
 			if err == nil {
 				t.Fatalf("expected error %q but got nil", tt.expectedErr)
@@ -717,7 +719,7 @@ func TestDeletePrivateKeys(t *testing.T) {
 					KvVersion:   tt.kvVersion,
 					VaultClient: nil,
 				}
-				err := km.DeletePrivateKeys(context.Background(), tt.keyID)
+				err := km.DeleteKeyset(context.Background(), tt.keyID)
 				if err != tt.wantErr {
 					t.Errorf("expected error %v, got %v", tt.wantErr, err)
 				}
@@ -745,7 +747,7 @@ func TestDeletePrivateKeys(t *testing.T) {
 				VaultClient: vaultClient,
 			}
 
-			err = km.DeletePrivateKeys(context.Background(), tt.keyID)
+			err = km.DeleteKeyset(context.Background(), tt.keyID)
 			if err != tt.wantErr {
 				t.Errorf("DeletePrivateKeys() error = %v, want %v", err, tt.wantErr)
 			}
@@ -809,7 +811,7 @@ func setupMockVaultServer(t *testing.T, kvVersion, keyID string, success bool) *
 	return httptest.NewServer(handler)
 }
 
-func TestGetKeysSuccess(t *testing.T) {
+func TestKeysetSuccess(t *testing.T) {
 	tests := []struct {
 		name      string
 		kvVersion string
@@ -845,7 +847,7 @@ func TestGetKeysSuccess(t *testing.T) {
 				KvVersion:   tt.kvVersion,
 			}
 
-			keys, err := km.getKeys(context.Background(), tt.keyID)
+			keys, err := km.Keyset(context.Background(), tt.keyID)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -862,7 +864,7 @@ func TestGetKeysSuccess(t *testing.T) {
 	}
 }
 
-func TestGetKeysFailure(t *testing.T) {
+func TestKeysetFailure(t *testing.T) {
 	tests := []struct {
 		name      string
 		kvVersion string
@@ -915,201 +917,12 @@ func TestGetKeysFailure(t *testing.T) {
 				KvVersion:   tt.kvVersion,
 			}
 
-			keys, err := km.getKeys(context.Background(), tt.keyID)
+			keys, err := km.Keyset(context.Background(), tt.keyID)
 			if err == nil {
 				t.Fatalf("expected error but got nil")
 			}
 			if keys != nil {
 				t.Fatalf("expected nil keys but got %+v", keys)
-			}
-		})
-	}
-}
-
-func TestGetPublicKeysSuccess(t *testing.T) {
-	km := &KeyMgr{
-		Cache: &mockCache{},
-		Registry: &mockRegistry{
-			LookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
-				return []model.Subscription{
-					{
-						Subscriber: model.Subscriber{
-							SubscriberID: sub.SubscriberID,
-						},
-						KeyID:            sub.KeyID,
-						SigningPublicKey: "mock-signing-public-key",
-						EncrPublicKey:    "mock-encryption-public-key",
-					},
-				}, nil
-			},
-		},
-	}
-
-	got, err := km.getPublicKeys(context.Background(), "sub-id", "key-id")
-	if err != nil {
-		t.Fatalf("getPublicKeys() unexpected error: %v", err)
-	}
-	if got == nil {
-		t.Fatal("getPublicKeys() returned nil Keyset")
-	}
-	if got.SigningPublic != "mock-signing-public-key" {
-		t.Errorf("SigningPublic = %v, want %v", got.SigningPublic, "mock-signing-public-key")
-	}
-	if got.EncrPublic != "mock-encryption-public-key" {
-		t.Errorf("EncrPublic = %v, want %v", got.EncrPublic, "mock-encryption-public-key")
-	}
-}
-
-func TestGetPublicKeysFailure(t *testing.T) {
-	type fields struct {
-		cache    definition.Cache
-		registry definition.RegistryLookup
-	}
-	type args struct {
-		subscriberID string
-		uniqueKeyID  string
-	}
-	tests := []struct {
-		name       string
-		fields     fields
-		args       args
-		errMessage string
-	}{
-		{
-			name: "failure - invalid parameters",
-			fields: fields{
-				cache:    &mockCache{},
-				registry: &mockRegistry{},
-			},
-			args: args{
-				subscriberID: "",
-				uniqueKeyID:  "",
-			},
-			errMessage: "invalid",
-		},
-		{
-			name: "failure - registry lookup fails",
-			fields: fields{
-				cache: &mockCache{},
-				registry: &mockRegistry{
-					LookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
-						return nil, fmt.Errorf("registry down")
-					},
-				},
-			},
-			args: args{
-				subscriberID: "sub-id",
-				uniqueKeyID:  "key-id",
-			},
-			errMessage: "registry down",
-		},
-		{
-			name: "failure - registry returns empty",
-			fields: fields{
-				cache: &mockCache{},
-				registry: &mockRegistry{
-					LookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
-						return []model.Subscription{}, nil
-					},
-				},
-			},
-			args: args{
-				subscriberID: "sub-id",
-				uniqueKeyID:  "key-id",
-			},
-			errMessage: "no subscriber found",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			km := &KeyMgr{
-				Cache:    tt.fields.cache,
-				Registry: tt.fields.registry,
-			}
-			got, err := km.getPublicKeys(context.Background(), tt.args.subscriberID, tt.args.uniqueKeyID)
-			if err == nil {
-				t.Errorf("getPublicKeys() expected error but got none, result: %v", got)
-				return
-			}
-			if !strings.Contains(err.Error(), tt.errMessage) {
-				t.Errorf("getPublicKeys() error = %v, want error message to contain %v", err.Error(), tt.errMessage)
-			}
-		})
-	}
-}
-
-func TestLookupRegistrySuccess(t *testing.T) {
-	km := &KeyMgr{
-		Registry: &mockRegistry{
-			LookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
-				return []model.Subscription{
-					{
-						Subscriber: model.Subscriber{
-							SubscriberID: sub.SubscriberID,
-						},
-						KeyID:            sub.KeyID,
-						SigningPublicKey: "signing-key",
-						EncrPublicKey:    "encryption-key",
-					},
-				}, nil
-			},
-		},
-	}
-
-	got, err := km.lookupRegistry(context.Background(), "test-subscriber", "key123")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	want := &model.Keyset{
-		SigningPublic: "signing-key",
-		EncrPublic:    "encryption-key",
-	}
-
-	if got.SigningPublic != want.SigningPublic {
-		t.Errorf("SigningPublic = %v, want %v", got.SigningPublic, want.SigningPublic)
-	}
-	if got.EncrPublic != want.EncrPublic {
-		t.Errorf("EncrPublic = %v, want %v", got.EncrPublic, want.EncrPublic)
-	}
-}
-
-func TestLookupRegistryFailure(t *testing.T) {
-	tests := []struct {
-		name       string
-		mockLookup func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error)
-		wantErr    error
-	}{
-		{
-			name: "lookup error",
-			mockLookup: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
-				return nil, fmt.Errorf("registry failure")
-			},
-			wantErr: fmt.Errorf("registry failure"),
-		},
-		{
-			name: "no subscriber found",
-			mockLookup: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
-				return []model.Subscription{}, nil
-			},
-			wantErr: ErrSubscriberNotFound,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			km := &KeyMgr{
-				Registry: &mockRegistry{
-					LookupFunc: tt.mockLookup,
-				},
-			}
-			got, err := km.lookupRegistry(context.Background(), "some-id", "key-id")
-			if err == nil {
-				t.Fatalf("expected error, got none")
-			}
-			if got != nil {
-				t.Errorf("expected nil keyset, got %v", got)
 			}
 		})
 	}
@@ -1157,6 +970,129 @@ func TestValidateParamsFailure(t *testing.T) {
 			}
 			if err != tt.wantErr {
 				t.Errorf("expected error %v, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestLookupNPKeysSuccess(t *testing.T) {
+	tests := []struct {
+		name               string
+		cacheGetFunc       func(ctx context.Context, key string) (string, error)
+		registryLookupFunc func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error)
+		expectedSigningPub string
+		expectedEncrPub    string
+	}{
+		{
+			name: "Cache hit with valid keys",
+			cacheGetFunc: func(ctx context.Context, key string) (string, error) {
+				return `{"SigningPublic":"mock-signing-public-key","EncrPublic":"mock-encryption-public-key"}`, nil
+			},
+			registryLookupFunc: nil,
+			expectedSigningPub: "mock-signing-public-key",
+			expectedEncrPub:    "mock-encryption-public-key",
+		},
+		{
+			name: "Cache miss and registry success",
+			cacheGetFunc: func(ctx context.Context, key string) (string, error) {
+
+				return "", nil
+			},
+			registryLookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
+				return []model.Subscription{
+					{
+						Subscriber: model.Subscriber{
+							SubscriberID: sub.SubscriberID,
+						},
+						KeyID:            sub.KeyID,
+						SigningPublicKey: "mock-signing-public-key",
+						EncrPublicKey:    "mock-encryption-public-key",
+					},
+				}, nil
+			},
+			expectedSigningPub: "mock-signing-public-key",
+			expectedEncrPub:    "mock-encryption-public-key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set up the KeyMgr with mocks
+			km := &KeyMgr{
+				Cache: &mockCache{
+					GetFunc: tt.cacheGetFunc,
+				},
+				Registry: &mockRegistry{
+					LookupFunc: tt.registryLookupFunc,
+				},
+			}
+
+			// Call the method
+			signingPublic, encrPublic, err := km.LookupNPKeys(context.Background(), "sub-id", "key-id")
+
+			// Validate no errors in success cases
+			if err != nil {
+				t.Fatalf("LookupNPKeys() unexpected error: %v", err)
+			}
+
+			// Validate returned public keys
+			if signingPublic != tt.expectedSigningPub {
+				t.Errorf("SigningPublic = %v, want %v", signingPublic, tt.expectedSigningPub)
+			}
+			if encrPublic != tt.expectedEncrPub {
+				t.Errorf("EncrPublic = %v, want %v", encrPublic, tt.expectedEncrPub)
+			}
+		})
+	}
+}
+
+func TestLookupNPKeysFailure(t *testing.T) {
+	tests := []struct {
+		name               string
+		cacheGetFunc       func(ctx context.Context, key string) (string, error)
+		registryLookupFunc func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error)
+		expectedError      string
+	}{
+		{
+			name: "Cache miss and registry failure",
+			cacheGetFunc: func(ctx context.Context, key string) (string, error) {
+				return "", nil
+			},
+			registryLookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
+				return nil, fmt.Errorf("registry down")
+			},
+			expectedError: "registry down",
+		},
+		{
+			name: "Cache miss and registry returns no subscriber",
+			cacheGetFunc: func(ctx context.Context, key string) (string, error) {
+				return "", nil
+			},
+			registryLookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
+				return nil, nil
+			},
+			expectedError: "no subscriber found with given credentials",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set up the KeyMgr with mocks
+			km := &KeyMgr{
+				Cache: &mockCache{
+					GetFunc: tt.cacheGetFunc,
+				},
+				Registry: &mockRegistry{
+					LookupFunc: tt.registryLookupFunc,
+				},
+			}
+			_, _, err := km.LookupNPKeys(context.Background(), "sub-id", "key-id")
+			if err == nil {
+				t.Fatalf("expected an error but got none")
+			}
+
+			if !strings.Contains(err.Error(), tt.expectedError) {
+				t.Errorf("expected error to contain %v, got %v", tt.expectedError, err.Error())
 			}
 		})
 	}

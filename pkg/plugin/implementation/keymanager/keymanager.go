@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/beckn/beckn-onix/pkg/log"
 	"github.com/beckn/beckn-onix/pkg/model"
@@ -175,8 +174,8 @@ var (
 	uuidGenFunc       = uuid.NewRandom
 )
 
-// GenerateKeyPairs generates a new signing (Ed25519) and encryption (X25519) key pair.
-func (km *KeyMgr) GenerateKeyPairs() (*model.Keyset, error) {
+// GenerateKeyset generates a new signing (Ed25519) and encryption (X25519) key pair.
+func (km *KeyMgr) GenerateKeyset() (*model.Keyset, error) {
 	signingPublic, signingPrivate, err := ed25519KeyGenFunc(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate signing key pair: %w", err)
@@ -200,8 +199,8 @@ func (km *KeyMgr) GenerateKeyPairs() (*model.Keyset, error) {
 	}, nil
 }
 
-// StorePrivateKeys stores the given keyset in Vault under the specified key ID.
-func (km *KeyMgr) StorePrivateKeys(ctx context.Context, keyID string, keys *model.Keyset) error {
+// InsertKeyset stores the given keyset in Vault under the specified key ID.
+func (km *KeyMgr) InsertKeyset(ctx context.Context, keyID string, keys *model.Keyset) error {
 	if keyID == "" {
 		return ErrEmptyKeyID
 	}
@@ -233,44 +232,8 @@ func (km *KeyMgr) StorePrivateKeys(ctx context.Context, keyID string, keys *mode
 	return nil
 }
 
-// SigningPrivateKey retrieves the unique key ID and signing private key for the given key ID.
-func (km *KeyMgr) SigningPrivateKey(ctx context.Context, keyID string) (string, string, error) {
-	keys, err := km.getKeys(ctx, keyID)
-	if err != nil {
-		return "", "", err
-	}
-	return keys.UniqueKeyID, keys.SigningPrivate, nil
-}
-
-// EncrPrivateKey retrieves the unique key ID and encryption private key for the given key ID.
-func (km *KeyMgr) EncrPrivateKey(ctx context.Context, keyID string) (string, string, error) {
-	keys, err := km.getKeys(ctx, keyID)
-	if err != nil {
-		return "", "", err
-	}
-	return keys.UniqueKeyID, keys.EncrPrivate, nil
-}
-
-// SigningPublicKey returns the signing public key for the given subscriber ID and key ID.
-func (km *KeyMgr) SigningPublicKey(ctx context.Context, subscriberID, uniqueKeyID string) (string, error) {
-	keys, err := km.getPublicKeys(ctx, subscriberID, uniqueKeyID)
-	if err != nil {
-		return "", err
-	}
-	return keys.SigningPublic, nil
-}
-
-// EncrPublicKey returns the encryption public key for the given subscriber ID and key ID.
-func (km *KeyMgr) EncrPublicKey(ctx context.Context, subscriberID, uniqueKeyID string) (string, error) {
-	keys, err := km.getPublicKeys(ctx, subscriberID, uniqueKeyID)
-	if err != nil {
-		return "", err
-	}
-	return keys.EncrPublic, nil
-}
-
-// DeletePrivateKeys deletes the private keys for the given key ID from Vault.
-func (km *KeyMgr) DeletePrivateKeys(ctx context.Context, keyID string) error {
+// DeleteKeyset deletes the private keys for the given key ID from Vault.
+func (km *KeyMgr) DeleteKeyset(ctx context.Context, keyID string) error {
 	if keyID == "" {
 		return ErrEmptyKeyID
 	}
@@ -283,8 +246,8 @@ func (km *KeyMgr) DeletePrivateKeys(ctx context.Context, keyID string) error {
 	return km.VaultClient.KVv2(path).Delete(ctx, keyID)
 }
 
-// getKeys retrieves the full keyset from Vault for the given key ID.
-func (km *KeyMgr) getKeys(ctx context.Context, keyID string) (*model.Keyset, error) {
+// Keyset retrieves the keyset for the given key ID from Vault and public keys from the registry.
+func (km *KeyMgr) Keyset(ctx context.Context, keyID string) (*model.Keyset, error) {
 	if keyID == "" {
 		return nil, ErrEmptyKeyID
 	}
@@ -324,32 +287,16 @@ func (km *KeyMgr) getKeys(ctx context.Context, keyID string) (*model.Keyset, err
 	}, nil
 }
 
-// getPublicKeys fetches the public keys from cache or registry for the given subscriber and key ID.
-func (km *KeyMgr) getPublicKeys(ctx context.Context, subscriberID, uniqueKeyID string) (*model.Keyset, error) {
-	if err := validateParams(subscriberID, uniqueKeyID); err != nil {
-		return nil, err
-	}
+// LookupNPKeys retrieves the signing and encryption public keys for the given subscriber ID and unique key ID.
+func (km *KeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueKeyID string) (string, string, error) {
 	cacheKey := fmt.Sprintf("%s_%s", subscriberID, uniqueKeyID)
 	cachedData, err := km.Cache.Get(ctx, cacheKey)
 	if err == nil {
 		var keys model.Keyset
 		if err := json.Unmarshal([]byte(cachedData), &keys); err == nil {
-			return &keys, nil
+			return keys.SigningPublic, keys.EncrPublic, nil
 		}
 	}
-	publicKeys, err := km.lookupRegistry(ctx, subscriberID, uniqueKeyID)
-	if err != nil {
-		return nil, err
-	}
-	cacheValue, err := json.Marshal(publicKeys)
-	if err == nil {
-		_ = km.Cache.Set(ctx, cacheKey, string(cacheValue), time.Hour)
-	}
-	return publicKeys, nil
-}
-
-// lookupRegistry queries the registry for public keys based on subscriber ID and key ID.
-func (km *KeyMgr) lookupRegistry(ctx context.Context, subscriberID, uniqueKeyID string) (*model.Keyset, error) {
 	subscribers, err := km.Registry.Lookup(ctx, &model.Subscription{
 		Subscriber: model.Subscriber{
 			SubscriberID: subscriberID,
@@ -357,15 +304,12 @@ func (km *KeyMgr) lookupRegistry(ctx context.Context, subscriberID, uniqueKeyID 
 		KeyID: uniqueKeyID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to lookup registry: %w", err)
+		return "", "", fmt.Errorf("failed to lookup registry: %w", err)
 	}
 	if len(subscribers) == 0 {
-		return nil, ErrSubscriberNotFound
+		return "", "", ErrSubscriberNotFound
 	}
-	return &model.Keyset{
-		SigningPublic: subscribers[0].SigningPublicKey,
-		EncrPublic:    subscribers[0].EncrPublicKey,
-	}, nil
+	return subscribers[0].SigningPublicKey, subscribers[0].EncrPublicKey, nil
 }
 
 // validateParams checks that subscriberID and uniqueKeyID are not empty.
