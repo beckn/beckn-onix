@@ -29,7 +29,7 @@ jobs:
     - name: Build Docker Image
       run: |
         IMAGE_NAME=${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.GCP_REPO }}/beckn-onix:${{ github.sha }}
-        docker build -t $IMAGE_NAME .
+        docker build -f Dockerfile.adapter -t $IMAGE_NAME .
         docker push $IMAGE_NAME
 
     - name: Get GKE Credentials
