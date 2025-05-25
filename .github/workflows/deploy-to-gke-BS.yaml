@@ -1,9 +1,7 @@
 name: CI/CD to GKE
 
 on:
-  push:
-    branches:
-      - beckn-onix-v1.0-develop
+  workflow_dispatch:
 
 jobs:
   deploy:
