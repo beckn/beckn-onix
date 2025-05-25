@@ -1,6 +1,7 @@
-name: CI/CD to GKE
+name: CI/CD to GKE updated
 
 on:
+  push:
   workflow_dispatch:
 
 jobs:
