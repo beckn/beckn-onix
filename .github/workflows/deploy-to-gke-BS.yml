@@ -36,7 +36,7 @@ jobs:
     - name: Get GKE Credentials
       run: |
         gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER }} \
-          --zone ${{ secrets.GKE_ZONE }} \
+          --zone ${{ secrets.GCP_REGION }} \
           --project ${{ secrets.GCP_PROJECT }}
 
     - name: Deploy to GKE
