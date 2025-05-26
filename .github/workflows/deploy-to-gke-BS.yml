@@ -50,8 +50,8 @@ jobs:
         sed -i "s|image: .*|image: $IMAGE_NAME|g" Deployment/deployment.yaml
 
         # Apply Kubernetes manifests
-        kubectl apply -f Deployment/deployment.yaml
-        kubectl apply -f Deployment/service.yaml
+        kubectl apply -f Deployment/deployment.yaml --namespace=onix-adapter
+        kubectl apply -f Deployment/service.yaml --namespace=onix-adapter
 
         # Wait for rollout to complete
-        kubectl rollout status Deployment/onix-demo-adapter
+        kubectl rollout status Deployment/onix-demo-adapter --namespace=onix-adapter
