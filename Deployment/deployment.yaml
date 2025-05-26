@@ -2,23 +2,23 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: onix-demo-adapter
-  namespace: onix-demo-saksham     #------
+  namespace: onix-adapter     #------
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: onix-demo-adapter
+      app: onix-adapter
   template:
     metadata:
       labels:
-        app: onix-demo-adapter
+        app: onix-adapter
       annotations:
         gke-gcsfuse/volumes: "true"
     spec:
-      serviceAccountName: "onix-adapter-sa"     #-----------
+      serviceAccountName: "onix-adapter-ksa"     #-----------
       containers:
         - name: onix-adapter
-          image: "asia-south1-docker.pkg.dev/trusty-relic-370809/onix-adapter-beta/adapter:latest"    #------
+          image: "asia-south1-docker.pkg.dev/trusty-relic-370809/onix-adapter-cicd/beckn-onix:latest"    #------
           ports:
             - containerPort: 8080
           env:
@@ -36,5 +36,5 @@ spec:
             driver: gcsfuse.csi.storage.gke.io
             readOnly: false
             volumeAttributes:
-              bucketName: "beckn-onix-demo"     #----------
+              bucketName: "beckn-cicd-bucket"     #----------
               mountOptions: "implicit-dirs"
