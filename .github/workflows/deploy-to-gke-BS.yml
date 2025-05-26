@@ -54,4 +54,4 @@ jobs:
         kubectl apply -f Deployment/service.yaml
 
         # Wait for rollout to complete
-        kubectl rollout status Deployment/${{ secrets.DEPLOYMENT_NAME }}
+        kubectl rollout status Deployment/onix-demo-adapter
