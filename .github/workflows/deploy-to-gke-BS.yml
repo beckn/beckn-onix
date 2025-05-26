@@ -39,8 +39,16 @@ jobs:
           --zone ${{ secrets.GCP_REGION }} \
           --project ${{ secrets.GCP_PROJECT }}
 
-    - name: Deploy to GKE
+    - name: Deploy to GKE using Kubernetes Manifests
       run: |
         IMAGE_NAME=${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.GCP_REPO }}/beckn-onix:${{ github.sha }}
-        kubectl set image deployment/${{ secrets.DEPLOYMENT_NAME }} ${{ secrets.DEPLOYMENT_NAME }}=$IMAGE_NAME
-        kubectl rollout status deployment/${{ secrets.DEPLOYMENT_NAME }}
+
+        # Replace image in deployment YAML
+        sed -i "s|image: .*|image: $IMAGE_NAME|g" Deployment/deployment.yaml
+
+        # Apply Kubernetes manifests
+        kubectl apply -f Deployment/deployment.yaml
+        kubectl apply -f Deployment/service.yaml
+
+        # Wait for rollout to complete
+        kubectl rollout status Deployment/${{ secrets.DEPLOYMENT_NAME }}
