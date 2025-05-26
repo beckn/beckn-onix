@@ -24,6 +24,9 @@ jobs:
         project_id: ${{ secrets.GCP_PROJECT }}
         export_default_credentials: true
 
+    - name: Install GKE Auth Plugin
+      run: gcloud components install gke-gcloud-auth-plugin --quiet
+
     - name: Configure Docker to use Artifact Registry
       run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev
 
@@ -38,11 +41,6 @@ jobs:
         gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER }} \
           --zone ${{ secrets.GCP_REGION }} \
           --project ${{ secrets.GCP_PROJECT }}
-
-    - name: Install gke-gcloud-auth-plugin
-      run: |
-        sudo apt-get update
-        sudo apt-get install google-cloud-sdk-gke-gcloud-auth-plugin
 
     - name: Deploy to GKE using Kubernetes Manifests
       run: |
