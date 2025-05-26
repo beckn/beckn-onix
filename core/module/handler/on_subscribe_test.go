@@ -1,0 +1,747 @@
+package handler
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"testing"
+	"time"
+
+	"github.com/beckn/beckn-onix/pkg/model"
+	"github.com/beckn/beckn-onix/pkg/plugin"
+	"github.com/beckn/beckn-onix/pkg/plugin/definition"
+	"github.com/stretchr/testify/assert"
+)
+
+type mockKeyManager struct {
+	signingPrivateKeyFunc func(ctx context.Context, keyID string) (string, string, error)
+	signingPublicKeyFunc  func(ctx context.Context, subscriberID, uniqueKeyID string) (string, error)
+	failKey               bool
+}
+
+func (m *mockKeyManager) SigningPrivateKey(ctx context.Context, keyID string) (string, string, error) {
+	return m.signingPrivateKeyFunc(ctx, keyID)
+}
+
+// Implement empty methods to satisfy interface
+func (m *mockKeyManager) GenerateKeyPairs() (*model.Keyset, error) { return nil, nil }
+func (m *mockKeyManager) StorePrivateKeys(ctx context.Context, keyID string, keys *model.Keyset) error {
+	return nil
+}
+func (m *mockKeyManager) EncrPrivateKey(ctx context.Context, keyID string) (string, string, error) {
+	return "", "", nil
+}
+func (m *mockKeyManager) SigningPublicKey(ctx context.Context, subscriberID, uniqueKeyID string) (string, error) {
+	return "", nil
+}
+func (m *mockKeyManager) EncrPublicKey(ctx context.Context, subscriberID, uniqueKeyID string) (string, error) {
+	return "", nil
+}
+func (m *mockKeyManager) DeletePrivateKeys(ctx context.Context, keyID string) error {
+	return nil
+}
+
+func generateTestKey() (string, *rsa.PrivateKey) {
+	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	privBytes := x509.MarshalPKCS1PrivateKey(privKey)
+	privPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: privBytes,
+	})
+	return string(privPEM), privKey
+}
+
+func TestOnSubscribeSuccess(t *testing.T) {
+	privPEM, privKey := generateTestKey()
+
+	challenge := []byte("secret")
+	encChallenge, _ := rsa.EncryptPKCS1v15(rand.Reader, &privKey.PublicKey, challenge)
+	encBase64 := base64.StdEncoding.EncodeToString(encChallenge)
+
+	tests := []struct {
+		name           string
+		req            OnSubscribeRequest
+		keyManagerMock func() definition.KeyManager
+	}{
+		{
+			name: "valid request decrypts successfully",
+			req: OnSubscribeRequest{
+				MessageID: "123",
+				Challenge: encBase64,
+			},
+			keyManagerMock: func() definition.KeyManager {
+				return &mockKeyManager{
+					signingPrivateKeyFunc: func(ctx context.Context, keyID string) (string, string, error) {
+						return privPEM, "", nil
+					},
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(tt.req)
+			step := onSubscribeStep{km: tt.keyManagerMock()}
+			ctx := &model.StepContext{Body: body}
+			err := step.Run(ctx)
+
+			assert.NoError(t, err)
+			var resp OnSubscribeResponse
+			json.Unmarshal(ctx.Body, &resp)
+			assert.Equal(t, tt.req.MessageID, resp.MessageID)
+			assert.Equal(t, "secret", resp.Answer)
+		})
+	}
+}
+
+func TestOnSubscribeFailures(t *testing.T) {
+	privPEM, _ := generateTestKey()
+
+	tests := []struct {
+		name           string
+		body           []byte
+		keyManagerMock func() definition.KeyManager
+		expectErrMsg   string
+	}{
+		{
+			name:           "invalid request body",
+			body:           []byte("not-json"),
+			keyManagerMock: func() definition.KeyManager { return &mockKeyManager{} },
+			expectErrMsg:   "invalid request body",
+		},
+		{
+			name: "message_id and challenge are required",
+			body: func() []byte {
+				req := OnSubscribeRequest{MessageID: "", Challenge: ""}
+				b, _ := json.Marshal(req)
+				return b
+			}(),
+			keyManagerMock: func() definition.KeyManager { return &mockKeyManager{} },
+			expectErrMsg:   "message_id and challenge are required",
+		},
+		{
+			name: "failed to get keys for message_id",
+			body: func() []byte {
+				req := OnSubscribeRequest{MessageID: "123", Challenge: base64.StdEncoding.EncodeToString([]byte("test"))}
+				b, _ := json.Marshal(req)
+				return b
+			}(),
+			keyManagerMock: func() definition.KeyManager {
+				return &mockKeyManager{
+					signingPrivateKeyFunc: func(ctx context.Context, keyID string) (string, string, error) {
+						return "", "", errors.New("key error")
+					},
+				}
+			},
+			expectErrMsg: "failed to get keys for message_id",
+		},
+		{
+			name: "failed to decode challenge",
+			body: func() []byte {
+				req := OnSubscribeRequest{MessageID: "123", Challenge: "!@#$notbase64"}
+				b, _ := json.Marshal(req)
+				return b
+			}(),
+			keyManagerMock: func() definition.KeyManager {
+				return &mockKeyManager{
+					signingPrivateKeyFunc: func(ctx context.Context, keyID string) (string, string, error) {
+						return privPEM, "", nil
+					},
+				}
+			},
+			expectErrMsg: "failed to decode challenge",
+		},
+		{
+			name: "failed to decrypt challenge",
+			body: func() []byte {
+				req := OnSubscribeRequest{
+					MessageID: "123",
+					Challenge: base64.StdEncoding.EncodeToString([]byte("invalid-decryption-data")),
+				}
+				b, _ := json.Marshal(req)
+				return b
+			}(),
+			keyManagerMock: func() definition.KeyManager {
+				return &mockKeyManager{
+					signingPrivateKeyFunc: func(ctx context.Context, keyID string) (string, string, error) {
+						return privPEM, "", nil
+					},
+				}
+			},
+			expectErrMsg: "failed to decrypt challenge",
+		},
+		{
+			name: "invalid PEM format or key type",
+			body: func() []byte {
+				req := OnSubscribeRequest{
+					MessageID: "123",
+					Challenge: base64.StdEncoding.EncodeToString([]byte("fake-challenge")),
+				}
+				b, _ := json.Marshal(req)
+				return b
+			}(),
+			keyManagerMock: func() definition.KeyManager {
+				return &mockKeyManager{
+					signingPrivateKeyFunc: func(ctx context.Context, keyID string) (string, string, error) {
+						// Not a valid PEM key (wrong header)
+						return "-----BEGIN INVALID-----\nabc\n-----END INVALID-----", "", nil
+					},
+				}
+			},
+			expectErrMsg: "invalid PEM format or key type",
+		},
+		{
+			name: "failed to parse private key",
+			body: func() []byte {
+				req := OnSubscribeRequest{
+					MessageID: "123",
+					Challenge: base64.StdEncoding.EncodeToString([]byte("fake-challenge")),
+				}
+				b, _ := json.Marshal(req)
+				return b
+			}(),
+			keyManagerMock: func() definition.KeyManager {
+				return &mockKeyManager{
+					signingPrivateKeyFunc: func(ctx context.Context, keyID string) (string, string, error) {
+						// Valid PEM header, invalid body (cannot parse key)
+						return "-----BEGIN RSA PRIVATE KEY-----\nZmFrZQo=\n-----END RSA PRIVATE KEY-----", "", nil
+					},
+				}
+			},
+			expectErrMsg: "failed to parse private key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			step := onSubscribeStep{km: tt.keyManagerMock()}
+			ctx := &model.StepContext{Body: tt.body}
+			err := step.Run(ctx)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tt.expectErrMsg)
+		})
+	}
+}
+
+// ///////////////////// step
+
+// Define mockStep struct
+type mockStep struct {
+	RunFunc func(ctx *model.StepContext) error
+}
+
+// Implement the Run method for mockStep to satisfy the definition.Step interface
+func (m *mockStep) Run(ctx *model.StepContext) error {
+	// if m.RunFunc != nil {
+	// 	return m.RunFunc(ctx)
+	// }
+	// return nil
+	return m.RunFunc(ctx)
+}
+
+type mockPluginManager struct {
+	failPlugin bool
+	failStep   bool
+}
+
+// Implement the Validator method to satisfy the PluginManager interface
+func (m *mockPluginManager) Validator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error) {
+	// Return a mock schema validator and no error
+	return &mockSchemaValidator{}, nil
+}
+
+// Implement the Middleware method to satisfy the PluginManager interface
+func (m *mockPluginManager) Middleware(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error) {
+	// Return a no-op middleware and no error
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r)
+		})
+	}, nil
+}
+
+type mockCache struct{}
+
+// Implement required methods of the definition.Cache interface for mockCache
+func (m *mockCache) Clear(ctx context.Context) error {
+	return nil
+}
+
+// Implement required methods of the definition.Cache interface for mockCache
+func (m *mockCache) Get(ctx context.Context, key string) (string, error) {
+	return "", nil
+}
+
+func (m *mockCache) Set(ctx context.Context, key string, value string, duration time.Duration) error {
+	return nil
+}
+
+func (m *mockCache) Delete(ctx context.Context, key string) error {
+	return nil
+}
+
+func (m *mockPluginManager) Cache(ctx context.Context, cfg *plugin.Config) (definition.Cache, error) {
+	if m.failPlugin {
+		return nil, fmt.Errorf("cache plugin error")
+	}
+	return &mockCache{}, nil
+}
+
+func (m *mockPluginManager) KeyManager(ctx context.Context, cache definition.Cache, lookup definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error) {
+	return &mockKeyManager{}, nil
+}
+
+type mockValidator struct{}
+
+// Implement required methods of the definition.SignValidator interface for mockValidator
+func (m *mockValidator) ValidateSignature(ctx context.Context, payload, signature, key string) error {
+	return nil
+}
+
+func (m *mockValidator) Validate(ctx context.Context, payload []byte, signature, key string) error {
+	// Add mock validation logic here if needed
+	return nil
+}
+
+func (m *mockPluginManager) SignValidator(ctx context.Context, cfg *plugin.Config) (definition.SignValidator, error) {
+	if m.failPlugin {
+		return nil, fmt.Errorf("signvalidator plugin error")
+	}
+	return &mockValidator{}, nil
+}
+
+type mockSchemaValidator struct{}
+
+// Implement required methods of the definition.SchemaValidator interface for mockSchemaValidator
+func (m *mockSchemaValidator) Validate(ctx context.Context, schema *url.URL, payload []byte) error {
+	// Add mock validation logic here if needed
+	return nil
+}
+
+func (m *mockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error) {
+	if m.failPlugin {
+		return nil, fmt.Errorf("schemavalidator plugin error")
+	}
+	return &mockSchemaValidator{}, nil
+}
+
+func (m *mockPluginManager) Router(ctx context.Context, cfg *plugin.Config) (definition.Router, error) {
+	if m.failPlugin {
+		return nil, fmt.Errorf("router plugin error")
+	}
+	return &mockRouter{}, nil
+}
+
+type mockRouter struct{}
+
+// Implement required methods of the definition.Router interface for mockRouter
+func (m *mockRouter) Route(ctx context.Context, url *url.URL, body []byte) (*model.Route, error) {
+	// Mock implementation for the updated signature
+	return &model.Route{TargetType: "mock", URL: url}, nil
+}
+
+// Define mockPublisher type
+type mockPublisher struct{}
+
+// Implement required methods of the definition.Publisher interface for mockPublisher
+func (m *mockPublisher) Publish(ctx context.Context, topic string, message []byte) error {
+	// Add mock publish logic here if needed
+	return nil
+}
+
+func (m *mockPluginManager) Publisher(ctx context.Context, cfg *plugin.Config) (definition.Publisher, error) {
+	if m.failPlugin {
+		return nil, fmt.Errorf("publisher plugin error")
+	}
+	return &mockPublisher{}, nil
+
+}
+
+// Define mockSigner type
+type mockSigner struct{}
+
+// Implement the Sign method for mockSigner to satisfy the definition.Signer interface
+func (m *mockSigner) Sign(ctx context.Context, payload []byte, key string, param1 int64, param2 int64) (string, error) {
+	// Add mock signing logic here if needed
+	return "mock-signature", nil
+}
+
+// Implement required methods of the definition.Signer interface for mockSigner
+// Ensure this return statement is inside a properly defined function or method
+func (m *mockPluginManager) MockStep(ctx context.Context) (*mockStep, error) {
+	return &mockStep{RunFunc: func(ctx *model.StepContext) error { return nil }}, nil
+}
+
+func (m *mockPluginManager) Signer(ctx context.Context, cfg *plugin.Config) (definition.Signer, error) {
+	if m.failPlugin {
+		return nil, fmt.Errorf("signer plugin error")
+	}
+	return &mockSigner{}, nil
+}
+
+func (m *mockPluginManager) Step(ctx context.Context, cfg *plugin.Config) (definition.Step, error) {
+	if m.failStep {
+		return nil, fmt.Errorf("step init failed")
+	}
+	return &mockStep{RunFunc: func(ctx *model.StepContext) error { return nil }}, nil
+}
+
+func TestNewStdHandler(t *testing.T) {
+	tests := []struct {
+		name        string
+		cfg         *Config
+		mgr         PluginManager
+		expectError bool
+	}{
+		{
+			name: "Success - All Plugins Loaded",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins:      PluginCfg{},
+				Steps:        []string{}, // no steps to init
+			},
+			mgr:         &mockPluginManager{},
+			expectError: false,
+		},
+		{
+			name: "Failure - Cache Plugin Load",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					Cache: &plugin.Config{ID: "cache-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{failPlugin: true},
+			expectError: true,
+		},
+		{
+			name: "Failure - KeyManager Plugin Load",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					KeyManager: &plugin.Config{ID: "keymanager-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{failPlugin: true},
+			expectError: true,
+		},
+		{
+			name: "Failure - Publisher Plugin Load",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					Publisher: &plugin.Config{ID: "publisher-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{failPlugin: true},
+			expectError: true,
+		},
+		{
+			name: "Failure - Signer Plugin Load",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					Signer: &plugin.Config{ID: "signer-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{failPlugin: true},
+			expectError: true,
+		},
+		{
+			name: "Failure - Router Plugin Load",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					Router: &plugin.Config{ID: "router-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{failPlugin: true},
+			expectError: true,
+		},
+		{
+			name: "Failure - SchemaValidator Plugin Load",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					SchemaValidator: &plugin.Config{ID: "schemavalidator-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{failPlugin: true},
+			expectError: true,
+		},
+		{
+			name: "Failure - SignValidator Plugin Load",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					SignValidator: &plugin.Config{ID: "signvalidator-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{failPlugin: true},
+			expectError: true,
+		},
+		{
+			name: "Failure - Plugin Step Initialization Error",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					Steps: []plugin.Config{
+						{ID: "fail-step"}, // required to trigger Step() method
+					},
+				},
+				Steps: []string{"fail-step"},
+			},
+			mgr:         &mockPluginManager{failStep: true},
+			expectError: true,
+		},
+		{
+			name: "Failure - Unknown Step",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Steps:        []string{"unknown-step"},
+			},
+			mgr:         &mockPluginManager{},
+			expectError: true,
+		},
+		{
+			name: "Failure - Built-in Sign Step Error (missing signer)",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Steps:        []string{"sign"},
+			},
+			mgr:         &mockPluginManager{},
+			expectError: true,
+		},
+		{
+			name: "Failure - Built-in ValidateSign Step Error (missing signValidator)",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Steps:        []string{"validateSign"},
+			},
+			mgr:         &mockPluginManager{},
+			expectError: true,
+		},
+		{
+			name: "Failure - Built-in ValidateSchema Step Error (missing schemaValidator)",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Steps:        []string{"validateSchema"},
+			},
+			mgr:         &mockPluginManager{},
+			expectError: true,
+		},
+		{
+			name: "Failure - Built-in AddRoute Step Error (missing router)",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Steps:        []string{"addRoute"},
+			},
+			mgr:         &mockPluginManager{},
+			expectError: true,
+		},
+		{
+			name: "Success - Custom Step From Plugin",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					Steps: []plugin.Config{{ID: "plugin-step"}},
+				},
+				Steps: []string{"plugin-step"},
+			},
+			mgr:         &mockPluginManager{},
+			expectError: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewStdHandler(context.Background(), tc.mgr, tc.cfg)
+			if (err != nil) != tc.expectError {
+				t.Errorf("Expected error: %v, got: %v", tc.expectError, err)
+			}
+		})
+	}
+}
+
+func TestRoute(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer mockServer.Close()
+
+	parsedURL, _ := url.Parse(mockServer.URL)
+
+	tests := []struct {
+		name        string
+		ctx         *model.StepContext
+		publisher   definition.Publisher
+		expectError bool
+	}{
+		{
+			name: "Success - Proxying to URL",
+			ctx: &model.StepContext{
+				Route: &model.Route{
+					TargetType: "url",
+					URL:        parsedURL,
+				},
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte("test body")))
+
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("Test panicked: %v", r)
+				}
+			}()
+
+			route(tc.ctx, req, recorder, tc.publisher)
+
+			if (recorder.Code >= 400) != tc.expectError {
+				t.Errorf("Unexpected response code: %d", recorder.Code)
+			}
+		})
+	}
+}
+
+func TestStepCtx(t *testing.T) {
+	tests := []struct {
+		name        string
+		handler     *stdHandler
+		request     *http.Request
+		setupCtx    func(r *http.Request) *http.Request
+		expectError bool
+	}{
+		{
+			name:    "Success - Valid Request",
+			handler: &stdHandler{}, // not using fallback SubscriberID
+			request: httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte("test body"))),
+			setupCtx: func(r *http.Request) *http.Request {
+				return r.WithContext(context.WithValue(r.Context(), model.ContextKeySubscriberID, "test-sub"))
+			},
+			expectError: false,
+		},
+		{
+			name:        "Failure - Subscriber ID Missing",
+			handler:     &stdHandler{}, // ensure no fallback
+			request:     httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte("test body"))),
+			setupCtx:    func(r *http.Request) *http.Request { return r }, // no context value
+			expectError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := tc.request
+			if tc.setupCtx != nil {
+				req = tc.setupCtx(req)
+			}
+
+			_, err := tc.handler.stepCtx(req, http.Header{})
+			if (err != nil) != tc.expectError {
+				t.Errorf("Expected error: %v, got: %v", tc.expectError, err)
+			}
+		})
+	}
+}
+
+func TestServeHTTP(t *testing.T) {
+	tests := []struct {
+		name           string
+		handler        *stdHandler
+		requestBody    string
+		injectSubID    bool
+		expectStatus   int
+		expectedHeader string
+	}{
+		{
+			name: "Failure - step returns error",
+			handler: &stdHandler{
+				SubscriberID: "test-sub",
+				steps: []definition.Step{
+					&mockStep{
+						RunFunc: func(ctx *model.StepContext) error {
+							return fmt.Errorf("step failed")
+						},
+					},
+				},
+			},
+			requestBody:  `{"test":"value"}`,
+			injectSubID:  true,
+			expectStatus: http.StatusInternalServerError, // Step error likely returns 500
+		},
+		{
+			name: "Success - no route (ACK)",
+			handler: &stdHandler{
+				SubscriberID: "test-sub",
+				steps: []definition.Step{
+					&mockStep{
+						RunFunc: func(ctx *model.StepContext) error {
+							return nil
+						},
+					},
+				},
+			},
+			requestBody:  `{"test":"value"}`,
+			injectSubID:  true,
+			expectStatus: http.StatusOK,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(tc.requestBody))
+
+			// Only inject subscriber ID if needed for this test
+			if tc.injectSubID {
+				ctx := context.WithValue(req.Context(), model.ContextKeySubscriberID, "test-sub")
+				req = req.WithContext(ctx)
+			}
+
+			rec := httptest.NewRecorder()
+			tc.handler.ServeHTTP(rec, req)
+
+			if rec.Code != tc.expectStatus {
+				t.Errorf("expected status %d, got %d", tc.expectStatus, rec.Code)
+			}
+		})
+	}
+}
