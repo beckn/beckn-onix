@@ -1,7 +1,6 @@
 name: Build and Upload Plugins
 
 on:
-  push:
   workflow_dispatch:
     inputs:
       target_branch:
