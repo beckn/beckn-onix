@@ -3,6 +3,12 @@ name: Build and Upload Plugins
 on:
   push:
   workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch to deploy'
+        required: true
+        default: 'beckn-onix-v1.0-develop'
+
 
 jobs:
   build-and-upload:
@@ -15,6 +21,12 @@ jobs:
     steps:
       - name: Checkout this repo
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch }}
+
+      - name: Show selected branch
+        run: echo "Deploying branch:${{ github.event.inputs.target_branch }}"
+
 
       - name: Clone GitHub and Gerrit plugin repos
         run: |
