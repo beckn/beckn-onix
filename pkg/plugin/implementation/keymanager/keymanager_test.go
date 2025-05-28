@@ -798,7 +798,9 @@ func setupMockVaultServer(t *testing.T, kvVersion, keyID string, success bool) *
 				"warnings": null,
 				"auth": null
 			}`, keyID)
-			w.Write([]byte(resp))
+			if _, err := w.Write([]byte(resp)); err != nil {
+				t.Fatalf("failed to write response: %v", err)
+			}
 		} else {
 			resp := fmt.Sprintf(`{
 				"request_id": "req-1234",
@@ -815,7 +817,9 @@ func setupMockVaultServer(t *testing.T, kvVersion, keyID string, success bool) *
 				"warnings": null,
 				"auth": null
 			}`, keyID)
-			w.Write([]byte(resp))
+			if _, err := w.Write([]byte(resp)); err != nil {
+				t.Fatalf("failed to write response: %v", err)
+			}
 		}
 	})
 
