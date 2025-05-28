@@ -62,8 +62,8 @@ func TestNewSuccess(t *testing.T) {
 	cache := &mockCache{}
 	registry := &mockRegistry{}
 	cfg := map[string]string{
-		"vault_addr": "http://dummy-vault",
-		"kv_version": "2",
+		"vaultAddr": "http://dummy-vault",
+		"kvVersion": "2",
 	}
 
 	cleanupCalled := false
@@ -105,8 +105,8 @@ func TestNewFailure(t *testing.T) {
 	cache := &mockCache{}
 	registry := &mockRegistry{}
 	cfg := map[string]string{
-		"vault_addr": "http://dummy-vault",
-		"kv_version": "2",
+		"vaultAddr": "http://dummy-vault",
+		"kvVersion": "2",
 	}
 
 	newKeyManagerFunc = func(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, cfg *keymanager.Config) (*keymanager.KeyMgr, func() error, error) {

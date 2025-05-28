@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/beckn/beckn-onix/pkg/log"
 	"github.com/beckn/beckn-onix/pkg/model"
@@ -61,11 +62,13 @@ func ValidateCfg(cfg *Config) error {
 	if cfg.VaultAddr == "" {
 		return errors.New("invalid config: VaultAddr cannot be empty")
 	}
-	if cfg.KVVersion == "" {
-		cfg.KVVersion = "v1"
-	} else if cfg.KVVersion != "v1" && cfg.KVVersion != "v2" {
+	kvVersion := strings.ToLower(cfg.KVVersion)
+	if kvVersion == "" {
+		kvVersion = "v1"
+	} else if kvVersion != "v1" && kvVersion != "v2" {
 		return fmt.Errorf("invalid KVVersion: must be 'v1' or 'v2'")
 	}
+	cfg.KVVersion = kvVersion
 	return nil
 }
 
@@ -199,6 +202,14 @@ func (km *KeyMgr) GenerateKeyset() (*model.Keyset, error) {
 	}, nil
 }
 
+// getSecretPath constructs the Vault secret path for storing keys based on the KV version.
+func (km *KeyMgr) getSecretPath(keyID string) string {
+	if km.KvVersion == "v2" {
+		return fmt.Sprintf("secret/data/keys/%s", keyID)
+	}
+	return fmt.Sprintf("secret/keys/%s", keyID)
+}
+
 // InsertKeyset stores the given keyset in Vault under the specified key ID.
 func (km *KeyMgr) InsertKeyset(ctx context.Context, keyID string, keys *model.Keyset) error {
 	if keyID == "" {
@@ -215,19 +226,17 @@ func (km *KeyMgr) InsertKeyset(ctx context.Context, keyID string, keys *model.Ke
 		"encrPublicKey":     keys.EncrPublic,
 		"encrPrivateKey":    keys.EncrPrivate,
 	}
-	var path string
+	path := km.getSecretPath(keyID)
 	var payload map[string]interface{}
 	if km.KvVersion == "v2" {
-		path = fmt.Sprintf("secret/data/keys/%s", keyID)
 		payload = map[string]interface{}{"data": keyData}
 	} else {
-		path = fmt.Sprintf("secret/keys/%s", keyID)
 		payload = keyData
 	}
 
 	_, err := km.VaultClient.Logical().Write(path, payload)
 	if err != nil {
-		return fmt.Errorf("failed to store secret in Vault: %w", err)
+		return fmt.Errorf("failed to store secret in Vault at path %s: %w", path, err)
 	}
 	return nil
 }
@@ -237,12 +246,7 @@ func (km *KeyMgr) DeleteKeyset(ctx context.Context, keyID string) error {
 	if keyID == "" {
 		return ErrEmptyKeyID
 	}
-	var path string
-	if km.KvVersion == "v2" {
-		path = fmt.Sprintf("secret/data/private_keys/%s", keyID)
-	} else {
-		path = fmt.Sprintf("secret/private_keys/%s", keyID)
-	}
+	path := km.getSecretPath(keyID)
 	return km.VaultClient.KVv2(path).Delete(ctx, keyID)
 }
 
@@ -252,12 +256,7 @@ func (km *KeyMgr) Keyset(ctx context.Context, keyID string) (*model.Keyset, erro
 		return nil, ErrEmptyKeyID
 	}
 
-	var path string
-	if km.KvVersion == "v2" {
-		path = fmt.Sprintf("secret/data/private_keys/%s", keyID)
-	} else {
-		path = fmt.Sprintf("secret/private_keys/%s", keyID)
-	}
+	path := km.getSecretPath(keyID)
 
 	secret, err := km.VaultClient.Logical().Read(path)
 	if err != nil || secret == nil {

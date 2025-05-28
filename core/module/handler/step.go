@@ -108,11 +108,11 @@ func (s *validateSignStep) validate(ctx *model.StepContext, value string) error 
 		return fmt.Errorf("malformed sign header")
 	}
 	keyID := headerParts[1]
-	keySet, err := s.km.Keyset(ctx, keyID)
+	signingPublicKey, _, err := s.km.LookupNPKeys(ctx, ctx.SubID, keyID)
 	if err != nil {
 		return fmt.Errorf("failed to get validation key: %w", err)
 	}
-	if err := s.validator.Validate(ctx, ctx.Body, value, keySet.SigningPublic); err != nil {
+	if err := s.validator.Validate(ctx, ctx.Body, value, signingPublicKey); err != nil {
 		return fmt.Errorf("sign validation failed: %w", err)
 	}
 	return nil
