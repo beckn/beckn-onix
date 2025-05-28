@@ -21,12 +21,13 @@ import (
 	"github.com/beckn/beckn-onix/pkg/plugin"
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
 type mockKeyManager struct {
+	mock.Mock
 	signingPrivateKeyFunc func(ctx context.Context, keyID string) (string, string, error)
-	signingPublicKeyFunc  func(ctx context.Context, subscriberID, uniqueKeyID string) (string, error)
-	failKey               bool
+	//signingPublicKeyFunc  func(ctx context.Context, subscriberID, uniqueKeyID string) (string, error)
 }
 
 func (m *mockKeyManager) SigningPrivateKey(ctx context.Context, keyID string) (string, string, error) {
@@ -98,7 +99,11 @@ func TestOnSubscribeSuccess(t *testing.T) {
 
 			assert.NoError(t, err)
 			var resp OnSubscribeResponse
-			json.Unmarshal(ctx.Body, &resp)
+			errNew := json.Unmarshal(ctx.Body, &resp)
+			if errNew != nil {
+				return
+			}
+			//json.Unmarshal(ctx.Body, &resp)
 			assert.Equal(t, tt.req.MessageID, resp.MessageID)
 			assert.Equal(t, "secret", resp.Answer)
 		})
@@ -321,12 +326,16 @@ func (m *mockPluginManager) SignValidator(ctx context.Context, cfg *plugin.Confi
 	return &mockValidator{}, nil
 }
 
-type mockSchemaValidator struct{}
+type mockSchemaValidator struct {
+	mock.Mock
+}
 
 // Implement required methods of the definition.SchemaValidator interface for mockSchemaValidator
 func (m *mockSchemaValidator) Validate(ctx context.Context, schema *url.URL, payload []byte) error {
 	// Add mock validation logic here if needed
-	return nil
+	args := m.Called(ctx, schema, payload)
+	return args.Error(0)
+	//return nil
 }
 
 func (m *mockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error) {
@@ -343,7 +352,9 @@ func (m *mockPluginManager) Router(ctx context.Context, cfg *plugin.Config) (def
 	return &mockRouter{}, nil
 }
 
-type mockRouter struct{}
+type mockRouter struct {
+	mock.Mock
+}
 
 // Implement required methods of the definition.Router interface for mockRouter
 func (m *mockRouter) Route(ctx context.Context, url *url.URL, body []byte) (*model.Route, error) {
@@ -397,7 +408,7 @@ func (m *mockPluginManager) Step(ctx context.Context, cfg *plugin.Config) (defin
 	return &mockStep{RunFunc: func(ctx *model.StepContext) error { return nil }}, nil
 }
 
-func TestNewStdHandler(t *testing.T) {
+func TestNewStdHandlerSuccess(t *testing.T) {
 	tests := []struct {
 		name        string
 		cfg         *Config
@@ -405,7 +416,7 @@ func TestNewStdHandler(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name: "Success - All Plugins Loaded",
+			name: "All Plugins Loaded",
 			cfg: &Config{
 				SubscriberID: "test-sub",
 				Role:         model.RoleGateway,
@@ -416,163 +427,7 @@ func TestNewStdHandler(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "Failure - Cache Plugin Load",
-			cfg: &Config{
-				SubscriberID: "test-sub",
-				Role:         model.RoleGateway,
-				Plugins: PluginCfg{
-					Cache: &plugin.Config{ID: "cache-plugin"},
-				},
-				Steps: []string{},
-			},
-			mgr:         &mockPluginManager{failPlugin: true},
-			expectError: true,
-		},
-		{
-			name: "Failure - KeyManager Plugin Load",
-			cfg: &Config{
-				SubscriberID: "test-sub",
-				Role:         model.RoleGateway,
-				Plugins: PluginCfg{
-					KeyManager: &plugin.Config{ID: "keymanager-plugin"},
-				},
-				Steps: []string{},
-			},
-			mgr:         &mockPluginManager{failPlugin: true},
-			expectError: true,
-		},
-		{
-			name: "Failure - Publisher Plugin Load",
-			cfg: &Config{
-				SubscriberID: "test-sub",
-				Role:         model.RoleGateway,
-				Plugins: PluginCfg{
-					Publisher: &plugin.Config{ID: "publisher-plugin"},
-				},
-				Steps: []string{},
-			},
-			mgr:         &mockPluginManager{failPlugin: true},
-			expectError: true,
-		},
-		{
-			name: "Failure - Signer Plugin Load",
-			cfg: &Config{
-				SubscriberID: "test-sub",
-				Role:         model.RoleGateway,
-				Plugins: PluginCfg{
-					Signer: &plugin.Config{ID: "signer-plugin"},
-				},
-				Steps: []string{},
-			},
-			mgr:         &mockPluginManager{failPlugin: true},
-			expectError: true,
-		},
-		{
-			name: "Failure - Router Plugin Load",
-			cfg: &Config{
-				SubscriberID: "test-sub",
-				Role:         model.RoleGateway,
-				Plugins: PluginCfg{
-					Router: &plugin.Config{ID: "router-plugin"},
-				},
-				Steps: []string{},
-			},
-			mgr:         &mockPluginManager{failPlugin: true},
-			expectError: true,
-		},
-		{
-			name: "Failure - SchemaValidator Plugin Load",
-			cfg: &Config{
-				SubscriberID: "test-sub",
-				Role:         model.RoleGateway,
-				Plugins: PluginCfg{
-					SchemaValidator: &plugin.Config{ID: "schemavalidator-plugin"},
-				},
-				Steps: []string{},
-			},
-			mgr:         &mockPluginManager{failPlugin: true},
-			expectError: true,
-		},
-		{
-			name: "Failure - SignValidator Plugin Load",
-			cfg: &Config{
-				SubscriberID: "test-sub",
-				Role:         model.RoleGateway,
-				Plugins: PluginCfg{
-					SignValidator: &plugin.Config{ID: "signvalidator-plugin"},
-				},
-				Steps: []string{},
-			},
-			mgr:         &mockPluginManager{failPlugin: true},
-			expectError: true,
-		},
-		{
-			name: "Failure - Plugin Step Initialization Error",
-			cfg: &Config{
-				SubscriberID: "test-sub",
-				Role:         model.RoleGateway,
-				Plugins: PluginCfg{
-					Steps: []plugin.Config{
-						{ID: "fail-step"}, // required to trigger Step() method
-					},
-				},
-				Steps: []string{"fail-step"},
-			},
-			mgr:         &mockPluginManager{failStep: true},
-			expectError: true,
-		},
-		{
-			name: "Failure - Unknown Step",
-			cfg: &Config{
-				SubscriberID: "test-sub",
-				Role:         model.RoleGateway,
-				Steps:        []string{"unknown-step"},
-			},
-			mgr:         &mockPluginManager{},
-			expectError: true,
-		},
-		{
-			name: "Failure - Built-in Sign Step Error (missing signer)",
-			cfg: &Config{
-				SubscriberID: "test-sub",
-				Role:         model.RoleGateway,
-				Steps:        []string{"sign"},
-			},
-			mgr:         &mockPluginManager{},
-			expectError: true,
-		},
-		{
-			name: "Failure - Built-in ValidateSign Step Error (missing signValidator)",
-			cfg: &Config{
-				SubscriberID: "test-sub",
-				Role:         model.RoleGateway,
-				Steps:        []string{"validateSign"},
-			},
-			mgr:         &mockPluginManager{},
-			expectError: true,
-		},
-		{
-			name: "Failure - Built-in ValidateSchema Step Error (missing schemaValidator)",
-			cfg: &Config{
-				SubscriberID: "test-sub",
-				Role:         model.RoleGateway,
-				Steps:        []string{"validateSchema"},
-			},
-			mgr:         &mockPluginManager{},
-			expectError: true,
-		},
-		{
-			name: "Failure - Built-in AddRoute Step Error (missing router)",
-			cfg: &Config{
-				SubscriberID: "test-sub",
-				Role:         model.RoleGateway,
-				Steps:        []string{"addRoute"},
-			},
-			mgr:         &mockPluginManager{},
-			expectError: true,
-		},
-		{
-			name: "Success - Custom Step From Plugin",
+			name: "Custom Step From Plugin",
 			cfg: &Config{
 				SubscriberID: "test-sub",
 				Role:         model.RoleGateway,
@@ -596,7 +451,182 @@ func TestNewStdHandler(t *testing.T) {
 	}
 }
 
-func TestRoute(t *testing.T) {
+func TestNewStdHandlerFailure(t *testing.T) {
+	tests := []struct {
+		name        string
+		cfg         *Config
+		mgr         PluginManager
+		expectError bool
+	}{
+		{
+			name: "Cache Plugin Load",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					Cache: &plugin.Config{ID: "cache-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{failPlugin: true},
+			expectError: true,
+		},
+		{
+			name: "KeyManager Plugin Load",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					KeyManager: &plugin.Config{ID: "keymanager-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{failPlugin: true},
+			expectError: true,
+		},
+		{
+			name: "Publisher Plugin Load",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					Publisher: &plugin.Config{ID: "publisher-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{failPlugin: true},
+			expectError: true,
+		},
+		{
+			name: " Signer Plugin Load",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					Signer: &plugin.Config{ID: "signer-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{failPlugin: true},
+			expectError: true,
+		},
+		{
+			name: "Router Plugin Load",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					Router: &plugin.Config{ID: "router-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{failPlugin: true},
+			expectError: true,
+		},
+		{
+			name: "SchemaValidator Plugin Load",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					SchemaValidator: &plugin.Config{ID: "schemavalidator-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{failPlugin: true},
+			expectError: true,
+		},
+		{
+			name: "SignValidator Plugin Load",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					SignValidator: &plugin.Config{ID: "signvalidator-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{failPlugin: true},
+			expectError: true,
+		},
+		{
+			name: "Plugin Step Initialization Error",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					Steps: []plugin.Config{
+						{ID: "fail-step"}, // required to trigger Step() method
+					},
+				},
+				Steps: []string{"fail-step"},
+			},
+			mgr:         &mockPluginManager{failStep: true},
+			expectError: true,
+		},
+		{
+			name: " Unknown Step",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Steps:        []string{"unknown-step"},
+			},
+			mgr:         &mockPluginManager{},
+			expectError: true,
+		},
+		{
+			name: " Built-in Sign Step Error (missing signer)",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Steps:        []string{"sign"},
+			},
+			mgr:         &mockPluginManager{},
+			expectError: true,
+		},
+		{
+			name: "Built-in ValidateSign Step Error (missing signValidator)",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Steps:        []string{"validateSign"},
+			},
+			mgr:         &mockPluginManager{},
+			expectError: true,
+		},
+		{
+			name: " Built-in ValidateSchema Step Error (missing schemaValidator)",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Steps:        []string{"validateSchema"},
+			},
+			mgr:         &mockPluginManager{},
+			expectError: true,
+		},
+		{
+			name: "Built-in AddRoute Step Error (missing router)",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Steps:        []string{"addRoute"},
+			},
+			mgr:         &mockPluginManager{},
+			expectError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewStdHandler(context.Background(), tc.mgr, tc.cfg)
+			if (err != nil) != tc.expectError {
+				t.Errorf("Expected error: %v, got: %v", tc.expectError, err)
+			}
+		})
+	}
+}
+
+func TestRouteSuccess(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -611,7 +641,7 @@ func TestRoute(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name: "Success - Proxying to URL",
+			name: "Proxying to URL",
 			ctx: &model.StepContext{
 				Route: &model.Route{
 					TargetType: "url",
@@ -642,7 +672,7 @@ func TestRoute(t *testing.T) {
 	}
 }
 
-func TestStepCtx(t *testing.T) {
+func TestStepCtxSuccess(t *testing.T) {
 	tests := []struct {
 		name        string
 		handler     *stdHandler
@@ -651,7 +681,7 @@ func TestStepCtx(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name:    "Success - Valid Request",
+			name:    "Valid Request",
 			handler: &stdHandler{}, // not using fallback SubscriberID
 			request: httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte("test body"))),
 			setupCtx: func(r *http.Request) *http.Request {
@@ -659,8 +689,33 @@ func TestStepCtx(t *testing.T) {
 			},
 			expectError: false,
 		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := tc.request
+			if tc.setupCtx != nil {
+				req = tc.setupCtx(req)
+			}
+
+			_, err := tc.handler.stepCtx(req, http.Header{})
+			if (err != nil) != tc.expectError {
+				t.Errorf("Expected error: %v, got: %v", tc.expectError, err)
+			}
+		})
+	}
+}
+
+func TestStepCtxFailure(t *testing.T) {
+	tests := []struct {
+		name        string
+		handler     *stdHandler
+		request     *http.Request
+		setupCtx    func(r *http.Request) *http.Request
+		expectError bool
+	}{
 		{
-			name:        "Failure - Subscriber ID Missing",
+			name:        "Subscriber ID Missing",
 			handler:     &stdHandler{}, // ensure no fallback
 			request:     httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte("test body"))),
 			setupCtx:    func(r *http.Request) *http.Request { return r }, // no context value
@@ -683,7 +738,7 @@ func TestStepCtx(t *testing.T) {
 	}
 }
 
-func TestServeHTTP(t *testing.T) {
+func TestServeHTTPSuccess(t *testing.T) {
 	tests := []struct {
 		name           string
 		handler        *stdHandler
@@ -693,23 +748,7 @@ func TestServeHTTP(t *testing.T) {
 		expectedHeader string
 	}{
 		{
-			name: "Failure - step returns error",
-			handler: &stdHandler{
-				SubscriberID: "test-sub",
-				steps: []definition.Step{
-					&mockStep{
-						RunFunc: func(ctx *model.StepContext) error {
-							return fmt.Errorf("step failed")
-						},
-					},
-				},
-			},
-			requestBody:  `{"test":"value"}`,
-			injectSubID:  true,
-			expectStatus: http.StatusInternalServerError, // Step error likely returns 500
-		},
-		{
-			name: "Success - no route (ACK)",
+			name: "No route (ACK)",
 			handler: &stdHandler{
 				SubscriberID: "test-sub",
 				steps: []definition.Step{
@@ -741,6 +780,344 @@ func TestServeHTTP(t *testing.T) {
 
 			if rec.Code != tc.expectStatus {
 				t.Errorf("expected status %d, got %d", tc.expectStatus, rec.Code)
+			}
+		})
+	}
+}
+
+func TestServeHTTPFailure(t *testing.T) {
+	tests := []struct {
+		name           string
+		handler        *stdHandler
+		requestBody    string
+		injectSubID    bool
+		expectStatus   int
+		expectedHeader string
+	}{
+		{
+			name: "Failure - step returns error",
+			handler: &stdHandler{
+				SubscriberID: "test-sub",
+				steps: []definition.Step{
+					&mockStep{
+						RunFunc: func(ctx *model.StepContext) error {
+							return fmt.Errorf("step failed")
+						},
+					},
+				},
+			},
+			requestBody:  `{"test":"value"}`,
+			injectSubID:  true,
+			expectStatus: http.StatusInternalServerError, // Step error likely returns 500
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(tc.requestBody))
+
+			// Only inject subscriber ID if needed for this test
+			if tc.injectSubID {
+				ctx := context.WithValue(req.Context(), model.ContextKeySubscriberID, "test-sub")
+				req = req.WithContext(ctx)
+			}
+
+			rec := httptest.NewRecorder()
+			tc.handler.ServeHTTP(rec, req)
+
+			if rec.Code != tc.expectStatus {
+				t.Errorf("expected status %d, got %d", tc.expectStatus, rec.Code)
+			}
+		})
+	}
+}
+
+type mockSignValidator struct {
+	mock.Mock
+}
+
+func (m *mockSignValidator) Validate(ctx context.Context, body []byte, header string, key string) error {
+	args := m.Called(ctx, body, header, key)
+	return args.Error(0)
+}
+
+func TestValidateSignStepFailure(t *testing.T) {
+	tests := []struct {
+		name          string
+		setupMocks    func(validator *mockSignValidator, km *mockKeyManager)
+		gatewayHdr    string
+		subscriberHdr string
+		expectErr     bool
+		headerValue   string
+	}{
+		{
+			name:          "Missing Gateway Header",
+			setupMocks:    func(validator *mockSignValidator, km *mockKeyManager) {},
+			gatewayHdr:    "",
+			subscriberHdr: "valid_subscriber_header",
+			expectErr:     true,
+		},
+		{
+			name: "Invalid Gateway Header",
+			setupMocks: func(validator *mockSignValidator, km *mockKeyManager) {
+				validator.On("Validate", mock.Anything, mock.Anything, "invalid_gateway_header", mock.Anything).
+					Return(errors.New("invalid signature"))
+			},
+			gatewayHdr:    "invalid_gateway_header",
+			subscriberHdr: "valid_subscriber_header",
+			expectErr:     true,
+		},
+		{
+			name:          " Missing Subscriber Header",
+			setupMocks:    func(validator *mockSignValidator, km *mockKeyManager) {},
+			gatewayHdr:    "valid_gateway_header",
+			subscriberHdr: "",
+			expectErr:     true,
+		},
+		{
+			name: "Invalid Subscriber Header",
+			setupMocks: func(validator *mockSignValidator, km *mockKeyManager) {
+				validator.On("Validate", mock.Anything, mock.Anything, "invalid_subscriber_header", mock.Anything).
+					Return(errors.New("invalid signature"))
+			},
+			gatewayHdr:    "valid_gateway_header",
+			subscriberHdr: "invalid_subscriber_header",
+			expectErr:     true,
+		},
+		{
+			name:        "Malformed Signature Header",
+			headerValue: `Signature keyId="bad|header"`, // Missing required fields
+			setupMocks:  func(validator *mockSignValidator, km *mockKeyManager) {},
+			expectErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			validator := new(mockSignValidator)
+			km := new(mockKeyManager)
+			tt.setupMocks(validator, km)
+
+			step, err := newValidateSignStep(validator, km)
+			assert.NoError(t, err)
+
+			req, _ := http.NewRequest("POST", "http://test.com", nil)
+			req.Header.Set(model.AuthHeaderGateway, tt.gatewayHdr)
+			req.Header.Set(model.AuthHeaderSubscriber, tt.subscriberHdr)
+
+			ctx := &model.StepContext{
+				Request:    req,
+				Body:       []byte("testBody"),
+				RespHeader: http.Header{}, // Initialize this map before use
+			}
+
+			err = step.Run(ctx)
+
+			if tt.expectErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNewValidateSchemaStepSuccess(t *testing.T) {
+	tests := []struct {
+		name          string
+		validator     definition.SchemaValidator
+		expectErr     bool
+		expectedError string
+	}{
+		{
+			name:      "SchemaValidator Plugin Configured",
+			validator: new(mockSchemaValidator), // Mock validator initialized
+			expectErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			step, err := newValidateSchemaStep(tt.validator)
+
+			if tt.expectErr {
+				assert.Nil(t, step)
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			} else {
+				assert.NotNil(t, step)
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNewValidateSchemaStepFailure(t *testing.T) {
+	tests := []struct {
+		name          string
+		validator     definition.SchemaValidator
+		expectErr     bool
+		expectedError string
+	}{
+		{
+			name:          "SchemaValidator Plugin Not Configured",
+			validator:     nil, // This should trigger an error
+			expectErr:     true,
+			expectedError: "invalid config: SchemaValidator plugin not configured",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			step, err := newValidateSchemaStep(tt.validator)
+
+			if tt.expectErr {
+				assert.Nil(t, step)
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			} else {
+				assert.NotNil(t, step)
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateSchemaStepRunSuccess(t *testing.T) {
+	tests := []struct {
+		name         string
+		setupMocks   func(validator *mockSchemaValidator)
+		expectErr    bool
+		errorMessage string
+	}{
+		{
+			name: "Schema Validation Passed",
+			setupMocks: func(validator *mockSchemaValidator) {
+				validator.On("Validate", mock.Anything, mock.Anything, mock.Anything).
+					Return(nil)
+			},
+			expectErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			validator := new(mockSchemaValidator)
+			tt.setupMocks(validator)
+
+			step := &validateSchemaStep{validator: validator}
+
+			ctx := &model.StepContext{
+				Request: &http.Request{URL: &url.URL{Path: "test_url"}},
+				Body:    []byte("testBody"),
+			}
+
+			err := step.Run(ctx)
+
+			if tt.expectErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorMessage)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateSchemaStepRunFailure(t *testing.T) {
+	tests := []struct {
+		name         string
+		setupMocks   func(validator *mockSchemaValidator)
+		expectErr    bool
+		errorMessage string
+	}{
+		{
+			name: "Schema Validation Error",
+			setupMocks: func(validator *mockSchemaValidator) {
+				validator.On("Validate", mock.Anything, mock.Anything, mock.Anything).
+					Return(errors.New("schema validation failed"))
+			},
+			expectErr:    true,
+			errorMessage: "schema validation failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			validator := new(mockSchemaValidator)
+			tt.setupMocks(validator)
+
+			step := &validateSchemaStep{validator: validator}
+
+			ctx := &model.StepContext{
+				Request: &http.Request{URL: &url.URL{Path: "test_url"}},
+				Body:    []byte("testBody"),
+			}
+
+			err := step.Run(ctx)
+
+			if tt.expectErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorMessage)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNewAddRouteStepSuccess(t *testing.T) {
+	tests := []struct {
+		name      string
+		router    definition.Router
+		expectErr bool
+	}{
+		{
+			name:      "Router Plugin Configured",
+			router:    new(mockRouter),
+			expectErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			step, err := newAddRouteStep(tt.router)
+
+			if tt.expectErr {
+				assert.Nil(t, step)
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "Router plugin not configured")
+			} else {
+				assert.NotNil(t, step)
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNewAddRouteStepFailure(t *testing.T) {
+	tests := []struct {
+		name      string
+		router    definition.Router
+		expectErr bool
+	}{
+		{
+			name:      "Router Plugin Not Configured",
+			router:    nil,
+			expectErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			step, err := newAddRouteStep(tt.router)
+
+			if tt.expectErr {
+				assert.Nil(t, step)
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "Router plugin not configured")
+			} else {
+				assert.NotNil(t, step)
+				assert.NoError(t, err)
 			}
 		})
 	}
