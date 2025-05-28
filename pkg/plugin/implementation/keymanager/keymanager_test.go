@@ -636,7 +636,7 @@ func TestStorePrivateKeysFailure(t *testing.T) {
 			keyID:       "mykeyid",
 			keys:        keys,
 			statusCode:  500,
-			expectedErr: "failed to store secret in Vault: Error making API request",
+			expectedErr: "failed to store secret in Vault at path secret/keys/mykeyid: Error making API request.",
 		},
 	}
 
@@ -699,14 +699,14 @@ func TestDeletePrivateKeys(t *testing.T) {
 			name:      "v1 delete",
 			kvVersion: "v1",
 			keyID:     "key123",
-			wantPath:  "/v1/secret/private_keys/key123/data/key123",
+			wantPath:  "/v1/secret/keys/key123/data/key123",
 			wantErr:   nil,
 		},
 		{
 			name:      "v2 delete",
 			kvVersion: "v2",
 			keyID:     "key123",
-			wantPath:  "/v1/secret/data/private_keys/key123/data/key123",
+			wantPath:  "/v1/secret/data/keys/key123/data/key123",
 			wantErr:   nil,
 		},
 	}
@@ -759,9 +759,8 @@ func setupMockVaultServer(t *testing.T, kvVersion, keyID string, success bool) *
 	t.Helper()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check that request path is expected
-		expectedPathV1 := fmt.Sprintf("/v1/secret/private_keys/%s", keyID)
-		expectedPathV2 := fmt.Sprintf("/v1/secret/data/private_keys/%s", keyID)
+		expectedPathV1 := fmt.Sprintf("/v1/secret/keys/%s", keyID)
+		expectedPathV2 := fmt.Sprintf("/v1/secret/data/keys/%s", keyID)
 
 		if (kvVersion == "v2" && r.URL.Path != expectedPathV2) || (kvVersion != "v2" && r.URL.Path != expectedPathV1) {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -769,14 +768,18 @@ func setupMockVaultServer(t *testing.T, kvVersion, keyID string, success bool) *
 		}
 
 		if !success {
-			// Simulate Vault error or not found
 			http.Error(w, `{"errors":["key not found"]}`, http.StatusNotFound)
 			return
 		}
 
-		// Success response JSON, different for v1 and v2
+		w.Header().Set("Content-Type", "application/json")
+
 		if kvVersion == "v2" {
 			resp := fmt.Sprintf(`{
+				"request_id": "req-1234",
+				"lease_id": "",
+				"renewable": false,
+				"lease_duration": 0,
 				"data": {
 					"data": {
 						"uniqueKeyID": "%s",
@@ -784,27 +787,35 @@ func setupMockVaultServer(t *testing.T, kvVersion, keyID string, success bool) *
 						"signingPrivateKey": "sign-priv",
 						"encrPublicKey": "encr-pub",
 						"encrPrivateKey": "encr-priv"
+					},
+					"metadata": {
+						"created_time": "2025-05-28T00:00:00Z",
+						"deletion_time": "",
+						"destroyed": false,
+						"version": 1
 					}
-				}
+				},
+				"warnings": null,
+				"auth": null
 			}`, keyID)
-			w.Header().Set("Content-Type", "application/json")
-			if _, err := w.Write([]byte(resp)); err != nil {
-				t.Fatalf("failed to write response: %v", err)
-			}
+			w.Write([]byte(resp))
 		} else {
 			resp := fmt.Sprintf(`{
+				"request_id": "req-1234",
+				"lease_id": "",
+				"renewable": false,
+				"lease_duration": 0,
 				"data": {
 					"uniqueKeyID": "%s",
 					"signingPublicKey": "sign-pub",
 					"signingPrivateKey": "sign-priv",
 					"encrPublicKey": "encr-pub",
 					"encrPrivateKey": "encr-priv"
-				}
+				},
+				"warnings": null,
+				"auth": null
 			}`, keyID)
-			w.Header().Set("Content-Type", "application/json")
-			if _, err := w.Write([]byte(resp)); err != nil {
-				t.Fatalf("failed to write response: %v", err)
-			}
+			w.Write([]byte(resp))
 		}
 	})
 

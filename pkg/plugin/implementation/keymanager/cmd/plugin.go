@@ -17,8 +17,8 @@ var newKeyManagerFunc = keymanager.New
 // New creates and initializes a new KeyManager instance using the provided cache, registry lookup, and configuration.
 func (k *keyManagerProvider) New(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, cfg map[string]string) (definition.KeyManager, func() error, error) {
 	config := &keymanager.Config{
-		VaultAddr: cfg["vault_addr"],
-		KVVersion: cfg["kv_version"],
+		VaultAddr: cfg["vaultAddr"],
+		KVVersion: cfg["kvVersion"],
 	}
 	log.Debugf(ctx, "Keymanager config mapped: %+v", cfg)
 	km, cleanup, err := newKeyManagerFunc(ctx, cache, registry, config)
