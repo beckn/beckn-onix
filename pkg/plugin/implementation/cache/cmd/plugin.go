@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/beckn/beckn-onix/pkg/log"
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn/beckn-onix/pkg/plugin/implementation/cache"
 )
@@ -16,14 +17,20 @@ func (c cacheProvider) New(ctx context.Context, config map[string]string) (defin
 	if ctx == nil {
 		return nil, nil, errors.New("context cannot be nil")
 	}
-
 	// Create cache.Config directly from map - validation is handled by cache.New
 	cacheConfig := &cache.Config{
 		Addr: config["addr"],
 	}
-	
-	return cache.New(ctx, cacheConfig)
+	log.Debugf(ctx, "Cache config mapped: %+v", cacheConfig)
+	cache, closer, err := cache.New(ctx, cacheConfig)
+	if err != nil {
+		log.Errorf(ctx, err, "Failed to create cache instance")
+		return nil, nil, err
+	}
+
+	log.Infof(ctx, "Cache instance created successfully")
+	return cache, closer, nil
 }
 
 // Provider is the exported plugin instance
-var Provider definition.CacheProvider = cacheProvider{}
+var Provider = cacheProvider{}
