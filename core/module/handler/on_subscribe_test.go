@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,7 +44,7 @@ func (m *mockKeyManager) EncrPrivateKey(ctx context.Context, keyID string) (stri
 	return "", "", nil
 }
 func (m *mockKeyManager) SigningPublicKey(ctx context.Context, subscriberID, uniqueKeyID string) (string, error) {
-	return "", nil
+	return "mockKey", nil
 }
 func (m *mockKeyManager) EncrPublicKey(ctx context.Context, subscriberID, uniqueKeyID string) (string, error) {
 	return "", nil
@@ -363,7 +364,9 @@ func (m *mockRouter) Route(ctx context.Context, url *url.URL, body []byte) (*mod
 }
 
 // Define mockPublisher type
-type mockPublisher struct{}
+type mockPublisher struct {
+	publishFunc func(ctx *model.StepContext, publisherID string, body []byte) error
+}
 
 // Implement required methods of the definition.Publisher interface for mockPublisher
 func (m *mockPublisher) Publish(ctx context.Context, topic string, message []byte) error {
@@ -380,11 +383,16 @@ func (m *mockPluginManager) Publisher(ctx context.Context, cfg *plugin.Config) (
 }
 
 // Define mockSigner type
-type mockSigner struct{}
+type mockSigner struct {
+	returnErr bool
+}
 
 // Implement the Sign method for mockSigner to satisfy the definition.Signer interface
 func (m *mockSigner) Sign(ctx context.Context, payload []byte, key string, param1 int64, param2 int64) (string, error) {
 	// Add mock signing logic here if needed
+	if m.returnErr {
+		return "", fmt.Errorf("sign error")
+	}
 	return "mock-signature", nil
 }
 
@@ -435,6 +443,33 @@ func TestNewStdHandlerSuccess(t *testing.T) {
 					Steps: []plugin.Config{{ID: "plugin-step"}},
 				},
 				Steps: []string{"plugin-step"},
+			},
+			mgr:         &mockPluginManager{},
+			expectError: false,
+		},
+		{
+			name: "KeyManager plugin loads successfully",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					KeyManager: &plugin.Config{ID: "keymanager-plugin"},
+					Cache:      &plugin.Config{ID: "cache-plugin"},
+				},
+				Steps: []string{},
+			},
+			mgr:         &mockPluginManager{},
+			expectError: false,
+		},
+		{
+			name: "Cache plugin loads successfully",
+			cfg: &Config{
+				SubscriberID: "test-sub",
+				Role:         model.RoleGateway,
+				Plugins: PluginCfg{
+					Cache: &plugin.Config{ID: "cache-plugin"},
+				},
+				Steps: []string{}, // No steps needed
 			},
 			mgr:         &mockPluginManager{},
 			expectError: false,
@@ -550,7 +585,7 @@ func TestNewStdHandlerFailure(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name: "Plugin Step Initialization Error",
+			name: "failed to initialize plugin step",
 			cfg: &Config{
 				SubscriberID: "test-sub",
 				Role:         model.RoleGateway,
@@ -565,7 +600,7 @@ func TestNewStdHandlerFailure(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name: " Unknown Step",
+			name: "unrecognized step",
 			cfg: &Config{
 				SubscriberID: "test-sub",
 				Role:         model.RoleGateway,
@@ -634,11 +669,19 @@ func TestRouteSuccess(t *testing.T) {
 
 	parsedURL, _ := url.Parse(mockServer.URL)
 
+	// Mock publisher that succeeds
+	successPublisher := &mockPublisher{
+		publishFunc: func(ctx *model.StepContext, publisherID string, body []byte) error {
+			return nil
+		},
+	}
+
 	tests := []struct {
 		name        string
 		ctx         *model.StepContext
 		publisher   definition.Publisher
 		expectError bool
+		expectAck   bool // new: to check if SendAck expected
 	}{
 		{
 			name: "Proxying to URL",
@@ -647,8 +690,24 @@ func TestRouteSuccess(t *testing.T) {
 					TargetType: "url",
 					URL:        parsedURL,
 				},
+				Context: context.Background(),
 			},
 			expectError: false,
+			expectAck:   false, // because returns after proxyFunc; SendAck not reached
+		},
+		{
+			name: "Successful publisher send",
+			ctx: &model.StepContext{
+				Route: &model.Route{
+					TargetType:  "publisher",
+					PublisherID: "test-pub",
+				},
+				Context: context.Background(),
+				Body:    []byte("test message"),
+			},
+			publisher:   successPublisher,
+			expectError: false,
+			expectAck:   true,
 		},
 	}
 
@@ -667,6 +726,82 @@ func TestRouteSuccess(t *testing.T) {
 
 			if (recorder.Code >= 400) != tc.expectError {
 				t.Errorf("Unexpected response code: %d", recorder.Code)
+			}
+
+			if tc.expectAck {
+				// Assuming SendAck writes "ACK" to response body — adjust if different
+				if !strings.Contains(recorder.Body.String(), "ACK") {
+					t.Errorf("Expected ACK in response body but got: %s", recorder.Body.String())
+				}
+			}
+		})
+	}
+}
+
+func TestRouteFailure(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer mockServer.Close()
+
+	parsedURL, _ := url.Parse(mockServer.URL)
+
+	tests := []struct {
+		name        string
+		ctx         *model.StepContext
+		publisher   definition.Publisher
+		expectError bool
+	}{
+		{
+			name: "proxying to URL (targetType=url)",
+			ctx: &model.StepContext{
+				Route: &model.Route{
+					TargetType: "url",
+					URL:        parsedURL,
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "publisher plugin not configured",
+			ctx: &model.StepContext{
+				Route: &model.Route{
+					TargetType:  "publisher",
+					PublisherID: "test-pub",
+				},
+				Context: context.Background(), // <- Add this line
+				Body:    []byte("test message"),
+			},
+			publisher:   nil,
+			expectError: true,
+		},
+		{
+			name: "unknown route type: invalid-type",
+			ctx: &model.StepContext{
+				Route: &model.Route{
+					TargetType: "invalid-type",
+				},
+				Context: context.Background(),
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte("test body")))
+
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("Test panicked: %v", r)
+				}
+			}()
+
+			route(tc.ctx, req, recorder, tc.publisher)
+
+			if tc.expectError && recorder.Code < 400 {
+				t.Errorf("Expected error response but got code: %d", recorder.Code)
 			}
 		})
 	}
@@ -784,15 +919,13 @@ func TestServeHTTPSuccess(t *testing.T) {
 		})
 	}
 }
-
 func TestServeHTTPFailure(t *testing.T) {
 	tests := []struct {
-		name           string
-		handler        *stdHandler
-		requestBody    string
-		injectSubID    bool
-		expectStatus   int
-		expectedHeader string
+		name         string
+		handler      *stdHandler
+		requestBody  string
+		injectSubID  bool
+		expectStatus int
 	}{
 		{
 			name: "Failure - step returns error",
@@ -808,25 +941,29 @@ func TestServeHTTPFailure(t *testing.T) {
 			},
 			requestBody:  `{"test":"value"}`,
 			injectSubID:  true,
-			expectStatus: http.StatusInternalServerError, // Step error likely returns 500
+			expectStatus: http.StatusInternalServerError,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(tc.requestBody))
-
-			// Only inject subscriber ID if needed for this test
 			if tc.injectSubID {
 				ctx := context.WithValue(req.Context(), model.ContextKeySubscriberID, "test-sub")
 				req = req.WithContext(ctx)
 			}
-
 			rec := httptest.NewRecorder()
+
 			tc.handler.ServeHTTP(rec, req)
 
 			if rec.Code != tc.expectStatus {
 				t.Errorf("expected status %d, got %d", tc.expectStatus, rec.Code)
+			}
+
+			// Relaxed assertion on error body since response.SendNack returns generic message
+			body := rec.Body.String()
+			if !strings.Contains(body, `"NACK"`) && !strings.Contains(body, "Internal Server Error") {
+				t.Errorf("expected body to contain NACK or Internal Server Error, got: %s", body)
 			}
 		})
 	}
@@ -841,6 +978,63 @@ func (m *mockSignValidator) Validate(ctx context.Context, body []byte, header st
 	return args.Error(0)
 }
 
+func TestValidateSignStepSuccess(t *testing.T) {
+	tests := []struct {
+		name          string
+		setupMocks    func(validator *mockSignValidator, km *mockKeyManager)
+		gatewayHdr    string
+		subscriberHdr string
+		expectErr     bool
+		headerValue   string
+	}{
+		{
+			name: "Successful validation of gateway and subscriber",
+			setupMocks: func(validator *mockSignValidator, km *mockKeyManager) {
+				// KeyManager returns valid key
+				km.On("SigningPublicKey", mock.Anything, "sub123", "key1").
+					Return("mockKey", nil).Twice()
+
+				// Validator.Validate must be called with correct key
+				validator.On("Validate", mock.AnythingOfType("*model.StepContext"), mock.Anything,
+					"Signature realm=\"sub123\"|key1|signature|extra", "mockKey").
+					Return(nil).Twice()
+			},
+			gatewayHdr:    `Signature realm="sub123"|key1|signature|extra`,
+			subscriberHdr: `Signature realm="sub123"|key1|signature|extra`,
+			expectErr:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			validator := new(mockSignValidator)
+			km := new(mockKeyManager)
+			tt.setupMocks(validator, km)
+
+			step, err := newValidateSignStep(validator, km)
+			assert.NoError(t, err)
+
+			req, _ := http.NewRequest("POST", "http://test.com", nil)
+			req.Header.Set(model.AuthHeaderGateway, tt.gatewayHdr)
+			req.Header.Set(model.AuthHeaderSubscriber, tt.subscriberHdr)
+
+			ctx := &model.StepContext{
+				SubID:      "sub123",
+				Request:    req,
+				Body:       []byte("testBody"),
+				RespHeader: http.Header{}, // Initialize this map before use
+			}
+
+			err = step.Run(ctx)
+
+			if tt.expectErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
 func TestValidateSignStepFailure(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -868,7 +1062,7 @@ func TestValidateSignStepFailure(t *testing.T) {
 			expectErr:     true,
 		},
 		{
-			name:          " Missing Subscriber Header",
+			name:          "Missing Subscriber Header",
 			setupMocks:    func(validator *mockSignValidator, km *mockKeyManager) {},
 			gatewayHdr:    "valid_gateway_header",
 			subscriberHdr: "",
@@ -890,6 +1084,18 @@ func TestValidateSignStepFailure(t *testing.T) {
 			setupMocks:  func(validator *mockSignValidator, km *mockKeyManager) {},
 			expectErr:   true,
 		},
+		{
+			name: "Validator.Validate returns error",
+			setupMocks: func(validator *mockSignValidator, km *mockKeyManager) {
+				km.On("SigningPublicKey", mock.Anything, "sub123", "key1").
+					Return("mockKey", nil)
+				validator.On("Validate", mock.Anything, mock.Anything, mock.Anything, "mockKey").
+					Return(errors.New("validation failed"))
+			},
+			gatewayHdr:    `Signature realm="sub123"|key1|signature|extra`,
+			subscriberHdr: `Signature realm="sub123"|key1|signature|extra`,
+			expectErr:     true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -906,6 +1112,7 @@ func TestValidateSignStepFailure(t *testing.T) {
 			req.Header.Set(model.AuthHeaderSubscriber, tt.subscriberHdr)
 
 			ctx := &model.StepContext{
+				SubID:      "sub123",
 				Request:    req,
 				Body:       []byte("testBody"),
 				RespHeader: http.Header{}, // Initialize this map before use
@@ -1118,6 +1325,224 @@ func TestNewAddRouteStepFailure(t *testing.T) {
 			} else {
 				assert.NotNil(t, step)
 				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNewSignStepSuccess(t *testing.T) {
+	tests := []struct {
+		name        string
+		signer      definition.Signer
+		km          definition.KeyManager
+		expectError bool
+	}{
+		{
+			name:        "SignerAndKeyManagerPresent",
+			signer:      &mockSigner{},
+			km:          &mockKeyManager{},
+			expectError: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			step, err := newSignStep(tc.signer, tc.km)
+			if tc.expectError && err == nil {
+				t.Errorf("expected error but got nil")
+			}
+			if !tc.expectError && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if !tc.expectError && step == nil {
+				t.Errorf("expected step to be non-nil")
+			}
+		})
+	}
+}
+
+func TestNewSignStepFailure(t *testing.T) {
+	tests := []struct {
+		name        string
+		signer      definition.Signer
+		km          definition.KeyManager
+		expectError bool
+	}{
+		{
+			name:        "Invalid config: Signer plugin not configured",
+			signer:      nil,
+			km:          &mockKeyManager{},
+			expectError: true,
+		},
+		{
+			name:        "Invalid config: KeyManager plugin not configured",
+			signer:      &mockSigner{},
+			km:          nil,
+			expectError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			step, err := newSignStep(tc.signer, tc.km)
+			if tc.expectError && err == nil {
+				t.Errorf("expected error but got nil")
+			}
+			if !tc.expectError && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if !tc.expectError && step == nil {
+				t.Errorf("expected step to be non-nil")
+			}
+		})
+	}
+}
+
+func TestSignStepRunSuccess(t *testing.T) {
+	tests := []struct {
+		name           string
+		role           model.Role
+		keyManagerErr  bool
+		signerErr      bool
+		expectError    bool
+		expectedHeader string
+	}{
+		{
+			name:           "Gateway role",
+			role:           model.RoleGateway,
+			keyManagerErr:  false,
+			signerErr:      false,
+			expectError:    false,
+			expectedHeader: model.AuthHeaderGateway,
+		},
+		{
+			name:           "Subscriber role",
+			role:           "subscriber",
+			keyManagerErr:  false,
+			signerErr:      false,
+			expectError:    false,
+			expectedHeader: model.AuthHeaderSubscriber,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			km := &mockKeyManager{
+				signingPrivateKeyFunc: func(ctx context.Context, subID string) (string, string, error) {
+					if tc.keyManagerErr {
+						return "", "", fmt.Errorf("mock key manager error")
+					}
+					return "mock-key-id", "mock-key", nil
+				},
+			}
+
+			signer := &mockSigner{
+				returnErr: tc.signerErr,
+			}
+
+			step := &signStep{
+				km:     km,
+				signer: signer,
+			}
+
+			ctx := &model.StepContext{
+				Context: context.Background(),
+				Body:    []byte(`{"test":"data"}`),
+				SubID:   "test-sub",
+				Role:    tc.role,
+				Request: &http.Request{Header: http.Header{}},
+			}
+
+			err := step.Run(ctx)
+			if tc.expectError && err == nil {
+				t.Errorf("expected error but got nil")
+			}
+			if !tc.expectError && err != nil {
+				t.Errorf("expected no error but got %v", err)
+			}
+
+			if !tc.expectError {
+				authHeader := ctx.Request.Header.Get(tc.expectedHeader)
+				if authHeader == "" {
+					t.Errorf("expected header %s to be set", tc.expectedHeader)
+				}
+				if !strings.Contains(authHeader, "Signature keyId=") {
+					t.Errorf("auth header format incorrect: %s", authHeader)
+				}
+			}
+		})
+	}
+}
+
+func TestSignStepRunFailure(t *testing.T) {
+	tests := []struct {
+		name           string
+		role           model.Role
+		keyManagerErr  bool
+		signerErr      bool
+		expectError    bool
+		expectedHeader string
+	}{
+		{
+			name:          "Failed to get signing key",
+			role:          model.RoleGateway,
+			keyManagerErr: true,
+			signerErr:     false,
+			expectError:   true,
+		},
+		{
+			name:          "Failed to sign request",
+			role:          model.RoleGateway,
+			keyManagerErr: false,
+			signerErr:     true,
+			expectError:   true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			km := &mockKeyManager{
+				signingPrivateKeyFunc: func(ctx context.Context, subID string) (string, string, error) {
+					if tc.keyManagerErr {
+						return "", "", fmt.Errorf("mock key manager error")
+					}
+					return "mock-key-id", "mock-key", nil
+				},
+			}
+
+			signer := &mockSigner{
+				returnErr: tc.signerErr,
+			}
+
+			step := &signStep{
+				km:     km,
+				signer: signer,
+			}
+
+			ctx := &model.StepContext{
+				Context: context.Background(),
+				Body:    []byte(`{"test":"data"}`),
+				SubID:   "test-sub",
+				Role:    tc.role,
+				Request: &http.Request{Header: http.Header{}},
+			}
+
+			err := step.Run(ctx)
+			if tc.expectError && err == nil {
+				t.Errorf("expected error but got nil")
+			}
+			if !tc.expectError && err != nil {
+				t.Errorf("expected no error but got %v", err)
+			}
+
+			if !tc.expectError {
+				authHeader := ctx.Request.Header.Get(tc.expectedHeader)
+				if authHeader == "" {
+					t.Errorf("expected header %s to be set", tc.expectedHeader)
+				}
+				if !strings.Contains(authHeader, "Signature keyId=") {
+					t.Errorf("auth header format incorrect: %s", authHeader)
+				}
 			}
 		})
 	}
