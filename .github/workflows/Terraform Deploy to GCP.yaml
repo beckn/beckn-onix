@@ -1,0 +1,41 @@
+name: Terraform Deploy to GCP
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  terraform:
+    name: Deploy with Terraform on GCP
+    runs-on: ubuntu-latest
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.0
+
+      - name: Authenticate to Google Cloud
+        run: echo "${{ secrets.GCP_CREDENTIALS }}" > gcp-key.json
+        shell: bash
+
+      - name: Terraform Init
+        run: terraform init -var="credentials_file=gcp-key.json"
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -var="credentials_file=gcp-key.json" -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+
+      - name: Clean up credentials file
+        run: rm -f gcp-key.json
