@@ -323,7 +323,9 @@ func TestCallRegistrySubscribe(t *testing.T) {
 				}
 
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{"result":"success"}`))
+				if _, err := w.Write([]byte(`{"result":"success"}`)); err != nil {
+					t.Errorf("failed to write response: %v", err)
+				}
 			},
 			wantResp: map[string]interface{}{"result": "success"},
 		},
@@ -359,7 +361,9 @@ func TestCallRegistrySubscribe(t *testing.T) {
 			req:         baseReq,
 			mockServer: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusBadRequest)
-				w.Write([]byte("bad request"))
+				if _, err := w.Write([]byte("bad request")); err != nil {
+					t.Errorf("failed to write response: %v", err)
+				}
 			},
 			wantResp: nil,
 			wantErr:  "registry returned non-200 status",
@@ -370,7 +374,10 @@ func TestCallRegistrySubscribe(t *testing.T) {
 			req:         baseReq,
 			mockServer: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("invalid json"))
+				w.WriteHeader(http.StatusOK)
+				if _, err := w.Write([]byte("invalid json")); err != nil {
+					t.Errorf("failed to write response: %v", err)
+				}
 			},
 			wantResp: nil,
 			wantErr:  "failed to unmarshal response",
