@@ -16,26 +16,7 @@ jobs:
       - name: Clone Terraform repo from Gerrit
         run: |
           git clone https://${{ secrets.GERRIT_USERNAME }}:${{ secrets.GERRIT_PAT }}@open-networks.googlesource.com/onix-dev gerrit-repo
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.5.0
-
-      - name: Authenticate to Google Cloud
-        run: echo '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}' > gcp-key.json
-
-      - name: Terraform Init with backend
-        working-directory: ./gerrit-repo/Terraform
-        run: |
-          terraform init \
-            -backend-config="bucket=beckn-state-bucket-bs" \
-            -backend-config="prefix=onix-terraform/state" \
-            -backend-config="credentials=${{ github.workspace }}/gcp-key.json"
-
-      - name: Terraform Plan
-        working-directory: ./gerrit-repo/Terraform
-        run: terraform plan -var="credentials_file=${{ github.workspace }}/gcp-key.json"
-
-      - name: Clean up credentials
-        run: rm -f gcp-key.json
+          echo "==== Directory contents after clone ===="
+          ls -la
+          echo "==== Contents of gerrit-repo ===="
+          ls -la gerrit-repo
