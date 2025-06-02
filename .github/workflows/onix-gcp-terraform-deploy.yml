@@ -15,8 +15,13 @@ jobs:
 
       - name: Clone Terraform repo from Gerrit
         run: |
-          git clone https://${{ secrets.GERRIT_USERNAME }}:${{ secrets.GERRIT_PAT }}@open-networks.googlesource.com/onix-dev/Terraform gerrit-repo
+          git clone https://${{ secrets.GERRIT_USERNAME }}:${{ secrets.GERRIT_PAT }}@open-networks.googlesource.com/onix-dev gerrit-repo
           echo "==== Directory contents after clone ===="
           ls -la
           echo "==== Contents of gerrit-repo ===="
           ls -la gerrit-repo
+          echo "==== Contents of Terraform-dir ===="
+          pwd
+          cd Terraform
+          pwd
+          la -la
