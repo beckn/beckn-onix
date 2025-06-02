@@ -1,54 +1,40 @@
 name: Terraform Deploy to GCP
- 
+
 on:
   workflow_dispatch:  # Manual trigger
- 
+
 jobs:
-  terraform:
-    name: Deploy GCP Infrastructure
+  plan:
+    name: Terraform Plan Only
     runs-on: ubuntu-latest
-    #env:
-    #  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
- 
+
     steps:
       - name: Checkout this repository
         uses: actions/checkout@v3
- 
+
       - name: Clone Terraform repo from Gerrit
         run: |
           git clone https://${{ secrets.GERRIT_USERNAME }}:${{ secrets.GERRIT_PAT }}@open-networks.googlesource.com/onix-dev gerrit-repo
 
- 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.5.0
- 
+
       - name: Authenticate to Google Cloud
-        run: echo "${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}" > gcp-key.json
- 
+        run: echo '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}' > gcp-key.json
+
       - name: Terraform Init with backend
-        working-directory: ./onix-dev/Terraform
+        working-directory: ./gerrit-repo/Terraform
         run: |
           terraform init \
-            -backend-config="bucket=your-backend-bucket-name" \
-            -backend-config="prefix=terraform/state" \
+            -backend-config="bucket=beckn-state-bucket-bs" \
+            -backend-config="prefix=onix-terraform/state" \
             -backend-config="credentials=${{ github.workspace }}/gcp-key.json"
- 
- 
+
       - name: Terraform Plan
-        working-directory: ./onix-dev/Terraform
-        run: terraform plan -out=tfplan -var="credentials_file=${{ github.workspace }}/gcp-key.json"
- 
-      - name: Wait for Manual Approval
-        uses: hmarr/auto-approve-action@v2
-        if: false  # prevents automatic approval
-        with:
-          github-token: ${{ secrets.PAT_GITHUB }}
- 
-      - name: Terraform Apply
-        working-directory: ./onix-dev/Terraform
-        run: terraform apply tfplan
- 
+        working-directory: ./gerrit-repo/Terraform
+        run: terraform plan -var="credentials_file=${{ github.workspace }}/gcp-key.json"
+
       - name: Clean up credentials
         run: rm -f gcp-key.json
