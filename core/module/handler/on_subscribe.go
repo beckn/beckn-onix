@@ -1,38 +1,21 @@
 package handler
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
-	"errors"
 	"fmt"
 
 	"github.com/beckn/beckn-onix/pkg/model"
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
 )
 
-// OnSubscribeRequest represents the request payload for the on_subscribe handler.
-type OnSubscribeRequest struct {
-	Status    string `json:"status,omitempty"`
-	MessageID string `json:"message_id"`
-	Challenge string `json:"challenge"` // Encrypted
-}
-
-// OnSubscribeResponse represents the response payload for the on_subscribe handler.
-type OnSubscribeResponse struct {
-	Answer    string `json:"answer"`     // Decrypted
-	MessageID string `json:"message_id"` // Same as request
-}
-
-type onSubscribeStep struct {
+type onSubscribeHandler struct {
 	km definition.KeyManager
+	dp definition.Decrypter
 }
 
-func (s *onSubscribeStep) Run(ctx *model.StepContext) error {
-	var req OnSubscribeRequest
+func (s *onSubscribeHandler) Run(ctx *model.StepContext) error {
+	var req model.OnSubscribeRequest
 	if err := json.Unmarshal(ctx.Body, &req); err != nil {
 		return model.NewBadReqErr(fmt.Errorf("invalid request body: %w", err))
 	}
@@ -48,21 +31,21 @@ func (s *onSubscribeStep) Run(ctx *model.StepContext) error {
 		return fmt.Errorf("failed to get keys for message_id %s: %w", req.MessageID, err)
 	}
 
-	// Decode and decrypt the challenge
+	// // Decode and decrypt the challenge
 	encBytes, err := base64.StdEncoding.DecodeString(req.Challenge)
 	if err != nil {
 		return fmt.Errorf("failed to decode challenge: %w", err)
 	}
 
-	// Decrypt using the encryption private key
-	answerBytes, err := decryptWithPrivateKey(encBytes, keySet)
+	// Decrypt using the Decrypter interface
+	plainText, err := s.dp.Decrypt(ctx, string(encBytes), keySet, "")
 	if err != nil {
 		return fmt.Errorf("failed to decrypt challenge: %w", err)
 	}
 
 	// Prepare the response
-	resp := OnSubscribeResponse{
-		Answer:    string(answerBytes),
+	resp := model.OnSubscribeResponse{
+		Answer:    plainText,
 		MessageID: req.MessageID,
 	}
 
@@ -73,19 +56,4 @@ func (s *onSubscribeStep) Run(ctx *model.StepContext) error {
 
 	ctx.Body = respJSON
 	return nil
-}
-
-// Helper: decrypt challenge using PEM private key
-func decryptWithPrivateKey(ciphertext []byte, privateKeyPEM string) ([]byte, error) {
-	block, _ := pem.Decode([]byte(privateKeyPEM))
-	if block == nil || block.Type != "RSA PRIVATE KEY" {
-		return nil, errors.New("invalid PEM format or key type")
-	}
-
-	privKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse private key: %w", err)
-	}
-
-	return rsa.DecryptPKCS1v15(rand.Reader, privKey, ciphertext)
 }

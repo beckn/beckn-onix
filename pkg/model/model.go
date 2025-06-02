@@ -184,3 +184,16 @@ type Message struct {
 type Response struct {
 	Message Message `json:"message"`
 }
+
+// OnSubscribeRequest represents the request payload for the on_subscribe handler.
+type OnSubscribeRequest struct {
+	Status    string `json:"status,omitempty"`
+	MessageID string `json:"message_id"`
+	Challenge string `json:"challenge"` // Encrypted
+}
+
+// OnSubscribeResponse represents the response payload for the on_subscribe handler.
+type OnSubscribeResponse struct {
+	Answer    string `json:"answer"`     // Decrypted
+	MessageID string `json:"message_id"` // Same as request
+}
