@@ -26,4 +26,4 @@ jobs:
           pwd
           cd gerrit-repo/Terraform
           pwd
-          la -la
+          ls -la
