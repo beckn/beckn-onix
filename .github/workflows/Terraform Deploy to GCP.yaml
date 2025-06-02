@@ -7,8 +7,8 @@ jobs:
   terraform:
     name: Deploy GCP Infrastructure
     runs-on: ubuntu-latest
-    env:
-      GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
+    #env:
+    #  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
  
     steps:
       - name: Checkout this repository
