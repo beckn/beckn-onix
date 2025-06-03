@@ -84,46 +84,6 @@ type mockRegistryResponse struct {
 	bodyReaderErr error
 }
 
-type mockRegistry struct {
-	responses []mockRegistryResponse
-	callCount int
-}
-
-type errorReadCloser struct {
-	err error
-}
-
-func (e *errorReadCloser) Read(p []byte) (int, error) {
-	return 0, e.err
-}
-
-func (e *errorReadCloser) Close() error {
-	return nil
-}
-
-func (m *mockRegistry) RoundTrip(req *http.Request) (*http.Response, error) {
-	if m.callCount >= len(m.responses) {
-		return nil, errors.New("no more responses")
-	}
-	resp := m.responses[m.callCount]
-	m.callCount++
-
-	if resp.err != nil {
-		return nil, resp.err
-	}
-
-	body := io.NopCloser(bytes.NewBufferString(resp.body))
-	if resp.bodyReaderErr != nil {
-		body = io.NopCloser(&errorReadCloser{err: resp.bodyReaderErr})
-	}
-
-	return &http.Response{
-		StatusCode: resp.statusCode,
-		Body:       body,
-		Header:     make(http.Header),
-	}, nil
-}
-
 // Mock implementation of RegistryClient
 type mockRegistryClient struct {
 	mockResponses []mockRegistryResponse
