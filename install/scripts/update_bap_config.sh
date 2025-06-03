@@ -43,7 +43,6 @@ else
     else
         registry_url="http://$(get_container_ip registry):3030/subscribers"
     fi 
-    echo "registry_url from update_bap_config.sh: $registry_url"
 fi
 
 echo "Generating public/private key pair"
@@ -83,7 +82,6 @@ if [[ $(uname -s ) == 'Darwin' ]];then
 
     echo "Configuring BAP protocol server"
     # Apply replacements in both files
-    echo "replacements: ${replacements[@]}"
     for file in "$clientFile" "$networkFile"; do
         for line in "${replacements[@]}"; do
             key="${line%%=*}"
@@ -115,7 +113,7 @@ else
         ["USE_LAYER_2_CONFIG"]=false
         ["MANDATE_LAYER_2_CONFIG"]=false        
     )
-    echo "replacements: ${replacements[@]}"
+
     echo "Configuring BAP protocol server"
     # Apply replacements in both files
     for file in "$clientFile" "$networkFile"; do
