@@ -1,13 +1,11 @@
 package handler
 
 import (
-	"bytes"
+	"context"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"time"
 
 	"github.com/beckn/beckn-onix/pkg/log"
@@ -15,43 +13,21 @@ import (
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
 )
 
-// SubscribeRequest represents the incoming /subscribe request
-type SubscribeRequest struct {
-	SubscriberID string                 `json:"subscriber_id"`          // Unique identifier (e.g., https://bap.example.com)
-	Type         string                 `json:"type"`                   // Type of participant: bap, bpp, bg
-	Domain       string                 `json:"domain"`                 // Domain code (e.g., nic2004:60232)
-	Location     map[string]interface{} `json:"location"`               // Location of the subscriber
-	KeyID        string                 `json:"key_id,omitempty"`       // Unique Identifier of the key, if not passed a new key id will be generated
-	KeyValidity  int64                  `json:"key_validity,omitempty"` // TTL for key, if not passed a configured value will be used as default
-	URL          string                 `json:"url"`                    // Callback URL for network APIs
-}
-
-// RegistrySubscriptionRequest represents the request sent to registry
-type RegistrySubscriptionRequest struct {
-	SubscriberID     string                 `json:"subscriber_id"`
-	Type             string                 `json:"type"`
-	Domain           string                 `json:"domain"`
-	Location         map[string]interface{} `json:"location"`
-	KeyID            string                 `json:"key_id"`
-	URL              string                 `json:"url"`
-	SigningPublicKey string                 `json:"signing_public_key"` // Base64-encoded signing public key
-	EncrPublicKey    string                 `json:"encr_public_key"`    // Base64-encoded encryption public key
-	ValidFrom        string                 `json:"valid_from"`         // Validity start in ISO-8601 format
-	ValidUntil       string                 `json:"valid_until"`        // Expiry in ISO-8601 format
-	MessageID        string                 `json:"message_id"`         // For correlating subscribe and on_subscribe calls
-}
-
-// subscribeStep implements the /subscribe endpoint logic
-type subscribeStep struct {
+// subscribeHandler implements the /subscribe endpoint logic
+type subscribeHandler struct {
 	km          definition.KeyManager
 	signer      definition.Signer
 	registryURL string
+	//registryClient client.RegistryClient
+	registryClient interface { // Use an empty interface to allow mock injection
+		RegistrySubscribe(ctx context.Context, endpoint string, reqBody []byte) (map[string]interface{}, error)
+	}
 }
 
 // Run executes the subscribe step logic
-func (s *subscribeStep) Run(ctx *model.StepContext) error {
+func (s *subscribeHandler) Run(ctx *model.StepContext) error {
 	// Parse the request body
-	var req SubscribeRequest
+	var req model.Subscriber
 	if err := json.Unmarshal(ctx.Body, &req); err != nil {
 		return model.NewBadReqErr(fmt.Errorf("invalid request body: %w", err))
 	}
@@ -132,7 +108,7 @@ func (s *subscribeStep) Run(ctx *model.StepContext) error {
 }
 
 // validateRequest validates the incoming subscribe request  requirements
-func (s *subscribeStep) validateRequest(req *SubscribeRequest) error {
+func (s *subscribeHandler) validateRequest(req *model.Subscriber) error {
 	if req.SubscriberID == "" {
 		return fmt.Errorf("subscriber_id is required")
 	}
@@ -165,7 +141,7 @@ func (s *subscribeStep) validateRequest(req *SubscribeRequest) error {
 }
 
 // createRegistryRequest creates the registry subscription request
-func (s *subscribeStep) createRegistryRequest(req *SubscribeRequest, keySet *model.Keyset, messageID string, validFrom, validUntil time.Time) *RegistrySubscriptionRequest {
+func (s *subscribeHandler) createRegistryRequest(req *model.Subscriber, keySet *model.Keyset, messageID string, validFrom, validUntil time.Time) *model.RegistrySubscriptionRequest {
 	// Decode the signing public key from the keyset
 	signingPubKey, _ := base64.StdEncoding.DecodeString(keySet.SigningPublic)
 	// Parse and re-encode to ensure proper format
@@ -177,7 +153,7 @@ func (s *subscribeStep) createRegistryRequest(req *SubscribeRequest, keySet *mod
 	parsedEncKey, _ := x509.ParsePKIXPublicKey(encPubKey)
 	encPubKeyBytes, _ := x509.MarshalPKIXPublicKey(parsedEncKey)
 
-	return &RegistrySubscriptionRequest{
+	return &model.RegistrySubscriptionRequest{
 		SubscriberID:     req.SubscriberID,
 		Type:             req.Type,
 		Domain:           req.Domain,
@@ -193,8 +169,14 @@ func (s *subscribeStep) createRegistryRequest(req *SubscribeRequest, keySet *mod
 }
 
 // signRequest signs the registry request with the new key (for updates)
-func (s *subscribeStep) signRequest(ctx *model.StepContext, req *RegistrySubscriptionRequest, keySet *model.Keyset) (*RegistrySubscriptionRequest, error) {
+func (s *subscribeHandler) signRequest(ctx *model.StepContext, req *model.RegistrySubscriptionRequest, keySet *model.Keyset) (*model.RegistrySubscriptionRequest, error) {
 	if s.signer == nil {
+		return req, nil
+	}
+
+	// Only sign update requests — identified by a non-empty SubscriberID
+	if req.SubscriberID == "" {
+		// It's a create request; no signing needed
 		return req, nil
 	}
 
@@ -226,49 +208,12 @@ func (s *subscribeStep) signRequest(ctx *model.StepContext, req *RegistrySubscri
 }
 
 // callRegistrySubscribe makes the HTTP call to the Registry's /subscribe endpoint
-func (s *subscribeStep) callRegistrySubscribe(ctx *model.StepContext, req *RegistrySubscriptionRequest) (map[string]interface{}, error) {
-	// Marshal the request body
+func (s *subscribeHandler) callRegistrySubscribe(ctx *model.StepContext, req *model.RegistrySubscriptionRequest) (map[string]interface{}, error) {
 	reqBody, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Create the HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", s.registryURL+"/subscribe", bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
+	return s.registryClient.RegistrySubscribe(ctx, "subscribe", reqBody)
 
-	// Set headers
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	// Make the request
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make http request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Read the response body
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	// Check response status
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("registry returned non-200 status: %d, body: %s", resp.StatusCode, string(respBody))
-	}
-
-	// Parse the response
-	var response map[string]interface{}
-	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	return response, nil
 }

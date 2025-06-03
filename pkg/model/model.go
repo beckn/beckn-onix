@@ -10,10 +10,13 @@ import (
 
 // Subscriber represents a unique operational configuration of a trusted platform on a network.
 type Subscriber struct {
-	SubscriberID string `json:"subscriber_id"`
-	URL          string `json:"url" format:"uri"`
-	Type         string `json:"type" enum:"BAP,BPP,BG"`
-	Domain       string `json:"domain"`
+	SubscriberID string                 `json:"subscriber_id"`
+	URL          string                 `json:"url" format:"uri"`
+	Type         string                 `json:"type" enum:"BAP,BPP,BG"`
+	Domain       string                 `json:"domain"`
+	Location     map[string]interface{} `json:"location"`               // Location of the subscriber
+	KeyID        string                 `json:"key_id,omitempty"`       // Unique Identifier of the key, if not passed a new key id will be generated
+	KeyValidity  int64                  `json:"key_validity,omitempty"` // TTL for key, if not passed a configured value will be used as default
 }
 
 // Subscription represents subscription details of a network participant.
@@ -183,4 +186,19 @@ type Message struct {
 // Response represents the main response structure.
 type Response struct {
 	Message Message `json:"message"`
+}
+
+// RegistrySubscriptionRequest represents the request sent to registry
+type RegistrySubscriptionRequest struct {
+	SubscriberID     string                 `json:"subscriber_id"`
+	Type             string                 `json:"type"`
+	Domain           string                 `json:"domain"`
+	Location         map[string]interface{} `json:"location"`
+	KeyID            string                 `json:"key_id"`
+	URL              string                 `json:"url"`
+	SigningPublicKey string                 `json:"signing_public_key"` // Base64-encoded signing public key
+	EncrPublicKey    string                 `json:"encr_public_key"`    // Base64-encoded encryption public key
+	ValidFrom        string                 `json:"valid_from"`         // Validity start in ISO-8601 format
+	ValidUntil       string                 `json:"valid_until"`        // Expiry in ISO-8601 format
+	MessageID        string                 `json:"message_id"`         // For correlating subscribe and on_subscribe calls
 }

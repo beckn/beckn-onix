@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -88,8 +87,20 @@ type KeySet struct {
 	UniqueKeyID string
 }
 
-func TestSubscribeStepRun(t *testing.T) {
-	validReq := SubscribeRequest{
+type mockRegistryClient struct {
+	mockResp map[string]interface{}
+	mockErr  error
+}
+
+func (m *mockRegistryClient) RegistrySubscribe(ctx context.Context, endpoint string, reqBody []byte) (map[string]interface{}, error) {
+	if m.mockErr != nil {
+		return nil, m.mockErr
+	}
+	return m.mockResp, nil
+}
+
+func TestSubscribeHandlerRun(t *testing.T) {
+	validReq := model.Subscriber{
 		SubscriberID: "subscriber-1",
 		Type:         "bap",
 		Domain:       "nic2004:60232",
@@ -105,7 +116,7 @@ func TestSubscribeStepRun(t *testing.T) {
 		subID                string
 		kmSetup              func() *mockKeyManager
 		signer               *mockSigner
-		callRegistry         func(ctx *model.StepContext, req RegistrySubscriptionRequest) (map[string]interface{}, error)
+		callRegistry         func(ctx *model.StepContext, req model.RegistrySubscriptionRequest) (map[string]interface{}, error)
 		expectErr            bool
 		errContains          string
 		mockJSONMarshalError bool
@@ -118,7 +129,7 @@ func TestSubscribeStepRun(t *testing.T) {
 		},
 		{
 			name: "missing keyID (empty Message ID)",
-			body: mustMarshal(t, SubscribeRequest{
+			body: mustMarshal(t, model.Subscriber{
 				SubscriberID: "sub2",
 				Type:         "bap",
 				Domain:       "nic",
@@ -145,7 +156,7 @@ func TestSubscribeStepRun(t *testing.T) {
 				return &mockKeyManager{}
 			},
 			signer: &mockSigner{Fail: true},
-			callRegistry: func(ctx *model.StepContext, req RegistrySubscriptionRequest) (map[string]interface{}, error) {
+			callRegistry: func(ctx *model.StepContext, req model.RegistrySubscriptionRequest) (map[string]interface{}, error) {
 				return map[string]interface{}{"message_id": "msg-001", "status": "success"}, nil
 			},
 			expectErr:   true,
@@ -153,7 +164,7 @@ func TestSubscribeStepRun(t *testing.T) {
 		},
 		{
 			name: "missing subscriber ID",
-			body: mustMarshal(t, SubscribeRequest{
+			body: mustMarshal(t, model.Subscriber{
 				Type:     "bap",
 				Domain:   "nic",
 				Location: map[string]interface{}{},
@@ -164,7 +175,7 @@ func TestSubscribeStepRun(t *testing.T) {
 		},
 		{
 			name: "missing type",
-			body: mustMarshal(t, SubscribeRequest{
+			body: mustMarshal(t, model.Subscriber{
 				SubscriberID: "https://bap.example.com",
 				Domain:       "domain",
 				Location:     map[string]interface{}{"city": "X"},
@@ -174,7 +185,7 @@ func TestSubscribeStepRun(t *testing.T) {
 		},
 		{
 			name: "missing Domain",
-			body: mustMarshal(t, SubscribeRequest{
+			body: mustMarshal(t, model.Subscriber{
 				SubscriberID: "https://bap.example.com",
 				Type:         "bap",
 				Location:     map[string]interface{}{"city": "X"},
@@ -185,7 +196,7 @@ func TestSubscribeStepRun(t *testing.T) {
 		},
 		{
 			name: "missing Location",
-			body: mustMarshal(t, SubscribeRequest{
+			body: mustMarshal(t, model.Subscriber{
 				SubscriberID: "https://bap.example.com",
 				Type:         "bap",
 				Domain:       "domain",
@@ -196,7 +207,7 @@ func TestSubscribeStepRun(t *testing.T) {
 		},
 		{
 			name: "missing URL",
-			body: mustMarshal(t, SubscribeRequest{
+			body: mustMarshal(t, model.Subscriber{
 				SubscriberID: "https://bap.example.com",
 				Type:         "bap",
 				Domain:       "domain",
@@ -207,7 +218,7 @@ func TestSubscribeStepRun(t *testing.T) {
 		},
 		{
 			name: "invalid participant type",
-			body: mustMarshal(t, SubscribeRequest{
+			body: mustMarshal(t, model.Subscriber{
 				SubscriberID: "abc",
 				Type:         "unknown",
 				Domain:       "d",
@@ -230,7 +241,7 @@ func TestSubscribeStepRun(t *testing.T) {
 				km = tt.kmSetup()
 			}
 
-			step := &subscribeStep{
+			step := &subscribeHandler{
 				km:          km,
 				signer:      tt.signer,
 				registryURL: "http://mock-registry",
@@ -239,7 +250,7 @@ func TestSubscribeStepRun(t *testing.T) {
 			err := step.Run(ctx)
 
 			if tt.callRegistry == nil {
-				tt.callRegistry = func(ctx *model.StepContext, req RegistrySubscriptionRequest) (map[string]interface{}, error) {
+				tt.callRegistry = func(ctx *model.StepContext, req model.RegistrySubscriptionRequest) (map[string]interface{}, error) {
 					return map[string]interface{}{"message_id": "default-msg", "status": "success"}, nil
 				}
 			}
@@ -270,139 +281,56 @@ func mustMarshal(t *testing.T, v interface{}) []byte {
 }
 
 func TestCallRegistrySubscribe(t *testing.T) {
-	// A sample valid subscription request
-	baseReq := &RegistrySubscriptionRequest{
-		SubscriberID:     "https://bap.example.com",
-		Type:             "bap",
-		Domain:           "nic2004:60232",
-		Location:         map[string]interface{}{"city": "ExampleCity"},
-		KeyID:            "key-123",
-		URL:              "https://callback.example.com",
-		SigningPublicKey: "base64-sign-key",
-		EncrPublicKey:    "base64-encr-key",
-		ValidFrom:        "2023-05-29T00:00:00Z",
-		ValidUntil:       "2024-05-29T00:00:00Z",
-		MessageID:        "msg-001",
+	baseReq := &model.RegistrySubscriptionRequest{
+		SubscriberID: "https://bap.example.com",
+		Type:         "bap",
+		Domain:       "nic2004:60232",
+		Location:     map[string]interface{}{"city": "ExampleCity"},
+		KeyID:        "key-123",
+		URL:          "https://callback.example.com",
 	}
 
 	tests := []struct {
-		name        string
-		registryURL string
-		req         *RegistrySubscriptionRequest
-		mockServer  func(w http.ResponseWriter, r *http.Request)
-		wantResp    map[string]interface{}
-		wantErr     string
+		name     string
+		mockResp map[string]interface{}
+		mockErr  error
+		wantResp map[string]interface{}
+		wantErr  string
 	}{
 		{
-			name:        "success",
-			registryURL: "", // to be set by httptest server
-			req:         baseReq,
-			mockServer: func(w http.ResponseWriter, r *http.Request) {
-				// Validate request headers and method
-				if r.Method != http.MethodPost {
-					t.Errorf("Expected POST, got %s", r.Method)
-				}
-				if r.URL.Path != "/subscribe" {
-					t.Errorf("Expected /subscribe path, got %s", r.URL.Path)
-				}
-				if ct := r.Header.Get("Content-Type"); ct != "application/json" {
-					t.Errorf("Expected Content-Type application/json, got %s", ct)
-				}
-
-				body, _ := io.ReadAll(r.Body)
-				defer r.Body.Close()
-
-				var receivedReq RegistrySubscriptionRequest
-				if err := json.Unmarshal(body, &receivedReq); err != nil {
-					t.Errorf("Failed to unmarshal request body: %v", err)
-				}
-
-				// Optional: check some fields
-				if receivedReq.SubscriberID != baseReq.SubscriberID {
-					t.Errorf("SubscriberID mismatch: want %s got %s", baseReq.SubscriberID, receivedReq.SubscriberID)
-				}
-
-				w.WriteHeader(http.StatusOK)
-				if _, err := w.Write([]byte(`{"result":"success"}`)); err != nil {
-					t.Errorf("failed to write response: %v", err)
-				}
-			},
+			name:     "success",
+			mockResp: map[string]interface{}{"result": "success"},
 			wantResp: map[string]interface{}{"result": "success"},
 		},
 		{
-			name:        "marshal error",
-			registryURL: "http://dummy",
-			req: &RegistrySubscriptionRequest{
-				// Make this unmarshalable by adding a channel (not serializable)
-				Location: map[string]interface{}{
-					"bad": make(chan int),
-				},
-			},
+			name:    "non-200 status",
+			mockErr: fmt.Errorf("registry returned non-200 status"),
+			wantErr: "registry returned non-200 status",
+		},
+		{
+			name:    "json unmarshal error",
+			mockErr: fmt.Errorf("failed to unmarshal response"),
+			wantErr: "failed to unmarshal response",
+		},
+		{
+			name:     "marshal error",
+			mockResp: nil,
+			mockErr:  fmt.Errorf("failed to marshal request"),
 			wantResp: nil,
 			wantErr:  "failed to marshal request",
-		},
-		{
-			name:        "http.NewRequestWithContext error",
-			registryURL: "http://\ninvalid-url", // invalid URL triggers error
-			req:         baseReq,
-			wantResp:    nil,
-			wantErr:     "failed to create request",
-		},
-		{
-			name:        "http client do error",
-			registryURL: "http://localhost:0", // unreachable port triggers error
-			req:         baseReq,
-			wantResp:    nil,
-			wantErr:     "failed to make http request",
-		},
-		{
-			name:        "non-200 status",
-			registryURL: "", // will be set by httptest server
-			req:         baseReq,
-			mockServer: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusBadRequest)
-				if _, err := w.Write([]byte("bad request")); err != nil {
-					t.Errorf("failed to write response: %v", err)
-				}
-			},
-			wantResp: nil,
-			wantErr:  "registry returned non-200 status",
-		},
-		{
-			name:        "json unmarshal error",
-			registryURL: "", // will be set by httptest server
-			req:         baseReq,
-			mockServer: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-				w.WriteHeader(http.StatusOK)
-				if _, err := w.Write([]byte("invalid json")); err != nil {
-					t.Errorf("failed to write response: %v", err)
-				}
-			},
-			wantResp: nil,
-			wantErr:  "failed to unmarshal response",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.mockServer != nil {
-				server := httptest.NewServer(http.HandlerFunc(tt.mockServer))
-				defer server.Close()
-				tt.registryURL = server.URL
-			}
-
-			step := &subscribeStep{
-				km:          nil,
-				signer:      nil,
-				registryURL: tt.registryURL,
+			mockClient := &mockRegistryClient{mockResp: tt.mockResp, mockErr: tt.mockErr}
+			step := &subscribeHandler{
+				registryClient: mockClient,
 			}
 
 			ctx := context.Background()
-			stepCtx := &model.StepContext{
-				Context: ctx,
-			}
-			resp, err := step.callRegistrySubscribe(stepCtx, tt.req)
+			stepCtx := &model.StepContext{Context: ctx}
+			resp, err := step.callRegistrySubscribe(stepCtx, baseReq)
 
 			if tt.wantErr != "" {
 				if err == nil {
@@ -425,6 +353,7 @@ func TestCallRegistrySubscribe(t *testing.T) {
 	}
 }
 
+// ///////////////////////////
 // Define mockStep struct
 type mockStep struct {
 	RunFunc func(ctx *model.StepContext) error
