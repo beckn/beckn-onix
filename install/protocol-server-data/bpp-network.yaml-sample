@@ -109,7 +109,7 @@ app:
 
   # Mandatory.
   registryUrl: REGISTRY_URL
-  auth: true
+  auth: false
   uniqueKey: "BPP_SUBSCRIBER_KEY_ID"
   
   # Mandatory.
