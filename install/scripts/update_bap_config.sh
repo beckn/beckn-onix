@@ -43,6 +43,7 @@ else
     else
         registry_url="http://$(get_container_ip registry):3030/subscribers"
     fi 
+    echo "registry_url from update_bap_config.sh: $registry_url"
 fi
 
 echo "Generating public/private key pair"
@@ -63,7 +64,7 @@ type=BAP
 if [[ $(uname -s ) == 'Darwin' ]];then
     replacements=(
         "REDIS_URL=$redisUrl"
-        "REGISTRY_URL=$registry_url"
+        "REGISTRY_URL=$(if [[ $registry_url == *"localhost:3030"* ]]; then echo "http://registry:3030/subscribers"; else echo "$registry_url"; fi)"
         "MONGO_USERNAME=$mongo_initdb_root_username"
         "MONGO_PASSWORD=$mongo_initdb_root_password"
         "MONGO_DB_NAME=$mongo_initdb_database"
@@ -82,18 +83,23 @@ if [[ $(uname -s ) == 'Darwin' ]];then
 
     echo "Configuring BAP protocol server"
     # Apply replacements in both files
+    echo "replacements: ${replacements[@]}"
     for file in "$clientFile" "$networkFile"; do
         for line in "${replacements[@]}"; do
-            key=$(echo "$line" | cut -d '=' -f1)
-            value=$(echo "$line" | cut -d '=' -f2)
-            sed -i '' "s|$key|$value|" "$file"
+            key="${line%%=*}"
+            value="${line#*=}"
+
+            escaped_key=$(printf '%s\n' "$key" | sed 's/[]\/$*.^[]/\\&/g')
+            escaped_value=$(printf '%s\n' "$value" | sed 's/[&/]/\\&/g')
+
+            sed -i '' "s|$escaped_key|$escaped_value|g" "$file"
         done
 
     done
 else
     declare -A replacements=(
         ["REDIS_URL"]=$redisUrl
-        ["REGISTRY_URL"]=$registry_url
+        ["REGISTRY_URL"]=$(if [[ $registry_url == *"localhost:3030"* ]]; then echo "http://registry:3030/subscribers"; else echo "$registry_url"; fi)
         ["MONGO_USERNAME"]=$mongo_initdb_root_username
         ["MONGO_PASSWORD"]=$mongo_initdb_root_password
         ["MONGO_DB_NAME"]=$mongo_initdb_database
@@ -109,7 +115,7 @@ else
         ["USE_LAYER_2_CONFIG"]=false
         ["MANDATE_LAYER_2_CONFIG"]=false        
     )
-
+    echo "replacements: ${replacements[@]}"
     echo "Configuring BAP protocol server"
     # Apply replacements in both files
     for file in "$clientFile" "$networkFile"; do

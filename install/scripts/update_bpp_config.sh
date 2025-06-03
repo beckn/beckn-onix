@@ -65,7 +65,7 @@ type=BPP
 if [[ $(uname -s ) == 'Darwin' ]];then
     replacements=(
         "REDIS_URL=$redisUrl"
-        "REGISTRY_URL=$registry_url"
+        "REGISTRY_URL=$(if [[ $registry_url == *"localhost:3030"* ]]; then echo "http://registry:3030/subscribers"; else echo "$registry_url"; fi)"
         "MONGO_USERNAME=$mongo_initdb_root_username"
         "MONGO_PASSWORD=$mongo_initdb_root_password"
         "MONGO_DB_NAME=$mongo_initdb_database"
@@ -88,9 +88,13 @@ if [[ $(uname -s ) == 'Darwin' ]];then
     # Apply replacements in both files
     for file in "$clientFile" "$networkFile"; do
         for line in "${replacements[@]}"; do
-            key=$(echo "$line" | cut -d '=' -f1)
-            value=$(echo "$line" | cut -d '=' -f2)
-            sed -i '' "s|$key|$value|" "$file"
+            key="${line%%=*}"
+            value="${line#*=}"
+
+            escaped_key=$(printf '%s\n' "$key" | sed 's/[]\/$*.^[]/\\&/g')
+            escaped_value=$(printf '%s\n' "$value" | sed 's/[&/]/\\&/g')
+
+            sed -i '' "s|$escaped_key|$escaped_value|g" "$file"
         done
 
     done
@@ -98,7 +102,7 @@ if [[ $(uname -s ) == 'Darwin' ]];then
 else
     declare -A replacements=(
         ["REDIS_URL"]=$redisUrl
-        ["REGISTRY_URL"]=$registry_url
+        ["REGISTRY_URL"]=$(if [[ $registry_url == *"localhost:3030"* ]]; then echo "http://registry:3030/subscribers"; else echo "$registry_url"; fi)
         ["MONGO_USERNAME"]=$mongo_initdb_root_username
         ["MONGO_PASSWORD"]=$mongo_initdb_root_password
         ["MONGO_DB_NAME"]=$mongo_initdb_database

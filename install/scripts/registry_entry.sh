@@ -42,6 +42,14 @@ EOF
         
         echo "${GREEN}Network Participant Entry is created. Please login to registry $registry_url and subscribe you Network Participant.${NC}"
     else
+        response=$(curl --location --request POST "$registry_url/register" \
+        --header "ApiKey:$api_key" --header "Content-Type: $content_type" \
+        --data-raw "$json_data" 2>&1)
+        if [ $? -eq 0 ]; then
+            echo "${GREEN}Network Participant Entry is created. Please login to registry $registry_url and subscribe you Network Participant.${NC}"
+        else
+            echo "${RED}Error: $response${NC}"
+        fi
         echo "${RED}Error: $response${NC}"
     fi
 }
