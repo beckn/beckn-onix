@@ -19,7 +19,13 @@ networkFile=$newNetworkFile
 client_port=$bpp_client_port
 network_port=$bpp_network_port
 
-
+if [[ $(uname) == "Darwin" ]]; then
+    sed -i '' "s|BPP_NETWORK_PORT|$network_port|" $networkFile
+    sed -i '' "s|BPP_CLIENT_PORT|$client_port|" $clientFile
+else
+    sed -i "s|BPP_NETWORK_PORT|$network_port|" $networkFile
+    sed -i "s|BPP_CLIENT_PORT|$client_port|" $clientFile
+fi 
 
 if [[ $1 ]]; then
     registry_url=$1
@@ -30,10 +36,7 @@ if [[ $1 ]]; then
     api_key=$6
     np_domain=$7    
 else
-    if [[ $(uname -s) == *"MINGW"* ]] || [[ $(uname -s) == *"MSYS"* ]] || [[ $(uname -s) == *"CYGWIN"* ]]; then
-        ip=localhost
-        registry_url="http://$ip:3030/subscribers"
-    elif [[ $(uname -s) == 'Darwin' ]]; then
+    if [[ $(uname -s) == 'Darwin' ]]; then
         ip=localhost
         registry_url="http://$ip:3030/subscribers"
     elif [[ $(systemd-detect-virt) == 'wsl' ]]; then
@@ -44,21 +47,13 @@ else
     fi 
 fi
 
-if [[ $(uname) == "Darwin" ]]; then
-    sed -i '' "s|BPP_NETWORK_PORT|$network_port|" $networkFile
-    sed -i '' "s|BPP_CLIENT_PORT|$client_port|" $clientFile
-else
-    sed -i "s|BPP_NETWORK_PORT|$network_port|" $networkFile
-    sed -i "s|BPP_CLIENT_PORT|$client_port|" $clientFile
-fi 
-
 echo "Generating public/private key pair"
 get_keys
 
 if [[ $(uname -s ) == 'Darwin' ]];then
     valid_from=$(date -u -v-1d +"%Y-%m-%dT%H:%M:%S.%000Z")
     valid_until=$(date -u -v+3y +"%Y-%m-%dT%H:%M:%S.%000Z")
-else    
+else
     valid_from=$(date -u -d "-1 day" +"%Y-%m-%dT%H:%M:%S.%3NZ")
     valid_until=$(date -u -d "+3 year" +"%Y-%m-%dT%H:%M:%S.%3NZ")
 fi
