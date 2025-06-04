@@ -58,7 +58,7 @@ jobs:
         run: terraform plan
       
       - name: Terraform Apply
-        working-directory: ./gerrit-repo/Terraform
+        working-directory: ./gerrit-repo/Terraform-CICD
         run: terraform apply -auto-approve
 
       - name: Clean up credentials
