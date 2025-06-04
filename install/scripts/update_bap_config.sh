@@ -18,6 +18,14 @@ networkFile=$newNetworkFile
 client_port=$bap_client_port
 network_port=$bap_network_port
 
+if [[ $(uname) == "Darwin" ]]; then
+    sed -i '' "s|BAP_NETWORK_PORT|$network_port|" $networkFile
+    sed -i '' "s|BAP_CLIENT_PORT|$client_port|" $clientFile
+else
+    sed -i "s|BAP_NETWORK_PORT|$network_port|" $networkFile
+    sed -i "s|BAP_CLIENT_PORT|$client_port|" $clientFile
+fi
+
 if [[ $1 ]]; then
     registry_url=$1
     bap_subscriber_id=$2
@@ -26,10 +34,7 @@ if [[ $1 ]]; then
     api_key=$5
     np_domain=$6
 else
-    if [[ $(uname -s) == *"MINGW"* ]] || [[ $(uname -s) == *"MSYS"* ]] || [[ $(uname -s) == *"CYGWIN"* ]]; then
-        ip=localhost
-        registry_url="http://$ip:3030/subscribers"
-    elif [[ $(uname -s) == 'Darwin' ]]; then
+    if [[ $(uname -s) == 'Darwin' ]]; then
         ip=localhost
         registry_url="http://$ip:3030/subscribers"
     elif [[ $(systemd-detect-virt) == 'wsl' ]]; then
@@ -38,14 +43,6 @@ else
     else
         registry_url="http://$(get_container_ip registry):3030/subscribers"
     fi 
-fi
-
-if [[ $(uname) == "Darwin" ]]; then
-    sed -i '' "s|BAP_NETWORK_PORT|$network_port|" $networkFile
-    sed -i '' "s|BAP_CLIENT_PORT|$client_port|" $clientFile
-else
-    sed -i "s|BAP_NETWORK_PORT|$network_port|" $networkFile
-    sed -i "s|BAP_CLIENT_PORT|$client_port|" $clientFile
 fi
 
 echo "Generating public/private key pair"
