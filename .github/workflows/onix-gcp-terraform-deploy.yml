@@ -30,11 +30,11 @@ jobs:
         with:
           terraform_version: 1.5.0  
 
-      - name: Authenticate to Google Cloud
-        run: echo "${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}" > gcp-key.json
+      - name: Write GCP credentials to file
+        run: echo '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}' > gcp-key.json
 
-      - name: Export GCP Credentials to Terraform
-        run: echo "GOOGLE_APPLICATION_CREDENTIALS=$GITHUB_WORKSPACE/gcp-key.json" >> $GITHUB_ENV    
+      - name: Export GCP credentials environment variable
+        run: echo "GOOGLE_APPLICATION_CREDENTIALS=$GITHUB_WORKSPACE/gcp-key.json" >> $GITHUB_ENV   
 
       - name: Create backend.tf and Terraform Init
         working-directory: ./gerrit-repo/Terraform-CICD
