@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -102,6 +103,9 @@ func (c *registryClient) Lookup(ctx context.Context, subscription *model.Subscri
 
 // CreateRequest creates an HTTP request with retry capability
 func (c *registryClient) CreateRequest(ctx context.Context, method, endpoint string, body []byte) (*http.Response, error) {
+	if c.config == nil || c.client == nil {
+		return nil, errors.New("client or config is not initialized")
+	}
 	url := fmt.Sprintf("%s/%s", c.config.RegisteryURL, endpoint)
 
 	req, err := retryablehttp.NewRequest(method, url, bytes.NewBuffer(body))
