@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/beckn/beckn-onix/pkg/model"
+	"github.com/hashicorp/go-retryablehttp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -228,4 +229,184 @@ func TestLookupFailure(t *testing.T) {
 			require.Empty(t, result)
 		})
 	}
+}
+
+type mockHTTPClient struct {
+	response *http.Response
+	err      error
+}
+
+func (m *mockHTTPClient) RoundTrip(req *http.Request) (*http.Response, error) {
+	return m.response, m.err
+}
+
+func TestRegistrySubscribeSuccess(t *testing.T) {
+	tests := []struct {
+		name         string
+		endpoint     string
+		reqBody      []byte
+		setupHandler func(w http.ResponseWriter, r *http.Request)
+		expectedErr  string
+	}{
+		{
+			name:     "Success - valid JSON response",
+			endpoint: "subscribe",
+			reqBody:  []byte(`{"key": "value"}`),
+			setupHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"ack": true}`))
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var client *registryClient
+
+			if tc.name == "Error - request creation failure" {
+				client = &registryClient{
+					config: &Config{RegisteryURL: "http://"},
+					client: &retryablehttp.Client{
+						HTTPClient: &http.Client{
+							Transport: &mockHTTPClient{
+								response: nil,
+								err:      errors.New("mocked send failure"),
+							},
+						},
+						RetryMax:     0,
+						RetryWaitMin: 1 * time.Millisecond,
+						RetryWaitMax: 2 * time.Millisecond,
+						Logger:       nil,
+					},
+				}
+			} else if tc.setupHandler != nil {
+				server := httptest.NewServer(http.HandlerFunc(tc.setupHandler))
+				defer server.Close()
+
+				client = &registryClient{
+					config: &Config{RegisteryURL: server.URL},
+					client: retryablehttp.NewClient(),
+				}
+			} else {
+				client = &registryClient{
+					config: &Config{RegisteryURL: "http://localhost"}, // will fail for invalid URL case
+					client: retryablehttp.NewClient(),
+				}
+			}
+
+			ctx := context.Background()
+			resp, err := client.RegistrySubscribe(ctx, tc.endpoint, tc.reqBody)
+
+			if tc.expectedErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expectedErr)
+				require.Nil(t, resp)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, resp)
+				require.Contains(t, resp, "ack")
+			}
+		})
+	}
+
+}
+
+func TestRegistrySubscribeFailure(t *testing.T) {
+	tests := []struct {
+		name         string
+		endpoint     string
+		reqBody      []byte
+		setupHandler func(w http.ResponseWriter, r *http.Request)
+		expectedErr  string
+	}{
+		{
+			name:     "Error - response body read failure",
+			endpoint: "subscribe",
+			reqBody:  []byte(`{"key": "value"}`),
+			setupHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				// simulate unreadable body by closing connection immediately
+				conn, _, _ := w.(http.Hijacker).Hijack()
+				conn.Close()
+			},
+			expectedErr: "failed to read response body",
+		},
+		{
+			name:     "Error - non-200 status",
+			endpoint: "subscribe",
+			reqBody:  []byte(`{"key": "value"}`),
+			setupHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`Bad Request`))
+			},
+			expectedErr: "registry returned non-200 status",
+		},
+		{
+			name:     "Error - invalid JSON in response",
+			endpoint: "subscribe",
+			reqBody:  []byte(`{"key": "value"}`),
+			setupHandler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`not-json`))
+			},
+			expectedErr: "failed to parse response JSON",
+		},
+		{
+			name:        "Error - request creation failure",
+			endpoint:    "%%%invalid-url%%%",
+			reqBody:     []byte(`{"key": "value"}`),
+			expectedErr: "failed to create registry subscribe request",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var client *registryClient
+
+			if tc.name == "Error - request creation failure" {
+				client = &registryClient{
+					config: &Config{RegisteryURL: "http://"},
+					client: &retryablehttp.Client{
+						HTTPClient: &http.Client{
+							Transport: &mockHTTPClient{
+								response: nil,
+								err:      errors.New("mocked send failure"),
+							},
+						},
+						RetryMax:     0,
+						RetryWaitMin: 1 * time.Millisecond,
+						RetryWaitMax: 2 * time.Millisecond,
+						Logger:       nil,
+					},
+				}
+			} else if tc.setupHandler != nil {
+				server := httptest.NewServer(http.HandlerFunc(tc.setupHandler))
+				defer server.Close()
+
+				client = &registryClient{
+					config: &Config{RegisteryURL: server.URL},
+					client: retryablehttp.NewClient(),
+				}
+			} else {
+				client = &registryClient{
+					config: &Config{RegisteryURL: "http://localhost"}, // will fail for invalid URL case
+					client: retryablehttp.NewClient(),
+				}
+			}
+
+			ctx := context.Background()
+			resp, err := client.RegistrySubscribe(ctx, tc.endpoint, tc.reqBody)
+
+			if tc.expectedErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expectedErr)
+				require.Nil(t, resp)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, resp)
+				require.Contains(t, resp, "ack")
+			}
+		})
+	}
+
 }

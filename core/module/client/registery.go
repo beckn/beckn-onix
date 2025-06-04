@@ -99,3 +99,37 @@ func (c *registryClient) Lookup(ctx context.Context, subscription *model.Subscri
 
 	return results, nil
 }
+
+// RegistrySubscribe sends a subscription request using RegistrySubscriptionRequest model.
+func (c *registryClient) RegistrySubscribe(ctx context.Context, endpoint string, reqBody []byte) (map[string]interface{}, error) {
+	fullURL := fmt.Sprintf("%s/%s", c.config.RegisteryURL, endpoint)
+
+	req, err := retryablehttp.NewRequest("POST", fullURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create registry subscribe request: %w", err)
+	}
+	req = req.WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("registry returned non-200 status: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse response JSON: %w", err)
+	}
+
+	return parsed, nil
+}
