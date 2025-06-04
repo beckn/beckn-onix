@@ -116,6 +116,7 @@ func run(ctx context.Context, configPath string) error {
 	if err := log.InitLogger(cfg.Log); err != nil {
 		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
+	log.Debugf(ctx, "HTTP Server config: %+v", cfg.HTTP)
 
 	// Initialize plugin manager.
 	log.Infof(ctx, "Initializing plugin manager")
@@ -132,6 +133,8 @@ func run(ctx context.Context, configPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize server: %w", err)
 	}
+
+	log.Infof(ctx, "Modules registered successfully")
 
 	// Configure HTTP server.
 	httpServer := &http.Server{
