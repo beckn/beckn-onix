@@ -47,6 +47,18 @@ jobs:
       
           terraform init
 
+      - name: Create provider.tf with credentials
+        working-directory: ./gerrit-repo/Terraform-CICD
+        run: |
+          cat <<EOF > provider.tf
+          provider "google" {
+            credentials = "${{ github.workspace }}/gcp-key.json"
+            project     = trusty-relic-370809"
+            region      = "asia-south1"
+          }
+          EOF
+          
+
     
       - name: Terraform Plan
         working-directory: ./gerrit-repo/Terraform-CICD
