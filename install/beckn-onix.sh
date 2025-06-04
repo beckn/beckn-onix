@@ -49,21 +49,7 @@ update_registry_details() {
     mv "$tmp_file" "$config_file"
     docker volume create registry_data_volume
     docker volume create registry_database_volume
-    
-    # Convert Windows paths to Unix-style paths if running in Git Bash
-    if [[ $(uname -s) == *"MINGW"* ]] || [[ $(uname -s) == *"MSYS"* ]] || [[ $(uname -s) == *"CYGWIN"* ]]; then
-        CONFIG_DIR=$(cygpath -w "$SCRIPT_DIR/../registry_data/config")
-    else
-        CONFIG_DIR="$SCRIPT_DIR/../registry_data/config"
-    fi
-    
-    # Check if source files exist
-    if [[ ! -f "$CONFIG_DIR/envvars" ]] || [[ ! -f "$CONFIG_DIR/logger.properties" ]] || [[ ! -f "$CONFIG_DIR/swf.properties" ]]; then
-        echo "Error: Required configuration files are missing in $CONFIG_DIR"
-        exit 1
-    fi
-    
-    docker run --rm -v "$CONFIG_DIR:/source" -v registry_data_volume:/target busybox cp /source/{envvars,logger.properties,swf.properties} /target/
+    docker run --rm -v $SCRIPT_DIR/../registry_data/config:/source -v registry_data_volume:/target busybox cp /source/{envvars,logger.properties,swf.properties} /target/
     docker rmi busybox
 }
 # Function to start the MongoDB, Redis, and RabbitMQ Services
