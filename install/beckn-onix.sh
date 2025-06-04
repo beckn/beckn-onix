@@ -723,6 +723,7 @@ fi
 if [[ $choice -eq 3 ]]; then
     echo "Installing all components on the local machine"
     install_registry
+    sleep 60
     install_gateway
     install_bap_protocol_server
     install_bpp_protocol_server_with_sandbox
