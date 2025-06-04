@@ -12,11 +12,7 @@ BOLD=$(tput bold)
 BoldGreen="${BOLD}$(tput setaf 2)"
 BoldRed="${BOLD}$(tput setaf 1)"
 
-# Get script directory and normalize path for Windows
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
-    SCRIPT_DIR=$(echo "$SCRIPT_DIR" | sed -E 's/^[A-Za-z]:/\/c/' | sed 's/\\/\//g')
-fi
 
 # Default registry and gateway username and password
 USERNAME="root"
@@ -26,7 +22,7 @@ PASSWORD="root"
 np_domain=""
 api_key=""
 # Registry Role Permission file path
-REGISTRY_FILE_PATH="$SCRIPT_DIR/../registry_data/RolePermission.xlsx"
+REGISTRY_FILE_PATH="../registry_data/RolePermission.xlsx"
 
 #Comman Variables with Default values
 mongo_initdb_root_username="beckn"
@@ -72,9 +68,9 @@ bpp_subscriber_key_id="bpp-network-key"
 bpp_subscriber_url="http://bpp-network:6002"
 webhook_url="http://sandbox-api:3000"
 
-bpp_docker_compose_file="$SCRIPT_DIR/../docker-compose-bpp.yml"
-bpp_docker_compose_file_sandbox="$SCRIPT_DIR/../docker-compose-bpp-with-sandbox.yml"
-bap_docker_compose_file="$SCRIPT_DIR/../docker-compose-bap.yml"
-registry_docker_compose_file="$SCRIPT_DIR/../docker-compose-registry.yml"
-gateway_docker_compose_file="$SCRIPT_DIR/../docker-compose-gateway.yml"
-gcl_docker_compose_file="$SCRIPT_DIR/../docker-compose-gcl.yml"
+bpp_docker_compose_file=docker-compose-bpp.yml
+bpp_docker_compose_file_sandbox=docker-compose-bpp-with-sandbox.yml
+bap_docker_compose_file=docker-compose-bap.yml
+registry_docker_compose_file=docker-compose-registry.yml
+gateway_docker_compose_file=docker-compose-gateway.yml
+gcl_docker_compose_file=docker-compose-gcl.yml
