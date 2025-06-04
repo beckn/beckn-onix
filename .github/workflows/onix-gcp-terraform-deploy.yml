@@ -50,7 +50,7 @@ jobs:
     
       - name: Terraform Plan
         working-directory: ./gerrit-repo/Terraform-CICD
-        run: terraform plan -var="credentials_file=${{ github.workspace }}/gcp-key.json"
+        run: terraform plan
       
       #- name: Terraform Apply
       #  working-directory: ./gerrit-repo/Terraform
