@@ -2,7 +2,7 @@ name: Terraform Deploy to GCP
 
 on:
   push:
-  workflow_dispatch: # Manual trigger
+  workflow_dispatch: # Manual triggerr
 
 jobs:
   plan:
