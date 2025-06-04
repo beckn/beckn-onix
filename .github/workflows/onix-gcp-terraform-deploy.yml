@@ -53,7 +53,7 @@ jobs:
           cat <<EOF > provider.tf
           provider "google" {
             credentials = "${{ github.workspace }}/gcp-key.json"
-            project     = trusty-relic-370809"
+            project     = "trusty-relic-370809"
             region      = "asia-south1"
           }
           EOF
