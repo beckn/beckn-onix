@@ -57,7 +57,10 @@ jobs:
         working-directory: ./gerrit-repo/Terraform-CICD
         run: terraform plan
       
-      #- name: Terraform Apply
-      #  working-directory: ./gerrit-repo/Terraform
-      #  run: terraform apply -auto-approve tfplan
+      - name: Terraform Apply
+        working-directory: ./gerrit-repo/Terraform
+        run: terraform apply -auto-approve tfplan
+
+      - name: Clean up credentials
+        run: rm -f gcp-key.json
 
