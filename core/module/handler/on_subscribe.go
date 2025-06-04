@@ -57,3 +57,12 @@ func (s *onSubscribeHandler) Run(ctx *model.StepContext) error {
 	ctx.Body = respJSON
 	return nil
 }
+
+// HandleOnSubscribe handles the 'on_subscribe' request by initializing and executing the onSubscribeHandler logic.
+func HandleOnSubscribe(ctx *model.StepContext, km definition.KeyManager, dp definition.Decrypter) error {
+	handler := &onSubscribeHandler{
+		km: km,
+		dp: dp,
+	}
+	return handler.Run(ctx)
+}

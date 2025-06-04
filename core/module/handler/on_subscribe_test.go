@@ -305,6 +305,42 @@ func TestOnSubscribeFailures(t *testing.T) {
 	}
 }
 
+func TestHandleOnSubscribe(t *testing.T) {
+	tests := []struct {
+		name    string
+		ctx     *model.StepContext
+		km      definition.KeyManager
+		dp      definition.Decrypter
+		wantErr bool
+	}{
+		{
+			name:    "Error in KeyManager",
+			ctx:     &model.StepContext{},
+			km:      &mockKeyManager{},
+			dp:      &mockDecrypter{},
+			wantErr: true,
+		},
+		{
+			name:    "Error in Decrypter",
+			ctx:     &model.StepContext{},
+			km:      &mockKeyManager{},
+			dp:      &mockDecrypter{},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := HandleOnSubscribe(tt.ctx, tt.km, tt.dp)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 // ///////////////////// step
 
 // Define mockStep struct
