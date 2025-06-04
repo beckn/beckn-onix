@@ -30,13 +30,23 @@ jobs:
         with:
           terraform_version: 1.5.0  
 
-      - name: Terraform Init with backend
+      - name: Create backend.tf and Terraform Init
         working-directory: ./gerrit-repo/Terraform-CICD
+        env:
+          GCS_BUCKET: beckn-cicd-tf-state-bucket
         run: |
-          terraform init \
-            -backend-config="bucket=beckn-cicd-tf-state-bucket" \
-            -backend-config="prefix=terraform/state" \
-            -backend-config="credentials=${{ github.workspace }}/gcp-key.json"
+          cat <<EOF > backend.tf
+          terraform {
+            backend "gcs" {
+              bucket = "${GCS_BUCKET}"
+              prefix = "terraform/state"
+              credentials = "${{ github.workspace }}/gcp-key.json"
+            }
+          }
+          EOF
+      
+          terraform init
+
     
       - name: Terraform Plan
         working-directory: ./gerrit-repo/Terraform-CICD
