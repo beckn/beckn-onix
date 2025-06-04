@@ -9,8 +9,62 @@ reg_url=http://$1:3030/subscribers/lookup
 registry_id=registry
 registry_url=http://registry:3030
 
+# Function to ensure directory structure exists
+ensure_directory_structure() {
+    local base_dir="$SCRIPT_DIR/../gateway_data"
+    local config_dir="$base_dir/config"
+    local networks_dir="$config_dir/networks"
+    
+    # Create directories if they don't exist
+    mkdir -p "$config_dir"
+    mkdir -p "$networks_dir"
+    
+    # Create sample files if they don't exist
+    if [[ ! -f "$config_dir/envvars" ]]; then
+        echo "Creating envvars file..."
+        echo "JAVA_OPTS=-Xmx512m" > "$config_dir/envvars"
+    fi
+    
+    if [[ ! -f "$config_dir/logger.properties" ]]; then
+        echo "Creating logger.properties file..."
+        echo "handlers=java.util.logging.ConsoleHandler
+.level=INFO
+java.util.logging.ConsoleHandler.level=INFO
+java.util.logging.ConsoleHandler.formatter=java.util.logging.SimpleFormatter" > "$config_dir/logger.properties"
+    fi
+    
+    if [[ ! -f "$config_dir/swf.properties-sample" ]]; then
+        echo "Creating swf.properties-sample file..."
+        echo "subscriber_id=SUBSCRIBER_ID
+gateway_url=GATEWAY_URL
+gateway_port=GATEWAY_PORT
+protocol=PROTOCOL
+registry_url=REGISTRY_URL" > "$config_dir/swf.properties-sample"
+    fi
+    
+    if [[ ! -f "$networks_dir/onix.json-sample" ]]; then
+        echo "Creating onix.json-sample file..."
+        echo '{
+    "gateway_id": "GATEWAY_ID",
+    "registry_id": "REGISTRY_ID",
+    "registry_url": "REGISTRY_URL"
+}' > "$networks_dir/onix.json-sample"
+    fi
+}
+
 update_network_json(){
-    cp $SCRIPT_DIR/../gateway_data/config/networks/onix.json-sample $SCRIPT_DIR/../gateway_data/config/networks/onix.json
+    ensure_directory_structure
+    
+    # Debug output before copying
+    echo "Current directory: $(pwd)"
+    echo "Script directory: $SCRIPT_DIR"
+    echo "Networks directory: $SCRIPT_DIR/../gateway_data/config/networks"
+    
+    # Ensure networks directory exists
+    mkdir -p "$SCRIPT_DIR/../gateway_data/config/networks"
+    
+    # Copy and update the network configuration
+    cp "$SCRIPT_DIR/../gateway_data/config/networks/onix.json-sample" "$SCRIPT_DIR/../gateway_data/config/networks/onix.json"
     networks_config_file="$SCRIPT_DIR/../gateway_data/config/networks/onix.json"
     tmp_file=$(mktemp "tempfile.XXXXXXXXXX")
     sed " s|GATEWAY_ID|$gateway_id|g; s|REGISTRY_ID|$registry_id|g; s|REGISTRY_URL|$registry_url|g" "$networks_config_file" > "$tmp_file"
@@ -26,10 +80,11 @@ update_network_json(){
     
     # Debug output
     echo "Using configuration directory: $CONFIG_DIR"
-    echo "Files to be copied:"
-    ls -l "$CONFIG_DIR/networks"
+    echo "Contents of networks directory:"
+    ls -la "$CONFIG_DIR/networks"
     
-    docker run --rm -v "$CONFIG_DIR:/source" -v gateway_data_volume:/target busybox sh -c "cp -r /source/networks /target/"
+    # Create networks directory in the target if it doesn't exist
+    docker run --rm -v "$CONFIG_DIR:/source" -v gateway_data_volume:/target busybox sh -c "mkdir -p /target/networks && cp -r /source/networks/* /target/networks/"
 }
 
 get_details_registry() {
@@ -52,6 +107,8 @@ get_details_registry() {
 }
 
 update_gateway_config() {
+        ensure_directory_structure
+        
         cp $SCRIPT_DIR/../gateway_data/config/swf.properties-sample $SCRIPT_DIR/../gateway_data/config/swf.properties
         config_file="$SCRIPT_DIR/../gateway_data/config/swf.properties"
         
