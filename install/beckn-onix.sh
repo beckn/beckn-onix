@@ -52,7 +52,19 @@ update_registry_details() {
     
     # Convert Windows paths to Unix-style paths if running in Git Bash
     if [[ $(uname -s) == *"MINGW"* ]] || [[ $(uname -s) == *"MSYS"* ]] || [[ $(uname -s) == *"CYGWIN"* ]]; then
-        CONFIG_DIR=$(cygpath -w "$SCRIPT_DIR/../registry_data/config")
+        # Get absolute path and convert to Unix style
+        CONFIG_DIR=$(cd "$SCRIPT_DIR/../registry_data/config" && pwd)
+        CONFIG_DIR=$(cygpath -u "$CONFIG_DIR")
+        
+        # Debug output for path conversion
+        echo "Original SCRIPT_DIR: $SCRIPT_DIR"
+        echo "Converted CONFIG_DIR: $CONFIG_DIR"
+        
+        # Ensure the path exists and is accessible
+        if [[ ! -d "$CONFIG_DIR" ]]; then
+            echo "Error: Configuration directory not found: $CONFIG_DIR"
+            exit 1
+        fi
     else
         CONFIG_DIR="$SCRIPT_DIR/../registry_data/config"
     fi
@@ -60,10 +72,20 @@ update_registry_details() {
     # Check if source files exist
     if [[ ! -f "$CONFIG_DIR/envvars" ]] || [[ ! -f "$CONFIG_DIR/logger.properties" ]] || [[ ! -f "$CONFIG_DIR/swf.properties" ]]; then
         echo "Error: Required configuration files are missing in $CONFIG_DIR"
+        echo "Looking for:"
+        echo "- $CONFIG_DIR/envvars"
+        echo "- $CONFIG_DIR/logger.properties"
+        echo "- $CONFIG_DIR/swf.properties"
         exit 1
     fi
     
-    docker run --rm -v "$CONFIG_DIR:/source" -v registry_data_volume:/target busybox cp /source/{envvars,logger.properties,swf.properties} /target/
+    # Debug output
+    echo "Using configuration directory: $CONFIG_DIR"
+    echo "Files to be copied:"
+    ls -l "$CONFIG_DIR"/{envvars,logger.properties,swf.properties}
+    
+    # Use absolute paths for Docker volume mounts and copy files individually
+    docker run --rm -v "$CONFIG_DIR:/source" -v registry_data_volume:/target busybox sh -c "cp /source/envvars /target/ && cp /source/logger.properties /target/ && cp /source/swf.properties /target/"
     docker rmi busybox
 }
 # Function to start the MongoDB, Redis, and RabbitMQ Services
