@@ -59,7 +59,7 @@ jobs:
       
       - name: Terraform Apply
         working-directory: ./gerrit-repo/Terraform-CICD
-        run: terraform apply -auto-approve
+        run: terraform apply -var="subnet_name=onix-gke-subnet" -auto-approve
 
       - name: Clean up credentials
         run: rm -f gcp-key.json
