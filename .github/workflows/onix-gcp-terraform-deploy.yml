@@ -30,6 +30,12 @@ jobs:
         with:
           terraform_version: 1.5.0  
 
+      - name: Authenticate to Google Cloud
+        run: echo "${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}" > gcp-key.json
+
+      - name: Export GCP Credentials to Terraform
+        run: echo "GOOGLE_APPLICATION_CREDENTIALS=$GITHUB_WORKSPACE/gcp-key.json" >> $GITHUB_ENV    
+
       - name: Create backend.tf and Terraform Init
         working-directory: ./gerrit-repo/Terraform-CICD
         env:
@@ -46,19 +52,6 @@ jobs:
           EOF
       
           terraform init
-
-      - name: Create provider.tf with credentials
-        working-directory: ./gerrit-repo/Terraform-CICD
-        run: |
-          cat <<EOF > provider.tf
-          provider "google" {
-            credentials = "${{ github.workspace }}/gcp-key.json"
-            project     = "trusty-relic-370809"
-            region      = "asia-south1"
-          }
-          EOF
-          
-
     
       - name: Terraform Plan
         working-directory: ./gerrit-repo/Terraform-CICD
