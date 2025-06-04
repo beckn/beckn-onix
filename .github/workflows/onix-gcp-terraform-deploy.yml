@@ -16,14 +16,28 @@ jobs:
       - name: Clone Terraform repo from Gerrit
         run: |
           git clone https://${{ secrets.GERRIT_USERNAME }}:${{ secrets.GERRIT_PAT }}@open-networks.googlesource.com/onix-dev gerrit-repo
-          #echo "==== Directory contents after clone ===="
-          #pwd
-          #ls -la
-          #echo "==== Contents of gerrit-repo ===="
-          #pwd
-          #ls -la gerrit-repo
           echo "==== Contents of Terraform-dir ===="
           pwd
           cd gerrit-repo/Terraform-CICD
           pwd
           ls -la
+
+      - name: Authenticate to Google Cloud
+        run: echo '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}' > gcp-key.json
+
+      - name: Terraform Init with backend
+        working-directory: ./gerrit-repo/Terraform-CICD
+        run: |
+          terraform init \
+            -backend-config="beckn-cicd-tf-state-bucket" \
+            -backend-config="prefix=terraform/state" \
+            -backend-config="credentials=${{ github.workspace }}/gcp-key.json"
+    
+      - name: Terraform Plan
+        working-directory: ./gerrit-repo/Terraform-CICD
+        run: terraform plan -var="credentials_file=${{ github.workspace }}/gcp-key.json"
+      
+      #- name: Terraform Apply
+      #  working-directory: ./gerrit-repo/Terraform
+      #  run: terraform apply -auto-approve tfplan
+
