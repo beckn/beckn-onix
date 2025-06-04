@@ -2,24 +2,13 @@
 source scripts/variables.sh
 source scripts/get_container_details.sh
 
-# Function to normalize path for Docker volume mounting
-normalize_path() {
-    local path="$1"
-    # Convert Windows path to Unix style if needed
-    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
-        # Remove drive letter and convert backslashes to forward slashes
-        path=$(echo "$path" | sed -E 's/^[A-Za-z]:/\/c/' | sed 's/\\/\//g')
-    fi
-    echo "$path"
-}
-
 # Function to start a specific service inside docker-compose file
 install_package() {
     echo "${GREEN}................Installing required packages................${NC}"
     bash scripts/package_manager.sh
     echo "Package Installation is done"
-}
 
+}
 start_container() {
     #ignore orphaned containers warning
     export COMPOSE_IGNORE_ORPHANS=1
@@ -45,6 +34,7 @@ update_registry_details() {
             registry_port=80
             protocol=http
         fi
+
     else
         registry_url=registry
         registry_port=3030
@@ -59,13 +49,9 @@ update_registry_details() {
     mv "$tmp_file" "$config_file"
     docker volume create registry_data_volume
     docker volume create registry_database_volume
-    
-    # Normalize paths for Docker volume mounting
-    source_path=$(normalize_path "$SCRIPT_DIR/../registry_data/config")
-    docker run --rm -v "$source_path:/source" -v registry_data_volume:/target busybox cp /source/{envvars,logger.properties,swf.properties} /target/
+    docker run --rm -v $SCRIPT_DIR/../registry_data/config:/source -v registry_data_volume:/target busybox cp /source/{envvars,logger.properties,swf.properties} /target/
     docker rmi busybox
 }
-
 # Function to start the MongoDB, Redis, and RabbitMQ Services
 start_support_services() {
     #ignore orphaned containers warning
@@ -157,13 +143,10 @@ install_bap_protocol_server() {
     sleep 10
     docker volume create bap_client_config_volume
     docker volume create bap_network_config_volume
-    
-    # Normalize paths for Docker volume mounting
-    source_path=$(normalize_path "$SCRIPT_DIR/../protocol-server-data")
-    docker run --rm -v "$source_path:/source" -v bap_client_config_volume:/target busybox cp /source/bap-client.yml /target/default.yml
-    docker run --rm -v "$source_path:/source" -v bap_client_config_volume:/target busybox cp /source/bap-client.yaml-sample /target
-    docker run --rm -v "$source_path:/source" -v bap_network_config_volume:/target busybox cp /source/bap-network.yml /target/default.yml
-    docker run --rm -v "$source_path:/source" -v bap_network_config_volume:/target busybox cp /source/bap-network.yaml-sample /target
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_client_config_volume:/target busybox cp /source/bap-client.yml /target/default.yml
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_client_config_volume:/target busybox cp /source/bap-client.yaml-sample /target
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_network_config_volume:/target busybox cp /source/bap-network.yml /target/default.yml
+    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_network_config_volume:/target busybox cp /source/bap-network.yaml-sample /target
     docker rmi busybox
 
     start_container $bap_docker_compose_file "bap-client"
