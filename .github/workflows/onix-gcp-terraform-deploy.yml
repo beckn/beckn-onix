@@ -25,11 +25,16 @@ jobs:
       - name: Authenticate to Google Cloud
         run: echo '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}' > gcp-key.json
 
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.0  
+
       - name: Terraform Init with backend
         working-directory: ./gerrit-repo/Terraform-CICD
         run: |
           terraform init \
-            -backend-config="beckn-cicd-tf-state-bucket" \
+            -backend-config="bucket=beckn-cicd-tf-state-bucket" \
             -backend-config="prefix=terraform/state" \
             -backend-config="credentials=${{ github.workspace }}/gcp-key.json"
     
