@@ -3,21 +3,52 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # Convert Windows paths to Unix-style paths if running in Git Bash
 if [[ $(uname -s) == *"MINGW"* ]] || [[ $(uname -s) == *"MSYS"* ]] || [[ $(uname -s) == *"CYGWIN"* ]]; then
-    SCRIPT_DIR=$(cygpath -u "$SCRIPT_DIR")
-    bppClientFile=$(cygpath -u "$bppClientFile")
-    bppNetworkFile=$(cygpath -u "$bppNetworkFile")      
+    if [[ -n "$SCRIPT_DIR" ]]; then
+        SCRIPT_DIR=$(cygpath -u "$SCRIPT_DIR")
+    fi
 fi
 
-source $SCRIPT_DIR/registry_entry.sh
-source $SCRIPT_DIR/generate_keys.sh
-source $SCRIPT_DIR/variables.sh
-source $SCRIPT_DIR/get_container_details.sh
+source "$SCRIPT_DIR/registry_entry.sh"
+source "$SCRIPT_DIR/generate_keys.sh"
+source "$SCRIPT_DIR/variables.sh"
+source "$SCRIPT_DIR/get_container_details.sh"
 
+# Ensure we're using absolute paths
+bppClientFile="$SCRIPT_DIR/../protocol-server-data/bpp-client.yaml-sample"
+bppNetworkFile="$SCRIPT_DIR/../protocol-server-data/bpp-network.yaml-sample"
+
+# Convert Windows paths to Unix-style paths if running in Git Bash
+if [[ $(uname -s) == *"MINGW"* ]] || [[ $(uname -s) == *"MSYS"* ]] || [[ $(uname -s) == *"CYGWIN"* ]]; then
+    if [[ -n "$bppClientFile" ]]; then
+        bppClientFile=$(cygpath -u "$bppClientFile")
+    fi
+    if [[ -n "$bppNetworkFile" ]]; then
+        bppNetworkFile=$(cygpath -u "$bppNetworkFile")
+    fi
+fi
 
 newClientFile=$(echo "$bppClientFile" | sed 's/yaml-sample/yml/')
 newNetworkFile=$(echo "$bppNetworkFile" | sed 's/yaml-sample/yml/')
 
-cp "$bppClientFile" "$newClientFile"        
+# Debug output
+echo "Source files:"
+echo "bppClientFile: $bppClientFile"
+echo "bppNetworkFile: $bppNetworkFile"
+echo "Target files:"
+echo "newClientFile: $newClientFile"
+echo "newNetworkFile: $newNetworkFile"
+
+# Check if source files exist before copying
+if [[ ! -f "$bppClientFile" ]]; then
+    echo "Error: Source file $bppClientFile does not exist"
+    exit 1
+fi
+if [[ ! -f "$bppNetworkFile" ]]; then
+    echo "Error: Source file $bppNetworkFile does not exist"
+    exit 1
+fi
+
+cp "$bppClientFile" "$newClientFile"
 cp "$bppNetworkFile" "$newNetworkFile"
 
 clientFile=$newClientFile
