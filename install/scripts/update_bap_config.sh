@@ -1,16 +1,27 @@
 #!/bin/bash
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+# Convert Windows paths to Unix-style paths if running in Git Bash
+if [[ $(uname -s) == *"MINGW"* ]] || [[ $(uname -s) == *"MSYS"* ]] || [[ $(uname -s) == *"CYGWIN"* ]]; then
+    SCRIPT_DIR=$(cygpath -u "$SCRIPT_DIR")
+fi
+
 source $SCRIPT_DIR/registry_entry.sh
 source $SCRIPT_DIR/generate_keys.sh
 source $SCRIPT_DIR/variables.sh
 source $SCRIPT_DIR/get_container_details.sh
 
+# Convert Windows paths to Unix-style paths if running in Git Bash
+if [[ $(uname -s) == *"MINGW"* ]] || [[ $(uname -s) == *"MSYS"* ]] || [[ $(uname -s) == *"CYGWIN"* ]]; then
+    bapClientFile=$(cygpath -u "$bapClientFile")
+    bapNetworkFile=$(cygpath -u "$bapNetworkFile")
+fi
+
 newClientFile=$(echo "$bapClientFile" | sed 's/yaml-sample/yml/')
 newNetworkFile=$(echo "$bapNetworkFile" | sed 's/yaml-sample/yml/')
 
-cp $bapClientFile $newClientFile
-cp $bapNetworkFile $newNetworkFile
+cp "$bapClientFile" "$newClientFile"
+cp "$bapNetworkFile" "$newNetworkFile"
 
 clientFile=$newClientFile
 networkFile=$newNetworkFile
