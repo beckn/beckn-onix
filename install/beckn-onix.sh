@@ -179,10 +179,23 @@ install_bap_protocol_server() {
     sleep 10
     docker volume create bap_client_config_volume
     docker volume create bap_network_config_volume
-    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_client_config_volume:/target busybox cp /source/bap-client.yml /target/default.yml
-    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_client_config_volume:/target busybox cp /source/bap-client.yaml-sample /target
-    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_network_config_volume:/target busybox cp /source/bap-network.yml /target/default.yml
-    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bap_network_config_volume:/target busybox cp /source/bap-network.yaml-sample /target
+
+    # Convert Windows paths to Unix-style paths if running in Git Bash
+    if [[ $(uname -s) == *"MINGW"* ]] || [[ $(uname -s) == *"MSYS"* ]] || [[ $(uname -s) == *"CYGWIN"* ]]; then
+        PROTOCOL_DIR=$(cd "$SCRIPT_DIR/../protocol-server-data" && pwd)
+        PROTOCOL_DIR=$(cygpath -u "$PROTOCOL_DIR")
+    else
+        PROTOCOL_DIR="$SCRIPT_DIR/../protocol-server-data"
+    fi
+
+    # Debug output
+    echo "Using protocol server data directory: $PROTOCOL_DIR"
+    echo "Files to be copied:"
+    ls -l "$PROTOCOL_DIR"/{bap-client.yml,bap-client.yaml-sample,bap-network.yml,bap-network.yaml-sample}
+
+    # Copy files individually using sh -c
+    docker run --rm -v "$PROTOCOL_DIR:/source" -v bap_client_config_volume:/target busybox sh -c "cp /source/bap-client.yml /target/default.yml && cp /source/bap-client.yaml-sample /target/"
+    docker run --rm -v "$PROTOCOL_DIR:/source" -v bap_network_config_volume:/target busybox sh -c "cp /source/bap-network.yml /target/default.yml && cp /source/bap-network.yaml-sample /target/"
     docker rmi busybox
 
     start_container $bap_docker_compose_file "bap-client"
@@ -219,10 +232,23 @@ install_bpp_protocol_server() {
     sleep 10
     docker volume create bpp_client_config_volume
     docker volume create bpp_network_config_volume
-    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bpp_client_config_volume:/target busybox cp /source/bpp-client.yml /target/default.yml
-    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bpp_client_config_volume:/target busybox cp /source/bpp-client.yaml-sample /target
-    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bpp_network_config_volume:/target busybox cp /source/bpp-network.yml /target/default.yml
-    docker run --rm -v $SCRIPT_DIR/../protocol-server-data:/source -v bpp_network_config_volume:/target busybox cp /source/bpp-network.yaml-sample /target
+
+    # Convert Windows paths to Unix-style paths if running in Git Bash
+    if [[ $(uname -s) == *"MINGW"* ]] || [[ $(uname -s) == *"MSYS"* ]] || [[ $(uname -s) == *"CYGWIN"* ]]; then
+        PROTOCOL_DIR=$(cd "$SCRIPT_DIR/../protocol-server-data" && pwd)
+        PROTOCOL_DIR=$(cygpath -u "$PROTOCOL_DIR")
+    else
+        PROTOCOL_DIR="$SCRIPT_DIR/../protocol-server-data"
+    fi
+
+    # Debug output
+    echo "Using protocol server data directory: $PROTOCOL_DIR"
+    echo "Files to be copied:"
+    ls -l "$PROTOCOL_DIR"/{bpp-client.yml,bpp-client.yaml-sample,bpp-network.yml,bpp-network.yaml-sample}
+
+    # Copy files individually using sh -c
+    docker run --rm -v "$PROTOCOL_DIR:/source" -v bpp_client_config_volume:/target busybox sh -c "cp /source/bpp-client.yml /target/default.yml && cp /source/bpp-client.yaml-sample /target/"
+    docker run --rm -v "$PROTOCOL_DIR:/source" -v bpp_network_config_volume:/target busybox sh -c "cp /source/bpp-network.yml /target/default.yml && cp /source/bpp-network.yaml-sample /target/"
     docker rmi busybox
 
     start_container $bpp_docker_compose_file "bpp-client"
