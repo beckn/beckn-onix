@@ -8,7 +8,7 @@ cache:
   port: 6379
   ttl: "PT10M"
   # Optional. Default is 0.
-  db: 0 
+  db: 0
 
 # Optional.
 responseCache:
@@ -21,13 +21,13 @@ responseCache:
 # 2. webhook
 # 3. pubSub
 client:
-#   synchronous: 
+#   synchronous:
 #     mongoURL: "mongodb://tvast:password@mongoDB:27017/ps?authSource=admin"
 
   webhook:
    url: "WEBHOOK_URL"
-  
-  #messageQueue: 
+
+  #messageQueue:
   #  amqpURL: "amqp://guest:guest@localhost:5672"
   #  incomingQueue: "protocol-server-incoming"
   #  outgoingQueue: "protocol-server-outgoing"
@@ -71,9 +71,9 @@ app:
       get_cancellation_reasons:
         ttl: "PT10S"
       get_rating_categories:
-        ttl: "PT10S"          
-    
-    responses: 
+        ttl: "PT10S"
+
+    responses:
       on_search:
         ttl: "PT15S"
       on_init:
@@ -97,8 +97,8 @@ app:
       cancellation_reasons:
         ttl: "PT10S"
       rating_categories:
-        ttl: "PT10S"          
-  
+        ttl: "PT10S"
+
   # Mandatory.
   privateKey: "PRIVATE_KEY"
   publicKey: "PUBLIC_KEY"
@@ -111,7 +111,7 @@ app:
   registryUrl: REGISTRY_URL
   auth: false
   uniqueKey: "BPP_SUBSCRIBER_KEY_ID"
-  
+
   # Mandatory.
   city: "std:080"
   country: "IND"
@@ -122,7 +122,7 @@ app:
   # Mandatory.
   httpTimeout: "PT3S"
   httpRetryCount: 2
-  ttelemetry:
+  telemetry:
     enabled: false
     url: ""
     batchSize: 100
@@ -131,4 +131,4 @@ app:
     redis_db: 3
 
   useLayer2Config: USE_LAYER_2_CONFIG
-  mandateLayer2Config: MANDATE_LAYER_2_CONFIG    
+  mandateLayer2Config: MANDATE_LAYER_2_CONFIG
