@@ -1,0 +1,66 @@
+name: Terraform Deploy to GCP
+
+on:
+  push:
+  workflow_dispatch: # Manual triggerr
+
+jobs:
+  plan:
+    name: Terraform Plan Only
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v3
+
+      - name: Clone Terraform repo from Gerrit
+        run: |
+          git clone https://${{ secrets.GERRIT_USERNAME }}:${{ secrets.GERRIT_PAT }}@open-networks.googlesource.com/onix-dev gerrit-repo
+          echo "==== Contents of Terraform-dir ===="
+          pwd
+          cd gerrit-repo/Terraform-CICD
+          pwd
+          ls -la
+
+      - name: Authenticate to Google Cloud
+        run: echo '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}' > gcp-key.json
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.0  
+
+      - name: Write GCP credentials to file
+        run: echo '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}' > gcp-key.json
+
+      - name: Export GCP credentials environment variable
+        run: echo "GOOGLE_APPLICATION_CREDENTIALS=$GITHUB_WORKSPACE/gcp-key.json" >> $GITHUB_ENV   
+
+      - name: Create backend.tf and Terraform Init
+        working-directory: ./gerrit-repo/Terraform-CICD
+        env:
+          GCS_BUCKET: beckn-cicd-tf-state-bucket
+        run: |
+          cat <<EOF > backend.tf
+          terraform {
+            backend "gcs" {
+              bucket = "${GCS_BUCKET}"
+              prefix = "terraform/state"
+              credentials = "${{ github.workspace }}/gcp-key.json"
+            }
+          }
+          EOF
+      
+          terraform init
+    
+      - name: Terraform Plan
+        working-directory: ./gerrit-repo/Terraform-CICD
+        run: terraform plan
+      
+      - name: Terraform Apply
+        working-directory: ./gerrit-repo/Terraform-CICD
+        run: terraform apply -var="subnet_name=onix-gke-subnet" -auto-approve
+
+      - name: Clean up credentials
+        run: rm -f gcp-key.json
+

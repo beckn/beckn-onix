@@ -11,7 +11,7 @@ type KeyManager interface {
 	GenerateKeyset() (*model.Keyset, error)
 	InsertKeyset(ctx context.Context, keyID string, keyset *model.Keyset) error
 	Keyset(ctx context.Context, keyID string) (*model.Keyset, error)
-	LookupNPKeys(ctx context.Context, subscriberID, uniqueKeyID string) (string, string, error)
+	LookupNPKeys(ctx context.Context, subscriberID, uniqueKeyID string) (signingPublicKey string, encrPublicKey string, err error)
 	DeleteKeyset(ctx context.Context, keyID string) error
 }
 
