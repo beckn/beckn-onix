@@ -1,0 +1,116 @@
+name: Build and Upload Plugins
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch to deploy'
+        required: true
+        default: 'beckn-onix-v1.0-develop'
+
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    env:
+      GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
+      PLUGIN_OUTPUT_DIR: ./generated
+      ZIP_FILE: plugins_bundle.zip
+
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch }}
+
+      - name: Show selected branch
+        run: echo "Deploying branch:${{ github.event.inputs.target_branch }}"
+
+
+      - name: Clone GitHub and Gerrit plugin repos
+        run: |
+          # Example GitHub clone
+          git clone -b beckn-onix-v1.0-develop https://${{ secrets.PAT_GITHUB }}:@github.com/beckn/beckn-onix.git github-repo
+          
+          # Example Gerrit clone
+          git clone https://${{ secrets.GERRIT_USERNAME }}:${{ secrets.GERRIT_PAT }}@open-networks.googlesource.com/onix-dev gerrit-repo
+
+      - name: List directory structure
+        run: |
+          echo "📂 Contents of root:"
+          ls -alh
+      
+          echo "📂 Contents of GitHub repo:"
+          ls -alh github-repo
+      
+          echo "📂 Deep list of GitHub repo:"
+          find github-repo
+      
+          echo "📂 Contents of Gerrit repo:"
+          ls -alh gerrit-repo
+      
+          echo "📂 Deep list of Gerrit repo:"
+          find gerrit-repo
+
+
+      - name: Build Go plugins in Docker
+        run: |
+          set -e
+          mkdir -p $PLUGIN_OUTPUT_DIR
+      
+          BUILD_CMDS=""
+      
+          # GitHub plugins
+          for dir in github-repo/pkg/plugin/implementation/*; do
+            if [ -d "$dir/cmd" ]; then
+              plugin=$(basename "$dir")
+              BUILD_CMDS+="cd github-repo && go build -buildmode=plugin -buildvcs=false -o ../${PLUGIN_OUTPUT_DIR}/${plugin}.so ./pkg/plugin/implementation/${plugin}/cmd && cd - && "
+            fi
+          done
+      
+          # Gerrit plugins — build in their own repo/module context
+          for dir in gerrit-repo/plugins/*; do
+            if [ -d "$dir/cmd" ]; then
+              plugin=$(basename "$dir")
+              BUILD_CMDS+="cd gerrit-repo && go build -buildmode=plugin -buildvcs=false -o ../${PLUGIN_OUTPUT_DIR}/${plugin}.so ./plugins/${plugin}/cmd && cd - && "
+            fi
+          done
+      
+          BUILD_CMDS=${BUILD_CMDS%" && "}
+          echo "🛠️ Running build commands inside Docker:"
+          echo "$BUILD_CMDS"
+      
+          docker run --rm -v "$(pwd)":/app -w /app golang:1.24-bullseye sh -c "$BUILD_CMDS"
+
+      - name: List built plugin files
+        run: |
+          echo "Looking in $PLUGIN_OUTPUT_DIR"
+          ls -lh $PLUGIN_OUTPUT_DIR || echo "⚠️ Directory does not exist"
+          find $PLUGIN_OUTPUT_DIR -name '*.so' || echo "⚠️ No .so files found"
+
+          echo "Creating zip archive..."
+          cd "$PLUGIN_OUTPUT_DIR"
+          zip -r "../$ZIP_FILE" *.so
+          echo "Created $ZIP_FILE"
+          cd ..
+
+      - name: List zip output
+        run: |
+          ls -lh plugins_bundle.zip
+
+
+      - name: Authenticate to GCP
+        run: |
+          echo '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}' > gcloud-key.json
+          gcloud auth activate-service-account --key-file=gcloud-key.json
+          gcloud config set project trusty-relic-370809
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: gcloud-key.json
+
+      - name: Upload to GCS
+        run: |
+          gsutil -m cp -r $ZIP_FILE gs://${GCS_BUCKET}/plugins/
+
+      - name: Cleanup
+        run: |
+          rm -rf $PLUGIN_OUTPUT_DIR $ZIP_FILE gcloud-key.json

@@ -1,0 +1,57 @@
+name: CI/CD to GKE updated
+
+on:
+  #push:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Build and Deploy to GKE
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: '${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}'
+
+    - name: Set up gcloud CLI
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        project_id: ${{ secrets.GCP_PROJECT }}
+        export_default_credentials: true
+
+    - name: Install GKE Auth Plugin
+      run: gcloud components install gke-gcloud-auth-plugin --quiet
+
+    - name: Configure Docker to use Artifact Registry
+      run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev
+
+    - name: Build Docker Image
+      run: |
+        IMAGE_NAME=${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.GCP_REPO }}/beckn-onix:${{ github.sha }}
+        docker build -f Dockerfile.adapter -t $IMAGE_NAME .
+        docker push $IMAGE_NAME
+
+    - name: Get GKE Credentials
+      run: |
+        gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER }} \
+          --zone ${{ secrets.GCP_REGION }} \
+          --project ${{ secrets.GCP_PROJECT }}
+
+    - name: Deploy to GKE using Kubernetes Manifests
+      run: |
+        IMAGE_NAME=${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.GCP_REPO }}/beckn-onix:${{ github.sha }}
+
+        # Replace image in deployment YAML
+        sed -i "s|image: .*|image: $IMAGE_NAME|g" Deployment/deployment.yaml
+
+        # Apply Kubernetes manifests
+        kubectl apply -f Deployment/deployment.yaml --namespace=onix-adapter
+        kubectl apply -f Deployment/service.yaml --namespace=onix-adapter
+
+        # Wait for rollout to complete
+        kubectl rollout status Deployment/onix-demo-adapter --namespace=onix-adapter
