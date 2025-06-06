@@ -73,6 +73,11 @@ func (m *MockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Con
 	return nil, nil
 }
 
+// Decrypter returns a mock implementation of the Decrypter interface.
+func (m *MockPluginManager) Decrypter(ctx context.Context, cfg *plugin.Config) (definition.Decrypter, error) {
+	return nil, nil
+}
+
 // mockRun is a mock implementation of the `run` function, simulating a successful run.
 func mockRun(ctx context.Context, configPath string) error {
 	return nil // Simulate a successful run

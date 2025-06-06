@@ -272,9 +272,9 @@ func (m *Manager) Encryptor(ctx context.Context, cfg *Config) (definition.Encryp
 	return encrypter, nil
 }
 
-// Decryptor returns a Decrypter instance based on the provided configuration.
+// Decrypter returns a Decrypter instance based on the provided configuration.
 // It registers a cleanup function for resource management.
-func (m *Manager) Decryptor(ctx context.Context, cfg *Config) (definition.Decrypter, error) {
+func (m *Manager) Decrypter(ctx context.Context, cfg *Config) (definition.Decrypter, error) {
 	dp, err := provider[definition.DecrypterProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)

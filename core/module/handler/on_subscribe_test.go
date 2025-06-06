@@ -3,12 +3,6 @@ package handler
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/base64"
-	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
@@ -32,18 +26,24 @@ type mockKeyManager struct {
 }
 
 type mockDecrypter struct {
+	mock.Mock
 	decryptFunc func(ctx context.Context, encryptedData, privateKeyBase64, publicKeyBase64 string) (string, error)
 }
 
 func (m *mockDecrypter) Decrypt(ctx context.Context, encryptedData, privateKeyBase64, publicKeyBase64 string) (string, error) {
-	if m == nil || m.decryptFunc == nil {
-		return "", nil
-	}
-	return m.decryptFunc(ctx, encryptedData, privateKeyBase64, publicKeyBase64)
+	// if m == nil || m.decryptFunc == nil {
+	// 	return "", nil
+	// }
+	// return m.decryptFunc(ctx, encryptedData, privateKeyBase64, publicKeyBase64)
+
+	args := m.Called(ctx, encryptedData, privateKeyBase64, publicKeyBase64)
+	return args.String(0), args.Error(1)
 }
 
 func (m *mockKeyManager) SigningPrivateKey(ctx context.Context, keyID string) (string, string, error) {
-	return m.signingPrivateKeyFunc(ctx, keyID)
+	//return m.signingPrivateKeyFunc(ctx, keyID)
+	args := m.Called(ctx, keyID)
+	return args.String(0), args.String(1), args.Error(2)
 }
 
 // Implement empty methods to satisfy interface
@@ -64,279 +64,139 @@ func (m *mockKeyManager) DeletePrivateKeys(ctx context.Context, keyID string) er
 	return nil
 }
 
-func generateTestKey() (string, *rsa.PrivateKey) {
-	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
-	privBytes := x509.MarshalPKCS1PrivateKey(privKey)
-	privPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: privBytes,
-	})
-	return string(privPEM), privKey
-}
+func TestNewOnSubscribeHandlerSuccess(t *testing.T) {
+	ctx := context.Background()
+	mockKM := new(mockKeyManager)
+	mockDP := new(mockDecrypter)
 
-func TestOnSubscribeSuccess(t *testing.T) {
-	privPEM, privKey := generateTestKey()
+	handler, err := NewOnSubscribeHandler(ctx, mockKM, mockDP)
+	assert.NoError(t, err)
+	assert.NotNil(t, handler)
 
-	challenge := []byte("secret")
-	encChallenge, _ := rsa.EncryptPKCS1v15(rand.Reader, &privKey.PublicKey, challenge)
-	encBase64 := base64.StdEncoding.EncodeToString(encChallenge)
-
-	tests := []struct {
+	testCases := []struct {
 		name           string
-		req            model.OnSubscribeRequest
-		keyManagerMock func() definition.KeyManager
-		decrypterMock  func() definition.Decrypter
+		requestBody    string
+		mockKMResponse []interface{}
+		mockDPResponse []interface{}
+		expectedStatus int
+		expectedBody   string
 	}{
 		{
-			name: "valid request decrypts successfully",
-			req: model.OnSubscribeRequest{
-				MessageID: "123",
-				Challenge: encBase64,
-			},
-			keyManagerMock: func() definition.KeyManager {
-				return &mockKeyManager{
-					signingPrivateKeyFunc: func(ctx context.Context, keyID string) (string, string, error) {
-						return privPEM, "", nil
-					},
-				}
-			},
-			decrypterMock: func() definition.Decrypter {
-				return &mockDecrypter{
-					decryptFunc: func(ctx context.Context, encryptedData, privKey, pubKey string) (string, error) {
-						return "secret", nil
-					},
-				}
-			},
+			name:           "Success - Valid Request",
+			requestBody:    `{"message_id": "12345", "challenge": "U2FtcGxlRW5jb2RlZENoYWxsZW5nZQ=="}`,
+			mockKMResponse: []interface{}{"privateKey", "publicKey", nil},
+			mockDPResponse: []interface{}{"decrypted-string", nil},
+			expectedStatus: http.StatusOK,
+			expectedBody:   `{"answer":"decrypted-string","message_id":"12345"}`,
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			body, _ := json.Marshal(tt.req)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/on_subscribe", strings.NewReader(tc.requestBody))
+			req.Header.Set("Content-Type", "application/json")
 
-			handler := onSubscribeHandler{
-				km: tt.keyManagerMock(),
-				dp: tt.decrypterMock(),
+			rr := httptest.NewRecorder()
+
+			// Mock behavior
+			if tc.mockKMResponse != nil {
+				mockKM.On("SigningPrivateKey", mock.Anything, "12345").Return(tc.mockKMResponse...)
+			}
+			if tc.mockDPResponse != nil {
+				mockDP.On("Decrypt", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(tc.mockDPResponse...)
 			}
 
-			ctx := &model.StepContext{Body: body}
-			err := handler.Run(ctx)
+			// Invoke the handler
+			handler.ServeHTTP(rr, req)
 
-			assert.NoError(t, err)
+			// Assertions
+			assert.Equal(t, tc.expectedStatus, rr.Code)
+			assert.Contains(t, rr.Body.String(), tc.expectedBody)
 
-			var resp model.OnSubscribeResponse
-			errNew := json.Unmarshal(ctx.Body, &resp)
-			assert.NoError(t, errNew)
-
-			assert.Equal(t, tt.req.MessageID, resp.MessageID)
-			assert.Equal(t, "secret", resp.Answer)
+			// Verify mocks
+			mockKM.AssertExpectations(t)
+			mockDP.AssertExpectations(t)
 		})
 	}
 }
 
-func TestOnSubscribeFailures(t *testing.T) {
-	privPEM, _ := generateTestKey()
+func TestNewOnSubscribeHandlerFailure(t *testing.T) {
+	ctx := context.Background()
+	mockKM := new(mockKeyManager)
+	mockDP := new(mockDecrypter)
 
-	tests := []struct {
+	handler, err := NewOnSubscribeHandler(ctx, mockKM, mockDP)
+	assert.NoError(t, err)
+	assert.NotNil(t, handler)
+
+	testCases := []struct {
 		name           string
-		body           []byte
-		keyManagerMock func() definition.KeyManager
-		decrypterMock  func() definition.Decrypter
-		expectErrMsg   string
+		requestBody    string
+		mockKMResponse []interface{}
+		mockDPResponse []interface{}
+		expectedStatus int
+		expectedBody   string
 	}{
 		{
-			name:         "invalid request body",
-			body:         []byte("not-json"),
-			expectErrMsg: "invalid request body",
-			keyManagerMock: func() definition.KeyManager {
-				return &mockKeyManager{}
-			},
-			decrypterMock: func() definition.Decrypter {
-				return &mockDecrypter{}
-			},
+			name:           "Error - Missing message_id",
+			requestBody:    `{"challenge": "U2FtcGxlRW5jb2RlZENoYWxsZW5nZQ=="}`,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "message_id and challenge are required",
 		},
 		{
-			name: "message_id and challenge are required",
-			body: func() []byte {
-				req := model.OnSubscribeRequest{MessageID: "", Challenge: ""}
-				b, _ := json.Marshal(req)
-				return b
-			}(),
-			expectErrMsg: "message_id and challenge are required",
-			keyManagerMock: func() definition.KeyManager {
-				return &mockKeyManager{}
-			},
-			decrypterMock: func() definition.Decrypter {
-				return &mockDecrypter{}
-			},
+			name:           "Error - Missing challenge",
+			requestBody:    `{"message_id": "12345"}`,
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "message_id and challenge are required",
 		},
 		{
-			name: "failed to get keys for message_id",
-			body: func() []byte {
-				req := model.OnSubscribeRequest{MessageID: "123", Challenge: base64.StdEncoding.EncodeToString([]byte("test"))}
-				b, _ := json.Marshal(req)
-				return b
-			}(),
-			expectErrMsg: "failed to get keys for message_id",
-			keyManagerMock: func() definition.KeyManager {
-				return &mockKeyManager{
-					signingPrivateKeyFunc: func(ctx context.Context, keyID string) (string, string, error) {
-						return "", "", errors.New("key error")
-					},
-				}
-			},
-			decrypterMock: func() definition.Decrypter {
-				return &mockDecrypter{}
-			},
+			name:           "Error - Invalid Base64 Encoding",
+			requestBody:    `{"message_id": "12345", "challenge": "invalid_base64"}`,
+			mockKMResponse: []interface{}{"privateKey", "publicKey", nil},
+			expectedStatus: http.StatusInternalServerError,
+			expectedBody:   "failed to decode challenge",
 		},
 		{
-			name: "failed to decode challenge",
-			body: func() []byte {
-				req := model.OnSubscribeRequest{MessageID: "123", Challenge: "!@#$notbase64"}
-				b, _ := json.Marshal(req)
-				return b
-			}(),
-			expectErrMsg: "failed to decode challenge",
-			keyManagerMock: func() definition.KeyManager {
-				return &mockKeyManager{
-					signingPrivateKeyFunc: func(ctx context.Context, keyID string) (string, string, error) {
-						return privPEM, "", nil
-					},
-				}
-			},
-			decrypterMock: func() definition.Decrypter {
-				return &mockDecrypter{}
-			},
+			name:           "Error - Invalid JSON Body",
+			requestBody:    `{"message_id": "12345", "challenge":`, // Malformed JSON
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "failed to decode request",
 		},
 		{
-			name: "failed to decrypt challenge",
-			body: func() []byte {
-				req := model.OnSubscribeRequest{
-					MessageID: "123",
-					Challenge: base64.StdEncoding.EncodeToString([]byte("invalid-decryption-data")),
-				}
-				b, _ := json.Marshal(req)
-				return b
-			}(),
-			expectErrMsg: "failed to decrypt challenge",
-			keyManagerMock: func() definition.KeyManager {
-				return &mockKeyManager{
-					signingPrivateKeyFunc: func(ctx context.Context, keyID string) (string, string, error) {
-						return privPEM, "", nil
-					},
-				}
-			},
-			decrypterMock: func() definition.Decrypter {
-				return &mockDecrypter{
-					decryptFunc: func(ctx context.Context, encryptedData, privKey, pubKey string) (string, error) {
-						return "", errors.New("decryption failed")
-					},
-				}
-			},
-		},
-		{
-			name: "invalid PEM format or key type",
-			body: func() []byte {
-				req := model.OnSubscribeRequest{
-					MessageID: "123",
-					Challenge: base64.StdEncoding.EncodeToString([]byte("fake-challenge")),
-				}
-				b, _ := json.Marshal(req)
-				return b
-			}(),
-			expectErrMsg: "invalid PEM format or key type",
-			keyManagerMock: func() definition.KeyManager {
-				return &mockKeyManager{
-					signingPrivateKeyFunc: func(ctx context.Context, keyID string) (string, string, error) {
-						// Invalid PEM key
-						return "-----BEGIN INVALID-----\nabc\n-----END INVALID-----", "", nil
-					},
-				}
-			},
-			decrypterMock: func() definition.Decrypter {
-				return &mockDecrypter{
-					decryptFunc: func(ctx context.Context, encryptedData, privKey, pubKey string) (string, error) {
-						return "", errors.New("invalid PEM format or key type")
-					},
-				}
-			},
-		},
-		{
-			name: "failed to parse private key",
-			body: func() []byte {
-				req := model.OnSubscribeRequest{
-					MessageID: "123",
-					Challenge: base64.StdEncoding.EncodeToString([]byte("fake-challenge")),
-				}
-				b, _ := json.Marshal(req)
-				return b
-			}(),
-			expectErrMsg: "failed to parse private key",
-			keyManagerMock: func() definition.KeyManager {
-				return &mockKeyManager{
-					signingPrivateKeyFunc: func(ctx context.Context, keyID string) (string, string, error) {
-						// Corrupted key content
-						return "-----BEGIN RSA PRIVATE KEY-----\nZmFrZQo=\n-----END RSA PRIVATE KEY-----", "", nil
-					},
-				}
-			},
-			decrypterMock: func() definition.Decrypter {
-				return &mockDecrypter{
-					decryptFunc: func(ctx context.Context, encryptedData, privKey, pubKey string) (string, error) {
-						return "", errors.New("failed to parse private key")
-					},
-				}
-			},
+			name:           "Error - Decryption Failure",
+			requestBody:    `{"message_id": "12345", "challenge": "U2FtcGxlRW5jb2RlZENoYWxsZW5nZQ=="}`,
+			mockKMResponse: []interface{}{"privateKey", "publicKey", nil},
+			mockDPResponse: []interface{}{"", assert.AnError},
+			expectedStatus: http.StatusInternalServerError,
+			expectedBody:   "failed to decrypt challenge",
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			handler := onSubscribeHandler{
-				km: tt.keyManagerMock(),
-				dp: tt.decrypterMock(),
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/on_subscribe", strings.NewReader(tc.requestBody))
+			req.Header.Set("Content-Type", "application/json")
+
+			rr := httptest.NewRecorder()
+
+			// Mock behavior
+			if tc.mockKMResponse != nil {
+				mockKM.On("SigningPrivateKey", mock.Anything, "12345").Return(tc.mockKMResponse...)
 			}
-			ctx := &model.StepContext{Body: tt.body}
-			err := handler.Run(ctx)
-
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), tt.expectErrMsg)
-		})
-	}
-}
-
-func TestHandleOnSubscribe(t *testing.T) {
-	tests := []struct {
-		name    string
-		ctx     *model.StepContext
-		km      definition.KeyManager
-		dp      definition.Decrypter
-		wantErr bool
-	}{
-		{
-			name:    "Error in KeyManager",
-			ctx:     &model.StepContext{},
-			km:      &mockKeyManager{},
-			dp:      &mockDecrypter{},
-			wantErr: true,
-		},
-		{
-			name:    "Error in Decrypter",
-			ctx:     &model.StepContext{},
-			km:      &mockKeyManager{},
-			dp:      &mockDecrypter{},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := HandleOnSubscribe(tt.ctx, tt.km, tt.dp)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
+			if tc.mockDPResponse != nil {
+				mockDP.On("Decrypt", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(tc.mockDPResponse...)
 			}
+
+			// Invoke the handler
+			handler.ServeHTTP(rr, req)
+
+			// Assertions
+			assert.Equal(t, tc.expectedStatus, rr.Code)
+			assert.Contains(t, rr.Body.String(), tc.expectedBody)
+
+			// Verify mocks
+			mockKM.AssertExpectations(t)
+			mockDP.AssertExpectations(t)
 		})
 	}
 }
@@ -452,6 +312,10 @@ func (m *mockPluginManager) Router(ctx context.Context, cfg *plugin.Config) (def
 		return nil, fmt.Errorf("router plugin error")
 	}
 	return &mockRouter{}, nil
+}
+
+func (m *mockPluginManager) Decrypter(ctx context.Context, cfg *plugin.Config) (definition.Decrypter, error) {
+	return nil, nil
 }
 
 type mockRouter struct {
@@ -1528,14 +1392,9 @@ func TestSignStepRunSuccess(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			km := &mockKeyManager{
-				signingPrivateKeyFunc: func(ctx context.Context, subID string) (string, string, error) {
-					if tc.keyManagerErr {
-						return "", "", fmt.Errorf("mock key manager error")
-					}
-					return "mock-key-id", "mock-key", nil
-				},
-			}
+			km := new(mockKeyManager)
+			km.On("SigningPrivateKey", mock.Anything, "test-sub").
+				Return("mock-key-id", "mock-key", nil)
 
 			signer := &mockSigner{
 				returnErr: tc.signerErr,
@@ -1602,14 +1461,9 @@ func TestSignStepRunFailure(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			km := &mockKeyManager{
-				signingPrivateKeyFunc: func(ctx context.Context, subID string) (string, string, error) {
-					if tc.keyManagerErr {
-						return "", "", fmt.Errorf("mock key manager error")
-					}
-					return "mock-key-id", "mock-key", nil
-				},
-			}
+			km := new(mockKeyManager)
+			km.On("SigningPrivateKey", mock.Anything, "test-sub").
+				Return("", "", fmt.Errorf("mock key retrieval failure"))
 
 			signer := &mockSigner{
 				returnErr: tc.signerErr,

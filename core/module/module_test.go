@@ -69,6 +69,11 @@ func (m *mockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Con
 	return nil, nil
 }
 
+// Decrypter returns a mock Decrypter validator implementation.
+func (m *mockPluginManager) Decrypter(ctx context.Context, cfg *plugin.Config) (definition.Decrypter, error) {
+	return nil, nil
+}
+
 // TestRegisterSuccess tests scenarios where the handler registration should succeed.
 func TestRegisterSuccess(t *testing.T) {
 	mCfgs := []Config{
