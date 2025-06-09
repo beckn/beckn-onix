@@ -150,7 +150,7 @@ install_bap_protocol_server() {
     docker rmi busybox
 
     start_container $bap_docker_compose_file "bap-client"
-    sleep 10
+    sleep 20
     start_container $bap_docker_compose_file "bap-network"
 
     if [[ -z "$layer2_url" ]]; then
@@ -162,7 +162,7 @@ install_bap_protocol_server() {
         install_layer2_config bap-network
     fi
     echo "Protocol server BAP installation successful"
-    sleep 30
+    sleep 45
 }
 
 # Function to install BPP Protocol Server without Sandbox
