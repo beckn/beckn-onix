@@ -1236,7 +1236,7 @@ func TestDecryptorSuccess(t *testing.T) {
 			}
 
 			// Call Decryptor.
-			decrypter, err := m.Decryptor(context.Background(), tt.cfg)
+			decrypter, err := m.Decrypter(context.Background(), tt.cfg)
 
 			// Check success case.
 			if err != nil {
@@ -1305,7 +1305,7 @@ func TestDecryptorFailure(t *testing.T) {
 			}
 
 			// Call Decryptor.
-			decrypter, err := m.Decryptor(context.Background(), tt.cfg)
+			decrypter, err := m.Decrypter(context.Background(), tt.cfg)
 
 			// Check error.
 			if err == nil {

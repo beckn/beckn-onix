@@ -21,6 +21,7 @@ type PluginManager interface {
 	Cache(ctx context.Context, cfg *plugin.Config) (definition.Cache, error)
 	KeyManager(ctx context.Context, cache definition.Cache, rLookup definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error)
 	SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)
+	Decrypter(ctx context.Context, cfg *plugin.Config) (definition.Decrypter, error)
 }
 
 // Type defines different handler types for processing requests.
@@ -29,6 +30,9 @@ type Type string
 const (
 	// HandlerTypeStd represents the standard handler type used for general request processing.
 	HandlerTypeStd Type = "std"
+
+	// HandlerTypeOnSubscribe represents the on_subscribe handler type used for general request processing.
+	HandlerTypeOnSubscribe Type = "onSubscribe"
 )
 
 // PluginCfg holds the configuration for various plugins.

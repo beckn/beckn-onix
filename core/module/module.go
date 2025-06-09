@@ -23,6 +23,32 @@ type Provider func(ctx context.Context, mgr handler.PluginManager, cfg *handler.
 // handlerProviders maintains a mapping of handler types to their respective providers.
 var handlerProviders = map[handler.Type]Provider{
 	handler.HandlerTypeStd: handler.NewStdHandler,
+	handler.HandlerTypeOnSubscribe: func(ctx context.Context, mgr handler.PluginManager, cfg *handler.Config) (http.Handler, error) {
+		// Ensure correct type conversion for KeyManager plugin configuration
+		if cfg.Plugins.KeyManager == nil {
+			return nil, fmt.Errorf("KeyManager plugin not configured")
+		}
+
+		// Load KeyManager properly
+		km, err := mgr.KeyManager(ctx, nil, nil, cfg.Plugins.KeyManager) // Remove `&cfg.Plugins.KeyManager.Config`
+		if err != nil {
+			return nil, fmt.Errorf("failed to get KeyManager: %w", err)
+		}
+
+		// Ensure Decrypter plugin exists before loading
+		if cfg.Plugins.Signer == nil {
+			return nil, fmt.Errorf("Signer plugin not configured")
+		}
+
+		// Load Decrypter properly
+		dp, err := mgr.Decrypter(ctx, cfg.Plugins.Signer)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get Decrypter: %w", err)
+		}
+
+		// Initialize and return handler
+		return handler.NewOnSubscribeHandler(ctx, km, dp)
+	},
 }
 
 // Register initializes and registers handlers based on the provided configuration.

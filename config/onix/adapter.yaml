@@ -175,3 +175,29 @@ modules:
         - validateSchema
         - addRoute
         - sign
+  - name: onSubscribeHandler
+    path: /on_subscribe/
+    handler:
+      type: onSubscribe
+      role: gateway
+      registryUrl: http://localhost:8080/reg
+      plugins:
+        keyManager:
+          id: secretskeymanager
+          config:
+            projectID: ${projectID}
+        cache:
+          id: redis
+          config:
+            addr: 192.168.1.1:6379
+        signer:
+          id: signer
+        router:
+          id: router
+          config:
+            routingConfigPath: /mnt/gcs/configs/onSubscribeHandler-routing.yaml
+        middleware:
+          - id: reqpreprocessor
+            config:
+              uuidKeys: transaction_id,message_id
+              role: gateway
