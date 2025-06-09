@@ -28,7 +28,6 @@ FINAL_FILENAME="${PROCESSED_DOMAIN}_1.1.0.yaml"
 
 # Execute the docker command
 echo "Creating layer2 config file with name: $FINAL_FILENAME"
-echo "Executing command: docker exec -it $CONTAINER_NAME cp schemas/core_1.1.0.yaml schemas/$FINAL_FILENAME"
 docker exec -it "$CONTAINER_NAME" cp schemas/core_1.1.0.yaml schemas/"$FINAL_FILENAME"
 
 # Check if the command was successful
