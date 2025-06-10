@@ -175,3 +175,27 @@ modules:
         - validateSchema
         - addRoute
         - sign
+  - name: subscribeHandler
+    path: /subscribe/
+    handler:
+      type: subscribe
+      role: bap
+      registryUrl: http://localhost:8080/reg
+      plugins:
+        keyManager:
+          id: secretskeymanager
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: /mnt/gcs/configs/schemas
+        signer:
+          id: signer
+        router:
+          id: router
+          config:
+            routingConfigPath: /mnt/gcs/configs/subscribe-routing.yaml
+      steps:
+        - validateSchema
+        - generateKeys
+        - sign
+        - sendToRegistry

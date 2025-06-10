@@ -261,10 +261,10 @@ func TestRegistrySubscribeSuccess(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var client *registryClient
+			var client *RegistryClient
 
 			if tc.name == "Error - request creation failure" {
-				client = &registryClient{
+				client = &RegistryClient{
 					config: &Config{RegisteryURL: "http://"},
 					client: &retryablehttp.Client{
 						HTTPClient: &http.Client{
@@ -283,12 +283,12 @@ func TestRegistrySubscribeSuccess(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(tc.setupHandler))
 				defer server.Close()
 
-				client = &registryClient{
+				client = &RegistryClient{
 					config: &Config{RegisteryURL: server.URL},
 					client: retryablehttp.NewClient(),
 				}
 			} else {
-				client = &registryClient{
+				client = &RegistryClient{
 					config: &Config{RegisteryURL: "http://localhost"}, // will fail for invalid URL case
 					client: retryablehttp.NewClient(),
 				}
@@ -361,10 +361,10 @@ func TestRegistrySubscribeFailure(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var client *registryClient
+			var client *RegistryClient
 
 			if tc.name == "Error - request creation failure" {
-				client = &registryClient{
+				client = &RegistryClient{
 					config: &Config{RegisteryURL: "http://"},
 					client: &retryablehttp.Client{
 						HTTPClient: &http.Client{
@@ -383,12 +383,12 @@ func TestRegistrySubscribeFailure(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(tc.setupHandler))
 				defer server.Close()
 
-				client = &registryClient{
+				client = &RegistryClient{
 					config: &Config{RegisteryURL: server.URL},
 					client: retryablehttp.NewClient(),
 				}
 			} else {
-				client = &registryClient{
+				client = &RegistryClient{
 					config: &Config{RegisteryURL: "http://localhost"}, // will fail for invalid URL case
 					client: retryablehttp.NewClient(),
 				}

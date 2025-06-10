@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/beckn/beckn-onix/core/module/client"
 	"github.com/beckn/beckn-onix/core/module/handler"
 	"github.com/beckn/beckn-onix/pkg/log"
 	"github.com/beckn/beckn-onix/pkg/model"
@@ -23,6 +24,37 @@ type Provider func(ctx context.Context, mgr handler.PluginManager, cfg *handler.
 // handlerProviders maintains a mapping of handler types to their respective providers.
 var handlerProviders = map[handler.Type]Provider{
 	handler.HandlerTypeStd: handler.NewStdHandler,
+	handler.HandlerTypeSubscribe: func(ctx context.Context, mgr handler.PluginManager, cfg *handler.Config) (http.Handler, error) {
+		// Ensure KeyManager is configured
+		if cfg.Plugins.KeyManager == nil {
+			return nil, fmt.Errorf("KeyManager plugin not configured")
+		}
+
+		// Load KeyManager
+		km, err := mgr.KeyManager(ctx, nil, nil, cfg.Plugins.KeyManager)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get KeyManager: %w", err)
+		}
+
+		// Ensure Signer plugin exists
+		if cfg.Plugins.Signer == nil {
+			return nil, fmt.Errorf("Signer plugin not configured")
+		}
+
+		// Load Signer
+		signer, err := mgr.Signer(ctx, cfg.Plugins.Signer)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get Signer: %w", err)
+		}
+
+		// Create an instance of RegistryClient using existing client package
+		registryClient := client.NewRegisteryClient(&client.Config{
+			RegisteryURL: cfg.RegistryURL,
+		})
+
+		// Initialize and return SubscribeHandler
+		return handler.NewSubscribeHandler(ctx, km, signer, registryClient, cfg.RegistryURL), nil
+	},
 }
 
 // Register initializes and registers handlers based on the provided configuration.

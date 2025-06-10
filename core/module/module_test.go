@@ -11,12 +11,15 @@ import (
 	"github.com/beckn/beckn-onix/pkg/model"
 	"github.com/beckn/beckn-onix/pkg/plugin"
 	"github.com/beckn/beckn-onix/pkg/plugin/definition"
+	"github.com/stretchr/testify/assert"
 )
 
 // mockPluginManager is a mock implementation of the PluginManager interface
 // with support for dynamically setting behavior.
 type mockPluginManager struct {
 	middlewareFunc func(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error)
+	keyManagerFunc func(ctx context.Context, cache, lookup any, cfg *plugin.Config) (definition.KeyManager, error)
+	signerFunc     func(ctx context.Context, cfg *plugin.Config) (definition.Signer, error)
 }
 
 // Middleware returns a mock middleware function based on the provided configuration.
@@ -46,6 +49,9 @@ func (m *mockPluginManager) Publisher(ctx context.Context, cfg *plugin.Config) (
 
 // Signer returns a mock signer implementation.
 func (m *mockPluginManager) Signer(ctx context.Context, cfg *plugin.Config) (definition.Signer, error) {
+	if m.signerFunc != nil {
+		return m.signerFunc(ctx, cfg)
+	}
 	return nil, nil
 }
 
@@ -61,6 +67,9 @@ func (m *mockPluginManager) Cache(ctx context.Context, cfg *plugin.Config) (defi
 
 // KeyManager returns a mock key manager implementation.
 func (m *mockPluginManager) KeyManager(ctx context.Context, cache definition.Cache, rLookup definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error) {
+	if m.keyManagerFunc != nil {
+		return m.keyManagerFunc(ctx, cache, rLookup, cfg)
+	}
 	return nil, nil
 }
 
@@ -68,6 +77,41 @@ func (m *mockPluginManager) KeyManager(ctx context.Context, cache definition.Cac
 func (m *mockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
+
+// ////////////////
+
+type mockKeyManager struct{}
+
+func (m *mockKeyManager) EncrPublicKey(ctx context.Context, messageID string, additionalParam string) (string, error) {
+	return "mock-encrypted-public-key", nil
+}
+
+func (m *mockKeyManager) EncrPrivateKey(ctx context.Context, messageID string) (string, string, error) {
+	return "mock-encrypted-private-key", "mock-additional-value", nil
+}
+
+func (m *mockKeyManager) DeletePrivateKeys(ctx context.Context, messageID string) error {
+	return nil
+}
+
+func (m *mockKeyManager) GenerateKeyPairs() (*model.Keyset, error) { return nil, nil }
+func (m *mockKeyManager) StorePrivateKeys(ctx context.Context, id string, keySet *model.Keyset) error {
+	return nil
+}
+func (m *mockKeyManager) SigningPrivateKey(ctx context.Context, keyID string) (string, string, error) {
+	return "", "", nil
+}
+func (m *mockKeyManager) SigningPublicKey(ctx context.Context, subscriberID, uniqueKeyID string) (string, error) {
+	return "mockKey", nil
+}
+
+type mockSigner struct{}
+
+func (m *mockSigner) Sign(ctx context.Context, payload []byte, privateKey string, validFrom, validUntil int64) (string, error) {
+	return "signed", nil
+}
+
+/////////////////
 
 // TestRegisterSuccess tests scenarios where the handler registration should succeed.
 func TestRegisterSuccess(t *testing.T) {
@@ -169,6 +213,106 @@ func TestRegisterFailure(t *testing.T) {
 			err := Register(context.Background(), tt.mCfgs, mux, tt.mockManager)
 			if err == nil {
 				t.Errorf("expected an error but got nil")
+			}
+		})
+	}
+}
+
+func TestSubscribeHandlerProvider(t *testing.T) {
+	tests := []struct {
+		name        string
+		cfg         *handler.Config
+		manager     *mockPluginManager
+		expectError string
+	}{
+		{
+			name: "Missing KeyManager plugin",
+			cfg: &handler.Config{
+				Plugins: handler.PluginCfg{
+					KeyManager: nil,
+					Signer:     &plugin.Config{ID: "signer"},
+				},
+			},
+			manager:     &mockPluginManager{},
+			expectError: "KeyManager plugin not configured",
+		},
+		{
+			name: "Failed to load KeyManager",
+			cfg: &handler.Config{
+				Plugins: handler.PluginCfg{
+					KeyManager: &plugin.Config{ID: "km"},
+					Signer:     &plugin.Config{ID: "signer"},
+				},
+			},
+			manager: &mockPluginManager{
+				keyManagerFunc: func(ctx context.Context, _, _ any, cfg *plugin.Config) (definition.KeyManager, error) {
+					return nil, errors.New("km error")
+				},
+			},
+			expectError: "failed to get KeyManager: km error",
+		},
+		{
+			name: "Missing Signer plugin",
+			cfg: &handler.Config{
+				Plugins: handler.PluginCfg{
+					KeyManager: &plugin.Config{ID: "km"},
+					Signer:     nil,
+				},
+			},
+			manager:     &mockPluginManager{},
+			expectError: "Signer plugin not configured",
+		},
+		{
+			name: "Failed to load Signer plugin",
+			cfg: &handler.Config{
+				Plugins: handler.PluginCfg{
+					KeyManager: &plugin.Config{ID: "km"},
+					Signer:     &plugin.Config{ID: "signer"},
+				},
+			},
+			manager: &mockPluginManager{
+				keyManagerFunc: func(ctx context.Context, _, _ any, cfg *plugin.Config) (definition.KeyManager, error) {
+					return &mockKeyManager{}, nil
+				},
+				signerFunc: func(ctx context.Context, cfg *plugin.Config) (definition.Signer, error) {
+					return nil, errors.New("signer error")
+				},
+			},
+			expectError: "failed to get Signer: signer error",
+		},
+		{
+			name: "Successful handler creation",
+			cfg: &handler.Config{
+				RegistryURL: "http://registry.test",
+				Plugins: handler.PluginCfg{
+					KeyManager: &plugin.Config{ID: "km"},
+					Signer:     &plugin.Config{ID: "signer"},
+				},
+			},
+			manager: &mockPluginManager{
+				keyManagerFunc: func(ctx context.Context, _, _ any, cfg *plugin.Config) (definition.KeyManager, error) {
+					return &mockKeyManager{}, nil
+				},
+				signerFunc: func(ctx context.Context, cfg *plugin.Config) (definition.Signer, error) {
+					return &mockSigner{}, nil
+				},
+			},
+			expectError: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handlerFunc := handlerProviders[handler.HandlerTypeSubscribe]
+			h, err := handlerFunc(context.Background(), tt.manager, tt.cfg)
+
+			if tt.expectError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectError)
+				assert.Nil(t, h)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, h)
 			}
 		})
 	}

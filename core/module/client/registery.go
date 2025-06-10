@@ -21,21 +21,21 @@ type Config struct {
 	RetryWaitMax time.Duration
 }
 
-// registryClient encapsulates the logic for calling the subscribe and lookup endpoints.
-type registryClient struct {
+// RegistryClient encapsulates the logic for calling the subscribe and lookup endpoints.
+type RegistryClient struct {
 	config *Config
 	client *retryablehttp.Client
 }
 
 // NewRegisteryClient creates a new instance of Client.
-func NewRegisteryClient(config *Config) *registryClient {
+func NewRegisteryClient(config *Config) *RegistryClient {
 	retryClient := retryablehttp.NewClient()
 
-	return &registryClient{config: config, client: retryClient}
+	return &RegistryClient{config: config, client: retryClient}
 }
 
 // Subscribe calls the /subscribe endpoint with retry.
-func (c *registryClient) Subscribe(ctx context.Context, subscription *model.Subscription) error {
+func (c *RegistryClient) Subscribe(ctx context.Context, subscription *model.Subscription) error {
 	subscribeURL := fmt.Sprintf("%s/subscribe", c.config.RegisteryURL)
 
 	jsonData, err := json.Marshal(subscription)
@@ -62,7 +62,7 @@ func (c *registryClient) Subscribe(ctx context.Context, subscription *model.Subs
 }
 
 // Lookup calls the /lookup endpoint with retry and returns a slice of Subscription.
-func (c *registryClient) Lookup(ctx context.Context, subscription *model.Subscription) ([]model.Subscription, error) {
+func (c *RegistryClient) Lookup(ctx context.Context, subscription *model.Subscription) ([]model.Subscription, error) {
 	lookupURL := fmt.Sprintf("%s/lookUp", c.config.RegisteryURL)
 
 	jsonData, err := json.Marshal(subscription)
@@ -100,8 +100,15 @@ func (c *registryClient) Lookup(ctx context.Context, subscription *model.Subscri
 	return results, nil
 }
 
+// RegistryClientInterface defines the contract for making subscription requests to a Beckn registry.
+type RegistryClientInterface interface {
+	RegistrySubscribe(ctx context.Context, endpoint string, reqBody []byte) (map[string]interface{}, error)
+}
+
+var _ RegistryClientInterface = (*RegistryClient)(nil)
+
 // RegistrySubscribe sends a subscription request using RegistrySubscriptionRequest model.
-func (c *registryClient) RegistrySubscribe(ctx context.Context, endpoint string, reqBody []byte) (map[string]interface{}, error) {
+func (c *RegistryClient) RegistrySubscribe(ctx context.Context, endpoint string, reqBody []byte) (map[string]interface{}, error) {
 	fullURL := fmt.Sprintf("%s/%s", c.config.RegisteryURL, endpoint)
 
 	req, err := retryablehttp.NewRequest("POST", fullURL, bytes.NewReader(reqBody))
