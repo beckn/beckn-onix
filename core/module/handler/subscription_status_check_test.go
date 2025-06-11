@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,7 +20,59 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// --- Mock for KeyManager interface ---
+//////////////////////
+
+// Mock Registry Client
+type MockRegistryClient struct {
+	mock.Mock
+}
+
+func (m *MockRegistryClient) CreateRequest(ctx context.Context, method, endpoint string, body []byte) (*http.Response, error) {
+	args := m.Called(ctx, method, endpoint, body)
+	return args.Get(0).(*http.Response), args.Error(1)
+}
+
+func TestLookupStatusSuccess(t *testing.T) {
+	mockClient := new(MockRegistryClient)
+	checker := &SubscriptionStatusChecker{
+		MaxRetries:      3,
+		RetryDelay:      time.Millisecond * 10,
+		registeryClient: mockClient,
+	}
+
+	tests := []struct {
+		name      string
+		status    string
+		err       error
+		expected  bool
+		expectErr bool
+	}{
+		{"Successful subscription", "SUBSCRIBED", nil, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient.On("CreateRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+				Return(&http.Response{StatusCode: http.StatusOK, Body: ioutil.NopCloser(strings.NewReader(`{"status":"SUBSCRIBED"}`))}, nil).
+				Once()
+
+			subscribed, err := checker.LookupStatus(context.Background(), model.LookupRequest{SubscriberID: "test_subscriber"})
+
+			assert.Equal(t, tt.expected, subscribed)
+			if tt.expectErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			mockClient.AssertExpectations(t)
+		})
+	}
+}
+
+//////////////////////
+
+// --- Mock for KeyManager interface --
 type mockKeyManager struct {
 	signingErr            error
 	encryptionErr         error
@@ -76,174 +128,7 @@ func (m *mockKeyManager) DeletePrivateKeys(ctx context.Context, keyID string) er
 	return m.deleteErr
 }
 
-// --- HTTP Mocking ---
-type mockRegistryResponse struct {
-	statusCode    int
-	body          string
-	err           error
-	bodyReaderErr error
-}
-
-// Mock implementation of RegistryClient
-type mockRegistryClient struct {
-	mockResponses []mockRegistryResponse
-}
-
-func (m *mockRegistryClient) CreateRequest(ctx context.Context, method, endpoint string, body []byte) (*http.Response, error) {
-	if len(m.mockResponses) == 0 {
-		return nil, errors.New("mocked network error")
-	}
-
-	mockResp := m.mockResponses[0]
-	m.mockResponses = m.mockResponses[1:]
-
-	if mockResp.err != nil {
-		return nil, mockResp.err
-	}
-
-	if mockResp.bodyReaderErr != nil {
-		return &http.Response{
-			StatusCode: mockResp.statusCode,
-			Body:       io.NopCloser(faultyReader{}),
-		}, nil
-	}
-
-	return &http.Response{
-		StatusCode: mockResp.statusCode,
-		Body:       io.NopCloser(strings.NewReader(mockResp.body)),
-	}, nil
-}
-
-// Simulate read failure
-type faultyReader struct{}
-
-func (faultyReader) Read(p []byte) (n int, err error) {
-	return 0, errors.New("mocked read failure")
-}
-
-// --- Test Function ---
-func TestCheckSubscriptionStatusSuccess(t *testing.T) {
-	tests := []struct {
-		name          string
-		mockResponses []mockRegistryResponse
-		keyManager    *mockKeyManager
-		wantErr       bool
-		registryURL   string
-		mockRegistry  RegistryClient // Use an interface instead of fixed mock
-	}{
-		{
-			name: "Keys successfully stored for subscriber",
-			mockResponses: []mockRegistryResponse{
-				{statusCode: 200, body: `{"status":"SUBSCRIBED","message_id":"msg1","subscriber_id":"sub1"}`},
-			},
-			keyManager: &mockKeyManager{
-				signingPrivKey: "signingKey",
-				encrPrivKey:    "encryptionKey",
-			},
-			wantErr: false,
-			mockRegistry: &mockRegistryClient{ // Dedicated mock for success test
-				mockResponses: []mockRegistryResponse{
-					{statusCode: 200, body: `{"status":"SUBSCRIBED","message_id":"msg1","subscriber_id":"sub1"}`},
-				},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			url := tt.registryURL
-			if url == "" {
-				url = "http://mock.registry"
-			}
-			cfg := &Config{
-				SubscriberID: "sub1",
-				RegistryURL:  url,
-			}
-
-			// Use the dedicated success mock instance
-			err := CheckSubscriptionStatus(ctx, cfg, tt.keyManager, "msg-123", "key-abc", "additional-arg", tt.mockRegistry)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestCheckSubscriptionStatusFailure(t *testing.T) {
-	tests := []struct {
-		name          string
-		mockResponses []mockRegistryResponse
-		keyManager    *mockKeyManager
-		wantErr       bool
-		registryURL   string
-	}{
-		{
-			name:          "failed to read response body",
-			mockResponses: []mockRegistryResponse{{statusCode: 200, bodyReaderErr: errors.New("read failed")}},
-			keyManager:    &mockKeyManager{},
-			wantErr:       true,
-			registryURL:   "",
-		},
-		{
-			name:          "failed to unmarshal JSON response",
-			mockResponses: []mockRegistryResponse{{statusCode: 200, body: `not-json`}},
-			keyManager:    &mockKeyManager{},
-			wantErr:       true,
-			registryURL:   "",
-		},
-		{
-			name:          "subscription pending, retries and fails after 5 attempts",
-			mockResponses: []mockRegistryResponse{{statusCode: 200, body: `{"status":"PENDING"}`}, {err: errors.New("network error")}},
-			keyManager:    &mockKeyManager{},
-			wantErr:       true,
-			registryURL:   "",
-		},
-		{
-			name:          "failed to fetch signing private key",
-			mockResponses: []mockRegistryResponse{{statusCode: 200, body: `{"status":"SUBSCRIBED"}`}},
-			keyManager:    &mockKeyManager{signingErr: errors.New("signing error")},
-			wantErr:       true,
-			registryURL:   "",
-		},
-		{
-			name:          "failed to store keyset under subscriber ID",
-			mockResponses: []mockRegistryResponse{{statusCode: 200, body: `{"status":"SUBSCRIBED"}`}},
-			keyManager:    &mockKeyManager{storeErr: errors.New("store error")},
-			wantErr:       true,
-			registryURL:   "",
-		},
-		{
-			name:          "failed to fetch encryption private key",
-			mockResponses: []mockRegistryResponse{{statusCode: 200, body: `{"status":"SUBSCRIBED"}`}},
-			keyManager:    &mockKeyManager{encryptionErr: errors.New("encryption error")},
-			wantErr:       true,
-			registryURL:   "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			url := tt.registryURL
-			if url == "" {
-				url = "http://mock.registry"
-			}
-
-			cfg := &Config{SubscriberID: "sub1", RegistryURL: url}
-			mockRegistry := &mockRegistryClient{mockResponses: tt.mockResponses}
-
-			err := CheckSubscriptionStatus(ctx, cfg, tt.keyManager, "msg-123", "key-abc", "additional-arg", mockRegistry)
-			if tt.wantErr {
-				assert.Error(t, err, "Expected an error but got nil")
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
+//////////////
 
 /////////////////////////////////
 

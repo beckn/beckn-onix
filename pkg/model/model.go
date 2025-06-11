@@ -188,15 +188,13 @@ type Response struct {
 // LookupRequest is the payload sent to registry's /lookup
 type LookupRequest struct {
 	SubscriberID string `json:"subscriber_id"`
-	//MessageID    string `json:"message_id"` //not in lookup
-	KeyID  string `json:"key_id"`
-	Domain string `json:"domain,omitempty"`
-	Type   string `json:"type,omitempty"` // e.g. "subscribe", "unsubscribe"
+	KeyID        string `json:"key_id"`
+	Domain       string `json:"domain,omitempty"`
+	Type         string `json:"type,omitempty"` // e.g. "subscribe", "unsubscribe"
 }
 
 // LookupResponse is the expected response from registry
 type LookupResponse struct {
-	Status string `json:"status"`
-	//MessageID  string `json:"message_id"`
+	Status     string `json:"status"`
 	Subscriber string `json:"subscriber_id"`
 }

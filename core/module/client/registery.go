@@ -101,6 +101,13 @@ func (c *registryClient) Lookup(ctx context.Context, subscription *model.Subscri
 	return results, nil
 }
 
+// RegistryClientInterface defines the contract for making subscription requests to a Beckn registry.
+type RegistryClientInterface interface {
+	CreateRequest(ctx context.Context, method, endpoint string, body []byte) (*http.Response, error)
+}
+
+var _ RegistryClientInterface = (*registryClient)(nil)
+
 // CreateRequest creates an HTTP request with retry capability
 func (c *registryClient) CreateRequest(ctx context.Context, method, endpoint string, body []byte) (*http.Response, error) {
 	if c.config == nil || c.client == nil {
