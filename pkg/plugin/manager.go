@@ -86,13 +86,14 @@ func plugins(ctx context.Context, cfg *ManagerConfig) (map[string]onixPlugin, er
 	if err != nil {
 		return nil, err
 	}
+	log.Infof(ctx, "Successfully loaded %d plugins", len(plugins))
 
 	return plugins, nil
 }
 
 // loadPlugin attempts to load a plugin from the given path and logs the execution time.
 func loadPlugin(ctx context.Context, path, id string) (onixPlugin, time.Duration, error) {
-	log.Debugf(ctx, "Loading plugin: %s", id)
+	log.Infof(ctx, "Loading plugin: %s", id)
 	start := time.Now()
 
 	p, err := plugin.Open(path)
