@@ -51,6 +51,15 @@ func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config) (http.Ha
 
 // ServeHTTP processes an incoming HTTP request and executes defined processing steps.
 func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		err := &model.MethodNotAllowedErr{Method: r.Method}
+		log.Errorf(r.Context(), err, "ServeHTTP: method not allowed")
+		response.SendNack(r.Context(), w, &model.Error{
+			Code:    http.StatusText(http.StatusMethodNotAllowed),
+			Message: fmt.Sprintf("The HTTP method '%s' is not allowed. Only POST is supported.", r.Method),
+		})
+		return
+	}
 	ctx, err := h.stepCtx(r, w.Header())
 	if err != nil {
 		log.Errorf(r.Context(), err, "stepCtx(r):%v", err)

@@ -68,7 +68,6 @@ func SendNack(ctx context.Context, w http.ResponseWriter, err error) {
 	var signErr *model.SignValidationErr
 	var badReqErr *model.BadReqErr
 	var notFoundErr *model.NotFoundErr
-
 	switch {
 	case errors.As(err, &schemaErr):
 		nack(ctx, w, schemaErr.BecknError(), http.StatusBadRequest)
