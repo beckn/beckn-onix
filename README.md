@@ -1,5 +1,5 @@
 ## ⚠️ Deprecation Notice: Beckn ONIX `master` Branch — Support Ends June 20, 2025
-We are discontinuing support and maintenance for the `master` branch of Beckn ONIX effective June 20, 2025. Users are advised to migrate to the latest official version developed in partnership with Google, available here: [beckn-onix-v1.0-develop branch](https://github.com/beckn/beckn-onix/tree/beckn-onix-v1.0-develop). The new version offers a modernized codebase, improved performance, and ongoing support aligned with the evolving Beckn Protocol. Please switch branches at the earliest convenience and refer to the migration notes in the new branch if needed.
+We are discontinuing support and maintenance for the `master` branch of Beckn ONIX effective June 20, 2025. Users are advised to migrate to the latest official version developed , available here: [beckn-onix-v1.0-develop branch](https://github.com/beckn/beckn-onix/tree/beckn-onix-v1.0-develop). The new version offers a modernized codebase, improved performance, and ongoing support aligned with the evolving Beckn Protocol. Please switch branches at the earliest convenience and refer to the migration notes in the new branch if needed.
 
 
 ## Beckn-ONIX
