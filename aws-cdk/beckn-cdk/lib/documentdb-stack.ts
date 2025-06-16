@@ -53,12 +53,12 @@ export class DocumentDbStack extends cdk.Stack {
     // Create 2 DocumentDB instances
     new docdb.CfnDBInstance(this, 'DocDbInstance1', {
       dbClusterIdentifier: docDbCluster.ref,
-      dbInstanceClass: 'db.r5.large',
+      dbInstanceClass: props.config.DOCDB_INSTANCE_TYPE,
     });
 
     new docdb.CfnDBInstance(this, 'DocDbInstance2', {
       dbClusterIdentifier: docDbCluster.ref,
-      dbInstanceClass: 'db.r5.large',
+      dbInstanceClass: props.config.DOCDB_INSTANCE_TYPE,
     });
   }
 }
