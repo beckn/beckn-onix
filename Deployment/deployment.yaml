@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: onix-demo-adapter
+  namespace: onix-adapter     #------
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: onix-adapter
+  template:
+    metadata:
+      labels:
+        app: onix-adapter
+      annotations:
+        gke-gcsfuse/volumes: "true"
+    spec:
+      serviceAccountName: "onix-adapter-ksa"     #-----------
+      containers:
+        - name: onix-adapter
+          image: "asia-south1-docker.pkg.dev/trusty-relic-370809/onix-adapter-cicd/beckn-onix:latest"    #------
+          ports:
+            - containerPort: 8080
+          env:
+            - name: CONFIG_FILE
+              value: "/mnt/gcs/configs/onix-adapter.yaml"  # Updated to GCS path
+
+          volumeMounts:
+            - name: gcs-bucket
+              mountPath: /mnt/gcs
+              readOnly: false
+
+      volumes:
+        - name: gcs-bucket
+          csi:
+            driver: gcsfuse.csi.storage.gke.io
+            readOnly: false
+            volumeAttributes:
+              bucketName: "beckn-cicd-bucket"     #----------
+              mountOptions: "implicit-dirs"
