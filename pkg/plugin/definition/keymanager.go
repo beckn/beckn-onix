@@ -8,13 +8,11 @@ import (
 
 // KeyManager defines the interface for key management operations/methods.
 type KeyManager interface {
-	GenerateKeyPairs() (*model.Keyset, error)
-	StorePrivateKeys(ctx context.Context, keyID string, keys *model.Keyset) error
-	SigningPrivateKey(ctx context.Context, keyID string) (string, string, error)
-	EncrPrivateKey(ctx context.Context, keyID string) (string, string, error)
-	SigningPublicKey(ctx context.Context, subscriberID, uniqueKeyID string) (string, error)
-	EncrPublicKey(ctx context.Context, subscriberID, uniqueKeyID string) (string, error)
-	DeletePrivateKeys(ctx context.Context, keyID string) error
+	GenerateKeyset() (*model.Keyset, error)
+	InsertKeyset(ctx context.Context, keyID string, keyset *model.Keyset) error
+	Keyset(ctx context.Context, keyID string) (*model.Keyset, error)
+	LookupNPKeys(ctx context.Context, subscriberID, uniqueKeyID string) (signingPublicKey string, encrPublicKey string, err error)
+	DeleteKeyset(ctx context.Context, keyID string) error
 }
 
 // KeyManagerProvider initializes a new signer instance.

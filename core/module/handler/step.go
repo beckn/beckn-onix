@@ -31,18 +31,18 @@ func newSignStep(signer definition.Signer, km definition.KeyManager) (definition
 
 // Run executes the signing step.
 func (s *signStep) Run(ctx *model.StepContext) error {
-	keyID, key, err := s.km.SigningPrivateKey(ctx, ctx.SubID)
+	keySet, err := s.km.Keyset(ctx, ctx.SubID)
 	if err != nil {
 		return fmt.Errorf("failed to get signing key: %w", err)
 	}
 	createdAt := time.Now().Unix()
 	validTill := time.Now().Add(5 * time.Minute).Unix()
-	sign, err := s.signer.Sign(ctx, ctx.Body, key, createdAt, validTill)
+	sign, err := s.signer.Sign(ctx, ctx.Body, keySet.SigningPrivate, createdAt, validTill)
 	if err != nil {
 		return fmt.Errorf("failed to sign request: %w", err)
 	}
 
-	authHeader := s.generateAuthHeader(ctx.SubID, keyID, createdAt, validTill, sign)
+	authHeader := s.generateAuthHeader(ctx.SubID, keySet.UniqueKeyID, createdAt, validTill, sign)
 
 	header := model.AuthHeaderSubscriber
 	if ctx.Role == model.RoleGateway {
@@ -107,13 +107,12 @@ func (s *validateSignStep) validate(ctx *model.StepContext, value string) error 
 	if len(ids) < 2 || len(headerParts) < 3 {
 		return fmt.Errorf("malformed sign header")
 	}
-	subID := ids[1]
 	keyID := headerParts[1]
-	key, err := s.km.SigningPublicKey(ctx, subID, keyID)
+	signingPublicKey, _, err := s.km.LookupNPKeys(ctx, ctx.SubID, keyID)
 	if err != nil {
 		return fmt.Errorf("failed to get validation key: %w", err)
 	}
-	if err := s.validator.Validate(ctx, ctx.Body, value, key); err != nil {
+	if err := s.validator.Validate(ctx, ctx.Body, value, signingPublicKey); err != nil {
 		return fmt.Errorf("sign validation failed: %w", err)
 	}
 	return nil
