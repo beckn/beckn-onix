@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -98,4 +99,32 @@ func (c *registryClient) Lookup(ctx context.Context, subscription *model.Subscri
 	}
 
 	return results, nil
+}
+
+// RegistryClientInterface defines the contract for making subscription requests to a Beckn registry.
+type RegistryClientInterface interface {
+	CreateRequest(ctx context.Context, method, endpoint string, body []byte) (*http.Response, error)
+}
+
+var _ RegistryClientInterface = (*registryClient)(nil)
+
+// CreateRequest creates an HTTP request with retry capability
+func (c *registryClient) CreateRequest(ctx context.Context, method, endpoint string, body []byte) (*http.Response, error) {
+	if c.config == nil || c.client == nil {
+		return nil, errors.New("client or config is not initialized")
+	}
+	url := fmt.Sprintf("%s/%s", c.config.RegisteryURL, endpoint)
+
+	req, err := retryablehttp.NewRequest(method, url, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request with retry: %w", err)
+	}
+
+	return resp, nil
 }

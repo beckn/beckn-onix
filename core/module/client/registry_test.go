@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/beckn/beckn-onix/pkg/model"
+	"github.com/hashicorp/go-retryablehttp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -226,6 +228,154 @@ func TestLookupFailure(t *testing.T) {
 			result, err := rClient.Lookup(ctx, subscription)
 			require.Error(t, err)
 			require.Empty(t, result)
+		})
+	}
+}
+
+// Mock RegistryClient for testing
+type mockHTTPClient struct {
+	response *http.Response
+	err      error
+}
+
+func (m *mockHTTPClient) RoundTrip(req *http.Request) (*http.Response, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.response, nil
+}
+func TestCreateRequestSuccess(t *testing.T) {
+	tests := []struct {
+		name          string
+		method        string
+		endpoint      string
+		body          []byte
+		mockResponse  *http.Response
+		mockError     error
+		expectedError string
+	}{
+		{
+			name:     "Successful request",
+			method:   "POST",
+			endpoint: "test-endpoint",
+			body:     []byte(`{"key": "value"}`),
+			mockResponse: &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       http.NoBody,
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &mockHTTPClient{
+				response: tt.mockResponse,
+				err:      tt.mockError,
+			}
+
+			retryableClient := retryablehttp.NewClient()
+			retryableClient.RetryMax = 3
+			retryableClient.RetryWaitMin = 100 * time.Millisecond
+			retryableClient.RetryWaitMax = 500 * time.Millisecond
+			retryableClient.HTTPClient = &http.Client{Transport: mockClient}
+
+			cfg := &Config{RegisteryURL: "http://mock.registry"}
+
+			c := &registryClient{
+				config: cfg,
+				client: retryableClient,
+			}
+
+			resp, err := c.CreateRequest(context.Background(), tt.method, tt.endpoint, tt.body)
+
+			if tt.expectedError != "" {
+				assert.Nil(t, resp)
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			} else {
+				assert.NotNil(t, resp)
+				assert.NoError(t, err)
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+			}
+		})
+
+	}
+}
+
+func TestCreateRequestFailure(t *testing.T) {
+	tests := []struct {
+		name      string
+		client    *retryablehttp.Client
+		config    *Config
+		method    string
+		endpoint  string
+		body      []byte
+		expectErr string
+	}{
+		{
+			name:      "Nil client",
+			client:    nil,
+			config:    &Config{RegisteryURL: "http://mock.registry"},
+			method:    "POST",
+			endpoint:  "test-endpoint",
+			body:      []byte(`{}`),
+			expectErr: "client or config is not initialized",
+		},
+		{
+			name:      "Nil config",
+			client:    retryablehttp.NewClient(),
+			config:    nil,
+			method:    "POST",
+			endpoint:  "test-endpoint",
+			body:      []byte(`{}`),
+			expectErr: "client or config is not initialized",
+		},
+		{
+			name:      "Invalid HTTP method causes request creation failure",
+			client:    retryablehttp.NewClient(),
+			config:    &Config{RegisteryURL: "http://mock.registry"},
+			method:    "INVALID METHOD", // spaces are invalid in HTTP methods
+			endpoint:  "test-endpoint",
+			body:      []byte(`{}`),
+			expectErr: "failed to create request",
+		},
+		{
+			name: "Request send failure",
+			client: func() *retryablehttp.Client {
+				c := retryablehttp.NewClient()
+				c.HTTPClient = &http.Client{
+					Transport: &mockHTTPClient{
+						response: nil,
+						err:      errors.New("mocked send failure"),
+					},
+				}
+				c.RetryMax = 1
+				c.RetryWaitMin = 10 * time.Millisecond
+				c.RetryWaitMax = 50 * time.Millisecond
+				c.Logger = nil
+				return c
+			}(),
+			config:    &Config{RegisteryURL: "http://mock.registry"},
+			method:    "POST",
+			endpoint:  "test-endpoint",
+			body:      []byte(`{}`),
+			expectErr: "failed to send request with retry",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &registryClient{
+				client: tt.client,
+				config: tt.config,
+			}
+
+			resp, err := client.CreateRequest(context.Background(), tt.method, tt.endpoint, tt.body)
+			assert.Nil(t, resp)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tt.expectErr)
 		})
 	}
 }
