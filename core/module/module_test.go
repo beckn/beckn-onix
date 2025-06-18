@@ -118,7 +118,15 @@ func TestRegisterSuccess(t *testing.T) {
 	if capturedModuleName != "test-module" {
 		t.Errorf("expected module_id in context to be 'test-module', got %v", capturedModuleName)
 	}
+	// Verifying /health endpoint registration
+	reqHealth := httptest.NewRequest(http.MethodGet, "/health", nil)
+	recHealth := httptest.NewRecorder()
+	mux.ServeHTTP(recHealth, reqHealth)
 
+	if status := recHealth.Code; status != http.StatusOK {
+		t.Errorf("handler for /health returned wrong status code: got %v want %v",
+			status, http.StatusOK)
+	}
 }
 
 // TestRegisterFailure tests scenarios where the handler registration should fail.
