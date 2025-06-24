@@ -6,8 +6,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/beckn/beckn-onix/pkg/model"
 )
 
 //go:embed testData/*
@@ -47,76 +50,141 @@ func setupRouter(t *testing.T, configFile string) (*Router, func() error, string
 func TestNew(t *testing.T) {
 	ctx := context.Background()
 
-	// List of YAML files in the testData directory
-	yamlFiles := []string{
-		"bap_caller.yaml",
-		"bap_receiver.yaml",
-		"bpp_caller.yaml",
-		"bpp_receiver.yaml",
+	validConfigFile := "bap_caller.yaml"
+	rulesFilePath := setupTestConfig(t, validConfigFile)
+	defer os.RemoveAll(filepath.Dir(rulesFilePath))
+
+	config := &Config{
+		RoutingConfig: rulesFilePath,
 	}
 
-	for _, yamlFile := range yamlFiles {
-		t.Run(yamlFile, func(t *testing.T) {
-			rulesFilePath := setupTestConfig(t, yamlFile)
-			defer os.RemoveAll(filepath.Dir(rulesFilePath))
+	router, _, err := New(ctx, config)
+	if err != nil {
+		t.Errorf("New(%v) = %v, want nil error", config, err)
+		return
+	}
+	if router == nil {
+		t.Errorf("New(%v) = nil router, want non-nil", config)
+	}
+	if len(router.rules) == 0 {
+		t.Error("Expected router to have loaded rules, but rules map is empty")
+	}
+}
 
-			// Define test cases
-			tests := []struct {
-				name    string
-				config  *Config
-				wantErr string
-			}{
-				{
-					name: "Valid configuration",
-					config: &Config{
-						RoutingConfig: rulesFilePath,
-					},
-					wantErr: "",
-				},
-				{
-					name:    "Empty config",
-					config:  nil,
-					wantErr: "config cannot be nil",
-				},
-				{
-					name: "Empty routing config path",
-					config: &Config{
-						RoutingConfig: "",
-					},
-					wantErr: "routingConfig path is empty",
-				},
-				{
-					name: "Routing config file does not exist",
-					config: &Config{
-						RoutingConfig: "/nonexistent/path/to/rules.yaml",
-					},
-					wantErr: "error reading config file",
-				},
+// TestNewErrors tests the New function for failure cases.
+func TestNewErrors(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		config  *Config
+		wantErr string
+	}{
+		{
+			name:    "Empty config",
+			config:  nil,
+			wantErr: "config cannot be nil",
+		},
+		{
+			name: "Empty routing config path",
+			config: &Config{
+				RoutingConfig: "",
+			},
+			wantErr: "routingConfig path is empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router, _, err := New(ctx, tt.config)
+
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("New(%v) = %v, want error containing %q", tt.config, err, tt.wantErr)
+			}
+			if router != nil {
+				t.Errorf("New(%v) = %v, want nil router on error", tt.config, router)
+			}
+		})
+	}
+}
+
+// TestLoadRules tests the loadRules function for successful loading and map construction.
+func TestLoadRules(t *testing.T) {
+	router := &Router{
+		rules: make(map[string]map[string]map[string]*model.Route),
+	}
+	rulesFilePath := setupTestConfig(t, "valid_all_routes.yaml")
+	defer os.RemoveAll(filepath.Dir(rulesFilePath))
+
+	err := router.loadRules(rulesFilePath)
+	if err != nil {
+		t.Fatalf("loadRules() err = %v, want nil", err)
+	}
+
+	// Expected router.rules map structure based on the yaml.
+	expectedRules := map[string]map[string]map[string]*model.Route{
+		"ONDC:TRV10": {
+			"2.0.0": {
+				"search":    {TargetType: targetTypeURL, URL: parseURL(t, "https://mock_gateway.com/v2/ondc/search")},
+				"init":      {TargetType: targetTypeBAP, URL: parseURL(t, "https://mock_bpp.com/v2/ondc/init")},
+				"select":    {TargetType: targetTypeBAP, URL: parseURL(t, "https://mock_bpp.com/v2/ondc/select")},
+				"on_search": {TargetType: targetTypeBAP, URL: parseURL(t, "https://mock_bap_gateway.com/v2/ondc/on_search")},
+				"confirm":   {TargetType: targetTypePublisher, PublisherID: "beckn_onix_topic", URL: nil},
+			},
+		},
+	}
+
+	if !reflect.DeepEqual(router.rules, expectedRules) {
+		t.Errorf("Loaded rules mismatch.\nGot:\n%#v\nWant:\n%#v", router.rules, expectedRules)
+	}
+}
+
+// mustParseURL is a helper for TestLoadRules to parse URLs.
+func parseURL(t *testing.T, rawURL string) *url.URL {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("Failed to parse URL %s: %v", rawURL, err)
+	}
+	return u
+}
+
+// TestLoadRulesErrors tests the loadRules function for various error cases.
+func TestLoadRulesErrors(t *testing.T) {
+	router := &Router{
+		rules: make(map[string]map[string]map[string]*model.Route),
+	}
+
+	tests := []struct {
+		name       string
+		configPath string
+		wantErr    string
+	}{
+		{
+			name:       "Empty routing config path",
+			configPath: "",
+			wantErr:    "routingConfig path is empty",
+		},
+		{
+			name:       "Routing config file does not exist",
+			configPath: "/nonexistent/path/to/rules.yaml",
+			wantErr:    "error reading config file",
+		},
+		{
+			name:       "Invalid YAML (Unmarshal error)",
+			configPath: setupTestConfig(t, "invalid_yaml.yaml"),
+			wantErr:    "error parsing YAML",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !strings.Contains(tt.configPath, "/nonexistent/") && tt.configPath != "" {
+				defer os.RemoveAll(filepath.Dir(tt.configPath))
 			}
 
-			for _, tt := range tests {
-				t.Run(tt.name, func(t *testing.T) {
-					router, _, err := New(ctx, tt.config)
-
-					// Check for expected error
-					if tt.wantErr != "" {
-						if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-							t.Errorf("New(%v) = %v, want error containing %q", tt.config, err, tt.wantErr)
-						}
-						return
-					}
-
-					// Ensure no error occurred
-					if err != nil {
-						t.Errorf("New(%v) = %v, want nil error", tt.config, err)
-						return
-					}
-
-					// Ensure the router and close function are not nil
-					if router == nil {
-						t.Errorf("New(%v, %v) = nil router, want non-nil", ctx, tt.config)
-					}
-				})
+			err := router.loadRules(tt.configPath)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("loadRules(%q) = %v, want error containing %q", tt.configPath, err, tt.wantErr)
 			}
 		})
 	}
