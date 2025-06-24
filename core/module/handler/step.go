@@ -31,6 +31,9 @@ func newSignStep(signer definition.Signer, km definition.KeyManager) (definition
 
 // Run executes the signing step.
 func (s *signStep) Run(ctx *model.StepContext) error {
+	if len(ctx.SubID) == 0 {
+		return model.NewBadReqErr(fmt.Errorf("subscriberID not set"))
+	}
 	keySet, err := s.km.Keyset(ctx, ctx.SubID)
 	if err != nil {
 		return fmt.Errorf("failed to get signing key: %w", err)
@@ -43,7 +46,7 @@ func (s *signStep) Run(ctx *model.StepContext) error {
 	}
 
 	authHeader := s.generateAuthHeader(ctx.SubID, keySet.UniqueKeyID, createdAt, validTill, sign)
-
+	log.Debugf(ctx, "Signature generated: %v", sign)
 	header := model.AuthHeaderSubscriber
 	if ctx.Role == model.RoleGateway {
 		header = model.AuthHeaderGateway
@@ -83,11 +86,14 @@ func (s *validateSignStep) Run(ctx *model.StepContext) error {
 	unauthHeader := fmt.Sprintf("Signature realm=\"%s\",headers=\"(created) (expires) digest\"", ctx.SubID)
 	headerValue := ctx.Request.Header.Get(model.AuthHeaderGateway)
 	if len(headerValue) != 0 {
+		log.Debugf(ctx, "Validating %v Header", model.AuthHeaderGateway)
 		if err := s.validate(ctx, headerValue); err != nil {
 			ctx.RespHeader.Set(model.UnaAuthorizedHeaderGateway, unauthHeader)
 			return model.NewSignValidationErr(fmt.Errorf("failed to validate %s: %w", model.AuthHeaderGateway, err))
 		}
 	}
+
+	log.Debugf(ctx, "Validating %v Header", model.AuthHeaderSubscriber)
 	headerValue = ctx.Request.Header.Get(model.AuthHeaderSubscriber)
 	if len(headerValue) == 0 {
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
@@ -102,13 +108,12 @@ func (s *validateSignStep) Run(ctx *model.StepContext) error {
 
 // validate checks the validity of the provided signature header.
 func (s *validateSignStep) validate(ctx *model.StepContext, value string) error {
-	headerParts := strings.Split(value, "|")
-	ids := strings.Split(headerParts[0], "\"")
-	if len(ids) < 2 || len(headerParts) < 3 {
-		return fmt.Errorf("malformed sign header")
+	headerVals, err := parseHeader(value)
+	if err != nil {
+		return fmt.Errorf("failed to parse header")
 	}
-	keyID := headerParts[1]
-	signingPublicKey, _, err := s.km.LookupNPKeys(ctx, ctx.SubID, keyID)
+	log.Debugf(ctx, "Validating Signature for subscriberID: %v", headerVals.SubscriberID)
+	signingPublicKey, _, err := s.km.LookupNPKeys(ctx, headerVals.SubscriberID, headerVals.UniqueID)
 	if err != nil {
 		return fmt.Errorf("failed to get validation key: %w", err)
 	}
@@ -116,6 +121,45 @@ func (s *validateSignStep) validate(ctx *model.StepContext, value string) error 
 		return fmt.Errorf("sign validation failed: %w", err)
 	}
 	return nil
+}
+
+// ParsedKeyID holds the components from the parsed Authorization header's keyId.
+type authHeader struct {
+	SubscriberID string
+	UniqueID     string
+	Algorithm    string
+}
+
+// keyID extracts subscriber_id and unique_key_id from the Authorization header.
+// Example keyId format: "{subscriber_id}|{unique_key_id}|{algorithm}"
+func parseHeader(header string) (*authHeader, error) {
+	// Example: Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",...
+	keyIDPart := ""
+	// Look for keyId="<value>"
+	const keyIdPrefix = `keyId="`
+	startIndex := strings.Index(header, keyIdPrefix)
+	if startIndex != -1 {
+		startIndex += len(keyIdPrefix)
+		endIndex := strings.Index(header[startIndex:], `"`)
+		if endIndex != -1 {
+			keyIDPart = strings.TrimSpace(header[startIndex : startIndex+endIndex])
+		}
+	}
+
+	if keyIDPart == "" {
+		return nil, fmt.Errorf("keyId parameter not found in Authorization header")
+	}
+
+	keyIDComponents := strings.Split(keyIDPart, "|")
+	if len(keyIDComponents) != 3 {
+		return nil, fmt.Errorf("keyId parameter has incorrect format, expected 3 components separated by '|', got %d for '%s'", len(keyIDComponents), keyIDPart)
+	}
+
+	return &authHeader{
+		SubscriberID: strings.TrimSpace(keyIDComponents[0]),
+		UniqueID:     strings.TrimSpace(keyIDComponents[1]),
+		Algorithm:    strings.TrimSpace(keyIDComponents[2]),
+	}, nil
 }
 
 // validateSchemaStep represents the schema validation step.
