@@ -63,7 +63,7 @@ func (c *registryClient) Subscribe(ctx context.Context, subscription *model.Subs
 
 // Lookup calls the /lookup endpoint with retry and returns a slice of Subscription.
 func (c *registryClient) Lookup(ctx context.Context, subscription *model.Subscription) ([]model.Subscription, error) {
-	lookupURL := fmt.Sprintf("%s/lookup", c.config.RegisteryURL)
+	lookupURL := fmt.Sprintf("%s/lookUp", c.config.RegisteryURL)
 
 	jsonData, err := json.Marshal(subscription)
 	if err != nil {

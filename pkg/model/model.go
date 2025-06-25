@@ -133,7 +133,6 @@ type Route struct {
 
 // Keyset represents a collection of cryptographic keys used for signing and encryption.
 type Keyset struct {
-	SubscriberID   string
 	UniqueKeyID    string // UniqueKeyID is the identifier for the key pair.
 	SigningPrivate string // SigningPrivate is the private key used for signing operations.
 	SigningPublic  string // SigningPublic is the public key corresponding to the signing private key.
