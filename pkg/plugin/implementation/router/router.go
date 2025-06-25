@@ -115,7 +115,6 @@ func (r *Router) loadRules(configPath string) error {
 				if err != nil {
 					return fmt.Errorf("invalid URL in rule: %w", err)
 				}
-				parsedURL.Path = joinPath(parsedURL, endpoint)
 				route = &model.Route{
 					TargetType: rule.TargetType,
 					URL:        parsedURL,
@@ -127,7 +126,6 @@ func (r *Router) loadRules(configPath string) error {
 					if err != nil {
 						return fmt.Errorf("invalid URL in rule: %w", err)
 					}
-					parsedURL.Path = joinPath(parsedURL, endpoint)
 				}
 				route = &model.Route{
 					TargetType: rule.TargetType,
@@ -229,23 +227,24 @@ func handleProtocolMapping(route *model.Route, npURI, endpoint string) (*model.R
 		}
 		return &model.Route{
 			TargetType: targetTypeURL,
-			URL:        route.URL,
+			URL: &url.URL{
+				Scheme: route.URL.Scheme,
+				Host:   route.URL.Host,
+				Path:   path.Join(route.URL.Path, endpoint),
+			},
 		}, nil
 	}
 	targetURL, err := url.Parse(target)
 	if err != nil {
 		return nil, fmt.Errorf("invalid %s URI - %s in request body for %s: %w", strings.ToUpper(route.TargetType), target, endpoint, err)
 	}
-	targetURL.Path = joinPath(targetURL, endpoint)
+
 	return &model.Route{
 		TargetType: targetTypeURL,
-		URL:        targetURL,
+		URL: &url.URL{
+			Scheme: targetURL.Scheme,
+			Host:   targetURL.Host,
+			Path:   path.Join(targetURL.Path, endpoint),
+		},
 	}, nil
-}
-
-func joinPath(u *url.URL, endpoint string) string {
-	if u.Path == "" {
-		u.Path = "/"
-	}
-	return path.Join(u.Path, endpoint)
 }
