@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 
 	"github.com/beckn/beckn-onix/core/module/client"
 	"github.com/beckn/beckn-onix/pkg/log"
@@ -85,6 +86,9 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 	}
 	r.Body.Close()
 	subID := h.subID(r.Context())
+	if len(subID) == 0 {
+		return nil, model.NewBadReqErr(fmt.Errorf("subscriberID not set"))
+	}
 	return &model.StepContext{
 		Context:    r.Context(),
 		Request:    r,
@@ -112,7 +116,7 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 	switch ctx.Route.TargetType {
 	case "url":
 		log.Infof(ctx.Context, "Forwarding request to URL: %s", ctx.Route.URL)
-		proxyFunc(ctx, r, w)
+		proxyFunc(r, w, ctx.Route.URL)
 		return
 	case "publisher":
 		if pb == nil {
@@ -136,18 +140,16 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 	}
 	response.SendAck(w)
 }
-func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter) {
-	target := ctx.Route.URL
+
+// proxy forwards the request to a target URL using a reverse proxy.
+func proxy(r *http.Request, w http.ResponseWriter, target *url.URL) {
+	r.URL.Scheme = target.Scheme
+	r.URL.Host = target.Host
+	r.URL.Path = target.Path
+
 	r.Header.Set("X-Forwarded-Host", r.Host)
-
-	director := func(req *http.Request) {
-		req.URL = target
-		req.Host = target.Host
-
-		log.Request(req.Context(), req, ctx.Body)
-	}
-
-	proxy := &httputil.ReverseProxy{Director: director}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	log.Infof(r.Context(), "Proxying request to: %s", target)
 
 	proxy.ServeHTTP(w, r)
 }
