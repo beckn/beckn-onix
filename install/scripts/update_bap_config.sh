@@ -84,9 +84,12 @@ if [[ $(uname -s ) == 'Darwin' ]];then
     # Apply replacements in both files
     for file in "$clientFile" "$networkFile"; do
         for line in "${replacements[@]}"; do
-            key=$(echo "$line" | cut -d '=' -f1)
-            value=$(echo "$line" | cut -d '=' -f2)
-            sed -i '' "s|$key|$value|" "$file"
+           key="${line%%=*}"
+           value="${line#*=}"
+
+           escaped_key=$(printf '%s\n' "$key" | sed 's/[]\/$*.^[]/\\&/g')
+           escaped_value=$(printf '%s\n' "$value" | sed 's/[&/]/\\&/g')
+           sed -i '' "s|$escaped_key|$escaped_value|g" "$file"
         done
 
     done
