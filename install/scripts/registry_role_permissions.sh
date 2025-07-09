@@ -11,29 +11,46 @@ get_api_key() {
     local login_url="${registry_url%/subscribers}/login"
     local username="$1"
     local password="$2"
+    local max_retries=20
+    local retry_count=0
+    local success=false
 
-    # Call the login API
-    local response
-    response=$(curl -s -H "Accept: application/json" \
-                     -H "Content-Type: application/json" \
-                     -d "{ \"Name\": \"${username}\", \"Password\": \"${password}\" }" \
-                     "$login_url")
+    while [ $retry_count -lt $max_retries ] && [ "$success" = false ]; do
+        # Call the login API
+        local response
+        response=$(curl -s -H "Accept: application/json" \
+                        -H "Content-Type: application/json" \
+                        -d "{ \"Name\": \"${username}\", \"Password\": \"${password}\" }" \
+                        "$login_url")
 
-    # Check if curl failed
-    if [ $? -ne 0 ]; then
-        echo -e "${BoldRed}Error: Failed to connect to $login_url${NC}"
+        # Check if curl failed
+        if [ $? -ne 0 ]; then
+            echo -e "${BoldRed}Error: Failed to connect to $login_url. Retrying in 5 seconds... (Attempt $((retry_count + 1)) of $max_retries)${NC}"
+            retry_count=$((retry_count + 1))
+            sleep 5
+            continue
+        fi
+
+        # Extract API key using jq
+        API_KEY=$(echo "$response" | jq -r '.api_key')
+        
+        # Validate API key
+        if [[ -z "$API_KEY" || "$API_KEY" == "null" ]]; then
+            echo -e "${BoldRed}Error: Failed to retrieve API key. Retrying in 5 seconds... (Attempt $((retry_count + 1)) of $max_retries)${NC}"
+            retry_count=$((retry_count + 1))
+            sleep 5
+            continue
+        fi
+
+        success=true
+        echo -e "${BoldGreen}API Key retrieved successfully${NC}"
+        return 0
+    done
+
+    if [ "$success" = false ]; then
+        echo -e "${BoldRed}Error: Failed to retrieve API key after $max_retries attempts${NC}"
         return 1
     fi
-    # Extract API key using jq
-    API_KEY=$(echo "$response" | jq -r '.api_key')
-    # Validate API key
-    if [[ -z "$API_KEY" || "$API_KEY" == "null" ]]; then
-        echo -e "${BoldRed}Error: Failed to retrieve API key${NC}"
-        return 1
-    fi
-
-    echo -e "${BoldGreen}API Key retrieved successfully${NC}"
-    return 0
 }
 
 # Function to upload the RolePermission.xlsx file
