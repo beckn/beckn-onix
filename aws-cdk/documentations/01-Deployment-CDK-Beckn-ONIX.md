@@ -78,6 +78,7 @@ The AWS CDK project follows a specific folder structure for better organization:
 | --------------------- | --------------  | ----------  |
 | `REGION`                | `ap-south-1`      | The AWS region in which to deploy all the resources |
 | `ACCOUNT`               | `123456789123`    | Your AWS 12 digit account number |
+| `ROLE_ARN`              | `arn:aws:iam::123456789123:role/Admin` | Create an [IAM role in AWS console](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-user.html#roles-creatingrole-user-console) or use existing role if any.
 
 
 #### BECKN-ONIX SPECIFIC MANDATORY VARIABLES ####
@@ -173,7 +174,14 @@ npm install libsodium-wrappers
 node generate-keys.js
 ```
 
-**Note:** Copy the `publicKey` and `privateKey` from the output. You need to add keys to .env file before running CDK deploy.
+**Note**: Copy the `publicKey` and `privateKey` from the output. Depending on whether you're installing BAP or BPP, you need to add the keys to your `.env` file:
+  - **For BAP**:
+    - `BAP_PUBLIC_KEY`
+    - `BAP_PRIVATE_KEY`
+  
+  - **For BPP**:
+    - `BPP_PUBLIC_KEY`
+    - `BPP_PRIVATE_KEY`
 
 3. **BAP (Buyer Application Provider) Environment**
 This will deploy the following stacks: VPC, Amazon EKS, BAP, and common services in Amazon EKS - Redis, DocumentDB, and RabbitMQ:
@@ -199,12 +207,26 @@ cdk list --context env=sandbox --all
 cdk deploy --context env=sandbox --all
 ```
 
+6. **Managed AWS Services** \
+We have created a separate stack for deploying AWS managed BAP and BPP services which will provision - Redis, DocumentDB, and RabbitMQ. \
+*Note - For running this stack you must have deployed any of these environments i.e. - Sandbox, BAP or BPP.*
+
+For AWS manged BAP, BPP services in sandbox environment: \
+
+```bash
+cdk list --context env=<environment> --context bap_bpp_managed=managed --all
+cdk deploy --context env=<environment> --context bap_bpp_managed=managed --all
+```
+
+Replace <environment> with the environment you have deployed before (e.g., bap, bpp, sandbox).
+
 ## Destroy CDK Resources
 
 If you wish to clean up and remove all the deployed resources, you can use the following command:
 
 ```bash
 cdk destroy --context env=<environment> --all
+```
 
 Replace <environment> with the environment you wish to destroy (e.g., registry, gateway, bap, bpp, or sandbox). This command will prompt you to confirm the deletion of all resources in the specified stack.
 
@@ -225,21 +247,10 @@ After installing all Beckn-Onix services, proceed with the next steps to verify 
 
    After updating your DNS records, you need to register your participants BAP and BPP network with the registry service. Follow the steps in the [BAP and BPP Registration](documentations/post-deployment-bap-bpp-register.md) document to complete this process.
 
+## Additional Resources:
 
+1. **[Layer 2 Configuration](documentations/update-layer2-config.md)**
+   Follow this guide to update [Layer 2 Configuration](documentations/update-layer2-config.md).
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+2. **[Helm Updates Release](documentations/helm-updates-release-process.md)**
+   Follow this guide to release new helm chart and update CDK to reflect that in [Helm Updates Release](documentations/helm-updates-release-process.md).

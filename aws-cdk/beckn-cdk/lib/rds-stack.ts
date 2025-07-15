@@ -3,7 +3,6 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import { Construct } from 'constructs';
 import { ConfigProps } from './config';
-import cluster from 'cluster';
 import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
 
 export interface RdsStackProps extends cdk.StackProps {
@@ -21,7 +20,12 @@ export class RdsStack extends cdk.Stack {
     super(scope, id, props);
 
     const vpc = props.vpc;
-    const dbName = props.envC;
+    let dbName = props.envC;
+    if(props.envC === "sandbox"){
+      dbName = "registry";
+    } else {
+      dbName = props.envC;
+    }
     const rdsUser = props.config.RDS_USER; // take input from user / make it 
     const rdsPassword = this.createPassword();
     const rdsSecGrpIngress = props.config.CIDR;
