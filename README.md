@@ -14,7 +14,8 @@ There is a community contributed browser based GUI installer to install multi-no
 
 Here is a [Demo Video](https://drive.google.com/file/d/1p1c1N9vCj-Rv0kBAsRIQ-KFfORTc1DjJ/view?usp=sharing) on how to use beckn-onix GUI:
 
-[![Beckn Onix GUI](https://mishalabdullah.xyz/images/beckn-cli-youtube.png)](https://drive.google.com/file/d/1p1c1N9vCj-Rv0kBAsRIQ-KFfORTc1DjJ/view?usp=sharing)
+[![Beckn Onix GUI](https://mishalabdullah.xyz/images/beckn-gui-youtube.png)](https://drive.google.com/file/d/1p1c1N9vCj-Rv0kBAsRIQ-KFfORTc1DjJ/view?usp=sharing)
+
 
 ## CLI Installer
 
@@ -22,7 +23,7 @@ For those comfortable with CLI, there is a command line installer to install mul
 
 Here is a [Demo Video](https://drive.google.com/file/d/1PfdhIpq-Qo6sDy0wAnO0zllCMGX718FW/view?usp=sharing) on how to use beckn-onix CLI:
 
-[![Beckn Onix CLI](https://mishalabdullah.xyz/images/beckn-gui-youtube.png)](https://drive.google.com/file/d/1PfdhIpq-Qo6sDy0wAnO0zllCMGX718FW/view?usp=sharing)
+[![Beckn Onix CLI](https://mishalabdullah.xyz/images/beckn-cli-youtube.png)](https://drive.google.com/file/d/1PfdhIpq-Qo6sDy0wAnO0zllCMGX718FW/view?usp=sharing)
 
 ## Other documents
 
