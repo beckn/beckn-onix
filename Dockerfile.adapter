@@ -1,6 +1,6 @@
 FROM golang:1.24-bullseye AS builder
 
-WORKDIR /app
+WORKDIR /workspace/app
 COPY cmd/adapter  ./cmd/adapter
 COPY core/ ./core
 COPY pkg/ ./pkg
@@ -16,7 +16,7 @@ FROM cgr.dev/chainguard/wolfi-base
 WORKDIR /app
 
 # Copy only the built binary and plugin
-COPY --from=builder /app/server .
+COPY --from=builder /workspace/app/server .
 
 # Expose port 8080
 EXPOSE 8080

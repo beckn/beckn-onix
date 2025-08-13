@@ -2,8 +2,6 @@ module github.com/beckn/beckn-onix
 
 go 1.24
 
-toolchain go1.23.4
-
 require (
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/rogpeppe/go-internal v1.13.1 // indirect
