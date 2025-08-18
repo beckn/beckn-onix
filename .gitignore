@@ -139,3 +139,6 @@ coverage.html
 
 # Ignore the schema directory used for testing
 /schemas/
+# Generated files
+.env.vault
+server
