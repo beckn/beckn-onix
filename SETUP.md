@@ -59,7 +59,45 @@ redis-cli --version
 
 ---
 
-## Development Setup
+## Quick Start (Recommended)
+
+For a complete Beckn network setup with all services, use our automated setup:
+
+```bash
+# Clone the repository
+git clone https://github.com/beckn/beckn-onix.git
+cd beckn-onix
+
+# Run the complete setup (includes all services)
+chmod +x setup.sh
+./setup.sh
+
+# Start the Beckn-ONIX server
+source .env.vault && ./server --config=config/local-dev.yaml
+```
+
+This will automatically:
+- Start all Beckn network services (Registry, Gateway, BAP, BPP)
+- Configure Redis and Vault
+- Build all plugins
+- Set up authentication
+- Create environment variables
+
+**Services Started:**
+- Registry: http://localhost:3000
+- Gateway: http://localhost:4000  
+- BAP Client: http://localhost:5001
+- BPP Client: http://localhost:6001
+- Vault: http://localhost:8200
+- Redis: localhost:6379
+- Beckn-ONIX: http://localhost:8081
+
+**To stop all services:** `docker compose down`
+**To view logs:** `docker compose logs -f [service-name]`
+
+---
+
+## Development Setup (Manual)
 
 ### Step 1: Clone the Repository
 
@@ -184,6 +222,13 @@ modules:
       role: bap
       registryUrl: http://localhost:8080/reg
       plugins:
+        keyManager:
+          id: keymanager
+          config:
+            projectID: beckn-onix-local
+            vaultAddr: http://localhost:8200
+            kvVersion: v2
+            mountPath: beckn
         cache:
           id: cache
           config:
@@ -194,6 +239,8 @@ modules:
             schemaDir: ./schemas
         signValidator:
           id: signvalidator
+          config:
+            publicKeyPath: beckn/keys
         router:
           id: router
           config:
@@ -204,6 +251,7 @@ modules:
               uuidKeys: transaction_id,message_id
               role: bap
       steps:
+        - validateSign
         - addRoute
         - validateSchema
   
@@ -214,6 +262,13 @@ modules:
       role: bap
       registryUrl: http://localhost:8080/reg
       plugins:
+        keyManager:
+          id: keymanager
+          config:
+            projectID: beckn-onix-local
+            vaultAddr: http://localhost:8200
+            kvVersion: v2
+            mountPath: beckn
         cache:
           id: cache
           config:
@@ -240,6 +295,13 @@ modules:
       role: bpp
       registryUrl: http://localhost:8080/reg
       plugins:
+        keyManager:
+          id: keymanager
+          config:
+            projectID: beckn-onix-local
+            vaultAddr: http://localhost:8200
+            kvVersion: v2
+            mountPath: beckn
         cache:
           id: cache
           config:
@@ -250,6 +312,8 @@ modules:
             schemaDir: ./schemas
         signValidator:
           id: signvalidator
+          config:
+            publicKeyPath: beckn/keys
         router:
           id: router
           config:
@@ -266,6 +330,13 @@ modules:
       role: bpp
       registryUrl: http://localhost:8080/reg
       plugins:
+        keyManager:
+          id: keymanager
+          config:
+            projectID: beckn-onix-local
+            vaultAddr: http://localhost:8200
+            kvVersion: v2
+            mountPath: beckn
         cache:
           id: cache
           config:
@@ -322,14 +393,152 @@ routingRules:
       - support
 ```
 
-### Step 9: Run the Application
+### Step 9: Run the Application with HashiCorp Vault
+
+Since the configuration now includes the keyManager plugin for signing capabilities, you need to set up Vault:
+
+#### Quick Setup (Recommended)
+
+**Note:** Make sure Redis is already running from Step 5.
 
 ```bash
-# Run with local configuration
+# Make the script executable
+chmod +x start-vault.sh
+
+# Run the automated setup script
+./start-vault.sh
+
+# This creates a .env.vault file with your credentials
+# Source it and run the server
+source .env.vault && ./server --config=config/local-dev.yaml
+```
+
+That's it! The script handles everything automatically.
+
+#### Manual Setup (Advanced)
+
+If you prefer to set up Vault manually or need custom configuration:
+
+```bash
+# 1. Start Vault container
+docker run -d \
+  --name vault-dev \
+  --cap-add=IPC_LOCK \
+  -p 8200:8200 \
+  -e 'VAULT_DEV_ROOT_TOKEN_ID=root' \
+  hashicorp/vault:latest
+
+# 2. Configure Vault (run the setup script)
+chmod +x config/setup-vault.sh
+./config/setup-vault.sh
+
+# 3. Export the displayed credentials
+export VAULT_ROLE_ID=<displayed-role-id>
+export VAULT_SECRET_ID=<displayed-secret-id>
+
+# 4. Run the server
+./server --config=config/local-dev.yaml
+```
+
+#### What the Setup Does
+
+- Starts Vault in development mode on port 8200
+- Enables AppRole authentication
+- Creates necessary policies and roles  
+- Sets up the KV secrets engine at path `beckn`
+- Stores sample keys for both BAP and BPP
+- Generates and saves credentials to `.env.vault`
+
+#### Accessing Vault UI
+
+- **URL:** http://localhost:8200
+- **Token:** root
+
+#### Troubleshooting
+
+If you get "invalid role or secret ID" error, the SECRET_ID has expired. Simply run:
+```bash
+./start-vault.sh
+source .env.vault
+```
+
+**Alternative: Simple Docker Run Command**
+
+```bash
+# Start Vault in dev mode with initial setup
+docker run -d \
+  --name vault-dev \
+  --cap-add=IPC_LOCK \
+  -p 8200:8200 \
+  -e 'VAULT_DEV_ROOT_TOKEN_ID=root' \
+  -e 'VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200' \
+  hashicorp/vault:latest
+
+# Wait for Vault to be ready
+sleep 3
+
+# Setup Vault using a single command
+docker exec vault-dev sh -c "
+  export VAULT_ADDR='http://127.0.0.1:8200' &&
+  export VAULT_TOKEN='root' &&
+  vault secrets enable -path=beckn kv-v2 &&
+  vault kv put beckn/keys/bap private_key='sample_bap_private_key' public_key='sample_bap_public_key' &&
+  vault kv put beckn/keys/bpp private_key='sample_bpp_private_key' public_key='sample_bpp_public_key'
+"
+```
+
+**Step 9b: Set Environment Variables and Run**
+
+```bash
+# Get the AppRole credentials from Vault container logs
+docker logs vault-dev | grep "VAULT_ROLE_ID\|VAULT_SECRET_ID"
+
+# Copy the displayed credentials and export them
+# They will look something like this:
+export VAULT_ROLE_ID='<role-id-from-logs>'
+export VAULT_SECRET_ID='<secret-id-from-logs>'
+
+# Run the server
 ./server --config=config/local-dev.yaml
 
 # Or using go run
 go run cmd/adapter/main.go --config=config/local-dev.yaml
+```
+
+**Note:** The Vault address is already configured in `config/local-dev.yaml` as `http://localhost:8200`. The docker-compose automatically sets up AppRole authentication and displays the credentials in the logs.
+
+**Alternative: Create a startup script**
+
+Create `run-with-vault.sh`:
+
+```bash
+#!/bin/bash
+# Set Vault environment variables
+export VAULT_ADDR=${VAULT_ADDR:-"http://localhost:8200"}
+export VAULT_TOKEN=${VAULT_TOKEN:-"root"}  # For dev mode
+
+# Or use AppRole auth for production-like setup
+# export VAULT_ROLE_ID=${VAULT_ROLE_ID:-"beckn-role-id"}
+# export VAULT_SECRET_ID=${VAULT_SECRET_ID:-"beckn-secret-id"}
+
+echo "Starting Beckn-ONIX with Vault key management..."
+echo "Vault Address: $VAULT_ADDR"
+
+# Check if Vault is accessible
+if ! curl -s "$VAULT_ADDR/v1/sys/health" > /dev/null 2>&1; then
+    echo "Error: Cannot reach Vault at $VAULT_ADDR"
+    echo "Please start Vault first with: vault server -dev -dev-root-token-id='root'"
+    exit 1
+fi
+
+# Run the server
+./server --config=config/local-dev.yaml
+```
+
+Make it executable and run:
+```bash
+chmod +x run-with-vault.sh
+./run-with-vault.sh
 ```
 
 The server will start on `http://localhost:8081`
