@@ -142,3 +142,10 @@ coverage.html
 # Generated files
 .env.vault
 server
+
+# Generated files
+beckn-adapter
+*.log
+.env
+.env.*
+test_request.json
