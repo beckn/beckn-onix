@@ -1,0 +1,49 @@
+services:
+  bap-client:
+    image: fidedocker/protocol-server
+    container_name: bap-client
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 5001:5001
+    restart: unless-stopped
+    volumes:
+      - bap_client_config_volume:/usr/src/app/config
+      - bap_client_schemas_volume:/usr/src/app/schemas
+      - bap_client_logs_volume:/usr/src/app/logs
+
+  bap-network:
+    image: fidedocker/protocol-server
+    container_name: bap-network
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 5002:5002
+    restart: unless-stopped
+    volumes:
+      - bap_network_config_volume:/usr/src/app/config
+      - bap_network_schemas_volume:/usr/src/app/schemas
+      - bap_network_logs_volume:/usr/src/app/logs
+
+networks:
+  beckn_network:
+    name: beckn_network
+    driver: bridge
+
+volumes:
+  bap_client_config_volume:
+    name: bap_client_config_volume
+    external: true
+  bap_client_schemas_volume:
+    name: bap_client_schemas_volume
+  bap_client_logs_volume:
+    name: bap_client_logs_volume
+  bap_network_config_volume:
+    name: bap_network_config_volume
+    external: true
+  bap_network_schemas_volume:
+    name: bap_network_schemas_volume
+  bap_network_logs_volume:
+    name: bap_network_logs_volume
