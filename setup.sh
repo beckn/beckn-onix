@@ -55,33 +55,77 @@ if ! docker ps | grep -q "vault"; then
         -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
         -p 8200:8200 \
         hashicorp/vault:latest > /dev/null 2>&1
-    sleep 5
+    
+    # Wait for Vault to be ready
+    echo -e "${BLUE}Waiting for Vault to start...${NC}"
+    for i in {1..30}; do
+        if docker exec -e VAULT_ADDR=http://127.0.0.1:8200 vault vault status > /dev/null 2>&1; then
+            echo -e "${GREEN}✓ Vault is ready${NC}"
+            break
+        fi
+        if [ $i -eq 30 ]; then
+            echo -e "${RED}Error: Vault failed to start${NC}"
+            exit 1
+        fi
+        sleep 1
+    done
 fi
 
-# Configure Vault
+# Configure Vault with error handling
 echo -e "${BLUE}Configuring Vault policies...${NC}"
-docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=root vault \
-    vault auth enable approle > /dev/null 2>&1 || true
 
+# Enable AppRole auth
+if ! docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=root vault \
+    vault auth list 2>/dev/null | grep -q "approle"; then
+    docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=root vault \
+        vault auth enable approle 2>/dev/null || {
+            echo -e "${YELLOW}AppRole already enabled or error occurred${NC}"
+        }
+fi
+
+# Create policy
 echo 'path "beckn/*" { capabilities = ["create", "read", "update", "delete", "list"] }' | \
     docker exec -i -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=root vault \
-    vault policy write beckn-policy - > /dev/null 2>&1
+    vault policy write beckn-policy - > /dev/null 2>&1 || {
+        echo -e "${YELLOW}Policy already exists or updated${NC}"
+    }
 
+# Create role
 docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=root vault \
     vault write auth/approle/role/beckn-role \
     token_policies="beckn-policy" \
     token_ttl=24h \
-    token_max_ttl=48h > /dev/null 2>&1
+    token_max_ttl=48h > /dev/null 2>&1 || {
+        echo -e "${YELLOW}Role already exists or updated${NC}"
+    }
 
-# Get Vault credentials
+# Get Vault credentials with error handling
+echo -e "${BLUE}Getting Vault credentials...${NC}"
 ROLE_ID=$(docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=root vault \
     vault read -field=role_id auth/approle/role/beckn-role/role-id 2>/dev/null)
+
+if [ -z "$ROLE_ID" ]; then
+    echo -e "${RED}Error: Failed to get ROLE_ID from Vault${NC}"
+    exit 1
+fi
+
 SECRET_ID=$(docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=root vault \
     vault write -field=secret_id -f auth/approle/role/beckn-role/secret-id 2>/dev/null)
 
+if [ -z "$SECRET_ID" ]; then
+    echo -e "${RED}Error: Failed to get SECRET_ID from Vault${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ Got Vault credentials:${NC}"
+echo -e "  ROLE_ID: ${ROLE_ID:0:20}..."
+echo -e "  SECRET_ID: ${SECRET_ID:0:20}..."
+
 # Enable KV v2 secrets engine
 docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=root vault \
-    vault secrets enable -path=beckn kv-v2 > /dev/null 2>&1 || true
+    vault secrets enable -path=beckn kv-v2 > /dev/null 2>&1 || {
+        echo -e "${YELLOW}Secrets engine already enabled${NC}"
+    }
 
 echo -e "${GREEN}✓ Vault configured successfully${NC}"
 
@@ -105,33 +149,76 @@ if docker ps | grep -q "vault"; then
     echo -e "${GREEN}✓ Vault is running${NC}"
 fi
 
-# Step 4: Build adapter plugins
-echo -e "${YELLOW}Step 4: Building adapter plugins...${NC}"
+# Step 4: Create required directories
+echo -e "${YELLOW}Step 4: Creating required directories...${NC}"
+
+# Create schemas directory for validation
+if [ ! -d "schemas" ]; then
+    mkdir -p schemas
+    echo -e "${GREEN}✓ Created schemas directory${NC}"
+else
+    echo -e "${YELLOW}schemas directory already exists${NC}"
+fi
+
+# Create logs directory
+if [ ! -d "logs" ]; then
+    mkdir -p logs
+    echo -e "${GREEN}✓ Created logs directory${NC}"
+else
+    echo -e "${YELLOW}logs directory already exists${NC}"
+fi
+
+# Create plugins directory if not exists
+if [ ! -d "plugins" ]; then
+    mkdir -p plugins
+    echo -e "${GREEN}✓ Created plugins directory${NC}"
+else
+    echo -e "${YELLOW}plugins directory already exists${NC}"
+fi
+
+# Step 5: Build adapter plugins
+echo -e "${YELLOW}Step 5: Building adapter plugins...${NC}"
 
 if [ -f "./build-plugins.sh" ]; then
     chmod +x ./build-plugins.sh
     ./build-plugins.sh
-    echo -e "${GREEN}✓ Plugins built successfully${NC}"
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ Plugins built successfully${NC}"
+    else
+        echo -e "${RED}Error: Plugin build failed${NC}"
+        exit 1
+    fi
 else
-    echo -e "${RED}Warning: build-plugins.sh not found${NC}"
+    echo -e "${RED}Error: build-plugins.sh not found${NC}"
+    exit 1
 fi
 
-# Step 5: Build the adapter server
-echo -e "${YELLOW}Step 5: Building Beckn-ONIX adapter server...${NC}"
+# Step 6: Build the adapter server
+echo -e "${YELLOW}Step 6: Building Beckn-ONIX adapter server...${NC}"
 
 if [ -f "go.mod" ]; then
     go build -o beckn-adapter cmd/adapter/main.go
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ Adapter server built successfully${NC}"
     else
-        echo -e "${RED}Failed to build adapter server${NC}"
+        echo -e "${RED}Error: Failed to build adapter server${NC}"
+        echo -e "${YELLOW}Please check Go installation and dependencies${NC}"
+        exit 1
     fi
 else
     echo -e "${RED}Error: go.mod not found${NC}"
+    exit 1
 fi
 
-# Step 6: Create environment file
-echo -e "${YELLOW}Step 6: Creating environment configuration...${NC}"
+# Step 7: Create environment file
+echo -e "${YELLOW}Step 7: Creating environment configuration...${NC}"
+
+# Check if we have Vault credentials
+if [ -z "$ROLE_ID" ] || [ -z "$SECRET_ID" ]; then
+    echo -e "${RED}Error: Vault credentials not available${NC}"
+    echo -e "${YELLOW}Please check Vault configuration and try again${NC}"
+    exit 1
+fi
 
 cat > .env <<EOF
 # Beckn-ONIX Environment Configuration
@@ -158,7 +245,13 @@ export VAULT_ROLE_ID=$ROLE_ID
 export VAULT_SECRET_ID=$SECRET_ID
 EOF
 
-echo -e "${GREEN}✓ Environment file created${NC}"
+if [ -f ".env" ]; then
+    echo -e "${GREEN}✓ Environment file created successfully${NC}"
+    echo -e "${YELLOW}  Vault ROLE_ID and SECRET_ID have been saved to .env${NC}"
+else
+    echo -e "${RED}Error: Failed to create .env file${NC}"
+    exit 1
+fi
 
 # Display final status
 echo ""
