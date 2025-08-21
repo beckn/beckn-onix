@@ -1,0 +1,43 @@
+swf.load.complete.config.tables.if.count.less.than=500
+swf.user.password.encrypted=false
+swf.plugins.background.core.workers.numThreads=1
+swf.application.authentication.required=false
+
+swf.encryption.support=false
+swf.key.store.directory=./.keystore
+swf.key.store.password=venky12
+swf.key.entry.succinct.password=succinct12
+
+
+swf.host=GATEWAY_URL
+swf.external.port=GATEWAY_PORT
+swf.external.scheme=PROTOCOL
+
+swf.jdbc.driver=org.h2.Driver
+swf.jdbc.url=jdbc:h2:./database/standalone;AUTO_SERVER=TRUE;
+swf.jdbc.userid=standalone
+swf.jdbc.password=standalone
+swf.jdbc.validationQuery=values(1)
+swf.jdbc.dbschema=PUBLIC
+swf.jdbc.dbschema.setonconnection=true
+swf.jdbc.set.dbschema.command=set schema public
+
+
+# These keys are needed if you want to in.succinct.beckn.gateway.subscriber_iduse push notifications. 
+# you can generate this from https://d3v.one/vapid-key-generator/ or similiar sites. 
+# you also need to specify the public key in src/main/resources/scripts/application.js
+
+#push.server.private.key=your_private_key
+#push.server.public.key=your_public_key 
+
+## Beckn Gateway configurations.
+
+beckn.auth.enabled=true
+
+in.succinct.beckn.gateway.subscriber_id=SUBSCRIBER_ID
+in.succinct.beckn.gateway.public_key_id=SUBSCRIBER_ID.k1
+
+
+in.succinct.onet.country.iso.3=IND
+in.succinct.onet.country.iso.2=IN
+in.succinct.onet.name=onix

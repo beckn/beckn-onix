@@ -33,6 +33,7 @@ services:
   redis:
     image: redis:alpine
     container_name: redis
+    platform: linux/amd64
     ports:
       - "6379:6379"
     networks:
@@ -47,6 +48,7 @@ services:
   vault:
     image: hashicorp/vault:latest
     container_name: vault
+    platform: linux/amd64
     cap_add:
       - IPC_LOCK
     ports:
@@ -71,6 +73,7 @@ services:
   registry:
     image: fidedocker/registry:latest
     container_name: registry
+    platform: linux/amd64
     ports:
       - "3000:3000"  # Main registry port
       - "3030:3030"  # Admin/monitoring port
@@ -88,6 +91,7 @@ services:
   gateway:
     image: fidedocker/gateway:latest
     container_name: gateway
+    platform: linux/amd64
     ports:
       - "4000:4000"  # Main gateway port
       - "4030:4030"  # Admin/monitoring port
@@ -111,6 +115,7 @@ services:
   bap-client:
     image: fidedocker/protocol-server:latest
     container_name: bap-client
+    platform: linux/amd64
     ports:
       - "5001:5001"
     volumes:
@@ -132,6 +137,7 @@ services:
   bap-network:
     image: fidedocker/protocol-server:latest
     container_name: bap-network
+    platform: linux/amd64
     ports:
       - "5002:5002"
     volumes:
@@ -158,6 +164,7 @@ services:
   bpp-client:
     image: fidedocker/protocol-server:latest
     container_name: bpp-client
+    platform: linux/amd64
     ports:
       - "6001:6001"
     volumes:
@@ -179,6 +186,7 @@ services:
   bpp-network:
     image: fidedocker/protocol-server:latest
     container_name: bpp-network
+    platform: linux/amd64
     ports:
       - "6002:6002"
     volumes:
