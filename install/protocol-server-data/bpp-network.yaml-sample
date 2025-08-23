@@ -1,0 +1,134 @@
+# Mandatory
+server:
+  port: BPP_NETWORK_PORT
+
+# Mandatory.
+cache:
+  host: "REDIS_URL"
+  port: 6379
+  ttl: "PT10M"
+  # Optional. Default is 0.
+  db: 0 
+
+# Optional.
+responseCache:
+  mongoURL: "mongodb://MONGO_USERNAME:MONGO_PASSWORD@MONOG_URL/MONGO_DB_NAME?authSource=admin"
+  ttl: "PT10M"
+
+# Mandatory.
+# Priority order will be
+# 1. Synchronous
+# 2. webhook
+# 3. pubSub
+client:
+#   synchronous: 
+#     mongoURL: "mongodb://tvast:password@mongoDB:27017/ps?authSource=admin"
+
+  webhook:
+   url: "WEBHOOK_URL"
+  
+  #messageQueue: 
+  #  amqpURL: "amqp://guest:guest@localhost:5672"
+  #  incomingQueue: "protocol-server-incoming"
+  #  outgoingQueue: "protocol-server-outgoing"
+
+# Mandatory.
+app:
+  # Mandatory.
+  mode: bpp
+
+  # Two types of gateway mode present.
+  # client and network.
+  gateway:
+    mode: network
+    inboxQueue: "inbox-bpp"
+    outboxQueue: "outbox-bpp"
+    amqpURL: "amqp://RABBITMQ_USERNAME:RABBITMQ_PASSWORD@RABBITMQ_URL:5672"
+
+  # Mandatory.
+  actions:
+    requests:
+      search:
+        ttl : "PT15S"
+      init:
+        ttl : "PT10S"
+      select:
+        ttl : "PT10S"
+      confirm:
+        ttl : "PT10S"
+      status:
+        ttl : "PT10S"
+      track:
+        ttl : "PT10S"
+      cancel:
+        ttl : "PT10S"
+      update:
+        ttl : "PT10S"
+      rating:
+        ttl : "PT10S"
+      support:
+        ttl : "PT10S"
+      get_cancellation_reasons:
+        ttl: "PT10S"
+      get_rating_categories:
+        ttl: "PT10S"          
+    
+    responses: 
+      on_search:
+        ttl: "PT15S"
+      on_init:
+        ttl: "PT10S"
+      on_select:
+        ttl: "PT10S"
+      on_confirm:
+        ttl: "PT10S"
+      on_status:
+        ttl: "PT10S"
+      on_track:
+        ttl: "PT10S"
+      on_cancel:
+        ttl: "PT10S"
+      on_update:
+        ttl: "PT10S"
+      on_rating:
+        ttl: "PT10S"
+      on_support:
+        ttl: "PT10S"
+      cancellation_reasons:
+        ttl: "PT10S"
+      rating_categories:
+        ttl: "PT10S"          
+  
+  # Mandatory.
+  privateKey: "PRIVATE_KEY"
+  publicKey: "PUBLIC_KEY"
+
+  # Mandatory.
+  subscriberId: "BPP_SUBSCRIBER_ID"
+  subscriberUri: "BPP_SUBSCRIBER_URL"
+
+  # Mandatory.
+  registryUrl: REGISTRY_URL
+  auth: false
+  uniqueKey: "BPP_SUBSCRIBER_KEY_ID"
+  
+  # Mandatory.
+  city: "std:080"
+  country: "IND"
+
+  # Mandatory.
+  ttl: "PT10M"
+
+  # Mandatory.
+  httpTimeout: "PT3S"
+  httpRetryCount: 2
+  telemetry:
+    enabled: false
+    url: ""
+    batchSize: 100
+    # In minutes
+    syncInterval: 30
+    redis_db: 3
+  
+  useLayer2Config: USE_LAYER_2_CONFIG
+  mandateLayer2Config: MANDATE_LAYER_2_CONFIG

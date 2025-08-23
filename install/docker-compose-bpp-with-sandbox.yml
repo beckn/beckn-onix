@@ -1,0 +1,62 @@
+services:
+  bpp-client:
+    image: fidedocker/protocol-server
+    container_name: bpp-client
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 6001:6001
+    restart: unless-stopped
+    volumes:
+      - bpp_client_config_volume:/usr/src/app/config
+      - bpp_client_schemas_volume:/usr/src/app/schemas
+      - bpp_client_logs_volume:/usr/src/app/logs
+
+  bpp-network:
+    image: fidedocker/protocol-server
+    container_name: bpp-network
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 6002:6002
+    restart: unless-stopped
+    volumes:
+      - bpp_network_config_volume:/usr/src/app/config
+      - bpp_network_schemas_volume:/usr/src/app/schemas
+      - bpp_network_logs_volume:/usr/src/app/logs
+
+  sandbox-api:
+    image: fidedocker/sandbox-api
+    container_name: sandbox-api
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 4010:4000
+    restart: unless-stopped
+    environment:
+      - PORT=4000
+      - WEBHOOK_URL=http://host.docker.internal:3001/webhook
+
+networks:
+  beckn_network:
+    name: beckn_network
+    driver: bridge
+
+volumes:
+  bpp_client_config_volume:
+    name: bpp_client_config_volume
+    external: true
+  bpp_client_schemas_volume:
+    name: bpp_client_schemas_volume
+  bpp_client_logs_volume:
+    name: bpp_client_logs_volume
+  bpp_network_config_volume:
+    name: bpp_network_config_volume
+    external: true
+  bpp_network_schemas_volume:
+    name: bpp_network_schemas_volume
+  bpp_network_logs_volume:
+    name: bpp_network_logs_volume

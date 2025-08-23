@@ -1,0 +1,16 @@
+docker_data
+gateway_data/config/swf.properties
+gateway_data/config/networks/onix.json
+registry_data/config/swf.properties
+.vscode
+gateway_data/config/networks/onix.json
+gateway_data/database/standalone.mv.db
+protocol-server-data/bap-client.yml
+protocol-server-data/bap-network.yml
+protocol-server-data/bpp-client.yml
+protocol-server-data/bpp-network.yml
+ENV/.env-generic-client-layer
+registry.*db
+gateway.*db
+gateway_data/config/networks/onix.json
+

@@ -1,0 +1,61 @@
+services:
+  mongo_db:
+    image: mongo:4.4
+    platform: linux/amd64
+    restart: unless-stopped
+    container_name: mongoDB
+    volumes:
+      - beckn_mongo_db:/data/db
+      - beckn_mongo_config:/data/configdb
+    networks:
+      - beckn_network
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=beckn
+      - MONGO_INITDB_ROOT_PASSWORD=beckn123
+      - MONGO_INITDB_DATABASE=protocol_server
+
+  redis_db:
+    image: redis:6.2.5-alpine
+    platform: linux/amd64
+    restart: unless-stopped
+    container_name: redis
+    networks:
+      - beckn_network
+    ports:
+      - "6379:6379"
+    volumes:
+      - beckn_redis:/data
+
+  queue_service:
+    image: rabbitmq:3.8-management-alpine
+    platform: linux/amd64
+    restart: unless-stopped
+    container_name: rabbitmq
+    networks:
+      - beckn_network
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - beckn_rabbitmq:/var/lib/rabbitmq
+    environment:
+      AMQP_URL: "amqp://queue_service?connection_attempts=3&retry_delay=5"
+      RABBITMQ_DEFAULT_USER: beckn
+      RABBITMQ_DEFAULT_PASS: beckn123
+
+networks:
+  beckn_network:
+    name: beckn_network
+    driver: bridge
+
+volumes:
+  beckn_mongo_db:
+    name: beckn_mongo_db
+  beckn_mongo_config:
+    name: beckn_mongo_config
+  beckn_redis:
+    name: beckn_redis
+  beckn_rabbitmq:
+    name: beckn_rabbitmq

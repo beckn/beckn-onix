@@ -1,0 +1,11 @@
+docker_data
+gateway_data/config/swf.properties
+registry_data/config/swf.properties
+.vscode
+protocol-server-data/bap-client.yml
+protocol-server-data/bap-network.yml
+protocol-server-data/bpp-client.yml
+protocol-server-data/bpp-network.yml
+ENV/.env-generic-client-layer
+registry.lock*
+gateway.lock*

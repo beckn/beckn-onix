@@ -1,0 +1,30 @@
+services:
+  registry:
+    image: fidedocker/registry
+    container_name: registry
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 3000:3000
+      - 3030:3030
+    restart: unless-stopped
+    volumes:
+      - registry_data_volume:/registry/overrideProperties/config
+      - registry_database_volume:/registry/database
+      - registry_logs_volume:/registry/tmp
+
+networks:
+  beckn_network:
+    name: beckn_network
+    driver: bridge
+
+volumes:
+  registry_data_volume:
+    name: registry_data_volume
+    external: true
+  registry_database_volume:
+    name: registry_database_volume
+    external: true
+  registry_logs_volume:
+    name: registry_logs_volume
