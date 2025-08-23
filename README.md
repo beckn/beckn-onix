@@ -349,5 +349,5 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 ---
 
 <div align="center">
-Built with ❤️ for the open commerce ecosystem
+Built with ❤️ for the open Value Network ecosystem
 </div>
