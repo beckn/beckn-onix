@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: registry
+  template:
+    metadata:
+      labels:
+        app: registry
+    spec:
+      containers:
+        - name: registry
+          image: fidedocker/registry
+          ports:
+            - containerPort: 3000
+            - containerPort: 3030
+          volumeMounts:
+            - name: registry-data
+              mountPath: /registry
+      volumes:
+        - name: registry-data
+          hostPath:
+            path: /absolute/path/to/registry_data/
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: fidedocker/gateway
+          ports:
+            - containerPort: 4000
+            - containerPort: 4030
+          volumeMounts:
+            - name: gateway-data
+              mountPath: /gateway
+      volumes:
+        - name: gateway-data
+          hostPath:
+            path: /path/to/gateway_data
+
+# Repeat the above structure for other services

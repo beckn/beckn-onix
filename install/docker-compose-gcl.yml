@@ -1,0 +1,119 @@
+services:
+  registry:
+    image: fidedocker/registry
+    container_name: registry
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 3000:3000
+      - 3030:3030
+    restart: unless-stopped
+    volumes:
+      - registry_data_volume:/registry/overrideProperties/config
+      - registry_database_volume:/registry/database
+
+  gateway:
+    image: fidedocker/gateway
+    container_name: gateway
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 4000:4000
+      - 4030:4030
+    restart: unless-stopped
+    volumes:
+      - gateway_data_volume:/gateway/overrideProperties/config
+      - gateway_database_volume:/gateway/database
+
+  bap-client:
+    image: fidedocker/protocol-server
+    container_name: bap-client
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 5001:5001
+    restart: unless-stopped
+    volumes:
+      - ./protocol-server-data/bap-client.yml:/usr/src/app/config/default.yml
+
+  bap-network:
+    image: fidedocker/protocol-server
+    container_name: bap-network
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 5002:5002
+    restart: unless-stopped
+    volumes:
+      - ./protocol-server-data/bap-network.yml:/usr/src/app/config/default.yml
+
+  sandbox-api:
+    image: fidedocker/sandbox-api
+    container_name: sandbox-api
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 4010:4000
+    restart: unless-stopped
+    volumes:
+      - ./ENV/.env-sandbox:/usr/src/app/.env
+
+  bpp-client:
+    image: fidedocker/protocol-server
+    container_name: bpp-client
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 6001:6001
+    restart: unless-stopped
+    volumes:
+      - ./protocol-server-data/bpp-client.yml:/usr/src/app/config/default.yml
+
+  bpp-network:
+    image: fidedocker/protocol-server
+    container_name: bpp-network
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 6002:6002
+    restart: unless-stopped
+    volumes:
+      - ./protocol-server-data/bpp-network.yml:/usr/src/app/config/default.yml
+
+  generic-client-layer:
+    image: fidedocker/generic-client-layer
+    container_name: generic-client-layer
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 3015:3000
+    restart: unless-stopped
+    volumes:
+      - ./ENV/.env-generic-client-layer:/app/.env
+
+networks:
+  beckn_network:
+    name: beckn_network
+    driver: bridge
+
+volumes:
+  registry_data_volume:
+    name: registry_data_volume
+    external: true
+  registry_database_volume:
+    name: registry_database_volume
+    external: true
+  gateway_data_volume:
+    name: gateway_data_volume
+    external: true
+  gateway_database_volume:
+    name: gateway_database_volume
+    external: true

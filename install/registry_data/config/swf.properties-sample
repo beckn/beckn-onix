@@ -1,0 +1,43 @@
+swf.load.complete.config.tables.if.count.less.than=500
+swf.user.password.encrypted=false
+swf.plugins.background.core.workers.numThreads=3
+swf.application.authentication.required=false
+swf.application.requires.registration=true
+
+#swf.host=localhost
+swf.host=REGISTRY_URL
+swf.external.port=REGISTRY_PORT
+swf.external.scheme=PROTOCOL
+
+
+swf.jdbc.driver=org.h2.Driver
+swf.jdbc.url=jdbc:h2:./database/registry;AUTO_SERVER=TRUE;
+swf.jdbc.userid=registry
+swf.jdbc.password=registry
+swf.jdbc.validationQuery=values(1)
+swf.jdbc.dbschema=PUBLIC
+swf.jdbc.dbschema.setonconnection=true
+swf.jdbc.set.dbschema.command=set schema public
+
+
+# These keys are needed if you want to use push notifications. 
+# you can generate this from https://d3v.one/vapid-key-generator/ or similiar sites. 
+# you also need to specify the public key in src/main/resources/scripts/application.js
+
+#push.server.private.key=your_private_key
+#push.server.public.key=your_public_key 
+
+swf.api.keys.case=SNAKE
+swf.api.root.required=false
+
+# Needed for Google Login
+#swf.GOOGLE.client.id=
+#swf.GOOGLE.client.secret=
+
+swf.encryption.support=false
+## Uncomment below if encryption is needed and set appropriate passwords
+#swf.key.store.directory=./.keystore
+#swf.key.store.password=venky12
+#swf.key.entry.succinct.password=succinct12
+
+swf.ftl.dir=src/main/resources/templates

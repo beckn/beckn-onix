@@ -1,0 +1,30 @@
+services:
+  gateway:
+    image: fidedocker/gateway
+    container_name: gateway
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - 4000:4000
+      - 4030:4030
+    restart: unless-stopped
+    volumes:
+      - gateway_data_volume:/gateway/overrideProperties/config
+      - gateway_database_volume:/gateway/database
+      - gateway_logs_volume:/gateway/tmp
+
+networks:
+  beckn_network:
+    name: beckn_network
+    driver: bridge
+
+volumes:
+  gateway_data_volume:
+    name: gateway_data_volume
+    external: true
+  gateway_database_volume:
+    name: gateway_database_volume
+    external: true
+  gateway_logs_volume:
+    name: gateway_logs_volume

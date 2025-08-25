@@ -1,0 +1,101 @@
+# Default values for registry.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+namespace: beckn-onix-gateway
+
+image:
+  repository: fidedocker/gateway
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  # tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: false
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+service:
+  type: ClusterIP
+  port: 4030
+  secondaryPort: 4000
+
+# Ingress definition for AWS Application Loadbalancer
+ingress:
+  enabled: true  # If enabled, HTTP port 80 listener is open on AWS ALB. Set to false to disable Ingress. Without ingress service will be scoped to K8s cluster.
+  tls:
+    enabled: false  # Set to true to enable TLS with Aamzon Certificate Manager (ACM)
+    certificateArn: arn:aws:acm:ap-south-1:365975017663:certificate/04d1ef71-8407-495b-82f0-4eded8694189 # SSL certificate location if tls is enabled
+    sslRedirect: true  # Set to true to enable SSL redirection
+
+resources:
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  requests:
+    cpu: "0.5"
+    memory: "1Gi"
+  limits:
+    cpu: "1"
+    memory: "2Gi"
+
+livenessProbe: {}
+  # httpGet:
+  #  path: /
+  #  port: http
+readinessProbe: {}
+  # httpGet:
+  #  path: /
+  #  port: http
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 2
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+# Gateway AWS RDS Postgres connection details
+database:
+  host: 
+  dbname: gateway
+  username: postgres
+  password:
+
+registry_url: 
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Gateway external domain/sub-domain value. Supply the actual value during Helm install "--set externalDomain=<domain-name>"
+externalDomain:
+

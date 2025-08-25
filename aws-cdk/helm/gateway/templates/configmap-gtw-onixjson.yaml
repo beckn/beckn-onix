@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "common.name" . }}-onixjson-config
+  namespace: {{ .Values.namespace }}
+data:
+  onix.json: |
+    {
+        "core_version": "1.1.0",
+        "registry_id": "{{ .Values.registry_url | default "localhost" | replace "http://" "" | replace "https://" "" }}..LREG",
+        "search_provider_id": "{{ .Values.externalDomain }}",
+        "self_registration_supported": true,
+        "subscription_needed_post_registration": true,
+        "base_url": "{{ .Values.registry_url | default "localhost" }}",
+        "registry_url": "{{ .Values.registry_url | default "localhost" }}/subscribers",
+        "extension_package": "in.succinct.beckn.boc",
+        "wild_card": ""
+    }
