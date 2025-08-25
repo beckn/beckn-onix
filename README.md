@@ -16,7 +16,7 @@
 ---
 ## Latest Update
 In August 2025, a completely new Beckn-ONIX adapter was made available. This version introduces a Plugin framework at it's core. 
-The ONIX Adapter previous to this release is archived to a separate branch, [main-pre-plugins][https://github.com/beckn/beckn-onix/tree/main-pre-plugins] for reference.
+The ONIX Adapter previous to this release is archived to a separate branch, [main-pre-plugins](https://github.com/beckn/beckn-onix/tree/main-pre-plugins) for reference.
 
 ## Overview
 
