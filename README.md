@@ -347,7 +347,29 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 ## Acknowledgments
 
 - [Beckn Foundation](https://beckn.org) for the protocol specifications
-- All contributors and community members
+
+| Contributor | Organization | Github ID |
+|--------|----------|-------------|
+| Ashish Guliya | Google Cloud | ashishkgGoogle |
+| Pooja Joshi | Google Cloud | poojajoshi2 |
+| Deepa Mulchandani | Google Cloud | Deepa-Mulchandani |
+| Ankit | FIDE | ankitShogun |
+| Abhishek | FIDE | em-abee |
+| Viraj Kulkarni | FIDE | viraj89 |
+| Amay Pandey | Google Cloud |  |
+| Dipika Prasad | Google Cloud | DipikaPrasad |
+| Tanya Madaan | ONDC | tanyamadaan |
+| Binu | ONDC |  |
+| Faiz M | FIDE | faizmagic |
+| Ravi Prakash | FIDE | ravi-prakash-v |
+| Siddharth Prakash | Google Cloud |  |
+| Namya Patiyal | Google Cloud |  |
+| Saksham Nagpal | Google Cloud | sakshamGoogle |
+| Arpit Bharadwaj | Google Cloud |  |
+| Pranoy | Google Cloud |  |
+| Mayuresh Nirhali | FIDE Volunteer | nirmay |
+| Madhuvandhini B | Google Cloud | madhuvandhini5856 |
+| Siddhartha Banerjee | Google Cloud | sidb85 |
 
 ---
 
