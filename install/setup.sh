@@ -18,19 +18,12 @@ if ! docker info > /dev/null 2>&1; then
 fi
 
 # Step 1: Run the Beckn network installer
-echo -e "${YELLOW}Step 1: Setting up Beckn network services...${NC}"
-
-# Check if install directory exists
-#if [ ! -d "./install" ]; then
-#    echo -e "${RED}Error: install directory not found.${NC}"
-#    exit 1
-#fi
+echo -e "${YELLOW}Step 1: Starting all Beckn ONIX adapter services...${NC}"
+docker compose -f ./docker-compose-adapter.yml down 2>/dev/null
+docker compose -f ./docker-compose-adapter.yml up -d
 
 # Make the installer executable
-#chmod +x ./install/beckn-onix.sh
-
-# Navigate to install directory and run setup
-#cd install
+#chmod +x ./beckn-onix.sh
 
 # Auto-select option 3 (local setup) for the installer
 #echo -e "${GREEN}Running local network setup...${NC}"

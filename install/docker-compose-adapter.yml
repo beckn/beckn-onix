@@ -1,0 +1,38 @@
+services:
+  # ============================================
+  # Core Infrastructure Services
+  # ============================================
+  
+  # Redis - Caching Service
+  redis:
+    image: redis:alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - beckn_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Vault - Key Management Service
+  vault:
+    image: hashicorp/vault:latest
+    container_name: vault
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    command: server -dev -dev-root-token-id=root
+    networks:
+      - beckn_network
+
+networks:
+  beckn_network:
+    name: beckn_network
+    driver: bridge
