@@ -68,7 +68,8 @@ For a complete Beckn network setup with all services, use our automated setup:
 git clone https://github.com/beckn/beckn-onix.git
 cd beckn-onix
 
-# Run the complete setup (includes all services)
+# Run the setup (includes only adapter services)
+cd install
 chmod +x setup.sh
 ./setup.sh
 
@@ -77,17 +78,12 @@ source .env.vault && ./server --config=config/local-dev.yaml
 ```
 
 This will automatically:
-- Start all Beckn network services (Registry, Gateway, BAP, BPP)
-- Configure Redis and Vault
+- Run & Configure Redis and Vault
 - Build all plugins
 - Set up authentication
 - Create environment variables
 
 **Services Started:**
-- Registry: http://localhost:3000
-- Gateway: http://localhost:4000  
-- BAP Client: http://localhost:5001
-- BPP Client: http://localhost:6001
 - Vault: http://localhost:8200
 - Redis: localhost:6379
 - Beckn-ONIX: http://localhost:8081
@@ -132,6 +128,7 @@ The application uses a plugin architecture. Build all plugins:
 
 ```bash
 # Make the build script executable
+cd install
 chmod +x build-plugins.sh
 
 # Build all plugins
