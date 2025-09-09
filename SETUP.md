@@ -128,11 +128,10 @@ The application uses a plugin architecture. Build all plugins:
 
 ```bash
 # Make the build script executable
-cd install
-chmod +x build-plugins.sh
+chmod +x install/build-plugins.sh
 
 # Build all plugins
-./build-plugins.sh
+./install/build-plugins.sh
 ```
 
 This creates `.so` files in the `plugins/` directory:
