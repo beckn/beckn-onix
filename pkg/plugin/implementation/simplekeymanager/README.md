@@ -47,25 +47,6 @@ plugins:
 
 *Required if any key is provided. If keys are configured, all four keys must be provided.
 
-### PEM Format Example
-
-```yaml
-plugins:
-  keymanager:
-    id: simplekeymanager
-    config:
-      networkParticipant: bap-network
-      keyId: bap-network-key
-      signingPrivateKey: |
-        MC4CAQAwBQYDK0NiAAEguc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
-      signingPublicKey: |
-        MCowBQYDK0NiAAEhkUSiFNAD3+6oE7KffKucxZ74e6g4i9VM6ypImg4rVCM=
-      encrPrivateKey: |
-        MC4CAQAwBQYDK0NiAAEguc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
-      encrPublicKey: |
-        MCowBQYDK0NiAAEhkUSiFNAD3+6oE7KffKucxZ74e6g4i9VM6ypImg4rVCM=
-```
-
 ## Key Generation
 
 ### Ed25519 Signing Keys
