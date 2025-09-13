@@ -11,6 +11,7 @@ plugins=(
     "decrypter"
     "encrypter"
     "keymanager"
+    "simplekeymanager"
     "publisher"
     "reqpreprocessor"
     "router"
