@@ -339,6 +339,28 @@ func (m *Manager) KeyManager(ctx context.Context, cache definition.Cache, rClien
 	return km, nil
 }
 
+// KeyManager returns a KeyManager instance based on the provided configuration.
+// It reuses the loaded provider.
+func (m *Manager) SimpleKeyManager(ctx context.Context, cache definition.Cache, rClient definition.RegistryLookup, cfg *Config) (definition.KeyManager, error) {
+
+	kmp, err := provider[definition.KeyManagerProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	km, closer, err := kmp.New(ctx, cache, rClient, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.closers = append(m.closers, func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return km, nil
+}
+
 // Validator implements handler.PluginManager.
 func (m *Manager) Validator(ctx context.Context, cfg *Config) (definition.SchemaValidator, error) {
 	panic("unimplemented")
