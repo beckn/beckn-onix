@@ -17,6 +17,6 @@ routingRules:
     version: "1.1.0"
     targetType: "url"
     target:
-      url: "http://gateway:4000"
+      url: "http://gateway:4030/bg"
     endpoints:
       - search
