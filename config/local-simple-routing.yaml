@@ -1,0 +1,22 @@
+routingRules:
+  - domain: "retail:1.1.0"  # Retail domain
+    version: "1.1.0"
+    targetType: "bpp"
+    endpoints:
+      - select
+      - init
+      - confirm
+      - status
+      - track
+      - cancel
+      - update
+      - rating
+      - support
+
+  - domain: "retail:1.1.0"  # Retail domain
+    version: "1.1.0"
+    targetType: "url"
+    target:
+      url: "https://172.27.0.3:4000/"
+    endpoints:
+      - search

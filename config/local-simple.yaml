@@ -1,0 +1,151 @@
+appName: "onix-local"
+log:
+  level: debug
+  destinations:
+    - type: stdout
+  contextKeys:
+    - transaction_id
+    - message_id
+    - subscriber_id
+    - module_id
+http:
+  port: 8081
+  timeout:
+    read: 30
+    write: 30
+    idle: 30
+pluginManager:
+  root: ./plugins
+modules:
+  - name: bapTxnReceiver
+    path: /bap/receiver/
+    handler:
+      type: std
+      role: bap
+      registryUrl: http://registry:3030/subscribers
+      plugins:
+        keyManager:
+          id: simplekeymanager
+          config:
+            keyId: bap-network
+            signingPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
+            signingPublicKey: UX1EDpL4YHOnfkuhrtS+Bz18qwidrX+oJxButD8xaCE=
+            encrPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
+            encrPublicKey: UX1EDpL4YHOnfkuhrtS+Bz18qwidrX+oJxButD8xaCE=
+        cache:
+          id: cache
+          config:
+            addr: localhost:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: ./schemas
+        signValidator:
+          id: signvalidator
+        router:
+          id: router
+          config:
+            routingConfig: ./config/local-simple-routing.yaml
+        middleware:
+          - id: reqpreprocessor
+            config:
+              uuidKeys: transaction_id,message_id
+              role: bap
+      steps:
+        - addRoute
+        - validateSchema
+  
+  - name: bapTxnCaller
+    path: /bap/caller/
+    handler:
+      type: std
+      role: bap
+      registryUrl: http://registry:3030/subscribers
+      plugins:
+        keyManager:
+          id: simplekeymanager
+          config:
+            keyId: bap-network
+            signingPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
+            signingPublicKey: UX1EDpL4YHOnfkuhrtS+Bz18qwidrX+oJxButD8xaCE=
+            encrPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
+            encrPublicKey: UX1EDpL4YHOnfkuhrtS+Bz18qwidrX+oJxButD8xaCE=
+        cache:
+          id: cache
+          config:
+            addr: localhost:6379
+        router:
+          id: router
+          config:
+            routingConfig: ./config/local-simple-routing-BAPCaller.yaml
+        signer:
+          id: signer
+        middleware:
+          - id: reqpreprocessor
+            config:
+              uuidKeys: transaction_id,message_id
+              role: bap
+      steps:
+        - addRoute
+        - sign
+  
+  - name: bppTxnReceiver
+    path: /bpp/receiver/
+    handler:
+      type: std
+      role: bpp
+      registryUrl: http://registry:3030/subscribers
+      plugins:
+        keyManager:
+          id: simplekeymanager
+          config:
+            keyId: bpp-network
+            signingPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
+            signingPublicKey: 8CANv4rto7u6RZEB9b6z6mXIIfBLlExIRLBLd5YYl/Y=
+            encrPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
+            encrPublicKey: 8CANv4rto7u6RZEB9b6z6mXIIfBLlExIRLBLd5YYl/Y=
+        cache:
+          id: cache
+          config:
+            addr: localhost:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: ./schemas
+        signValidator:
+          id: signvalidator
+        router:
+          id: router
+          config:
+            routingConfig: ./config/local-simple-routing-BPPReceiver.yaml
+      steps:
+        - addRoute
+  
+  - name: bppTxnCaller
+    path: /bpp/caller/
+    handler:
+      type: std
+      role: bpp
+      registryUrl: http://registry:3030/subscribers
+      plugins:
+        keyManager:
+          id: simplekeymanager
+          config:
+            keyId: bap-network
+            signingPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
+            signingPublicKey: 8CANv4rto7u6RZEB9b6z6mXIIfBLlExIRLBLd5YYl/Y=
+            encrPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
+            encrPublicKey: 8CANv4rto7u6RZEB9b6z6mXIIfBLlExIRLBLd5YYl/Y=
+        cache:
+          id: cache
+          config:
+            addr: localhost:6379
+        router:
+          id: router
+          config:
+            routingConfig: ./config/local-simple-routing.yaml
+        signer:
+          id: signer
+      steps:
+        - addRoute
+        - sign

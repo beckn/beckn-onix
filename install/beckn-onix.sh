@@ -701,6 +701,11 @@ update_network() {
     esac
 }
 
+install_adapter() {
+    start_container $adapter_docker_compose_file "onix-adapter"
+    sleep 10
+    echo "ONIX Adapter installation successful"
+}
 # MAIN SCRIPT STARTS HERE
 
 echo "Welcome to Beckn-ONIX!"
@@ -723,11 +728,12 @@ if [[ $? -ne 0 ]]; then
 fi
 
 if [[ $choice -eq 3 ]]; then
-    echo "Installing all components on the local machine"
+    echo "Installing all components on the local machine"    
     install_registry
     install_gateway
     install_bap_protocol_server
     install_bpp_protocol_server_with_sandbox
+    install_adapter
 elif [[ $choice -eq 4 ]]; then
     echo "Determining the platforms available based on the initial choice"
     mergingNetworks

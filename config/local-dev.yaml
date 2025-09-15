@@ -1,0 +1,149 @@
+appName: "onix-local"
+log:
+  level: debug
+  destinations:
+    - type: stdout
+  contextKeys:
+    - transaction_id
+    - message_id
+    - subscriber_id
+    - module_id
+http:
+  port: 8081
+  timeout:
+    read: 30
+    write: 30
+    idle: 30
+pluginManager:
+  root: ./plugins
+modules:
+  - name: bapTxnReceiver
+    path: /bap/receiver/
+    handler:
+      type: std
+      role: bap
+      registryUrl: http://localhost:8080/reg
+      plugins:
+        keyManager:
+          id: keymanager
+          config:
+            projectID: beckn-onix-local
+            vaultAddr: http://localhost:8200
+            kvVersion: v2
+            mountPath: beckn
+        cache:
+          id: cache
+          config:
+            addr: localhost:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: ./schemas
+        signValidator:
+          id: signvalidator
+        router:
+          id: router
+          config:
+            routingConfig: ./config/local-routing.yaml
+        middleware:
+          - id: reqpreprocessor
+            config:
+              uuidKeys: transaction_id,message_id
+              role: bap
+      steps:
+        - addRoute
+        - validateSchema
+  
+  - name: bapTxnCaller
+    path: /bap/caller/
+    handler:
+      type: std
+      role: bap
+      registryUrl: http://localhost:8080/reg
+      plugins:
+        keyManager:
+          id: keymanager
+          config:
+            projectID: beckn-onix-local
+            vaultAddr: http://localhost:8200
+            kvVersion: v2
+            mountPath: beckn
+        cache:
+          id: cache
+          config:
+            addr: localhost:6379
+        router:
+          id: router
+          config:
+            routingConfig: ./config/local-routing.yaml
+        signer:
+          id: signer
+        middleware:
+          - id: reqpreprocessor
+            config:
+              uuidKeys: transaction_id,message_id
+              role: bap
+      steps:
+        - addRoute
+        - sign
+  
+  - name: bppTxnReceiver
+    path: /bpp/receiver/
+    handler:
+      type: std
+      role: bpp
+      registryUrl: http://localhost:8080/reg
+      plugins:
+        keyManager:
+          id: keymanager
+          config:
+            projectID: beckn-onix-local
+            vaultAddr: http://localhost:8200
+            kvVersion: v2
+            mountPath: beckn
+        cache:
+          id: cache
+          config:
+            addr: localhost:6379
+        schemaValidator:
+          id: schemavalidator
+          config:
+            schemaDir: ./schemas
+        signValidator:
+          id: signvalidator
+        router:
+          id: router
+          config:
+            routingConfig: ./config/local-routing.yaml
+      steps:
+        - validateSign
+        - addRoute
+        - validateSchema
+  
+  - name: bppTxnCaller
+    path: /bpp/caller/
+    handler:
+      type: std
+      role: bpp
+      registryUrl: http://localhost:8080/reg
+      plugins:
+        keyManager:
+          id: keymanager
+          config:
+            projectID: beckn-onix-local
+            vaultAddr: http://localhost:8200
+            kvVersion: v2
+            mountPath: beckn
+        cache:
+          id: cache
+          config:
+            addr: localhost:6379
+        router:
+          id: router
+          config:
+            routingConfig: ./config/local-routing.yaml
+        signer:
+          id: signer
+      steps:
+        - addRoute
+        - sign
