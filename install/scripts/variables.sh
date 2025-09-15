@@ -52,7 +52,7 @@ bap_network_port=5002
 
 bap_subscriber_id="bap-network"
 bap_subscriber_key_id="bap-network-key"
-bap_subscriber_url="http://bap-network:5002"
+bap_subscriber_url="http://onix-adapter:8081"
 bap_client_url="http://bap-client:5002"
 
 #BPP varibales. 
@@ -65,7 +65,7 @@ bpp_network_port=6002
 
 bpp_subscriber_id="bpp-network"
 bpp_subscriber_key_id="bpp-network-key"
-bpp_subscriber_url="http://bpp-network:6002"
+bpp_subscriber_url="http://onix-adapter:8081"
 webhook_url="http://sandbox-api:3000"
 
 bpp_docker_compose_file=docker-compose-bpp.yml
@@ -74,3 +74,4 @@ bap_docker_compose_file=docker-compose-bap.yml
 registry_docker_compose_file=docker-compose-registry.yml
 gateway_docker_compose_file=docker-compose-gateway.yml
 gcl_docker_compose_file=docker-compose-gcl.yml
+adapter_docker_compose_file=docker-compose-adapter2.yml

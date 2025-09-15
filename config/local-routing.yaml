@@ -1,0 +1,34 @@
+routingRules:
+  - domain: "nic2004:60221"  # Mobility domain
+    version: "0.9.4"
+    targetType: "url"
+    target:
+      url: "http://localhost:9001/beckn"
+    endpoints:
+      - search
+      - select
+      - init
+      - confirm
+      - status
+      - track
+      - cancel
+      - update
+      - rating
+      - support
+  
+  - domain: "nic2004:52110"  # Retail domain
+    version: "1.0.0"
+    targetType: "url"
+    target:
+      url: "http://test.bap.com/beckn"
+    endpoints:
+      - search
+      - select
+      - init
+      - confirm
+      - status
+      - track
+      - cancel
+      - update
+      - rating
+      - support

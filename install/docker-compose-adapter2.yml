@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  onix-adapter:
+    image: onix-adapter
+    container_name: onix-adapter
+    platform: linux/amd64
+    networks:
+      - beckn_network
+    ports:
+      - "8081:8081"
+    environment:
+      CONFIG_FILE: "/app/config/local-simple.yaml"
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: root
+      REDIS_ADDR: redis:6379
+      RABBITMQ_ADDR: rabbitmq:5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASS: admin123
+    volumes:
+      - ../config:/app/config
+      - ../schemas:/app/schemas
+    command: ["./server", "--config=/app/config/local-simple.yaml"]
+    #command: ["sh", "-c", "ls -la plugins schemas config"]
+
+networks:
+  beckn_network:
+    name: beckn_network
+    driver: bridge

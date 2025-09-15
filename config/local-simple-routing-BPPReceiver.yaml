@@ -1,0 +1,24 @@
+routingRules:
+  - domain: "retail:1.1.0"  # Retail domain
+    version: "1.1.0"
+    targetType: "url"
+    target:
+      url: "http://sandbox-api:3000/retail/1.1.0"
+    endpoints:
+      - select
+      - init
+      - confirm
+      - status
+      - track
+      - cancel
+      - update
+      - rating
+      - support
+
+  - domain: "retail:1.1.0"  # Retail domain
+    version: "1.1.0"
+    targetType: "url"
+    target:
+      url: "http://gateway:4000/"
+    endpoints:
+      - search
