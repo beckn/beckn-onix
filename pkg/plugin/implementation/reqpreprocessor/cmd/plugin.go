@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/beckn/beckn-onix/pkg/plugin/implementation/reqpreprocessor"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/reqpreprocessor"
 )
 
 type provider struct{}

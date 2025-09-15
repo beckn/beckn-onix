@@ -8,12 +8,12 @@ import (
 	"net/http"
 	"net/http/httputil"
 
-	"github.com/beckn/beckn-onix/core/module/client"
-	"github.com/beckn/beckn-onix/pkg/log"
-	"github.com/beckn/beckn-onix/pkg/model"
-	"github.com/beckn/beckn-onix/pkg/plugin"
-	"github.com/beckn/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn/beckn-onix/pkg/response"
+	"github.com/beckn-one/beckn-onix/core/module/client"
+	"github.com/beckn-one/beckn-onix/pkg/log"
+	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/response"
 )
 
 // stdHandler orchestrates the execution of defined processing steps.

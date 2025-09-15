@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/url"
 
-	"github.com/beckn/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
 // RouterProvider initializes the a new Router instance with the given config.

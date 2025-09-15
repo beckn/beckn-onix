@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/beckn/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn/beckn-onix/pkg/plugin/implementation/schemavalidator"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/schemavalidator"
 )
 
 // schemaValidatorProvider provides instances of schemaValidator.

@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 
-	"github.com/beckn/beckn-onix/pkg/plugin/definition"
-	decrypter "github.com/beckn/beckn-onix/pkg/plugin/implementation/decrypter"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	decrypter "github.com/beckn-one/beckn-onix/pkg/plugin/implementation/decrypter"
 )
 
 // decrypterProvider implements the definition.decrypterProvider interface.

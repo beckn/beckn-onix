@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beckn/beckn-onix/pkg/plugin/implementation/cache"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/cache"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

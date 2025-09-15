@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/beckn/beckn-onix/pkg/log"
-	"github.com/beckn/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/log"
+	"github.com/beckn-one/beckn-onix/pkg/model"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )

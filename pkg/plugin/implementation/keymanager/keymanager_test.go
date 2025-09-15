@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beckn/beckn-onix/pkg/model"
-	"github.com/beckn/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/google/uuid"
 	"github.com/hashicorp/vault/api"
 	vault "github.com/hashicorp/vault/api"

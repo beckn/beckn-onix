@@ -6,7 +6,7 @@ import (
 	"plugin"
 	"time"
 
-	"github.com/beckn/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
 func main() {

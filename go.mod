@@ -1,4 +1,4 @@
-module github.com/beckn/beckn-onix
+module github.com/beckn-one/beckn-onix
 
 go 1.24.0
 
@@ -25,9 +25,9 @@ require github.com/zenazn/pkcs7pad v0.0.0-20170308005700-253a5b1f0e03
 require golang.org/x/text v0.23.0 // indirect
 
 require (
+	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
-	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.0.1 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
@@ -50,9 +50,9 @@ require (
 require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-retryablehttp v0.7.7
-	github.com/redis/go-redis/v9 v9.8.0
 	github.com/hashicorp/vault/api v1.16.0
 	github.com/rabbitmq/amqp091-go v1.10.0
+	github.com/redis/go-redis/v9 v9.8.0
 	github.com/rs/zerolog v1.34.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v2 v2.4.0
