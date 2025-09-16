@@ -13,6 +13,7 @@ plugins=(
     "keymanager"
     "simplekeymanager"
     "publisher"
+    "registry"
     "reqpreprocessor"
     "router"
     "schemavalidator"
