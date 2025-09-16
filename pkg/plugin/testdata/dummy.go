@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 
-	"github.com/beckn/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn/beckn-onix/pkg/plugin/implementation/encrypter"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/encrypter"
 )
 
 // encrypterProvider implements the definition.encrypterProvider interface.

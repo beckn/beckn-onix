@@ -13,10 +13,10 @@ import (
 
 	"gopkg.in/yaml.v2"
 
-	"github.com/beckn/beckn-onix/core/module"
-	"github.com/beckn/beckn-onix/core/module/handler"
-	"github.com/beckn/beckn-onix/pkg/log"
-	"github.com/beckn/beckn-onix/pkg/plugin"
+	"github.com/beckn-one/beckn-onix/core/module"
+	"github.com/beckn-one/beckn-onix/core/module/handler"
+	"github.com/beckn-one/beckn-onix/pkg/log"
+	"github.com/beckn-one/beckn-onix/pkg/plugin"
 )
 
 // Config struct holds all configurations.

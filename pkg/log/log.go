@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/beckn/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/rs/zerolog"
 	"gopkg.in/natefinch/lumberjack.v2"
 )

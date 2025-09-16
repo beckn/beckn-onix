@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/beckn/beckn-onix/pkg/log"
+	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/redis/go-redis/v9"
 )
 

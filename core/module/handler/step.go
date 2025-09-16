@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/beckn/beckn-onix/pkg/log"
-	"github.com/beckn/beckn-onix/pkg/model"
-	"github.com/beckn/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/log"
+	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
 // signStep represents the signing step in the processing pipeline.

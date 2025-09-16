@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/beckn/beckn-onix/pkg/plugin/implementation/publisher"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/publisher"
 	"github.com/rabbitmq/amqp091-go"
 )
 

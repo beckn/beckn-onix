@@ -4,9 +4,9 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/beckn/beckn-onix/pkg/model"
-	"github.com/beckn/beckn-onix/pkg/plugin"
-	"github.com/beckn/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
 // PluginManager defines an interface for managing plugins dynamically.

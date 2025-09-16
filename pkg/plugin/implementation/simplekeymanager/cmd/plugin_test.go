@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beckn/beckn-onix/pkg/model"
-	"github.com/beckn/beckn-onix/pkg/plugin/implementation/simplekeymanager"
+	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/simplekeymanager"
 )
 
 // Mock implementations for testing

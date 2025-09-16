@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beckn/beckn-onix/core/module"
-	"github.com/beckn/beckn-onix/core/module/handler"
-	"github.com/beckn/beckn-onix/pkg/plugin"
-	"github.com/beckn/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/core/module"
+	"github.com/beckn-one/beckn-onix/core/module/handler"
+	"github.com/beckn-one/beckn-onix/pkg/plugin"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/stretchr/testify/mock"
 )
 

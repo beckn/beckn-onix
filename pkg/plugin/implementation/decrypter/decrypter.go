@@ -10,7 +10,7 @@ import (
 
 	"github.com/zenazn/pkcs7pad"
 
-	"github.com/beckn/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
 // decrypter implements the Decrypter interface and handles the decryption process.
