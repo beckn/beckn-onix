@@ -22,8 +22,14 @@ modules:
     handler:
       type: std
       role: bap
-      registryUrl: http://registry:3030/subscribers
       plugins:
+       registry:
+          id: registry
+          config:
+            url: http://registry:3030/subscribers
+            retry_max: "3"
+            retry_wait_min: "100ms"
+            retry_wait_max: "500ms"
         keyManager:
           id: simplekeymanager
           config:
@@ -61,8 +67,14 @@ modules:
     handler:
       type: std
       role: bap
-      registryUrl: http://registry:3030/subscribers
       plugins:
+       registry:
+          id: registry
+          config:
+            url: http://registry:3030/subscribers
+            retry_max: "3"
+            retry_wait_min: "100ms"
+            retry_wait_max: "500ms"
         keyManager:
           id: simplekeymanager
           config:
@@ -96,8 +108,14 @@ modules:
     handler:
       type: std
       role: bpp
-      registryUrl: http://registry:3030/subscribers
       plugins:
+       registry:
+          id: registry
+          config:
+            url: http://registry:3030/subscribers
+            retry_max: "3"
+            retry_wait_min: "100ms"
+            retry_wait_max: "500ms"
         keyManager:
           id: simplekeymanager
           config:
@@ -129,8 +147,14 @@ modules:
     handler:
       type: std
       role: bpp
-      registryUrl: http://registry:3030/subscribers
       plugins:
+       registry:
+          id: registry
+          config:
+            url: http://registry:3030/subscribers
+            retry_max: "3"
+            retry_wait_min: "100ms"
+            retry_wait_max: "500ms"
         keyManager:
           id: simplekeymanager
           config:
