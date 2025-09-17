@@ -16,10 +16,10 @@ import (
 
 // Config holds configuration parameters for the registry client.
 type Config struct {
-	URL          string
-	RetryMax     int
-	RetryWaitMin time.Duration
-	RetryWaitMax time.Duration
+	URL          string        `yaml:"url" json:"url"`
+	RetryMax     int           `yaml:"retry_max" json:"retry_max"`
+	RetryWaitMin time.Duration `yaml:"retry_wait_min" json:"retry_wait_min"`
+	RetryWaitMax time.Duration `yaml:"retry_wait_max" json:"retry_wait_max"`
 }
 
 // RegistryClient encapsulates the logic for calling the registry endpoints.

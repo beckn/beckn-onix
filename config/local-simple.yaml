@@ -23,7 +23,7 @@ modules:
       type: std
       role: bap
       plugins:
-       registry:
+        registry:
           id: registry
           config:
             url: http://registry:3030/subscribers
@@ -42,7 +42,7 @@ modules:
         cache:
           id: cache
           config:
-            addr: localhost:6379
+            addr: redis:6379
         schemaValidator:
           id: schemavalidator
           config:
@@ -68,7 +68,7 @@ modules:
       type: std
       role: bap
       plugins:
-       registry:
+        registry:
           id: registry
           config:
             url: http://registry:3030/subscribers
@@ -87,7 +87,7 @@ modules:
         cache:
           id: cache
           config:
-            addr: localhost:6379
+            addr: redis:6379
         router:
           id: router
           config:
@@ -109,7 +109,7 @@ modules:
       type: std
       role: bpp
       plugins:
-       registry:
+        registry:
           id: registry
           config:
             url: http://registry:3030/subscribers
@@ -128,7 +128,7 @@ modules:
         cache:
           id: cache
           config:
-            addr: localhost:6379
+            addr: redis:6379
         schemaValidator:
           id: schemavalidator
           config:
@@ -148,7 +148,7 @@ modules:
       type: std
       role: bpp
       plugins:
-       registry:
+        registry:
           id: registry
           config:
             url: http://registry:3030/subscribers
@@ -167,7 +167,7 @@ modules:
         cache:
           id: cache
           config:
-            addr: localhost:6379
+            addr: redis:6379
         router:
           id: router
           config:

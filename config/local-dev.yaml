@@ -22,8 +22,14 @@ modules:
     handler:
       type: std
       role: bap
-      registryUrl: http://localhost:8080/reg
       plugins:
+        registry:
+          id: registry
+          config:
+            url: http://localhost:8080/reg
+            retry_max: "3"
+            retry_wait_min: "100ms"
+            retry_wait_max: "500ms"
         keyManager:
           id: keymanager
           config:
@@ -59,8 +65,14 @@ modules:
     handler:
       type: std
       role: bap
-      registryUrl: http://localhost:8080/reg
       plugins:
+        registry:
+          id: registry
+          config:
+            url: http://localhost:8080/reg
+            retry_max: "3"
+            retry_wait_min: "100ms"
+            retry_wait_max: "500ms"
         keyManager:
           id: keymanager
           config:
@@ -92,8 +104,14 @@ modules:
     handler:
       type: std
       role: bpp
-      registryUrl: http://localhost:8080/reg
       plugins:
+        registry:
+          id: registry
+          config:
+            url: http://localhost:8080/reg
+            retry_max: "3"
+            retry_wait_min: "100ms"
+            retry_wait_max: "500ms"
         keyManager:
           id: keymanager
           config:
@@ -125,8 +143,14 @@ modules:
     handler:
       type: std
       role: bpp
-      registryUrl: http://localhost:8080/reg
       plugins:
+        registry:
+          id: registry
+          config:
+            url: http://localhost:8080/reg
+            retry_max: "3"
+            retry_wait_min: "100ms"
+            retry_wait_max: "500ms"
         keyManager:
           id: keymanager
           config:
