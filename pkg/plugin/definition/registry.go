@@ -7,8 +7,8 @@ import (
 )
 
 type RegistryLookup interface {
+	// looks up Registry entry to obtain public keys to validate signature of the incoming message
 	Lookup(ctx context.Context, req *model.Subscription) ([]model.Subscription, error)
-	Subscribe(ctx context.Context, subscription *model.Subscription) error
 }
 
 // RegistryLookupProvider initializes a new registry lookup instance.

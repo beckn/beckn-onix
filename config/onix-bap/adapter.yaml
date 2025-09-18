@@ -24,13 +24,13 @@ modules:
       type: std
       role: bap
       plugins:
-       registry:
+        registry:
           id: registry
           config:
             url: http://localhost:8080/reg
-            retry_max: "3"
-            retry_wait_min: "100ms"
-            retry_wait_max: "500ms"
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
         keyManager:
           id: secretskeymanager
           config:
@@ -69,13 +69,13 @@ modules:
       type: std
       role: bap
       plugins:
-       registry:
+        registry:
           id: registry
           config:
             url: http://localhost:8080/reg
-            retry_max: "3"
-            retry_wait_min: "100ms"
-            retry_wait_max: "500ms"
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
         keyManager:
           id: secretskeymanager
           config:

@@ -145,7 +145,6 @@ func TestRegistryProvider_IntegrationTest(t *testing.T) {
 	require.NotNil(t, closer)
 	defer closer()
 
-	// Test Subscribe
 	subscription := &model.Subscription{
 		Subscriber: model.Subscriber{
 			SubscriberID: "test-subscriber",
@@ -160,9 +159,6 @@ func TestRegistryProvider_IntegrationTest(t *testing.T) {
 		ValidUntil:       time.Now().Add(24 * time.Hour),
 		Status:           "SUBSCRIBED",
 	}
-
-	err = registry.Subscribe(ctx, subscription)
-	require.NoError(t, err)
 
 	// Test Lookup
 	results, err := registry.Lookup(ctx, subscription)
@@ -249,18 +245,6 @@ func TestRegistryProvider_ConfigurationParsing(t *testing.T) {
 			require.NotNil(t, closer)
 			defer closer()
 
-			// The registry should work regardless of invalid config values
-			subscription := &model.Subscription{
-				KeyID:            "test-key",
-				SigningPublicKey: "test-signing-key",
-				EncrPublicKey:    "test-encryption-key",
-				ValidFrom:        time.Now(),
-				ValidUntil:       time.Now().Add(24 * time.Hour),
-				Status:           "SUBSCRIBED",
-			}
-
-			err = registry.Subscribe(ctx, subscription)
-			assert.NoError(t, err)
 		})
 	}
 }

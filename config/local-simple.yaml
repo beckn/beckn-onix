@@ -27,9 +27,9 @@ modules:
           id: registry
           config:
             url: http://registry:3030/subscribers
-            retry_max: "3"
-            retry_wait_min: "100ms"
-            retry_wait_max: "500ms"
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
         keyManager:
           id: simplekeymanager
           config:
@@ -72,9 +72,9 @@ modules:
           id: registry
           config:
             url: http://registry:3030/subscribers
-            retry_max: "3"
-            retry_wait_min: "100ms"
-            retry_wait_max: "500ms"
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
         keyManager:
           id: simplekeymanager
           config:
@@ -113,9 +113,9 @@ modules:
           id: registry
           config:
             url: http://registry:3030/subscribers
-            retry_max: "3"
-            retry_wait_min: "100ms"
-            retry_wait_max: "500ms"
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
         keyManager:
           id: simplekeymanager
           config:
@@ -152,9 +152,9 @@ modules:
           id: registry
           config:
             url: http://registry:3030/subscribers
-            retry_max: "3"
-            retry_wait_min: "100ms"
-            retry_wait_max: "500ms"
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
         keyManager:
           id: simplekeymanager
           config:

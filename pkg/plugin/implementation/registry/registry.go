@@ -47,22 +47,22 @@ func New(ctx context.Context, cfg *Config) (*RegistryClient, func() error, error
 		return nil, nil, err
 	}
 
-	retryClient := retryablehttp.NewClient()
+	rc := retryablehttp.NewClient()
 
 	// Configure retry settings if provided
 	if cfg.RetryMax > 0 {
-		retryClient.RetryMax = cfg.RetryMax
+		rc.RetryMax = cfg.RetryMax
 	}
 	if cfg.RetryWaitMin > 0 {
-		retryClient.RetryWaitMin = cfg.RetryWaitMin
+		rc.RetryWaitMin = cfg.RetryWaitMin
 	}
 	if cfg.RetryWaitMax > 0 {
-		retryClient.RetryWaitMax = cfg.RetryWaitMax
+		rc.RetryWaitMax = cfg.RetryWaitMax
 	}
 
 	client := &RegistryClient{
 		config: cfg,
-		client: retryClient,
+		client: rc,
 	}
 
 	// Cleanup function
@@ -74,7 +74,7 @@ func New(ctx context.Context, cfg *Config) (*RegistryClient, func() error, error
 		return nil
 	}
 
-	log.Infof(ctx, "Registry client connection established successfully")
+	log.Infof(ctx, "Registry client is created successfully")
 	return client, closer, nil
 }
 
@@ -107,7 +107,7 @@ func (c *RegistryClient) Subscribe(ctx context.Context, subscription *model.Subs
 		return fmt.Errorf("subscribe request failed with status: %s", resp.Status)
 	}
 
-	log.Debugf(ctx, "Subscribe request successful")
+	log.Debugf(ctx, "Subscribe request is initiated successfully")
 	return nil
 }
 

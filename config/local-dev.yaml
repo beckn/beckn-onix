@@ -27,9 +27,9 @@ modules:
           id: registry
           config:
             url: http://localhost:8080/reg
-            retry_max: "3"
-            retry_wait_min: "100ms"
-            retry_wait_max: "500ms"
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
         keyManager:
           id: keymanager
           config:
@@ -70,9 +70,9 @@ modules:
           id: registry
           config:
             url: http://localhost:8080/reg
-            retry_max: "3"
-            retry_wait_min: "100ms"
-            retry_wait_max: "500ms"
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
         keyManager:
           id: keymanager
           config:
@@ -109,9 +109,9 @@ modules:
           id: registry
           config:
             url: http://localhost:8080/reg
-            retry_max: "3"
-            retry_wait_min: "100ms"
-            retry_wait_max: "500ms"
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
         keyManager:
           id: keymanager
           config:
@@ -148,9 +148,9 @@ modules:
           id: registry
           config:
             url: http://localhost:8080/reg
-            retry_max: "3"
-            retry_wait_min: "100ms"
-            retry_wait_max: "500ms"
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
         keyManager:
           id: keymanager
           config:
