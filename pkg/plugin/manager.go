@@ -382,6 +382,27 @@ func (m *Manager) Registry(ctx context.Context, cfg *Config) (definition.Registr
 	return registry, nil
 }
 
+// DeDiRegistry returns a DeDiRegistry instance based on the provided configuration.
+// It registers a cleanup function for resource management.
+func (m *Manager) DeDiRegistry(ctx context.Context, cfg *Config) (definition.DeDiRegistry, error) {
+	drp, err := provider[definition.DeDiRegistryProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	dediRegistry, closer, err := drp.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.closers = append(m.closers, func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return dediRegistry, nil
+}
+
 // Validator implements handler.PluginManager.
 func (m *Manager) Validator(ctx context.Context, cfg *Config) (definition.SchemaValidator, error) {
 	panic("unimplemented")

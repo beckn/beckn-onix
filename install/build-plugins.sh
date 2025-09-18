@@ -14,6 +14,7 @@ plugins=(
     "simplekeymanager"
     "publisher"
     "registry"
+    "dediregistry"
     "reqpreprocessor"
     "router"
     "schemavalidator"
