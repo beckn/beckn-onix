@@ -1,10 +1,10 @@
 # DeDi Registry Plugin
 
-A Beckn-ONIX plugin for integrating with DeDi (Decentralized Digital Identity) registry services to lookup participant information and public keys.
+A Beckn-ONIX plugin for integrating with DeDi (Decentralized directory) registry services to lookup participant information and public keys.
 
 ## Overview
 
-The DeDi Registry plugin enables Beckn-ONIX to query DeDi registries for participant records, supporting secure communication and identity verification in Beckn networks.
+The DeDi Registry plugin enables Beckn-ONIX to lookup DeDi registries for participant records, supporting secure communication and identity verification in Beckn networks.
 
 ## Features
 
@@ -106,15 +106,6 @@ The plugin expects DeDi registry responses in this format:
   }
 }
 ```
-
-## Error Handling
-
-The plugin handles various error scenarios:
-
-- **Network Errors**: Automatic retry with exponential backoff
-- **Authentication Errors**: Clear error messages for invalid API keys
-- **Not Found**: Returns appropriate errors when records don't exist
-- **Timeout Errors**: Configurable timeout handling
 
 ## Testing
 
