@@ -185,3 +185,44 @@ type Message struct {
 type Response struct {
 	Message Message `json:"message"`
 }
+
+// DeDiSchema represents the schema structure in DeDi record.
+type DeDiSchema struct {
+	PublicKeyID   string `json:"public_key_id"`
+	PublicKey     string `json:"publicKey"`
+	KeyType       string `json:"keyType"`
+	KeyFormat     string `json:"keyFormat"`
+	EntityName    string `json:"entity_name"`
+	EntityURL     string `json:"entity_url"`
+	EntityAddress string `json:"entity_address"`
+	PreviousKeys  []interface{} `json:"previousKeys"`
+}
+
+// DeDiRecord represents the data structure in DeDi response.
+type DeDiRecord struct {
+	Namespace     string      `json:"namespace"`
+	NamespaceID   string      `json:"namespace_id"`
+	RegistryID    string      `json:"registry_id"`
+	RegistryName  string      `json:"registry_name"`
+	RecordID      *string     `json:"record_id"`
+	RecordName    string      `json:"record_name"`
+	Description   string      `json:"description"`
+	Digest        string      `json:"digest"`
+	Schema        DeDiSchema  `json:"schema"`
+	VersionCount  int         `json:"version_count"`
+	Version       string      `json:"version"`
+	Details       interface{} `json:"details"`
+	Meta          interface{} `json:"meta"`
+	Genesis       string      `json:"genesis"`
+	CreatedAt     string      `json:"created_at"`
+	UpdatedAt     string      `json:"updated_at"`
+	CreatedBy     string      `json:"created_by"`
+	State         string      `json:"state"`
+	TTL           int         `json:"ttl"`
+}
+
+// DeDiResponse represents the complete DeDi API response.
+type DeDiResponse struct {
+	Message string      `json:"message"`
+	Data    DeDiRecord  `json:"data"`
+}
