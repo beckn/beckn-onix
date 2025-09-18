@@ -44,6 +44,39 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "empty namespaceID",
+			config: &Config{
+				BaseURL:      "https://test.com",
+				ApiKey:       "test-key",
+				NamespaceID:  "",
+				RegistryName: "test-registry",
+				RecordName:   "test-record",
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty registryName",
+			config: &Config{
+				BaseURL:      "https://test.com",
+				ApiKey:       "test-key",
+				NamespaceID:  "test-namespace",
+				RegistryName: "",
+				RecordName:   "test-record",
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty recordName",
+			config: &Config{
+				BaseURL:      "https://test.com",
+				ApiKey:       "test-key",
+				NamespaceID:  "test-namespace",
+				RegistryName: "test-registry",
+				RecordName:   "",
+			},
+			wantErr: true,
+		},
+		{
 			name: "valid config",
 			config: &Config{
 				BaseURL:      "https://test.com",
