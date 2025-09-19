@@ -1,18 +1,19 @@
 # DeDi Registry Plugin
 
-A Beckn-ONIX plugin for integrating with DeDi (Decentralized directory) registry services to lookup participant information and public keys.
+A Beckn-ONIX registry type plugin for integrating with DeDi registry services. Implements the `RegistryLookup` interface to provide participant information and public keys.
 
 ## Overview
 
-The DeDi Registry plugin enables Beckn-ONIX to lookup DeDi registries for participant records, supporting secure communication and identity verification in Beckn networks.
+The DeDi Registry plugin enables Beckn-ONIX to lookup DeDi registries for participant records, converting DeDi API responses to standard Beckn Subscription format for seamless integration with existing registry infrastructure.
 
 ## Features
 
-- **Registry Lookup**: Query DeDi registries for participant records
-- **Public Key Retrieval**: Extract public keys for signature validation
-- **Configurable Endpoints**: Support for different DeDi registry implementations
-- **HTTP Retry Logic**: Built-in retry mechanism for reliable API calls
+- **RegistryLookup Interface**: Implements standard Beckn registry interface
+- **DeDi API Integration**: GET requests to DeDi registry endpoints with Bearer authentication
+- **Data Conversion**: Converts DeDi responses to Beckn Subscription format
+- **HTTP Retry Logic**: Built-in retry mechanism using retryablehttp client
 - **Timeout Control**: Configurable request timeouts
+
 
 ## Configuration
 
@@ -59,35 +60,35 @@ modules:
             recordName: "participant-id"
 ```
 
-### In Processing Steps
-
-Access the plugin in custom processing steps:
+### In Code
 
 ```go
-// Get DeDi registry from handler
-dediRegistry := handler.GetDeDiRegistry()
+// Load DeDi registry plugin
+dediRegistry, err := manager.Registry(ctx, &plugin.Config{
+    ID: "dediregistry",
+    Config: map[string]string{
+        "baseURL": "https://dedi-registry.example.com",
+        "apiKey": "your-api-key",
+        "namespaceID": "beckn-network",
+        "registryName": "participants",
+        "recordName": "participant-id",
+    },
+})
 
-// Lookup participant record
-record, err := dediRegistry.LookupRecord(ctx, "participant.example.com")
+// Or use specific method
+dediRegistry, err := manager.DeDiRegistry(ctx, config)
+
+// Lookup participant (returns Beckn Subscription format)
+subscription := &model.Subscription{}
+results, err := dediRegistry.Lookup(ctx, subscription)
 if err != nil {
     return err
 }
 
-// Extract public key
-publicKey := record.Schema.PublicKey
-```
-
-### With KeyManager Integration
-
-```go
-// Use with KeyManager for public key retrieval
-keyManager := handler.GetKeyManager()
-dediRegistry := handler.GetDeDiRegistry()
-
-// Lookup and store public key
-record, err := dediRegistry.LookupRecord(ctx, participantID)
-if err == nil && record.Schema.PublicKey != "" {
-    keyManager.StorePublicKey(participantID, record.Schema.PublicKey)
+// Extract public key from first result
+if len(results) > 0 {
+    publicKey := results[0].SigningPublicKey
+    subscriberID := results[0].SubscriberID
 }
 ```
 
@@ -97,13 +98,35 @@ The plugin expects DeDi registry responses in this format:
 
 ```json
 {
-  "schema": {
-    "participant_id": "participant.example.com",
-    "public_key": "base64-encoded-public-key",
-    "status": "active",
+  "message": "success",
+  "data": {
+    "namespace": "beckn",
+    "schema": {
+      "entity_name": "participant.example.com",
+      "entity_url": "https://participant.example.com",
+      "publicKey": "base64-encoded-public-key",
+      "keyType": "ed25519",
+      "keyFormat": "base64"
+    },
+    "state": "active",
     "created_at": "2023-01-01T00:00:00Z",
     "updated_at": "2023-01-01T00:00:00Z"
   }
+}
+```
+
+### Converted to Beckn Format
+
+The plugin converts this to standard Beckn Subscription format:
+
+```json
+{
+  "subscriber_id": "participant.example.com",
+  "url": "https://participant.example.com",
+  "signing_public_key": "base64-encoded-public-key",
+  "status": "active",
+  "created": "2023-01-01T00:00:00Z",
+  "updated": "2023-01-01T00:00:00Z"
 }
 ```
 
@@ -122,7 +145,9 @@ go test ./pkg/plugin/implementation/dediregistry -v
 
 ## Integration Notes
 
-- Plugin follows Beckn-ONIX plugin architecture patterns
-- Compatible with existing KeyManager and other plugins
-- Can be used in any module (BAP/BPP receiver/caller)
-- Supports hot-reloading through configuration changes
+- **Registry Type Plugin**: Implements `RegistryLookup` interface, not a separate plugin category
+- **Interchangeable**: Can be used alongside or instead of standard registry plugin
+- **Manager Integration**: Available via `manager.Registry()` or `manager.DeDiRegistry()` methods
+- **Data Conversion**: Automatically converts DeDi format to Beckn Subscription format
+- **Interface Compliance**: Implements `RegistryLookup` interface with `Lookup()` method only
+- **Build Integration**: Included in `build-plugins.sh` script, compiles to `dediregistry.so`
