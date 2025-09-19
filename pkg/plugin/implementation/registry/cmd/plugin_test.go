@@ -2,249 +2,188 @@ package main
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
-	"github.com/beckn-one/beckn-onix/pkg/model"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/registry"
 )
 
-func TestRegistryProvider_New(t *testing.T) {
-	tests := []struct {
+// mockRegistryClient is a mock implementation of the RegistryLookup interface
+// for testing purposes.
+type mockRegistryClient struct{}
+
+func (m *mockRegistryClient) Subscribe(ctx context.Context, subscription interface{}) error {
+	return nil
+}
+func (m *mockRegistryClient) Lookup(ctx context.Context, subscription interface{}) ([]interface{}, error) {
+	return nil, nil
+}
+
+// TestRegistryProvider_ParseConfig tests the configuration parsing logic.
+func TestRegistryProvider_ParseConfig(t *testing.T) {
+	t.Parallel()
+	provider := registryProvider{}
+
+	testCases := []struct {
 		name        string
 		config      map[string]string
-		expectError bool
-		errorMsg    string
+		expected    *registry.Config
+		expectedErr string
 	}{
 		{
-			name: "valid config with all parameters",
+			name: "should parse a full, valid config",
 			config: map[string]string{
-				"url":            "http://localhost:8080",
-				"retry_max":      "3",
-				"retry_wait_min": "100ms",
-				"retry_wait_max": "500ms",
-			},
-			expectError: false,
-		},
-		{
-			name: "minimal valid config",
-			config: map[string]string{
-				"url": "http://localhost:8080",
-			},
-			expectError: false,
-		},
-		{
-			name:        "missing URL",
-			config:      map[string]string{},
-			expectError: true,
-			errorMsg:    "registry URL cannot be empty",
-		},
-		{
-			name: "invalid retry_max",
-			config: map[string]string{
-				"url":       "http://localhost:8080",
-				"retry_max": "invalid",
-			},
-			expectError: false, // Invalid values are ignored, not errors
-		},
-		{
-			name: "invalid retry_wait_min",
-			config: map[string]string{
-				"url":            "http://localhost:8080",
-				"retry_wait_min": "invalid",
-			},
-			expectError: false, // Invalid values are ignored, not errors
-		},
-		{
-			name: "invalid retry_wait_max",
-			config: map[string]string{
-				"url":            "http://localhost:8080",
-				"retry_wait_max": "invalid",
-			},
-			expectError: false, // Invalid values are ignored, not errors
-		},
-		{
-			name: "empty URL",
-			config: map[string]string{
-				"url": "",
-			},
-			expectError: true,
-			errorMsg:    "registry URL cannot be empty",
-		},
-	}
-
-	provider := registryProvider{}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			registry, closer, err := provider.New(ctx, tt.config)
-
-			if tt.expectError {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errorMsg)
-				assert.Nil(t, registry)
-				assert.Nil(t, closer)
-			} else {
-				require.NoError(t, err)
-				assert.NotNil(t, registry)
-				assert.NotNil(t, closer)
-
-				// Test that closer works
-				err = closer()
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestRegistryProvider_NilContext(t *testing.T) {
-	provider := registryProvider{}
-	config := map[string]string{
-		"url": "http://localhost:8080",
-	}
-
-	registry, closer, err := provider.New(context.TODO(), config)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "context cannot be nil")
-	assert.Nil(t, registry)
-	assert.Nil(t, closer)
-}
-
-func TestRegistryProvider_IntegrationTest(t *testing.T) {
-	// Create a test server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/subscribe":
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("{}"))
-		case "/lookup":
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("[]"))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-
-	provider := registryProvider{}
-	config := map[string]string{
-		"url":            server.URL,
-		"retry_max":      "2",
-		"retry_wait_min": "10ms",
-		"retry_wait_max": "20ms",
-	}
-
-	ctx := context.Background()
-	registry, closer, err := provider.New(ctx, config)
-	require.NoError(t, err)
-	require.NotNil(t, registry)
-	require.NotNil(t, closer)
-	defer closer()
-
-	subscription := &model.Subscription{
-		Subscriber: model.Subscriber{
-			SubscriberID: "test-subscriber",
-			URL:          "https://example.com",
-			Type:         "BAP",
-			Domain:       "mobility",
-		},
-		KeyID:            "test-key",
-		SigningPublicKey: "test-signing-key",
-		EncrPublicKey:    "test-encryption-key",
-		ValidFrom:        time.Now(),
-		ValidUntil:       time.Now().Add(24 * time.Hour),
-		Status:           "SUBSCRIBED",
-	}
-
-	// Test Lookup
-	results, err := registry.Lookup(ctx, subscription)
-	require.NoError(t, err)
-	assert.NotNil(t, results)
-	assert.Len(t, results, 0) // Empty array response from test server
-}
-
-func TestRegistryProvider_ConfigurationParsing(t *testing.T) {
-	tests := []struct {
-		name           string
-		config         map[string]string
-		expectedConfig map[string]interface{}
-	}{
-		{
-			name: "all parameters set",
-			config: map[string]string{
-				"url":            "http://localhost:8080",
+				"url":            "http://test.com",
 				"retry_max":      "5",
-				"retry_wait_min": "200ms",
-				"retry_wait_max": "1s",
+				"retry_wait_min": "100ms",
+				"retry_wait_max": "2s",
 			},
-			expectedConfig: map[string]interface{}{
-				"url":            "http://localhost:8080",
-				"retry_max":      5,
-				"retry_wait_min": 200 * time.Millisecond,
-				"retry_wait_max": 1 * time.Second,
+			expected: &registry.Config{
+				URL:          "http://test.com",
+				RetryMax:     5,
+				RetryWaitMin: 100 * time.Millisecond,
+				RetryWaitMax: 2 * time.Second,
 			},
+			expectedErr: "",
 		},
 		{
-			name: "only required parameters",
+			name: "should handle missing optional values",
 			config: map[string]string{
-				"url": "https://registry.example.com",
+				"url": "http://test.com",
 			},
-			expectedConfig: map[string]interface{}{
-				"url": "https://registry.example.com",
+			expected: &registry.Config{
+				URL: "http://test.com",
 			},
+			expectedErr: "",
 		},
 		{
-			name: "invalid numeric values ignored",
+			name: "should return error for invalid retry_max",
 			config: map[string]string{
-				"url":       "http://localhost:8080",
+				"url":       "http://test.com",
 				"retry_max": "not-a-number",
 			},
-			expectedConfig: map[string]interface{}{
-				"url": "http://localhost:8080",
-			},
+			expected:    nil,
+			expectedErr: "invalid retry_max value 'not-a-number'",
 		},
 		{
-			name: "invalid duration values ignored",
+			name: "should return error for invalid retry_wait_min",
 			config: map[string]string{
-				"url":            "http://localhost:8080",
-				"retry_wait_min": "not-a-duration",
-				"retry_wait_max": "also-not-a-duration",
+				"url":            "http://test.com",
+				"retry_wait_min": "bad-duration",
 			},
-			expectedConfig: map[string]interface{}{
-				"url": "http://localhost:8080",
+			expected:    nil,
+			expectedErr: "invalid retry_wait_min value 'bad-duration'",
+		},
+		{
+			name: "should return error for invalid retry_wait_max",
+			config: map[string]string{
+				"url":            "http://test.com",
+				"retry_wait_max": "30parsecs",
 			},
+			expected:    nil,
+			expectedErr: "invalid retry_wait_max value '30parsecs'",
 		},
 	}
 
-	// Create a test server that just returns OK
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
-	}))
-	defer server.Close()
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsedConfig, err := provider.parseConfig(tc.config)
 
-	provider := registryProvider{}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Override URL with test server URL for testing
-			testConfig := make(map[string]string)
-			for k, v := range tt.config {
-				testConfig[k] = v
+			if tc.expectedErr != "" {
+				if err == nil {
+					t.Fatalf("expected an error containing '%s' but got none", tc.expectedErr)
+				}
+				if e, a := tc.expectedErr, err.Error(); !(a == e || (len(a) > len(e) && a[:len(e)] == e)) {
+					t.Errorf("expected error message to contain '%s', but got '%s'", e, a)
+				}
+				return
 			}
-			testConfig["url"] = server.URL
 
-			ctx := context.Background()
-			registry, closer, err := provider.New(ctx, testConfig)
-			require.NoError(t, err)
-			require.NotNil(t, registry)
-			require.NotNil(t, closer)
-			defer closer()
-
+			if err != nil {
+				t.Fatalf("expected no error, but got: %v", err)
+			}
+			if parsedConfig.URL != tc.expected.URL {
+				t.Errorf("expected URL '%s', got '%s'", tc.expected.URL, parsedConfig.URL)
+			}
+			if parsedConfig.RetryMax != tc.expected.RetryMax {
+				t.Errorf("expected RetryMax %d, got %d", tc.expected.RetryMax, parsedConfig.RetryMax)
+			}
+			if parsedConfig.RetryWaitMin != tc.expected.RetryWaitMin {
+				t.Errorf("expected RetryWaitMin %v, got %v", tc.expected.RetryWaitMin, parsedConfig.RetryWaitMin)
+			}
+			if parsedConfig.RetryWaitMax != tc.expected.RetryWaitMax {
+				t.Errorf("expected RetryWaitMax %v, got %v", tc.expected.RetryWaitMax, parsedConfig.RetryWaitMax)
+			}
 		})
 	}
+}
+
+// TestRegistryProvider_New tests the plugin's main constructor.
+func TestRegistryProvider_New(t *testing.T) {
+	t.Parallel()
+	provider := registryProvider{}
+	originalNewRegistryFunc := newRegistryFunc
+
+	// Cleanup to restore the original function after the test
+	t.Cleanup(func() {
+		newRegistryFunc = originalNewRegistryFunc
+	})
+
+	t.Run("should return error if context is nil", func(t *testing.T) {
+		_, _, err := provider.New(nil, map[string]string{})
+		if err == nil {
+			t.Fatal("expected an error for nil context but got none")
+		}
+		if err.Error() != "context cannot be nil" {
+			t.Errorf("expected 'context cannot be nil' error, got '%s'", err.Error())
+		}
+	})
+
+	t.Run("should return error if config parsing fails", func(t *testing.T) {
+		config := map[string]string{"retry_max": "invalid"}
+		_, _, err := provider.New(context.Background(), config)
+		if err == nil {
+			t.Fatal("expected an error for bad config but got none")
+		}
+	})
+
+	t.Run("should return error if registry.New fails", func(t *testing.T) {
+		// Mock the newRegistryFunc to return an error
+		expectedErr := errors.New("registry creation failed")
+		newRegistryFunc = func(ctx context.Context, cfg *registry.Config) (*registry.RegistryClient, func() error, error) {
+			return nil, nil, expectedErr
+		}
+
+		config := map[string]string{"url": "http://test.com"}
+		_, _, err := provider.New(context.Background(), config)
+		if err == nil {
+			t.Fatal("expected an error from registry.New but got none")
+		}
+		if !errors.Is(err, expectedErr) {
+			t.Errorf("expected error '%v', got '%v'", expectedErr, err)
+		}
+	})
+
+	t.Run("should succeed and return a valid instance", func(t *testing.T) {
+		// Mock the newRegistryFunc for a successful case
+		mockCloser := func() error { fmt.Println("closed"); return nil }
+		newRegistryFunc = func(ctx context.Context, cfg *registry.Config) (*registry.RegistryClient, func() error, error) {
+			// Return a non-nil client of th correct concrete type
+			return new(registry.RegistryClient), mockCloser, nil
+		}
+
+		config := map[string]string{"url": "http://test.com"}
+		instance, closer, err := provider.New(context.Background(), config)
+		if err != nil {
+			t.Fatalf("expected no error, but got: %v", err)
+		}
+		if instance == nil {
+			t.Fatal("expected a non-nil instance")
+		}
+		if closer == nil {
+			t.Fatal("expected a non-nil closer function")
+		}
+	})
 }

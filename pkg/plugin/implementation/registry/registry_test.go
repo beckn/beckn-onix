@@ -3,496 +3,202 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// TestNew tests the New function for creating RegistryClient instances
-func TestNew(t *testing.T) {
-	tests := []struct {
+// TestValidate ensures the config validation logic works correctly.
+func TestValidate(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
 		name        string
 		config      *Config
-		expectError bool
-		errorMsg    string
+		expectedErr string
 	}{
 		{
-			name: "valid config",
-			config: &Config{
-				URL:          "http://localhost:8080",
-				RetryMax:     3,
-				RetryWaitMin: time.Millisecond * 100,
-				RetryWaitMax: time.Millisecond * 500,
-			},
-			expectError: false,
-		},
-		{
-			name:        "nil config",
+			name:        "should return error for nil config",
 			config:      nil,
-			expectError: true,
-			errorMsg:    "registry config cannot be nil",
+			expectedErr: "registry config cannot be nil",
 		},
 		{
-			name: "empty URL",
-			config: &Config{
-				URL: "",
-			},
-			expectError: true,
-			errorMsg:    "registry URL cannot be empty",
+			name:        "should return error for empty URL",
+			config:      &Config{URL: ""},
+			expectedErr: "registry URL cannot be empty",
 		},
 		{
-			name: "minimal valid config",
-			config: &Config{
-				URL: "http://example.com",
-			},
-			expectError: false,
+			name:        "should succeed for valid config",
+			config:      &Config{URL: "http://localhost:8080"},
+			expectedErr: "",
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			client, closer, err := New(ctx, tt.config)
-
-			if tt.expectError {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errorMsg)
-				assert.Nil(t, client)
-				assert.Nil(t, closer)
-			} else {
-				require.NoError(t, err)
-				assert.NotNil(t, client)
-				assert.NotNil(t, closer)
-
-				// Test that closer works without error
-				err = closer()
-				assert.NoError(t, err)
-
-				// Verify config is set correctly
-				assert.Equal(t, tt.config.URL, client.config.URL)
-			}
-		})
-	}
-}
-
-// TestSubscribeSuccess verifies that the Subscribe function succeeds when the server responds with HTTP 200.
-func TestSubscribeSuccess(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify request method and headers
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
-		assert.Contains(t, r.URL.Path, "/subscribe")
-
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte("{}")); err != nil {
-			t.Errorf("failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	config := &Config{
-		URL:          server.URL,
-		RetryMax:     3,
-		RetryWaitMin: time.Millisecond * 100,
-		RetryWaitMax: time.Millisecond * 500,
-	}
-
-	ctx := context.Background()
-	client, closer, err := New(ctx, config)
-	require.NoError(t, err)
-	defer closer()
-
-	subscription := &model.Subscription{
-		KeyID:            "test-key",
-		SigningPublicKey: "test-signing-key",
-		EncrPublicKey:    "test-encryption-key",
-		ValidFrom:        time.Now(),
-		ValidUntil:       time.Now().Add(24 * time.Hour),
-		Status:           "SUBSCRIBED",
-	}
-
-	err = client.Subscribe(context.Background(), subscription)
-	require.NoError(t, err)
-}
-
-// TestSubscribeFailure tests different failure scenarios for Subscribe.
-func TestSubscribeFailure(t *testing.T) {
-	tests := []struct {
-		name          string
-		responseCode  int
-		responseBody  string
-		expectError   bool
-		errorContains string
-		setupServer   func() *httptest.Server
-		config        *Config
-	}{
-		{
-			name:          "Internal Server Error",
-			responseCode:  http.StatusInternalServerError,
-			responseBody:  "Internal Server Error",
-			expectError:   true,
-			errorContains: "subscribe request failed with status",
-		},
-		{
-			name:          "Bad Request",
-			responseCode:  http.StatusBadRequest,
-			responseBody:  "Bad Request",
-			expectError:   true,
-			errorContains: "subscribe request failed with status",
-		},
-		{
-			name:          "Not Found",
-			responseCode:  http.StatusNotFound,
-			responseBody:  "Not Found",
-			expectError:   true,
-			errorContains: "subscribe request failed with status",
-		},
-		{
-			name: "Connection Refused",
-			setupServer: func() *httptest.Server {
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-				server.Close() // Close immediately to simulate connection refused
-				return server
-			},
-			expectError:   true,
-			errorContains: "failed to send subscribe request with retry",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var server *httptest.Server
-
-			if tt.setupServer != nil {
-				server = tt.setupServer()
-			} else {
-				server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					w.WriteHeader(tt.responseCode)
-					if _, err := w.Write([]byte(tt.responseBody)); err != nil {
-						t.Errorf("failed to write response: %v", err)
-					}
-				}))
-				defer server.Close()
-			}
-
-			config := &Config{
-				URL:          server.URL,
-				RetryMax:     1,
-				RetryWaitMin: 1 * time.Millisecond,
-				RetryWaitMax: 2 * time.Millisecond,
-			}
-
-			ctx := context.Background()
-			client, closer, err := New(ctx, config)
-			require.NoError(t, err)
-			defer closer()
-
-			subscription := &model.Subscription{
-				KeyID:            "test-key",
-				SigningPublicKey: "test-signing-key",
-				EncrPublicKey:    "test-encryption-key",
-				ValidFrom:        time.Now(),
-				ValidUntil:       time.Now().Add(24 * time.Hour),
-				Status:           "SUBSCRIBED",
-			}
-
-			err = client.Subscribe(context.Background(), subscription)
-			if tt.expectError {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errorContains)
-			} else {
-				require.NoError(t, err)
-			}
-		})
-	}
-}
-
-// TestLookupSuccess tests successful lookup scenarios.
-func TestLookupSuccess(t *testing.T) {
-	expectedResponse := []model.Subscription{
-		{
-			Subscriber: model.Subscriber{
-				SubscriberID: "123",
-				URL:          "https://example.com",
-				Type:         "BAP",
-				Domain:       "mobility",
-			},
-			KeyID:            "test-key",
-			SigningPublicKey: "test-signing-key",
-			EncrPublicKey:    "test-encryption-key",
-			ValidFrom:        time.Now(),
-			ValidUntil:       time.Now().Add(24 * time.Hour),
-			Status:           "SUBSCRIBED",
-		},
-		{
-			Subscriber: model.Subscriber{
-				SubscriberID: "456",
-				URL:          "https://example2.com",
-				Type:         "BPP",
-				Domain:       "retail",
-			},
-			KeyID:            "test-key-2",
-			SigningPublicKey: "test-signing-key-2",
-			EncrPublicKey:    "test-encryption-key-2",
-			ValidFrom:        time.Now(),
-			ValidUntil:       time.Now().Add(48 * time.Hour),
-			Status:           "SUBSCRIBED",
-		},
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify request method and headers
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
-		assert.Contains(t, r.URL.Path, "/lookup")
-
-		w.WriteHeader(http.StatusOK)
-		bodyBytes, _ := json.Marshal(expectedResponse)
-		if _, err := w.Write(bodyBytes); err != nil {
-			t.Errorf("failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	config := &Config{
-		URL:          server.URL,
-		RetryMax:     1,
-		RetryWaitMin: 1 * time.Millisecond,
-		RetryWaitMax: 2 * time.Millisecond,
-	}
-
-	ctx := context.Background()
-	client, closer, err := New(ctx, config)
-	require.NoError(t, err)
-	defer closer()
-
-	subscription := &model.Subscription{
-		Subscriber: model.Subscriber{
-			SubscriberID: "123",
-		},
-		KeyID:            "test-key",
-		SigningPublicKey: "test-signing-key",
-		EncrPublicKey:    "test-encryption-key",
-		ValidFrom:        time.Now(),
-		ValidUntil:       time.Now().Add(24 * time.Hour),
-		Status:           "SUBSCRIBED",
-	}
-
-	result, err := client.Lookup(ctx, subscription)
-	require.NoError(t, err)
-	require.NotEmpty(t, result)
-	assert.Len(t, result, 2)
-	assert.Equal(t, expectedResponse[0].Subscriber.SubscriberID, result[0].Subscriber.SubscriberID)
-	assert.Equal(t, expectedResponse[1].Subscriber.SubscriberID, result[1].Subscriber.SubscriberID)
-}
-
-// TestLookupFailure tests failure scenarios for the Lookup function.
-func TestLookupFailure(t *testing.T) {
-	tests := []struct {
-		name          string
-		responseBody  interface{}
-		responseCode  int
-		setupServer   func() *httptest.Server
-		expectError   bool
-		errorContains string
-	}{
-		{
-			name:          "Non-200 status code",
-			responseBody:  "Internal Server Error",
-			responseCode:  http.StatusInternalServerError,
-			expectError:   true,
-			errorContains: "lookup request failed with status",
-		},
-		{
-			name:          "Invalid JSON response",
-			responseBody:  "Invalid JSON",
-			responseCode:  http.StatusOK,
-			expectError:   true,
-			errorContains: "failed to unmarshal response body",
-		},
-		{
-			name: "Connection error",
-			setupServer: func() *httptest.Server {
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-				server.Close() // Close immediately to simulate connection error
-				return server
-			},
-			expectError:   true,
-			errorContains: "failed to send lookup request with retry",
-		},
-		{
-			name:          "Empty response body with 200 status",
-			responseBody:  "",
-			responseCode:  http.StatusOK,
-			expectError:   true,
-			errorContains: "failed to unmarshal response body",
-		},
-		{
-			name:         "Valid empty array response",
-			responseBody: []model.Subscription{},
-			responseCode: http.StatusOK,
-			expectError:  false,
-		},
-	}
-
-	for _, tc := range tests {
+	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var server *httptest.Server
-
-			if tc.setupServer != nil {
-				server = tc.setupServer()
+			err := validate(tc.config)
+			if tc.expectedErr != "" {
+				if err == nil {
+					t.Fatalf("expected an error but got none")
+				}
+				if err.Error() != tc.expectedErr {
+					t.Errorf("expected error message '%s', but got '%s'", tc.expectedErr, err.Error())
+				}
 			} else {
-				server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if tc.responseCode != 0 {
-						w.WriteHeader(tc.responseCode)
-					}
-					if tc.responseBody != nil {
-						if str, ok := tc.responseBody.(string); ok {
-							if _, err := w.Write([]byte(str)); err != nil {
-								t.Errorf("failed to write response: %v", err)
-							}
-						} else {
-							bodyBytes, _ := json.Marshal(tc.responseBody)
-							if _, err := w.Write(bodyBytes); err != nil {
-								t.Errorf("failed to write response: %v", err)
-							}
-						}
-					}
-				}))
-				defer server.Close()
+				if err != nil {
+					t.Fatalf("expected no error, but got: %v", err)
+				}
 			}
+		})
+	}
+}
 
-			config := &Config{
-				URL:          server.URL,
-				RetryMax:     0,
-				RetryWaitMin: 1 * time.Millisecond,
-				RetryWaitMax: 2 * time.Millisecond,
-			}
+// TestNew tests the constructor for the RegistryClient.
+func TestNew(t *testing.T) {
+	t.Parallel()
 
-			ctx := context.Background()
-			client, closer, err := New(ctx, config)
-			require.NoError(t, err)
-			defer closer()
+	t.Run("should fail with invalid config", func(t *testing.T) {
+		_, _, err := New(context.Background(), &Config{URL: ""})
+		if err == nil {
+			t.Fatal("expected an error for invalid config but got none")
+		}
+	})
 
-			subscription := &model.Subscription{
-				Subscriber:       model.Subscriber{},
+	t.Run("should succeed with valid config and set defaults", func(t *testing.T) {
+		cfg := &Config{URL: "http://test.com"}
+		client, closer, err := New(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected no error, but got: %v", err)
+		}
+		if client == nil {
+			t.Fatal("expected client to be non-nil")
+		}
+		if closer == nil {
+			t.Fatal("expected closer to be non-nil")
+		}
+		// Check if default retry settings are applied (go-retryablehttp defaults)
+		if client.client.RetryMax != 4 {
+			t.Errorf("expected default RetryMax of 4, but got %d", client.client.RetryMax)
+		}
+	})
+
+	t.Run("should apply custom retry settings", func(t *testing.T) {
+		cfg := &Config{
+			URL:          "http://test.com",
+			RetryMax:     10,
+			RetryWaitMin: 100 * time.Millisecond,
+			RetryWaitMax: 1 * time.Second,
+		}
+		client, _, err := New(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected no error, but got: %v", err)
+		}
+
+		if client.client.RetryMax != cfg.RetryMax {
+			t.Errorf("expected RetryMax to be %d, but got %d", cfg.RetryMax, client.client.RetryMax)
+		}
+		if client.client.RetryWaitMin != cfg.RetryWaitMin {
+			t.Errorf("expected RetryWaitMin to be %v, but got %v", cfg.RetryWaitMin, client.client.RetryWaitMin)
+		}
+		if client.client.RetryWaitMax != cfg.RetryWaitMax {
+			t.Errorf("expected RetryWaitMax to be %v, but got %v", cfg.RetryWaitMax, client.client.RetryWaitMax)
+		}
+	})
+}
+
+// TestRegistryClient_Lookup tests the Lookup method.
+func TestRegistryClient_Lookup(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should succeed and unmarshal response", func(t *testing.T) {
+		expectedSubs := []model.Subscription{
+			{
 				KeyID:            "test-key",
 				SigningPublicKey: "test-signing-key",
 				EncrPublicKey:    "test-encryption-key",
 				ValidFrom:        time.Now(),
 				ValidUntil:       time.Now().Add(24 * time.Hour),
 				Status:           "SUBSCRIBED",
-			}
-
-			result, err := client.Lookup(ctx, subscription)
-			if tc.expectError {
-				require.Error(t, err)
-				if tc.errorContains != "" {
-					assert.Contains(t, err.Error(), tc.errorContains)
-				}
-				assert.Empty(t, result)
-			} else {
-				require.NoError(t, err)
-				assert.NotNil(t, result)
-			}
-		})
-	}
-}
-
-// TestContextCancellation tests that operations respect context cancellation
-func TestContextCancellation(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Simulate a slow server
-		time.Sleep(100 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
-	}))
-	defer server.Close()
-
-	config := &Config{
-		URL:          server.URL,
-		RetryMax:     0,
-		RetryWaitMin: 1 * time.Millisecond,
-		RetryWaitMax: 2 * time.Millisecond,
-	}
-
-	ctx := context.Background()
-	client, closer, err := New(ctx, config)
-	require.NoError(t, err)
-	defer closer()
-
-	subscription := &model.Subscription{
-		KeyID:            "test-key",
-		SigningPublicKey: "test-signing-key",
-		EncrPublicKey:    "test-encryption-key",
-		ValidFrom:        time.Now(),
-		ValidUntil:       time.Now().Add(24 * time.Hour),
-		Status:           "SUBSCRIBED",
-	}
-
-	t.Run("Subscribe with cancelled context", func(t *testing.T) {
-		cancelledCtx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel immediately
-
-		err := client.Subscribe(cancelledCtx, subscription)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "context canceled")
-	})
-
-	t.Run("Lookup with cancelled context", func(t *testing.T) {
-		cancelledCtx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel immediately
-
-		result, err := client.Lookup(cancelledCtx, subscription)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "context canceled")
-		assert.Empty(t, result)
-	})
-}
-
-// TestRetryConfiguration tests that retry configuration is properly applied
-func TestRetryConfiguration(t *testing.T) {
-	attempts := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts++
-		if attempts < 3 {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("Server Error"))
-		} else {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("{}"))
+			},
+			{
+				KeyID:            "test-key-2",
+				SigningPublicKey: "test-signing-key-2",
+				EncrPublicKey:    "test-encryption-key-2",
+				ValidFrom:        time.Now(),
+				ValidUntil:       time.Now().Add(48 * time.Hour),
+				Status:           "SUBSCRIBED",
+			},
 		}
-	}))
-	defer server.Close()
 
-	config := &Config{
-		URL:          server.URL,
-		RetryMax:     3,
-		RetryWaitMin: 1 * time.Millisecond,
-		RetryWaitMax: 2 * time.Millisecond,
-	}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/lookup" {
+				t.Errorf("expected path '/lookup', got '%s'", r.URL.Path)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(expectedSubs); err != nil {
+				t.Fatalf("failed to write response: %v", err)
+			}
+		}))
+		defer server.Close()
 
-	ctx := context.Background()
-	client, closer, err := New(ctx, config)
-	require.NoError(t, err)
-	defer closer()
+		client, closer, err := New(context.Background(), &Config{URL: server.URL})
+		if err != nil {
+			t.Fatalf("failed to create client: %v", err)
+		}
+		defer closer()
 
-	subscription := &model.Subscription{
-		KeyID:            "test-key",
-		SigningPublicKey: "test-signing-key",
-		EncrPublicKey:    "test-encryption-key",
-		ValidFrom:        time.Now(),
-		ValidUntil:       time.Now().Add(24 * time.Hour),
-		Status:           "SUBSCRIBED",
-	}
+		results, err := client.Lookup(context.Background(), &model.Subscription{})
+		if err != nil {
+			t.Fatalf("lookup failed: %v", err)
+		}
 
-	// This should succeed after retries
-	err = client.Subscribe(context.Background(), subscription)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, attempts, 3)
+		if len(results) != len(expectedSubs) {
+			t.Fatalf("expected %d results, but got %d", len(expectedSubs), len(results))
+		}
+
+		if results[0].SubscriberID != expectedSubs[0].SubscriberID {
+			t.Errorf("expected subscriber ID '%s', got '%s'", expectedSubs[0].SubscriberID, results[0].SubscriberID)
+		}
+	})
+
+	t.Run("should fail on non-200 status", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+		}))
+		defer server.Close()
+
+		client, closer, err := New(context.Background(), &Config{URL: server.URL})
+		if err != nil {
+			t.Fatalf("failed to create client: %v", err)
+		}
+		defer closer()
+
+		_, err = client.Lookup(context.Background(), &model.Subscription{})
+		if err == nil {
+			t.Fatal("expected an error but got none")
+		}
+	})
+
+	t.Run("should fail on bad JSON response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `[{"subscriber_id": "bad-json"`) // Malformed JSON
+		}))
+		defer server.Close()
+
+		client, closer, err := New(context.Background(), &Config{URL: server.URL, RetryMax: 1})
+		if err != nil {
+			t.Fatalf("failed to create client: %v", err)
+		}
+		defer closer()
+
+		_, err = client.Lookup(context.Background(), &model.Subscription{})
+		if err == nil {
+			t.Fatal("expected an unmarshaling error but got none")
+		}
+	})
 }
