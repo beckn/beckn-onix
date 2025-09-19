@@ -42,6 +42,7 @@ type routingRule struct {
 type target struct {
 	URL         string `yaml:"url,omitempty"`         // URL for "url" or gateway endpoint for "bpp"/"bap"
 	PublisherID string `yaml:"publisherId,omitempty"` // For "msgq" type
+	ExcludeAction bool `yaml:"excludeAction,omitempty"` // For "url" type to exclude appending action to URL path
 }
 
 // TargetType defines possible target destinations.
@@ -115,7 +116,9 @@ func (r *Router) loadRules(configPath string) error {
 				if err != nil {
 					return fmt.Errorf("invalid URL in rule: %w", err)
 				}
-				parsedURL.Path = joinPath(parsedURL, endpoint)
+				if !rule.Target.ExcludeAction {
+					parsedURL.Path = joinPath(parsedURL, endpoint)
+				}
 				route = &model.Route{
 					TargetType: rule.TargetType,
 					URL:        parsedURL,
