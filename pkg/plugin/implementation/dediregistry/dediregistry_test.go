@@ -155,11 +155,14 @@ func TestLookup(t *testing.T) {
 				Data: model.DeDiRecord{
 					Schema: model.DeDiSchema{
 						EntityName:  "test.example.com",
+						EntityURL:   "https://test.example.com",
 						PublicKey:   "test-public-key",
 						KeyType:     "ed25519",
 						KeyFormat:   "base64",
 					},
-					State: "active",
+					State:     "active",
+					CreatedAt: "2023-01-01T00:00:00Z",
+					UpdatedAt: "2023-01-01T00:00:00Z",
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -182,20 +185,27 @@ func TestLookup(t *testing.T) {
 		}
 		defer closer()
 
-		record, err := client.Lookup(ctx)
+		req := &model.Subscription{}
+		results, err := client.Lookup(ctx, req)
 		if err != nil {
 			t.Errorf("Lookup() error = %v", err)
 			return
 		}
 
-		if record.Schema.EntityName != "test.example.com" {
-			t.Errorf("Expected entity_name test.example.com, got %s", record.Schema.EntityName)
+		if len(results) != 1 {
+			t.Errorf("Expected 1 result, got %d", len(results))
+			return
 		}
-		if record.Schema.PublicKey != "test-public-key" {
-			t.Errorf("Expected public_key test-public-key, got %s", record.Schema.PublicKey)
+
+		subscription := results[0]
+		if subscription.SubscriberID != "test.example.com" {
+			t.Errorf("Expected subscriber_id test.example.com, got %s", subscription.SubscriberID)
 		}
-		if record.State != "active" {
-			t.Errorf("Expected state active, got %s", record.State)
+		if subscription.SigningPublicKey != "test-public-key" {
+			t.Errorf("Expected signing_public_key test-public-key, got %s", subscription.SigningPublicKey)
+		}
+		if subscription.Status != "active" {
+			t.Errorf("Expected status active, got %s", subscription.Status)
 		}
 	})
 
@@ -221,7 +231,8 @@ func TestLookup(t *testing.T) {
 		}
 		defer closer()
 
-		_, err = client.Lookup(ctx)
+		req := &model.Subscription{}
+		_, err = client.Lookup(ctx, req)
 		if err == nil {
 			t.Error("Expected error for 404 response, got nil")
 		}
@@ -249,7 +260,8 @@ func TestLookup(t *testing.T) {
 		}
 		defer closer()
 
-		_, err = client.Lookup(ctx)
+		req := &model.Subscription{}
+		_, err = client.Lookup(ctx, req)
 		if err == nil {
 			t.Error("Expected error for invalid JSON, got nil")
 		}
@@ -272,7 +284,8 @@ func TestLookup(t *testing.T) {
 		}
 		defer closer()
 
-		_, err = client.Lookup(ctx)
+		req := &model.Subscription{}
+		_, err = client.Lookup(ctx, req)
 		if err == nil {
 			t.Error("Expected network error, got nil")
 		}

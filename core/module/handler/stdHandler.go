@@ -22,7 +22,7 @@ type stdHandler struct {
 	signValidator   definition.SignValidator
 	cache           definition.Cache
 	registry        definition.RegistryLookup
-	dediRegistry    definition.DeDiRegistry
+
 	km              definition.KeyManager
 	schemaValidator definition.SchemaValidator
 	router          definition.Router
@@ -200,9 +200,7 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.registry, err = loadPlugin(ctx, "Registry", cfg.Registry, mgr.Registry); err != nil {
 		return err
 	}
-	if h.dediRegistry, err = loadPlugin(ctx, "DeDiRegistry", cfg.DeDiRegistry, mgr.DeDiRegistry); err != nil {
-		return err
-	}
+
 	if h.km, err = loadKeyManager(ctx, mgr, h.cache, h.registry, cfg.KeyManager); err != nil {
 		return err
 	}

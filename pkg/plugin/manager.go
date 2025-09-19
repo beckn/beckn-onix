@@ -382,14 +382,14 @@ func (m *Manager) Registry(ctx context.Context, cfg *Config) (definition.Registr
 	return registry, nil
 }
 
-// DeDiRegistry returns a DeDiRegistry instance based on the provided configuration.
-// It registers a cleanup function for resource management.
-func (m *Manager) DeDiRegistry(ctx context.Context, cfg *Config) (definition.DeDiRegistry, error) {
-	drp, err := provider[definition.DeDiRegistryProvider](m.plugins, cfg.ID)
+// DeDiRegistry returns a RegistryLookup instance based on the provided configuration.
+// It reuses the loaded provider.
+func (m *Manager) DeDiRegistry(ctx context.Context, cfg *Config) (definition.RegistryLookup, error) {
+	rp, err := provider[definition.RegistryLookupProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	dediRegistry, closer, err := drp.New(ctx, cfg.Config)
+	registry, closer, err := rp.New(ctx, cfg.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -400,8 +400,10 @@ func (m *Manager) DeDiRegistry(ctx context.Context, cfg *Config) (definition.DeD
 			}
 		})
 	}
-	return dediRegistry, nil
+	return registry, nil
 }
+
+
 
 // Validator implements handler.PluginManager.
 func (m *Manager) Validator(ctx context.Context, cfg *Config) (definition.SchemaValidator, error) {

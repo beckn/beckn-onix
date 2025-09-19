@@ -10,11 +10,11 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/dediregistry"
 )
 
-// dediRegistryProvider implements the DeDiRegistryProvider interface for the DeDi registry plugin.
+// dediRegistryProvider implements the RegistryLookupProvider interface for the DeDi registry plugin.
 type dediRegistryProvider struct{}
 
 // New creates a new DeDi registry plugin instance.
-func (d dediRegistryProvider) New(ctx context.Context, config map[string]string) (definition.DeDiRegistry, func() error, error) {
+func (d dediRegistryProvider) New(ctx context.Context, config map[string]string) (definition.RegistryLookup, func() error, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("context cannot be nil")
 	}

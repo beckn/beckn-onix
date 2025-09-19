@@ -85,21 +85,21 @@ func New(ctx context.Context, cfg *Config) (*DeDiRegistryClient, func() error, e
 	return client, closer, nil
 }
 
-// Lookup calls the DeDi lookup endpoint and returns a DeDi record.
-func (c *DeDiRegistryClient) Lookup(ctx context.Context) (*model.DeDiRecord, error) {
+// Lookup implements RegistryLookup interface - calls the DeDi lookup endpoint and returns Subscription.
+func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription) ([]model.Subscription, error) {
 	lookupURL := fmt.Sprintf("%s/dedi/lookup/%s/%s/%s", 
 		c.config.BaseURL, c.config.NamespaceID, c.config.RegistryName, c.config.RecordName)
 
-	req, err := retryablehttp.NewRequest("GET", lookupURL, nil)
+	httpReq, err := retryablehttp.NewRequest("GET", lookupURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.config.ApiKey))
-	req = req.WithContext(ctx)
+	httpReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.config.ApiKey))
+	httpReq = httpReq.WithContext(ctx)
 
 	log.Debugf(ctx, "Making DeDi lookup request to: %s", lookupURL)
-	resp, err := c.client.Do(req)
+	resp, err := c.client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send DeDi lookup request: %w", err)
 	}
@@ -123,5 +123,30 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context) (*model.DeDiRecord, err
 	}
 
 	log.Debugf(ctx, "DeDi lookup request successful")
-	return &response.Data, nil
+	
+	// Convert DeDi response to Subscription format (essential fields only)
+	subscription := model.Subscription{
+		Subscriber: model.Subscriber{
+			SubscriberID: response.Data.Schema.EntityName,
+			URL:          response.Data.Schema.EntityURL,
+		},
+		SigningPublicKey: response.Data.Schema.PublicKey,
+		Status:           response.Data.State,
+		Created:          parseTime(response.Data.CreatedAt),
+		Updated:          parseTime(response.Data.UpdatedAt),
+	}
+	
+	return []model.Subscription{subscription}, nil
+}
+
+// parseTime converts string timestamp to time.Time
+func parseTime(timeStr string) time.Time {
+	if timeStr == "" {
+		return time.Time{}
+	}
+	parsedTime, err := time.Parse(time.RFC3339, timeStr)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsedTime
 }
