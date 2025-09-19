@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 
-	"github.com/beckn-one/beckn-onix/core/module/client"
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
@@ -22,6 +21,7 @@ type stdHandler struct {
 	steps           []definition.Step
 	signValidator   definition.SignValidator
 	cache           definition.Cache
+	registry        definition.RegistryLookup
 	km              definition.KeyManager
 	schemaValidator definition.SchemaValidator
 	router          definition.Router
@@ -38,7 +38,7 @@ func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config) (http.Ha
 		role:         cfg.Role,
 	}
 	// Initialize plugins.
-	if err := h.initPlugins(ctx, mgr, &cfg.Plugins, cfg.RegistryURL); err != nil {
+	if err := h.initPlugins(ctx, mgr, &cfg.Plugins); err != nil {
 		return nil, fmt.Errorf("failed to initialize plugins: %w", err)
 	}
 	// Initialize steps.
@@ -169,8 +169,8 @@ func loadPlugin[T any](ctx context.Context, name string, cfg *plugin.Config, mgr
 	return plugin, nil
 }
 
-// loadKeyManager loads the KeyManager plugin using the provided PluginManager, cache, and registry URL.
-func loadKeyManager(ctx context.Context, mgr PluginManager, cache definition.Cache, cfg *plugin.Config, regURL string) (definition.KeyManager, error) {
+// loadKeyManager loads the KeyManager plugin using the provided PluginManager, cache, and registry.
+func loadKeyManager(ctx context.Context, mgr PluginManager, cache definition.Cache, registry definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping KeyManager plugin: not configured")
 		return nil, nil
@@ -178,10 +178,12 @@ func loadKeyManager(ctx context.Context, mgr PluginManager, cache definition.Cac
 	if cache == nil {
 		return nil, fmt.Errorf("failed to load KeyManager plugin (%s): Cache plugin not configured", cfg.ID)
 	}
-	rClient := client.NewRegisteryClient(&client.Config{RegisteryURL: regURL})
-	km, err := mgr.KeyManager(ctx, cache, rClient, cfg)
+	if registry == nil {
+		return nil, fmt.Errorf("failed to load KeyManager plugin (%s): Registry plugin not configured", cfg.ID)
+	}
+	km, err := mgr.KeyManager(ctx, cache, registry, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load cache plugin (%s): %w", cfg.ID, err)
+		return nil, fmt.Errorf("failed to load KeyManager plugin (%s): %w", cfg.ID, err)
 	}
 
 	log.Debugf(ctx, "Loaded Keymanager plugin: %s", cfg.ID)
@@ -189,12 +191,15 @@ func loadKeyManager(ctx context.Context, mgr PluginManager, cache definition.Cac
 }
 
 // initPlugins initializes required plugins for the processor.
-func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *PluginCfg, regURL string) error {
+func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *PluginCfg) error {
 	var err error
 	if h.cache, err = loadPlugin(ctx, "Cache", cfg.Cache, mgr.Cache); err != nil {
 		return err
 	}
-	if h.km, err = loadKeyManager(ctx, mgr, h.cache, cfg.KeyManager, regURL); err != nil {
+	if h.registry, err = loadPlugin(ctx, "Registry", cfg.Registry, mgr.Registry); err != nil {
+		return err
+	}
+	if h.km, err = loadKeyManager(ctx, mgr, h.cache, h.registry, cfg.KeyManager); err != nil {
 		return err
 	}
 	if h.signValidator, err = loadPlugin(ctx, "SignValidator", cfg.SignValidator, mgr.SignValidator); err != nil {
