@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
@@ -376,18 +377,22 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 }
 
 func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
-	recipientID := h.SubscriberID
-
-	if v, ok := r.Context().Value(model.ContextKeySubscriberID).(string); ok {
-		recipientID = v
-	}
-	senderID := ""
+	selfID := h.SubscriberID
+	remoteID := ""
 	if v, ok := r.Context().Value(model.ContextKeyCallerID).(string); ok {
-		senderID = v
+		remoteID = v
 	}
 
+	var senderID, receiverID string
+	if strings.Contains(h.moduleName, "Caller") {
+		senderID = selfID
+		receiverID = remoteID
+	} else {
+		senderID = remoteID
+		receiverID = selfID
+	}
 	attrs := []attribute.KeyValue{
-		attribute.String("recipient.id", recipientID),
+		attribute.String("recipient.id", receiverID),
 		attribute.String("sender.id", senderID),
 		attribute.String("span_uuid", uuid.New().String()),
 		attribute.String("http.request.method", r.Method),
