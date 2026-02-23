@@ -1,0 +1,24 @@
+auditRules:
+  default:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.domain
+    - context.bap_id
+    - context.bpp_id
+
+  search:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.timestamp
+    - message.intent
+
+  select:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.timestamp
+    - message.order.beckn:buyer.beckn:id
+    - message.order.beckn:orderItems.beckn:acceptedOffer.beckn:id
+

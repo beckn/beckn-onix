@@ -8,13 +8,14 @@ import (
 	"os"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // RedisCl global variable for the Redis client, can be overridden in tests
@@ -103,10 +104,6 @@ func New(ctx context.Context, cfg *Config) (*Cache, func() error, error) {
 			log.Debugf(ctx, "Failed to instrument Redis tracing: %v", err)
 		}
 
-		if err := redisotel.InstrumentMetrics(redisClient); err != nil {
-			// Log error but don't fail - instrumentation is optional
-			log.Debugf(ctx, "Failed to instrument Redis metrics: %v", err)
-		}
 	}
 
 	metrics, _ := GetCacheMetrics(ctx)
@@ -141,8 +138,12 @@ func (c *Cache) Get(ctx context.Context, key string) (string, error) {
 
 // Set stores the given key-value pair in Redis with the specified TTL (time to live).
 func (c *Cache) Set(ctx context.Context, key, value string, ttl time.Duration) error {
-	err := c.Client.Set(ctx, key, value, ttl).Err()
-	c.recordOperation(ctx, "set", err)
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
+	spanCtx, span := tracer.Start(ctx, "redis_set")
+	defer span.End()
+
+	err := c.Client.Set(spanCtx, key, value, ttl).Err()
+	c.recordOperation(spanCtx, "set", err)
 	return err
 }
 

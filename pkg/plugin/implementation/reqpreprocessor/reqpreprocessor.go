@@ -48,12 +48,21 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				http.Error(w, fmt.Sprintf("%s field not found or invalid.", contextKey), http.StatusBadRequest)
 				return
 			}
+
 			var subID any
 			switch cfg.Role {
 			case "bap":
 				subID = reqContext["bap_id"]
 			case "bpp":
 				subID = reqContext["bpp_id"]
+			}
+
+			var callerID any
+			switch cfg.Role {
+			case "bap":
+				callerID = reqContext["bpp_id"]
+			case "bpp":
+				callerID = reqContext["bap_id"]
 			}
 			if subID != nil {
 				log.Debugf(ctx, "adding subscriberId to request:%s, %v", model.ContextKeySubscriberID, subID)
@@ -63,6 +72,11 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 			if cfg.ParentID != "" {
 				log.Debugf(ctx, "adding parentID to request:%s, %v", model.ContextKeyParentID, cfg.ParentID)
 				ctx = context.WithValue(ctx, model.ContextKeyParentID, cfg.ParentID)
+			}
+
+			if callerID != nil {
+				log.Debugf(ctx, "adding callerID to request:%s, %v", model.ContextKeyCallerID, callerID)
+				ctx = context.WithValue(ctx, model.ContextKeyCallerID, callerID)
 			}
 			for _, key := range cfg.ContextKeys {
 				ctxKey, _ := model.ParseContextKey(key)

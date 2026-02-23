@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -32,8 +33,8 @@ func GetStepMetrics(ctx context.Context) (*StepMetrics, error) {
 
 func newStepMetrics() (*StepMetrics, error) {
 	meter := otel.GetMeterProvider().Meter(
-		"github.com/beckn-one/beckn-onix/telemetry",
-		metric.WithInstrumentationVersion("1.0.0"),
+		telemetry.ScopeName,
+		metric.WithInstrumentationVersion(telemetry.ScopeVersion),
 	)
 
 	m := &StepMetrics{}
@@ -66,4 +67,3 @@ func newStepMetrics() (*StepMetrics, error) {
 
 	return m, nil
 }
-

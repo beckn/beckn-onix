@@ -14,6 +14,7 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel/trace"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -273,6 +274,11 @@ func Request(ctx context.Context, r *http.Request, body []byte) {
 
 // addCtx adds context values to the log event based on configured context keys.
 func addCtx(ctx context.Context, event *zerolog.Event) {
+	span := trace.SpanFromContext(ctx)
+	if span.SpanContext().IsValid() {
+		event.Str("trace_id", span.SpanContext().TraceID().String())
+		event.Str("span_id", span.SpanContext().SpanID().String())
+	}
 	for _, key := range cfg.ContextKeys {
 		val, ok := ctx.Value(key).(string)
 		if !ok {

@@ -15,7 +15,10 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Config holds configuration parameters for SimpleKeyManager.
@@ -245,28 +248,43 @@ func (skm *SimpleKeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueK
 		return "", "", err
 	}
 
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
 	cacheKey := fmt.Sprintf("%s_%s", subscriberID, uniqueKeyID)
-	cachedData, err := skm.Cache.Get(ctx, cacheKey)
-	if err == nil {
-		var keys model.Keyset
-		if err := json.Unmarshal([]byte(cachedData), &keys); err == nil {
-			log.Debugf(ctx, "Found cached keys for subscriber: %s, uniqueKeyID: %s", subscriberID, uniqueKeyID)
-			return keys.SigningPublic, keys.EncrPublic, nil
+	var cachedData string
+
+	{
+		spanCtx, span := tracer.Start(ctx, "redis lookup")
+		defer span.End()
+		var err error
+		cachedData, err = skm.Cache.Get(spanCtx, cacheKey)
+		if err == nil {
+			var keys model.Keyset
+			if err := json.Unmarshal([]byte(cachedData), &keys); err == nil {
+				log.Debugf(ctx, "Found cached keys for subscriber: %s, uniqueKeyID: %s", subscriberID, uniqueKeyID)
+				return keys.SigningPublic, keys.EncrPublic, nil
+			}
 		}
 	}
 
 	log.Debugf(ctx, "Cache miss, looking up registry for subscriber: %s, uniqueKeyID: %s", subscriberID, uniqueKeyID)
-	subscribers, err := skm.Registry.Lookup(ctx, &model.Subscription{
-		Subscriber: model.Subscriber{
-			SubscriberID: subscriberID,
-		},
-		KeyID: uniqueKeyID,
-	})
-	if err != nil {
-		return "", "", fmt.Errorf("failed to lookup registry: %w", err)
-	}
-	if len(subscribers) == 0 {
-		return "", "", ErrSubscriberNotFound
+	var subscribers []model.Subscription
+	{
+		spanCtx, span := tracer.Start(ctx, "registry lookup")
+		defer span.End()
+		var err error
+
+		subscribers, err = skm.Registry.Lookup(spanCtx, &model.Subscription{
+			Subscriber: model.Subscriber{
+				SubscriberID: subscriberID,
+			},
+			KeyID: uniqueKeyID,
+		})
+		if err != nil {
+			return "", "", fmt.Errorf("failed to lookup registry: %w", err)
+		}
+		if len(subscribers) == 0 {
+			return "", "", ErrSubscriberNotFound
+		}
 	}
 
 	log.Debugf(ctx, "Successfully looked up keys for subscriber: %s, uniqueKeyID: %s", subscriberID, uniqueKeyID)

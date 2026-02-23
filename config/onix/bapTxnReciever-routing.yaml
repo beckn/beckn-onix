@@ -1,20 +1,47 @@
+# ONIX BAP Receiver Routing Configuration
+
+# Supports Phase 1 (Discover Aggregation) and Phase 2+ (Direct BPP Callbacks)
+
+
+
+# Phase 1: Discover Aggregation
+
+# Phase 2+: Other Callbacks (Direct from BPPs to BAP, NO CDS involvement)
+
+# These routes use bap_uri from context to route callbacks back to originating BAP
+
+
+
 routingRules:
-  - domain: "ONDC:TRV10"
-    version: "2.0.0"
-    routingType: "url"
+
+  # Phase 1: on_discover callback to BAP (routed to mock-bap for testing)
+  - domain: ev_charging_network
+    version: "1.0.0"
+    targetType: url
     target:
-      url: "https://services-backend/trv/v1"
+      url: http://mock-bap:9001
+      excludeAction: false
+    endpoints:
+      - on_discover
+      
+
+
+
+  # Phase 2+: Other callbacks to BAP (routed to mock-bap for testing)
+
+  - domain: ev_charging_network
+    version: "1.0.0"
+    targetType: url
+    target:
+      url: http://mock-bap:9001
+      excludeAction: false
     endpoints:
       - on_select
       - on_init
       - on_confirm
       - on_status
-      - on_update
+      - on_track
       - on_cancel
-  - domain: "ONDC:TRV10"
-    version: "2.0.0"
-    routingType: "msgq"
-    target:
-      topic_id: "trv_topic_id1"
-    endpoints:
-      - on_search
+      - on_update
+      - on_rating
+      - on_support

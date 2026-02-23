@@ -1,25 +1,41 @@
+# ONIX BAP Caller Routing Configuration
+
+# Supports Phase 1 (Discover Aggregation) and Phase 2+ (Direct BPP Routing)
+
+# Phase 1: Discover (Aggregation via CDS)
+
+# Phase 2+: Other Requests (Direct to BPP, NO CDS involvement)
+
+# These routes use bpp_uri from context (provided in on_discover aggregated response)
+
 routingRules:
-  - domain: "ONDC:TRV10"
-    version: "2.0.0"
-    routingType: "bpp"
+
+  # Phase 1: Discover to CDS
+
+  - domain: ev_charging_network
+    version: "1.0.0"
+    targetType: url
     target:
-      url: "https://gateway.example.com"
+      url: http://mock-cds:8082/csd
+      excludeAction: false
     endpoints:
-      - search
-  - domain: "ONDC:TRV10"
-    version: "2.0.0"
-    routingType: "bpp"
+      - discover
+
+
+
+  # Phase 2+: Other actions to BPP (via context_endpoint)
+
+  - domain: ev_charging_network
+    version: "1.0.0"
+    targetType: bpp
+    target: {}
     endpoints:
       - select
       - init
       - confirm
       - status
+      - track
       - cancel
-  - domain: "ONDC:TRV12"
-    version: "2.0.0"
-    routingType: "bpp"
-    endpoints:
-      - select
-      - init
-      - confirm
-      - status
+      - update
+      - rating
+      - support

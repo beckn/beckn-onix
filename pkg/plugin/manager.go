@@ -197,9 +197,7 @@ func (m *Manager) Middleware(ctx context.Context, cfg *Config) (func(http.Handle
 	return mwp.New(ctx, cfg.Config)
 }
 
-// OtelSetup initializes OpenTelemetry via a dedicated plugin. The plugin is
-// expected to return a telemetry Provider that the core application can use for
-// instrumentation.
+// OtelSetup initializes OpenTelemetry via a dedicated plugin. The plugin is expected to return a telemetry Provider that the core application can use for instrumentation.
 func (m *Manager) OtelSetup(ctx context.Context, cfg *Config) (*telemetry.Provider, error) {
 	if cfg == nil {
 		log.Info(ctx, "Telemetry config not provided; skipping OpenTelemetry setup")

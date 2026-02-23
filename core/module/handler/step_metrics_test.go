@@ -2,7 +2,7 @@ package handler
 
 import (
 	"context"
-	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"go.opentelemetry.io/otel/metric"
@@ -103,11 +103,8 @@ func TestStepMetrics_Instruments(t *testing.T) {
 			metric.WithAttributes(telemetry.AttrStep.String("test-step"), telemetry.AttrModule.String("test-module")))
 	}, "StepErrorsTotal.Add should not panic")
 
-	// Verify metrics are exposed via HTTP handler
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/metrics", nil)
-	provider.MetricsHandler.ServeHTTP(rec, req)
-	assert.Equal(t, 200, rec.Code, "Metrics endpoint should return 200")
+	// MeterProvider is set by NewTestProvider; metrics are recorded via OTel SDK
+	assert.NotNil(t, provider.MeterProvider, "MeterProvider should be set")
 }
 
 func TestStepMetrics_MultipleCalls(t *testing.T) {
@@ -129,3 +126,113 @@ func TestStepMetrics_MultipleCalls(t *testing.T) {
 	}
 }
 
+func TestStepMetrics_RecordWithDifferentAttributes(t *testing.T) {
+	ctx := context.Background()
+	provider, err := telemetry.NewTestProvider(ctx)
+	require.NoError(t, err)
+	defer provider.Shutdown(context.Background())
+
+	metrics, err := GetStepMetrics(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, metrics)
+
+	attrsList := []struct {
+		step   string
+		module string
+	}{
+		{"test-step", "test-module"},
+		{"", "module-only"},
+		{"step-only", ""},
+		{"", ""},
+		{"long-step-name-with-many-parts", "long-module-name"},
+	}
+
+	for _, a := range attrsList {
+		attrs := metric.WithAttributes(
+			telemetry.AttrStep.String(a.step),
+			telemetry.AttrModule.String(a.module),
+		)
+		require.NotPanics(t, func() {
+			metrics.StepExecutionDuration.Record(ctx, 0.01, attrs)
+			metrics.StepExecutionTotal.Add(ctx, 1, attrs)
+			metrics.StepErrorsTotal.Add(ctx, 0, attrs)
+		}, "Recording with step=%q module=%q should not panic", a.step, a.module)
+	}
+}
+
+func TestStepMetrics_DurationValues(t *testing.T) {
+	ctx := context.Background()
+	provider, err := telemetry.NewTestProvider(ctx)
+	require.NoError(t, err)
+	defer provider.Shutdown(context.Background())
+
+	metrics, err := GetStepMetrics(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, metrics)
+
+	attrs := metric.WithAttributes(
+		telemetry.AttrStep.String("test-step"),
+		telemetry.AttrModule.String("test-module"),
+	)
+
+	durations := []float64{0, 0.0005, 0.001, 0.01, 0.1, 0.5}
+	for _, d := range durations {
+		d := d
+		require.NotPanics(t, func() {
+			metrics.StepExecutionDuration.Record(ctx, d, attrs)
+		}, "StepExecutionDuration.Record(%.4f) should not panic", d)
+	}
+}
+
+func TestStepMetrics_ConcurrentRecord(t *testing.T) {
+	ctx := context.Background()
+	provider, err := telemetry.NewTestProvider(ctx)
+	require.NoError(t, err)
+	defer provider.Shutdown(context.Background())
+
+	metrics, err := GetStepMetrics(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, metrics)
+
+	attrs := metric.WithAttributes(
+		telemetry.AttrStep.String("concurrent-step"),
+		telemetry.AttrModule.String("concurrent-module"),
+	)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			metrics.StepExecutionDuration.Record(ctx, 0.05, attrs)
+			metrics.StepExecutionTotal.Add(ctx, 1, attrs)
+			metrics.StepErrorsTotal.Add(ctx, 0, attrs)
+		}()
+	}
+	wg.Wait()
+}
+
+func TestStepMetrics_WithTraceProvider(t *testing.T) {
+	ctx := context.Background()
+	provider, sr, err := telemetry.NewTestProviderWithTrace(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, provider)
+	require.NotNil(t, sr)
+	defer provider.Shutdown(ctx)
+
+	metrics, err := GetStepMetrics(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, metrics)
+	assert.NotNil(t, provider.MeterProvider, "MeterProvider should be set")
+	assert.NotNil(t, provider.TraceProvider, "TraceProvider should be set")
+
+	attrs := metric.WithAttributes(
+		telemetry.AttrStep.String("trace-test-step"),
+		telemetry.AttrModule.String("trace-test-module"),
+	)
+	require.NotPanics(t, func() {
+		metrics.StepExecutionDuration.Record(ctx, 0.1, attrs)
+		metrics.StepExecutionTotal.Add(ctx, 1, attrs)
+		metrics.StepErrorsTotal.Add(ctx, 0, attrs)
+	}, "Step metrics should work when trace provider is also set")
+}
