@@ -4,12 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strconv"
 	"sync"
-	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -66,7 +63,7 @@ func StatusClass(statusCode int) string {
 	}
 }
 
-func RecordHTTPRequest(ctx context.Context, statusCode int, action, role, caller string) {
+func RecordHTTPRequest(ctx context.Context, statusCode int, action, role, senderID, recipientID string) {
 	m, err := GetHTTPMetrics(ctx)
 	if err != nil || m == nil {
 		return
@@ -76,7 +73,8 @@ func RecordHTTPRequest(ctx context.Context, statusCode int, action, role, caller
 		telemetry.AttrHTTPStatus.String(status),
 		telemetry.AttrAction.String(action),
 		telemetry.AttrRole.String(role),
-		telemetry.AttrCaller.String(caller),
+		telemetry.AttrSenderID.String(senderID),
+		telemetry.AttrRecipientID.String(recipientID),
 	}
 
 	metric_code := action + "_api_total_count"
@@ -110,11 +108,9 @@ func specHttpMetricAttr(metricCode, category string) []attribute.KeyValue {
 
 	granularity, frequency := telemetry.GetNetworkMetricsConfig()
 	return []attribute.KeyValue{
-		telemetry.AttrMetricUUID.String(uuid.New().String()),
 		telemetry.AttrMetricCode.String(metricCode),
 		telemetry.AttrMetricCategory.String(category),
 		telemetry.AttrMetricGranularity.String(granularity),
 		telemetry.AttrMetricFrequency.String(frequency),
-		telemetry.AttrObservedTimeUnixNano.String(strconv.FormatInt(time.Now().UnixNano(), 10)),
 	}
 }

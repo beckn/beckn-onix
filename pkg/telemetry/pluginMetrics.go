@@ -51,6 +51,8 @@ var (
 	AttrMetricFrequency      = attribute.Key("metric.frequency")
 	AttrObservedTimeUnixNano = attribute.Key("observedTimeUnixNano")
 	AttrMatricLabels         = attribute.Key("metric.labels")
+	AttrSenderID             = attribute.Key("sender.id")
+	AttrRecipientID          = attribute.Key("recipient.id")
 )
 
 var (

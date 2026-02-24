@@ -122,14 +122,23 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		record:         nil,
 	}
 
-	caller := "unknown"
-	if v, ok := r.Context().Value(model.ContextKeyCallerID).(string); ok && v != "" {
-		caller = v
+	selfID := h.SubscriberID
+	remoteID := ""
+	if v, ok := r.Context().Value(model.ContextKeyCallerID).(string); ok {
+		remoteID = v
+	}
+	var senderID, receiverID string
+	if strings.Contains(h.moduleName, "Caller") {
+		senderID = selfID
+		receiverID = remoteID
+	} else {
+		senderID = remoteID
+		receiverID = selfID
 	}
 	httpMeter, _ := GetHTTPMetrics(r.Context())
 	if httpMeter != nil {
 		recordOnce = func() {
-			RecordHTTPRequest(r.Context(), wrapped.statusCode, r.URL.Path, string(h.role), caller)
+			RecordHTTPRequest(r.Context(), wrapped.statusCode, r.URL.Path, string(h.role), senderID, receiverID)
 		}
 		wrapped.record = recordOnce
 	}
@@ -152,7 +161,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		body := stepCtx.Body
-		go telemetry.EmitAuditLogs(r.Context(), body, auditlog.Int("http.response.status_code", wrapped.statusCode))
+		go telemetry.EmitAuditLogs(r.Context(), body, auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.response.error", errString(err)))
 		span.End()
 	}()
 
@@ -392,8 +401,8 @@ func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
 		receiverID = selfID
 	}
 	attrs := []attribute.KeyValue{
-		attribute.String("recipient.id", receiverID),
-		attribute.String("sender.id", senderID),
+		telemetry.AttrRecipientID.String(receiverID),
+		telemetry.AttrSenderID.String(senderID),
 		attribute.String("span_uuid", uuid.New().String()),
 		attribute.String("http.request.method", r.Method),
 		attribute.String("http.route", r.URL.Path),
@@ -417,4 +426,11 @@ func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
 	}
 
 	span.SetAttributes(attrs...)
+}
+
+func errString(e error) string {
+	if e == nil {
+		return ""
+	}
+	return e.Error()
 }
