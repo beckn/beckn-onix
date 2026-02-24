@@ -76,7 +76,7 @@ func TestSimpleKeyManagerProvider_New(t *testing.T) {
 			config: map[string]string{
 				"keyId": "test-key",
 			},
-			wantErr: false,
+			wantErr: true,
 		},
 	}
 
@@ -145,14 +145,13 @@ func TestConfigMapping(t *testing.T) {
 	cache := &mockCache{}
 	registry := &mockRegistry{}
 
-	// Test config mapping
 	configMap := map[string]string{
 		"networkParticipant": "mapped-np",
 		"keyId":              "mapped-key-id",
-		"signingPrivateKey":  "mapped-signing-private",
-		"signingPublicKey":   "mapped-signing-public",
-		"encrPrivateKey":     "mapped-encr-private",
-		"encrPublicKey":      "mapped-encr-public",
+		"signingPrivateKey":  "dGVzdC1zaWduaW5nLXByaXZhdGU=",
+		"signingPublicKey":   "dGVzdC1zaWduaW5nLXB1YmxpYw==",
+		"encrPrivateKey":     "dGVzdC1lbmNyLXByaXZhdGU=",
+		"encrPublicKey":      "dGVzdC1lbmNyLXB1YmxpYw==",
 	}
 
 	// We can't directly test the config mapping without exposing internals,
