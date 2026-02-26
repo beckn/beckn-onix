@@ -35,6 +35,7 @@ type stdHandler struct {
 	registry         definition.RegistryLookup
 	km               definition.KeyManager
 	schemaValidator  definition.SchemaValidator
+	policyEnforcer   definition.PolicyEnforcer
 	router           definition.Router
 	publisher        definition.Publisher
 	transportWrapper definition.TransportWrapper
@@ -318,6 +319,9 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.transportWrapper, err = loadPlugin(ctx, "TransportWrapper", cfg.TransportWrapper, mgr.TransportWrapper); err != nil {
 		return err
 	}
+	if h.policyEnforcer, err = loadPlugin(ctx, "PolicyEnforcer", cfg.PolicyEnforcer, mgr.PolicyEnforcer); err != nil {
+		return err
+	}
 
 	log.Debugf(ctx, "All required plugins successfully loaded for stdHandler")
 	return nil
@@ -350,6 +354,8 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			s, err = newValidateSchemaStep(h.schemaValidator)
 		case "addRoute":
 			s, err = newAddRouteStep(h.router)
+		case "enforcePolicy":
+			s, err = newEnforcePolicyStep(h.policyEnforcer)
 		default:
 			if customStep, exists := steps[step]; exists {
 				s = customStep

@@ -84,8 +84,15 @@ modules:
           id: router
           config:
             routingConfig: ./config/local-beckn-one-routing-BPPReceiver.yaml
+        policyEnforcer:
+          id: policyenforcer
+          config:
+            policySources: "./policies/compliance.rego"
+            actions: "confirm"
+            query: "data.policy.violations"
       steps:
         - validateSign
+        - enforcePolicy
         - addRoute
         - validateSchema
   

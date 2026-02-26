@@ -66,6 +66,12 @@ modules:
           id: router
           config:
             routingConfig: ./config/local-simple-routing.yaml
+        policyEnforcer:
+          id: policyenforcer
+          config:
+            policySources: "./policies/compliance.rego"
+            actions: "confirm"
+            query: "data.policy.violations"
         middleware:
           - id: reqpreprocessor
             config:
@@ -73,6 +79,7 @@ modules:
               role: bap
       steps:
         - validateSign
+        - enforcePolicy
         - addRoute
   
   - name: bapTxnCaller
@@ -162,8 +169,15 @@ modules:
           id: router
           config:
             routingConfig: ./config/local-simple-routing-BPPReceiver.yaml
+        policyEnforcer:
+          id: policyenforcer
+          config:
+            policySources: "./policies/compliance.rego"
+            actions: "confirm"
+            query: "data.policy.violations"
       steps:
         - validateSign
+        - enforcePolicy
         - addRoute
   
   - name: bppTxnCaller

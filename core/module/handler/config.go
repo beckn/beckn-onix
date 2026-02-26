@@ -19,6 +19,7 @@ type PluginManager interface {
 	Publisher(ctx context.Context, cfg *plugin.Config) (definition.Publisher, error)
 	Signer(ctx context.Context, cfg *plugin.Config) (definition.Signer, error)
 	Step(ctx context.Context, cfg *plugin.Config) (definition.Step, error)
+	PolicyEnforcer(ctx context.Context, cfg *plugin.Config) (definition.PolicyEnforcer, error)
 	Cache(ctx context.Context, cfg *plugin.Config) (definition.Cache, error)
 	Registry(ctx context.Context, cfg *plugin.Config) (definition.RegistryLookup, error)
 	KeyManager(ctx context.Context, cache definition.Cache, rLookup definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error)
@@ -37,6 +38,7 @@ const (
 // PluginCfg holds the configuration for various plugins.
 type PluginCfg struct {
 	SchemaValidator  *plugin.Config  `yaml:"schemaValidator,omitempty"`
+	PolicyEnforcer   *plugin.Config  `yaml:"policyEnforcer,omitempty"`
 	SignValidator    *plugin.Config  `yaml:"signValidator,omitempty"`
 	Publisher        *plugin.Config  `yaml:"publisher,omitempty"`
 	Signer           *plugin.Config  `yaml:"signer,omitempty"`
