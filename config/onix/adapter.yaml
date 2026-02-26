@@ -1,3 +1,13 @@
+appName: "onix"
+log:
+  level: debug
+  destinations:
+    - type: stdout
+  contextKeys:
+    - transaction_id
+    - message_id
+    - subscriber_id
+    - module_id
 http:
   port: 8080
   timeout:
@@ -16,6 +26,9 @@ modules:
       httpClientConfig:
         maxIdleConns: 1000
         maxIdleConnsPerHost: 200
+        idleConnTimeout: 300s
+        responseHeaderTimeout: 5s
+      plugins:
         registry:
           id: registry
           config:
@@ -63,6 +76,9 @@ modules:
       httpClientConfig:
         maxIdleConns: 1000
         maxIdleConnsPerHost: 200
+        idleConnTimeout: 300s
+        responseHeaderTimeout: 5s
+      plugins:
         registry:
           id: registry
           config:
