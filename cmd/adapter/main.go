@@ -53,7 +53,7 @@ var runFunc = run
 
 func main() {
 	// Define and parse command-line flags.
-	flag.StringVar(&configPath, "config", "config/onix/adapter.yaml", "Path to the configuration file")
+	flag.StringVar(&configPath, "config", "../../config/onix/adapter.yaml", "Path to the configuration file")
 	flag.Parse()
 
 	// Use custom log for initial setup messages.

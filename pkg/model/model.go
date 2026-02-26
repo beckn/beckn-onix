@@ -57,8 +57,8 @@ const (
 	// ContextKeyParentID is the context key for  storing  and retrieving the parent ID from a request context
 	ContextKeyParentID ContextKey = "parent_id"
 
-	// ContextKeyCallerID is the context key for the caller who is calling the bap/bpp
-	ContextKeyCallerID ContextKey = "caller_id"
+	// ContextKeyRemoteID is the context key for the caller who is calling the bap/bpp
+	ContextKeyRemoteID ContextKey = "caller_id"
 )
 
 var contextKeys = map[string]ContextKey{
@@ -67,7 +67,7 @@ var contextKeys = map[string]ContextKey{
 	"subscriber_id":  ContextKeySubscriberID,
 	"module_id":      ContextKeyModuleID,
 	"parent_id":      ContextKeyParentID,
-	"caller_id":      ContextKeyCallerID,
+	"caller_id":      ContextKeyRemoteID,
 }
 
 // ParseContextKey converts a string into a valid ContextKey.

@@ -16,6 +16,25 @@ http:
     idle: 30
 pluginManager:
   root: ./plugins
+
+# OpenTelemetry (OTLP) - metrics and traces sent to OTEL collector
+plugins:
+  otelsetup:
+    id: otelsetup
+    config:
+      serviceName: "beckn-one-bap"
+      serviceVersion: "1.0.0"
+      environment: "development"
+      domain: "ev_charging"
+      otlpEndpoint: "otel-collector-bap:4317"
+      enableMetrics: "true"
+      networkMetricsGranularity: "2min"
+      networkMetricsFrequency: "4min"
+      enableTracing: "true"
+      enableLogs: "true"
+      timeInterval: "5"
+      auditFieldsConfig: "/app/config/audit-fields.yaml"
+
 modules:
   - name: bapTxnReceiver
     path: /bap/receiver/

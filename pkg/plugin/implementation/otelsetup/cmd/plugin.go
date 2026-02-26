@@ -41,9 +41,18 @@ func (m metricsProvider) New(ctx context.Context, config map[string]string) (*te
 	if v := ctx.Value(model.ContextKeyParentID); v != nil {
 		parentID := v.(string)
 		p := strings.Split(parentID, ":")
-		deviceId = p[len(p)-1]
-		producerType = p[0]
-		producer = p[1]
+		if len(p) >= 3 {
+			producerType = p[0]
+			producer = p[1]
+			deviceId = p[len(p)-1]
+		} else if len(p) >= 2 {
+			producerType = p[0]
+			producer = p[1]
+			deviceId = p[1]
+		} else if len(p) >= 1 {
+			producerType = p[0]
+			deviceId = p[0]
+		}
 	}
 
 	if deviceId != "" {
@@ -97,7 +106,7 @@ func (m metricsProvider) New(ctx context.Context, config map[string]string) (*te
 		}
 	}
 
-	//to set network leval matric frequency and granularity
+	//to set network level matric frequency and granularity
 	if v, ok := config["networkMetricsGranularity"]; ok && v != "" {
 		telemetry.SetNetworkMetricsConfig(v, "")
 	}

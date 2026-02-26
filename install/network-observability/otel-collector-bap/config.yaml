@@ -1,0 +1,83 @@
+# OpenTelemetry Collector BAP - receives OTLP from BAP adapter (local-beckn-one-bap.yaml)
+# App-level: all signals to Prometheus and Jaeger. Network-level: filtered to otel-collector-network.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    send_batch_size: 1024
+    timeout: 10s
+  batch/traces:
+    send_batch_size: 1024
+    timeout: 2s
+
+  filter/network_metrics:
+    error_mode: ignore
+    metrics:
+      metric:
+        - 'name != "onix_http_request_count"'
+
+  filter/network_traces:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["sender.id"] == nil'
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: onix
+    const_labels:
+      observability: otel-collector-bap
+      service_name: beckn-one-bap
+
+  otlp_grpc/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  otlp_http/collector2:
+    endpoint: http://otel-collector-network:4318
+    compression: gzip
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+service:
+  extensions: [health_check, zpages]
+  pipelines:
+    metrics/app:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+
+    metrics/network:
+      receivers: [otlp]
+      processors: [filter/network_metrics, batch]
+      exporters: [otlp_http/collector2]
+
+    traces/app:
+      receivers: [otlp]
+      processors: [batch/traces]
+      exporters: [otlp_grpc/jaeger]
+
+    traces/network:
+      receivers: [otlp]
+      processors: [filter/network_traces, batch/traces]
+      exporters: [otlp_http/collector2]
+
+    logs/network:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/collector2]
+
+  telemetry:
+    logs:
+      level: info

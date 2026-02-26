@@ -108,7 +108,7 @@ func (Setup) New(ctx context.Context, cfg *Config) (*telemetry.Provider, error) 
 		}, nil
 	}
 
-	//this will be used by both matric and traces
+	//this will be used by both metric and traces
 
 	// to build resource with envelope metadata
 	baseAttrs := []attribute.KeyValue{
@@ -123,10 +123,10 @@ func (Setup) New(ctx context.Context, cfg *Config) (*telemetry.Provider, error) 
 
 	resMetric, err := resource.New(ctx, resource.WithAttributes(buildAtts(baseAttrs, "METRIC")...))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create telemetry resource for matric: %w", err)
+		return nil, fmt.Errorf("failed to create telemetry resource for metric: %w", err)
 	}
 
-	//OTLP matric
+	//OTLP metric
 	var meterProvider *metric.MeterProvider
 	if cfg.EnableMetrics {
 		metricExpoter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithEndpoint(cfg.OtlpEndpoint),
@@ -139,7 +139,7 @@ func (Setup) New(ctx context.Context, cfg *Config) (*telemetry.Provider, error) 
 		otel.SetMeterProvider(meterProvider)
 		log.Infof(ctx, "OpenTelemetry metrics initialized for service=%s version=%s env=%s (OTLP endpoint=%s)",
 			cfg.ServiceName, cfg.ServiceVersion, cfg.Environment, cfg.OtlpEndpoint)
-		// for the go runtime matrics
+		// for the go runtime metrics
 		if err := runtime.Start(runtime.WithMinimumReadMemStatsInterval(runtime.DefaultMinimumReadMemStatsInterval)); err != nil {
 			log.Warnf(ctx, "Failed to start Go runtime instrumentation: %v", err)
 		}

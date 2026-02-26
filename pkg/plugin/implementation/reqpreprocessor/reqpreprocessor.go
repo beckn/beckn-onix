@@ -75,8 +75,8 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 			}
 
 			if callerID != nil {
-				log.Debugf(ctx, "adding callerID to request:%s, %v", model.ContextKeyCallerID, callerID)
-				ctx = context.WithValue(ctx, model.ContextKeyCallerID, callerID)
+				log.Debugf(ctx, "adding callerID to request:%s, %v", model.ContextKeyRemoteID, callerID)
+				ctx = context.WithValue(ctx, model.ContextKeyRemoteID, callerID)
 			}
 			for _, key := range cfg.ContextKeys {
 				ctxKey, _ := model.ParseContextKey(key)

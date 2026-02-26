@@ -108,41 +108,6 @@ func getFieldForAction(ctx context.Context, action string) []string {
 	return auditRules["default"]
 }
 
-//func getByPath(root map[string]interface{}, path string) (interface{}, bool) {
-//
-//	parts := strings.Split(path, ".")
-//	var cur interface{} = root
-//
-//	for _, part := range parts {
-//		m, ok := cur.(map[string]interface{})
-//		if !ok {
-//			return nil, false
-//		}
-//		v, ok := m[part]
-//		if !ok {
-//			return nil, false
-//		}
-//		cur = v
-//	}
-//	return cur, true
-//}
-//
-//func setByPath(root map[string]interface{}, path string, value interface{}) {
-//	parts := strings.Split(path, ".")
-//	cur := root
-//
-//	for i := 0; i < len(parts)-1; i++ {
-//		k := parts[i]
-//		next, ok := cur[k].(map[string]interface{})
-//		if !ok {
-//			next = map[string]interface{}{}
-//			cur[k] = next
-//		}
-//		cur = next
-//	}
-//	cur[parts[len(parts)-1]] = value
-//}
-
 func projectPath(cur interface{}, parts []string) (interface{}, bool) {
 	if len(parts) == 0 {
 		return cur, true

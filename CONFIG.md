@@ -199,9 +199,7 @@ log:
 #### `plugins.otelsetup`
 **Type**: `object`  
 **Required**: No  
-**Description**: OpenTelemetry configuration controlling whether the Prometheus exporter is enabled.
-
-**Important**: This block is optional—omit it to run without telemetry. When present, the `/metrics` endpoint is exposed on a separate port (configurable via `metricsPort`) only if `enableMetrics: true`.
+**Description**: OpenTelemetry (OTLP) configuration for metrics, traces, and logs. When configured, telemetry is exported to an OTLP collector endpoint. Omit this block to run without telemetry.
 
 ##### Parameters:
 
@@ -215,11 +213,10 @@ log:
 **Required**: Yes  
 **Description**: Plugin configuration parameters.
 
-###### `config.enableMetrics`
-**Type**: `string` (boolean)  
-**Required**: No  
-**Default**: `"true"`  
-**Description**: Enables metrics collection and the `/metrics` endpoint. Must be `"true"` or `"false"` as a string.
+###### `config.otlpEndpoint`
+**Type**: `string`  
+**Required**: Yes (when OtelSetup is used)  
+**Description**: OTLP gRPC endpoint (host:port) for exporting metrics, traces, and logs. Example: `"localhost:4317"`, `"otel-collector-bap:4317"`.
 
 ###### `config.serviceName`
 **Type**: `string`  
@@ -238,47 +235,114 @@ log:
 **Default**: `"development"`  
 **Description**: Sets the `deployment.environment` attribute (e.g., `development`, `staging`, `production`).
 
-###### `config.metricsPort`
+###### `config.domain`
 **Type**: `string`  
 **Required**: No  
 **Default**: `"9090"`  
 **Description**: Port on which the metrics HTTP server will listen. The metrics endpoint is hosted on a separate server from the main application.
 
-**Example - Enable Metrics** (matches `config/local-simple.yaml`):
+###### `config.enableMetrics`
+**Type**: `string` (boolean)  
+**Required**: No  
+**Default**: `"false"`  
+**Description**: Enables metrics collection and OTLP metric export. Use `"true"` or `"false"` as a string.
+
+###### `config.enableTracing`
+**Type**: `string` (boolean)  
+**Required**: No  
+**Default**: `"false"`  
+**Description**: Enables trace export via OTLP. Use `"true"` or `"false"` as a string.
+
+###### `config.enableLogs`
+**Type**: `string` (boolean)  
+**Required**: No  
+**Default**: `"false"`  
+**Description**: Enables log export via OTLP (e.g. audit logs). Use `"true"` or `"false"` as a string.
+
+###### `config.timeInterval`
+**Type**: `string` (integer)  
+**Required**: No  
+**Default**: `"5"`  
+**Description**: Time interval in seconds used for periodic metric export or batching.
+
+###### `config.auditFieldsConfig`
+**Type**: `string`  
+**Required**: No  
+**Description**: Path to a YAML file that defines which request/response fields are included in audit logs, per action. See [Audit fields configuration](#audit-fields-configuration). Example: `"/app/config/audit-fields.yaml"`.
+
+
+**Example - OTLP export with audit logs** (e.g. `config/local-beckn-one-bap.yaml`):
 ```yaml
 plugins:
   otelsetup:
     id: otelsetup
     config:
-      serviceName: "beckn-onix"
+      serviceName: "beckn-one-bap"
       serviceVersion: "1.0.0"
-      enableMetrics: "true"
       environment: "development"
-      metricsPort: "9090"
+      domain: "ev_charging"
+      otlpEndpoint: "otel-collector-bap:4317"
+      enableMetrics: "true"
+      enableTracing: "true"
+      enableLogs: "true"
+      timeInterval: "5"
+      networkMetricsGranularity: "2min"
+      networkMetricsFrequency: "4min"
+      auditFieldsConfig: "/app/config/audit-fields.yaml"
 ```
 
-### Accessing Metrics
 
-When `plugins.otelsetup.config.enableMetrics: "true"`, the metrics endpoint is hosted on a separate HTTP server. Scrape metrics at:
 
+### Audit fields configuration
+
+When `config.auditFieldsConfig` points to a YAML file, audit logs (emitted via OTLP when `enableLogs: "true"`) include only the fields you list per action. The file format:
+
+```yaml
+auditRules:
+  default:                           # Optional: fallback for actions without a specific list
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.domain
+    - context.bap_id
+    - context.bpp_id
+  discover:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.timestamp
+    - message.filters
+    - message.spatial
+  select:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - message.order.beckn:buyer.beckn:id
+    # ... more dot-path fields
 ```
-http://your-server:9090/metrics
-```
 
-**Note**: The metrics server runs on the port specified by `config.metricsPort` (default: `9090`), which is separate from the main application port configured in `http.port`.
+- **Top-level key**: `auditRules`.
+- **Action keys**: Use Beckn action names (e.g. `discover`, `select`, `init`, `confirm`, `update`, `track`, `cancel`, `rating`, `support`). Use `default` for actions that do not have a specific list.
+- **Values**: List of dot-path strings into the request/response JSON (e.g. `context.transaction_id`, `message.order.beckn:id`). Namespaced keys use colons (e.g. `beckn:id`).
+
+See `config/audit-fields.yaml` for a full example.
 
 ### Metrics Collected
+
+When OtelSetup is configured with `otlpEndpoint`, metrics and traces are exported via OTLP (no separate metrics HTTP server). Scrape metrics from your OTLP collector 
 
 Metrics are organized by module for better maintainability and encapsulation:
 
 #### OTel Setup (from `otelsetup` plugin)
-- Prometheus exporter & `/metrics` endpoint on separate HTTP server
-- Go runtime instrumentation (`go_*`), resource attributes, and meter provider wiring
+- OTLP export for metrics, traces, and logs (gRPC endpoint). 
+- Go runtime instrumentation (`go_*`), resource attributes, and meter/tracer provider wiring.
+- When `enableLogs: "true"` and `auditFieldsConfig` is set, audit logs are emitted via OTLP with fields defined in the audit-fields YAML.
 
 #### Step Execution Metrics (from `telemetry` package)
 - `onix_step_executions_total`, `onix_step_execution_duration_seconds`, `onix_step_errors_total`
 
 #### Handler Metrics (from `handler` module)
+- `onix_http_request_count` – HTTP requests by status class, route, method, role, sender, recipient (and optional network metric attributes).
 - `beckn_signature_validations_total` - Signature validation attempts
 - `beckn_schema_validations_total` - Schema validation attempts
 - `onix_routing_decisions_total` - Routing decisions taken by handler
@@ -752,12 +816,12 @@ publisher:
 middleware:
   - id: reqpreprocessor
     config:
-      uuidKeys: transaction_id,message_id
       role: bap
+      contextKeys: transaction_id,message_id,subscriber_id,module_id
 ```
 
 **Parameters**:
-- `uuidKeys`: Comma-separated list of fields to auto-generate UUIDs for if missing
+- `contextKeys`: Comma-separated list of fields to auto-generate UUIDs for if missing
 - `role`: BAP or BPP role for request processing
 
 ---

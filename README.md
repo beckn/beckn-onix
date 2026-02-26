@@ -132,7 +132,7 @@ The **Beckn Protocol** is an open protocol that enables location-aware, local co
 - **Decrypter**: AES decryption for encrypted data processing
 - **ReqPreprocessor**: Request preprocessing (UUID generation, headers)
 - **ReqMapper**: Middleware to transform payload either between Beckn versions or against other platforms.
-- **OtelSetup**: Observability Setup to make metrics, traces and logs available
+- **OtelSetup**: Observability setup for metrics, traces, and logs (OTLP). Supports optional audit log configuration via `auditFieldsConfig` (YAML mapping actions to fields) . See [CONFIG.md](CONFIG.md) for details.
 
 
 ## Quick Start
@@ -330,10 +330,11 @@ modules:
 ### Deployment Modes
 
 1. **Combined Mode**: Single instance handling both BAP and BPP (`config/onix/`) - Uses `secretskeymanager` (HashiCorp Vault) for production key management
-2. **BAP-Only Mode**: Dedicated buyer-side deployment (`config/onix-bap/`) 
-3. **BPP-Only Mode**: Dedicated seller-side deployment (`config/onix-bpp/`) 
-4. **Local Development Combined Mode**: Simplified configuration (`config/local-simple.yaml`) - Uses `simplekeymanager` with embedded Ed25519 keys, no vault setup needed.
-5. **Local Development Combined Mode (Alternative)**: Development configuration (`config/local-dev.yaml`) - Uses `keymanager` vault setup needed
+2. **BAP-Only Mode**: Dedicated buyer-side deployment (`config/onix-bap/`)
+3. **BPP-Only Mode**: Dedicated seller-side deployment (`config/onix-bpp/`)
+4. **Local Development Combined Mode**: Simplified configuration (`config/local-simple.yaml`) - Uses `simplekeymanager` with embedded Ed25519 keys, no vault setup needed
+5. **Local Development Combined Mode (Alternative)**: Development configuration (`config/local-dev.yaml`) - Uses `keymanager`, vault setup needed
+6. **Local with Observability (BAP/BPP)**: Configs `config/local-beckn-one-bap.yaml` and `config/local-beckn-one-bpp.yaml` include OtelSetup (metrics, traces, audit logs) for use with an OTLP collector. Audit fields are configured via `config/audit-fields.yaml`. For a full stack (collectors, Grafana, Loki), see `install/network-observability/`
 
 ## API Endpoints
 
@@ -359,14 +360,6 @@ modules:
 | POST | `/bpp/receiver/*` | Receives all BAP requests |
 | POST | `/bpp/caller/on_*` | Sends responses back to BAP |
 
-### Observability Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check endpoint |
-| GET | `/metrics` | Prometheus metrics endpoint (when telemetry is enabled) |
-
-**Note**: The `/metrics` endpoint is available when `telemetry.enableMetrics: true` in the configuration file. It returns metrics in Prometheus format.
 
 ## Documentation
 

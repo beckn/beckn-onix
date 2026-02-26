@@ -100,5 +100,6 @@ func (is *InstrumentedStep) Run(ctx *model.StepContext) error {
 	if stepCtx.Route != nil {
 		ctx.Route = stepCtx.Route
 	}
+	ctx.WithContext(stepCtx.Context)
 	return err
 }

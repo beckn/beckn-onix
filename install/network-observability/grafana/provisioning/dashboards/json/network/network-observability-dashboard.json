@@ -1,0 +1,199 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Zipkin UI",
+      "tooltip": "Open Zipkin UI for network API traces",
+      "type": "link",
+      "url": "http://localhost:9411"
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Network Metrics",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisPlacement": "auto" }, "unit": "reqps" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "id": 2,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate({__name__=~\"onix.*http_request_count(_total)?\"}[5m])) by (action)",
+          "legendFormat": "{{action}}",
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP request rate by action",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisPlacement": "auto" }, "unit": "reqps" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "id": 3,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate({__name__=~\"onix.*http_request_count(_total)?\"}[5m])) by (http_status_code)",
+          "legendFormat": "{{http_status_code}}",
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP request rate by status",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisPlacement": "auto" }, "unit": "reqps" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "id": 4,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate({__name__=~\"onix.*http_request_count(_total)?\"}[5m])) by (role)",
+          "legendFormat": "{{role}}",
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP request rate by role",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisPlacement": "auto" }, "unit": "reqps" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "id": 5,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate({__name__=~\"onix.*http_request_count(_total)?\"}[5m])) by (caller)",
+          "legendFormat": "{{caller}}",
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP request rate by caller",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+      "id": 6,
+      "title": "Network Logs (Beckn Audit)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 18 },
+      "id": 7,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descend",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{service_name=~\"onix.*|beckn.*\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Beckn audit logs (onix/beckn)",
+      "type": "logs"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "id": 71,
+      "options": { "dedupStrategy": "none", "enableLogDetails": true, "showCommonLabels": true, "showLabels": true, "showTime": true, "sortOrder": "Descend" },
+      "targets": [{ "datasource": { "type": "loki", "uid": "loki" }, "expr": "{}", "refId": "A" }],
+      "title": "All logs (debug: matches any)",
+      "type": "logs"
+    },
+    {
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "id": 8,
+      "title": "Network Traces",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "zipkin", "uid": "zipkin" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 33 },
+      "id": 9,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "showCommonLabels": false,
+        "showProcess": false,
+        "sortOrder": "Descend"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "zipkin", "uid": "zipkin" },
+          "query": "",
+          "queryType": "traceqlSearch",
+          "refId": "A"
+        }
+      ],
+      "title": "Network API spans (Zipkin)",
+      "type": "traces"
+    },
+    {
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 45 },
+      "id": 10,
+      "options": {
+        "content": "**Network-level observability**: Beckn API spans, audit logs, and HTTP request metrics from the network pipeline.\n\n**No Loki/Zipkin data?** 1) Restart stack after config changes: `docker compose -f network_observability/docker-compose.yml up -d --force-recreate`. 2) Trigger requests to generate audit logs (EmitAuditLogs runs on each request). 3) Use [Zipkin UI](http://localhost:9411) to search traces. 4) In Grafana Explore (Loki), try `{}` or `{service_name=~\".+\"}` to see all logs.",
+        "mode": "markdown"
+      },
+      "title": "About",
+      "type": "text"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["onix", "network", "observability"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Network Observability",
+  "uid": "network-observability",
+  "version": 1,
+  "weekStart": ""
+}

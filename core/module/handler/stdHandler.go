@@ -124,7 +124,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	selfID := h.SubscriberID
 	remoteID := ""
-	if v, ok := r.Context().Value(model.ContextKeyCallerID).(string); ok {
+	if v, ok := r.Context().Value(model.ContextKeyRemoteID).(string); ok {
 		remoteID = v
 	}
 	var senderID, receiverID string
@@ -176,7 +176,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Restore request body before forwarding or publishing.
 	r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
 	if stepCtx.Route == nil {
-		response.SendAck(w)
+		response.SendAck(wrapped)
 		return
 	}
 
@@ -388,7 +388,7 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
 	selfID := h.SubscriberID
 	remoteID := ""
-	if v, ok := r.Context().Value(model.ContextKeyCallerID).(string); ok {
+	if v, ok := r.Context().Value(model.ContextKeyRemoteID).(string); ok {
 		remoteID = v
 	}
 

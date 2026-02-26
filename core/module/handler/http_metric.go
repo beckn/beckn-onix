@@ -17,7 +17,7 @@ type HTTPMetrics struct {
 }
 
 var (
-	httlMetricsInstance *HTTPMetrics
+	httpMetricsInstance *HTTPMetrics
 	httpMetricsOnce     sync.Once
 	httpMetricsErr      error
 )
@@ -31,7 +31,7 @@ func newHTTPMetrics() (*HTTPMetrics, error) {
 
 	if m.HttpRequestCount, err = meter.Int64Counter(
 		"onix_http_request_count",
-		metric.WithDescription("Total HTTP requests by status, route, method, role and calle "),
+		metric.WithDescription("Total HTTP requests by status, route, method, role and caller"),
 		metric.WithUnit("1"),
 	); err != nil {
 		return nil, fmt.Errorf("onix_http_request_count: %w", err)
@@ -42,9 +42,9 @@ func newHTTPMetrics() (*HTTPMetrics, error) {
 
 func GetHTTPMetrics(ctx context.Context) (*HTTPMetrics, error) {
 	httpMetricsOnce.Do(func() {
-		httlMetricsInstance, httpMetricsErr = newHTTPMetrics()
+		httpMetricsInstance, httpMetricsErr = newHTTPMetrics()
 	})
-	return httlMetricsInstance, httpMetricsErr
+	return httpMetricsInstance, httpMetricsErr
 }
 
 // StatusClass returns the HTTP status class string (e.g. 200 -> "2xx").
