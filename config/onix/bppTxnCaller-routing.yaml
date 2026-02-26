@@ -1,20 +1,23 @@
 routingRules:
   - domain: "ONDC:TRV10"
     version: "2.0.0"
-    routingType: "url"
-    target:
-      url: "https://services-backend/trv/v1"
+    routingType: "bap"
     endpoints:
+      - on_search
       - on_select
       - on_init
       - on_confirm
       - on_status
       - on_update
       - on_cancel
-  - domain: "ONDC:TRV10"
+  - domain: "ONDC:TRV11"
     version: "2.0.0"
-    routingType: "msgq"
-    target:
-      topic_id: "trv_topic_id1"
+    routingType: "bap"
     endpoints:
       - on_search
+      - on_select
+      - on_init
+      - on_confirm
+      - on_status
+      - on_update
+      - on_cancel

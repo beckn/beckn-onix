@@ -1,25 +1,20 @@
 routingRules:
   - domain: "ONDC:TRV10"
     version: "2.0.0"
-    routingType: "bpp"
+    routingType: "url"
     target:
-      url: "https://gateway.example.com"
+      url: "https://services-backend/trv/v1"
     endpoints:
-      - search
+      - on_select
+      - on_init
+      - on_confirm
+      - on_status
+      - on_update
+      - on_cancel
   - domain: "ONDC:TRV10"
     version: "2.0.0"
-    routingType: "bpp"
+    routingType: "msgq"
+    target:
+      topic_id: "trv_topic_id1"
     endpoints:
-      - select
-      - init
-      - confirm
-      - status
-      - cancel
-  - domain: "ONDC:TRV12"
-    version: "2.0.0"
-    routingType: "bpp"
-    endpoints:
-      - select
-      - init
-      - confirm
-      - status
+      - on_search
