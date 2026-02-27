@@ -421,23 +421,24 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 | Ashish Guliya | Google Cloud | ashishkgGoogle |
 | Pooja Joshi | Google Cloud | poojajoshi2 |
 | Deepa Mulchandani | Google Cloud | Deepa-Mulchandani |
-| Ankit | FIDE | ankitShogun |
-| Abhishek | FIDE | em-abee |
-| Viraj Kulkarni | FIDE | viraj89 |
+| Ankit | Beckn Labs | ankitShogun |
+| Abhishek | Beckn Labs | em-abee |
+| Viraj Kulkarni | Beckn Labs | viraj89 |
 | Amay Pandey | Google Cloud |  |
 | Dipika Prasad | Google Cloud | DipikaPrasad |
 | Tanya Madaan | ONDC | tanyamadaan |
 | Binu | ONDC |  |
-| Faiz M | FIDE | faizmagic |
-| Ravi Prakash | FIDE | ravi-prakash-v |
+| Faiz M | Beckn Labs | faizmagic |
+| Ravi Prakash | Beckn Labs | ravi-prakash-v |
 | Siddharth Prakash | Google Cloud |  |
 | Namya Patiyal | Google Cloud |  |
 | Saksham Nagpal | Google Cloud | sakshamGoogle |
 | Arpit Bharadwaj | Google Cloud |  |
 | Pranoy | Google Cloud |  |
-| Mayuresh Nirhali | FIDE Volunteer | nirmay |
+| Mayuresh Nirhali | Beckn Labs | nirmay |
 | Madhuvandhini B | Google Cloud | madhuvandhini5856 |
 | Siddhartha Banerjee | Google Cloud | sidb85 |
+| Manendra Pal Singh | NPCI BHIM | manendrapalsingh |
 
 ---
 
