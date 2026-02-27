@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
@@ -52,18 +54,34 @@ func (is *InstrumentedStep) Run(ctx *model.StepContext) error {
 		return is.step.Run(ctx)
 	}
 
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
+	stepName := "step:" + is.stepName
+	spanCtx, span := tracer.Start(ctx.Context, stepName)
+	defer span.End()
+
+	// run step with context that contains the step span
+	stepCtx := &model.StepContext{
+		Context:    spanCtx,
+		Request:    ctx.Request,
+		Body:       ctx.Body,
+		Role:       ctx.Role,
+		SubID:      ctx.SubID,
+		RespHeader: ctx.RespHeader,
+		Route:      ctx.Route,
+	}
+
 	start := time.Now()
-	err := is.step.Run(ctx)
+	err := is.step.Run(stepCtx)
 	duration := time.Since(start).Seconds()
 
 	attrs := []attribute.KeyValue{
 		telemetry.AttrModule.String(is.moduleName),
 		telemetry.AttrStep.String(is.stepName),
-		telemetry.AttrRole.String(string(ctx.Role)),
+		telemetry.AttrRole.String(string(stepCtx.Role)),
 	}
 
-	is.metrics.StepExecutionTotal.Add(ctx.Context, 1, metric.WithAttributes(attrs...))
-	is.metrics.StepExecutionDuration.Record(ctx.Context, duration, metric.WithAttributes(attrs...))
+	is.metrics.StepExecutionTotal.Add(stepCtx.Context, 1, metric.WithAttributes(attrs...))
+	is.metrics.StepExecutionDuration.Record(stepCtx.Context, duration, metric.WithAttributes(attrs...))
 
 	if err != nil {
 		errorType := fmt.Sprintf("%T", err)
@@ -75,10 +93,13 @@ func (is *InstrumentedStep) Run(ctx *model.StepContext) error {
 		}
 
 		errorAttrs := append(attrs, telemetry.AttrErrorType.String(errorType))
-		is.metrics.StepErrorsTotal.Add(ctx.Context, 1, metric.WithAttributes(errorAttrs...))
-		log.Errorf(ctx.Context, err, "Step %s failed", is.stepName)
+		is.metrics.StepErrorsTotal.Add(stepCtx.Context, 1, metric.WithAttributes(errorAttrs...))
+		log.Errorf(stepCtx.Context, err, "Step %s failed", is.stepName)
 	}
 
+	if stepCtx.Route != nil {
+		ctx.Route = stepCtx.Route
+	}
+	ctx.WithContext(stepCtx.Context)
 	return err
 }
-

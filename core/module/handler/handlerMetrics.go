@@ -65,4 +65,3 @@ func newHandlerMetrics() (*HandlerMetrics, error) {
 
 	return m, nil
 }
-

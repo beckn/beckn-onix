@@ -22,7 +22,8 @@ func TestNewPreProcessorSuccessCases(t *testing.T) {
 		{
 			name: "BAP role with valid context",
 			config: &Config{
-				Role: "bap",
+				Role:     "bap",
+				ParentID: "bap:bap-123",
 			},
 			requestBody: map[string]interface{}{
 				"context": map[string]interface{}{
@@ -38,7 +39,8 @@ func TestNewPreProcessorSuccessCases(t *testing.T) {
 		{
 			name: "BPP role with valid context",
 			config: &Config{
-				Role: "bpp",
+				Role:     "bpp",
+				ParentID: "bap:bap-123",
 			},
 			requestBody: map[string]interface{}{
 				"context": map[string]interface{}{

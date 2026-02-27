@@ -1,0 +1,245 @@
+# Network observability + BAP/BPP adapters + BPP sandbox
+# Builds Onix adapter once; BAP uses config/local-beckn-one-bap.yaml, BPP uses config/local-beckn-one-bpp.yaml.
+# No mock-registry: BAP/BPP use real registry (api.testnet.beckn.one) from config.
+# Run from repo root: docker compose -f install/network-observability/docker-compose.yml up -d
+# UIs: Grafana http://localhost:3000 | Jaeger http://localhost:16686 | BAP http://localhost:8081 | BPP http://localhost:8082
+
+services:
+  redis:
+    image: redis:alpine
+    pull_policy: always
+    container_name: redis-onix
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass your-redis-password
+    networks:
+      beckn_network:
+        aliases:
+          - redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "your-redis-password", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  onix-bap:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.adapter-with-plugins
+    image: onix-adapter:local
+    container_name: onix-bap
+    ports:
+      - "8081:8081"
+    volumes:
+      - ../../config:/app/config:ro
+      - ../../schemas:/app/schemas:ro
+    environment:
+      - CONFIG_FILE=/app/config/local-beckn-one-bap.yaml
+      - REDIS_PASSWORD=your-redis-password
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector-bap:4317
+    command: ["./server", "--config=/app/config/local-beckn-one-bap.yaml"]
+    networks:
+      - beckn_network
+      - observability
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      otel-collector-bap:
+        condition: service_started
+
+  onix-bpp:
+    image: onix-adapter:local
+    container_name: onix-bpp
+    ports:
+      - "8082:8082"
+    volumes:
+      - ../../config:/app/config:ro
+      - ../../schemas:/app/schemas:ro
+    environment:
+      - CONFIG_FILE=/app/config/local-beckn-one-bpp.yaml
+      - REDIS_PASSWORD=your-redis-password
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector-bpp:4317
+    command: ["./server", "--config=/app/config/local-beckn-one-bpp.yaml"]
+    networks:
+      - beckn_network
+      - observability
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      otel-collector-bpp:
+        condition: service_started
+
+  otel-collector-bap:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector-bap
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./otel-collector-bap/config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8889:8889"
+    networks:
+      - observability
+      - beckn_network
+    restart: unless-stopped
+    depends_on:
+      - otel-collector-network
+
+  otel-collector-bpp:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector-bpp
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./otel-collector-bpp/config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4321:4317"
+      - "4322:4318"
+      - "8891:8891"
+    networks:
+      - observability
+      - beckn_network
+    restart: unless-stopped
+    depends_on:
+      - otel-collector-network
+
+  otel-collector-network:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector-network
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./otel-collector-network/config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4319:4317"
+      - "4320:4318"
+      - "8890:8890"
+    networks:
+      - observability
+    restart: unless-stopped
+
+  zipkin:
+    image: openzipkin/zipkin:latest
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+    networks:
+      - observability
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - observability
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - observability
+    restart: unless-stopped
+    depends_on:
+      - otel-collector-bap
+      - otel-collector-bpp
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+    networks:
+      - observability
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - observability
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - jaeger
+      - zipkin
+      - loki
+
+  sandbox-bap:
+    container_name: sandbox-bap
+    image: fidedocker/sandbox-2.0:latest
+    platform: linux/amd64
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - beckn_network
+
+  sandbox-bpp:
+    container_name: sandbox-bpp
+    image: fidedocker/sandbox-2.0:latest
+    platform: linux/amd64
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+    ports:
+      - "3002:3002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - beckn_network
+
+networks:
+  observability:
+    driver: bridge
+  beckn_network:
+    name: beckn_network
+    driver: bridge
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  loki_data:

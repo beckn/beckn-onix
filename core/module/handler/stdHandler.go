@@ -7,12 +7,23 @@ import (
 	"io"
 	"net/http"
 	"net/http/httputil"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/response"
+	"github.com/beckn-one/beckn-onix/pkg/telemetry"
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	auditlog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // stdHandler orchestrates the execution of defined processing steps.
@@ -94,31 +105,71 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Header.Del("X-Role")
 	}()
 
-	ctx, err := h.stepCtx(r, w.Header())
+	// to start a new trace
+	propagator := otel.GetTextMapPropagator()
+	traceCtx := propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
+	spanName := r.URL.Path
+	traceCtx, span := tracer.Start(traceCtx, spanName, trace.WithSpanKind(trace.SpanKindServer))
+
+	//to build the request with trace
+	r = r.WithContext(traceCtx)
+
+	var recordOnce func()
+	wrapped := &responseRecorder{
+		ResponseWriter: w,
+		statusCode:     http.StatusOK,
+		record:         nil,
+	}
+
+	senderID, receiverID := h.resolveDirection(r.Context())
+	httpMeter, _ := GetHTTPMetrics(r.Context())
+	if httpMeter != nil {
+		recordOnce = func() {
+			RecordHTTPRequest(r.Context(), wrapped.statusCode, r.URL.Path, string(h.role), senderID, receiverID)
+		}
+		wrapped.record = recordOnce
+	}
+
+	// set beckn attribute
+	setBecknAttr(span, r, h)
+
+	stepCtx, err := h.stepCtx(r, w.Header())
 	if err != nil {
 		log.Errorf(r.Context(), err, "stepCtx(r):%v", err)
-		response.SendNack(r.Context(), w, err)
+		response.SendNack(r.Context(), wrapped, err)
 		return
 	}
-	log.Request(r.Context(), r, ctx.Body)
+	log.Request(r.Context(), r, stepCtx.Body)
+
+	defer func() {
+		span.SetAttributes(attribute.Int("http.response.status_code", wrapped.statusCode), attribute.String("observedTimeUnixNano", strconv.FormatInt(time.Now().UnixNano(), 10)))
+		if wrapped.statusCode < 200 || wrapped.statusCode >= 400 {
+			span.SetStatus(codes.Error, "status code is invalid")
+		}
+
+		body := stepCtx.Body
+		telemetry.EmitAuditLogs(r.Context(), body, auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.response.error", errString(err)))
+		span.End()
+	}()
 
 	// Execute processing steps.
 	for _, step := range h.steps {
-		if err := step.Run(ctx); err != nil {
-			log.Errorf(ctx, err, "%T.run():%v", step, err)
-			response.SendNack(ctx, w, err)
+		if err := step.Run(stepCtx); err != nil {
+			log.Errorf(stepCtx, err, "%T.run():%v", step, err)
+			response.SendNack(stepCtx, wrapped, err)
 			return
 		}
 	}
 	// Restore request body before forwarding or publishing.
-	r.Body = io.NopCloser(bytes.NewReader(ctx.Body))
-	if ctx.Route == nil {
-		response.SendAck(w)
+	r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
+	if stepCtx.Route == nil {
+		response.SendAck(wrapped)
 		return
 	}
 
 	// Handle routing based on the defined route type.
-	route(ctx, r, w, h.publisher, h.httpClient)
+	route(stepCtx, r, wrapped, h.publisher, h.httpClient)
 }
 
 // stepCtx creates a new StepContext for processing an HTTP request.
@@ -320,4 +371,50 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 	}
 	log.Infof(ctx, "Processor steps initialized: %v", cfg.Steps)
 	return nil
+}
+
+func (h *stdHandler) resolveDirection(ctx context.Context) (senderID, receiverID string) {
+	selfID := h.SubscriberID
+	remoteID, _ := ctx.Value(model.ContextKeyRemoteID).(string)
+	if strings.Contains(h.moduleName, "Caller") {
+		return selfID, remoteID
+	}
+	return remoteID, selfID
+}
+
+func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
+	senderID, receiverID := h.resolveDirection(r.Context())
+	attrs := []attribute.KeyValue{
+		telemetry.AttrRecipientID.String(receiverID),
+		telemetry.AttrSenderID.String(senderID),
+		attribute.String("span_uuid", uuid.New().String()),
+		attribute.String("http.request.method", r.Method),
+		attribute.String("http.route", r.URL.Path),
+	}
+
+	if trxID, ok := r.Context().Value(model.ContextKeyTxnID).(string); ok {
+		attrs = append(attrs, attribute.String("transaction_id", trxID))
+	}
+	if mesID, ok := r.Context().Value(model.ContextKeyMsgID).(string); ok {
+		attrs = append(attrs, attribute.String("message_id", mesID))
+	}
+	if parentID, ok := r.Context().Value(model.ContextKeyParentID).(string); ok && parentID != "" {
+		attrs = append(attrs, attribute.String("parentSpanId", parentID))
+	}
+	if r.Host != "" {
+		attrs = append(attrs, attribute.String("server.address", r.Host))
+	}
+
+	if ua := r.UserAgent(); ua != "" {
+		attrs = append(attrs, attribute.String("user_agent.original", ua))
+	}
+
+	span.SetAttributes(attrs...)
+}
+
+func errString(e error) string {
+	if e == nil {
+		return ""
+	}
+	return e.Error()
 }

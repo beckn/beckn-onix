@@ -1,0 +1,89 @@
+auditRules:
+  default:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.domain
+    - context.bap_id
+    - context.bpp_id
+
+  discover:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.timestamp
+    - message.filters
+    - message.spatial
+
+  select:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.timestamp
+    - message.order.beckn:buyer.beckn:id
+    - message.order.beckn:seller
+    - message.order.beckn:orderItems.beckn:acceptedOffer.beckn:id
+    - message.order.beckn:orderAttributes
+
+  init:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.timestamp
+    - message.order.beckn:id
+    - message.order.beckn:buyer.beckn:id
+    - message.order.beckn:orderValue.value
+    - message.order.beckn:payment.beckn:paymentStatus
+
+  confirm:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.timestamp
+    - message.order.beckn:id
+    - message.order.beckn:orderStatus
+    - message.order.beckn:buyer.beckn:id
+    - message.order.beckn:payment.beckn:txnRef
+    - message.order.beckn:payment.beckn:paymentStatus
+
+  update:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.timestamp
+    - message.order.beckn:id
+    - message.order.beckn:orderStatus
+    - message.order.beckn:fulfillment.beckn:deliveryAttributes.sessionStatus
+
+  track:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.timestamp
+    - message.order.beckn:id
+
+  cancel:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.timestamp
+    - message.order.beckn:id
+    - message.order.beckn:orderStatus
+    - message.order.beckn:buyer.beckn:id
+
+  rating:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.timestamp
+    - message.id
+    - message.value
+    - message.category
+
+  support:
+    - context.transaction_id
+    - context.message_id
+    - context.action
+    - context.timestamp
+    - message.ref_id
+    - message.ref_type

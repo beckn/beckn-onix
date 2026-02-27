@@ -20,6 +20,11 @@ import (
 type ctxKey any
 
 var requestID ctxKey = "requestID"
+var transaction_id ctxKey = "transactionID"
+var message_id ctxKey = "messageID"
+var subscriber_id ctxKey = "subscriberID"
+var module_id ctxKey = "moduleID"
+var parent_id ctxKey = "parentID"
 
 const testLogFilePath = "./test_logs/test.log"
 
@@ -69,6 +74,7 @@ func setupLogger(t *testing.T, l level) string {
 			model.ContextKeyMsgID,
 			model.ContextKeySubscriberID,
 			model.ContextKeyModuleID,
+			model.ContextKeyParentID,
 		},
 	}
 
@@ -103,16 +109,25 @@ func parseLogLine(t *testing.T, line string) map[string]interface{} {
 func TestDebug(t *testing.T) {
 	t.Helper()
 	logPath := setupLogger(t, DebugLevel)
-	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "12345")
+	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "subscriber-id-12345")
+	ctx = context.WithValue(ctx, model.ContextKeyTxnID, "trx-id-12345")
+	ctx = context.WithValue(ctx, model.ContextKeyMsgID, "message-id-12345")
+	ctx = context.WithValue(ctx, model.ContextKeyModuleID, "module-id-12345")
+	ctx = context.WithValue(ctx, model.ContextKeyParentID, "parent-id-12345")
+
 	Debug(ctx, "Debug message")
 	lines := readLogFile(t, logPath)
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
 	expected := map[string]interface{}{
-		"level":         "debug",
-		"subscriber_id": "12345",
-		"message":       "Debug message",
+		"level":          "debug",
+		"transaction_id": "trx-id-12345",
+		"message_id":     "message-id-12345",
+		"subscriber_id":  "subscriber-id-12345",
+		"module_id":      "module-id-12345",
+		"parent_id":      "parent-id-12345",
+		"message":        "Debug message",
 	}
 
 	var found bool
@@ -135,16 +150,24 @@ func TestDebug(t *testing.T) {
 
 func TestInfo(t *testing.T) {
 	logPath := setupLogger(t, InfoLevel)
-	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "12345")
+	ctx := context.WithValue(context.Background(), model.ContextKeySubscriberID, "subscriber-id-12345")
+	ctx = context.WithValue(ctx, model.ContextKeyTxnID, "trx-id-12345")
+	ctx = context.WithValue(ctx, model.ContextKeyMsgID, "message-id-12345")
+	ctx = context.WithValue(ctx, model.ContextKeyModuleID, "module-id-12345")
+	ctx = context.WithValue(ctx, model.ContextKeyParentID, "parent-id-12345")
 	Info(ctx, "Info message")
 	lines := readLogFile(t, logPath)
 	if len(lines) == 0 {
 		t.Fatal("No logs were written.")
 	}
 	expected := map[string]interface{}{
-		"level":         "info",
-		"subscriber_id": "12345",
-		"message":       "Info message",
+		"level":          "info",
+		"transaction_id": "trx-id-12345",
+		"message_id":     "message-id-12345",
+		"subscriber_id":  "subscriber-id-12345",
+		"module_id":      "module-id-12345",
+		"parent_id":      "parent-id-12345",
+		"message":        "Info message",
 	}
 
 	var found bool
@@ -227,6 +250,12 @@ func TestError(t *testing.T) {
 func TestRequest(t *testing.T) {
 	logPath := setupLogger(t, InfoLevel)
 	ctx := context.WithValue(context.Background(), requestID, "abc-123")
+	ctx = context.WithValue(ctx, transaction_id, "transaction-id-123-")
+	ctx = context.WithValue(ctx, message_id, "message-id-123")
+	ctx = context.WithValue(ctx, subscriber_id, "subscriber-id-123")
+	ctx = context.WithValue(ctx, module_id, "module-id-123")
+	ctx = context.WithValue(ctx, parent_id, "parent-id-123")
+
 	req, _ := http.NewRequest("POST", "/api/test", bytes.NewBuffer([]byte(`{"key":"value"}`)))
 	req.RemoteAddr = "127.0.0.1:8080"
 	Request(ctx, req, []byte(`{"key":"value"}`))

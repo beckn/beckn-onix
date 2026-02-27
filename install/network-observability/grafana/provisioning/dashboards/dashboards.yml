@@ -1,0 +1,23 @@
+# Dashboard provisioning - load JSON dashboards from the json folder
+apiVersion: 1
+
+providers:
+  - name: 'Application'
+    orgId: 1
+    folder: 'Onix / Application'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json/application
+
+  - name: 'Network'
+    orgId: 1
+    folder: 'Onix / Network'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json/network

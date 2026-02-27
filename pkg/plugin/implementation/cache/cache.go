@@ -8,13 +8,14 @@ import (
 	"os"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // RedisCl global variable for the Redis client, can be overridden in tests
@@ -103,10 +104,6 @@ func New(ctx context.Context, cfg *Config) (*Cache, func() error, error) {
 			log.Debugf(ctx, "Failed to instrument Redis tracing: %v", err)
 		}
 
-		if err := redisotel.InstrumentMetrics(redisClient); err != nil {
-			// Log error but don't fail - instrumentation is optional
-			log.Debugf(ctx, "Failed to instrument Redis metrics: %v", err)
-		}
 	}
 
 	metrics, _ := GetCacheMetrics(ctx)
@@ -117,22 +114,25 @@ func New(ctx context.Context, cfg *Config) (*Cache, func() error, error) {
 
 // Get retrieves the value for the specified key from Redis.
 func (c *Cache) Get(ctx context.Context, key string) (string, error) {
-	result, err := c.Client.Get(ctx, key).Result()
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
+	spanCtx, span := tracer.Start(ctx, "redis_get")
+	defer span.End()
+	result, err := c.Client.Get(spanCtx, key).Result()
 	if c.metrics != nil {
 		attrs := []attribute.KeyValue{
 			telemetry.AttrOperation.String("get"),
 		}
 		switch {
 		case err == redis.Nil:
-			c.metrics.CacheMissesTotal.Add(ctx, 1, metric.WithAttributes(attrs...))
-			c.metrics.CacheOperationsTotal.Add(ctx, 1,
+			c.metrics.CacheMissesTotal.Add(spanCtx, 1, metric.WithAttributes(attrs...))
+			c.metrics.CacheOperationsTotal.Add(spanCtx, 1,
 				metric.WithAttributes(append(attrs, telemetry.AttrStatus.String("miss"))...))
 		case err != nil:
-			c.metrics.CacheOperationsTotal.Add(ctx, 1,
+			c.metrics.CacheOperationsTotal.Add(spanCtx, 1,
 				metric.WithAttributes(append(attrs, telemetry.AttrStatus.String("error"))...))
 		default:
-			c.metrics.CacheHitsTotal.Add(ctx, 1, metric.WithAttributes(attrs...))
-			c.metrics.CacheOperationsTotal.Add(ctx, 1,
+			c.metrics.CacheHitsTotal.Add(spanCtx, 1, metric.WithAttributes(attrs...))
+			c.metrics.CacheOperationsTotal.Add(spanCtx, 1,
 				metric.WithAttributes(append(attrs, telemetry.AttrStatus.String("hit"))...))
 		}
 	}
@@ -141,15 +141,22 @@ func (c *Cache) Get(ctx context.Context, key string) (string, error) {
 
 // Set stores the given key-value pair in Redis with the specified TTL (time to live).
 func (c *Cache) Set(ctx context.Context, key, value string, ttl time.Duration) error {
-	err := c.Client.Set(ctx, key, value, ttl).Err()
-	c.recordOperation(ctx, "set", err)
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
+	spanCtx, span := tracer.Start(ctx, "redis_set")
+	defer span.End()
+
+	err := c.Client.Set(spanCtx, key, value, ttl).Err()
+	c.recordOperation(spanCtx, "set", err)
 	return err
 }
 
 // Delete removes the specified key from Redis.
 func (c *Cache) Delete(ctx context.Context, key string) error {
-	err := c.Client.Del(ctx, key).Err()
-	c.recordOperation(ctx, "delete", err)
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
+	spanCtx, span := tracer.Start(ctx, "redis_delete")
+	defer span.End()
+	err := c.Client.Del(spanCtx, key).Err()
+	c.recordOperation(spanCtx, "delete", err)
 	return err
 }
 

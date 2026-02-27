@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/reqpreprocessor"
 )
 
@@ -18,6 +19,11 @@ func (p provider) New(ctx context.Context, c map[string]string) (func(http.Handl
 	if contextKeys, ok := c["contextKeys"]; ok {
 		config.ContextKeys = strings.Split(contextKeys, ",")
 	}
+
+	if v := ctx.Value(model.ContextKeyParentID); v != nil {
+		config.ParentID = v.(string)
+	}
+
 	return reqpreprocessor.NewPreProcessor(config)
 }
 

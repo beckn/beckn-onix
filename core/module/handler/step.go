@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
@@ -38,24 +40,38 @@ func (s *signStep) Run(ctx *model.StepContext) error {
 	if len(ctx.SubID) == 0 {
 		return model.NewBadReqErr(fmt.Errorf("subscriberID not set"))
 	}
-	keySet, err := s.km.Keyset(ctx, ctx.SubID)
-	if err != nil {
-		return fmt.Errorf("failed to get signing key: %w", err)
-	}
-	createdAt := time.Now().Unix()
-	validTill := time.Now().Add(5 * time.Minute).Unix()
-	sign, err := s.signer.Sign(ctx, ctx.Body, keySet.SigningPrivate, createdAt, validTill)
-	if err != nil {
-		return fmt.Errorf("failed to sign request: %w", err)
+
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
+
+	var keySet *model.Keyset
+	{
+		keySetCtx, keySetSpan := tracer.Start(ctx.Context, "keyset")
+		ks, err := s.km.Keyset(keySetCtx, ctx.SubID)
+		keySetSpan.End()
+		if err != nil {
+			return fmt.Errorf("failed to get signing key: %w", err)
+		}
+		keySet = ks
 	}
 
-	authHeader := s.generateAuthHeader(ctx.SubID, keySet.UniqueKeyID, createdAt, validTill, sign)
-	log.Debugf(ctx, "Signature generated: %v", sign)
-	header := model.AuthHeaderSubscriber
-	if ctx.Role == model.RoleGateway {
-		header = model.AuthHeaderGateway
+	{
+		signerCtx, signerSpan := tracer.Start(ctx.Context, "sign")
+		createdAt := time.Now().Unix()
+		validTill := time.Now().Add(5 * time.Minute).Unix()
+		sign, err := s.signer.Sign(signerCtx, ctx.Body, keySet.SigningPrivate, createdAt, validTill)
+		signerSpan.End()
+		if err != nil {
+			return fmt.Errorf("failed to sign request: %w", err)
+		}
+		authHeader := s.generateAuthHeader(ctx.SubID, keySet.UniqueKeyID, createdAt, validTill, sign)
+		log.Debugf(ctx, "Signature generated: %v", sign)
+		header := model.AuthHeaderSubscriber
+		if ctx.Role == model.RoleGateway {
+			header = model.AuthHeaderGateway
+		}
+		ctx.Request.Header.Set(header, authHeader)
 	}
-	ctx.Request.Header.Set(header, authHeader)
+
 	return nil
 }
 
@@ -93,8 +109,20 @@ func newValidateSignStep(signValidator definition.SignValidator, km definition.K
 
 // Run executes the validation step.
 func (s *validateSignStep) Run(ctx *model.StepContext) error {
-	err := s.validateHeaders(ctx)
-	s.recordMetrics(ctx, err)
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
+	spanCtx, span := tracer.Start(ctx.Context, "validate-sign")
+	defer span.End()
+	stepCtx := &model.StepContext{
+		Context:    spanCtx,
+		Request:    ctx.Request,
+		Body:       ctx.Body,
+		Role:       ctx.Role,
+		SubID:      ctx.SubID,
+		RespHeader: ctx.RespHeader,
+		Route:      ctx.Route,
+	}
+	err := s.validateHeaders(stepCtx)
+	s.recordMetrics(stepCtx, err)
 	return err
 }
 

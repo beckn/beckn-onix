@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"gopkg.in/yaml.v2"
 
 	"github.com/beckn-one/beckn-onix/core/module"
@@ -153,6 +154,9 @@ func run(ctx context.Context, configPath string) error {
 		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
 
+	//to add the parent_id in the context value so it get passed to the logs
+	ctx = addParentIdCtx(ctx, cfg)
+
 	// Initialize plugin manager.
 	log.Infof(ctx, "Initializing plugin manager")
 	mgr, closer, err := newManagerFunc(ctx, cfg.PluginManager)
@@ -219,4 +223,41 @@ func shutdown(ctx context.Context, httpServer *http.Server, wg *sync.WaitGroup, 
 			closer()
 		}
 	}()
+}
+
+func addParentIdCtx(ctx context.Context, config *Config) context.Context {
+	var parentID string
+	var podName string
+
+	if p := os.Getenv("POD_NAME"); p != "" {
+		log.Infof(ctx, "Adding POD name: %s", p)
+		podName = p
+	} else {
+		log.Info(ctx, "POD_NAME environment variable not set, falling back to hostname")
+		if hostname, err := os.Hostname(); err == nil {
+			log.Infof(ctx, "Setting POD name as hostname: %s", hostname)
+			podName = hostname
+		} else {
+			log.Info(ctx, "failed to get POD name")
+		}
+	}
+
+	for _, m := range config.Modules {
+		if m.Handler.Role == "" || m.Handler.SubscriberID == "" {
+			continue
+		}
+		candidate := string(m.Handler.Role) + ":" + m.Handler.SubscriberID + ":" + podName
+		if parentID == "" {
+			parentID = candidate
+		} else if candidate != parentID {
+			log.Warnf(ctx, "Multiple distinct role:subscriberID pairs found in modules (using %q, also saw %q); consider explicit parent_id config", parentID, candidate)
+		}
+	}
+
+	if parentID != "" {
+		ctx = context.WithValue(ctx, model.ContextKeyParentID, parentID)
+	} else {
+		log.Warnf(ctx, "Failed to find parent ID in config; add role and subscriber_id to the handler config")
+	}
+	return ctx
 }

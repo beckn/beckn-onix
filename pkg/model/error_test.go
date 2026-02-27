@@ -208,6 +208,7 @@ func TestParseContextKey_ValidKeys(t *testing.T) {
 		{"message_id", ContextKeyMsgID},
 		{"subscriber_id", ContextKeySubscriberID},
 		{"module_id", ContextKeyModuleID},
+		{"parent_id", ContextKeyParentID},
 	}
 
 	for _, tt := range tests {

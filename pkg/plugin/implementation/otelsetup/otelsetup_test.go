@@ -22,15 +22,21 @@ func TestSetup_New_Success(t *testing.T) {
 				ServiceName:    "test-service",
 				ServiceVersion: "1.0.0",
 				EnableMetrics:  true,
+				EnableTracing:  false,
 				Environment:    "test",
+				Domain:         "test-domain",
+				DeviceID:       "test-device",
+				OtlpEndpoint:   "localhost:4317",
+				TimeInterval:   5,
 			},
 		},
 		{
-			name: "Valid config with metrics disabled",
+			name: "Valid config with metrics and tracing disabled",
 			cfg: &Config{
 				ServiceName:    "test-service",
 				ServiceVersion: "1.0.0",
 				EnableMetrics:  false,
+				EnableTracing:  false,
 				Environment:    "test",
 			},
 		},
@@ -40,6 +46,7 @@ func TestSetup_New_Success(t *testing.T) {
 				ServiceName:    "",
 				ServiceVersion: "",
 				EnableMetrics:  true,
+				EnableTracing:  false,
 				Environment:    "",
 			},
 		},
@@ -56,10 +63,12 @@ func TestSetup_New_Success(t *testing.T) {
 			if tt.cfg.EnableMetrics {
 				assert.NotNil(t, provider.MeterProvider, "MeterProvider should be set when metrics enabled")
 			}
+			if tt.cfg.EnableTracing {
+				assert.NotNil(t, provider.TraceProvider, "TraceProvider should be set when tracing enabled")
+			}
 
-			// Test shutdown
-			err = provider.Shutdown(ctx)
-			assert.NoError(t, err, "Shutdown should not return error")
+			// Shutdown for cleanup. When metrics/tracing are enabled, shutdown may fail without a real OTLP backend.
+			_ = provider.Shutdown(ctx)
 		})
 	}
 }
@@ -104,7 +113,10 @@ func TestSetup_New_DefaultValues(t *testing.T) {
 		ServiceName:    "",
 		ServiceVersion: "",
 		EnableMetrics:  true,
+		EnableTracing:  false,
 		Environment:    "",
+		OtlpEndpoint:   "localhost:4317",
+		TimeInterval:   5,
 	}
 
 	provider, err := setup.New(ctx, cfg)
@@ -114,9 +126,8 @@ func TestSetup_New_DefaultValues(t *testing.T) {
 	// Verify defaults are applied by checking that provider is functional
 	assert.NotNil(t, provider.MeterProvider, "MeterProvider should be set with defaults")
 
-	// Cleanup
-	err = provider.Shutdown(ctx)
-	assert.NoError(t, err)
+	// Cleanup (shutdown may fail without a real OTLP backend)
+	_ = provider.Shutdown(ctx)
 }
 
 func TestSetup_New_MetricsDisabled(t *testing.T) {
@@ -127,6 +138,7 @@ func TestSetup_New_MetricsDisabled(t *testing.T) {
 		ServiceName:    "test-service",
 		ServiceVersion: "1.0.0",
 		EnableMetrics:  false,
+		EnableTracing:  false,
 		Environment:    "test",
 	}
 
@@ -134,8 +146,9 @@ func TestSetup_New_MetricsDisabled(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, provider)
 
-	// When metrics are disabled, MetricsHandler should be nil and MeterProvider should be nil
+	// When metrics and tracing are disabled, MeterProvider and TraceProvider should be nil
 	assert.Nil(t, provider.MeterProvider, "MeterProvider should be nil when metrics disabled")
+	assert.Nil(t, provider.TraceProvider, "TraceProvider should be nil when tracing disabled")
 
 	// Shutdown should still work
 	err = provider.Shutdown(ctx)
@@ -155,32 +168,51 @@ func TestToPluginConfig_Success(t *testing.T) {
 				ServiceName:    "test-service",
 				ServiceVersion: "1.0.0",
 				EnableMetrics:  true,
+				EnableTracing:  true,
+				EnableLogs:     true,
 				Environment:    "test",
+				Domain:         "test-domain",
+				DeviceID:       "test-device",
+				OtlpEndpoint:   "localhost:4317",
+				TimeInterval:   5,
 			},
 			expectedID: "otelsetup",
 			expectedConfig: map[string]string{
-				"serviceName":    "test-service",
-				"serviceVersion": "1.0.0",
-				"enableMetrics":  "true",
-				"environment":    "test",
-				"metricsPort":    "",
+				"serviceName":       "test-service",
+				"serviceVersion":    "1.0.0",
+				"environment":       "test",
+				"domain":            "test-domain",
+				"enableMetrics":     "true",
+				"enableTracing":     "true",
+				"enableLogs":        "true",
+				"otlpEndpoint":      "localhost:4317",
+				"deviceID":          "test-device",
+				"timeInterval":      "5",
+				"auditFieldsConfig": "",
 			},
 		},
 		{
-			name: "Config with enableMetrics false",
+			name: "Config with enableMetrics and enableTracing false",
 			cfg: &Config{
 				ServiceName:    "my-service",
 				ServiceVersion: "2.0.0",
 				EnableMetrics:  false,
+				EnableTracing:  false,
 				Environment:    "production",
 			},
 			expectedID: "otelsetup",
 			expectedConfig: map[string]string{
-				"serviceName":    "my-service",
-				"serviceVersion": "2.0.0",
-				"enableMetrics":  "false",
-				"environment":    "production",
-				"metricsPort":    "",
+				"serviceName":       "my-service",
+				"serviceVersion":    "2.0.0",
+				"environment":       "production",
+				"domain":            "",
+				"enableMetrics":     "false",
+				"enableTracing":     "false",
+				"enableLogs":        "false",
+				"otlpEndpoint":      "",
+				"deviceID":          "",
+				"timeInterval":      "0",
+				"auditFieldsConfig": "",
 			},
 		},
 		{
@@ -189,15 +221,25 @@ func TestToPluginConfig_Success(t *testing.T) {
 				ServiceName:    "",
 				ServiceVersion: "",
 				EnableMetrics:  true,
+				EnableTracing:  false,
 				Environment:    "",
+				Domain:         "",
+				DeviceID:       "",
+				OtlpEndpoint:   "",
 			},
 			expectedID: "otelsetup",
 			expectedConfig: map[string]string{
-				"serviceName":    "",
-				"serviceVersion": "",
-				"enableMetrics":  "true",
-				"environment":    "",
-				"metricsPort":    "",
+				"serviceName":       "",
+				"serviceVersion":    "",
+				"environment":       "",
+				"domain":            "",
+				"enableMetrics":     "true",
+				"enableTracing":     "false",
+				"enableLogs":        "false",
+				"otlpEndpoint":      "",
+				"deviceID":          "",
+				"timeInterval":      "0",
+				"auditFieldsConfig": "",
 			},
 		},
 	}
@@ -224,19 +266,32 @@ func TestToPluginConfig_NilConfig(t *testing.T) {
 
 func TestToPluginConfig_BooleanConversion(t *testing.T) {
 	tests := []struct {
-		name          string
-		enableMetrics bool
-		expected      string
+		name           string
+		enableMetrics  bool
+		enableTracing  bool
+		expectedMetric string
+		expectedTrace  string
 	}{
 		{
-			name:          "EnableMetrics true",
-			enableMetrics: true,
-			expected:      "true",
+			name:           "EnableMetrics and EnableTracing true",
+			enableMetrics:  true,
+			enableTracing:  true,
+			expectedMetric: "true",
+			expectedTrace:  "true",
 		},
 		{
-			name:          "EnableMetrics false",
-			enableMetrics: false,
-			expected:      "false",
+			name:           "EnableMetrics and EnableTracing false",
+			enableMetrics:  false,
+			enableTracing:  false,
+			expectedMetric: "false",
+			expectedTrace:  "false",
+		},
+		{
+			name:           "EnableMetrics true, EnableTracing false",
+			enableMetrics:  true,
+			enableTracing:  false,
+			expectedMetric: "true",
+			expectedTrace:  "false",
 		},
 	}
 
@@ -246,14 +301,18 @@ func TestToPluginConfig_BooleanConversion(t *testing.T) {
 				ServiceName:    "test",
 				ServiceVersion: "1.0.0",
 				EnableMetrics:  tt.enableMetrics,
+				EnableTracing:  tt.enableTracing,
 				Environment:    "test",
-				MetricsPort:    "",
+				OtlpEndpoint:   "localhost:4317",
+				DeviceID:       "test-device",
 			}
 
 			result := ToPluginConfig(cfg)
 			require.NotNil(t, result)
-			assert.Equal(t, tt.expected, result.Config["enableMetrics"], "enableMetrics should be converted to string correctly")
-			assert.Equal(t, "", result.Config["metricsPort"], "metricsPort should be included even when empty")
+			assert.Equal(t, tt.expectedMetric, result.Config["enableMetrics"], "enableMetrics should be converted to string correctly")
+			assert.Equal(t, tt.expectedTrace, result.Config["enableTracing"], "enableTracing should be converted to string correctly")
+			assert.Equal(t, "localhost:4317", result.Config["otlpEndpoint"], "otlpEndpoint should be included")
+			assert.Equal(t, "test-device", result.Config["deviceID"], "deviceID should be included")
 		})
 	}
 }

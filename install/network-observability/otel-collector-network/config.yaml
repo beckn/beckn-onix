@@ -1,0 +1,60 @@
+# Collector 2 - receives network-level OTLP from Collector 1, exports to Loki, Zipkin, Prometheus
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  # Map Beckn transaction_id -> trace_id and message_id -> span_id for UI correlation.
+  # UUID format: remove hyphens for trace_id (32 hex chars); first 16 hex chars for span_id.
+  transform/beckn_ids:
+    error_mode: ignore
+    trace_statements:
+      - set(span.attributes["_beckn_tx"], span.attributes["transaction_id"]) where span.attributes["transaction_id"] != nil
+      - replace_pattern(span.attributes["_beckn_tx"], "-", "") where span.attributes["_beckn_tx"] != nil
+      - set(span.trace_id, TraceID(span.attributes["_beckn_tx"])) where span.attributes["_beckn_tx"] != nil
+
+
+  batch:
+    send_batch_size: 1024
+    timeout: 10s
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:8890"
+    namespace: onix_network
+    const_labels:
+      observability: network-level
+
+  zipkin:
+    endpoint: http://zipkin:9411/api/v2/spans
+    format: json
+
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    compression: gzip
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+
+    traces:
+      receivers: [otlp]
+      processors: [transform/beckn_ids, batch]
+      exporters: [zipkin]
+
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/loki]
+
+  telemetry:
+    logs:
+      level: info

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -92,7 +93,9 @@ func TestProviderNew(t *testing.T) {
 			}`
 
 			p := provider{}
-			middleware, err := p.New(context.Background(), tc.config)
+			ctx := context.Background()
+			ctx = context.WithValue(ctx, model.ContextKeyParentID, "bap:bap-1:instanceID")
+			middleware, err := p.New(ctx, tc.config)
 			if tc.expectedError {
 				assert.Error(t, err)
 				return

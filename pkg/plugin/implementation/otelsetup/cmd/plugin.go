@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/otelsetup"
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 )
@@ -27,31 +29,90 @@ func (m metricsProvider) New(ctx context.Context, config map[string]string) (*te
 		ServiceName:    config["serviceName"],
 		ServiceVersion: config["serviceVersion"],
 		Environment:    config["environment"],
-		MetricsPort:    config["metricsPort"],
+		Domain:         config["domain"],
+		OtlpEndpoint:   config["otlpEndpoint"],
+	}
+
+	// to extract the device id from the parent id from context
+	var deviceId string
+	var producer string
+	var producerType string
+	var err error
+	if v := ctx.Value(model.ContextKeyParentID); v != nil {
+		parentID := v.(string)
+		p := strings.Split(parentID, ":")
+		if len(p) >= 3 {
+			producerType = p[0]
+			producer = p[1]
+			deviceId = p[len(p)-1]
+		} else if len(p) >= 2 {
+			producerType = p[0]
+			producer = p[1]
+			deviceId = p[1]
+		} else if len(p) >= 1 {
+			producerType = p[0]
+			deviceId = p[0]
+		}
+	}
+
+	if deviceId != "" {
+		telemetryConfig.DeviceID = deviceId
+	}
+
+	if producer != "" {
+		telemetryConfig.Producer = producer
+	}
+	if producerType != "" {
+		telemetryConfig.ProducerType = producerType
+	}
+
+	// Parse enableTracing from config
+	if enableTracingStr, ok := config["enableTracing"]; ok && enableTracingStr != "" {
+		telemetryConfig.EnableTracing, err = strconv.ParseBool(enableTracingStr)
+		if err != nil {
+			log.Warnf(ctx, "Invalid enableTracing value: %s, defaulting to False", enableTracingStr)
+		}
 	}
 
 	// Parse enableMetrics as boolean
 	if enableMetricsStr, ok := config["enableMetrics"]; ok && enableMetricsStr != "" {
-		enableMetrics, err := strconv.ParseBool(enableMetricsStr)
+		telemetryConfig.EnableMetrics, err = strconv.ParseBool(enableMetricsStr)
 		if err != nil {
-			log.Warnf(ctx, "Invalid enableMetrics value '%s', defaulting to true: %v", enableMetricsStr, err)
-			telemetryConfig.EnableMetrics = true
-		} else {
-			telemetryConfig.EnableMetrics = enableMetrics
+			log.Warnf(ctx, "Invalid enableMetrics value '%s', defaulting to False: %v", enableMetricsStr, err)
 		}
-	} else {
-		telemetryConfig.EnableMetrics = true // Default to true if not specified or empty
 	}
 
-	// Apply defaults if fields are empty
-	if telemetryConfig.ServiceName == "" {
-		telemetryConfig.ServiceName = otelsetup.DefaultConfig().ServiceName
+	// Parse enableLogs as boolean
+	if enableLogsStr, ok := config["enableLogs"]; ok && enableLogsStr != "" {
+		telemetryConfig.EnableLogs, err = strconv.ParseBool(enableLogsStr)
+		if err != nil {
+			log.Warnf(ctx, "Invalid enableLogs value '%s', defaulting to False: %v", enableLogsStr, err)
+		}
 	}
-	if telemetryConfig.ServiceVersion == "" {
-		telemetryConfig.ServiceVersion = otelsetup.DefaultConfig().ServiceVersion
+
+	// Parse timeInterval as int
+	if timeIntervalStr, ok := config["timeInterval"]; ok && timeIntervalStr != "" {
+		telemetryConfig.TimeInterval, err = strconv.ParseInt(timeIntervalStr, 10, 64)
+		if err != nil {
+			log.Warnf(ctx, "Invalid timeInterval value: %s, defaulting to 5 second ", timeIntervalStr)
+		}
+
 	}
-	if telemetryConfig.Environment == "" {
-		telemetryConfig.Environment = otelsetup.DefaultConfig().Environment
+
+	// to set fields for audit logs
+	if v, ok := config["auditFieldsConfig"]; ok && v != "" {
+		if err := telemetry.LoadAuditFieldRules(ctx, v); err != nil {
+			log.Warnf(ctx, "Failed to load audit field rules: %v", err)
+		}
+	}
+
+	//to set network level matric frequency and granularity
+	if v, ok := config["networkMetricsGranularity"]; ok && v != "" {
+		telemetry.SetNetworkMetricsConfig(v, "")
+	}
+
+	if v, ok := config["networkMetricsFrequency"]; ok && v != "" {
+		telemetry.SetNetworkMetricsConfig("", v)
 	}
 
 	log.Debugf(ctx, "Telemetry config mapped: %+v", telemetryConfig)
