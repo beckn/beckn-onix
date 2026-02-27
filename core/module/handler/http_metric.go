@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
@@ -79,10 +80,10 @@ func RecordHTTPRequest(ctx context.Context, statusCode int, action, role, sender
 
 	metric_code := action + "_api_total_count"
 	category := "NetworkHealth"
-	if action == "/search" || action == "/discovery" {
+	if strings.HasSuffix(action, "/search") || strings.HasSuffix(action, "/discovery") {
 		category = "Discovery"
 	}
-	attributes = append(attributes, specHttpMetricAttr(metric_code, category)...) //TODO: need to update as per the furthur discussion
+	attributes = append(attributes, specHttpMetricAttr(metric_code, category)...)
 	m.HttpRequestCount.Add(ctx, 1, metric.WithAttributes(attributes...))
 }
 

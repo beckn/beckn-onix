@@ -23,8 +23,6 @@ func EmitAuditLogs(ctx context.Context, body []byte, attrs ...log.KeyValue) {
 		return
 	}
 
-	//maskedBody := MaskPIIInAuditBody(body)
-
 	sum := sha256.Sum256(body)
 	auditBody := selectAuditPayload(ctx, body)
 	auditlog := provider.Logger(auditLoggerName)

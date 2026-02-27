@@ -30,18 +30,19 @@ type Setup struct{}
 
 // Config represents OpenTelemetry related configuration.
 type Config struct {
-	ServiceName    string `yaml:"serviceName"`
-	ServiceVersion string `yaml:"serviceVersion"`
-	Environment    string `yaml:"environment"`
-	Domain         string `yaml:"domain"`
-	DeviceID       string `yaml:"deviceID"`
-	EnableMetrics  bool   `yaml:"enableMetrics"`
-	EnableTracing  bool   `yaml:"enableTracing"`
-	EnableLogs     bool   `yaml:"enableLogs"`
-	OtlpEndpoint   string `yaml:"otlpEndpoint"`
-	TimeInterval   int64  `yaml:"timeInterval"`
-	Producer       string `yaml:"producer"`
-	ProducerType   string `yaml:"producerType"`
+	ServiceName       string `yaml:"serviceName"`
+	ServiceVersion    string `yaml:"serviceVersion"`
+	Environment       string `yaml:"environment"`
+	Domain            string `yaml:"domain"`
+	DeviceID          string `yaml:"deviceID"`
+	EnableMetrics     bool   `yaml:"enableMetrics"`
+	EnableTracing     bool   `yaml:"enableTracing"`
+	EnableLogs        bool   `yaml:"enableLogs"`
+	OtlpEndpoint      string `yaml:"otlpEndpoint"`
+	TimeInterval      int64  `yaml:"timeInterval"`
+	AuditFieldsConfig string `yaml:"auditFieldsConfig"`
+	Producer          string `yaml:"producer"`
+	ProducerType      string `yaml:"producerType"`
 }
 
 // DefaultConfig returns sensible defaults for telemetry configuration.
@@ -62,13 +63,17 @@ func ToPluginConfig(cfg *Config) *plugin.Config {
 	return &plugin.Config{
 		ID: "otelsetup",
 		Config: map[string]string{
-			"serviceName":    cfg.ServiceName,
-			"serviceVersion": cfg.ServiceVersion,
-			"environment":    cfg.Environment,
-			"enableMetrics":  fmt.Sprintf("%t", cfg.EnableMetrics),
-			"enableTracing":  fmt.Sprintf("%t", cfg.EnableTracing),
-			"otelEndpoint":   cfg.OtlpEndpoint,
-			"deviceID":       cfg.DeviceID,
+			"serviceName":       cfg.ServiceName,
+			"serviceVersion":    cfg.ServiceVersion,
+			"environment":       cfg.Environment,
+			"domain":            cfg.Domain,
+			"enableMetrics":     fmt.Sprintf("%t", cfg.EnableMetrics),
+			"enableTracing":     fmt.Sprintf("%t", cfg.EnableTracing),
+			"enableLogs":        fmt.Sprintf("%t", cfg.EnableLogs),
+			"otlpEndpoint":      cfg.OtlpEndpoint,
+			"deviceID":          cfg.DeviceID,
+			"timeInterval":      fmt.Sprintf("%d", cfg.TimeInterval),
+			"auditFieldsConfig": cfg.AuditFieldsConfig,
 		},
 	}
 }
@@ -101,16 +106,13 @@ func (Setup) New(ctx context.Context, cfg *Config) (*telemetry.Provider, error) 
 		cfg.TimeInterval = DefaultConfig().TimeInterval
 	}
 
-	if !cfg.EnableMetrics && !cfg.EnableTracing {
-		log.Info(ctx, "OpenTelemetry metrics and tracing are  disabled")
+	if !cfg.EnableMetrics && !cfg.EnableTracing && !cfg.EnableLogs {
+		log.Info(ctx, "OpenTelemetry metrics, tracing, and logs are all disabled")
 		return &telemetry.Provider{
 			Shutdown: func(context.Context) error { return nil },
 		}, nil
 	}
 
-	//this will be used by both metric and traces
-
-	// to build resource with envelope metadata
 	baseAttrs := []attribute.KeyValue{
 		attribute.String("service.name", cfg.ServiceName),
 		attribute.String("service.version", cfg.ServiceVersion),
@@ -121,53 +123,49 @@ func (Setup) New(ctx context.Context, cfg *Config) (*telemetry.Provider, error) 
 		attribute.String("producer", cfg.Producer),
 	}
 
-	resMetric, err := resource.New(ctx, resource.WithAttributes(buildAtts(baseAttrs, "METRIC")...))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create telemetry resource for metric: %w", err)
-	}
-
-	//OTLP metric
 	var meterProvider *metric.MeterProvider
 	if cfg.EnableMetrics {
-		metricExpoter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithEndpoint(cfg.OtlpEndpoint),
+		resMetric, err := resource.New(ctx, resource.WithAttributes(buildAtts(baseAttrs, "METRIC")...))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create telemetry resource for metric: %w", err)
+		}
+		metricExporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithEndpoint(cfg.OtlpEndpoint),
 			otlpmetricgrpc.WithDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OTLP metric exporter: %w", err)
 		}
-		reader := metric.NewPeriodicReader(metricExpoter, metric.WithInterval(time.Second*time.Duration(cfg.TimeInterval)))
+		reader := metric.NewPeriodicReader(metricExporter, metric.WithInterval(time.Second*time.Duration(cfg.TimeInterval)))
 		meterProvider = metric.NewMeterProvider(metric.WithReader(reader), metric.WithResource(resMetric))
 		otel.SetMeterProvider(meterProvider)
 		log.Infof(ctx, "OpenTelemetry metrics initialized for service=%s version=%s env=%s (OTLP endpoint=%s)",
 			cfg.ServiceName, cfg.ServiceVersion, cfg.Environment, cfg.OtlpEndpoint)
-		// for the go runtime metrics
 		if err := runtime.Start(runtime.WithMinimumReadMemStatsInterval(runtime.DefaultMinimumReadMemStatsInterval)); err != nil {
 			log.Warnf(ctx, "Failed to start Go runtime instrumentation: %v", err)
 		}
 	}
 
-	//OTLP traces
-	restrace, err := resource.New(ctx, resource.WithAttributes(buildAtts(baseAttrs, "API")...))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create trace resource: %w", err)
-	}
 	var traceProvider *trace.TracerProvider
 	if cfg.EnableTracing {
-		traceExpoter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithEndpoint(cfg.OtlpEndpoint), otlptracegrpc.WithDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
+		resTrace, err := resource.New(ctx, resource.WithAttributes(buildAtts(baseAttrs, "API")...))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create trace resource: %w", err)
+		}
+		traceExporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithEndpoint(cfg.OtlpEndpoint), otlptracegrpc.WithDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
 		}
-		traceProvider = trace.NewTracerProvider(trace.WithBatcher(traceExpoter), trace.WithResource(restrace)) //TODO: need to add the trace sampleing rate
+		traceProvider = trace.NewTracerProvider(trace.WithBatcher(traceExporter), trace.WithResource(resTrace))
 		otel.SetTracerProvider(traceProvider)
 		log.Infof(ctx, "OpenTelemetry tracing initialized for service=%s (OTLP endpoint=%s)",
 			cfg.ServiceName, cfg.OtlpEndpoint)
 	}
 
-	resAudit, err := resource.New(ctx, resource.WithAttributes(buildAtts(baseAttrs, "AUDIT")...))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create audit resource: %w", err)
-	}
 	var logProvider *logsdk.LoggerProvider
 	if cfg.EnableLogs {
+		resAudit, err := resource.New(ctx, resource.WithAttributes(buildAtts(baseAttrs, "AUDIT")...))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create audit resource: %w", err)
+		}
 		logExporter, err := otlploggrpc.New(ctx, otlploggrpc.WithEndpoint(cfg.OtlpEndpoint), otlploggrpc.WithDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OTLP logs exporter: %w", err)

@@ -169,6 +169,7 @@ func TestToPluginConfig_Success(t *testing.T) {
 				ServiceVersion: "1.0.0",
 				EnableMetrics:  true,
 				EnableTracing:  true,
+				EnableLogs:     true,
 				Environment:    "test",
 				Domain:         "test-domain",
 				DeviceID:       "test-device",
@@ -177,13 +178,17 @@ func TestToPluginConfig_Success(t *testing.T) {
 			},
 			expectedID: "otelsetup",
 			expectedConfig: map[string]string{
-				"serviceName":    "test-service",
-				"serviceVersion": "1.0.0",
-				"environment":    "test",
-				"enableMetrics":  "true",
-				"enableTracing":  "true",
-				"otelEndpoint":   "localhost:4317",
-				"deviceID":       "test-device",
+				"serviceName":       "test-service",
+				"serviceVersion":    "1.0.0",
+				"environment":       "test",
+				"domain":            "test-domain",
+				"enableMetrics":     "true",
+				"enableTracing":     "true",
+				"enableLogs":        "true",
+				"otlpEndpoint":      "localhost:4317",
+				"deviceID":          "test-device",
+				"timeInterval":      "5",
+				"auditFieldsConfig": "",
 			},
 		},
 		{
@@ -197,13 +202,17 @@ func TestToPluginConfig_Success(t *testing.T) {
 			},
 			expectedID: "otelsetup",
 			expectedConfig: map[string]string{
-				"serviceName":    "my-service",
-				"serviceVersion": "2.0.0",
-				"environment":    "production",
-				"enableMetrics":  "false",
-				"enableTracing":  "false",
-				"otelEndpoint":   "",
-				"deviceID":       "",
+				"serviceName":       "my-service",
+				"serviceVersion":    "2.0.0",
+				"environment":       "production",
+				"domain":            "",
+				"enableMetrics":     "false",
+				"enableTracing":     "false",
+				"enableLogs":        "false",
+				"otlpEndpoint":      "",
+				"deviceID":          "",
+				"timeInterval":      "0",
+				"auditFieldsConfig": "",
 			},
 		},
 		{
@@ -220,13 +229,17 @@ func TestToPluginConfig_Success(t *testing.T) {
 			},
 			expectedID: "otelsetup",
 			expectedConfig: map[string]string{
-				"serviceName":    "",
-				"serviceVersion": "",
-				"environment":    "",
-				"enableMetrics":  "true",
-				"enableTracing":  "false",
-				"otelEndpoint":   "",
-				"deviceID":       "",
+				"serviceName":       "",
+				"serviceVersion":    "",
+				"environment":       "",
+				"domain":            "",
+				"enableMetrics":     "true",
+				"enableTracing":     "false",
+				"enableLogs":        "false",
+				"otlpEndpoint":      "",
+				"deviceID":          "",
+				"timeInterval":      "0",
+				"auditFieldsConfig": "",
 			},
 		},
 	}
@@ -298,7 +311,7 @@ func TestToPluginConfig_BooleanConversion(t *testing.T) {
 			require.NotNil(t, result)
 			assert.Equal(t, tt.expectedMetric, result.Config["enableMetrics"], "enableMetrics should be converted to string correctly")
 			assert.Equal(t, tt.expectedTrace, result.Config["enableTracing"], "enableTracing should be converted to string correctly")
-			assert.Equal(t, "localhost:4317", result.Config["otelEndpoint"], "otelEndpoint should be included")
+			assert.Equal(t, "localhost:4317", result.Config["otlpEndpoint"], "otlpEndpoint should be included")
 			assert.Equal(t, "test-device", result.Config["deviceID"], "deviceID should be included")
 		})
 	}

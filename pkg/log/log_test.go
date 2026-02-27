@@ -250,11 +250,11 @@ func TestError(t *testing.T) {
 func TestRequest(t *testing.T) {
 	logPath := setupLogger(t, InfoLevel)
 	ctx := context.WithValue(context.Background(), requestID, "abc-123")
-	ctx = context.WithValue(context.Background(), transaction_id, "transaction-id-123-")
-	ctx = context.WithValue(context.Background(), message_id, "message-id-123")
-	ctx = context.WithValue(context.Background(), subscriber_id, "subscriber-id-123")
-	ctx = context.WithValue(context.Background(), module_id, "module-id-123")
-	ctx = context.WithValue(context.Background(), parent_id, "parent-id-123")
+	ctx = context.WithValue(ctx, transaction_id, "transaction-id-123-")
+	ctx = context.WithValue(ctx, message_id, "message-id-123")
+	ctx = context.WithValue(ctx, subscriber_id, "subscriber-id-123")
+	ctx = context.WithValue(ctx, module_id, "module-id-123")
+	ctx = context.WithValue(ctx, parent_id, "parent-id-123")
 
 	req, _ := http.NewRequest("POST", "/api/test", bytes.NewBuffer([]byte(`{"key":"value"}`)))
 	req.RemoteAddr = "127.0.0.1:8080"

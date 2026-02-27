@@ -196,46 +196,41 @@ services:
       - zipkin
       - loki
 
-  bpp-client:
-    image: fidedocker/protocol-server
-    container_name: bpp-client
+  sandbox-bap:
+    container_name: sandbox-bap
+    image: fidedocker/sandbox-2.0:latest
     platform: linux/amd64
-    networks:
-      - beckn_network
-    ports:
-      - "6001:6001"
-    restart: unless-stopped
-    volumes:
-      - bpp_client_config_volume:/usr/src/app/config
-      - bpp_client_schemas_volume:/usr/src/app/schemas
-      - bpp_client_logs_volume:/usr/src/app/logs
-
-  bpp-network:
-    image: fidedocker/protocol-server
-    container_name: bpp-network
-    platform: linux/amd64
-    networks:
-      - beckn_network
-    ports:
-      - "6002:6002"
-    restart: unless-stopped
-    volumes:
-      - bpp_network_config_volume:/usr/src/app/config
-      - bpp_network_schemas_volume:/usr/src/app/schemas
-      - bpp_network_logs_volume:/usr/src/app/logs
-
-  sandbox-api:
-    image: fidedocker/sandbox-api
-    container_name: sandbox-api
-    platform: linux/amd64
-    networks:
-      - beckn_network
-    ports:
-      - "4010:4000"
-    restart: unless-stopped
     environment:
-      - PORT=4000
-      - WEBHOOK_URL=http://host.docker.internal:3001/webhook
+      - NODE_ENV=production
+      - PORT=3001
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - beckn_network
+
+  sandbox-bpp:
+    container_name: sandbox-bpp
+    image: fidedocker/sandbox-2.0:latest
+    platform: linux/amd64
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+    ports:
+      - "3002:3002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - beckn_network
 
 networks:
   observability:
@@ -248,17 +243,3 @@ volumes:
   prometheus_data:
   grafana_data:
   loki_data:
-  bpp_client_config_volume:
-    name: bpp_client_config_volume
-    external: true
-  bpp_client_schemas_volume:
-    name: bpp_client_schemas_volume
-  bpp_client_logs_volume:
-    name: bpp_client_logs_volume
-  bpp_network_config_volume:
-    name: bpp_network_config_volume
-    external: true
-  bpp_network_schemas_volume:
-    name: bpp_network_schemas_volume
-  bpp_network_logs_volume:
-    name: bpp_network_logs_volume

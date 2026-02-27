@@ -58,7 +58,7 @@ const (
 	ContextKeyParentID ContextKey = "parent_id"
 
 	// ContextKeyRemoteID is the context key for the caller who is calling the bap/bpp
-	ContextKeyRemoteID ContextKey = "caller_id"
+	ContextKeyRemoteID ContextKey = "remote_id"
 )
 
 var contextKeys = map[string]ContextKey{
@@ -67,7 +67,7 @@ var contextKeys = map[string]ContextKey{
 	"subscriber_id":  ContextKeySubscriberID,
 	"module_id":      ContextKeyModuleID,
 	"parent_id":      ContextKeyParentID,
-	"caller_id":      ContextKeyRemoteID,
+	"remote_id":      ContextKeyRemoteID,
 }
 
 // ParseContextKey converts a string into a valid ContextKey.

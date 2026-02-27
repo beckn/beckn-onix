@@ -233,7 +233,7 @@ func addParentIdCtx(ctx context.Context, config *Config) context.Context {
 		log.Infof(ctx, "Adding POD name: %s", p)
 		podName = p
 	} else {
-		log.Info(ctx, "POD_NAME environment variable not set falling back to hostname")
+		log.Info(ctx, "POD_NAME environment variable not set, falling back to hostname")
 		if hostname, err := os.Hostname(); err == nil {
 			log.Infof(ctx, "Setting POD name as hostname: %s", hostname)
 			podName = hostname
@@ -243,16 +243,21 @@ func addParentIdCtx(ctx context.Context, config *Config) context.Context {
 	}
 
 	for _, m := range config.Modules {
-		if m.Handler.Role != "" && m.Handler.SubscriberID != "" {
-			parentID = string(m.Handler.Role) + ":" + m.Handler.SubscriberID + ":" + podName
-			break
+		if m.Handler.Role == "" || m.Handler.SubscriberID == "" {
+			continue
+		}
+		candidate := string(m.Handler.Role) + ":" + m.Handler.SubscriberID + ":" + podName
+		if parentID == "" {
+			parentID = candidate
+		} else if candidate != parentID {
+			log.Warnf(ctx, "Multiple distinct role:subscriberID pairs found in modules (using %q, also saw %q); consider explicit parent_id config", parentID, candidate)
 		}
 	}
 
 	if parentID != "" {
 		ctx = context.WithValue(ctx, model.ContextKeyParentID, parentID)
 	} else {
-		log.Warnf(ctx, "Failed to find parent ID in config please add the role and subscriber_id in the handler config ")
+		log.Warnf(ctx, "Failed to find parent ID in config; add role and subscriber_id to the handler config")
 	}
 	return ctx
 }

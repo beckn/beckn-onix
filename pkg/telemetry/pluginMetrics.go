@@ -57,8 +57,8 @@ var (
 
 var (
 	networkMetricsCfgMu       sync.RWMutex
-	networkMetricsGranularity = "10mim" // default
-	networkMetricsFrequency   = "10mim" // default
+	networkMetricsGranularity = "10min" // default
+	networkMetricsFrequency   = "10min" // default
 )
 
 func SetNetworkMetricsConfig(granularity, frequency string) {

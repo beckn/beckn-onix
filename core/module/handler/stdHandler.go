@@ -122,19 +122,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		record:         nil,
 	}
 
-	selfID := h.SubscriberID
-	remoteID := ""
-	if v, ok := r.Context().Value(model.ContextKeyRemoteID).(string); ok {
-		remoteID = v
-	}
-	var senderID, receiverID string
-	if strings.Contains(h.moduleName, "Caller") {
-		senderID = selfID
-		receiverID = remoteID
-	} else {
-		senderID = remoteID
-		receiverID = selfID
-	}
+	senderID, receiverID := h.resolveDirection(r.Context())
 	httpMeter, _ := GetHTTPMetrics(r.Context())
 	if httpMeter != nil {
 		recordOnce = func() {
@@ -161,7 +149,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		body := stepCtx.Body
-		go telemetry.EmitAuditLogs(r.Context(), body, auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.response.error", errString(err)))
+		telemetry.EmitAuditLogs(r.Context(), body, auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.response.error", errString(err)))
 		span.End()
 	}()
 
@@ -385,21 +373,17 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 	return nil
 }
 
-func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
+func (h *stdHandler) resolveDirection(ctx context.Context) (senderID, receiverID string) {
 	selfID := h.SubscriberID
-	remoteID := ""
-	if v, ok := r.Context().Value(model.ContextKeyRemoteID).(string); ok {
-		remoteID = v
-	}
-
-	var senderID, receiverID string
+	remoteID, _ := ctx.Value(model.ContextKeyRemoteID).(string)
 	if strings.Contains(h.moduleName, "Caller") {
-		senderID = selfID
-		receiverID = remoteID
-	} else {
-		senderID = remoteID
-		receiverID = selfID
+		return selfID, remoteID
 	}
+	return remoteID, selfID
+}
+
+func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
+	senderID, receiverID := h.resolveDirection(r.Context())
 	attrs := []attribute.KeyValue{
 		telemetry.AttrRecipientID.String(receiverID),
 		telemetry.AttrSenderID.String(senderID),

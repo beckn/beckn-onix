@@ -41,28 +41,25 @@ func (s *signStep) Run(ctx *model.StepContext) error {
 		return model.NewBadReqErr(fmt.Errorf("subscriberID not set"))
 	}
 
-	tracer := otel.Tracer("beckn-onix")
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
 
 	var keySet *model.Keyset
 	{
-		// to create span to finding the key set
 		keySetCtx, keySetSpan := tracer.Start(ctx.Context, "keyset")
-		defer keySetSpan.End()
 		ks, err := s.km.Keyset(keySetCtx, ctx.SubID)
+		keySetSpan.End()
 		if err != nil {
 			return fmt.Errorf("failed to get signing key: %w", err)
 		}
 		keySet = ks
-
 	}
 
 	{
-		// to create span for the signa
 		signerCtx, signerSpan := tracer.Start(ctx.Context, "sign")
-		defer signerSpan.End()
 		createdAt := time.Now().Unix()
 		validTill := time.Now().Add(5 * time.Minute).Unix()
 		sign, err := s.signer.Sign(signerCtx, ctx.Body, keySet.SigningPrivate, createdAt, validTill)
+		signerSpan.End()
 		if err != nil {
 			return fmt.Errorf("failed to sign request: %w", err)
 		}
@@ -73,7 +70,6 @@ func (s *signStep) Run(ctx *model.StepContext) error {
 			header = model.AuthHeaderGateway
 		}
 		ctx.Request.Header.Set(header, authHeader)
-
 	}
 
 	return nil
