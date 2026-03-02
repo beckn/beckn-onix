@@ -149,7 +149,8 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		body := stepCtx.Body
-		telemetry.EmitAuditLogs(r.Context(), body, auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.response.error", errString(err)))
+		senderID, receiverID := h.resolveDirection(r.Context())
+		telemetry.EmitAuditLogs(r.Context(), body, auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.response.error", errString(err)), auditlog.String("sender.id", senderID), auditlog.String("receiver.id", receiverID))
 		span.End()
 	}()
 
