@@ -37,7 +37,7 @@ func writePolicyDir(t *testing.T, filename, content string) string {
 func TestParseConfig_RequiresPolicySource(t *testing.T) {
 	_, err := ParseConfig(map[string]string{})
 	if err == nil {
-		t.Fatal("expected error when no policyPaths, policyFile, or policyUrls given")
+		t.Fatal("expected error when no policyPaths given")
 	}
 }
 
@@ -93,23 +93,20 @@ func TestParseConfig_CustomActions(t *testing.T) {
 	}
 }
 
-func TestParseConfig_PolicyUrls(t *testing.T) {
+func TestParseConfig_PolicyPaths(t *testing.T) {
 	cfg, err := ParseConfig(map[string]string{
-		"policyUrls": "https://example.com/a.rego, https://example.com/b.rego",
+		"policyPaths": "https://example.com/a.rego, https://example.com/b.rego",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cfg.PolicyUrls) != 2 {
-		t.Fatalf("expected 2 URLs, got %d: %v", len(cfg.PolicyUrls), cfg.PolicyUrls)
+	if len(cfg.PolicyPaths) != 2 {
+		t.Fatalf("expected 2 paths, got %d: %v", len(cfg.PolicyPaths), cfg.PolicyPaths)
 	}
-	if cfg.PolicyUrls[0] != "https://example.com/a.rego" {
-		t.Errorf("url[0] = %q", cfg.PolicyUrls[0])
+	if cfg.PolicyPaths[0] != "https://example.com/a.rego" {
+		t.Errorf("path[0] = %q", cfg.PolicyPaths[0])
 	}
 }
-
-// Note: policySources support was removed; we intentionally only support
-// comma-separated policyUrls and local paths via policyUrls entries.
 
 // --- Evaluator Tests (with inline policies) ---
 
@@ -123,7 +120,7 @@ violations contains msg if {
 }
 `
 	dir := writePolicyDir(t, "test.rego", policy)
-	eval, err := NewEvaluator(dir, "", nil, "data.policy.violations", nil)
+	eval, err := NewEvaluator([]string{dir}, "data.policy.violations", nil)
 	if err != nil {
 		t.Fatalf("NewEvaluator failed: %v", err)
 	}
@@ -147,7 +144,7 @@ violations contains msg if {
 }
 `
 	dir := writePolicyDir(t, "test.rego", policy)
-	eval, err := NewEvaluator(dir, "", nil, "data.policy.violations", nil)
+	eval, err := NewEvaluator([]string{dir}, "data.policy.violations", nil)
 	if err != nil {
 		t.Fatalf("NewEvaluator failed: %v", err)
 	}
@@ -174,7 +171,7 @@ violations contains msg if {
 }
 `
 	dir := writePolicyDir(t, "test.rego", policy)
-	eval, err := NewEvaluator(dir, "", nil, "data.policy.violations", map[string]string{"maxValue": "100"})
+	eval, err := NewEvaluator([]string{dir}, "data.policy.violations", map[string]string{"maxValue": "100"})
 	if err != nil {
 		t.Fatalf("NewEvaluator failed: %v", err)
 	}
@@ -217,7 +214,7 @@ test_something if { count(policy.violations) > 0 }
 `
 	os.WriteFile(filepath.Join(dir, "policy_test.rego"), []byte(testFile), 0644)
 
-	eval, err := NewEvaluator(dir, "", nil, "data.policy.violations", nil)
+	eval, err := NewEvaluator([]string{dir}, "data.policy.violations", nil)
 	if err != nil {
 		t.Fatalf("NewEvaluator should skip _test.rego files, but failed: %v", err)
 	}
@@ -238,7 +235,7 @@ import rego.v1
 violations := set()
 `
 	dir := writePolicyDir(t, "test.rego", policy)
-	eval, err := NewEvaluator(dir, "", nil, "data.policy.violations", nil)
+	eval, err := NewEvaluator([]string{dir}, "data.policy.violations", nil)
 	if err != nil {
 		t.Fatalf("NewEvaluator failed: %v", err)
 	}
@@ -267,7 +264,7 @@ violations contains msg if {
 	}))
 	defer srv.Close()
 
-	eval, err := NewEvaluator("", "", []string{srv.URL + "/test_policy.rego"}, "data.policy.violations", nil)
+	eval, err := NewEvaluator([]string{srv.URL + "/test_policy.rego"}, "data.policy.violations", nil)
 	if err != nil {
 		t.Fatalf("NewEvaluator with URL failed: %v", err)
 	}
@@ -295,14 +292,14 @@ func TestEvaluator_FetchURL_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
 
-	_, err := NewEvaluator("", "", []string{srv.URL + "/missing.rego"}, "data.policy.violations", nil)
+	_, err := NewEvaluator([]string{srv.URL + "/missing.rego"}, "data.policy.violations", nil)
 	if err == nil {
 		t.Fatal("expected error for 404 URL")
 	}
 }
 
 func TestEvaluator_FetchURL_InvalidScheme(t *testing.T) {
-	_, err := NewEvaluator("", "", []string{"ftp://example.com/policy.rego"}, "data.policy.violations", nil)
+	_, err := NewEvaluator([]string{"ftp://example.com/policy.rego"}, "data.policy.violations", nil)
 	if err == nil {
 		t.Fatal("expected error for ftp:// scheme")
 	}
@@ -328,7 +325,7 @@ violations contains "remote_violation" if { input.remote_bad }
 	}))
 	defer srv.Close()
 
-	eval, err := NewEvaluator(dir, "", []string{srv.URL + "/remote.rego"}, "data.policy.violations", nil)
+	eval, err := NewEvaluator([]string{dir, srv.URL + "/remote.rego"}, "data.policy.violations", nil)
 	if err != nil {
 		t.Fatalf("NewEvaluator failed: %v", err)
 	}
@@ -355,7 +352,7 @@ violations contains "from_file" if { input.bad }
 	policyPath := filepath.Join(dir, "local_policy.rego")
 	os.WriteFile(policyPath, []byte(policy), 0644)
 
-	eval, err := NewEvaluator("", "", []string{policyPath}, "data.policy.violations", nil)
+	eval, err := NewEvaluator([]string{policyPath}, "data.policy.violations", nil)
 	if err != nil {
 		t.Fatalf("NewEvaluator with local path failed: %v", err)
 	}
@@ -487,9 +484,9 @@ violations contains "blocked" if { input.context.action == "confirm" }
 	defer srv.Close()
 
 	enforcer, err := New(map[string]string{
-		"policyUrls": srv.URL + "/block_confirm.rego",
-		"query":      "data.policy.violations",
-		"actions":    "confirm",
+		"policyPaths": srv.URL + "/block_confirm.rego",
+		"query":       "data.policy.violations",
+		"actions":     "confirm",
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)

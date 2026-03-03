@@ -8,17 +8,12 @@ import (
 
 // Config holds the configuration for the Policy Enforcer plugin.
 type Config struct {
-	// PolicyPaths is a local directory containing .rego policy files (all loaded).
-	// At least one policy source (PolicyPaths, PolicyFile, or PolicyUrls) is required.
-	PolicyPaths string
-
-	// PolicyFile is a single local .rego file path.
-	PolicyFile string
-
-	// PolicyUrls is a list of URLs (or local file paths) pointing to .rego files,
-	// fetched at startup or read from disk.
-	// Parsed from the comma-separated "policyUrls" config key.
-	PolicyUrls []string
+	// PolicyPaths is a list of policy sources. Each entry is auto-detected as:
+	//   - Remote URL (http:// or https://) → fetched via HTTP
+	//   - Local directory → all .rego files loaded (excluding _test.rego)
+	//   - Local file → loaded directly
+	// Parsed from the comma-separated "policyPaths" config key.
+	PolicyPaths []string
 
 	// Query is the Rego query that returns a set of violation strings.
 	// Default: "data.policy.violations".
@@ -43,8 +38,6 @@ type Config struct {
 // Known config keys that are handled directly (not forwarded to RuntimeConfig).
 var knownKeys = map[string]bool{
 	"policyPaths":  true,
-	"policyFile":   true,
-	"policyUrls":   true,
 	"query":        true,
 	"actions":      true,
 	"enabled":      true,
@@ -65,29 +58,22 @@ func DefaultConfig() *Config {
 func ParseConfig(cfg map[string]string) (*Config, error) {
 	config := DefaultConfig()
 
-	if dir, ok := cfg["policyPaths"]; ok && dir != "" {
-		config.PolicyPaths = dir
-	}
-	if file, ok := cfg["policyFile"]; ok && file != "" {
-		config.PolicyFile = file
-	}
-
-	// Comma-separated policyUrls (supports URLs, local files, and directory paths)
-	if urls, ok := cfg["policyUrls"]; ok && urls != "" {
-		for _, u := range strings.Split(urls, ",") {
-			u = strings.TrimSpace(u)
-			if u != "" {
-				config.PolicyUrls = append(config.PolicyUrls, u)
+	// Comma-separated policyPaths (each entry auto-detected as URL, directory, or file)
+	if paths, ok := cfg["policyPaths"]; ok && paths != "" {
+		for _, p := range strings.Split(paths, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				config.PolicyPaths = append(config.PolicyPaths, p)
 			}
 		}
 	}
 
-	if config.PolicyPaths == "" && config.PolicyFile == "" && len(config.PolicyUrls) == 0 {
+	if len(config.PolicyPaths) == 0 {
 		// Fall back to the default ./policies directory if it exists on disk.
 		if info, err := os.Stat("./policies"); err == nil && info.IsDir() {
-			config.PolicyPaths = "./policies"
+			config.PolicyPaths = append(config.PolicyPaths, "./policies")
 		} else {
-			return nil, fmt.Errorf("at least one policy source is required (policyPaths, policyFile, or policyUrls)")
+			return nil, fmt.Errorf("at least one policy source is required (policyPaths)")
 		}
 	}
 

@@ -51,6 +51,16 @@ modules:
         policyEnforcer:
           id: policyenforcer
           config:
+            # policyPaths: polymorphic, auto-detects each entry as URL, directory, or file
+            # Examples:
+            #   policyPaths: "./policies"                              # local directory
+            #   policyPaths: "https://example.com/compliance.rego"     # remote URL
+            #   policyPaths: "./policies/compliance.rego"              # local file
+            # For multiple sources, use YAML folded scalar (>-):
+            #   policyPaths: >-
+            #     https://example.com/compliance.rego,
+            #     https://example.com/safety.rego,
+            #     ./policies
             policyPaths: "./policies"
         signValidator:
           id: signvalidator

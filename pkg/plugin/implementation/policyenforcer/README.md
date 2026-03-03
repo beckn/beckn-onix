@@ -5,7 +5,7 @@ OPA/Rego-based policy enforcement for beckn-onix adapters. Evaluates incoming be
 ## Overview
 
 The `policyenforcer` plugin is a **Step plugin** that:
-- Loads `.rego` policy files from local directories, files, URLs, or local paths
+- Loads `.rego` policy files from URLs, local directories, or local files
 - Evaluates incoming messages against compiled OPA policies
 - Returns a `BadReqErr` (NACK) when policy violations are detected
 - Fails closed on evaluation errors (treats as NACK)
@@ -17,9 +17,7 @@ All config keys are passed via `map[string]string` in the adapter YAML config.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `policyUrls` | At least one of `policyUrls`, `policyDir`, or `policyFile` required | — | Comma-separated list of URLs, local file paths, or directory paths to `.rego` files |
-| `policyPaths` | | `./policies` | Local directory or path containing `.rego` files |
-| `policyFile` | | — | Single local `.rego` file path |
+| `policyPaths` | Yes (at least one source required) | `./policies` (if dir exists) | Comma-separated list of policy sources — each entry is auto-detected as a **URL**, **directory**, or **file** |
 | `query` | No | `data.policy.violations` | Rego query returning violation strings |
 | `actions` | No | *(empty — all actions)* | Comma-separated beckn actions to enforce. When omitted, all actions are evaluated and the Rego policy itself decides which to gate. |
 | `enabled` | No | `true` | Enable/disable the plugin |
@@ -28,26 +26,34 @@ All config keys are passed via `map[string]string` in the adapter YAML config.
 
 ### Policy Sources
 
-`policyUrls` is the primary configuration key. It accepts a comma-separated list of:
-- **Remote URLs**: `https://policies.example.com/compliance.rego`
-- **Local file paths**: `/etc/policies/local.rego`
-- **Directory paths**: `/etc/policies/` (all `.rego` files loaded, `_test.rego` excluded)
+`policyPaths` is the single configuration key for all policy sources. Each comma-separated entry is **auto-detected** as:
+- **Remote URL** (`http://` or `https://`): fetched via HTTP at startup
+- **Local directory**: all `.rego` files loaded (`_test.rego` excluded)
+- **Local file**: loaded directly
 
 ```yaml
+# Single directory
 config:
-  policyUrls: "https://policies.example.com/compliance.rego,/etc/policies/,/local/safety.rego"
+  policyPaths: "./policies"
+
+# Single remote URL
+config:
+  policyPaths: "https://policies.example.com/compliance.rego"
+
+# Mix of URLs, directories, and files
+config:
+  policyPaths: "https://policies.example.com/compliance.rego,./policies,/local/safety.rego"
 ```
 
-When specifying many URLs, use the YAML folded scalar (`>-`) to keep the config readable:
+When specifying many sources, use the YAML folded scalar (`>-`) to keep the config readable:
 
 ```yaml
 config:
-  policyUrls: >-
+  policyPaths: >-
     https://policies.example.com/compliance.rego,
     https://policies.example.com/safety.rego,
-    https://policies.example.com/rate-limit.rego,
-    /local/policies/,
-    https://policies.example.com/auth.rego
+    ./policies,
+    /local/overrides/rate-limit.rego
 ```
 
 The `>-` folds newlines into spaces, so the value is parsed as a single comma-separated string.
@@ -68,7 +74,7 @@ Or specify a custom policy location:
 policyEnforcer:
   id: policyenforcer
   config:
-    policyUrls: "./policies/compliance.rego"
+    policyPaths: "./policies/compliance.rego"
 ```
 
 ### Air-Gapped Deployments
@@ -77,7 +83,7 @@ For environments without internet access, use local file paths or volume mounts:
 
 ```yaml
 config:
-  policyUrls: "/mounted-policies/compliance.rego,/mounted-policies/safety.rego"
+  policyPaths: "/mounted-policies/compliance.rego,/mounted-policies/safety.rego"
 ```
 
 ## Example Config
@@ -87,7 +93,9 @@ plugins:
   policyEnforcer:
     id: policyenforcer
     config:
-      policyUrls: "https://policies.example.com/compliance.rego,/local/policies/"
+      policyPaths: >-
+        /local/policies/,
+        https://policies.example.com/compliance.rego
       minDeliveryLeadHours: "4"
       debugLogging: "true"
 steps:

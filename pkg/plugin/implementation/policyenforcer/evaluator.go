@@ -40,63 +40,28 @@ const maxPolicySize = 1 << 20
 
 // NewEvaluator creates an Evaluator by loading .rego files from local paths
 // and/or URLs, then compiling them. runtimeConfig is passed to Rego as data.config.
-func NewEvaluator(policyPaths, policyFile string, policyUrls []string, query string, runtimeConfig map[string]string) (*Evaluator, error) {
+func NewEvaluator(policyPaths []string, query string, runtimeConfig map[string]string) (*Evaluator, error) {
 	modules := make(map[string]string)
 
-	// Load from local directory
-	if policyPaths != "" {
-		entries, err := os.ReadDir(policyPaths)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read policy directory %s: %w", policyPaths, err)
-		}
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			if !strings.HasSuffix(entry.Name(), ".rego") {
-				continue
-			}
-			// Skip test files — they shouldn't be compiled into the runtime evaluator
-			if strings.HasSuffix(entry.Name(), "_test.rego") {
-				continue
-			}
-			fpath := filepath.Join(policyPaths, entry.Name())
-			data, err := os.ReadFile(fpath)
+	// Load from policyPaths (each entry auto-detected as URL, directory, or file)
+	for _, source := range policyPaths {
+		if isURL(source) {
+			name, content, err := fetchPolicy(source)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read policy file %s: %w", fpath, err)
-			}
-			modules[entry.Name()] = string(data)
-		}
-	}
-
-	// Load single local file
-	if policyFile != "" {
-		data, err := os.ReadFile(policyFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read policy file %s: %w", policyFile, err)
-		}
-		modules[filepath.Base(policyFile)] = string(data)
-	}
-
-	// Load from URLs, local file paths, and directory paths (policyUrls)
-	for _, rawSource := range policyUrls {
-		if isURL(rawSource) {
-			name, content, err := fetchPolicy(rawSource)
-			if err != nil {
-				return nil, fmt.Errorf("failed to fetch policy from %s: %w", rawSource, err)
+				return nil, fmt.Errorf("failed to fetch policy from %s: %w", source, err)
 			}
 			modules[name] = content
-		} else if info, err := os.Stat(rawSource); err == nil && info.IsDir() {
-			// Treat as directory — load all .rego files inside
-			entries, err := os.ReadDir(rawSource)
+		} else if info, err := os.Stat(source); err == nil && info.IsDir() {
+			// Directory — load all .rego files inside
+			entries, err := os.ReadDir(source)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read policy directory %s: %w", rawSource, err)
+				return nil, fmt.Errorf("failed to read policy directory %s: %w", source, err)
 			}
 			for _, entry := range entries {
 				if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".rego") || strings.HasSuffix(entry.Name(), "_test.rego") {
 					continue
 				}
-				fpath := filepath.Join(rawSource, entry.Name())
+				fpath := filepath.Join(source, entry.Name())
 				data, err := os.ReadFile(fpath)
 				if err != nil {
 					return nil, fmt.Errorf("failed to read policy file %s: %w", fpath, err)
@@ -104,12 +69,12 @@ func NewEvaluator(policyPaths, policyFile string, policyUrls []string, query str
 				modules[entry.Name()] = string(data)
 			}
 		} else {
-			// Treat as local file path
-			data, err := os.ReadFile(rawSource)
+			// Local file path
+			data, err := os.ReadFile(source)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read local policy source %s: %w", rawSource, err)
+				return nil, fmt.Errorf("failed to read policy file %s: %w", source, err)
 			}
-			modules[filepath.Base(rawSource)] = string(data)
+			modules[filepath.Base(source)] = string(data)
 		}
 	}
 
