@@ -36,7 +36,8 @@ func loadAuditFieldRules(ctx context.Context, configPath string) error {
 
 	var data []byte
 
-	if u, err := url.Parse(str); err != nil && (u.Scheme != "http" && u.Scheme != "https") {
+	u, err := url.Parse(str)
+	if err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		resp, err := http.Get(str)
 		if err != nil {
 			log.Error(ctx, err, "failed to fetch audit rules from url")
