@@ -87,7 +87,7 @@ modules:
         policyEnforcer:
           id: policyenforcer
           config:
-            policyDir: "./policies"
+            policyPaths: "./policies"
       steps:
         - validateSign
         - policyEnforcer

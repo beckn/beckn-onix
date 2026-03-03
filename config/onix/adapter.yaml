@@ -51,7 +51,7 @@ modules:
         policyEnforcer:
           id: policyenforcer
           config:
-            policyDir: "./policies"
+            policyPaths: "./policies"
         signValidator:
           id: signvalidator
         publisher:
@@ -106,7 +106,7 @@ modules:
         policyEnforcer:
           id: policyenforcer
           config:
-            policyDir: "./policies"
+            policyPaths: "./policies"
         signer:
           id: signer
         publisher:
@@ -162,7 +162,7 @@ modules:
         policyEnforcer:
           id: policyenforcer
           config:
-            policyDir: "./policies"
+            policyPaths: "./policies"
         signValidator:
           id: signvalidator
         publisher:
@@ -217,7 +217,7 @@ modules:
         policyEnforcer:
           id: policyenforcer
           config:
-            policyDir: "./policies"
+            policyPaths: "./policies"
         signer:
           id: signer
         publisher:

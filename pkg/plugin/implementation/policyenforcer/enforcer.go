@@ -24,7 +24,7 @@ func New(cfg map[string]string) (*PolicyEnforcer, error) {
 		return nil, fmt.Errorf("policyenforcer: config error: %w", err)
 	}
 
-	evaluator, err := NewEvaluator(config.PolicyDir, config.PolicyFile, config.PolicyUrls, config.Query, config.RuntimeConfig)
+	evaluator, err := NewEvaluator(config.PolicyPaths, config.PolicyFile, config.PolicyUrls, config.Query, config.RuntimeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("policyenforcer: failed to initialize OPA evaluator: %w", err)
 	}

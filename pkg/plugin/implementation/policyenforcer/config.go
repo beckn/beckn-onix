@@ -8,9 +8,9 @@ import (
 
 // Config holds the configuration for the Policy Enforcer plugin.
 type Config struct {
-	// PolicyDir is a local directory containing .rego policy files (all loaded).
-	// At least one policy source (PolicyDir, PolicyFile, or PolicyUrls) is required.
-	PolicyDir string
+	// PolicyPaths is a local directory containing .rego policy files (all loaded).
+	// At least one policy source (PolicyPaths, PolicyFile, or PolicyUrls) is required.
+	PolicyPaths string
 
 	// PolicyFile is a single local .rego file path.
 	PolicyFile string
@@ -42,7 +42,7 @@ type Config struct {
 
 // Known config keys that are handled directly (not forwarded to RuntimeConfig).
 var knownKeys = map[string]bool{
-	"policyDir":    true,
+	"policyPaths":  true,
 	"policyFile":   true,
 	"policyUrls":   true,
 	"query":        true,
@@ -65,8 +65,8 @@ func DefaultConfig() *Config {
 func ParseConfig(cfg map[string]string) (*Config, error) {
 	config := DefaultConfig()
 
-	if dir, ok := cfg["policyDir"]; ok && dir != "" {
-		config.PolicyDir = dir
+	if dir, ok := cfg["policyPaths"]; ok && dir != "" {
+		config.PolicyPaths = dir
 	}
 	if file, ok := cfg["policyFile"]; ok && file != "" {
 		config.PolicyFile = file
@@ -82,12 +82,12 @@ func ParseConfig(cfg map[string]string) (*Config, error) {
 		}
 	}
 
-	if config.PolicyDir == "" && config.PolicyFile == "" && len(config.PolicyUrls) == 0 {
+	if config.PolicyPaths == "" && config.PolicyFile == "" && len(config.PolicyUrls) == 0 {
 		// Fall back to the default ./policies directory if it exists on disk.
 		if info, err := os.Stat("./policies"); err == nil && info.IsDir() {
-			config.PolicyDir = "./policies"
+			config.PolicyPaths = "./policies"
 		} else {
-			return nil, fmt.Errorf("at least one policy source is required (policyDir, policyFile, or policyUrls)")
+			return nil, fmt.Errorf("at least one policy source is required (policyPaths, policyFile, or policyUrls)")
 		}
 	}
 

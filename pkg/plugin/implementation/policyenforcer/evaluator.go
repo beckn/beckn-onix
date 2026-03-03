@@ -40,14 +40,14 @@ const maxPolicySize = 1 << 20
 
 // NewEvaluator creates an Evaluator by loading .rego files from local paths
 // and/or URLs, then compiling them. runtimeConfig is passed to Rego as data.config.
-func NewEvaluator(policyDir, policyFile string, policyUrls []string, query string, runtimeConfig map[string]string) (*Evaluator, error) {
+func NewEvaluator(policyPaths, policyFile string, policyUrls []string, query string, runtimeConfig map[string]string) (*Evaluator, error) {
 	modules := make(map[string]string)
 
 	// Load from local directory
-	if policyDir != "" {
-		entries, err := os.ReadDir(policyDir)
+	if policyPaths != "" {
+		entries, err := os.ReadDir(policyPaths)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read policy directory %s: %w", policyDir, err)
+			return nil, fmt.Errorf("failed to read policy directory %s: %w", policyPaths, err)
 		}
 		for _, entry := range entries {
 			if entry.IsDir() {
@@ -60,7 +60,7 @@ func NewEvaluator(policyDir, policyFile string, policyUrls []string, query strin
 			if strings.HasSuffix(entry.Name(), "_test.rego") {
 				continue
 			}
-			fpath := filepath.Join(policyDir, entry.Name())
+			fpath := filepath.Join(policyPaths, entry.Name())
 			data, err := os.ReadFile(fpath)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read policy file %s: %w", fpath, err)

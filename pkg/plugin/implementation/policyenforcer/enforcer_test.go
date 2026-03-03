@@ -37,12 +37,12 @@ func writePolicyDir(t *testing.T, filename, content string) string {
 func TestParseConfig_RequiresPolicySource(t *testing.T) {
 	_, err := ParseConfig(map[string]string{})
 	if err == nil {
-		t.Fatal("expected error when no policyDir, policyFile, or policyUrls given")
+		t.Fatal("expected error when no policyPaths, policyFile, or policyUrls given")
 	}
 }
 
 func TestParseConfig_Defaults(t *testing.T) {
-	cfg, err := ParseConfig(map[string]string{"policyDir": "/tmp"})
+	cfg, err := ParseConfig(map[string]string{"policyPaths": "/tmp"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestParseConfig_Defaults(t *testing.T) {
 
 func TestParseConfig_RuntimeConfigForwarding(t *testing.T) {
 	cfg, err := ParseConfig(map[string]string{
-		"policyDir":            "/tmp",
+		"policyPaths":          "/tmp",
 		"minDeliveryLeadHours": "6",
 		"customParam":          "value",
 	})
@@ -76,8 +76,8 @@ func TestParseConfig_RuntimeConfigForwarding(t *testing.T) {
 
 func TestParseConfig_CustomActions(t *testing.T) {
 	cfg, err := ParseConfig(map[string]string{
-		"policyDir": "/tmp",
-		"actions":   "confirm, select, init",
+		"policyPaths": "/tmp",
+		"actions":     "confirm, select, init",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -380,9 +380,9 @@ violations contains "blocked" if { input.context.action == "confirm"; input.bloc
 	dir := writePolicyDir(t, "test.rego", policy)
 
 	enforcer, err := New(map[string]string{
-		"policyDir": dir,
-		"query":     "data.policy.violations",
-		"actions":   "confirm",
+		"policyPaths": dir,
+		"query":       "data.policy.violations",
+		"actions":     "confirm",
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -404,9 +404,9 @@ violations contains "blocked" if { input.context.action == "confirm" }
 	dir := writePolicyDir(t, "test.rego", policy)
 
 	enforcer, err := New(map[string]string{
-		"policyDir": dir,
-		"query":     "data.policy.violations",
-		"actions":   "confirm",
+		"policyPaths": dir,
+		"query":       "data.policy.violations",
+		"actions":     "confirm",
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -433,9 +433,9 @@ violations contains "blocked" if { true }
 	dir := writePolicyDir(t, "test.rego", policy)
 
 	enforcer, err := New(map[string]string{
-		"policyDir": dir,
-		"query":     "data.policy.violations",
-		"actions":   "confirm",
+		"policyPaths": dir,
+		"query":       "data.policy.violations",
+		"actions":     "confirm",
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -458,9 +458,9 @@ violations contains "blocked" if { true }
 	dir := writePolicyDir(t, "test.rego", policy)
 
 	enforcer, err := New(map[string]string{
-		"policyDir": dir,
-		"query":     "data.policy.violations",
-		"enabled":   "false",
+		"policyPaths": dir,
+		"query":       "data.policy.violations",
+		"enabled":     "false",
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)

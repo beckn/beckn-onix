@@ -18,7 +18,7 @@ All config keys are passed via `map[string]string` in the adapter YAML config.
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
 | `policyUrls` | At least one of `policyUrls`, `policyDir`, or `policyFile` required | — | Comma-separated list of URLs, local file paths, or directory paths to `.rego` files |
-| `policyDir` | | `./policies` | Local directory containing `.rego` files |
+| `policyPaths` | | `./policies` | Local directory or path containing `.rego` files |
 | `policyFile` | | — | Single local `.rego` file path |
 | `query` | No | `data.policy.violations` | Rego query returning violation strings |
 | `actions` | No | *(empty — all actions)* | Comma-separated beckn actions to enforce. When omitted, all actions are evaluated and the Rego policy itself decides which to gate. |
