@@ -43,6 +43,7 @@ type Config struct {
 	AuditFieldsConfig string `yaml:"auditFieldsConfig"`
 	Producer          string `yaml:"producer"`
 	ProducerType      string `yaml:"producerType"`
+	CacheTTL          int64  `yaml:"cacheTTL"`
 }
 
 // DefaultConfig returns sensible defaults for telemetry configuration.

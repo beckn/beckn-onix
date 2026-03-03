@@ -32,7 +32,8 @@ plugins:
       enableTracing: "true"
       enableLogs: "true"
       timeInterval: "5"
-      auditFieldsConfig: "/app/config/audit-fields.yaml"
+      auditFieldsConfig: "/app/config/audit-fields.yaml" # this can be git url
+      cacheTTL: "3600"
 modules:
   - name: bppTxnReceiver
     path: /bpp/receiver/

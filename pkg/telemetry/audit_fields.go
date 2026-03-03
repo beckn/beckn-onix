@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"gopkg.in/yaml.v3"
@@ -21,18 +25,46 @@ var (
 	auditRulesMutex sync.RWMutex
 )
 
-func LoadAuditFieldRules(ctx context.Context, configPath string) error {
+func loadAuditFieldRules(ctx context.Context, configPath string) error {
 
-	if strings.TrimSpace(configPath) == "" {
+	str := strings.TrimSpace(configPath)
+	if str == "" {
 		err := fmt.Errorf("config file path is empty")
 		log.Error(ctx, err, "there are no audit rules defined")
 		return err
 	}
 
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		log.Error(ctx, err, "failed to read audit rules file")
-		return err
+	var data []byte
+
+	if u, err := url.Parse(str); err != nil && (u.Scheme != "http" && u.Scheme != "https") {
+		resp, err := http.Get(str)
+		if err != nil {
+			log.Error(ctx, err, "failed to fetch audit rules from url")
+			return err
+		}
+
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			err = fmt.Errorf("unexpected status %d fetching audit rules from %s", resp.StatusCode, str)
+			log.Error(ctx, err, "failed to fetch audit rules from url")
+			return err
+
+		}
+
+		data, err = io.ReadAll(resp.Body)
+		if err != nil {
+			log.Error(ctx, err, "failed to read audit rules from url")
+			return err
+		}
+	} else {
+
+		filedata, err := os.ReadFile(str)
+		if err != nil {
+			log.Error(ctx, err, "failed to read audit rules file")
+			return err
+		}
+		data = filedata
 	}
 
 	var config auditFieldsRules
@@ -178,4 +210,35 @@ func deepMerge(dst, src interface{}) interface{} {
 	}
 
 	return src
+}
+
+func StartAuditFieldsRefresh(ctx context.Context, configUrl string, intervalSec int64) (stop func()) {
+
+	if intervalSec <= 0 {
+		intervalSec = 3600
+	}
+
+	interval := time.Duration(intervalSec) * time.Second
+	ticker := time.NewTicker(interval)
+	done := make(chan struct{})
+
+	if err := loadAuditFieldRules(ctx, configUrl); err != nil {
+		log.Warn(ctx, "failed to load audit rules from url")
+	}
+
+	go func() {
+		for {
+			select {
+			case <-done:
+				ticker.Stop()
+				return
+			case <-ticker.C:
+				if err := loadAuditFieldRules(ctx, configUrl); err != nil {
+					log.Warn(ctx, "failed to load audit rules from url")
+				}
+			}
+		}
+	}()
+
+	return func() { close(done) }
 }

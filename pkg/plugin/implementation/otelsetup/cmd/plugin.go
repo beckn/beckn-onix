@@ -99,11 +99,18 @@ func (m metricsProvider) New(ctx context.Context, config map[string]string) (*te
 
 	}
 
+	// Parse cacheTTL as in
+	if cacheTTLStr, ok := config["cacheTTL"]; ok && cacheTTLStr != "" {
+		telemetryConfig.CacheTTL, err = strconv.ParseInt(cacheTTLStr, 10, 64)
+		if err != nil {
+			log.Warnf(ctx, "Invalid cacheTTL value: %s, defaulting to 3600 second ", cacheTTLStr)
+			telemetryConfig.CacheTTL = 3600
+		}
+	}
+	var stopAuditRefresh func()
 	// to set fields for audit logs
 	if v, ok := config["auditFieldsConfig"]; ok && v != "" {
-		if err := telemetry.LoadAuditFieldRules(ctx, v); err != nil {
-			log.Warnf(ctx, "Failed to load audit field rules: %v", err)
-		}
+		stopAuditRefresh = telemetry.StartAuditFieldsRefresh(ctx, v, telemetryConfig.CacheTTL)
 	}
 
 	//to set network level matric frequency and granularity
@@ -126,6 +133,9 @@ func (m metricsProvider) New(ctx context.Context, config map[string]string) (*te
 	var closer func() error
 	if provider != nil && provider.Shutdown != nil {
 		closer = func() error {
+			if stopAuditRefresh != nil {
+				stopAuditRefresh()
+			}
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			return provider.Shutdown(shutdownCtx)
