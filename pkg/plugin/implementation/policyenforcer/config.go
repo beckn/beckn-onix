@@ -2,6 +2,7 @@ package policyenforcer
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -20,11 +21,12 @@ type Config struct {
 	PolicyUrls []string
 
 	// Query is the Rego query that returns a set of violation strings.
-	// Default: "data.policy.violations"
+	// Default: "data.policy.violations".
 	Query string
 
 	// Actions is the list of beckn actions to enforce policies on.
-	// Default: ["confirm"]
+	// When empty or nil, all actions are considered and the Rego policy
+	// is responsible for deciding which actions to gate.
 	Actions []string
 
 	// Enabled controls whether the plugin is active.
@@ -53,7 +55,6 @@ var knownKeys = map[string]bool{
 func DefaultConfig() *Config {
 	return &Config{
 		Query:         "data.policy.violations",
-		Actions:       []string{"confirm"},
 		Enabled:       true,
 		DebugLogging:  false,
 		RuntimeConfig: make(map[string]string),
@@ -71,7 +72,7 @@ func ParseConfig(cfg map[string]string) (*Config, error) {
 		config.PolicyFile = file
 	}
 
-	// Legacy: comma-separated policyUrls
+	// Comma-separated policyUrls (supports URLs, local files, and directory paths)
 	if urls, ok := cfg["policyUrls"]; ok && urls != "" {
 		for _, u := range strings.Split(urls, ",") {
 			u = strings.TrimSpace(u)
@@ -82,7 +83,12 @@ func ParseConfig(cfg map[string]string) (*Config, error) {
 	}
 
 	if config.PolicyDir == "" && config.PolicyFile == "" && len(config.PolicyUrls) == 0 {
-		return nil, fmt.Errorf("at least one policy source is required (policyDir, policyFile, or policyUrls)")
+		// Fall back to the default ./policies directory if it exists on disk.
+		if info, err := os.Stat("./policies"); err == nil && info.IsDir() {
+			config.PolicyDir = "./policies"
+		} else {
+			return nil, fmt.Errorf("at least one policy source is required (policyDir, policyFile, or policyUrls)")
+		}
 	}
 
 	if query, ok := cfg["query"]; ok && query != "" {
@@ -119,7 +125,12 @@ func ParseConfig(cfg map[string]string) (*Config, error) {
 }
 
 // IsActionEnabled checks if the given action is in the configured actions list.
+// When the actions list is empty/nil, all actions are enabled and action-gating
+// is delegated entirely to the Rego policy.
 func (c *Config) IsActionEnabled(action string) bool {
+	if len(c.Actions) == 0 {
+		return true
+	}
 	for _, a := range c.Actions {
 		if a == action {
 			return true

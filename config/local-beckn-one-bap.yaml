@@ -89,9 +89,7 @@ modules:
         policyEnforcer:
           id: policyenforcer
           config:
-            policySources: "./policies/compliance.rego"
-            actions: "confirm"
-            query: "data.policy.violations"
+            policyDir: "./policies"
         middleware:
           - id: reqpreprocessor
             config:
@@ -99,7 +97,7 @@ modules:
               role: bap
       steps:
         - validateSign
-        - enforcePolicy
+        - policyEnforcer
         - addRoute
         - validateSchema
   

@@ -48,6 +48,10 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
+        policyEnforcer:
+          id: policyenforcer
+          config:
+            policyDir: "./policies"
         signValidator:
           id: signvalidator
         publisher:
@@ -66,6 +70,7 @@ modules:
               role: bap
       steps:
         - validateSign
+        - policyEnforcer
         - addRoute
         - validateSchema
   - name: bapTxnCaller
@@ -98,6 +103,10 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
+        policyEnforcer:
+          id: policyenforcer
+          config:
+            policyDir: "./policies"
         signer:
           id: signer
         publisher:
@@ -116,6 +125,7 @@ modules:
               role: bap
       steps:
         - validateSchema
+        - policyEnforcer
         - addRoute
         - sign
   - name: bppTxnReciever
@@ -149,6 +159,10 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
+        policyEnforcer:
+          id: policyenforcer
+          config:
+            policyDir: "./policies"
         signValidator:
           id: signvalidator
         publisher:
@@ -167,6 +181,7 @@ modules:
               role: bpp
       steps:
         - validateSign
+        - policyEnforcer
         - addRoute
         - validateSchema
   - name: bppTxnCaller
@@ -199,6 +214,10 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
+        policyEnforcer:
+          id: policyenforcer
+          config:
+            policyDir: "./policies"
         signer:
           id: signer
         publisher:
@@ -217,5 +236,6 @@ modules:
               role: bpp
       steps:
         - validateSchema
+        - policyEnforcer
         - addRoute
         - sign

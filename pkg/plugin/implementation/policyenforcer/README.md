@@ -17,27 +17,63 @@ All config keys are passed via `map[string]string` in the adapter YAML config.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `policyDir` | One of `policyDir`, `policyFile`, or `policyUrls` required | — | Local directory containing `.rego` files |
+| `policyUrls` | At least one of `policyUrls`, `policyDir`, or `policyFile` required | — | Comma-separated list of URLs, local file paths, or directory paths to `.rego` files |
+| `policyDir` | | `./policies` | Local directory containing `.rego` files |
 | `policyFile` | | — | Single local `.rego` file path |
-| `policyUrls` | | — | Comma-separated list of URLs or local paths to `.rego` files |
 | `query` | No | `data.policy.violations` | Rego query returning violation strings |
-| `actions` | No | `confirm` | Comma-separated beckn actions to enforce |
+| `actions` | No | *(empty — all actions)* | Comma-separated beckn actions to enforce. When omitted, all actions are evaluated and the Rego policy itself decides which to gate. |
 | `enabled` | No | `true` | Enable/disable the plugin |
 | `debugLogging` | No | `false` | Enable verbose logging |
 | *any other key* | No | — | Forwarded to Rego as `data.config.<key>` |
 
-### Policy URLs
+### Policy Sources
 
-`policyUrls` accepts both remote URLs and local file paths, separated by commas:
+`policyUrls` is the primary configuration key. It accepts a comma-separated list of:
+- **Remote URLs**: `https://policies.example.com/compliance.rego`
+- **Local file paths**: `/etc/policies/local.rego`
+- **Directory paths**: `/etc/policies/` (all `.rego` files loaded, `_test.rego` excluded)
 
 ```yaml
 config:
-  policyUrls: "https://policies.example.com/compliance.rego,/etc/policies/local.rego,https://policies.example.com/safety.rego"
+  policyUrls: "https://policies.example.com/compliance.rego,/etc/policies/,/local/safety.rego"
+```
+
+When specifying many URLs, use the YAML folded scalar (`>-`) to keep the config readable:
+
+```yaml
+config:
+  policyUrls: >-
+    https://policies.example.com/compliance.rego,
+    https://policies.example.com/safety.rego,
+    https://policies.example.com/rate-limit.rego,
+    /local/policies/,
+    https://policies.example.com/auth.rego
+```
+
+The `>-` folds newlines into spaces, so the value is parsed as a single comma-separated string.
+
+### Minimal Config
+
+By default, the plugin loads `.rego` files from `./policies` and uses the query `data.policy.violations`. A zero-config setup works if your policies are in the default directory:
+
+```yaml
+policyEnforcer:
+  id: policyenforcer
+  config: {}
+```
+
+Or specify a custom policy location:
+
+```yaml
+policyEnforcer:
+  id: policyenforcer
+  config:
+    policyUrls: "./policies/compliance.rego"
 ```
 
 ### Air-Gapped Deployments
 
-For environments without internet access, replace any URL with a local file path or volume mount:
+For environments without internet access, use local file paths or volume mounts:
 
 ```yaml
 config:
@@ -48,14 +84,15 @@ config:
 
 ```yaml
 plugins:
-  steps:
-    - id: policyenforcer
-      config:
-        policyUrls: "https://policies.example.com/compliance.rego,/local/policies/safety.rego"
-        actions: "confirm,init"
-        query: "data.policy.violations"
-        minDeliveryLeadHours: "4"
-        debugLogging: "true"
+  policyEnforcer:
+    id: policyenforcer
+    config:
+      policyUrls: "https://policies.example.com/compliance.rego,/local/policies/"
+      minDeliveryLeadHours: "4"
+      debugLogging: "true"
+steps:
+  - policyEnforcer
+  - addRoute
 ```
 
 ## Relationship with Schema Validator

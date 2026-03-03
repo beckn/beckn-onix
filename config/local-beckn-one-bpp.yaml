@@ -87,12 +87,10 @@ modules:
         policyEnforcer:
           id: policyenforcer
           config:
-            policySources: "./policies/compliance.rego"
-            actions: "confirm"
-            query: "data.policy.violations"
+            policyDir: "./policies"
       steps:
         - validateSign
-        - enforcePolicy
+        - policyEnforcer
         - addRoute
         - validateSchema
   

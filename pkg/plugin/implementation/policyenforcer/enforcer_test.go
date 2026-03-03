@@ -47,10 +47,10 @@ func TestParseConfig_Defaults(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cfg.Query != "data.policy.violations" {
-		t.Errorf("expected default query, got %q", cfg.Query)
+		t.Errorf("expected default query 'data.policy.violations', got %q", cfg.Query)
 	}
-	if len(cfg.Actions) != 1 || cfg.Actions[0] != "confirm" {
-		t.Errorf("expected default actions [confirm], got %v", cfg.Actions)
+	if len(cfg.Actions) != 0 {
+		t.Errorf("expected empty default actions (all enabled), got %v", cfg.Actions)
 	}
 	if !cfg.Enabled {
 		t.Error("expected enabled=true by default")
@@ -381,6 +381,7 @@ violations contains "blocked" if { input.context.action == "confirm"; input.bloc
 
 	enforcer, err := New(map[string]string{
 		"policyDir": dir,
+		"query":     "data.policy.violations",
 		"actions":   "confirm",
 	})
 	if err != nil {
@@ -404,6 +405,7 @@ violations contains "blocked" if { input.context.action == "confirm" }
 
 	enforcer, err := New(map[string]string{
 		"policyDir": dir,
+		"query":     "data.policy.violations",
 		"actions":   "confirm",
 	})
 	if err != nil {
@@ -432,6 +434,7 @@ violations contains "blocked" if { true }
 
 	enforcer, err := New(map[string]string{
 		"policyDir": dir,
+		"query":     "data.policy.violations",
 		"actions":   "confirm",
 	})
 	if err != nil {
@@ -456,6 +459,7 @@ violations contains "blocked" if { true }
 
 	enforcer, err := New(map[string]string{
 		"policyDir": dir,
+		"query":     "data.policy.violations",
 		"enabled":   "false",
 	})
 	if err != nil {
@@ -484,6 +488,7 @@ violations contains "blocked" if { input.context.action == "confirm" }
 
 	enforcer, err := New(map[string]string{
 		"policyUrls": srv.URL + "/block_confirm.rego",
+		"query":      "data.policy.violations",
 		"actions":    "confirm",
 	})
 	if err != nil {

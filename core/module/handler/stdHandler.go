@@ -354,7 +354,7 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			s, err = newValidateSchemaStep(h.schemaValidator)
 		case "addRoute":
 			s, err = newAddRouteStep(h.router)
-		case "enforcePolicy":
+		case "policyEnforcer":
 			s, err = newEnforcePolicyStep(h.policyEnforcer)
 		default:
 			if customStep, exists := steps[step]; exists {
