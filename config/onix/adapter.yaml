@@ -48,6 +48,20 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
+        policyEnforcer:
+          id: policyenforcer
+          config:
+            # policyPaths: polymorphic, auto-detects each entry as URL, directory, or file
+            # Examples:
+            #   policyPaths: "./policies"                              # local directory
+            #   policyPaths: "https://example.com/compliance.rego"     # remote URL
+            #   policyPaths: "./policies/compliance.rego"              # local file
+            # For multiple sources, use YAML folded scalar (>-):
+            #   policyPaths: >-
+            #     https://example.com/compliance.rego,
+            #     https://example.com/safety.rego,
+            #     ./policies
+            policyPaths: "./policies"
         signValidator:
           id: signvalidator
         publisher:
@@ -66,6 +80,7 @@ modules:
               role: bap
       steps:
         - validateSign
+        - policyEnforcer
         - addRoute
         - validateSchema
   - name: bapTxnCaller
@@ -98,6 +113,10 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
+        policyEnforcer:
+          id: policyenforcer
+          config:
+            policyPaths: "./policies"
         signer:
           id: signer
         publisher:
@@ -116,6 +135,7 @@ modules:
               role: bap
       steps:
         - validateSchema
+        - policyEnforcer
         - addRoute
         - sign
   - name: bppTxnReciever
@@ -149,6 +169,10 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
+        policyEnforcer:
+          id: policyenforcer
+          config:
+            policyPaths: "./policies"
         signValidator:
           id: signvalidator
         publisher:
@@ -167,6 +191,7 @@ modules:
               role: bpp
       steps:
         - validateSign
+        - policyEnforcer
         - addRoute
         - validateSchema
   - name: bppTxnCaller
@@ -199,6 +224,10 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
+        policyEnforcer:
+          id: policyenforcer
+          config:
+            policyPaths: "./policies"
         signer:
           id: signer
         publisher:
@@ -217,5 +246,6 @@ modules:
               role: bpp
       steps:
         - validateSchema
+        - policyEnforcer
         - addRoute
         - sign

@@ -315,3 +315,11 @@ func extractSchemaVersion(body []byte) string {
 	}
 	return "unknown"
 }
+
+// newEnforcePolicyStep creates and returns the enforcePolicy step after validation.
+func newEnforcePolicyStep(policyEnforcer definition.PolicyEnforcer) (definition.Step, error) {
+	if policyEnforcer == nil {
+		return nil, fmt.Errorf("invalid config: PolicyEnforcer plugin not configured")
+	}
+	return policyEnforcer, nil
+}

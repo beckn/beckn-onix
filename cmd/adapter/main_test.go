@@ -83,6 +83,11 @@ func (m *MockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Con
 	return nil, nil
 }
 
+// PolicyEnforcer returns a mock implementation of the PolicyEnforcer interface.
+func (m *MockPluginManager) PolicyEnforcer(ctx context.Context, cfg *plugin.Config) (definition.PolicyEnforcer, error) {
+	return nil, nil
+}
+
 // mockRun is a mock implementation of the `run` function, simulating a successful run.
 func mockRun(ctx context.Context, configPath string) error {
 	return nil // Simulate a successful run
@@ -186,8 +191,8 @@ func TestRunFailure(t *testing.T) {
 			}
 			defer func() { newManagerFunc = originalNewManager }()
 
-		originalNewServer := newServerFunc
-		newServerFunc = func(ctx context.Context, mgr handler.PluginManager, cfg *Config) (http.Handler, error) {
+			originalNewServer := newServerFunc
+			newServerFunc = func(ctx context.Context, mgr handler.PluginManager, cfg *Config) (http.Handler, error) {
 				return tt.mockServer(ctx, mgr, cfg)
 			}
 			defer func() { newServerFunc = originalNewServer }()
