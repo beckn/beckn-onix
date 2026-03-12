@@ -24,10 +24,7 @@ services:
     restart: unless-stopped
 
   onix-bap:
-    build:
-      context: ../..
-      dockerfile: Dockerfile.adapter-with-plugins
-    image: onix-adapter:local
+    image: fidedocker/onix-adapter
     container_name: onix-bap
     ports:
       - "8081:8081"
@@ -51,7 +48,7 @@ services:
         condition: service_started
 
   onix-bpp:
-    image: onix-adapter:local
+    image: fidedocker/onix-adapter
     container_name: onix-bpp
     ports:
       - "8082:8082"
