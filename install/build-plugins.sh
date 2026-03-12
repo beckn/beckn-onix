@@ -27,7 +27,7 @@ plugins=(
 
 for plugin in "${plugins[@]}"; do
     echo "Building $plugin plugin..."
-    go build -buildmode=plugin -o "plugins/${plugin}.so" "./pkg/plugin/implementation/${plugin}/cmd/plugin.go"
+    CGO_ENABLED=1 go build -buildmode=plugin -o "plugins/${plugin}.so" "./pkg/plugin/implementation/${plugin}/cmd/plugin.go"
     if [ $? -eq 0 ]; then
         echo "✓ Successfully built $plugin plugin"
     else
