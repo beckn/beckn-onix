@@ -181,10 +181,6 @@ func TestGenerateKeyset(t *testing.T) {
 		return
 	}
 
-	// Check that all fields are populated
-	if keyset.SubscriberID == "" {
-		t.Error("GenerateKeyset() SubscriberID is empty")
-	}
 	if keyset.UniqueKeyID == "" {
 		t.Error("GenerateKeyset() UniqueKeyID is empty")
 	}

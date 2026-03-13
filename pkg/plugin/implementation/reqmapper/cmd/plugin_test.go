@@ -11,7 +11,8 @@ import (
 
 func TestProviderNewSuccess(t *testing.T) {
 	p := provider{}
-	middleware, err := p.New(context.Background(), map[string]string{"role": "bap"})
+	mappingFile := "../testdata/mappings.yaml"
+	middleware, err := p.New(context.Background(), map[string]string{"role": "bap", "mappingsFile": mappingFile})
 	if err != nil {
 		t.Fatalf("provider.New returned unexpected error: %v", err)
 	}
