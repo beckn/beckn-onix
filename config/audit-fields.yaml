@@ -1,89 +1,75 @@
-auditRules:
-  default:
-    - context.transaction_id
-    - context.message_id
-    - context.action
-    - context.domain
-    - context.bap_id
-    - context.bpp_id
+piiPatterns:
+  - name: email
+    regex: "^[\\w.+-]+@[\\w.-]+\\.[a-zA-Z]{2,}$"
+    maskType: replace
+    mask: "***@***.***"
+  - name: phone
+    regex: "^\\+?[0-9][0-9\\-\\s]{7,15}$"
+    maskType: last4
+  - name: tax_id
+    regex: "^[A-Z0-9]{5,20}$"
+    maskType: last4
+  - name: account
+    regex: "^[0-9]{8,20}$"
+    maskType: last4
+  - name: generic
+    regex: "."
+    maskType: replace
+    mask: "[MASKED]"
 
-  discover:
-    - context.transaction_id
-    - context.message_id
-    - context.action
-    - context.timestamp
-    - message.filters
-    - message.spatial
+piiPaths:
+  # Buyer identity
+  - path: message.order.beckn:buyer.beckn:email
+    pattern: email
+  - path: message.order.beckn:buyer.beckn:telephone
+    pattern: phone
+  - path: message.order.beckn:buyer.beckn:displayName
+    pattern: generic
+  - path: message.order.beckn:buyer.beckn:taxID
+    pattern: tax_id
 
-  select:
-    - context.transaction_id
-    - context.message_id
-    - context.action
-    - context.timestamp
-    - message.order.beckn:buyer.beckn:id
-    - message.order.beckn:seller
-    - message.order.beckn:orderItems.beckn:acceptedOffer.beckn:id
-    - message.order.beckn:orderAttributes
+  # Payment
+  - path: message.order.beckn:payment.beckn:paymentURL
+    pattern: generic
+  - path: message.order.beckn:payment.beckn:txnRef
+    pattern: last4
+  - path: message.order.beckn:payment.beckn:paidAt
+    pattern: generic
 
-  init:
-    - context.transaction_id
-    - context.message_id
-    - context.action
-    - context.timestamp
-    - message.order.beckn:id
-    - message.order.beckn:buyer.beckn:id
-    - message.order.beckn:orderValue.value
-    - message.order.beckn:payment.beckn:paymentStatus
+  # Fulfillment address
+  - path: message.order.beckn:fulfillment.beckn:deliveryAttributes.address
+    pattern: generic
+  - path: message.order.beckn:fulfillment.beckn:deliveryAttributes.address.streetAddress
+    pattern: generic
+  - path: message.order.beckn:fulfillment.beckn:deliveryAttributes.address.extendedAddress
+    pattern: generic
+  - path: message.order.beckn:fulfillment.beckn:deliveryAttributes.address.addressLocality
+    pattern: generic
+  - path: message.order.beckn:fulfillment.beckn:deliveryAttributes.address.postalCode
+    pattern: generic
 
-  confirm:
-    - context.transaction_id
-    - context.message_id
-    - context.action
-    - context.timestamp
-    - message.order.beckn:id
-    - message.order.beckn:orderStatus
-    - message.order.beckn:buyer.beckn:id
-    - message.order.beckn:payment.beckn:txnRef
-    - message.order.beckn:payment.beckn:paymentStatus
+  # SupportInfo
+  - path: message.support.name
+    pattern: generic
+  - path: message.support.phone
+    pattern: phone
+  - path: message.support.email
+    pattern: email
 
-  update:
-    - context.transaction_id
-    - context.message_id
-    - context.action
-    - context.timestamp
-    - message.order.beckn:id
-    - message.order.beckn:orderStatus
-    - message.order.beckn:fulfillment.beckn:deliveryAttributes.sessionStatus
+  # Provider attributes (ChargingPointOperator)
+  - path: message.order.beckn:seller.beckn:providerAttributes.supportEmail
+    pattern: email
+  - path: message.order.beckn:seller.beckn:providerAttributes.supportPhone
+    pattern: phone
+  - path: message.order.beckn:seller.beckn:providerAttributes.gstNumber
+    pattern: tax_id
 
-  track:
-    - context.transaction_id
-    - context.message_id
-    - context.action
-    - context.timestamp
-    - message.order.beckn:id
-
-  cancel:
-    - context.transaction_id
-    - context.message_id
-    - context.action
-    - context.timestamp
-    - message.order.beckn:id
-    - message.order.beckn:orderStatus
-    - message.order.beckn:buyer.beckn:id
-
-  rating:
-    - context.transaction_id
-    - context.message_id
-    - context.action
-    - context.timestamp
-    - message.id
-    - message.value
-    - message.category
-
-  support:
-    - context.transaction_id
-    - context.message_id
-    - context.action
-    - context.timestamp
-    - message.ref_id
-    - message.ref_type
+  # PaymentSettlement (in payment attributes)
+  - path: message.order.beckn:payment.beckn:paymentAttributes.settlementAccounts.accountHolderName
+    pattern: generic
+  - path: message.order.beckn:payment.beckn:paymentAttributes.settlementAccounts.accountNumber
+    pattern: account
+  - path: message.order.beckn:payment.beckn:paymentAttributes.settlementAccounts.vpa
+    pattern: generic
+  - path: message.order.beckn:payment.beckn:paymentAttributes.settlementAccounts.paymentURL
+    pattern: generic

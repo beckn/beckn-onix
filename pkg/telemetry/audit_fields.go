@@ -2,12 +2,12 @@ package telemetry
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -16,215 +16,134 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type auditFieldsRules struct {
-	AuditRules map[string][]string `yaml:"auditRules"`
+type piiPatternDef struct {
+	Name     string `yaml:"name"`
+	Regex    string `yaml:"regex"`
+	MaskType string `yaml:"maskType"` // "replace" (default) or "last4"
+	Mask     string `yaml:"mask"`     // literal mask for maskType "replace"
+}
+
+type piiPathDef struct {
+	Path    string `yaml:"path"`
+	Pattern string `yaml:"pattern"`
+}
+
+type auditConfig struct {
+	PIIPatterns []piiPatternDef `yaml:"piiPatterns"`
+	PIIPaths    []piiPathDef    `yaml:"piiPaths"`
+}
+
+type CompiledPattern struct {
+	Name     string
+	Re       *regexp.Regexp
+	MaskType string // "replace" or "last4"
+	Mask     string
+}
+
+type CompiledPIIConfig struct {
+	Patterns map[string]*CompiledPattern
+	Paths    []piiPathDef
 }
 
 var (
-	auditRules      = map[string][]string{}
-	auditRulesMutex sync.RWMutex
+	piiConfig   *CompiledPIIConfig
+	piiConfigMu sync.RWMutex
 )
 
-func loadAuditFieldRules(ctx context.Context, configPath string) error {
-
-	str := strings.TrimSpace(configPath)
+func loadAuditConfig(ctx context.Context, source string) error {
+	str := strings.TrimSpace(source)
 	if str == "" {
-		err := fmt.Errorf("config file path is empty")
-		log.Error(ctx, err, "there are no audit rules defined")
+		err := fmt.Errorf("auditFieldsConfig is empty")
+		log.Error(ctx, err, "audit config source is empty")
 		return err
 	}
 
 	var data []byte
-
 	u, err := url.Parse(str)
 	if err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		resp, err := http.Get(str)
 		if err != nil {
-			log.Error(ctx, err, "failed to fetch audit rules from url")
+			log.Error(ctx, err, "failed to fetch audit config from url")
 			return err
 		}
-
 		defer resp.Body.Close()
-
 		if resp.StatusCode != http.StatusOK {
-			err = fmt.Errorf("unexpected status %d fetching audit rules from %s", resp.StatusCode, str)
-			log.Error(ctx, err, "failed to fetch audit rules from url")
+			err := fmt.Errorf("unexpected status %d fetching audit config from %s", resp.StatusCode, str)
+			log.Error(ctx, err, "failed to fetch audit config from url")
 			return err
-
 		}
-
 		data, err = io.ReadAll(resp.Body)
 		if err != nil {
-			log.Error(ctx, err, "failed to read audit rules from url")
+			log.Error(ctx, err, "failed to read audit config from url")
 			return err
 		}
 	} else {
-
-		filedata, err := os.ReadFile(str)
+		data, err = os.ReadFile(str)
 		if err != nil {
-			log.Error(ctx, err, "failed to read audit rules file")
+			log.Error(ctx, err, "failed to read audit config file")
 			return err
 		}
-		data = filedata
 	}
 
-	var config auditFieldsRules
+	var config auditConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		log.Error(ctx, err, "failed to parse audit rules file")
+		log.Error(ctx, err, "failed to parse audit config file")
 		return err
 	}
 
-	if config.AuditRules == nil {
-		log.Warn(ctx, "audit rules are not defined")
-		config.AuditRules = map[string][]string{}
+	compiled := &CompiledPIIConfig{
+		Patterns: make(map[string]*CompiledPattern, len(config.PIIPatterns)),
+		Paths:    config.PIIPaths,
+	}
+	for _, p := range config.PIIPatterns {
+		re, err := regexp.Compile(p.Regex)
+		if err != nil {
+			log.Error(ctx, err, fmt.Sprintf("invalid regex for piiPattern %q", p.Name))
+			return err
+		}
+		maskType := p.MaskType
+		if maskType == "" {
+			maskType = "replace"
+		}
+		compiled.Patterns[p.Name] = &CompiledPattern{
+			Name:     p.Name,
+			Re:       re,
+			MaskType: maskType,
+			Mask:     p.Mask,
+		}
 	}
 
-	auditRulesMutex.Lock()
-	auditRules = config.AuditRules
-	auditRulesMutex.Unlock()
-	log.Info(ctx, "audit rules loaded")
+	piiConfigMu.Lock()
+	piiConfig = compiled
+	piiConfigMu.Unlock()
+	log.Info(ctx, "audit config loaded (piiPatterns + piiPaths)")
 	return nil
 }
 
-func selectAuditPayload(ctx context.Context, body []byte) []byte {
-
-	var root map[string]interface{}
-	if err := json.Unmarshal(body, &root); err != nil {
-		log.Warn(ctx, "failed to unmarshal audit payload ")
-		return nil
-	}
-
-	action := ""
-	if c, ok := root["context"].(map[string]interface{}); ok {
-		if v, ok := c["action"].(string); ok {
-			action = strings.TrimSpace(v)
-		}
-	}
-
-	fields := getFieldForAction(ctx, action)
-	if len(fields) == 0 {
-		return nil
-	}
-
-	out := map[string]interface{}{}
-	for _, field := range fields {
-		parts := strings.Split(field, ".")
-		partial, ok := projectPath(root, parts)
-		if !ok {
-			continue
-		}
-		merged := deepMerge(out, partial)
-		if m, ok := merged.(map[string]interface{}); ok {
-			out = m
-		}
-	}
-
-	body, err := json.Marshal(out)
-	if err != nil {
-		log.Warn(ctx, "failed to marshal audit payload")
-		return nil
-	}
-	return body
+// LoadAuditConfig loads audit config (PII patterns + paths) from a single source:
+// either an HTTP(S) URL or a local file path.
+func LoadAuditConfig(ctx context.Context, configPath string) error {
+	return loadAuditConfig(ctx, configPath)
 }
 
-func getFieldForAction(ctx context.Context, action string) []string {
-	auditRulesMutex.RLock()
-	defer auditRulesMutex.RUnlock()
-
-	if action != "" {
-		if fields, ok := auditRules[action]; ok && len(fields) > 0 {
-			return fields
-		}
-	}
-
-	log.Warn(ctx, "audit rules are not defined for this action send default")
-	return auditRules["default"]
+// GetPIIConfig returns the current compiled PII config (patterns + paths).
+func GetPIIConfig() *CompiledPIIConfig {
+	piiConfigMu.RLock()
+	defer piiConfigMu.RUnlock()
+	return piiConfig
 }
 
-func projectPath(cur interface{}, parts []string) (interface{}, bool) {
-	if len(parts) == 0 {
-		return cur, true
-	}
-
-	switch node := cur.(type) {
-	case map[string]interface{}:
-		next, ok := node[parts[0]]
-		if !ok {
-			return nil, false
-		}
-		child, ok := projectPath(next, parts[1:])
-		if !ok {
-			return nil, false
-		}
-		return map[string]interface{}{parts[0]: child}, true
-
-	case []interface{}:
-		out := make([]interface{}, 0, len(node))
-		found := false
-
-		for _, n := range node {
-			child, ok := projectPath(n, parts)
-			if ok {
-				out = append(out, child)
-				found = true
-			}
-		}
-		if !found {
-			return nil, false
-		}
-		return out, true
-
-	default:
-		return nil, false
-	}
-}
-func deepMerge(dst, src interface{}) interface{} {
-	if dst == nil {
-		return src
-	}
-
-	dm, dok := dst.(map[string]interface{})
-	sm, sok := src.(map[string]interface{})
-	if dok && sok {
-		for k, sv := range sm {
-			if dv, ok := dm[k]; ok {
-				dm[k] = deepMerge(dv, sv)
-			} else {
-				dm[k] = sv
-			}
-		}
-		return dm
-	}
-
-	da, dok := dst.([]interface{})
-	sa, sok := src.([]interface{})
-	if dok && sok {
-		if len(da) < len(sa) {
-			ext := make([]interface{}, len(sa)-len(da))
-			da = append(da, ext...)
-		}
-
-		for i := range sa {
-			da[i] = deepMerge(da[i], sa[i])
-		}
-		return da
-	}
-
-	return src
-}
-
-func StartAuditFieldsRefresh(ctx context.Context, configUrl string, intervalSec int64) (stop func()) {
-
+// StartAuditFieldsRefresh periodically reloads audit config from the configured source (URL or local path).
+func StartAuditFieldsRefresh(ctx context.Context, configSource string, intervalSec int64) (stop func()) {
 	if intervalSec <= 0 {
 		intervalSec = 3600
 	}
-
 	interval := time.Duration(intervalSec) * time.Second
 	ticker := time.NewTicker(interval)
 	done := make(chan struct{})
 
-	if err := loadAuditFieldRules(ctx, configUrl); err != nil {
-		log.Warn(ctx, "failed to load audit rules from url")
+	if err := loadAuditConfig(ctx, configSource); err != nil {
+		log.Warn(ctx, "failed to load audit config")
 	}
 
 	go func() {
@@ -234,8 +153,9 @@ func StartAuditFieldsRefresh(ctx context.Context, configUrl string, intervalSec 
 				ticker.Stop()
 				return
 			case <-ticker.C:
-				if err := loadAuditFieldRules(ctx, configUrl); err != nil {
-					log.Warn(ctx, "failed to load audit rules from url")
+				reloadCtx := context.Background()
+				if err := loadAuditConfig(reloadCtx, configSource); err != nil {
+					log.Warn(reloadCtx, "failed to reload audit config")
 				}
 			}
 		}
