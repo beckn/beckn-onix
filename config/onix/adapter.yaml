@@ -48,20 +48,17 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
-        policyEnforcer:
-          id: policyenforcer
+        checkPolicy:
+          id: opapolicychecker
           config:
-            # policyPaths: polymorphic, auto-detects each entry as URL, directory, or file
-            # Examples:
-            #   policyPaths: "./policies"                              # local directory
-            #   policyPaths: "https://example.com/compliance.rego"     # remote URL
-            #   policyPaths: "./policies/compliance.rego"              # local file
-            # For multiple sources, use YAML folded scalar (>-):
-            #   policyPaths: >-
-            #     https://example.com/compliance.rego,
-            #     https://example.com/safety.rego,
-            #     ./policies
-            policyPaths: "./policies"
+            # Policy source configuration.
+            # type: url | file | dir | bundle
+            # location: path or URL to policy source
+            # query: OPA query path to evaluate (required)
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
         signValidator:
           id: signvalidator
         publisher:
@@ -80,7 +77,7 @@ modules:
               role: bap
       steps:
         - validateSign
-        - policyEnforcer
+        - checkPolicy
         - addRoute
         - validateSchema
   - name: bapTxnCaller
@@ -113,10 +110,13 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
-        policyEnforcer:
-          id: policyenforcer
+        checkPolicy:
+          id: opapolicychecker
           config:
-            policyPaths: "./policies"
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
         signer:
           id: signer
         publisher:
@@ -135,7 +135,7 @@ modules:
               role: bap
       steps:
         - validateSchema
-        - policyEnforcer
+        - checkPolicy
         - addRoute
         - sign
   - name: bppTxnReciever
@@ -169,10 +169,13 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
-        policyEnforcer:
-          id: policyenforcer
+        checkPolicy:
+          id: opapolicychecker
           config:
-            policyPaths: "./policies"
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
         signValidator:
           id: signvalidator
         publisher:
@@ -191,7 +194,7 @@ modules:
               role: bpp
       steps:
         - validateSign
-        - policyEnforcer
+        - checkPolicy
         - addRoute
         - validateSchema
   - name: bppTxnCaller
@@ -224,10 +227,13 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
-        policyEnforcer:
-          id: policyenforcer
+        checkPolicy:
+          id: opapolicychecker
           config:
-            policyPaths: "./policies"
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
         signer:
           id: signer
         publisher:
@@ -246,6 +252,6 @@ modules:
               role: bpp
       steps:
         - validateSchema
-        - policyEnforcer
+        - checkPolicy
         - addRoute
         - sign

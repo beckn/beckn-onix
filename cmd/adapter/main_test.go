@@ -83,8 +83,8 @@ func (m *MockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Con
 	return nil, nil
 }
 
-// PolicyEnforcer returns a mock implementation of the PolicyEnforcer interface.
-func (m *MockPluginManager) PolicyEnforcer(ctx context.Context, cfg *plugin.Config) (definition.PolicyEnforcer, error) {
+// PolicyChecker returns a mock implementation of the PolicyChecker interface.
+func (m *MockPluginManager) PolicyChecker(ctx context.Context, cfg *plugin.Config) (definition.PolicyChecker, error) {
 	return nil, nil
 }
 

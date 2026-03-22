@@ -316,10 +316,18 @@ func extractSchemaVersion(body []byte) string {
 	return "unknown"
 }
 
-// newEnforcePolicyStep creates and returns the enforcePolicy step after validation.
-func newEnforcePolicyStep(policyEnforcer definition.PolicyEnforcer) (definition.Step, error) {
-	if policyEnforcer == nil {
-		return nil, fmt.Errorf("invalid config: PolicyEnforcer plugin not configured")
+// checkPolicyStep adapts PolicyChecker into the Step interface.
+type checkPolicyStep struct {
+	checker definition.PolicyChecker
+}
+
+func newCheckPolicyStep(policyChecker definition.PolicyChecker) (definition.Step, error) {
+	if policyChecker == nil {
+		return nil, fmt.Errorf("invalid config: PolicyChecker plugin not configured")
 	}
-	return policyEnforcer, nil
+	return &checkPolicyStep{checker: policyChecker}, nil
+}
+
+func (s *checkPolicyStep) Run(ctx *model.StepContext) error {
+	return s.checker.CheckPolicy(ctx)
 }

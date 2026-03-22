@@ -36,7 +36,6 @@ services:
     volumes:
       - ../config:/app/config
       - ../schemas:/app/schemas
-      - ../policies:/app/policies
     command: ["./server", "--config=/app/config/local-simple.yaml"]
 
   # Vault - Key Management Service

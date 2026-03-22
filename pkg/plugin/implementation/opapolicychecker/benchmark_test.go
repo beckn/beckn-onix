@@ -5,7 +5,7 @@
 //
 // Run human-readable report:  go test -run TestBenchmarkReport -v -count=1
 // Run Go benchmarks:          go test -bench=. -benchmem -count=1
-package policyenforcer
+package opapolicychecker
 
 import (
 	"context"
@@ -101,12 +101,21 @@ func BenchmarkEvaluate_MostlyInactive(b *testing.B) {
 			dir := b.TempDir()
 			os.WriteFile(filepath.Join(dir, "policy.rego"), []byte(generateDummyRules(n)), 0644)
 
-			eval, err := NewEvaluator([]string{dir}, "data.policy.violations", nil)
+			eval, err := NewEvaluator([]string{dir}, "data.policy.violations", nil, false)
 			if err != nil {
 				b.Fatalf("NewEvaluator failed: %v", err)
 			}
 
 			ctx := context.Background()
+
+			violations, err := eval.Evaluate(ctx, sampleBecknInput)
+			if err != nil {
+				b.Fatalf("correctness check failed: %v", err)
+			}
+			if len(violations) != 1 || violations[0] != "real_violation" {
+				b.Fatalf("expected [real_violation], got %v", violations)
+			}
+
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_, err := eval.Evaluate(ctx, sampleBecknInput)
@@ -126,12 +135,21 @@ func BenchmarkEvaluate_AllActive(b *testing.B) {
 			dir := b.TempDir()
 			os.WriteFile(filepath.Join(dir, "policy.rego"), []byte(generateActiveRules(n)), 0644)
 
-			eval, err := NewEvaluator([]string{dir}, "data.policy.violations", nil)
+			eval, err := NewEvaluator([]string{dir}, "data.policy.violations", nil, false)
 			if err != nil {
 				b.Fatalf("NewEvaluator failed: %v", err)
 			}
 
 			ctx := context.Background()
+
+			violations, err := eval.Evaluate(ctx, sampleBecknInput)
+			if err != nil {
+				b.Fatalf("correctness check failed: %v", err)
+			}
+			if len(violations) != n {
+				b.Fatalf("expected %d violations, got %d", n, len(violations))
+			}
+
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_, err := eval.Evaluate(ctx, sampleBecknInput)
@@ -154,7 +172,7 @@ func BenchmarkCompilation(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, err := NewEvaluator([]string{dir}, "data.policy.violations", nil)
+				_, err := NewEvaluator([]string{dir}, "data.policy.violations", nil, false)
 				if err != nil {
 					b.Fatalf("NewEvaluator failed: %v", err)
 				}
@@ -188,7 +206,7 @@ func TestBenchmarkReport(t *testing.T) {
 		os.WriteFile(filepath.Join(dir, "policy.rego"), []byte(generateDummyRules(n)), 0644)
 
 		start := time.Now()
-		_, err := NewEvaluator([]string{dir}, "data.policy.violations", nil)
+		_, err := NewEvaluator([]string{dir}, "data.policy.violations", nil, false)
 		elapsed := time.Since(start)
 		if err != nil {
 			t.Fatalf("NewEvaluator(%d rules) failed: %v", n, err)
@@ -209,7 +227,7 @@ func TestBenchmarkReport(t *testing.T) {
 		dir := t.TempDir()
 		os.WriteFile(filepath.Join(dir, "policy.rego"), []byte(generateDummyRules(n)), 0644)
 
-		eval, err := NewEvaluator([]string{dir}, "data.policy.violations", nil)
+		eval, err := NewEvaluator([]string{dir}, "data.policy.violations", nil, false)
 		if err != nil {
 			t.Fatalf("NewEvaluator(%d rules) failed: %v", n, err)
 		}
@@ -245,7 +263,7 @@ func TestBenchmarkReport(t *testing.T) {
 		dir := t.TempDir()
 		os.WriteFile(filepath.Join(dir, "policy.rego"), []byte(generateActiveRules(n)), 0644)
 
-		eval, err := NewEvaluator([]string{dir}, "data.policy.violations", nil)
+		eval, err := NewEvaluator([]string{dir}, "data.policy.violations", nil, false)
 		if err != nil {
 			t.Fatalf("NewEvaluator(%d rules) failed: %v", n, err)
 		}

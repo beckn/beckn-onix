@@ -86,20 +86,17 @@ modules:
           id: router
           config:
             routingConfig: ./config/local-beckn-one-routing-BAPReceiver.yaml
-        policyEnforcer:
-          id: policyenforcer
+        checkPolicy:
+          id: opapolicychecker
           config:
-            # policyPaths: polymorphic, auto-detects each entry as URL, directory, or file
-            # Examples:
-            #   policyPaths: "./policies"                              # local directory
-            #   policyPaths: "https://example.com/compliance.rego"     # remote URL
-            #   policyPaths: "./policies/compliance.rego"              # local file
-            # For multiple sources, use YAML folded scalar (>-):
-            #   policyPaths: >-
-            #     https://example.com/compliance.rego,
-            #     https://example.com/safety.rego,
-            #     ./policies
-            policyPaths: "./policies"
+            # Policy source configuration.
+            # type: url | file | dir | bundle
+            # location: path or URL to policy source
+            # query: OPA query path to evaluate (required)
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
         middleware:
           - id: reqpreprocessor
             config:
@@ -107,7 +104,7 @@ modules:
               role: bap
       steps:
         - validateSign
-        - policyEnforcer
+        - checkPolicy
         - addRoute
         - validateSchema
   
@@ -166,12 +163,15 @@ modules:
             config:
               contextKeys: transaction_id,message_id
               role: bap
-        policyEnforcer:
-          id: policyenforcer
+        checkPolicy:
+          id: opapolicychecker
           config:
-            policyPaths: "./policies"
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
       steps:
-        - policyEnforcer
+        - checkPolicy
         - addRoute
         - sign
         - validateSchema
