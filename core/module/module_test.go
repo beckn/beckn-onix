@@ -79,6 +79,11 @@ func (m *mockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Con
 	return nil, nil
 }
 
+// PolicyChecker returns a mock policy checker implementation.
+func (m *mockPluginManager) PolicyChecker(ctx context.Context, cfg *plugin.Config) (definition.PolicyChecker, error) {
+	return nil, nil
+}
+
 // TestRegisterSuccess tests scenarios where the handler registration should succeed.
 func TestRegisterSuccess(t *testing.T) {
 	mCfgs := []Config{

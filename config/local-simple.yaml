@@ -66,6 +66,13 @@ modules:
           id: router
           config:
             routingConfig: ./config/local-simple-routing.yaml
+        checkPolicy:
+          id: opapolicychecker
+          config:
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
         middleware:
           - id: reqpreprocessor
             config:
@@ -73,6 +80,7 @@ modules:
               role: bap
       steps:
         - validateSign
+        - checkPolicy
         - addRoute
   
   - name: bapTxnCaller
@@ -162,8 +170,16 @@ modules:
           id: router
           config:
             routingConfig: ./config/local-simple-routing-BPPReceiver.yaml
+        checkPolicy:
+          id: opapolicychecker
+          config:
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
       steps:
         - validateSign
+        - checkPolicy
         - addRoute
   
   - name: bppTxnCaller

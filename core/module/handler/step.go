@@ -315,3 +315,19 @@ func extractSchemaVersion(body []byte) string {
 	}
 	return "unknown"
 }
+
+// checkPolicyStep adapts PolicyChecker into the Step interface.
+type checkPolicyStep struct {
+	checker definition.PolicyChecker
+}
+
+func newCheckPolicyStep(policyChecker definition.PolicyChecker) (definition.Step, error) {
+	if policyChecker == nil {
+		return nil, fmt.Errorf("invalid config: PolicyChecker plugin not configured")
+	}
+	return &checkPolicyStep{checker: policyChecker}, nil
+}
+
+func (s *checkPolicyStep) Run(ctx *model.StepContext) error {
+	return s.checker.CheckPolicy(ctx)
+}
