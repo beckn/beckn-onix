@@ -140,9 +140,9 @@ func TestLookup(t *testing.T) {
 						"signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
 						"encr_public_key":    "test-encr-key",
 					},
-					"parent_namespaces": []string{"commerce-network.org", "local-commerce.org"},
-					"created_at": "2025-10-27T11:45:27.963Z",
-					"updated_at": "2025-10-27T11:46:23.563Z",
+					"network_memberships": []string{"commerce-network/subscriber-references", "local-commerce/subscriber-references"},
+					"created_at":          "2025-10-27T11:45:27.963Z",
+					"updated_at":          "2025-10-27T11:46:23.563Z",
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -192,7 +192,7 @@ func TestLookup(t *testing.T) {
 		}
 	})
 
-	t.Run("allowed parent namespaces match", func(t *testing.T) {
+	t.Run("allowed network IDs match", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			response := map[string]interface{}{
 				"message": "Record retrieved from registry cache",
@@ -204,7 +204,7 @@ func TestLookup(t *testing.T) {
 						"subscriber_id":      "dev.np2.com",
 						"signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
 					},
-					"parent_namespaces": []string{"commerce-network.org", "local-commerce.org"},
+					"network_memberships": []string{"commerce-network/subscriber-references", "local-commerce/subscriber-references"},
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -213,9 +213,9 @@ func TestLookup(t *testing.T) {
 		defer server.Close()
 
 		config := &Config{
-			URL:                     server.URL + "/dedi",
-			RegistryName:            "subscribers.beckn.one",
-			AllowedParentNamespaces: []string{"commerce-network.org"},
+			URL:               server.URL + "/dedi",
+			RegistryName:      "subscribers.beckn.one",
+			AllowedNetworkIDs: []string{"commerce-network/subscriber-references"},
 		}
 
 		client, closer, err := New(ctx, config)
@@ -236,7 +236,7 @@ func TestLookup(t *testing.T) {
 		}
 	})
 
-	t.Run("allowed parent namespaces mismatch", func(t *testing.T) {
+	t.Run("allowed network IDs mismatch", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			response := map[string]interface{}{
 				"message": "Record retrieved from registry cache",
@@ -248,7 +248,7 @@ func TestLookup(t *testing.T) {
 						"subscriber_id":      "dev.np2.com",
 						"signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
 					},
-					"parent_namespaces": []string{"local-commerce.org"},
+					"network_memberships": []string{"local-commerce/subscriber-references"},
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -257,9 +257,9 @@ func TestLookup(t *testing.T) {
 		defer server.Close()
 
 		config := &Config{
-			URL:                     server.URL + "/dedi",
-			RegistryName:            "subscribers.beckn.one",
-			AllowedParentNamespaces: []string{"commerce-network.org"},
+			URL:               server.URL + "/dedi",
+			RegistryName:      "subscribers.beckn.one",
+			AllowedNetworkIDs: []string{"commerce-network/subscriber-references"},
 		}
 
 		client, closer, err := New(ctx, config)
@@ -276,7 +276,11 @@ func TestLookup(t *testing.T) {
 		}
 		_, err = client.Lookup(ctx, req)
 		if err == nil {
-			t.Error("Expected error for disallowed parent namespaces, got nil")
+			t.Error("Expected error for disallowed network memberships, got nil")
+		}
+		expectedErr := "registry entry with subscriber_id 'dev.np2.com' does not belong to any configured network memberships (registry.config.allowedNetworkIDs)"
+		if err.Error() != expectedErr {
+			t.Errorf("Expected error %q, got %q", expectedErr, err.Error())
 		}
 	})
 
