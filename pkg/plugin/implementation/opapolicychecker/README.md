@@ -10,6 +10,8 @@ Validates incoming Beckn messages against network-defined business rules using [
 - Fail-closed on empty/undefined query results — misconfigured policies are treated as violations
 - Runtime config forwarding: adapter config values are accessible in Rego as `data.config.<key>`
 - Action-based enforcement: apply policies only to specific beckn actions (e.g., `confirm`, `search`)
+- Configurable fetch timeout for remote policy and bundle sources
+- Warns at startup when policy enforcement is explicitly disabled
 
 ## Configuration
 
@@ -36,6 +38,7 @@ steps:
 | `actions` | string | No | *(all)* | Comma-separated beckn actions to enforce |
 | `enabled` | string | No | `"true"` | Enable or disable the plugin |
 | `debugLogging` | string | No | `"false"` | Enable verbose OPA evaluation logging |
+| `fetchTimeoutSeconds` | string | No | `"30"` | Timeout in seconds for fetching remote `.rego` files or bundles |
 | `refreshIntervalSeconds` | string | No | - | Reload policies every N seconds (0 or omit = disabled) |
 | *any other key* | string | No | - | Forwarded to Rego as `data.config.<key>` |
 
@@ -47,7 +50,7 @@ When `refreshIntervalSeconds` is set, a background goroutine periodically re-fet
 
 - **Atomic swap**: the old evaluator stays fully active until the new one is compiled — no gap in enforcement
 - **Non-fatal errors**: if the reload fails (e.g., file temporarily unreachable or parse error), the error is logged and the previous policy stays active
-- **Goroutine lifecycle**: the reload loop is tied to the adapter context and stops cleanly on shutdown
+- **Goroutine lifecycle**: the reload loop stops when the adapter context is cancelled or when plugin `Close()` is invoked during shutdown
 
 ```yaml
 config:
@@ -67,7 +70,7 @@ config:
 
 ### Request Evaluation (Runtime)
 
-1. **Check Action Match**: If `actions` is configured, skip evaluation for non-matching actions
+1. **Check Action Match**: If `actions` is configured, skip evaluation for non-matching actions. The plugin assumes standard adapter routes look like `/{participant}/{direction}/{action}` such as `/bpp/caller/confirm`; non-standard paths fall back to `context.action` from the JSON body.
 2. **Evaluate OPA Query**: Run the prepared query with the full beckn message as `input`
 3. **Handle Result**:
    - If the query returns no result (undefined) → **violation** (fail-closed)
@@ -109,6 +112,7 @@ checkPolicy:
     type: url
     location: https://policies.example.com/compliance.rego
     query: "data.policy.result"
+    fetchTimeoutSeconds: "10"
 ```
 
 ### Local Directory (multiple `.rego` files)
@@ -192,3 +196,4 @@ Configure them side-by-side in your adapter steps as needed.
 
 -   **No bundle signature verification**: When using `type: bundle`, bundle signature verification is skipped. This is planned for a future enhancement.
 -   **Network-level scoping**: Policies apply to all messages handled by the adapter instance. Per-network policy mapping (by `networkId`) is tracked for follow-up.
+-   **Non-standard route shapes**: URL-based action extraction assumes the standard Beckn adapter route shape `/{participant}/{direction}/{action}` and falls back to `context.action` for other path layouts.

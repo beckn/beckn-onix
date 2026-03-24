@@ -22,6 +22,7 @@ type Config struct {
 	Actions         []string
 	Enabled         bool
 	DebugLogging    bool
+	FetchTimeout    time.Duration
 	IsBundle        bool
 	RefreshInterval time.Duration // 0 = disabled
 	RuntimeConfig   map[string]string
@@ -34,12 +35,14 @@ var knownKeys = map[string]bool{
 	"actions":                true,
 	"enabled":                true,
 	"debugLogging":           true,
+	"fetchTimeoutSeconds":    true,
 	"refreshIntervalSeconds": true,
 }
 
 func DefaultConfig() *Config {
 	return &Config{
 		Enabled:       true,
+		FetchTimeout:  defaultPolicyFetchTimeout,
 		RuntimeConfig: make(map[string]string),
 	}
 }
@@ -105,6 +108,14 @@ func ParseConfig(cfg map[string]string) (*Config, error) {
 		config.DebugLogging = debug == "true" || debug == "1"
 	}
 
+	if fts, ok := cfg["fetchTimeoutSeconds"]; ok && fts != "" {
+		secs, err := strconv.Atoi(fts)
+		if err != nil || secs <= 0 {
+			return nil, fmt.Errorf("'fetchTimeoutSeconds' must be a positive integer, got %q", fts)
+		}
+		config.FetchTimeout = time.Duration(secs) * time.Second
+	}
+
 	if ris, ok := cfg["refreshIntervalSeconds"]; ok && ris != "" {
 		secs, err := strconv.Atoi(ris)
 		if err != nil || secs < 0 {
@@ -136,9 +147,11 @@ func (c *Config) IsActionEnabled(action string) bool {
 
 // PolicyEnforcer evaluates beckn messages against OPA policies and NACKs non-compliant messages.
 type PolicyEnforcer struct {
-	config        *Config
-	evaluator     *Evaluator
-	evaluatorMu   sync.RWMutex
+	config      *Config
+	evaluator   *Evaluator
+	evaluatorMu sync.RWMutex
+	closeOnce   sync.Once
+	done        chan struct{}
 }
 
 // getEvaluator safely returns the current evaluator under a read lock.
@@ -162,18 +175,24 @@ func New(ctx context.Context, cfg map[string]string) (*PolicyEnforcer, error) {
 		return nil, fmt.Errorf("opapolicychecker: config error: %w", err)
 	}
 
-	evaluator, err := NewEvaluator(config.PolicyPaths, config.Query, config.RuntimeConfig, config.IsBundle)
+	enforcer := &PolicyEnforcer{
+		config: config,
+		done:   make(chan struct{}),
+	}
+
+	if !config.Enabled {
+		log.Warnf(ctx, "OPAPolicyChecker is disabled via config; policy enforcement will be skipped")
+		return enforcer, nil
+	}
+
+	evaluator, err := NewEvaluator(config.PolicyPaths, config.Query, config.RuntimeConfig, config.IsBundle, config.FetchTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("opapolicychecker: failed to initialize OPA evaluator: %w", err)
 	}
+	enforcer.evaluator = evaluator
 
-	log.Infof(ctx, "OPAPolicyChecker initialized (actions=%v, query=%s, policies=%v, isBundle=%v, debugLogging=%v, refreshInterval=%s)",
-		config.Actions, config.Query, evaluator.ModuleNames(), config.IsBundle, config.DebugLogging, config.RefreshInterval)
-
-	enforcer := &PolicyEnforcer{
-		config:    config,
-		evaluator: evaluator,
-	}
+	log.Infof(ctx, "OPAPolicyChecker initialized (actions=%v, query=%s, policies=%v, isBundle=%v, debugLogging=%v, fetchTimeout=%s, refreshInterval=%s)",
+		config.Actions, config.Query, evaluator.ModuleNames(), config.IsBundle, config.DebugLogging, config.FetchTimeout, config.RefreshInterval)
 
 	if config.RefreshInterval > 0 {
 		go enforcer.refreshLoop(ctx)
@@ -193,6 +212,9 @@ func (e *PolicyEnforcer) refreshLoop(ctx context.Context) {
 		case <-ctx.Done():
 			log.Infof(ctx, "OPAPolicyChecker: refresh loop stopped")
 			return
+		case <-e.done:
+			log.Infof(ctx, "OPAPolicyChecker: refresh loop stopped by Close()")
+			return
 		case <-ticker.C:
 			e.reloadPolicies(ctx)
 		}
@@ -208,6 +230,7 @@ func (e *PolicyEnforcer) reloadPolicies(ctx context.Context) {
 		e.config.Query,
 		e.config.RuntimeConfig,
 		e.config.IsBundle,
+		e.config.FetchTimeout,
 	)
 	if err != nil {
 		log.Errorf(ctx, err, "OPAPolicyChecker: policy reload failed (keeping previous policies): %v", err)
@@ -237,6 +260,9 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	}
 
 	ev := e.getEvaluator()
+	if ev == nil {
+		return model.NewBadReqErr(fmt.Errorf("policy evaluator is not initialized"))
+	}
 
 	if e.config.DebugLogging {
 		log.Debugf(ctx, "OPAPolicyChecker: evaluating policies for action %q (modules=%v)", action, ev.ModuleNames())
@@ -260,12 +286,17 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	return model.NewBadReqErr(fmt.Errorf("%s", msg))
 }
 
-func (e *PolicyEnforcer) Close() {}
+func (e *PolicyEnforcer) Close() {
+	e.closeOnce.Do(func() {
+		close(e.done)
+	})
+}
 
 func extractAction(urlPath string, body []byte) string {
-	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
-	if len(parts) >= 3 {
-		return parts[len(parts)-1]
+	// /bpp/caller/confirm/extra as action "extra".
+	parts := strings.FieldsFunc(strings.Trim(urlPath, "/"), func(r rune) bool { return r == '/' })
+	if len(parts) == 3 && isBecknDirection(parts[1]) && parts[2] != "" {
+		return parts[2]
 	}
 
 	var payload struct {
@@ -278,4 +309,13 @@ func extractAction(urlPath string, body []byte) string {
 	}
 
 	return ""
+}
+
+func isBecknDirection(part string) bool {
+	switch part {
+	case "caller", "receiver", "reciever":
+		return true
+	default:
+		return false
+	}
 }

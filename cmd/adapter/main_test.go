@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/beckn-one/beckn-onix/core/module"
 	"github.com/beckn-one/beckn-onix/core/module/handler"
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/stretchr/testify/mock"
@@ -21,6 +23,15 @@ import (
 // MockPluginManager implements handler.PluginManager for testing.
 type MockPluginManager struct {
 	mock.Mock
+	policyCheckerFunc func(ctx context.Context, cfg *plugin.Config) (definition.PolicyChecker, error)
+}
+
+type stubPolicyChecker struct {
+	err error
+}
+
+func (s stubPolicyChecker) CheckPolicy(*model.StepContext) error {
+	return s.err
 }
 
 // Middleware returns a middleware function based on the provided configuration.
@@ -85,6 +96,9 @@ func (m *MockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Con
 
 // PolicyChecker returns a mock implementation of the PolicyChecker interface.
 func (m *MockPluginManager) PolicyChecker(ctx context.Context, cfg *plugin.Config) (definition.PolicyChecker, error) {
+	if m.policyCheckerFunc != nil {
+		return m.policyCheckerFunc(ctx, cfg)
+	}
 	return nil, nil
 }
 
@@ -332,6 +346,49 @@ func TestNewServerSuccess(t *testing.T) {
 				t.Errorf("Expected handler to be non-nil, but got nil")
 			}
 		})
+	}
+}
+
+func TestNewServerRejectsPolicyViolation(t *testing.T) {
+	mockMgr := &MockPluginManager{
+		policyCheckerFunc: func(ctx context.Context, cfg *plugin.Config) (definition.PolicyChecker, error) {
+			return stubPolicyChecker{err: model.NewBadReqErr(errors.New("blocked by policy"))}, nil
+		},
+	}
+
+	cfg := &Config{
+		Modules: []module.Config{
+			{
+				Name: "policy-module",
+				Path: "/policy",
+				Handler: handler.Config{
+					Type: handler.HandlerTypeStd,
+					Plugins: handler.PluginCfg{
+						PolicyChecker: &plugin.Config{ID: "mock-policy"},
+					},
+					Steps: []string{"checkPolicy"},
+				},
+			},
+		},
+	}
+
+	h, err := newServer(context.Background(), mockMgr, cfg)
+	if err != nil {
+		t.Fatalf("expected no error creating server, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/policy", strings.NewReader(`{"context":{"action":"confirm"}}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for policy violation, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "NACK") {
+		t.Fatalf("expected NACK response, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "blocked by policy") {
+		t.Fatalf("expected policy error in response, got %s", rec.Body.String())
 	}
 }
 

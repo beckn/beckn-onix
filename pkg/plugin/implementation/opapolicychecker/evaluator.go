@@ -35,8 +35,9 @@ func (e *Evaluator) ModuleNames() []string {
 	return e.moduleNames
 }
 
-// policyFetchTimeout is the HTTP timeout for fetching remote .rego files.
-const policyFetchTimeout = 30 * time.Second
+// defaultPolicyFetchTimeout bounds remote policy and bundle fetches during startup
+// and refresh. This can be overridden via config.fetchTimeoutSeconds.
+const defaultPolicyFetchTimeout = 30 * time.Second
 
 // maxPolicySize is the maximum size of a single .rego file fetched from a URL (1 MB).
 const maxPolicySize = 1 << 20
@@ -47,21 +48,24 @@ const maxBundleSize = 10 << 20
 // NewEvaluator creates an Evaluator by loading .rego files from local paths
 // and/or URLs, then compiling them. runtimeConfig is passed to Rego as data.config.
 // When isBundle is true, the first policyPath is treated as a URL to an OPA bundle (.tar.gz).
-func NewEvaluator(policyPaths []string, query string, runtimeConfig map[string]string, isBundle bool) (*Evaluator, error) {
-	if isBundle {
-		return newBundleEvaluator(policyPaths, query, runtimeConfig)
+func NewEvaluator(policyPaths []string, query string, runtimeConfig map[string]string, isBundle bool, fetchTimeout time.Duration) (*Evaluator, error) {
+	if fetchTimeout <= 0 {
+		fetchTimeout = defaultPolicyFetchTimeout
 	}
-	return newRegoEvaluator(policyPaths, query, runtimeConfig)
+	if isBundle {
+		return newBundleEvaluator(policyPaths, query, runtimeConfig, fetchTimeout)
+	}
+	return newRegoEvaluator(policyPaths, query, runtimeConfig, fetchTimeout)
 }
 
 // newRegoEvaluator loads raw .rego files from local paths and/or URLs.
-func newRegoEvaluator(policyPaths []string, query string, runtimeConfig map[string]string) (*Evaluator, error) {
+func newRegoEvaluator(policyPaths []string, query string, runtimeConfig map[string]string, fetchTimeout time.Duration) (*Evaluator, error) {
 	modules := make(map[string]string)
 
 	// Load from policyPaths (resolved locations based on config Type)
 	for _, source := range policyPaths {
 		if isURL(source) {
-			name, content, err := fetchPolicy(source)
+			name, content, err := fetchPolicy(source, fetchTimeout)
 			if err != nil {
 				return nil, fmt.Errorf("failed to fetch policy from %s: %w", source, err)
 			}
@@ -101,13 +105,13 @@ func newRegoEvaluator(policyPaths []string, query string, runtimeConfig map[stri
 }
 
 // newBundleEvaluator loads an OPA bundle (.tar.gz) from a URL and compiles it.
-func newBundleEvaluator(policyPaths []string, query string, runtimeConfig map[string]string) (*Evaluator, error) {
+func newBundleEvaluator(policyPaths []string, query string, runtimeConfig map[string]string, fetchTimeout time.Duration) (*Evaluator, error) {
 	if len(policyPaths) == 0 {
 		return nil, fmt.Errorf("bundle source URL is required")
 	}
 
 	bundleURL := policyPaths[0]
-	modules, bundleData, err := loadBundle(bundleURL)
+	modules, bundleData, err := loadBundle(bundleURL, fetchTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load bundle from %s: %w", bundleURL, err)
 	}
@@ -121,8 +125,8 @@ func newBundleEvaluator(policyPaths []string, query string, runtimeConfig map[st
 
 // loadBundle downloads a .tar.gz OPA bundle from a URL, parses it using OPA's
 // bundle reader, and returns the modules and data from the bundle.
-func loadBundle(bundleURL string) (map[string]string, map[string]interface{}, error) {
-	data, err := fetchBundleArchive(bundleURL)
+func loadBundle(bundleURL string, fetchTimeout time.Duration) (map[string]string, map[string]interface{}, error) {
+	data, err := fetchBundleArchive(bundleURL, fetchTimeout)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -131,7 +135,7 @@ func loadBundle(bundleURL string) (map[string]string, map[string]interface{}, er
 }
 
 // fetchBundleArchive downloads a bundle .tar.gz from a URL.
-func fetchBundleArchive(rawURL string) ([]byte, error) {
+func fetchBundleArchive(rawURL string, fetchTimeout time.Duration) ([]byte, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid URL: %w", err)
@@ -141,7 +145,7 @@ func fetchBundleArchive(rawURL string) ([]byte, error) {
 		return nil, fmt.Errorf("unsupported URL scheme %q (only http and https are supported)", parsed.Scheme)
 	}
 
-	client := &http.Client{Timeout: policyFetchTimeout}
+	client := &http.Client{Timeout: fetchTimeout}
 	resp, err := client.Get(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
@@ -229,7 +233,7 @@ func isURL(source string) bool {
 }
 
 // fetchPolicy downloads a .rego file from a URL and returns (filename, content, error).
-func fetchPolicy(rawURL string) (string, string, error) {
+func fetchPolicy(rawURL string, fetchTimeout time.Duration) (string, string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return "", "", fmt.Errorf("invalid URL: %w", err)
@@ -239,7 +243,7 @@ func fetchPolicy(rawURL string) (string, string, error) {
 		return "", "", fmt.Errorf("unsupported URL scheme %q (only http and https are supported)", parsed.Scheme)
 	}
 
-	client := &http.Client{Timeout: policyFetchTimeout}
+	client := &http.Client{Timeout: fetchTimeout}
 	resp, err := client.Get(rawURL)
 	if err != nil {
 		return "", "", fmt.Errorf("HTTP request failed: %w", err)
