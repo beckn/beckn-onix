@@ -62,12 +62,16 @@ const (
 )
 
 var contextKeys = map[string]ContextKey{
+	// snake_case keys (legacy beckn spec)
 	"transaction_id": ContextKeyTxnID,
 	"message_id":     ContextKeyMsgID,
 	"subscriber_id":  ContextKeySubscriberID,
 	"module_id":      ContextKeyModuleID,
 	"parent_id":      ContextKeyParentID,
 	"remote_id":      ContextKeyRemoteID,
+	// camelCase aliases (new beckn spec — map to the same internal constants)
+	"transactionId": ContextKeyTxnID,
+	"messageId":     ContextKeyMsgID,
 }
 
 // ParseContextKey converts a string into a valid ContextKey.
