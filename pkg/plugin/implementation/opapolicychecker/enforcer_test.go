@@ -855,6 +855,32 @@ result := {
 	}
 }
 
+func TestEvaluator_NonStructuredMapResult_Ignored(t *testing.T) {
+	policy := `
+package policy
+
+import rego.v1
+
+result := {
+  "action": "confirm",
+  "status": "ok"
+}
+`
+	dir := writePolicyDir(t, "policy.rego", policy)
+	eval, err := NewEvaluator([]string{dir}, "data.policy.result", nil, false, 0)
+	if err != nil {
+		t.Fatalf("NewEvaluator failed: %v", err)
+	}
+
+	violations, err := eval.Evaluate(context.Background(), []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected non-structured map result to be ignored, got %v", violations)
+	}
+}
+
 // --- Bundle Tests ---
 
 // buildTestBundle creates an OPA bundle .tar.gz in memory from the given modules.

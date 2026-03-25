@@ -332,14 +332,8 @@ func extractViolations(rs rego.ResultSet) ([]string, error) {
 					}
 				}
 			case map[string]interface{}:
-				// Check for structured result: {"valid": bool, "violations": [...]}
 				if vs := extractStructuredViolations(v); vs != nil {
 					violations = append(violations, vs...)
-				} else {
-					// Fallback: OPA sometimes returns sets as maps with string keys
-					for key := range v {
-						violations = append(violations, key)
-					}
 				}
 			}
 		}
