@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -157,57 +155,12 @@ func (v *schemav2Validator) initialise(ctx context.Context) error {
 	return v.loadSpec(ctx)
 }
 
-// readFromURI fetches a URL and returns its raw bytes.
-func readFromURI(ctx context.Context, u *url.URL) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build request for %s: %w", u, err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch %s: %w", u, err)
-	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read body from %s: %w", u, err)
-	}
-
-	log.Debugf(ctx, "External ref resolved: %s (%d bytes, HTTP %d)", u, len(data), resp.StatusCode)
-	return data, nil
-}
-
 // loadSpec loads the OpenAPI spec from URL or local path.
 func (v *schemav2Validator) loadSpec(ctx context.Context) error {
 	loader := openapi3.NewLoader()
 
 	// Allow external references
 	loader.IsExternalRefsAllowed = true
-
-	// Log every URI kin-openapi resolves so we can trace the full $ref chain.
-	//
-	// Exception: json-schema.org meta-schema URLs are intercepted and short-
-	// circuited with an empty schema object. kin-openapi follows the $schema
-	// dialect URI declared in each Beckn schema file, which leads it deep into
-	// the JSON Schema 2020-12 meta-schema hierarchy. Those meta-schemas use
-	// boolean schemas (e.g. "additionalProperties": false, "items": false) that
-	// are valid JSON Schema but cannot be parsed by kin-openapi's OpenAPI Schema
-	// Object model. Since the meta-schemas carry no Beckn-specific content and
-	// are not used for validation, returning {} is safe and correct.
-	loader.ReadFromURIFunc = func(loader *openapi3.Loader, u *url.URL) ([]byte, error) {
-		if u.Host == "json-schema.org" {
-			log.Debugf(ctx, "Skipping json-schema.org meta-schema (not an OpenAPI schema): %s", u)
-			return []byte(`{}`), nil
-		}
-		log.Debugf(ctx, "Resolving external $ref: %s", u)
-		data, err := readFromURI(ctx, u)
-		if err != nil {
-			log.Errorf(ctx, err, "Failed to resolve external $ref: %s", u)
-			return nil, err
-		}
-		return data, nil
-	}
 
 	var doc *openapi3.T
 	var err error
@@ -232,20 +185,15 @@ func (v *schemav2Validator) loadSpec(ctx context.Context) error {
 		return fmt.Errorf("failed to load OpenAPI document: %v", err)
 	}
 
-	// Validate spec — this also triggers resolution of all $refs including external ones.
-	// Log the error but treat as non-fatal to allow JSON Schema keywords not in OpenAPI 3.0.
+	// Validate spec (skip strict validation to allow JSON Schema keywords)
 	if err := doc.Validate(ctx); err != nil {
-		log.Errorf(ctx, err, "Spec validation error (external refs may not have resolved): %v", err)
+		log.Debugf(ctx, "Spec validation warnings (non-fatal): %v", err)
 	} else {
 		log.Debugf(ctx, "Spec validation passed")
 	}
 
 	// Build action→schema index for O(1) lookup
 	actionSchemas := v.buildActionIndex(ctx, doc)
-
-	if len(actionSchemas) == 0 {
-		log.Errorf(ctx, fmt.Errorf("no actions indexed"), "No actions indexed from spec — external $refs may not have resolved. Check that IsExternalRefsAllowed=true and the referenced URLs are reachable and return valid YAML/JSON")
-	}
 
 	v.specMutex.Lock()
 	v.spec = &cachedSpec{
