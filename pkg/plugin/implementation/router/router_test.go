@@ -470,6 +470,19 @@ func TestRouteSuccess(t *testing.T) {
 			url:        "https://example.com/v1/ondc/on_select",
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_uri": "https://bpp1.example.com"}}`,
 		},
+		// camelCase variants (beckn spec camelCase migration)
+		{
+			name:       "camelCase: bppUri in context is resolved for bpp routing",
+			configFile: "bap_caller.yaml",
+			url:        "https://example.com/v1/ondc/select",
+			body:       `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bppUri": "https://bpp1.example.com"}}`,
+		},
+		{
+			name:       "camelCase: bapUri in context is resolved for bap routing",
+			configFile: "bpp_caller.yaml",
+			url:        "https://example.com/v1/ondc/on_select",
+			body:       `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bapUri": "https://bap1.example.com"}}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -759,6 +772,78 @@ func TestV2ConflictingRules(t *testing.T) {
 	expectedErr := "duplicate endpoint 'on_search' found for version 2.0.0"
 	if err != nil && !strings.Contains(err.Error(), expectedErr) {
 		t.Errorf("loadRules() error = %v, want error containing %q", err, expectedErr)
+	}
+}
+
+// TestGetContextString tests the dual-key lookup helper used to support both
+// snake_case (legacy) and camelCase (new beckn spec) context attribute names.
+func TestGetContextString(t *testing.T) {
+	tests := []struct {
+		name      string
+		ctx       map[string]interface{}
+		snakeKey  string
+		camelKey  string
+		want      string
+	}{
+		{
+			name:     "snake_case key present",
+			ctx:      map[string]interface{}{"bpp_uri": "https://bpp.example.com"},
+			snakeKey: "bpp_uri",
+			camelKey: "bppUri",
+			want:     "https://bpp.example.com",
+		},
+		{
+			name:     "camelCase key present",
+			ctx:      map[string]interface{}{"bppUri": "https://bpp.example.com"},
+			snakeKey: "bpp_uri",
+			camelKey: "bppUri",
+			want:     "https://bpp.example.com",
+		},
+		{
+			name:     "snake_case takes precedence when both present",
+			ctx:      map[string]interface{}{"bpp_uri": "https://snake.example.com", "bppUri": "https://camel.example.com"},
+			snakeKey: "bpp_uri",
+			camelKey: "bppUri",
+			want:     "https://snake.example.com",
+		},
+		{
+			name:     "neither key present returns empty string",
+			ctx:      map[string]interface{}{"domain": "ONDC:TRV10"},
+			snakeKey: "bpp_uri",
+			camelKey: "bppUri",
+			want:     "",
+		},
+		{
+			name:     "empty snake_case value falls through to camelCase",
+			ctx:      map[string]interface{}{"bpp_uri": "", "bppUri": "https://bpp.example.com"},
+			snakeKey: "bpp_uri",
+			camelKey: "bppUri",
+			want:     "https://bpp.example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getContextString(tt.ctx, tt.snakeKey, tt.camelKey)
+			if got != tt.want {
+				t.Errorf("getContextString(%v, %q, %q) = %q, want %q", tt.ctx, tt.snakeKey, tt.camelKey, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRouteNilContext tests that Route returns a clear error when the context
+// field is absent from the request body.
+func TestRouteNilContext(t *testing.T) {
+	ctx := context.Background()
+	router, _, rulesFilePath := setupRouter(t, "bap_caller.yaml")
+	defer os.RemoveAll(filepath.Dir(rulesFilePath))
+
+	parsedURL, _ := url.Parse("https://example.com/v1/ondc/select")
+	_, err := router.Route(ctx, parsedURL, []byte(`{"message": {}}`))
+
+	if err == nil || !strings.Contains(err.Error(), "context field not found or invalid") {
+		t.Errorf("Route() with missing context = %v, want error containing 'context field not found or invalid'", err)
 	}
 }
 

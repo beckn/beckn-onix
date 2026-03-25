@@ -199,20 +199,45 @@ func validateRules(rules []routingRule) error {
 	return nil
 }
 
+// getContextString returns the value for a context field, checking the snake_case
+// key first and falling back to the camelCase key. This supports both the legacy
+// beckn spec (snake_case) and the new camelCase convention transparently.
+func getContextString(ctx map[string]interface{}, snakeKey, camelKey string) string {
+	if v, ok := ctx[snakeKey].(string); ok && v != "" {
+		return v
+	}
+	if v, ok := ctx[camelKey].(string); ok && v != "" {
+		return v
+	}
+	return ""
+}
+
 // Route determines the routing destination based on the request context.
 func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.Route, error) {
-	// Parse the body to extract domain and version
+	// Parse domain and version via typed struct — unchanged from original.
 	var requestBody struct {
 		Context struct {
 			Domain  string `json:"domain"`
 			Version string `json:"version"`
-			BPPURI  string `json:"bpp_uri,omitempty"`
-			BAPURI  string `json:"bap_uri,omitempty"`
 		} `json:"context"`
 	}
 	if err := json.Unmarshal(body, &requestBody); err != nil {
 		return nil, fmt.Errorf("error parsing request body: %w", err)
 	}
+
+	// Parse context as a map solely to resolve URI fields that have both
+	// snake_case (bpp_uri, bap_uri) and camelCase (bppUri, bapUri) variants.
+	var uriBody struct {
+		Context map[string]interface{} `json:"context"`
+	}
+	if err := json.Unmarshal(body, &uriBody); err != nil {
+		return nil, fmt.Errorf("error parsing request body: %w", err)
+	}
+	if uriBody.Context == nil {
+		return nil, fmt.Errorf("context field not found or invalid in request body")
+	}
+	bppURI := getContextString(uriBody.Context, "bpp_uri", "bppUri")
+	bapURI := getContextString(uriBody.Context, "bap_uri", "bapUri")
 
 	// Extract the endpoint from the URL
 	endpoint := path.Base(url.Path)
@@ -251,9 +276,9 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.R
 	// Handle BPP/BAP routing with request URIs
 	switch route.TargetType {
 	case targetTypeBPP:
-		return handleProtocolMapping(route, requestBody.Context.BPPURI, endpoint)
+		return handleProtocolMapping(route, bppURI, endpoint)
 	case targetTypeBAP:
-		return handleProtocolMapping(route, requestBody.Context.BAPURI, endpoint)
+		return handleProtocolMapping(route, bapURI, endpoint)
 	}
 	return route, nil
 }
