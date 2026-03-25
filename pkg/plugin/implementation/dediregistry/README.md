@@ -18,7 +18,7 @@ registry:
   config:
     url: "https://dedi-wrapper.example.com/dedi"
     registryName: "subscribers.beckn.one"
-    allowedNetworkIDs: "commerce-network/subscriber-references,local-commerce/subscriber-references"
+    allowedNetworkIDs: "commerce-network.org/subscriber-references,local-commerce.org/subscriber-references"
     timeout: 30
     retry_max: 3
     retry_wait_min: 1s
@@ -64,7 +64,7 @@ GET {url}/lookup/{subscriber_id}/{registryName}/{key_id}
       "signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
       "encr_public_key": "test-encr-key"
     },
-    "network_memberships": ["commerce-network/subscriber-references", "local-commerce/subscriber-references"],
+    "network_memberships": ["commerce-network.org/subscriber-references", "local-commerce.com/subscriber-references"],
     "created_at": "2025-10-27T11:45:27.963Z",
     "updated_at": "2025-10-27T11:46:23.563Z"
   }
@@ -96,7 +96,7 @@ modules:
           config:
             url: "https://api.bekcn.io/registry/dedi"
             registryName: "subscribers.beckn.one"
-            allowedNetworkIDs: "commerce-network/subscriber-references,local-commerce/subscriber-references"
+            allowedNetworkIDs: "commerce-network.org/subscriber-references,local-commerce.com/subscriber-references"
             timeout: 30
             retry_max: 3
             retry_wait_min: 1s
