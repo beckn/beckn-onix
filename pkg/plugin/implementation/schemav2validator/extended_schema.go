@@ -239,6 +239,7 @@ func (c *schemaCache) loadSchemaFromPath(ctx context.Context, schemaPath string,
 		loadCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		loader.Context = loadCtx
+		log.Debugf(ctx, "Fetching schema from URL: %s (timeout=%v)", schemaPath, timeout)
 		doc, err = loader.LoadFromURI(u)
 	} else {
 		// Load from local file (file:// or path)
@@ -246,6 +247,7 @@ func (c *schemaCache) loadSchemaFromPath(ctx context.Context, schemaPath string,
 		if u != nil && u.Scheme == "file" {
 			filePath = u.Path
 		}
+		log.Debugf(ctx, "Loading schema from local file: %s", filePath)
 		doc, err = loader.LoadFromFile(filePath)
 	}
 
@@ -254,9 +256,13 @@ func (c *schemaCache) loadSchemaFromPath(ctx context.Context, schemaPath string,
 		return nil, fmt.Errorf("failed to load schema from %s: %w", schemaPath, err)
 	}
 
+	log.Debugf(ctx, "Successfully loaded schema from: %s", schemaPath)
+
 	// Validate loaded schema (non-blocking, just log warnings)
 	if err := doc.Validate(ctx); err != nil {
-		log.Debugf(ctx, "Schema validation warnings for %s: %v", schemaPath, err)
+		log.Warnf(ctx, "Schema validation warnings for %s (may indicate unresolved $ref): %v", schemaPath, err)
+	} else {
+		log.Debugf(ctx, "Schema self-validation passed for: %s", schemaPath)
 	}
 
 	c.set(urlHash, doc, ttl)
@@ -315,8 +321,11 @@ func transformContextToSchemaURL(contextURL string) string {
 // findSchemaByType finds a schema in the document by @type value.
 func findSchemaByType(ctx context.Context, doc *openapi3.T, typeName string) (*openapi3.SchemaRef, error) {
 	if doc.Components == nil || doc.Components.Schemas == nil {
+		log.Errorf(ctx, fmt.Errorf("no schemas in document"), "Schema lookup failed for @type: %s — document has no components.schemas section", typeName)
 		return nil, fmt.Errorf("no schemas found in document")
 	}
+
+	log.Debugf(ctx, "Looking up @type: %s in document with %d schema(s)", typeName, len(doc.Components.Schemas))
 
 	// Try direct match by schema name
 	if schema, exists := doc.Components.Schemas[typeName]; exists {
@@ -336,6 +345,22 @@ func findSchemaByType(ctx context.Context, doc *openapi3.T, typeName string) (*o
 			}
 		}
 	}
+
+	// Log available schema names and x-jsonld.@type values to help diagnose the mismatch
+	available := make([]string, 0, len(doc.Components.Schemas))
+	for name, schema := range doc.Components.Schemas {
+		entry := name
+		if schema.Value != nil {
+			if xJsonld, ok := schema.Value.Extensions["x-jsonld"].(map[string]interface{}); ok {
+				if atType, ok := xJsonld["@type"].(string); ok {
+					entry = fmt.Sprintf("%s (x-jsonld.@type=%s)", name, atType)
+				}
+			}
+		}
+		available = append(available, entry)
+	}
+	log.Errorf(ctx, fmt.Errorf("no schema found for @type: %s", typeName),
+		"Schema lookup failed — @type %q not matched by name or x-jsonld.@type. Available schemas: %v", typeName, available)
 
 	return nil, fmt.Errorf("no schema found for @type: %s", typeName)
 }
@@ -373,7 +398,16 @@ func (c *schemaCache) validateReferencedObject(
 	// Load schema with timeout (supports URL or local file)
 	doc, err := c.loadSchemaFromPath(ctx, schemaPath, ttl, timeout)
 	if err != nil {
+		log.Errorf(ctx, err, "Failed to load schema for @type: %s from URL: %s (derived from @context: %s)",
+			obj.Type, schemaPath, obj.Context)
 		return fmt.Errorf("at %s: %w", obj.Path, err)
+	}
+
+	// Log doc structure to help diagnose schema-not-found issues
+	if doc.Components == nil || doc.Components.Schemas == nil {
+		log.Warnf(ctx, "Schema doc loaded from %s has no components.schemas — @type %s cannot be resolved", schemaPath, obj.Type)
+	} else {
+		log.Debugf(ctx, "Schema doc loaded from %s contains %d schema(s) in components", schemaPath, len(doc.Components.Schemas))
 	}
 
 	// Find schema by @type

@@ -235,6 +235,144 @@ func TestNewPreProcessorErrorCases(t *testing.T) {
 	}
 }
 
+// TestSnakeToCamel tests the snakeToCamel conversion helper.
+func TestSnakeToCamel(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"transaction_id", "transactionId"},
+		{"message_id", "messageId"},
+		{"bap_id", "bapId"},
+		{"bpp_id", "bppId"},
+		{"bap_uri", "bapUri"},
+		{"bpp_uri", "bppUri"},
+		{"domain", "domain"},   // no underscore — unchanged
+		{"version", "version"}, // no underscore — unchanged
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := snakeToCamel(tt.input)
+			if got != tt.want {
+				t.Errorf("snakeToCamel(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCamelCaseSubscriberID tests that bapId / bppId are resolved when the payload
+// uses camelCase context attribute names (new beckn spec).
+func TestCamelCaseSubscriberID(t *testing.T) {
+	tests := []struct {
+		name        string
+		role        string
+		contextBody map[string]interface{}
+		wantSubID   string
+		wantCaller  string
+	}{
+		{
+			name: "BAP role — camelCase bapId resolved as subscriber",
+			role: "bap",
+			contextBody: map[string]interface{}{
+				"bapId": "bap.example.com",
+				"bppId": "bpp.example.com",
+			},
+			wantSubID:  "bap.example.com",
+			wantCaller: "bpp.example.com",
+		},
+		{
+			name: "BPP role — camelCase bppId resolved as subscriber",
+			role: "bpp",
+			contextBody: map[string]interface{}{
+				"bapId": "bap.example.com",
+				"bppId": "bpp.example.com",
+			},
+			wantSubID:  "bpp.example.com",
+			wantCaller: "bap.example.com",
+		},
+		{
+			name: "snake_case still takes precedence over camelCase",
+			role: "bap",
+			contextBody: map[string]interface{}{
+				"bap_id": "bap-snake.example.com",
+				"bapId":  "bap-camel.example.com",
+				"bpp_id": "bpp-snake.example.com",
+				"bppId":  "bpp-camel.example.com",
+			},
+			wantSubID:  "bap-snake.example.com",
+			wantCaller: "bpp-snake.example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{Role: tt.role}
+			middleware, err := NewPreProcessor(cfg)
+			if err != nil {
+				t.Fatalf("NewPreProcessor() error = %v", err)
+			}
+
+			body, _ := json.Marshal(map[string]interface{}{"context": tt.contextBody})
+			req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+
+			var gotSubID, gotCaller interface{}
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotSubID = r.Context().Value(model.ContextKeySubscriberID)
+				gotCaller = r.Context().Value(model.ContextKeyRemoteID)
+				w.WriteHeader(http.StatusOK)
+			})
+
+			middleware(handler).ServeHTTP(httptest.NewRecorder(), req)
+
+			if gotSubID != tt.wantSubID {
+				t.Errorf("subscriber ID: got %v, want %v", gotSubID, tt.wantSubID)
+			}
+			if gotCaller != tt.wantCaller {
+				t.Errorf("caller ID: got %v, want %v", gotCaller, tt.wantCaller)
+			}
+		})
+	}
+}
+
+// TestCamelCaseContextKeys tests that generic context keys (e.g. transaction_id)
+// are resolved from their camelCase equivalents (transactionId) when the
+// snake_case key is absent from the payload.
+func TestCamelCaseContextKeys(t *testing.T) {
+	cfg := &Config{
+		Role:        "bap",
+		ContextKeys: []string{"transaction_id", "message_id"},
+	}
+	middleware, err := NewPreProcessor(cfg)
+	if err != nil {
+		t.Fatalf("NewPreProcessor() error = %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"context": map[string]interface{}{
+			"bapId":         "bap.example.com",
+			"transactionId": "txn-abc",
+			"messageId":     "msg-xyz",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+
+	var gotTxnID, gotMsgID interface{}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotTxnID = r.Context().Value(model.ContextKeyTxnID)
+		gotMsgID = r.Context().Value(model.ContextKeyMsgID)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	middleware(handler).ServeHTTP(httptest.NewRecorder(), req)
+
+	if gotTxnID != "txn-abc" {
+		t.Errorf("transaction_id: got %v, want txn-abc", gotTxnID)
+	}
+	if gotMsgID != "msg-xyz" {
+		t.Errorf("message_id: got %v, want msg-xyz", gotMsgID)
+	}
+}
+
 func TestNewPreProcessorAddsSubscriberIDToContext(t *testing.T) {
 	cfg := &Config{Role: "bap"}
 	middleware, err := NewPreProcessor(cfg)
