@@ -257,6 +257,23 @@ func (m *Manager) Step(ctx context.Context, cfg *Config) (definition.Step, error
 	return step, error
 }
 
+// PolicyChecker returns a PolicyChecker instance based on the provided configuration.
+// It registers a cleanup function for resource management.
+func (m *Manager) PolicyChecker(ctx context.Context, cfg *Config) (definition.PolicyChecker, error) {
+	pp, err := provider[definition.PolicyCheckerProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	checker, closer, err := pp.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.closers = append(m.closers, closer)
+	}
+	return checker, nil
+}
+
 // Cache returns a Cache instance based on the provided configuration.
 // It registers a cleanup function for resource management.
 func (m *Manager) Cache(ctx context.Context, cfg *Config) (definition.Cache, error) {

@@ -48,6 +48,17 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
+        checkPolicy:
+          id: opapolicychecker
+          config:
+            # Policy source configuration.
+            # type: url | file | dir | bundle
+            # location: path or URL to policy source
+            # query: OPA query path to evaluate (required)
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
         signValidator:
           id: signvalidator
         publisher:
@@ -66,6 +77,7 @@ modules:
               role: bap
       steps:
         - validateSign
+        - checkPolicy
         - addRoute
         - validateSchema
   - name: bapTxnCaller
@@ -98,6 +110,13 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
+        checkPolicy:
+          id: opapolicychecker
+          config:
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
         signer:
           id: signer
         publisher:
@@ -116,6 +135,7 @@ modules:
               role: bap
       steps:
         - validateSchema
+        - checkPolicy
         - addRoute
         - sign
   - name: bppTxnReciever
@@ -149,6 +169,13 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
+        checkPolicy:
+          id: opapolicychecker
+          config:
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
         signValidator:
           id: signvalidator
         publisher:
@@ -167,6 +194,7 @@ modules:
               role: bpp
       steps:
         - validateSign
+        - checkPolicy
         - addRoute
         - validateSchema
   - name: bppTxnCaller
@@ -199,6 +227,13 @@ modules:
           id: schemavalidator
           config:
             schemaDir: /mnt/gcs/configs/schemas
+        checkPolicy:
+          id: opapolicychecker
+          config:
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
         signer:
           id: signer
         publisher:
@@ -217,5 +252,6 @@ modules:
               role: bpp
       steps:
         - validateSchema
+        - checkPolicy
         - addRoute
         - sign

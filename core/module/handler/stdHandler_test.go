@@ -1,10 +1,68 @@
 package handler
 
 import (
+	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/beckn-one/beckn-onix/pkg/plugin"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
+
+// noopPluginManager satisfies PluginManager with nil plugins (unused loaders are never invoked when config is omitted).
+type noopPluginManager struct{}
+
+func (noopPluginManager) Middleware(context.Context, *plugin.Config) (func(http.Handler) http.Handler, error) {
+	return nil, nil
+}
+func (noopPluginManager) SignValidator(context.Context, *plugin.Config) (definition.SignValidator, error) {
+	return nil, nil
+}
+func (noopPluginManager) Validator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
+	return nil, nil
+}
+func (noopPluginManager) Router(context.Context, *plugin.Config) (definition.Router, error) { return nil, nil }
+func (noopPluginManager) Publisher(context.Context, *plugin.Config) (definition.Publisher, error) {
+	return nil, nil
+}
+func (noopPluginManager) Signer(context.Context, *plugin.Config) (definition.Signer, error) { return nil, nil }
+func (noopPluginManager) Step(context.Context, *plugin.Config) (definition.Step, error) { return nil, nil }
+func (noopPluginManager) PolicyChecker(context.Context, *plugin.Config) (definition.PolicyChecker, error) {
+	return nil, nil
+}
+func (noopPluginManager) Cache(context.Context, *plugin.Config) (definition.Cache, error) { return nil, nil }
+func (noopPluginManager) Registry(context.Context, *plugin.Config) (definition.RegistryLookup, error) {
+	return nil, nil
+}
+func (noopPluginManager) KeyManager(context.Context, definition.Cache, definition.RegistryLookup, *plugin.Config) (definition.KeyManager, error) {
+	return nil, nil
+}
+func (noopPluginManager) TransportWrapper(context.Context, *plugin.Config) (definition.TransportWrapper, error) {
+	return nil, nil
+}
+func (noopPluginManager) SchemaValidator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
+	return nil, nil
+}
+
+func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
+	ctx := context.Background()
+	cfg := &Config{
+		Plugins: PluginCfg{},
+		Steps:   []string{"checkPolicy"},
+	}
+	_, err := NewStdHandler(ctx, noopPluginManager{}, cfg, "testModule")
+	if err == nil {
+		t.Fatal("expected error when steps list checkPolicy but checkPolicy plugin is omitted")
+	}
+	if !strings.Contains(err.Error(), "failed to initialize steps") {
+		t.Fatalf("expected steps init failure, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "PolicyChecker plugin not configured") {
+		t.Fatalf("expected explicit PolicyChecker config error, got: %v", err)
+	}
+}
 
 func TestNewHTTPClient(t *testing.T) {
 	tests := []struct {

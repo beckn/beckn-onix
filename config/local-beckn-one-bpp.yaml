@@ -84,8 +84,20 @@ modules:
           id: router
           config:
             routingConfig: ./config/local-beckn-one-routing-BPPReceiver.yaml
+        checkPolicy:
+          id: opapolicychecker
+          config:
+            # Policy source configuration.
+            # type: url | file | dir | bundle
+            # location: path or URL to policy source
+            # query: OPA query path to evaluate (required)
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
       steps:
         - validateSign
+        - checkPolicy
         - addRoute
         - validateSchema
   
@@ -144,7 +156,15 @@ modules:
             config:
               contextKeys: transaction_id,message_id
               role: bpp          
+        checkPolicy:
+          id: opapolicychecker
+          config:
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
       steps:
+        - checkPolicy
         - addRoute
         - sign
         - validateSchema

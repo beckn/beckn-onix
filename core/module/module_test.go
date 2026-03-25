@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/core/module/handler"
@@ -16,7 +17,8 @@ import (
 // mockPluginManager is a mock implementation of the PluginManager interface
 // with support for dynamically setting behavior.
 type mockPluginManager struct {
-	middlewareFunc func(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error)
+	middlewareFunc    func(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error)
+	policyCheckerFunc func(ctx context.Context, cfg *plugin.Config) (definition.PolicyChecker, error)
 }
 
 // Middleware returns a mock middleware function based on the provided configuration.
@@ -79,7 +81,67 @@ func (m *mockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Con
 	return nil, nil
 }
 
+// PolicyChecker returns a mock policy checker implementation.
+func (m *mockPluginManager) PolicyChecker(ctx context.Context, cfg *plugin.Config) (definition.PolicyChecker, error) {
+	if m.policyCheckerFunc != nil {
+		return m.policyCheckerFunc(ctx, cfg)
+	}
+	return nil, nil
+}
+
+type mockPolicyChecker struct {
+	err error
+}
+
+func (m mockPolicyChecker) CheckPolicy(*model.StepContext) error {
+	return m.err
+}
+
 // TestRegisterSuccess tests scenarios where the handler registration should succeed.
+func TestRegisterRejectsPolicyViolation(t *testing.T) {
+	mCfgs := []Config{
+		{
+			Name: "test-module",
+			Path: "/test",
+			Handler: handler.Config{
+				Type: handler.HandlerTypeStd,
+				Plugins: handler.PluginCfg{
+					PolicyChecker: &plugin.Config{ID: "mock-policy"},
+				},
+				Steps: []string{"checkPolicy"},
+			},
+		},
+	}
+
+	mockManager := &mockPluginManager{
+		middlewareFunc: func(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error) {
+			return func(next http.Handler) http.Handler { return next }, nil
+		},
+		policyCheckerFunc: func(ctx context.Context, cfg *plugin.Config) (definition.PolicyChecker, error) {
+			return mockPolicyChecker{err: model.NewBadReqErr(errors.New("blocked by policy"))}, nil
+		},
+	}
+
+	mux := http.NewServeMux()
+	if err := Register(context.Background(), mCfgs, mux, mockManager); err != nil {
+		t.Fatalf("unexpected register error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"context":{"action":"confirm"}}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for policy violation, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "NACK") {
+		t.Fatalf("expected NACK response, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "blocked by policy") {
+		t.Fatalf("expected policy error in response, got %s", rec.Body.String())
+	}
+}
+
 func TestRegisterSuccess(t *testing.T) {
 	mCfgs := []Config{
 		{
