@@ -35,8 +35,8 @@ func (d dediRegistryProvider) New(ctx context.Context, config map[string]string)
 		}
 	}
 
-	if rawNamespaces, exists := config["allowedParentNamespaces"]; exists && rawNamespaces != "" {
-		dediConfig.AllowedParentNamespaces = parseAllowedParentNamespaces(rawNamespaces)
+	if rawNetworkIDs, exists := config["allowedNetworkIDs"]; exists && rawNetworkIDs != "" {
+		dediConfig.AllowedNetworkIDs = parseAllowedNetworkIDs(rawNetworkIDs)
 	}
 
 	log.Debugf(ctx, "DeDi Registry config mapped: %+v", dediConfig)
@@ -51,17 +51,17 @@ func (d dediRegistryProvider) New(ctx context.Context, config map[string]string)
 	return dediClient, closer, nil
 }
 
-func parseAllowedParentNamespaces(raw string) []string {
+func parseAllowedNetworkIDs(raw string) []string {
 	parts := strings.Split(raw, ",")
-	namespaces := make([]string, 0, len(parts))
+	networkIDs := make([]string, 0, len(parts))
 	for _, part := range parts {
 		item := strings.TrimSpace(part)
 		if item == "" {
 			continue
 		}
-		namespaces = append(namespaces, item)
+		networkIDs = append(networkIDs, item)
 	}
-	return namespaces
+	return networkIDs
 }
 
 // Provider is the exported plugin instance

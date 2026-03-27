@@ -90,6 +90,23 @@ func TestDediRegistryProvider_New_InvalidTimeout(t *testing.T) {
 	}
 }
 
+func TestParseAllowedNetworkIDs(t *testing.T) {
+	got := parseAllowedNetworkIDs("commerce-network/subscriber-references, retail-network/subscriber-references, ,")
+	want := []string{
+		"commerce-network/subscriber-references",
+		"retail-network/subscriber-references",
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d allowed network IDs, got %d", len(want), len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("expected allowedNetworkIDs[%d] = %q, got %q", i, want[i], got[i])
+		}
+	}
+}
+
 func TestDediRegistryProvider_New_NilContext(t *testing.T) {
 	provider := dediRegistryProvider{}
 

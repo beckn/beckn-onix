@@ -16,9 +16,9 @@ The DeDi Registry plugin implements the `RegistryLookup` interface to retrieve p
 registry:
   id: dediregistry
   config:
-    url: "https://dedi-wrapper.example.com/dedi"
+    url: "https://fabric.nfh.global/registry/dedi"
     registryName: "subscribers.beckn.one"
-    allowedParentNamespaces: "commerce-network.org,retail-collective.org"
+    allowedNetworkIDs: "commerce-network.org/prod,local-commerce.org/production"
     timeout: 30
     retry_max: 3
     retry_wait_min: 1s
@@ -31,7 +31,7 @@ registry:
 |-----------|----------|-------------|---------|
 | `url` | Yes | DeDi wrapper API base URL (include /dedi path) | - |
 | `registryName` | Yes | Registry name for lookup path | - |
-| `allowedParentNamespaces` | No | Allowlist of parent namespace domains for signature validation | - |
+| `allowedNetworkIDs` | No | Allowlist of network membership IDs from `data.network_memberships` for signature validation | - |
 | `timeout` | No | Request timeout in seconds | Client default |
 | `retry_max` | No | Maximum number of retry attempts | 4 (library default) |
 | `retry_wait_min` | No | Minimum wait time between retries (e.g., "1s", "500ms") | 1s (library default) |
@@ -39,15 +39,15 @@ registry:
 
 ## API Integration
 
-### DeDi Wrapper API Format
+### Beckn Registry API Format
 ```
 GET {url}/lookup/{subscriber_id}/{registryName}/{key_id}
 ```
 
-**Example**: `https://dedi-wrapper.com/dedi/lookup/bpp.example.com/subscribers.beckn.one/key-1`
+**Example**: `https://api.bekcn.io/registry/dedi/lookup/bpp.example.com/subscribers.beckn.one/76EU7K8oC9EQbXPMRL5uw3KbmTxbg3YDXHvm9nVQpK2eGghASnwHzm`
 
 ### Authentication
-**No authentication required** - DeDi wrapper API is public.
+**No authentication required** - Beckn Registry API is public.
 
 ### Expected Response Format
 
@@ -64,7 +64,7 @@ GET {url}/lookup/{subscriber_id}/{registryName}/{key_id}
       "signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
       "encr_public_key": "test-encr-key"
     },
-    "parent_namespaces": ["commerce-network.org", "local-commerce.org"],
+    "network_memberships": ["commerce-network.org/prod", "local-commerce.com/production"],
     "created_at": "2025-10-27T11:45:27.963Z",
     "updated_at": "2025-10-27T11:46:23.563Z"
   }
@@ -94,8 +94,9 @@ modules:
         registry:
           id: dediregistry
           config:
-            url: "https://dedi-wrapper.example.com/dedi"
+            url: "https://fabric.nfh.global/registry/dedi"
             registryName: "subscribers.beckn.one"
+            allowedNetworkIDs: "commerce-network.org/prod,local-commerce.com/production"
             timeout: 30
             retry_max: 3
             retry_wait_min: 1s
@@ -148,6 +149,7 @@ This plugin replaces direct DeDi API integration with the new DeDi Wrapper API f
 - **Added**: Configurable registryName parameter
 - **Changed**: POST requests → GET requests
 - **Updated**: Response structure parsing (`data.details` object)
+- **Updated**: Optional allowlist validation now checks `data.network_memberships`
 - **Added**: New URL path parameter format
 
 ## Dependencies
