@@ -278,7 +278,7 @@ func TestLookup(t *testing.T) {
 		if err == nil {
 			t.Error("Expected error for disallowed network memberships, got nil")
 		}
-		expectedErr := "registry entry with subscriber_id 'dev.np2.com' does not belong to any configured network memberships (registry.config.allowedNetworkIDs)"
+		expectedErr := "registry entry with subscriber_id 'dev.np2.com' does not belong to any configured networks (registry.config.allowedNetworkIDs)"
 		if err.Error() != expectedErr {
 			t.Errorf("Expected error %q, got %q", expectedErr, err.Error())
 		}

@@ -168,7 +168,7 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 	networkMemberships := extractStringSlice(data["network_memberships"])
 	if len(c.config.AllowedNetworkIDs) > 0 {
 		if len(networkMemberships) == 0 || !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
-			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured network memberships (registry.config.allowedNetworkIDs)", detailsSubscriberID)
+			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", detailsSubscriberID)
 		}
 	}
 
