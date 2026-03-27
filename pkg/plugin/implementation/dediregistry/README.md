@@ -16,7 +16,7 @@ The DeDi Registry plugin implements the `RegistryLookup` interface to retrieve p
 registry:
   id: dediregistry
   config:
-    url: "https://dedi-wrapper.example.com/dedi"
+    url: "https://fabric.nfh.global/registry/dedi"
     registryName: "subscribers.beckn.one"
     allowedNetworkIDs: "commerce-network.org/prod,local-commerce.org/production"
     timeout: 30
@@ -94,7 +94,7 @@ modules:
         registry:
           id: dediregistry
           config:
-            url: "https://api.bekcn.io/registry/dedi"
+            url: "https://fabric.nfh.global/registry/dedi"
             registryName: "subscribers.beckn.one"
             allowedNetworkIDs: "commerce-network.org/prod,local-commerce.com/production"
             timeout: 30
