@@ -44,7 +44,7 @@ registry:
 GET {url}/lookup/{subscriber_id}/{registryName}/{key_id}
 ```
 
-**Example**: `https://api.bekcn.io/registry/dedi/lookup/bpp.example.com/subscribers.beckn.one/76EU7K8oC9EQbXPMRL5uw3KbmTxbg3YDXHvm9nVQpK2eGghASnwHzm`
+**Example**: `https://api.beckn.io/registry/dedi/lookup/bpp.example.com/subscribers.beckn.one/76EU7K8oC9EQbXPMRL5uw3KbmTxbg3YDXHvm9nVQpK2eGghASnwHzm`
 
 ### Authentication
 **No authentication required** - Beckn Registry API is public.
@@ -64,7 +64,7 @@ GET {url}/lookup/{subscriber_id}/{registryName}/{key_id}
       "signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
       "encr_public_key": "test-encr-key"
     },
-    "network_memberships": ["commerce-network.org/prod", "local-commerce.com/production"],
+    "network_memberships": ["commerce-network.org/prod", "local-commerce.org/production"],
     "created_at": "2025-10-27T11:45:27.963Z",
     "updated_at": "2025-10-27T11:46:23.563Z"
   }
@@ -96,7 +96,7 @@ modules:
           config:
             url: "https://fabric.nfh.global/registry/dedi"
             registryName: "subscribers.beckn.one"
-            allowedNetworkIDs: "commerce-network.org/prod,local-commerce.com/production"
+            allowedNetworkIDs: "commerce-network.org/prod,local-commerce.org/production"
             timeout: 30
             retry_max: 3
             retry_wait_min: 1s
@@ -150,6 +150,7 @@ This plugin replaces direct DeDi API integration with the new DeDi Wrapper API f
 - **Changed**: POST requests → GET requests
 - **Updated**: Response structure parsing (`data.details` object)
 - **Updated**: Optional allowlist validation now checks `data.network_memberships`
+- **Deprecated**: `allowedParentNamespaces` config key in favor of `allowedNetworkIDs` (plugin now errors until the config is updated to full network membership IDs)
 - **Added**: New URL path parameter format
 
 ## Dependencies

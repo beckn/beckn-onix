@@ -140,7 +140,7 @@ func TestLookup(t *testing.T) {
 						"signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
 						"encr_public_key":    "test-encr-key",
 					},
-					"network_memberships": []string{"commerce-network/subscriber-references", "local-commerce/subscriber-references"},
+					"network_memberships": []string{"commerce-network.org/prod", "local-commerce.org/production"},
 					"created_at":          "2025-10-27T11:45:27.963Z",
 					"updated_at":          "2025-10-27T11:46:23.563Z",
 				},
@@ -204,7 +204,7 @@ func TestLookup(t *testing.T) {
 						"subscriber_id":      "dev.np2.com",
 						"signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
 					},
-					"network_memberships": []string{"commerce-network/subscriber-references", "local-commerce/subscriber-references"},
+					"network_memberships": []string{"commerce-network.org/prod", "local-commerce.org/production"},
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -215,7 +215,7 @@ func TestLookup(t *testing.T) {
 		config := &Config{
 			URL:               server.URL + "/dedi",
 			RegistryName:      "subscribers.beckn.one",
-			AllowedNetworkIDs: []string{"commerce-network/subscriber-references"},
+			AllowedNetworkIDs: []string{"commerce-network.org/prod"},
 		}
 
 		client, closer, err := New(ctx, config)
@@ -248,7 +248,7 @@ func TestLookup(t *testing.T) {
 						"subscriber_id":      "dev.np2.com",
 						"signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
 					},
-					"network_memberships": []string{"local-commerce/subscriber-references"},
+					"network_memberships": []string{"local-commerce.org/production"},
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -35,9 +36,11 @@ func (d dediRegistryProvider) New(ctx context.Context, config map[string]string)
 		}
 	}
 
-	if rawNetworkIDs, exists := config["allowedNetworkIDs"]; exists && rawNetworkIDs != "" {
-		dediConfig.AllowedNetworkIDs = parseAllowedNetworkIDs(rawNetworkIDs)
+	allowedNetworkIDs, err := resolveAllowedNetworkIDs(ctx, config)
+	if err != nil {
+		return nil, nil, err
 	}
+	dediConfig.AllowedNetworkIDs = allowedNetworkIDs
 
 	log.Debugf(ctx, "DeDi Registry config mapped: %+v", dediConfig)
 
@@ -62,6 +65,20 @@ func parseAllowedNetworkIDs(raw string) []string {
 		networkIDs = append(networkIDs, item)
 	}
 	return networkIDs
+}
+
+func resolveAllowedNetworkIDs(ctx context.Context, config map[string]string) ([]string, error) {
+	if rawParentNamespaces, exists := config["allowedParentNamespaces"]; exists && rawParentNamespaces != "" {
+		if _, hasAllowedNetworkIDs := config["allowedNetworkIDs"]; !hasAllowedNetworkIDs {
+			return nil, fmt.Errorf("config key 'allowedParentNamespaces' is no longer supported; use 'allowedNetworkIDs' with full network IDs")
+		}
+	}
+
+	if rawNetworkIDs, exists := config["allowedNetworkIDs"]; exists && rawNetworkIDs != "" {
+		return parseAllowedNetworkIDs(rawNetworkIDs), nil
+	}
+
+	return nil, nil
 }
 
 // Provider is the exported plugin instance
