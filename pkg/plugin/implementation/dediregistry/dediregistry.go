@@ -165,7 +165,7 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 	detailsSubscriberID, _ := details["subscriber_id"].(string)
 
 	// Validate network memberships if configured.
-	networkMemberships := extractStringSlice(data["network_memberships"])
+	networkMemberships := extractStringSlice(ctx, "network_memberships", data["network_memberships"])
 	if len(c.config.AllowedNetworkIDs) > 0 {
 		if len(networkMemberships) == 0 || !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
 			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", detailsSubscriberID)
@@ -210,7 +210,7 @@ func parseTime(timeStr string) time.Time {
 	return parsedTime
 }
 
-func extractStringSlice(value interface{}) []string {
+func extractStringSlice(ctx context.Context, fieldName string, value interface{}) []string {
 	if value == nil {
 		return nil
 	}
@@ -219,9 +219,10 @@ func extractStringSlice(value interface{}) []string {
 		return v
 	case []interface{}:
 		out := make([]string, 0, len(v))
-		for _, item := range v {
+		for i, item := range v {
 			str, ok := item.(string)
 			if !ok {
+				log.Warnf(ctx, "Ignoring invalid %s entry at index %d during registry lookup: expected a string network ID, got %T. This entry will not be considered for allowlist validation.", fieldName, i, item)
 				continue
 			}
 			if str != "" {

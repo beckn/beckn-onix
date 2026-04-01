@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -107,6 +108,33 @@ func TestNew(t *testing.T) {
 		}
 		if client.client.RetryWaitMax != cfg.RetryWaitMax {
 			t.Errorf("expected RetryWaitMax to be %v, but got %v", cfg.RetryWaitMax, client.client.RetryWaitMax)
+		}
+	})
+}
+
+func TestExtractStringSlice(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns strings from []string", func(t *testing.T) {
+		got := extractStringSlice(ctx, "network_memberships", []string{"commerce-network.org/prod", "local-commerce.org/production"})
+		want := []string{"commerce-network.org/prod", "local-commerce.org/production"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("filters non-string entries from []interface{}", func(t *testing.T) {
+		got := extractStringSlice(ctx, "network_memberships", []interface{}{"commerce-network.org/prod", 42, true, "", "local-commerce.org/production"})
+		want := []string{"commerce-network.org/prod", "local-commerce.org/production"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("returns nil for unsupported type", func(t *testing.T) {
+		got := extractStringSlice(ctx, "network_memberships", "commerce-network.org/prod")
+		if got != nil {
+			t.Fatalf("expected nil, got %v", got)
 		}
 	})
 }
@@ -281,6 +309,50 @@ func TestLookup(t *testing.T) {
 		expectedErr := "registry entry with subscriber_id 'dev.np2.com' does not belong to any configured networks (registry.config.allowedNetworkIDs)"
 		if err.Error() != expectedErr {
 			t.Errorf("Expected error %q, got %q", expectedErr, err.Error())
+		}
+	})
+
+	t.Run("allowed network IDs match with mixed network membership types", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := map[string]interface{}{
+				"message": "Record retrieved from registry cache",
+				"data": map[string]interface{}{
+					"details": map[string]interface{}{
+						"url":                "http://dev.np2.com/beckn/bap",
+						"type":               "BAP",
+						"domain":             "energy",
+						"subscriber_id":      "dev.np2.com",
+						"signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
+					},
+					"network_memberships": []interface{}{123, "commerce-network.org/prod", map[string]interface{}{"invalid": true}},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		config := &Config{
+			URL:               server.URL + "/dedi",
+			RegistryName:      "subscribers.beckn.one",
+			AllowedNetworkIDs: []string{"commerce-network.org/prod"},
+		}
+
+		client, closer, err := New(ctx, config)
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		req := &model.Subscription{
+			Subscriber: model.Subscriber{
+				SubscriberID: "dev.np2.com",
+			},
+			KeyID: "test-key-id",
+		}
+		_, err = client.Lookup(ctx, req)
+		if err != nil {
+			t.Errorf("Lookup() error = %v", err)
 		}
 	})
 
