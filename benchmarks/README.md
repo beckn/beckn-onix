@@ -1,0 +1,157 @@
+# beckn-onix Adapter Benchmarks
+
+End-to-end performance benchmarks for the beckn-onix ONIX adapter, using Go's native `testing.B` framework and `net/http/httptest`. No Docker, no external services — everything runs in-process.
+
+---
+
+## Quick Start
+
+```bash
+# From the repo root
+go mod tidy                        # fetch miniredis + benchstat checksums
+bash benchmarks/run_benchmarks.sh  # compile plugins, run all scenarios, generate report
+```
+
+Results land in `benchmarks/results/<timestamp>/`.
+
+---
+
+## What Is Being Benchmarked
+
+The benchmarks target the **`bapTxnCaller`** handler — the primary outbound path a BAP takes when initiating a Beckn transaction. Every request travels through the full production pipeline:
+
+```
+Benchmark goroutine(s)
+        │  HTTP POST /bap/caller/<action>
+        ▼
+httptest.Server  ←  ONIX adapter (real compiled .so plugins)
+        │
+        ├── addRoute      router plugin      resolve BPP URL from routing config
+        ├── sign          signer + simplekeymanager  Ed25519 / BLAKE-512 signing
+        └── validateSchema  schemav2validator  Beckn OpenAPI spec validation
+        │
+        └──▶ httptest mock BPP  (instant ACK — no network)
+```
+
+Mock services replace all external dependencies so results reflect **adapter-internal latency only**:
+
+| Dependency | Replaced by |
+|------------|-------------|
+| Redis | `miniredis` (in-process) |
+| BPP backend | `httptest` mock — returns `{"message":{"ack":{"status":"ACK"}}}` |
+| Beckn registry | `httptest` mock — returns the dev key pair for signature verification |
+
+---
+
+## Benchmark Scenarios
+
+| Benchmark | What it measures |
+|-----------|-----------------|
+| `BenchmarkBAPCaller_Discover` | Baseline single-goroutine latency for `/discover` |
+| `BenchmarkBAPCaller_Discover_Parallel` | Throughput under concurrent load; run with `-cpu=1,2,4,8,16` |
+| `BenchmarkBAPCaller_AllActions` | Per-action latency: `discover`, `select`, `init`, `confirm` |
+| `BenchmarkBAPCaller_Discover_Percentiles` | p50 / p95 / p99 latency via `b.ReportMetric` |
+| `BenchmarkBAPCaller_CacheWarm` | Latency when the Redis key cache is already populated |
+| `BenchmarkBAPCaller_CacheCold` | Latency on a cold cache — full key-derivation round-trip |
+| `BenchmarkBAPCaller_RPS` | Requests-per-second under parallel load (`req/s` custom metric) |
+
+---
+
+## How It Works
+
+### Startup (`TestMain`)
+
+Before any benchmark runs, `TestMain` in `e2e/setup_test.go`:
+
+1. **Compiles all required plugins** to a temporary directory using `go build -buildmode=plugin`. The first run takes 60–90 s (cold Go build cache); subsequent runs are near-instant.
+2. **Starts miniredis** — an in-process Redis server used by the `cache` plugin (no external Redis needed).
+3. **Starts mock servers** — an instant-ACK BPP and a registry mock that returns the dev signing public key.
+4. **Starts the adapter** — wires all plugins programmatically (no YAML parsing) and wraps it in an `httptest.Server`.
+
+### Per-iteration (`buildSignedRequest`)
+
+Each benchmark iteration:
+1. Loads the JSON fixture for the requested Beckn action (`testdata/<action>_request.json`).
+2. Substitutes sentinel values (`BENCH_TIMESTAMP`, `BENCH_MESSAGE_ID`, `BENCH_TRANSACTION_ID`) with fresh values, ensuring unique message IDs per iteration.
+3. Signs the body using the Beckn Ed25519/BLAKE-512 spec (same algorithm as the production `signer` plugin).
+4. Sends the signed `POST` to the adapter and validates a `200 OK` response.
+
+### Validation test (`TestSignBecknPayload`)
+
+A plain `Test*` function runs before the benchmarks and sends one signed request end-to-end. If the signing helper is mis-implemented, this fails fast before any benchmark time is wasted.
+
+---
+
+## Directory Layout
+
+```
+benchmarks/
+├── README.md                        ← you are here
+├── run_benchmarks.sh                ← one-shot runner script
+├── e2e/
+│   ├── bench_test.go                ← benchmark functions (T8)
+│   ├── setup_test.go                ← TestMain, startAdapter, signing helper (T3/T4/T7)
+│   ├── mocks_test.go                ← mock BPP and registry servers (T5)
+│   ├── keys_test.go                 ← dev key pair constants (T6a)
+│   └── testdata/
+│       ├── routing-BAPCaller.yaml   ← routing config (BENCH_BPP_URL placeholder)
+│       ├── discover_request.json    ← Beckn search payload fixture
+│       ├── select_request.json
+│       ├── init_request.json
+│       └── confirm_request.json
+├── tools/
+│   └── parse_results.go             ← CSV exporter for latency + throughput data (T10)
+└── results/
+    └── BENCHMARK_REPORT.md          ← report template (populate after a run)
+```
+
+---
+
+## Running Individual Benchmarks
+
+```bash
+# Single benchmark, 10 s
+go test ./benchmarks/e2e/... \
+  -bench=BenchmarkBAPCaller_Discover \
+  -benchtime=10s -benchmem -timeout=30m
+
+# All actions in one shot
+go test ./benchmarks/e2e/... \
+  -bench=BenchmarkBAPCaller_AllActions \
+  -benchtime=5s -benchmem -timeout=30m
+
+# Concurrency sweep at 1, 4, and 16 goroutines
+go test ./benchmarks/e2e/... \
+  -bench=BenchmarkBAPCaller_Discover_Parallel \
+  -benchtime=30s -cpu=1,4,16 -timeout=30m
+
+# Race detector check (no data races)
+go test ./benchmarks/e2e/... \
+  -bench=BenchmarkBAPCaller_Discover_Parallel \
+  -benchtime=5s -race -timeout=30m
+
+# Percentile metrics (p50/p95/p99 in µs)
+go test ./benchmarks/e2e/... \
+  -bench=BenchmarkBAPCaller_Discover_Percentiles \
+  -benchtime=10s -benchmem -timeout=30m
+```
+
+## Comparing Two Runs with benchstat
+
+```bash
+go test ./benchmarks/e2e/... -bench=. -benchtime=10s -count=6 > before.txt
+# ... make your change ...
+go test ./benchmarks/e2e/... -bench=. -benchtime=10s -count=6 > after.txt
+benchstat before.txt after.txt
+```
+
+---
+
+## Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `github.com/alicebob/miniredis/v2` | In-process Redis for the `cache` plugin |
+| `golang.org/x/perf/cmd/benchstat` | Statistical benchmark comparison (CLI tool) |
+
+Both are declared in `go.mod`. Run `go mod tidy` once to fetch their checksums.

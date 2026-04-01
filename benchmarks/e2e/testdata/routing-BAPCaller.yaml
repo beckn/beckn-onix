@@ -1,0 +1,13 @@
+# Routing config for v2.0.0 benchmark. Domain is not required for v2.x.x — the
+# router ignores it and routes purely by version + endpoint.
+# BENCH_BPP_URL is substituted at runtime with the mock BPP server URL.
+routingRules:
+  - version: "2.0.0"
+    targetType: "url"
+    target:
+      url: "BENCH_BPP_URL"
+    endpoints:
+      - discover
+      - select
+      - init
+      - confirm
