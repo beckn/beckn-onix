@@ -36,7 +36,7 @@ func (d dediRegistryProvider) New(ctx context.Context, config map[string]string)
 		}
 	}
 
-	allowedNetworkIDs, err := resolveAllowedNetworkIDs(ctx, config)
+	allowedNetworkIDs, err := resolveAllowedNetworkIDs(config)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -67,7 +67,7 @@ func parseAllowedNetworkIDs(raw string) []string {
 	return networkIDs
 }
 
-func resolveAllowedNetworkIDs(ctx context.Context, config map[string]string) ([]string, error) {
+func resolveAllowedNetworkIDs(config map[string]string) ([]string, error) {
 	if rawParentNamespaces, exists := config["allowedParentNamespaces"]; exists && rawParentNamespaces != "" {
 		if _, hasAllowedNetworkIDs := config["allowedNetworkIDs"]; !hasAllowedNetworkIDs {
 			return nil, fmt.Errorf("config key 'allowedParentNamespaces' is no longer supported; use 'allowedNetworkIDs' with full network IDs")

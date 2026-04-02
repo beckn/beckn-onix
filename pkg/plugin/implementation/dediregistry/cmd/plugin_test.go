@@ -108,12 +108,11 @@ func TestParseAllowedNetworkIDs(t *testing.T) {
 }
 
 func TestResolveAllowedNetworkIDs_DeprecatedAllowedParentNamespacesErrorsWithoutAllowedNetworkIDs(t *testing.T) {
-	ctx := context.Background()
 	config := map[string]string{
 		"allowedParentNamespaces": "commerce-network.org/prod, local-commerce.org/production",
 	}
 
-	got, err := resolveAllowedNetworkIDs(ctx, config)
+	got, err := resolveAllowedNetworkIDs(config)
 	if err == nil {
 		t.Fatal("expected error when only allowedParentNamespaces is configured")
 	}
@@ -123,7 +122,6 @@ func TestResolveAllowedNetworkIDs_DeprecatedAllowedParentNamespacesErrorsWithout
 }
 
 func TestResolveAllowedNetworkIDs_AllowedNetworkIDsTakesPrecedence(t *testing.T) {
-	ctx := context.Background()
 	config := map[string]string{
 		"url":                     "https://test.com/dedi",
 		"registryName":            "subscribers.beckn.one",
@@ -131,7 +129,7 @@ func TestResolveAllowedNetworkIDs_AllowedNetworkIDsTakesPrecedence(t *testing.T)
 		"allowedNetworkIDs":       "commerce-network.org/prod, local-commerce.org/production",
 	}
 
-	got, err := resolveAllowedNetworkIDs(ctx, config)
+	got, err := resolveAllowedNetworkIDs(config)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
