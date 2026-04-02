@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -111,6 +112,33 @@ func TestNew(t *testing.T) {
 	})
 }
 
+func TestExtractStringSlice(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns strings from []string", func(t *testing.T) {
+		got := extractStringSlice(ctx, "network_memberships", []string{"commerce-network.org/prod", "local-commerce.org/production"})
+		want := []string{"commerce-network.org/prod", "local-commerce.org/production"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("filters non-string entries from []interface{}", func(t *testing.T) {
+		got := extractStringSlice(ctx, "network_memberships", []interface{}{"commerce-network.org/prod", 42, true, "", "local-commerce.org/production"})
+		want := []string{"commerce-network.org/prod", "local-commerce.org/production"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("returns nil for unsupported type", func(t *testing.T) {
+		got := extractStringSlice(ctx, "network_memberships", "commerce-network.org/prod")
+		if got != nil {
+			t.Fatalf("expected nil, got %v", got)
+		}
+	})
+}
+
 func TestLookup(t *testing.T) {
 	ctx := context.Background()
 
@@ -140,9 +168,9 @@ func TestLookup(t *testing.T) {
 						"signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
 						"encr_public_key":    "test-encr-key",
 					},
-					"parent_namespaces": []string{"commerce-network.org", "local-commerce.org"},
-					"created_at": "2025-10-27T11:45:27.963Z",
-					"updated_at": "2025-10-27T11:46:23.563Z",
+					"network_memberships": []string{"commerce-network.org/prod", "local-commerce.org/production"},
+					"created_at":          "2025-10-27T11:45:27.963Z",
+					"updated_at":          "2025-10-27T11:46:23.563Z",
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -192,7 +220,7 @@ func TestLookup(t *testing.T) {
 		}
 	})
 
-	t.Run("allowed parent namespaces match", func(t *testing.T) {
+	t.Run("allowed network IDs match", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			response := map[string]interface{}{
 				"message": "Record retrieved from registry cache",
@@ -204,7 +232,7 @@ func TestLookup(t *testing.T) {
 						"subscriber_id":      "dev.np2.com",
 						"signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
 					},
-					"parent_namespaces": []string{"commerce-network.org", "local-commerce.org"},
+					"network_memberships": []string{"commerce-network.org/prod", "local-commerce.org/production"},
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -213,9 +241,9 @@ func TestLookup(t *testing.T) {
 		defer server.Close()
 
 		config := &Config{
-			URL:                     server.URL + "/dedi",
-			RegistryName:            "subscribers.beckn.one",
-			AllowedParentNamespaces: []string{"commerce-network.org"},
+			URL:               server.URL + "/dedi",
+			RegistryName:      "subscribers.beckn.one",
+			AllowedNetworkIDs: []string{"commerce-network.org/prod"},
 		}
 
 		client, closer, err := New(ctx, config)
@@ -236,7 +264,7 @@ func TestLookup(t *testing.T) {
 		}
 	})
 
-	t.Run("allowed parent namespaces mismatch", func(t *testing.T) {
+	t.Run("allowed network IDs mismatch", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			response := map[string]interface{}{
 				"message": "Record retrieved from registry cache",
@@ -248,7 +276,7 @@ func TestLookup(t *testing.T) {
 						"subscriber_id":      "dev.np2.com",
 						"signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
 					},
-					"parent_namespaces": []string{"local-commerce.org"},
+					"network_memberships": []string{"local-commerce.org/production"},
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -257,9 +285,9 @@ func TestLookup(t *testing.T) {
 		defer server.Close()
 
 		config := &Config{
-			URL:                     server.URL + "/dedi",
-			RegistryName:            "subscribers.beckn.one",
-			AllowedParentNamespaces: []string{"commerce-network.org"},
+			URL:               server.URL + "/dedi",
+			RegistryName:      "subscribers.beckn.one",
+			AllowedNetworkIDs: []string{"commerce-network/subscriber-references"},
 		}
 
 		client, closer, err := New(ctx, config)
@@ -276,7 +304,55 @@ func TestLookup(t *testing.T) {
 		}
 		_, err = client.Lookup(ctx, req)
 		if err == nil {
-			t.Error("Expected error for disallowed parent namespaces, got nil")
+			t.Error("Expected error for disallowed network memberships, got nil")
+		}
+		expectedErr := "registry entry with subscriber_id 'dev.np2.com' does not belong to any configured networks (registry.config.allowedNetworkIDs)"
+		if err.Error() != expectedErr {
+			t.Errorf("Expected error %q, got %q", expectedErr, err.Error())
+		}
+	})
+
+	t.Run("allowed network IDs match with mixed network membership types", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := map[string]interface{}{
+				"message": "Record retrieved from registry cache",
+				"data": map[string]interface{}{
+					"details": map[string]interface{}{
+						"url":                "http://dev.np2.com/beckn/bap",
+						"type":               "BAP",
+						"domain":             "energy",
+						"subscriber_id":      "dev.np2.com",
+						"signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
+					},
+					"network_memberships": []interface{}{123, "commerce-network.org/prod", map[string]interface{}{"invalid": true}},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		config := &Config{
+			URL:               server.URL + "/dedi",
+			RegistryName:      "subscribers.beckn.one",
+			AllowedNetworkIDs: []string{"commerce-network.org/prod"},
+		}
+
+		client, closer, err := New(ctx, config)
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		req := &model.Subscription{
+			Subscriber: model.Subscriber{
+				SubscriberID: "dev.np2.com",
+			},
+			KeyID: "test-key-id",
+		}
+		_, err = client.Lookup(ctx, req)
+		if err != nil {
+			t.Errorf("Lookup() error = %v", err)
 		}
 	})
 

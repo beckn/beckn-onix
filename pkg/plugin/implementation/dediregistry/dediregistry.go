@@ -15,13 +15,13 @@ import (
 
 // Config holds configuration parameters for the DeDi registry client.
 type Config struct {
-	URL                     string        `yaml:"url" json:"url"`
-	RegistryName            string        `yaml:"registryName" json:"registryName"`
-	AllowedParentNamespaces []string      `yaml:"allowedParentNamespaces" json:"allowedParentNamespaces"`
-	Timeout                 int           `yaml:"timeout" json:"timeout"`
-	RetryMax                int           `yaml:"retry_max" json:"retry_max"`
-	RetryWaitMin            time.Duration `yaml:"retry_wait_min" json:"retry_wait_min"`
-	RetryWaitMax            time.Duration `yaml:"retry_wait_max" json:"retry_wait_max"`
+	URL               string        `yaml:"url" json:"url"`
+	RegistryName      string        `yaml:"registryName" json:"registryName"`
+	AllowedNetworkIDs []string      `yaml:"allowedNetworkIDs" json:"allowedNetworkIDs"`
+	Timeout           int           `yaml:"timeout" json:"timeout"`
+	RetryMax          int           `yaml:"retry_max" json:"retry_max"`
+	RetryWaitMin      time.Duration `yaml:"retry_wait_min" json:"retry_wait_min"`
+	RetryWaitMax      time.Duration `yaml:"retry_wait_max" json:"retry_wait_max"`
 }
 
 // DeDiRegistryClient encapsulates the logic for calling the DeDi registry endpoints.
@@ -164,11 +164,11 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 	detailsDomain, _ := details["domain"].(string)
 	detailsSubscriberID, _ := details["subscriber_id"].(string)
 
-	// Validate parent namespaces if configured
-	parentNamespaces := extractStringSlice(data["parent_namespaces"])
-	if len(c.config.AllowedParentNamespaces) > 0 {
-		if len(parentNamespaces) == 0 || !containsAny(parentNamespaces, c.config.AllowedParentNamespaces) {
-			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured parent namespaces (registry.config.allowedParentNamespaces)", detailsSubscriberID)
+	// Validate network memberships if configured.
+	networkMemberships := extractStringSlice(ctx, "network_memberships", data["network_memberships"])
+	if len(c.config.AllowedNetworkIDs) > 0 {
+		if len(networkMemberships) == 0 || !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
+			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", detailsSubscriberID)
 		}
 	}
 
@@ -210,7 +210,7 @@ func parseTime(timeStr string) time.Time {
 	return parsedTime
 }
 
-func extractStringSlice(value interface{}) []string {
+func extractStringSlice(ctx context.Context, fieldName string, value interface{}) []string {
 	if value == nil {
 		return nil
 	}
@@ -219,9 +219,10 @@ func extractStringSlice(value interface{}) []string {
 		return v
 	case []interface{}:
 		out := make([]string, 0, len(v))
-		for _, item := range v {
+		for i, item := range v {
 			str, ok := item.(string)
 			if !ok {
+				log.Warnf(ctx, "Ignoring invalid %s entry at index %d during registry lookup: expected a string network ID, got %T. This entry will not be considered for allowlist validation.", fieldName, i, item)
 				continue
 			}
 			if str != "" {

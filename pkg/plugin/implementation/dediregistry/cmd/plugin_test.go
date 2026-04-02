@@ -90,6 +90,80 @@ func TestDediRegistryProvider_New_InvalidTimeout(t *testing.T) {
 	}
 }
 
+func TestParseAllowedNetworkIDs(t *testing.T) {
+	got := parseAllowedNetworkIDs("commerce-network.org/prod, local-commerce.org/production, ,")
+	want := []string{
+		"commerce-network.org/prod",
+		"local-commerce.org/production",
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d allowed network IDs, got %d", len(want), len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("expected allowedNetworkIDs[%d] to preserve input order as %q, got %q", i, want[i], got[i])
+		}
+	}
+}
+
+func TestResolveAllowedNetworkIDs_DeprecatedAllowedParentNamespacesErrorsWithoutAllowedNetworkIDs(t *testing.T) {
+	config := map[string]string{
+		"allowedParentNamespaces": "commerce-network.org/prod, local-commerce.org/production",
+	}
+
+	got, err := resolveAllowedNetworkIDs(config)
+	if err == nil {
+		t.Fatal("expected error when only allowedParentNamespaces is configured")
+	}
+	if got != nil {
+		t.Fatalf("expected nil allowed network IDs on error, got %#v", got)
+	}
+}
+
+func TestResolveAllowedNetworkIDs_AllowedNetworkIDsTakesPrecedence(t *testing.T) {
+	config := map[string]string{
+		"url":                     "https://test.com/dedi",
+		"registryName":            "subscribers.beckn.one",
+		"allowedParentNamespaces": "deprecated-network.org/legacy",
+		"allowedNetworkIDs":       "commerce-network.org/prod, local-commerce.org/production",
+	}
+
+	got, err := resolveAllowedNetworkIDs(config)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	want := []string{
+		"commerce-network.org/prod",
+		"local-commerce.org/production",
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d allowed network IDs, got %d", len(want), len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("expected allowedNetworkIDs[%d] = %q, got %q", i, want[i], got[i])
+		}
+	}
+}
+
+func TestDediRegistryProvider_New_DeprecatedAllowedParentNamespacesErrorsWithoutAllowedNetworkIDs(t *testing.T) {
+	ctx := context.Background()
+	provider := dediRegistryProvider{}
+
+	config := map[string]string{
+		"url":                     "https://test.com/dedi",
+		"registryName":            "subscribers.beckn.one",
+		"allowedParentNamespaces": "commerce-network.org",
+	}
+
+	_, _, err := provider.New(ctx, config)
+	if err == nil {
+		t.Fatal("expected New() to error when only allowedParentNamespaces is configured")
+	}
+}
+
 func TestDediRegistryProvider_New_NilContext(t *testing.T) {
 	provider := dediRegistryProvider{}
 
