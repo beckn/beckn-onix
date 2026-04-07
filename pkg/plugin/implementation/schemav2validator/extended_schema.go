@@ -383,12 +383,22 @@ func (c *schemaCache) validateReferencedObject(
 		return fmt.Errorf("at %s: %w", obj.Path, err)
 	}
 
-	// Strip JSON-LD metadata before validation
-	domainData := make(map[string]interface{}, len(obj.Data)-2)
+	// Strip @context and @type only if the schema does not declare them as properties.
+	// Some schemas explicitly require these fields; stripping them in that case
+	// would cause a "missing required field" validation error.
+	schemaProps := schema.Value.Properties
+	_, contextInSchema := schemaProps["@context"]
+	_, typeInSchema := schemaProps["@type"]
+
+	domainData := make(map[string]interface{}, len(obj.Data))
 	for k, v := range obj.Data {
-		if k != "@context" && k != "@type" {
-			domainData[k] = v
+		if k == "@context" && !contextInSchema {
+			continue
 		}
+		if k == "@type" && !typeInSchema {
+			continue
+		}
+		domainData[k] = v
 	}
 
 	// Validate domain-specific data against schema
