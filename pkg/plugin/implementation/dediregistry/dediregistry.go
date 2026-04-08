@@ -198,6 +198,79 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 	return []model.Subscription{subscription}, nil
 }
 
+// LookupRegistry fetches registry-level metadata for the given DeDi registry path.
+func (c *DeDiRegistryClient) LookupRegistry(ctx context.Context, namespaceIdentifier, registryName string) (*model.RegistryMetadata, error) {
+	if namespaceIdentifier == "" {
+		return nil, fmt.Errorf("namespaceIdentifier is required for DeDi registry lookup")
+	}
+	if registryName == "" {
+		return nil, fmt.Errorf("registryName is required for DeDi registry lookup")
+	}
+
+	lookupURL := fmt.Sprintf("%s/lookup/%s/%s", c.config.URL, namespaceIdentifier, registryName)
+	httpReq, err := retryablehttp.NewRequest("GET", lookupURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq = httpReq.WithContext(ctx)
+
+	log.Debugf(ctx, "Making DeDi registry metadata request to: %s", lookupURL)
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send DeDi registry metadata request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Errorf(ctx, nil, "DeDi registry metadata request failed with status: %s, response: %s", resp.Status, string(body))
+		return nil, fmt.Errorf("DeDi registry metadata request failed with status: %s", resp.Status)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	var responseData map[string]interface{}
+	if err := json.Unmarshal(body, &responseData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response body: %w", err)
+	}
+
+	data, ok := responseData["data"].(map[string]interface{})
+	if !ok {
+		log.Errorf(ctx, nil, "Invalid DeDi response format: missing or invalid data field")
+		return nil, fmt.Errorf("invalid response format: missing data field")
+	}
+
+	rawMetaValue, ok := data["meta"]
+	if !ok {
+		log.Errorf(ctx, nil, "Invalid DeDi response format: missing meta field")
+		return nil, fmt.Errorf("invalid response format: missing meta field")
+	}
+	rawMeta, ok := rawMetaValue.(map[string]interface{})
+	if !ok {
+		log.Errorf(ctx, nil, "Invalid DeDi response format: invalid meta field")
+		return nil, fmt.Errorf("invalid response format: invalid meta field")
+	}
+
+	meta := make(map[string]string, len(rawMeta))
+	for key, value := range rawMeta {
+		strValue, ok := value.(string)
+		if !ok {
+			log.Warnf(ctx, "Ignoring non-string registry metadata value for key %q: got %T", key, value)
+			continue
+		}
+		meta[key] = strValue
+	}
+
+	return &model.RegistryMetadata{
+		NamespaceIdentifier: namespaceIdentifier,
+		RegistryName:        registryName,
+		RawMeta:             meta,
+	}, nil
+}
+
 // parseTime converts string timestamp to time.Time
 func parseTime(timeStr string) time.Time {
 	if timeStr == "" {
