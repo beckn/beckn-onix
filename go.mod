@@ -1,6 +1,6 @@
 module github.com/beckn-one/beckn-onix
 
-go 1.25.0
+go 1.24.6
 
 require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.1
