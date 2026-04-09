@@ -10,7 +10,7 @@
 // Output files:
 //
 //	latency_report.csv    — per-benchmark mean, p50, p95, p99 latency, allocs
-//	throughput_report.csv — RPS at each GOMAXPROCS level from the parallel sweep
+//	throughput_report.csv — RPS and mean latency at each GOMAXPROCS level from the parallel sweep
 package main
 
 import (
@@ -26,19 +26,19 @@ import (
 )
 
 var (
-	// Matches standard go bench output:
-	// BenchmarkFoo-8   1000   1234567 ns/op   1234 B/op   56 allocs/op
-	benchLineRe = regexp.MustCompile(
-		`^(Benchmark\S+)\s+\d+\s+([\d.]+)\s+ns/op` +
-			`(?:\s+([\d.]+)\s+B/op)?` +
-			`(?:\s+([\d.]+)\s+allocs/op)?` +
-			`(?:\s+([\d.]+)\s+p50_µs)?` +
-			`(?:\s+([\d.]+)\s+p95_µs)?` +
-			`(?:\s+([\d.]+)\s+p99_µs)?` +
-			`(?:\s+([\d.]+)\s+req/s)?`,
-	)
+	// Matches the benchmark name and ns/op from a standard go test -bench output line.
+	// Go outputs custom metrics (p50_µs, req/s, …) BEFORE B/op and allocs/op, so we
+	// extract those fields with dedicated regexps rather than relying on positional groups.
+	//
+	// Example lines:
+	//   BenchmarkBAPCaller_Discover-10        73542  164193 ns/op  82913 B/op  662 allocs/op
+	//   BenchmarkBAPCaller_Discover_Percentiles-10  72849  164518 ns/op  130.0 p50_µs  144.0 p95_µs  317.0 p99_µs  82528 B/op  660 allocs/op
+	//   BenchmarkBAPCaller_RPS-4              700465  73466 ns/op  14356.0 req/s  80375 B/op  660 allocs/op
+	benchLineRe = regexp.MustCompile(`^(Benchmark\S+)\s+\d+\s+([\d.]+)\s+ns/op`)
+	bytesRe     = regexp.MustCompile(`([\d.]+)\s+B/op`)
+	allocsRe    = regexp.MustCompile(`([\d.]+)\s+allocs/op`)
 
-	// Matches custom metric lines in percentile output.
+	// Extracts any custom metric value from a benchmark line.
 	metricRe = regexp.MustCompile(`([\d.]+)\s+(p50_µs|p95_µs|p99_µs|req/s)`)
 )
 
@@ -124,48 +124,43 @@ func parseRunFile(path string) ([]benchResult, error) {
 	defer f.Close()
 
 	var results []benchResult
-	currentBench := ""
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 
-		// Main benchmark line.
-		if m := benchLineRe.FindStringSubmatch(line); m != nil {
-			r := benchResult{name: stripCPUSuffix(m[1])}
-			r.nsPerOp = parseFloat(m[2])
-			r.bytesOp = parseFloat(m[3])
-			r.allocsOp = parseFloat(m[4])
-			r.p50 = parseFloat(m[5])
-			r.p95 = parseFloat(m[6])
-			r.p99 = parseFloat(m[7])
-			r.rps = parseFloat(m[8])
-			results = append(results, r)
-			currentBench = r.name
+		m := benchLineRe.FindStringSubmatch(line)
+		if m == nil {
 			continue
 		}
 
-		// Custom metric lines (e.g., "123.4 p50_µs").
-		if currentBench != "" {
-			for _, mm := range metricRe.FindAllStringSubmatch(line, -1) {
-				val := parseFloat(mm[1])
-				metric := mm[2]
-				for i := range results {
-					if results[i].name == currentBench {
-						switch metric {
-						case "p50_µs":
-							results[i].p50 = val
-						case "p95_µs":
-							results[i].p95 = val
-						case "p99_µs":
-							results[i].p99 = val
-						case "req/s":
-							results[i].rps = val
-						}
-					}
-				}
+		r := benchResult{name: stripCPUSuffix(m[1])}
+		r.nsPerOp = parseFloat(m[2])
+
+		// B/op and allocs/op — extracted independently because Go places custom
+		// metrics (p50_µs, req/s, …) between ns/op and B/op on the same line.
+		if bm := bytesRe.FindStringSubmatch(line); bm != nil {
+			r.bytesOp = parseFloat(bm[1])
+		}
+		if am := allocsRe.FindStringSubmatch(line); am != nil {
+			r.allocsOp = parseFloat(am[1])
+		}
+
+		// Custom metrics — scan the whole line regardless of position.
+		for _, mm := range metricRe.FindAllStringSubmatch(line, -1) {
+			switch mm[2] {
+			case "p50_µs":
+				r.p50 = parseFloat(mm[1])
+			case "p95_µs":
+				r.p95 = parseFloat(mm[1])
+			case "p99_µs":
+				r.p99 = parseFloat(mm[1])
+			case "req/s":
+				r.rps = parseFloat(mm[1])
 			}
 		}
+
+		results = append(results, r)
 	}
 	return results, scanner.Err()
 }
@@ -212,7 +207,11 @@ func writeThroughputCSV(path string, rows []cpuResult) error {
 	w := csv.NewWriter(f)
 	defer w.Flush()
 
-	header := []string{"gomaxprocs", "benchmark", "rps", "mean_latency_ms", "p95_latency_ms"}
+	// p95 latency is not available from the parallel sweep files — those benchmarks
+	// only emit ns/op and req/s. p95 data comes exclusively from
+	// BenchmarkBAPCaller_Discover_Percentiles, which runs at a single GOMAXPROCS
+	// setting and is not part of the concurrency sweep.
+	header := []string{"gomaxprocs", "benchmark", "rps", "mean_latency_ms"}
 	if err := w.Write(header); err != nil {
 		return err
 	}
@@ -223,7 +222,6 @@ func writeThroughputCSV(path string, rows []cpuResult) error {
 			row.res.name,
 			fmtFloat(row.res.rps),
 			fmtFloat(row.res.nsPerOp / 1e6),
-			fmtFloat(row.res.p95),
 		}
 		if err := w.Write(r); err != nil {
 			return err

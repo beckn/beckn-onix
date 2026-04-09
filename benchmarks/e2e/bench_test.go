@@ -1,7 +1,6 @@
 package e2e_bench_test
 
 import (
-	"fmt"
 	"net/http"
 	"sort"
 	"testing"
@@ -162,9 +161,7 @@ func BenchmarkBAPCaller_RPS(b *testing.B) {
 
 	elapsed := time.Since(start).Seconds()
 	if elapsed > 0 {
-		rps := float64(count) / elapsed
-		b.ReportMetric(rps, "req/s")
-		fmt.Printf("  RPS: %.0f over %.1fs\n", rps, elapsed)
+		b.ReportMetric(float64(count)/elapsed, "req/s")
 	}
 }
 
