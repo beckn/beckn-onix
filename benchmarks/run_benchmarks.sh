@@ -20,7 +20,6 @@ set -euo pipefail
 
 SCRIPT_START=$(date +%s)
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RESULTS_DIR="$REPO_ROOT/benchmarks/results/$(date +%Y-%m-%d_%H-%M-%S)"
 BENCH_PKG="./benchmarks/e2e/..."
 BENCH_TIMEOUT="10m"
 BENCH_TIME_SERIAL="10s"
@@ -30,6 +29,38 @@ BENCH_COUNT=1             # benchstat uses the 3 serial files for stability
 # Adapter version — reads from git tag, falls back to "dev"
 ONIX_VERSION="$(git -C "$REPO_ROOT" describe --tags --abbrev=0 2>/dev/null || echo "dev")"
 REPORT_TEMPLATE="$REPO_ROOT/benchmarks/reports/REPORT_TEMPLATE.md"
+
+# ── -report-only <dir>: regenerate report from an existing results directory ──
+if [[ "${1:-}" == "-report-only" ]]; then
+  RESULTS_DIR="${2:-}"
+  if [[ -z "$RESULTS_DIR" ]]; then
+    echo "Usage: bash benchmarks/run_benchmarks.sh -report-only <results-dir>"
+    echo "Example: bash benchmarks/run_benchmarks.sh -report-only benchmarks/results/2026-04-09_10-30-00"
+    exit 1
+  fi
+  if [[ ! -d "$RESULTS_DIR" ]]; then
+    echo "ERROR: results directory not found: $RESULTS_DIR"
+    exit 1
+  fi
+  echo "=== Regenerating report from existing results ==="
+  echo "Results dir : $RESULTS_DIR"
+  echo ""
+  cd "$REPO_ROOT"
+  echo "Parsing results to CSV..."
+  go run "$REPO_ROOT/benchmarks/tools/parse_results.go" \
+    -dir="$RESULTS_DIR" -out="$RESULTS_DIR" 2>&1 || true
+  echo ""
+  echo "Generating benchmark report..."
+  go run "$REPO_ROOT/benchmarks/tools/generate_report.go" \
+    -dir="$RESULTS_DIR" \
+    -template="$REPORT_TEMPLATE" \
+    -version="$ONIX_VERSION"
+  echo ""
+  echo "Done. Report written to: $RESULTS_DIR/BENCHMARK_REPORT.md"
+  exit 0
+fi
+
+RESULTS_DIR="$REPO_ROOT/benchmarks/results/$(date +%Y-%m-%d_%H-%M-%S)"
 
 cd "$REPO_ROOT"
 

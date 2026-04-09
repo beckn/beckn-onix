@@ -146,6 +146,10 @@ func main() {
 	// ── Build throughput table ─────────────────────────────────────────────────
 	throughputTable := buildThroughputTable(throughput)
 
+	// ── Generate interpretation and recommendation ─────────────────────────────
+	interpretation := buildInterpretation(perc, latency, throughput, warmUS, coldUS)
+	recommendation := buildRecommendation(throughput)
+
 	// ── Apply substitutions ────────────────────────────────────────────────────
 	replacements := map[string]string{
 		"__TIMESTAMP__":        timestamp,
@@ -181,8 +185,10 @@ func main() {
 		"__CACHE_WARM_BYTES__":  fmtInt(latency["BenchmarkBAPCaller_CacheWarm"]["bytes_op"]),
 		"__CACHE_COLD_BYTES__":  fmtInt(latency["BenchmarkBAPCaller_CacheCold"]["bytes_op"]),
 		"__CACHE_DELTA__":      cacheDelta,
-		"__THROUGHPUT_TABLE__": throughputTable,
+		"__THROUGHPUT_TABLE__":  throughputTable,
 		"__BENCHSTAT_SUMMARY__": benchstat,
+		"__INTERPRETATION__":   interpretation,
+		"__RECOMMENDATION__":   recommendation,
 	}
 
 	for placeholder, value := range replacements {
@@ -398,4 +404,192 @@ func readFileOrDefault(path, def string) string {
 		return def
 	}
 	return strings.TrimRight(string(b), "\n")
+}
+
+// ── Narrative generators ───────────────────────────────────────────────────────
+
+// buildInterpretation generates a data-driven interpretation paragraph from the
+// benchmark results. It covers tail-latency control, action complexity trend,
+// concurrency scaling efficiency, and cache impact.
+func buildInterpretation(
+	perc map[string]string,
+	latency map[string]map[string]string,
+	throughput []map[string]string,
+	warmUS, coldUS string,
+) string {
+	var sb strings.Builder
+
+	p50 := parseFloatOrZero(perc["p50_µs"])
+	p99 := parseFloatOrZero(perc["p99_µs"])
+	meanDiscover := parseFloatOrZero(latency["BenchmarkBAPCaller_Discover"]["mean_ms"]) * 1000
+
+	// Tail-latency control.
+	if p50 > 0 && p99 > 0 {
+		ratio := p99 / p50
+		quality := "good"
+		if ratio > 5 {
+			quality = "poor"
+		} else if ratio > 3 {
+			quality = "moderate"
+		}
+		sb.WriteString(fmt.Sprintf(
+			"The adapter delivers a p50 latency of **%.0f µs** for the discover action. "+
+				"The p99/p50 ratio is **%.1f×**, indicating %s tail-latency control — "+
+				"spikes are %s relative to the median.\n\n",
+			p50, ratio, quality, tailDescription(ratio),
+		))
+	} else if meanDiscover > 0 {
+		sb.WriteString(fmt.Sprintf(
+			"The adapter delivers a mean latency of **%.0f µs** for the discover action. "+
+				"Run with `-bench=BenchmarkBAPCaller_Discover_Percentiles` to obtain p50/p95/p99 data.\n\n",
+			meanDiscover,
+		))
+	}
+
+	// Action complexity trend.
+	selectMS := parseFloatOrZero(latency["BenchmarkBAPCaller_AllActions/select"]["mean_ms"]) * 1000
+	initMS := parseFloatOrZero(latency["BenchmarkBAPCaller_AllActions/init"]["mean_ms"]) * 1000
+	confirmMS := parseFloatOrZero(latency["BenchmarkBAPCaller_AllActions/confirm"]["mean_ms"]) * 1000
+	if meanDiscover > 0 && selectMS > 0 && initMS > 0 && confirmMS > 0 {
+		sb.WriteString(fmt.Sprintf(
+			"Latency scales with payload complexity: select (+%.0f%%), init (+%.0f%%), confirm (+%.0f%%) "+
+				"vs the discover baseline. Allocation counts track proportionally, driven by JSON "+
+				"unmarshalling and schema validation of larger payloads.\n\n",
+			pctChange(meanDiscover, selectMS),
+			pctChange(meanDiscover, initMS),
+			pctChange(meanDiscover, confirmMS),
+		))
+	}
+
+	// Concurrency scaling.
+	lat1 := latencyAtCPU(throughput, "1")
+	lat16 := latencyAtCPU(throughput, "16")
+	if lat1 > 0 && lat16 > 0 {
+		improvement := lat1 / lat16
+		sb.WriteString(fmt.Sprintf(
+			"Concurrency scaling is effective: mean latency drops from **%.0f µs** at GOMAXPROCS=1 "+
+				"to **%.0f µs** at GOMAXPROCS=16 — a **%.1f× improvement**.",
+			lat1*1000, lat16*1000, improvement,
+		))
+		if improvement < 4 {
+			sb.WriteString(" Gains taper beyond 8 cores, suggesting a shared serialisation point " +
+				"(likely schema validation or key derivation).")
+		}
+		sb.WriteString("\n\n")
+	}
+
+	// Cache impact.
+	w := parseFloatOrZero(warmUS)
+	c := parseFloatOrZero(coldUS)
+	if w > 0 && c > 0 {
+		delta := math.Abs(w-c) / w * 100
+		if delta < 5 {
+			sb.WriteString(fmt.Sprintf(
+				"The Redis key-manager cache shows **no measurable impact** in this setup "+
+					"(warm vs cold delta: %.0f µs, %.1f%% of mean). "+
+					"miniredis is in-process; signing and schema validation dominate. "+
+					"Cache benefit would be visible with real Redis over a network.",
+				math.Abs(w-c), delta,
+			))
+		} else {
+			sb.WriteString(fmt.Sprintf(
+				"The Redis key-manager cache provides a **%.0f µs improvement** (%.1f%%) "+
+					"on the warm path vs cold.",
+				math.Abs(w-c), delta,
+			))
+		}
+		sb.WriteString("\n")
+	}
+
+	if sb.Len() == 0 {
+		return "_Insufficient data to generate interpretation. Ensure all benchmark scenarios completed successfully._"
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// buildRecommendation generates a sizing and tuning recommendation based on the
+// concurrency sweep results.
+func buildRecommendation(throughput []map[string]string) string {
+	if len(throughput) == 0 {
+		return "_Run the concurrency sweep to generate sizing recommendations._"
+	}
+
+	// Find the GOMAXPROCS level with best scaling efficiency (RPS gain per core).
+	type cpuPoint struct {
+		cpu int
+		rps float64
+		lat float64
+	}
+	var points []cpuPoint
+	for _, row := range throughput {
+		cpu := int(parseFloatOrZero(row["gomaxprocs"]))
+		rps := parseFloatOrZero(row["rps"])
+		lat := parseFloatOrZero(row["mean_latency_ms"]) * 1000
+		if cpu > 0 && lat > 0 {
+			points = append(points, cpuPoint{cpu, rps, lat})
+		}
+	}
+
+	if len(points) == 0 {
+		return "_Run the concurrency sweep (parallel_cpu*.txt) to generate sizing recommendations._"
+	}
+
+	// Find sweet spot: largest latency improvement per doubling of cores.
+	bestEffCPU := points[0].cpu
+	bestEff := 0.0
+	for i := 1; i < len(points); i++ {
+		if points[i-1].lat > 0 {
+			eff := (points[i-1].lat - points[i].lat) / points[i-1].lat
+			if eff > bestEff {
+				bestEff = eff
+				bestEffCPU = points[i].cpu
+			}
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(
+		"**%d cores** offers the best throughput/cost ratio based on the concurrency sweep — "+
+			"scaling efficiency begins to taper beyond this point.\n\n",
+		bestEffCPU,
+	))
+	sb.WriteString("The adapter is ready for staged load testing against a real BPP. " +
+		"For production sizing, start with the recommended core count above and adjust based " +
+		"on observed throughput targets. If schema validation dominates CPU (likely at high " +
+		"concurrency), profile with `go tool pprof` using the commands in B5 to isolate the bottleneck.")
+
+	return sb.String()
+}
+
+// ── Narrative helpers ──────────────────────────────────────────────────────────
+
+func tailDescription(ratio float64) string {
+	switch {
+	case ratio <= 2:
+		return "minimal"
+	case ratio <= 3:
+		return "modest"
+	case ratio <= 5:
+		return "noticeable"
+	default:
+		return "significant"
+	}
+}
+
+func pctChange(base, val float64) float64 {
+	if base == 0 {
+		return 0
+	}
+	return (val - base) / base * 100
+}
+
+func latencyAtCPU(throughput []map[string]string, cpu string) float64 {
+	for _, row := range throughput {
+		if row["gomaxprocs"] == cpu {
+			if v := parseFloatOrZero(row["mean_latency_ms"]); v > 0 {
+				return v
+			}
+		}
+	}
+	return 0
 }

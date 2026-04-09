@@ -36,11 +36,11 @@ adapter-internal latency from network variables.
 
 ### Interpretation
 
-_Review the numbers above and add interpretation here._
+__INTERPRETATION__
 
 ### Recommendation
 
-_Add sizing and tuning recommendations here._
+__RECOMMENDATION__
 
 ---
 
