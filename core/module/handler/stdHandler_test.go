@@ -23,20 +23,31 @@ func (noopPluginManager) SignValidator(context.Context, *plugin.Config) (definit
 func (noopPluginManager) Validator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
-func (noopPluginManager) Router(context.Context, *plugin.Config) (definition.Router, error) { return nil, nil }
+func (noopPluginManager) Router(context.Context, *plugin.Config) (definition.Router, error) {
+	return nil, nil
+}
 func (noopPluginManager) Publisher(context.Context, *plugin.Config) (definition.Publisher, error) {
 	return nil, nil
 }
-func (noopPluginManager) Signer(context.Context, *plugin.Config) (definition.Signer, error) { return nil, nil }
-func (noopPluginManager) Step(context.Context, *plugin.Config) (definition.Step, error) { return nil, nil }
+func (noopPluginManager) Signer(context.Context, *plugin.Config) (definition.Signer, error) {
+	return nil, nil
+}
+func (noopPluginManager) Step(context.Context, *plugin.Config) (definition.Step, error) {
+	return nil, nil
+}
 func (noopPluginManager) PolicyChecker(context.Context, *plugin.Config) (definition.PolicyChecker, error) {
 	return nil, nil
 }
-func (noopPluginManager) Cache(context.Context, *plugin.Config) (definition.Cache, error) { return nil, nil }
+func (noopPluginManager) Cache(context.Context, *plugin.Config) (definition.Cache, error) {
+	return nil, nil
+}
 func (noopPluginManager) Registry(context.Context, *plugin.Config) (definition.RegistryLookup, error) {
 	return nil, nil
 }
 func (noopPluginManager) KeyManager(context.Context, definition.Cache, definition.RegistryLookup, *plugin.Config) (definition.KeyManager, error) {
+	return nil, nil
+}
+func (noopPluginManager) ManifestLoader(context.Context, definition.Cache, definition.RegistryMetadataLookup, *plugin.Config) (definition.ManifestLoader, error) {
 	return nil, nil
 }
 func (noopPluginManager) TransportWrapper(context.Context, *plugin.Config) (definition.TransportWrapper, error) {

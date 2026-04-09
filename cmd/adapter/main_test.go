@@ -84,6 +84,10 @@ func (m *MockPluginManager) KeyManager(ctx context.Context, cache definition.Cac
 	return nil, nil
 }
 
+func (m *MockPluginManager) ManifestLoader(ctx context.Context, cache definition.Cache, lookup definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.ManifestLoader, error) {
+	return nil, nil
+}
+
 // TransportWrapper returns a mock implementation of the TransportWrapper interface.
 func (m *MockPluginManager) TransportWrapper(ctx context.Context, cfg *plugin.Config) (definition.TransportWrapper, error) {
 	return nil, nil

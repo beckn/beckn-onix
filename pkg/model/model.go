@@ -2,6 +2,8 @@ package model
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -35,6 +37,31 @@ type RegistryMetadata struct {
 	NamespaceIdentifier string
 	RegistryName        string
 	RawMeta             map[string]string
+}
+
+// ManifestMetadata describes the three inputs needed to fetch and verify a manifest.
+type ManifestMetadata struct {
+	ManifestURL               string
+	ManifestSignatureURL      string
+	SigningPublicKeyLookupURL string
+}
+
+// CacheKey returns a deterministic cache key for metadata-driven manifest loading.
+func (m ManifestMetadata) CacheKey() string {
+	hash := sha256.Sum256([]byte(m.ManifestURL + "|" + m.ManifestSignatureURL + "|" + m.SigningPublicKeyLookupURL))
+	return "manifest:metadata:" + hex.EncodeToString(hash[:])
+}
+
+// ManifestDocument is the cached and returned verified manifest payload.
+type ManifestDocument struct {
+	NetworkID    string    `json:"network_id,omitempty"`
+	ContentType  string    `json:"content_type,omitempty"`
+	Content      []byte    `json:"content"`
+	Digest       string    `json:"digest"`
+	SourceURL    string    `json:"source_url"`
+	SignatureURL string    `json:"signature_url"`
+	Verified     bool      `json:"verified"`
+	FetchedAt    time.Time `json:"fetched_at"`
 }
 
 // Authorization-related constants for headers.

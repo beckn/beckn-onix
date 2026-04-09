@@ -33,6 +33,7 @@ type stdHandler struct {
 	signValidator    definition.SignValidator
 	cache            definition.Cache
 	registry         definition.RegistryLookup
+	manifestLoader   definition.ManifestLoader
 	km               definition.KeyManager
 	schemaValidator  definition.SchemaValidator
 	policyChecker    definition.PolicyChecker
@@ -289,6 +290,29 @@ func loadKeyManager(ctx context.Context, mgr PluginManager, cache definition.Cac
 	return km, nil
 }
 
+func loadManifestLoader(ctx context.Context, mgr PluginManager, cache definition.Cache, registry definition.RegistryLookup, cfg *plugin.Config) (definition.ManifestLoader, error) {
+	if cfg == nil {
+		log.Debug(ctx, "Skipping ManifestLoader plugin: not configured")
+		return nil, nil
+	}
+	if cache == nil {
+		return nil, fmt.Errorf("failed to load ManifestLoader plugin (%s): Cache plugin not configured", cfg.ID)
+	}
+	if registry == nil {
+		return nil, fmt.Errorf("failed to load ManifestLoader plugin (%s): Registry plugin not configured", cfg.ID)
+	}
+	metadataLookup, ok := registry.(definition.RegistryMetadataLookup)
+	if !ok {
+		return nil, fmt.Errorf("failed to load ManifestLoader plugin (%s): Registry plugin does not implement RegistryMetadataLookup", cfg.ID)
+	}
+	loader, err := mgr.ManifestLoader(ctx, cache, metadataLookup, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load ManifestLoader plugin (%s): %w", cfg.ID, err)
+	}
+	log.Debugf(ctx, "Loaded ManifestLoader plugin: %s", cfg.ID)
+	return loader, nil
+}
+
 // initPlugins initializes required plugins for the processor.
 func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *PluginCfg) error {
 	var err error
@@ -299,6 +323,9 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 		return err
 	}
 	if h.km, err = loadKeyManager(ctx, mgr, h.cache, h.registry, cfg.KeyManager); err != nil {
+		return err
+	}
+	if h.manifestLoader, err = loadManifestLoader(ctx, mgr, h.cache, h.registry, cfg.ManifestLoader); err != nil {
 		return err
 	}
 	if h.signValidator, err = loadPlugin(ctx, "SignValidator", cfg.SignValidator, mgr.SignValidator); err != nil {

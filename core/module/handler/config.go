@@ -23,6 +23,7 @@ type PluginManager interface {
 	Cache(ctx context.Context, cfg *plugin.Config) (definition.Cache, error)
 	Registry(ctx context.Context, cfg *plugin.Config) (definition.RegistryLookup, error)
 	KeyManager(ctx context.Context, cache definition.Cache, rLookup definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error)
+	ManifestLoader(ctx context.Context, cache definition.Cache, lookup definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.ManifestLoader, error)
 	TransportWrapper(ctx context.Context, cfg *plugin.Config) (definition.TransportWrapper, error)
 	SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)
 }
@@ -46,6 +47,7 @@ type PluginCfg struct {
 	Cache            *plugin.Config  `yaml:"cache,omitempty"`
 	Registry         *plugin.Config  `yaml:"registry,omitempty"`
 	KeyManager       *plugin.Config  `yaml:"keyManager,omitempty"`
+	ManifestLoader   *plugin.Config  `yaml:"manifestLoader,omitempty"`
 	TransportWrapper *plugin.Config  `yaml:"transportWrapper,omitempty"`
 	Middleware       []plugin.Config `yaml:"middleware,omitempty"`
 	Steps            []plugin.Config

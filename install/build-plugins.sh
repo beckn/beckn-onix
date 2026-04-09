@@ -15,6 +15,7 @@ plugins=(
     "publisher"
     "registry"
     "dediregistry"
+    "manifestloader"
     "reqpreprocessor"
     "otelsetup"
     "reqmapper"
