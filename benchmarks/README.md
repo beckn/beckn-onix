@@ -100,11 +100,14 @@ benchmarks/
 │       ├── init_request.json
 │       └── confirm_request.json
 ├── tools/
-│   └── parse_results.go             ← CSV exporter for latency + throughput data
-├── reports/                         ← committed benchmark reports
+│   ├── parse_results.go             ← CSV exporter for latency + throughput data
+│   └── generate_report.go           ← fills REPORT_TEMPLATE.md with run data
+├── reports/                         ← committed benchmark reports and template
+│   ├── REPORT_TEMPLATE.md           ← template used to generate each run's report
 │   └── REPORT_ONIX_v150.md          ← baseline report (Apple M5, Beckn v2.0.0)
 └── results/                         ← gitignored; created by run_benchmarks.sh
     └── <timestamp>/
+        ├── BENCHMARK_REPORT.md            — generated human-readable report
         ├── run1.txt, run2.txt, run3.txt   — raw go test -bench output
         ├── parallel_cpu*.txt              — concurrency sweep
         ├── benchstat_summary.txt          — statistical aggregation
@@ -122,11 +125,11 @@ Committed reports are stored in `benchmarks/reports/`. Each report documents the
 |------|----------|-----------------|
 | `REPORT_ONIX_v150.md` | Apple M5 · darwin/arm64 · GOMAXPROCS=10 | beckn-onix v1.5.0 |
 
-To add a new report after a benchmark run:
-1. Run `bash benchmarks/run_benchmarks.sh` — results appear in `benchmarks/results/<timestamp>/`.
-2. Review `benchstat_summary.txt` and the CSV files.
-3. Write a report (see the existing report as a template) and save it as `benchmarks/reports/REPORT_<tag>.md`.
-4. Commit only the report file; `benchmarks/results/` remains gitignored.
+The script auto-generates `BENCHMARK_REPORT.md` in each results directory using `REPORT_TEMPLATE.md`. To permanently record a run:
+1. Run `bash benchmarks/run_benchmarks.sh` — `BENCHMARK_REPORT.md` is generated automatically.
+2. Review it, fill in the B5 bottleneck analysis section.
+3. Copy it to `benchmarks/reports/REPORT_<tag>.md` and commit.
+4. `benchmarks/results/` stays gitignored; only the curated report goes in.
 
 ---
 

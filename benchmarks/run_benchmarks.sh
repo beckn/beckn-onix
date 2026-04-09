@@ -23,10 +23,13 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RESULTS_DIR="$REPO_ROOT/benchmarks/results/$(date +%Y-%m-%d_%H-%M-%S)"
 BENCH_PKG="./benchmarks/e2e/..."
 BENCH_TIMEOUT="10m"
-# ── Smoke-test values (small): swap to the "full run" values below once stable ─
-BENCH_TIME_SERIAL="10s"    # full run: 10s
-BENCH_TIME_PARALLEL="30s"  # full run: 30s
-BENCH_COUNT=1             # full run: keep at 1; benchstat uses the 3 serial files
+BENCH_TIME_SERIAL="10s"
+BENCH_TIME_PARALLEL="30s"
+BENCH_COUNT=1             # benchstat uses the 3 serial files for stability
+
+# Adapter version — reads from git tag, falls back to "dev"
+ONIX_VERSION="$(git -C "$REPO_ROOT" describe --tags --abbrev=0 2>/dev/null || echo "dev")"
+REPORT_TEMPLATE="$REPO_ROOT/benchmarks/reports/REPORT_TEMPLATE.md"
 
 cd "$REPO_ROOT"
 
@@ -120,11 +123,21 @@ echo "  Saved → $RESULTS_DIR/benchstat_summary.txt"
 echo ""
 
 # ── Parse results to CSV ──────────────────────────────────────────────────────
-if command -v go &>/dev/null; then
-  echo "Parsing results to CSV..."
-  go run benchmarks/tools/parse_results.go \
+echo "Parsing results to CSV..."
+go run "$REPO_ROOT/benchmarks/tools/parse_results.go" \
+  -dir="$RESULTS_DIR" \
+  -out="$RESULTS_DIR" 2>&1 || echo "  (parse_results.go: skipping on error)"
+echo ""
+
+# ── Generate human-readable report ───────────────────────────────────────────
+echo "Generating benchmark report..."
+if [[ -f "$REPORT_TEMPLATE" ]]; then
+  go run "$REPO_ROOT/benchmarks/tools/generate_report.go" \
     -dir="$RESULTS_DIR" \
-    -out="$RESULTS_DIR" 2>&1 || echo "  (parse_results.go: optional step, skipping if errors)"
+    -template="$REPORT_TEMPLATE" \
+    -version="$ONIX_VERSION" 2>&1 || echo "  (generate_report.go: skipping on error)"
+else
+  echo "  WARNING: template not found at $REPORT_TEMPLATE — skipping report generation"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
@@ -143,11 +156,14 @@ echo "Results written to:"
 echo "  $RESULTS_DIR"
 echo ""
 echo "Key files:"
+echo "  BENCHMARK_REPORT.md   — generated human-readable report"
 echo "  benchstat_summary.txt — statistical analysis of 3 serial runs"
-echo "  parallel_cpu*.txt     — concurrency sweep results"
+echo "  latency_report.csv    — per-benchmark latency and allocation data"
+echo "  throughput_report.csv — RPS and latency by GOMAXPROCS level"
+echo "  parallel_cpu*.txt     — concurrency sweep raw output"
 echo "  percentiles.txt       — p50/p95/p99 latency data"
 echo "  cache_comparison.txt  — warm vs cold Redis cache comparison"
 echo ""
-echo "To view benchstat summary:"
-echo "  cat $RESULTS_DIR/benchstat_summary.txt"
+echo "To review the report:"
+echo "  open $RESULTS_DIR/BENCHMARK_REPORT.md"
 echo "========================================"
