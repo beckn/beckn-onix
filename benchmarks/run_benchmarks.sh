@@ -18,6 +18,7 @@
 # =============================================================================
 set -euo pipefail
 
+SCRIPT_START=$(date +%s)
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RESULTS_DIR="$REPO_ROOT/benchmarks/results/$(date +%Y-%m-%d_%H-%M-%S)"
 BENCH_PKG="./benchmarks/e2e/..."
@@ -127,9 +128,16 @@ if command -v go &>/dev/null; then
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
+SCRIPT_END=$(date +%s)
+ELAPSED_SECS=$(( SCRIPT_END - SCRIPT_START ))
+ELAPSED_MIN=$(( ELAPSED_SECS / 60 ))
+ELAPSED_SEC_REM=$(( ELAPSED_SECS % 60 ))
+
 echo ""
 echo "========================================"
 echo "✅ Benchmark run complete!"
+echo ""
+echo "Total runtime : ${ELAPSED_MIN}m ${ELAPSED_SEC_REM}s"
 echo ""
 echo "Results written to:"
 echo "  $RESULTS_DIR"
