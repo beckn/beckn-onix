@@ -12,7 +12,7 @@ go mod tidy                        # fetch miniredis + benchstat checksums
 bash benchmarks/run_benchmarks.sh  # compile plugins, run all scenarios, generate report
 ```
 
-Results land in `benchmarks/results/<timestamp>/`.
+Runtime output lands in `benchmarks/results/<timestamp>/` (gitignored). Committed reports live in `benchmarks/reports/`.
 
 ---
 
@@ -89,10 +89,10 @@ benchmarks/
 ├── README.md                        ← you are here
 ├── run_benchmarks.sh                ← one-shot runner script
 ├── e2e/
-│   ├── bench_test.go                ← benchmark functions (T8)
-│   ├── setup_test.go                ← TestMain, startAdapter, signing helper (T3/T4/T7)
-│   ├── mocks_test.go                ← mock BPP and registry servers (T5)
-│   ├── keys_test.go                 ← dev key pair constants (T6a)
+│   ├── bench_test.go                ← benchmark functions
+│   ├── setup_test.go                ← TestMain, startAdapter, signing helper
+│   ├── mocks_test.go                ← mock BPP and registry servers
+│   ├── keys_test.go                 ← dev key pair constants
 │   └── testdata/
 │       ├── routing-BAPCaller.yaml   ← routing config (BENCH_BPP_URL placeholder)
 │       ├── discover_request.json    ← Beckn search payload fixture
@@ -100,10 +100,33 @@ benchmarks/
 │       ├── init_request.json
 │       └── confirm_request.json
 ├── tools/
-│   └── parse_results.go             ← CSV exporter for latency + throughput data (T10)
-└── results/
-    └── BENCHMARK_REPORT.md          ← report template (populate after a run)
+│   └── parse_results.go             ← CSV exporter for latency + throughput data
+├── reports/                         ← committed benchmark reports
+│   └── REPORT_ONIX_v150.md          ← baseline report (Apple M5, Beckn v2.0.0)
+└── results/                         ← gitignored; created by run_benchmarks.sh
+    └── <timestamp>/
+        ├── run1.txt, run2.txt, run3.txt   — raw go test -bench output
+        ├── parallel_cpu*.txt              — concurrency sweep
+        ├── benchstat_summary.txt          — statistical aggregation
+        ├── latency_report.csv             — per-benchmark latency (from parse_results.go)
+        └── throughput_report.csv          — RPS vs GOMAXPROCS (from parse_results.go)
 ```
+
+---
+
+## Reports
+
+Committed reports are stored in `benchmarks/reports/`. Each report documents the environment, raw numbers, and analysis for a specific run and adapter version.
+
+| File | Platform | Adapter version |
+|------|----------|-----------------|
+| `REPORT_ONIX_v150.md` | Apple M5 · darwin/arm64 · GOMAXPROCS=10 | beckn-onix v1.5.0 |
+
+To add a new report after a benchmark run:
+1. Run `bash benchmarks/run_benchmarks.sh` — results appear in `benchmarks/results/<timestamp>/`.
+2. Review `benchstat_summary.txt` and the CSV files.
+3. Write a report (see the existing report as a template) and save it as `benchmarks/reports/REPORT_<tag>.md`.
+4. Commit only the report file; `benchmarks/results/` remains gitignored.
 
 ---
 
@@ -142,7 +165,7 @@ go test ./benchmarks/e2e/... \
 go test ./benchmarks/e2e/... -bench=. -benchtime=10s -count=6 > before.txt
 # ... make your change ...
 go test ./benchmarks/e2e/... -bench=. -benchtime=10s -count=6 > after.txt
-benchstat before.txt after.txt
+go tool benchstat before.txt after.txt
 ```
 
 ---

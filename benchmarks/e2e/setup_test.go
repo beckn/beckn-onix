@@ -269,7 +269,7 @@ func buildBAPCallerConfig(routingConfigPath, registryURL string) module.Config {
 	}
 }
 
-// ── T7: Request builder and Beckn signing helper ──────────────────────────────
+// ── Request builder and Beckn signing helper ─────────────────────────────────
 
 // becknPayloadTemplate holds the raw JSON for a fixture file with sentinels.
 var fixtureCache = map[string][]byte{}
