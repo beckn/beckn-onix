@@ -507,7 +507,11 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 
 	violations, err := ev.Evaluate(ctx, ctx.Body)
 	if err != nil {
-		log.Errorf(ctx, err, "OPAPolicyChecker: policy evaluation failed: %v", err)
+		if e.config.NetworkPolicyConfig != "" {
+			log.Errorf(ctx, err, "OPAPolicyChecker: policy evaluation failed for networkID=%q: %v", selectedNetworkID, err)
+		} else {
+			log.Errorf(ctx, err, "OPAPolicyChecker: policy evaluation failed: %v", err)
+		}
 		return model.NewBadReqErr(fmt.Errorf("policy evaluation error: %w", err))
 	}
 
@@ -519,7 +523,11 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	}
 
 	msg := fmt.Sprintf("policy violation(s): %s", strings.Join(violations, "; "))
-	log.Warnf(ctx, "OPAPolicyChecker: %s", msg)
+	if e.config.NetworkPolicyConfig != "" {
+		log.Warnf(ctx, "OPAPolicyChecker: networkID=%q %s", selectedNetworkID, msg)
+	} else {
+		log.Warnf(ctx, "OPAPolicyChecker: %s", msg)
+	}
 	return model.NewBadReqErr(fmt.Errorf("%s", msg))
 }
 
