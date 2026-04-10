@@ -504,9 +504,11 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 		log.Debugf(ctx, "OPAPolicyChecker: evaluating policy for networkID=%q action=%q (modules=%v)", selectedNetworkID, action, ev.ModuleNames())
 	}
 
+	requestLogCtx := formatRequestLogContext(ctx.Body)
+
 	violations, err := ev.Evaluate(ctx, ctx.Body)
 	if err != nil {
-		log.Errorf(ctx, err, "OPAPolicyChecker: policy evaluation failed for networkID=%q: %v", selectedNetworkID, err)
+		log.Errorf(ctx, err, "OPAPolicyChecker: policy evaluation failed for networkID=%q%s: %v", selectedNetworkID, requestLogCtx, err)
 		return model.NewBadReqErr(fmt.Errorf("policy evaluation error: %w", err))
 	}
 
@@ -518,7 +520,7 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	}
 
 	msg := fmt.Sprintf("policy violation(s): %s", strings.Join(violations, "; "))
-	log.Warnf(ctx, "OPAPolicyChecker: networkID=%q %s", selectedNetworkID, msg)
+	log.Warnf(ctx, "OPAPolicyChecker: networkID=%q%s %s", selectedNetworkID, requestLogCtx, msg)
 	return model.NewBadReqErr(fmt.Errorf("%s", msg))
 }
 
@@ -561,6 +563,70 @@ func extractNetworkID(body []byte) string {
 		return payload.Context.NetworkIDCamel
 	}
 	return payload.Context.NetworkIDSnake
+}
+
+type requestLogContext struct {
+	BAPID         string
+	BPPID         string
+	MessageID     string
+	TransactionID string
+	Action        string
+	Timestamp     string
+}
+
+func extractRequestLogContext(body []byte) requestLogContext {
+	var payload struct {
+		Context map[string]interface{} `json:"context"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || payload.Context == nil {
+		return requestLogContext{}
+	}
+
+	get := func(snakeKey, camelKey string) string {
+		if v, ok := payload.Context[snakeKey].(string); ok && v != "" {
+			return v
+		}
+		if v, ok := payload.Context[camelKey].(string); ok && v != "" {
+			return v
+		}
+		return ""
+	}
+
+	return requestLogContext{
+		BAPID:         get("bap_id", "bapId"),
+		BPPID:         get("bpp_id", "bppId"),
+		MessageID:     get("message_id", "messageId"),
+		TransactionID: get("transaction_id", "transactionId"),
+		Action:        get("action", "action"),
+		Timestamp:     get("timestamp", "timestamp"),
+	}
+}
+
+func formatRequestLogContext(body []byte) string {
+	ctx := extractRequestLogContext(body)
+	parts := make([]string, 0, 6)
+	if ctx.BAPID != "" {
+		parts = append(parts, fmt.Sprintf("bap_id=%q", ctx.BAPID))
+	}
+	if ctx.BPPID != "" {
+		parts = append(parts, fmt.Sprintf("bpp_id=%q", ctx.BPPID))
+	}
+	if ctx.MessageID != "" {
+		parts = append(parts, fmt.Sprintf("message_id=%q", ctx.MessageID))
+	}
+	if ctx.TransactionID != "" {
+		parts = append(parts, fmt.Sprintf("transaction_id=%q", ctx.TransactionID))
+	}
+	if ctx.Action != "" {
+		parts = append(parts, fmt.Sprintf("action=%q", ctx.Action))
+	}
+	if ctx.Timestamp != "" {
+		parts = append(parts, fmt.Sprintf("timestamp=%q", ctx.Timestamp))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(parts, " ")
 }
 
 func isBecknDirection(part string) bool {
