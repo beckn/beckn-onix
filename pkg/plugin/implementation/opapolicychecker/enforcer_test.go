@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,16 @@ func writePolicyDir(t *testing.T, filename, content string) string {
 		t.Fatalf("failed to write policy file: %v", err)
 	}
 	return dir
+}
+
+func writeNetworkPolicyConfig(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "network-policies.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write network policy config: %v", err)
+	}
+	return path
 }
 
 // --- Config Tests ---
@@ -69,6 +80,26 @@ func TestParseConfig_RequiresQuery(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error when no query given")
+	}
+}
+
+func TestParseConfig_NetworkPolicyConfig(t *testing.T) {
+	cfg, err := ParseConfig(map[string]string{
+		"networkPolicyConfig":    "/tmp/network-policies.yaml",
+		"refreshIntervalSeconds": "300",
+		"sharedKey":              "sharedValue",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.NetworkPolicyConfig != "/tmp/network-policies.yaml" {
+		t.Fatalf("expected networkPolicyConfig to be set, got %q", cfg.NetworkPolicyConfig)
+	}
+	if cfg.RefreshInterval != 300*time.Second {
+		t.Fatalf("expected refresh interval 300s, got %v", cfg.RefreshInterval)
+	}
+	if cfg.RuntimeConfig["sharedKey"] != "sharedValue" {
+		t.Fatalf("expected shared runtime config to be preserved, got %q", cfg.RuntimeConfig["sharedKey"])
 	}
 }
 
@@ -707,6 +738,15 @@ func TestExtractAction_FromBody(t *testing.T) {
 	}
 }
 
+func TestExtractNetworkID(t *testing.T) {
+	if got := extractNetworkID([]byte(`{"context":{"networkId":"retail.network/production"}}`)); got != "retail.network/production" {
+		t.Fatalf("expected camelCase networkId, got %q", got)
+	}
+	if got := extractNetworkID([]byte(`{"context":{"network_id":"retail.network/sandbox"}}`)); got != "retail.network/sandbox" {
+		t.Fatalf("expected snake_case network_id, got %q", got)
+	}
+}
+
 // --- Config Tests: Bundle Type ---
 
 func TestParseConfig_BundleType(t *testing.T) {
@@ -1120,6 +1160,137 @@ default result := {"valid": true, "violations": []}
 	}
 
 	t.Fatal("hot-reload did not take effect within 5 seconds")
+}
+
+func TestEnforcer_NetworkPolicySelection(t *testing.T) {
+	retailDir := writePolicyDir(t, "retail.rego", `
+package retail
+import rego.v1
+default result := {"valid": false, "violations": ["retail policy violation"]}
+result := {"valid": false, "violations": ["retail policy violation"]}
+`)
+	logisticsDir := writePolicyDir(t, "logistics.rego", `
+package logistics
+import rego.v1
+default result := {"valid": false, "violations": ["logistics policy violation"]}
+result := {"valid": false, "violations": ["logistics policy violation"]}
+`)
+
+	configPath := writeNetworkPolicyConfig(t, `
+networkPolicies:
+  retail.network/production:
+    type: dir
+    location: `+retailDir+`
+    query: data.retail.result
+    actions: confirm
+  retail.network/logistics:
+    type: dir
+    location: `+logisticsDir+`
+    query: data.logistics.result
+    actions: confirm
+`)
+
+	enforcer, err := New(context.Background(), map[string]string{
+		"networkPolicyConfig": configPath,
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	retailCtx := makeStepCtx("confirm", `{"context":{"action":"confirm","networkId":"retail.network/production"}}`)
+	if err := enforcer.CheckPolicy(retailCtx); err == nil || !strings.Contains(err.Error(), "retail policy violation") {
+		t.Fatalf("expected retail policy violation, got %v", err)
+	}
+
+	logisticsCtx := makeStepCtx("confirm", `{"context":{"action":"confirm","networkId":"retail.network/logistics"}}`)
+	if err := enforcer.CheckPolicy(logisticsCtx); err == nil || !strings.Contains(err.Error(), "logistics policy violation") {
+		t.Fatalf("expected logistics policy violation, got %v", err)
+	}
+}
+
+func TestEnforcer_NetworkPolicyDefaultFallback(t *testing.T) {
+	defaultDir := writePolicyDir(t, "default.rego", `
+package policy
+import rego.v1
+default result := {"valid": false, "violations": ["default policy violation"]}
+result := {"valid": false, "violations": ["default policy violation"]}
+`)
+
+	configPath := writeNetworkPolicyConfig(t, `
+networkPolicies:
+  default:
+    type: dir
+    location: `+defaultDir+`
+    query: data.policy.result
+    actions: confirm
+`)
+
+	enforcer, err := New(context.Background(), map[string]string{
+		"networkPolicyConfig": configPath,
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	ctx := makeStepCtx("confirm", `{"context":{"action":"confirm","networkId":"unknown.network/production"}}`)
+	if err := enforcer.CheckPolicy(ctx); err == nil || !strings.Contains(err.Error(), "default policy violation") {
+		t.Fatalf("expected default policy violation, got %v", err)
+	}
+}
+
+func TestEnforcer_NetworkPolicyUnknownWithoutDefaultSkips(t *testing.T) {
+	retailDir := writePolicyDir(t, "retail.rego", `
+package retail
+import rego.v1
+default result := {"valid": false, "violations": ["retail policy violation"]}
+result := {"valid": false, "violations": ["retail policy violation"]}
+`)
+
+	configPath := writeNetworkPolicyConfig(t, `
+networkPolicies:
+  retail.network/production:
+    type: dir
+    location: `+retailDir+`
+    query: data.retail.result
+    actions: confirm
+`)
+
+	enforcer, err := New(context.Background(), map[string]string{
+		"networkPolicyConfig": configPath,
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	ctx := makeStepCtx("confirm", `{"context":{"action":"confirm","networkId":"unknown.network/production"}}`)
+	if err := enforcer.CheckPolicy(ctx); err != nil {
+		t.Fatalf("expected unknown network with no default to skip, got %v", err)
+	}
+}
+
+func TestEnforcer_NetworkPolicyStartupFailureIfAnyPolicyInvalid(t *testing.T) {
+	retailDir := writePolicyDir(t, "retail.rego", `
+package retail
+import rego.v1
+default result := {"valid": true, "violations": []}
+`)
+
+	configPath := writeNetworkPolicyConfig(t, `
+networkPolicies:
+  retail.network/production:
+    type: dir
+    location: `+retailDir+`
+    query: data.retail.result
+  retail.network/invalid:
+    type: dir
+    location: `+retailDir+`
+`)
+
+	if _, err := New(context.Background(), map[string]string{
+		"networkPolicyConfig": configPath,
+	}); err == nil {
+		t.Fatal("expected startup failure when one network policy is invalid")
+	}
 }
 
 func TestParseConfig_FetchTimeout(t *testing.T) {

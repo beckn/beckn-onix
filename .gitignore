@@ -131,6 +131,9 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
+# Benchmark runtime output (raw go test output, logs, CSVs)
+benchmarks/results/
+
 # Ignore compiled shared object files
 *.so
 
@@ -150,3 +153,5 @@ beckn-adapter
 .env
 .env.*
 test_request.json
+
+.codex

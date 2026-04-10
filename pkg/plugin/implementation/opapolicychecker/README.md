@@ -40,7 +40,50 @@ steps:
 | `debugLogging` | string | No | `"false"` | Enable verbose OPA evaluation logging |
 | `fetchTimeoutSeconds` | string | No | `"30"` | Timeout in seconds for fetching remote `.rego` files or bundles |
 | `refreshIntervalSeconds` | string | No | - | Reload policies every N seconds (0 or omit = disabled) |
+| `networkPolicyConfig` | string | No | - | Path to a YAML file containing `networkPolicies` keyed by `network_id` |
 | *any other key* | string | No | - | Forwarded to Rego as `data.config.<key>` |
+
+### Network Policy Config File
+
+When `networkPolicyConfig` is provided, the plugin loads all configured policies at startup and selects the correct one at request time using `context.networkId` or `context.network_id`.
+
+Top-level plugin config:
+
+```yaml
+checkPolicy:
+  id: opapolicychecker
+  config:
+    networkPolicyConfig: ./config/opa-network-policies.yaml
+    refreshIntervalSeconds: "300"
+```
+
+Structured config file:
+
+```yaml
+networkPolicies:
+  nfo.example.org/mobility-network:
+    type: url
+    location: https://nfo.example.org/policies/mobility.rego
+    query: "data.mobility.policy.result"
+    actions: "confirm"
+
+  nfo.example.org/logistics-network:
+    type: bundle
+    location: https://nfo.example.org/policies/logistics.tar.gz
+    query: "data.logistics.policy.result"
+
+  default:
+    type: file
+    location: ./policies/default.rego
+    query: "data.default.policy.result"
+```
+
+Behavior in network mode:
+
+- all configured policies are loaded at startup
+- request-time selection uses exact match on `context.networkId` and falls back to `context.network_id`
+- if no network-specific policy matches, `default` is used when configured
+- if neither a network-specific policy nor `default` matches, OPA evaluation is skipped
 
 
 
@@ -195,5 +238,4 @@ Configure them side-by-side in your adapter steps as needed.
 ## Known Limitations
 
 -   **No bundle signature verification**: When using `type: bundle`, bundle signature verification is skipped. This is planned for a future enhancement.
--   **Network-level scoping**: Policies apply to all messages handled by the adapter instance. Per-network policy mapping (by `networkId`) is tracked for follow-up.
 -   **Non-standard route shapes**: URL-based action extraction assumes the standard Beckn adapter route shape `/{participant}/{direction}/{action}` and falls back to `context.action` for other path layouts.
