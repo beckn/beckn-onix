@@ -18,21 +18,33 @@ import (
 // Config holds the configuration for the OPA Policy Checker plugin.
 type Config struct {
 	NetworkPolicyConfig string
-	Type                string
-	Location            string
-	PolicyPaths         []string
-	Query               string
-	Actions             []string
+	RefreshInterval     time.Duration // 0 = disabled
 	Enabled             bool
 	DebugLogging        bool
-	FetchTimeout        time.Duration
-	IsBundle            bool
-	RefreshInterval     time.Duration // 0 = disabled
 	RuntimeConfig       map[string]string
+}
+
+type PolicyConfig struct {
+	Type          string
+	Location      string
+	PolicyPaths   []string
+	Query         string
+	Actions       []string
+	Enabled       bool
+	DebugLogging  bool
+	FetchTimeout  time.Duration
+	IsBundle      bool
+	RuntimeConfig map[string]string
 }
 
 var knownKeys = map[string]bool{
 	"networkPolicyConfig":    true,
+	"enabled":                true,
+	"debugLogging":           true,
+	"refreshIntervalSeconds": true,
+}
+
+var policyEntryKnownKeys = map[string]bool{
 	"type":                   true,
 	"location":               true,
 	"query":                  true,
@@ -46,43 +58,55 @@ var knownKeys = map[string]bool{
 func DefaultConfig() *Config {
 	return &Config{
 		Enabled:       true,
+		RuntimeConfig: make(map[string]string),
+	}
+}
+
+func defaultPolicyConfig() *PolicyConfig {
+	return &PolicyConfig{
+		Enabled:       true,
 		FetchTimeout:  defaultPolicyFetchTimeout,
 		RuntimeConfig: make(map[string]string),
 	}
 }
 
-// ParseConfig parses the plugin configuration map into a Config struct.
-// Uses type + location pattern (matches schemav2validator).
+// ParseConfig parses the top-level plugin configuration map into a Config struct.
 func ParseConfig(cfg map[string]string) (*Config, error) {
 	config := DefaultConfig()
 
-	if npc, ok := cfg["networkPolicyConfig"]; ok && npc != "" {
-		config.NetworkPolicyConfig = npc
-
-		if enabled, ok := cfg["enabled"]; ok {
-			config.Enabled = enabled == "true" || enabled == "1"
-		}
-
-		if debug, ok := cfg["debugLogging"]; ok {
-			config.DebugLogging = debug == "true" || debug == "1"
-		}
-
-		if ris, ok := cfg["refreshIntervalSeconds"]; ok && ris != "" {
-			secs, err := strconv.Atoi(ris)
-			if err != nil || secs < 0 {
-				return nil, fmt.Errorf("'refreshIntervalSeconds' must be a non-negative integer, got %q", ris)
-			}
-			config.RefreshInterval = time.Duration(secs) * time.Second
-		}
-
-		for k, v := range cfg {
-			if !knownKeys[k] {
-				config.RuntimeConfig[k] = v
-			}
-		}
-
-		return config, nil
+	npc, ok := cfg["networkPolicyConfig"]
+	if !ok || strings.TrimSpace(npc) == "" {
+		return nil, fmt.Errorf("'networkPolicyConfig' is required")
 	}
+	config.NetworkPolicyConfig = npc
+
+	if enabled, ok := cfg["enabled"]; ok {
+		config.Enabled = enabled == "true" || enabled == "1"
+	}
+
+	if debug, ok := cfg["debugLogging"]; ok {
+		config.DebugLogging = debug == "true" || debug == "1"
+	}
+
+	if ris, ok := cfg["refreshIntervalSeconds"]; ok && ris != "" {
+		secs, err := strconv.Atoi(ris)
+		if err != nil || secs < 0 {
+			return nil, fmt.Errorf("'refreshIntervalSeconds' must be a non-negative integer, got %q", ris)
+		}
+		config.RefreshInterval = time.Duration(secs) * time.Second
+	}
+
+	for k, v := range cfg {
+		if !knownKeys[k] {
+			config.RuntimeConfig[k] = v
+		}
+	}
+
+	return config, nil
+}
+
+func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
+	config := defaultPolicyConfig()
 
 	typ, hasType := cfg["type"]
 	if !hasType || typ == "" {
@@ -148,16 +172,8 @@ func ParseConfig(cfg map[string]string) (*Config, error) {
 		config.FetchTimeout = time.Duration(secs) * time.Second
 	}
 
-	if ris, ok := cfg["refreshIntervalSeconds"]; ok && ris != "" {
-		secs, err := strconv.Atoi(ris)
-		if err != nil || secs < 0 {
-			return nil, fmt.Errorf("'refreshIntervalSeconds' must be a non-negative integer, got %q", ris)
-		}
-		config.RefreshInterval = time.Duration(secs) * time.Second
-	}
-
 	for k, v := range cfg {
-		if !knownKeys[k] {
+		if !policyEntryKnownKeys[k] {
 			config.RuntimeConfig[k] = v
 		}
 	}
@@ -165,7 +181,7 @@ func ParseConfig(cfg map[string]string) (*Config, error) {
 	return config, nil
 }
 
-func (c *Config) IsActionEnabled(action string) bool {
+func (c *PolicyConfig) IsActionEnabled(action string) bool {
 	if len(c.Actions) == 0 {
 		return true
 	}
@@ -179,7 +195,7 @@ func (c *Config) IsActionEnabled(action string) bool {
 
 type loadedPolicy struct {
 	name      string
-	config    *Config
+	config    *PolicyConfig
 	evaluator *Evaluator
 }
 
@@ -190,27 +206,11 @@ type networkPolicyFile struct {
 // PolicyEnforcer evaluates beckn messages against OPA policies and NACKs non-compliant messages.
 type PolicyEnforcer struct {
 	config        *Config
-	evaluator     *Evaluator
 	policies      map[string]*loadedPolicy
 	defaultPolicy *loadedPolicy
 	evaluatorMu   sync.RWMutex
 	closeOnce     sync.Once
 	done          chan struct{}
-}
-
-// getEvaluator safely returns the current evaluator under a read lock.
-func (e *PolicyEnforcer) getEvaluator() *Evaluator {
-	e.evaluatorMu.RLock()
-	ev := e.evaluator
-	e.evaluatorMu.RUnlock()
-	return ev
-}
-
-// setEvaluator safely swaps the evaluator under a write lock.
-func (e *PolicyEnforcer) setEvaluator(ev *Evaluator) {
-	e.evaluatorMu.Lock()
-	e.evaluator = ev
-	e.evaluatorMu.Unlock()
 }
 
 func loadNetworkPolicies(configPath string) (map[string]map[string]string, error) {
@@ -280,7 +280,7 @@ func mergeRuntimeConfig(base map[string]string, override map[string]string) map[
 	return merged
 }
 
-func loadPolicy(policyName string, config *Config, sharedRuntimeConfig map[string]string) (*loadedPolicy, error) {
+func loadPolicy(policyName string, config *PolicyConfig, sharedRuntimeConfig map[string]string) (*loadedPolicy, error) {
 	policyConfig := *config
 	policyConfig.RuntimeConfig = mergeRuntimeConfig(sharedRuntimeConfig, config.RuntimeConfig)
 
@@ -316,7 +316,7 @@ func loadNetworkPoliciesForEnforcer(config *Config) (map[string]*loadedPolicy, *
 	var defaultPolicy *loadedPolicy
 
 	for policyName, rawCfg := range rawPolicies {
-		policyCfg, err := ParseConfig(rawCfg)
+		policyCfg, err := parsePolicyConfig(rawCfg)
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid network policy %q: %w", policyName, err)
 		}
@@ -385,29 +385,18 @@ func New(ctx context.Context, cfg map[string]string) (*PolicyEnforcer, error) {
 		return enforcer, nil
 	}
 
-	if config.NetworkPolicyConfig != "" {
-		enforcer.policies, enforcer.defaultPolicy, err = loadNetworkPoliciesForEnforcer(config)
-		if err != nil {
-			return nil, fmt.Errorf("opapolicychecker: failed to initialize network policies: %w", err)
-		}
+	enforcer.policies, enforcer.defaultPolicy, err = loadNetworkPoliciesForEnforcer(config)
+	if err != nil {
+		return nil, fmt.Errorf("opapolicychecker: failed to initialize network policies: %w", err)
+	}
 
-		log.Infof(ctx, "OPAPolicyChecker initialized in network policy mode (policyConfig=%s, policies=%d, hasDefault=%t, refreshInterval=%s)",
-			config.NetworkPolicyConfig, len(enforcer.policies), enforcer.defaultPolicy != nil, config.RefreshInterval)
-		for _, policy := range enforcer.policies {
-			logLoadedPolicy(ctx, true, policy)
-		}
-		if enforcer.defaultPolicy != nil {
-			logLoadedPolicy(ctx, false, enforcer.defaultPolicy)
-		}
-	} else {
-		evaluator, err := NewEvaluator(config.PolicyPaths, config.Query, config.RuntimeConfig, config.IsBundle, config.FetchTimeout)
-		if err != nil {
-			return nil, fmt.Errorf("opapolicychecker: failed to initialize OPA evaluator: %w", err)
-		}
-		enforcer.evaluator = evaluator
-
-		log.Infof(ctx, "OPAPolicyChecker initialized (actions=%v, query=%s, policies=%v, isBundle=%v, debugLogging=%v, fetchTimeout=%s, refreshInterval=%s)",
-			config.Actions, config.Query, evaluator.ModuleNames(), config.IsBundle, config.DebugLogging, config.FetchTimeout, config.RefreshInterval)
+	log.Infof(ctx, "OPAPolicyChecker initialized in network policy mode (policyConfig=%s, policies=%d, hasDefault=%t, refreshInterval=%s)",
+		config.NetworkPolicyConfig, len(enforcer.policies), enforcer.defaultPolicy != nil, config.RefreshInterval)
+	for _, policy := range enforcer.policies {
+		logLoadedPolicy(ctx, true, policy)
+	}
+	if enforcer.defaultPolicy != nil {
+		logLoadedPolicy(ctx, false, enforcer.defaultPolicy)
 	}
 
 	if config.RefreshInterval > 0 {
@@ -440,26 +429,7 @@ func (e *PolicyEnforcer) refreshLoop(ctx context.Context) {
 // reloadPolicies reloads and recompiles all policies, atomically swapping the evaluator.
 // Reload failures are non-fatal; the old evaluator stays active.
 func (e *PolicyEnforcer) reloadPolicies(ctx context.Context) {
-	if e.config.NetworkPolicyConfig != "" {
-		e.reloadNetworkPolicies(ctx)
-		return
-	}
-
-	start := time.Now()
-	newEvaluator, err := NewEvaluator(
-		e.config.PolicyPaths,
-		e.config.Query,
-		e.config.RuntimeConfig,
-		e.config.IsBundle,
-		e.config.FetchTimeout,
-	)
-	if err != nil {
-		log.Errorf(ctx, err, "OPAPolicyChecker: policy reload failed (keeping previous policies): %v", err)
-		return
-	}
-
-	e.setEvaluator(newEvaluator)
-	log.Infof(ctx, "OPAPolicyChecker: policies reloaded in %s (modules=%v)", time.Since(start), newEvaluator.ModuleNames())
+	e.reloadNetworkPolicies(ctx)
 }
 
 func (e *PolicyEnforcer) reloadNetworkPolicies(ctx context.Context) {
@@ -504,19 +474,13 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 		return nil
 	}
 
-	policyConfig := e.config
-	ev := e.getEvaluator()
-	selectedNetworkID := ""
-	if e.config.NetworkPolicyConfig != "" {
-		policy, networkID := e.selectedPolicy(ctx.Body)
-		selectedNetworkID = networkID
-		if policy == nil {
-			log.Debugf(ctx, "OPAPolicyChecker: no matching network policy for networkID=%q and no default configured, skipping", networkID)
-			return nil
-		}
-		policyConfig = policy.config
-		ev = policy.evaluator
+	policy, selectedNetworkID := e.selectedPolicy(ctx.Body)
+	if policy == nil {
+		log.Debugf(ctx, "OPAPolicyChecker: no matching network policy for networkID=%q and no default configured, skipping", selectedNetworkID)
+		return nil
 	}
+	policyConfig := policy.config
+	ev := policy.evaluator
 
 	action := extractAction(ctx.Request.URL.Path, ctx.Body)
 
@@ -537,20 +501,12 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	}
 
 	if policyConfig.DebugLogging {
-		if e.config.NetworkPolicyConfig != "" {
-			log.Debugf(ctx, "OPAPolicyChecker: evaluating policy for networkID=%q action=%q (modules=%v)", selectedNetworkID, action, ev.ModuleNames())
-		} else {
-			log.Debugf(ctx, "OPAPolicyChecker: evaluating policies for action %q (modules=%v)", action, ev.ModuleNames())
-		}
+		log.Debugf(ctx, "OPAPolicyChecker: evaluating policy for networkID=%q action=%q (modules=%v)", selectedNetworkID, action, ev.ModuleNames())
 	}
 
 	violations, err := ev.Evaluate(ctx, ctx.Body)
 	if err != nil {
-		if e.config.NetworkPolicyConfig != "" {
-			log.Errorf(ctx, err, "OPAPolicyChecker: policy evaluation failed for networkID=%q: %v", selectedNetworkID, err)
-		} else {
-			log.Errorf(ctx, err, "OPAPolicyChecker: policy evaluation failed: %v", err)
-		}
+		log.Errorf(ctx, err, "OPAPolicyChecker: policy evaluation failed for networkID=%q: %v", selectedNetworkID, err)
 		return model.NewBadReqErr(fmt.Errorf("policy evaluation error: %w", err))
 	}
 
@@ -562,11 +518,7 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	}
 
 	msg := fmt.Sprintf("policy violation(s): %s", strings.Join(violations, "; "))
-	if e.config.NetworkPolicyConfig != "" {
-		log.Warnf(ctx, "OPAPolicyChecker: networkID=%q %s", selectedNetworkID, msg)
-	} else {
-		log.Warnf(ctx, "OPAPolicyChecker: %s", msg)
-	}
+	log.Warnf(ctx, "OPAPolicyChecker: networkID=%q %s", selectedNetworkID, msg)
 	return model.NewBadReqErr(fmt.Errorf("%s", msg))
 }
 

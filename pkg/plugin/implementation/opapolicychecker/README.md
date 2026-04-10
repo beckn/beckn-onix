@@ -19,10 +19,8 @@ Validates incoming Beckn messages against network-defined business rules using [
 checkPolicy:
   id: opapolicychecker
   config:
-    type: file
-    location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
-    query: "data.policy.result"
-    actions: "confirm,search"
+    networkPolicyConfig: ./config/opa-network-policies.yaml
+    refreshIntervalSeconds: "300"
 steps:
   - checkPolicy
   - addRoute
@@ -32,20 +30,15 @@ steps:
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `type` | string | Yes | - | Policy source type: `url`, `file`, `dir`, or `bundle` |
-| `location` | string | Yes | - | Path or URL to the policy source (`.tar.gz` for bundles) |
-| `query` | string | Yes | - | Rego query path to evaluate (e.g., `data.policy.result`) |
-| `actions` | string | No | *(all)* | Comma-separated beckn actions to enforce |
+| `networkPolicyConfig` | string | Yes | - | Path to a YAML file containing `networkPolicies` keyed by `network_id` |
 | `enabled` | string | No | `"true"` | Enable or disable the plugin |
 | `debugLogging` | string | No | `"false"` | Enable verbose OPA evaluation logging |
-| `fetchTimeoutSeconds` | string | No | `"30"` | Timeout in seconds for fetching remote `.rego` files or bundles |
-| `refreshIntervalSeconds` | string | No | - | Reload policies every N seconds (0 or omit = disabled) |
-| `networkPolicyConfig` | string | No | - | Path to a YAML file containing `networkPolicies` keyed by `network_id` |
+| `refreshIntervalSeconds` | string | No | - | Reload all configured policies every N seconds (0 or omit = disabled) |
 | *any other key* | string | No | - | Forwarded to Rego as `data.config.<key>` |
 
 ### Network Policy Config File
 
-When `networkPolicyConfig` is provided, the plugin loads all configured policies at startup and selects the correct one at request time using `context.networkId` or `context.network_id`.
+The plugin loads all configured policies at startup and selects the correct one at request time using `context.networkId` or `context.network_id`.
 
 Top-level plugin config:
 
@@ -84,12 +77,21 @@ Behavior in network mode:
 - request-time selection uses exact match on `context.networkId` and falls back to `context.network_id`
 - if no network-specific policy matches, `default` is used when configured
 - if neither a network-specific policy nor `default` matches, OPA evaluation is skipped
+- if you want one global policy only, define just `default`
 
+Each entry under `networkPolicies` supports:
 
+- `type`: `url`, `file`, `dir`, or `bundle`
+- `location`
+- `query`
+- optional `actions`
+- optional `enabled`
+- optional `debugLogging`
+- optional `fetchTimeoutSeconds`
 
 ## Policy Hot-Reload
 
-When `refreshIntervalSeconds` is set, a background goroutine periodically re-fetches and recompiles the policy source without restarting the adapter:
+When `refreshIntervalSeconds` is set, a background goroutine periodically re-fetches and recompiles all configured policy sources without restarting the adapter:
 
 - **Atomic swap**: the old evaluator stays fully active until the new one is compiled — no gap in enforcement
 - **Non-fatal errors**: if the reload fails (e.g., file temporarily unreachable or parse error), the error is logged and the previous policy stays active
@@ -97,9 +99,7 @@ When `refreshIntervalSeconds` is set, a background goroutine periodically re-fet
 
 ```yaml
 config:
-  type: file
-  location: ./policies/compliance.rego
-  query: "data.policy.result"
+  networkPolicyConfig: ./config/opa-network-policies.yaml
   refreshIntervalSeconds: "300"  # reload every 5 minutes
 ```
 
@@ -107,21 +107,22 @@ config:
 
 ### Initialization (Load Time)
 
-1. **Load Policy Source**: Fetches `.rego` files from the configured `location` — URL, file, directory, or OPA bundle
-2. **Compile Policies**: Compiles all Rego modules into a single optimized `PreparedEvalQuery`
-3. **Set Query**: Prepares the OPA query from the configured `query` path (e.g., `data.policy.result`)
+1. **Load Policy Config**: Reads the structured `networkPolicyConfig` file
+2. **Load Policy Sources**: Fetches `.rego` files or bundles for each configured network policy entry
+3. **Compile Policies**: Compiles one evaluator per configured `network_id` plus optional `default`
 
 ### Request Evaluation (Runtime)
 
-1. **Check Action Match**: If `actions` is configured, skip evaluation for non-matching actions. The plugin assumes standard adapter routes look like `/{participant}/{direction}/{action}` such as `/bpp/caller/confirm`; non-standard paths fall back to `context.action` from the JSON body.
-2. **Evaluate OPA Query**: Run the prepared query with the full beckn message as `input`
-3. **Handle Result**:
+1. **Select Policy**: Match `context.networkId` exactly, fall back to `context.network_id`, then `default`
+2. **Check Action Match**: If `actions` is configured on the selected policy, skip evaluation for non-matching actions. The plugin assumes standard adapter routes look like `/{participant}/{direction}/{action}` such as `/bpp/caller/confirm`; non-standard paths fall back to `context.action` from the JSON body.
+3. **Evaluate OPA Query**: Run the selected policy with the full beckn message as `input`
+4. **Handle Result**:
    - If the query returns no result (undefined) → **violation** (fail-closed)
    - If result is `{"valid": bool, "violations": []string}` → use structured format
    - If result is a `set` or `[]string` → each string is a violation
    - If result is a `bool` → `false` = violation
    - If result is a `string` → non-empty = violation
-4. **Reject or Allow**: If violations are found, NACK the request with all violation messages
+5. **Reject or Allow**: If violations are found, NACK the request with all violation messages
 
 ### Supported Query Output Formats
 
@@ -135,49 +136,21 @@ config:
 
 ## Example Usage
 
-### Local File
+### Default-only Policy
 
 ```yaml
 checkPolicy:
   id: opapolicychecker
   config:
+    networkPolicyConfig: ./config/opa-network-policies.yaml
+```
+
+```yaml
+networkPolicies:
+  default:
     type: file
     location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
     query: "data.policy.result"
-```
-
-### Remote URL
-
-```yaml
-checkPolicy:
-  id: opapolicychecker
-  config:
-    type: url
-    location: https://policies.example.com/compliance.rego
-    query: "data.policy.result"
-    fetchTimeoutSeconds: "10"
-```
-
-### Local Directory (multiple `.rego` files)
-
-```yaml
-checkPolicy:
-  id: opapolicychecker
-  config:
-    type: dir
-    location: ./policies
-    query: "data.policy.result"
-```
-
-### OPA Bundle (`.tar.gz`)
-
-```yaml
-checkPolicy:
-  id: opapolicychecker
-  config:
-    type: bundle
-    location: https://nfo.example.org/policies/bundle.tar.gz
-    query: "data.retail.validation.result"
 ```
 
 ## Writing Policies

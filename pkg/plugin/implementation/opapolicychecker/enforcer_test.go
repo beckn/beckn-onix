@@ -47,34 +47,42 @@ func writeNetworkPolicyConfig(t *testing.T, content string) string {
 	return path
 }
 
+func writeDefaultOnlyNetworkPolicyConfig(t *testing.T, entry string) string {
+	t.Helper()
+	return writeNetworkPolicyConfig(t, "networkPolicies:\n  default:\n"+indentYAML(entry, "    "))
+}
+
+func indentYAML(s, prefix string) string {
+	lines := strings.Split(strings.TrimSuffix(s, "\n"), "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
 // --- Config Tests ---
 
-func TestParseConfig_RequiresPolicySource(t *testing.T) {
+func TestParseConfig_RequiresNetworkPolicyConfig(t *testing.T) {
 	_, err := ParseConfig(map[string]string{})
 	if err == nil {
-		t.Fatal("expected error when no policy source given")
+		t.Fatal("expected error when networkPolicyConfig is missing")
 	}
 }
 
 func TestParseConfig_Defaults(t *testing.T) {
 	cfg, err := ParseConfig(map[string]string{
-		"type":     "dir",
-		"location": "/tmp",
-		"query":    "data.policy.violations",
+		"networkPolicyConfig": "/tmp/network-policies.yaml",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(cfg.Actions) != 0 {
-		t.Errorf("expected empty default actions (all enabled), got %v", cfg.Actions)
 	}
 	if !cfg.Enabled {
 		t.Error("expected enabled=true by default")
 	}
 }
 
-func TestParseConfig_RequiresQuery(t *testing.T) {
-	_, err := ParseConfig(map[string]string{
+func TestParsePolicyConfig_RequiresQuery(t *testing.T) {
+	_, err := parsePolicyConfig(map[string]string{
 		"type":     "dir",
 		"location": "/tmp",
 	})
@@ -103,8 +111,8 @@ func TestParseConfig_NetworkPolicyConfig(t *testing.T) {
 	}
 }
 
-func TestParseConfig_RuntimeConfigForwarding(t *testing.T) {
-	cfg, err := ParseConfig(map[string]string{
+func TestParsePolicyConfig_RuntimeConfigForwarding(t *testing.T) {
+	cfg, err := parsePolicyConfig(map[string]string{
 		"type":                 "dir",
 		"location":             "/tmp",
 		"query":                "data.policy.violations",
@@ -122,8 +130,8 @@ func TestParseConfig_RuntimeConfigForwarding(t *testing.T) {
 	}
 }
 
-func TestParseConfig_CustomActions(t *testing.T) {
-	cfg, err := ParseConfig(map[string]string{
+func TestParsePolicyConfig_CustomActions(t *testing.T) {
+	cfg, err := parsePolicyConfig(map[string]string{
 		"type":     "dir",
 		"location": "/tmp",
 		"query":    "data.policy.violations",
@@ -143,8 +151,8 @@ func TestParseConfig_CustomActions(t *testing.T) {
 	}
 }
 
-func TestParseConfig_PolicyPaths(t *testing.T) {
-	cfg, err := ParseConfig(map[string]string{
+func TestParsePolicyConfig_PolicyPaths(t *testing.T) {
+	cfg, err := parsePolicyConfig(map[string]string{
 		"type":     "url",
 		"location": "https://example.com/a.rego, https://example.com/b.rego",
 		"query":    "data.policy.violations",
@@ -590,11 +598,9 @@ violations contains "blocked" if { input.context.action == "confirm"; input.bloc
 `
 	dir := writePolicyDir(t, "test.rego", policy)
 
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.violations\nactions: confirm\n")
 	enforcer, err := New(context.Background(), map[string]string{
-		"type":     "dir",
-		"location": dir,
-		"query":    "data.policy.violations",
-		"actions":  "confirm",
+		"networkPolicyConfig": configPath,
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -615,11 +621,9 @@ violations contains "blocked" if { input.context.action == "confirm" }
 `
 	dir := writePolicyDir(t, "test.rego", policy)
 
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.violations\nactions: confirm\n")
 	enforcer, err := New(context.Background(), map[string]string{
-		"type":     "dir",
-		"location": dir,
-		"query":    "data.policy.violations",
-		"actions":  "confirm",
+		"networkPolicyConfig": configPath,
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -645,11 +649,9 @@ violations contains "blocked" if { true }
 `
 	dir := writePolicyDir(t, "test.rego", policy)
 
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.violations\nactions: confirm\n")
 	enforcer, err := New(context.Background(), map[string]string{
-		"type":     "dir",
-		"location": dir,
-		"query":    "data.policy.violations",
-		"actions":  "confirm",
+		"networkPolicyConfig": configPath,
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -671,11 +673,9 @@ violations contains "blocked" if { true }
 `
 	dir := writePolicyDir(t, "test.rego", policy)
 
+	configPath := writeNetworkPolicyConfig(t, "networkPolicies:\n  default:\n    type: dir\n    location: "+dir+"\n    query: data.policy.violations\n    enabled: false\n")
 	enforcer, err := New(context.Background(), map[string]string{
-		"type":     "dir",
-		"location": dir,
-		"query":    "data.policy.violations",
-		"enabled":  "false",
+		"networkPolicyConfig": configPath,
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -701,11 +701,9 @@ violations contains "blocked" if { input.context.action == "confirm" }
 	}))
 	defer srv.Close()
 
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: url\nlocation: "+srv.URL+"/block_confirm.rego\nquery: data.policy.violations\nactions: confirm\n")
 	enforcer, err := New(context.Background(), map[string]string{
-		"type":     "url",
-		"location": srv.URL + "/block_confirm.rego",
-		"query":    "data.policy.violations",
-		"actions":  "confirm",
+		"networkPolicyConfig": configPath,
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -749,8 +747,8 @@ func TestExtractNetworkID(t *testing.T) {
 
 // --- Config Tests: Bundle Type ---
 
-func TestParseConfig_BundleType(t *testing.T) {
-	cfg, err := ParseConfig(map[string]string{
+func TestParsePolicyConfig_BundleType(t *testing.T) {
+	cfg, err := parsePolicyConfig(map[string]string{
 		"type":     "bundle",
 		"location": "https://example.com/bundle.tar.gz",
 		"query":    "data.retail.validation.result",
@@ -1035,11 +1033,9 @@ violations contains "blocked" if {
 	}))
 	defer srv.Close()
 
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: bundle\nlocation: "+srv.URL+"/policy-bundle.tar.gz\nquery: data.retail.policy.result\nactions: confirm\n")
 	enforcer, err := New(context.Background(), map[string]string{
-		"type":     "bundle",
-		"location": srv.URL + "/policy-bundle.tar.gz",
-		"query":    "data.retail.policy.result",
-		"actions":  "confirm",
+		"networkPolicyConfig": configPath,
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -1065,9 +1061,7 @@ violations contains "blocked" if {
 
 func TestParseConfig_RefreshInterval(t *testing.T) {
 	cfg, err := ParseConfig(map[string]string{
-		"type":                   "dir",
-		"location":               "/tmp",
-		"query":                  "data.policy.violations",
+		"networkPolicyConfig":    "/tmp/network-policies.yaml",
 		"refreshIntervalSeconds": "300",
 	})
 	if err != nil {
@@ -1080,9 +1074,7 @@ func TestParseConfig_RefreshInterval(t *testing.T) {
 
 func TestParseConfig_RefreshInterval_Zero(t *testing.T) {
 	cfg, err := ParseConfig(map[string]string{
-		"type":     "dir",
-		"location": "/tmp",
-		"query":    "data.policy.violations",
+		"networkPolicyConfig": "/tmp/network-policies.yaml",
 		// no refreshIntervalSeconds → disabled
 	})
 	if err != nil {
@@ -1095,9 +1087,7 @@ func TestParseConfig_RefreshInterval_Zero(t *testing.T) {
 
 func TestParseConfig_RefreshInterval_Invalid(t *testing.T) {
 	_, err := ParseConfig(map[string]string{
-		"type":                   "dir",
-		"location":               "/tmp",
-		"query":                  "data.policy.violations",
+		"networkPolicyConfig":    "/tmp/network-policies.yaml",
 		"refreshIntervalSeconds": "not-a-number",
 	})
 	if err == nil {
@@ -1124,10 +1114,9 @@ result := {"valid": false, "violations": ["blocked by initial policy"]}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.result\n")
 	enforcer, err := New(ctx, map[string]string{
-		"type":                   "dir",
-		"location":               dir,
-		"query":                  "data.policy.result",
+		"networkPolicyConfig":    configPath,
 		"refreshIntervalSeconds": "1", // 1s refresh for test speed
 	})
 	if err != nil {
@@ -1293,8 +1282,8 @@ networkPolicies:
 	}
 }
 
-func TestParseConfig_FetchTimeout(t *testing.T) {
-	cfg, err := ParseConfig(map[string]string{
+func TestParsePolicyConfig_FetchTimeout(t *testing.T) {
+	cfg, err := parsePolicyConfig(map[string]string{
 		"type":                "url",
 		"location":            "https://example.com/policy.rego",
 		"query":               "data.policy.violations",
@@ -1333,15 +1322,13 @@ func TestExtractAction_NonStandardURLFallsBackToBody(t *testing.T) {
 
 func TestEnforcer_DisabledSkipsEvaluatorInitialization(t *testing.T) {
 	enforcer, err := New(context.Background(), map[string]string{
-		"type":     "url",
-		"location": "https://127.0.0.1:1/unreachable.rego",
-		"query":    "data.policy.violations",
-		"enabled":  "false",
+		"networkPolicyConfig": "/tmp/any.yaml",
+		"enabled":             "false",
 	})
 	if err != nil {
 		t.Fatalf("expected disabled enforcer to skip evaluator initialization, got %v", err)
 	}
-	if enforcer.getEvaluator() != nil {
-		t.Fatal("expected disabled enforcer to leave evaluator uninitialized")
+	if len(enforcer.policies) != 0 || enforcer.defaultPolicy != nil {
+		t.Fatal("expected disabled enforcer to skip policy initialization")
 	}
 }
