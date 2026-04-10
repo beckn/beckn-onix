@@ -131,6 +131,12 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
+# Benchmark runtime output (raw go test output, logs, CSVs)
+benchmarks/results/
+
+# Utility scripts not part of the project
+create_benchmark_issues.sh
+
 # Ignore compiled shared object files
 *.so
 
