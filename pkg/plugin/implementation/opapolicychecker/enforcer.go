@@ -336,7 +336,7 @@ func loadNetworkPoliciesForEnforcer(config *Config) (map[string]*loadedPolicy, *
 	return policies, defaultPolicy, nil
 }
 
-func logLoadedPolicy(ctx context.Context, prefix string, policy *loadedPolicy) {
+func logLoadedPolicy(ctx context.Context, networkScoped bool, policy *loadedPolicy) {
 	if policy == nil || policy.config == nil {
 		return
 	}
@@ -346,16 +346,25 @@ func logLoadedPolicy(ctx context.Context, prefix string, policy *loadedPolicy) {
 		moduleNames = policy.evaluator.ModuleNames()
 	}
 
-	log.Infof(ctx, "OPAPolicyChecker: %s policy=%q type=%s location=%s query=%s actions=%v enabled=%t isBundle=%t fetchTimeout=%s modules=%v",
-		prefix,
-		policy.name,
+	if networkScoped {
+		log.Infof(ctx, "OPAPolicyChecker: loaded network policy networkID=%q type=%s location=%s query=%s actions=%v enabled=%t modules=%v",
+			policy.name,
+			policy.config.Type,
+			policy.config.Location,
+			policy.config.Query,
+			policy.config.Actions,
+			policy.config.Enabled,
+			moduleNames,
+		)
+		return
+	}
+
+	log.Infof(ctx, "OPAPolicyChecker: loaded default policy type=%s location=%s query=%s actions=%v enabled=%t modules=%v",
 		policy.config.Type,
 		policy.config.Location,
 		policy.config.Query,
 		policy.config.Actions,
 		policy.config.Enabled,
-		policy.config.IsBundle,
-		policy.config.FetchTimeout,
 		moduleNames,
 	)
 }
@@ -385,10 +394,10 @@ func New(ctx context.Context, cfg map[string]string) (*PolicyEnforcer, error) {
 		log.Infof(ctx, "OPAPolicyChecker initialized in network policy mode (policyConfig=%s, policies=%d, hasDefault=%t, refreshInterval=%s)",
 			config.NetworkPolicyConfig, len(enforcer.policies), enforcer.defaultPolicy != nil, config.RefreshInterval)
 		for _, policy := range enforcer.policies {
-			logLoadedPolicy(ctx, "loaded network", policy)
+			logLoadedPolicy(ctx, true, policy)
 		}
 		if enforcer.defaultPolicy != nil {
-			logLoadedPolicy(ctx, "loaded default", enforcer.defaultPolicy)
+			logLoadedPolicy(ctx, false, enforcer.defaultPolicy)
 		}
 	} else {
 		evaluator, err := NewEvaluator(config.PolicyPaths, config.Query, config.RuntimeConfig, config.IsBundle, config.FetchTimeout)
