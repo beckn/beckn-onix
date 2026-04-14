@@ -1,0 +1,5 @@
+networkPolicies:
+  default:
+    type: file
+    location: /app/pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+    query: data.policy.result

@@ -3,6 +3,13 @@ package opapolicychecker
 import (
 	"bytes"
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -93,9 +100,9 @@ func TestParsePolicyConfig_RequiresQuery(t *testing.T) {
 
 func TestParseConfig_NetworkPolicyConfig(t *testing.T) {
 	cfg, err := ParseConfig(map[string]string{
-		"networkPolicyConfig":    "/tmp/network-policies.yaml",
-		"refreshIntervalSeconds": "300",
-		"sharedKey":              "sharedValue",
+		"networkPolicyConfig": "/tmp/network-policies.yaml",
+		"refreshInterval":     "5m",
+		"sharedKey":           "sharedValue",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -103,8 +110,8 @@ func TestParseConfig_NetworkPolicyConfig(t *testing.T) {
 	if cfg.NetworkPolicyConfig != "/tmp/network-policies.yaml" {
 		t.Fatalf("expected networkPolicyConfig to be set, got %q", cfg.NetworkPolicyConfig)
 	}
-	if cfg.RefreshInterval != 300*time.Second {
-		t.Fatalf("expected refresh interval 300s, got %v", cfg.RefreshInterval)
+	if cfg.RefreshInterval != 5*time.Minute {
+		t.Fatalf("expected refresh interval 5m, got %v", cfg.RefreshInterval)
 	}
 	if cfg.RuntimeConfig["sharedKey"] != "sharedValue" {
 		t.Fatalf("expected shared runtime config to be preserved, got %q", cfg.RuntimeConfig["sharedKey"])
@@ -153,15 +160,15 @@ func TestParsePolicyConfig_CustomActions(t *testing.T) {
 
 func TestParsePolicyConfig_PolicyPaths(t *testing.T) {
 	cfg, err := parsePolicyConfig(map[string]string{
-		"type":     "url",
-		"location": "https://example.com/a.rego, https://example.com/b.rego",
+		"type":     "file",
+		"location": "https://example.com/a.rego",
 		"query":    "data.policy.violations",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cfg.PolicyPaths) != 2 {
-		t.Fatalf("expected 2 paths, got %d: %v", len(cfg.PolicyPaths), cfg.PolicyPaths)
+	if len(cfg.PolicyPaths) != 1 {
+		t.Fatalf("expected 1 path, got %d: %v", len(cfg.PolicyPaths), cfg.PolicyPaths)
 	}
 	if cfg.PolicyPaths[0] != "https://example.com/a.rego" {
 		t.Errorf("path[0] = %q", cfg.PolicyPaths[0])
@@ -701,7 +708,7 @@ violations contains "blocked" if { input.context.action == "confirm" }
 	}))
 	defer srv.Close()
 
-	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: url\nlocation: "+srv.URL+"/block_confirm.rego\nquery: data.policy.violations\nactions: confirm\n")
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: file\nlocation: "+srv.URL+"/block_confirm.rego\nquery: data.policy.violations\nactions: confirm\n")
 	enforcer, err := New(context.Background(), map[string]string{
 		"networkPolicyConfig": configPath,
 	})
@@ -764,6 +771,95 @@ func TestParsePolicyConfig_BundleType(t *testing.T) {
 	}
 	if cfg.Query != "data.retail.validation.result" {
 		t.Errorf("expected query 'data.retail.validation.result', got %q", cfg.Query)
+	}
+}
+
+func TestParsePolicyConfig_VerificationForDirRejected(t *testing.T) {
+	_, err := parsePolicyConfig(map[string]string{
+		"type":                            "dir",
+		"location":                        "/tmp/policies",
+		"query":                           "data.policy.result",
+		"verification.enabled":            "true",
+		"verification.publicKeyLookupUrl": "/tmp/public.pem",
+		"verification.signatureLocation":  "/tmp/policies.sig",
+	})
+	if err == nil {
+		t.Fatal("expected error when verification is enabled for dir")
+	}
+}
+
+func TestParsePolicyConfig_VerificationForBundleRejectsSignatureLocation(t *testing.T) {
+	_, err := parsePolicyConfig(map[string]string{
+		"type":                            "bundle",
+		"location":                        "/tmp/policies.tar.gz",
+		"query":                           "data.policy.result",
+		"verification.enabled":            "true",
+		"verification.publicKeyLookupUrl": "/tmp/public.pem",
+		"verification.signatureLocation":  "/tmp/policies.sig",
+	})
+	if err == nil {
+		t.Fatal("expected error when signatureLocation is set for bundle verification")
+	}
+}
+
+func TestParsePolicyConfig_URLTypeRejected(t *testing.T) {
+	_, err := parsePolicyConfig(map[string]string{
+		"type":     "url",
+		"location": "https://example.com/policy.rego",
+		"query":    "data.policy.result",
+	})
+	if err == nil {
+		t.Fatal("expected error when type=url is used")
+	}
+}
+
+func TestLoadNetworkPolicies_WithNestedVerificationBlock(t *testing.T) {
+	configPath := writeNetworkPolicyConfig(t, `
+networkPolicies:
+  default:
+    type: file
+    location: ./policy.rego
+    query: data.policy.result
+    verification:
+      enabled: true
+      publicKeyLookupUrl: https://api.dedi.global/dedi/lookup/ns/public_key_test/policy-key
+      signatureLocation: ./policy.rego.sig
+`)
+
+	policies, err := loadNetworkPolicies(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg := policies["default"]
+	if cfg["verification.enabled"] != "true" {
+		t.Fatalf("expected verification.enabled=true, got %q", cfg["verification.enabled"])
+	}
+	if cfg["verification.publicKeyLookupUrl"] == "" {
+		t.Fatal("expected verification.publicKeyLookupUrl to be flattened")
+	}
+	if cfg["verification.signatureLocation"] != "./policy.rego.sig" {
+		t.Fatalf("unexpected verification.signatureLocation %q", cfg["verification.signatureLocation"])
+	}
+}
+
+func TestParseVerificationPublicKeyResponse_DeDiBase64Key(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatalf("failed to marshal public key: %v", err)
+	}
+
+	body := `{"data":{"details":{"keyType":"RSA","keyFormat":"base64","publicKey":"` + base64.StdEncoding.EncodeToString(der) + `"}}}`
+	key, err := parseVerificationPublicKeyResponse([]byte(body))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := key.(*rsa.PublicKey); !ok {
+		t.Fatalf("expected *rsa.PublicKey, got %T", key)
 	}
 }
 
@@ -944,6 +1040,86 @@ func buildTestBundle(t *testing.T, modules map[string]string) []byte {
 	return buf.Bytes()
 }
 
+func buildSignedTestBundle(t *testing.T, modules map[string]string) ([]byte, string) {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+
+	privatePEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: mustMarshalPKCS8PrivateKey(t, privateKey),
+	})
+	publicPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: mustMarshalPKIXPublicKey(t, &privateKey.PublicKey),
+	})
+
+	b := bundle.Bundle{
+		Modules: make([]bundle.ModuleFile, 0, len(modules)),
+		Data:    make(map[string]interface{}),
+	}
+	for path, content := range modules {
+		b.Modules = append(b.Modules, bundle.ModuleFile{
+			URL:  path,
+			Path: path,
+			Raw:  []byte(content),
+		})
+	}
+
+	if err := b.GenerateSignature(bundle.NewSigningConfig(string(privatePEM), "RS256", ""), defaultBundleVerificationKeyID, false); err != nil {
+		t.Fatalf("failed to sign test bundle: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := bundle.Write(&buf, b); err != nil {
+		t.Fatalf("failed to write signed test bundle: %v", err)
+	}
+
+	return buf.Bytes(), string(publicPEM)
+}
+
+func mustMarshalPKCS8PrivateKey(t *testing.T, key *rsa.PrivateKey) []byte {
+	t.Helper()
+	encoded, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("failed to marshal private key: %v", err)
+	}
+	return encoded
+}
+
+func mustMarshalPKIXPublicKey(t *testing.T, key *rsa.PublicKey) []byte {
+	t.Helper()
+	encoded, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		t.Fatalf("failed to marshal public key: %v", err)
+	}
+	return encoded
+}
+
+func signArtifactRSA(t *testing.T, content []byte) ([]byte, string) {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+
+	sum := sha256.Sum256(content)
+	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, sum[:])
+	if err != nil {
+		t.Fatalf("failed to sign artifact: %v", err)
+	}
+
+	publicPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: mustMarshalPKIXPublicKey(t, &privateKey.PublicKey),
+	})
+	return signature, string(publicPEM)
+}
+
 func TestEvaluator_BundleFromURL(t *testing.T) {
 	policy := `
 package retail.validation
@@ -981,7 +1157,6 @@ violations contains msg if {
 		t.Fatalf("NewEvaluator with bundle failed: %v", err)
 	}
 
-	// Non-compliant
 	body := `{"message":{"order":{"items":[{"id":"x","quantity":{"count":0}}]}}}`
 	violations, err := eval.Evaluate(context.Background(), []byte(body))
 	if err != nil {
@@ -991,7 +1166,6 @@ violations contains msg if {
 		t.Fatalf("expected 1 violation, got %d: %v", len(violations), violations)
 	}
 
-	// Compliant
 	body = `{"message":{"order":{"items":[{"id":"x","quantity":{"count":5}}]}}}`
 	violations, err = eval.Evaluate(context.Background(), []byte(body))
 	if err != nil {
@@ -999,6 +1173,139 @@ violations contains msg if {
 	}
 	if len(violations) != 0 {
 		t.Errorf("expected 0 violations, got %v", violations)
+	}
+}
+
+func TestEvaluator_BundleFromLocalFile(t *testing.T) {
+	policy := `
+package retail.validation
+
+import rego.v1
+
+default result := {
+  "valid": true,
+  "violations": []
+}
+`
+	bundleData := buildTestBundle(t, map[string]string{
+		"retail/validation.rego": policy,
+	})
+
+	dir := t.TempDir()
+	bundlePath := filepath.Join(dir, "policy-bundle.tar.gz")
+	if err := os.WriteFile(bundlePath, bundleData, 0644); err != nil {
+		t.Fatalf("failed to write bundle: %v", err)
+	}
+
+	eval, err := NewEvaluator([]string{bundlePath}, "data.retail.validation.result", nil, true, 0)
+	if err != nil {
+		t.Fatalf("NewEvaluator with local bundle failed: %v", err)
+	}
+
+	violations, err := eval.Evaluate(context.Background(), []byte(`{"message":{"order":{"items":[]}}}`))
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %v", violations)
+	}
+}
+
+func TestEvaluator_BundleVerificationFromLocalFile(t *testing.T) {
+	policy := `
+package retail.validation
+
+import rego.v1
+
+default result := {
+  "valid": true,
+  "violations": []
+}
+`
+	bundleData, publicPEM := buildSignedTestBundle(t, map[string]string{
+		"retail/validation.rego": policy,
+	})
+
+	dir := t.TempDir()
+	bundlePath := filepath.Join(dir, "signed-bundle.tar.gz")
+	publicKeyPath := filepath.Join(dir, "bundle-public.pem")
+	if err := os.WriteFile(bundlePath, bundleData, 0644); err != nil {
+		t.Fatalf("failed to write signed bundle: %v", err)
+	}
+	if err := os.WriteFile(publicKeyPath, []byte(publicPEM), 0644); err != nil {
+		t.Fatalf("failed to write public key: %v", err)
+	}
+
+	eval, err := NewEvaluator(
+		[]string{bundlePath},
+		"data.retail.validation.result",
+		nil,
+		true,
+		0,
+		&ArtifactVerificationConfig{
+			Enabled:            true,
+			PublicKeyLookupURL: publicKeyPath,
+			Algorithm:          "RS256",
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewEvaluator with signed local bundle failed: %v", err)
+	}
+
+	violations, err := eval.Evaluate(context.Background(), []byte(`{"message":{"order":{"items":[]}}}`))
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %v", violations)
+	}
+}
+
+func TestEvaluator_FileVerificationFromLocalFile(t *testing.T) {
+	policy := []byte(`
+package policy
+import rego.v1
+violations := set()
+`)
+
+	signature, publicPEM := signArtifactRSA(t, policy)
+
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.rego")
+	signaturePath := filepath.Join(dir, "policy.rego.sig")
+	publicKeyPath := filepath.Join(dir, "public.pem")
+	if err := os.WriteFile(policyPath, policy, 0644); err != nil {
+		t.Fatalf("failed to write policy: %v", err)
+	}
+	if err := os.WriteFile(signaturePath, signature, 0644); err != nil {
+		t.Fatalf("failed to write signature: %v", err)
+	}
+	if err := os.WriteFile(publicKeyPath, []byte(publicPEM), 0644); err != nil {
+		t.Fatalf("failed to write public key: %v", err)
+	}
+
+	eval, err := NewEvaluator(
+		[]string{policyPath},
+		"data.policy.violations",
+		nil,
+		false,
+		0,
+		&ArtifactVerificationConfig{
+			Enabled:            true,
+			PublicKeyLookupURL: publicKeyPath,
+			SignatureLocation:  signaturePath,
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewEvaluator with signed local file failed: %v", err)
+	}
+
+	violations, err := eval.Evaluate(context.Background(), []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %v", violations)
 	}
 }
 
@@ -1061,21 +1368,21 @@ violations contains "blocked" if {
 
 func TestParseConfig_RefreshInterval(t *testing.T) {
 	cfg, err := ParseConfig(map[string]string{
-		"networkPolicyConfig":    "/tmp/network-policies.yaml",
-		"refreshIntervalSeconds": "300",
+		"networkPolicyConfig": "/tmp/network-policies.yaml",
+		"refreshInterval":     "20m",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.RefreshInterval != 300*time.Second {
-		t.Errorf("expected 300s refresh interval, got %v", cfg.RefreshInterval)
+	if cfg.RefreshInterval != 20*time.Minute {
+		t.Errorf("expected 20m refresh interval, got %v", cfg.RefreshInterval)
 	}
 }
 
 func TestParseConfig_RefreshInterval_Zero(t *testing.T) {
 	cfg, err := ParseConfig(map[string]string{
 		"networkPolicyConfig": "/tmp/network-policies.yaml",
-		// no refreshIntervalSeconds → disabled
+		// no refreshInterval -> disabled
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1087,11 +1394,11 @@ func TestParseConfig_RefreshInterval_Zero(t *testing.T) {
 
 func TestParseConfig_RefreshInterval_Invalid(t *testing.T) {
 	_, err := ParseConfig(map[string]string{
-		"networkPolicyConfig":    "/tmp/network-policies.yaml",
-		"refreshIntervalSeconds": "not-a-number",
+		"networkPolicyConfig": "/tmp/network-policies.yaml",
+		"refreshInterval":     "not-a-duration",
 	})
 	if err == nil {
-		t.Fatal("expected error for invalid refreshIntervalSeconds")
+		t.Fatal("expected error for invalid refreshInterval")
 	}
 }
 
@@ -1116,8 +1423,8 @@ result := {"valid": false, "violations": ["blocked by initial policy"]}
 
 	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.result\n")
 	enforcer, err := New(ctx, map[string]string{
-		"networkPolicyConfig":    configPath,
-		"refreshIntervalSeconds": "1", // 1s refresh for test speed
+		"networkPolicyConfig": configPath,
+		"refreshInterval":     "1s",
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -1284,7 +1591,7 @@ networkPolicies:
 
 func TestParsePolicyConfig_FetchTimeout(t *testing.T) {
 	cfg, err := parsePolicyConfig(map[string]string{
-		"type":                "url",
+		"type":                "file",
 		"location":            "https://example.com/policy.rego",
 		"query":               "data.policy.violations",
 		"fetchTimeoutSeconds": "7",

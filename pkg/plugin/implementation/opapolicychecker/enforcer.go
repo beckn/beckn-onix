@@ -34,25 +34,29 @@ type PolicyConfig struct {
 	DebugLogging  bool
 	FetchTimeout  time.Duration
 	IsBundle      bool
+	Verification  *ArtifactVerificationConfig
 	RuntimeConfig map[string]string
 }
 
 var knownKeys = map[string]bool{
-	"networkPolicyConfig":    true,
-	"enabled":                true,
-	"debugLogging":           true,
-	"refreshIntervalSeconds": true,
+	"networkPolicyConfig": true,
+	"enabled":             true,
+	"debugLogging":        true,
+	"refreshInterval":     true,
 }
 
 var policyEntryKnownKeys = map[string]bool{
-	"type":                   true,
-	"location":               true,
-	"query":                  true,
-	"actions":                true,
-	"enabled":                true,
-	"debugLogging":           true,
-	"fetchTimeoutSeconds":    true,
-	"refreshIntervalSeconds": true,
+	"type":                            true,
+	"location":                        true,
+	"query":                           true,
+	"actions":                         true,
+	"enabled":                         true,
+	"debugLogging":                    true,
+	"fetchTimeoutSeconds":             true,
+	"verification.enabled":            true,
+	"verification.publicKeyLookupUrl": true,
+	"verification.signatureLocation":  true,
+	"verification.algorithm":          true,
 }
 
 func DefaultConfig() *Config {
@@ -88,12 +92,12 @@ func ParseConfig(cfg map[string]string) (*Config, error) {
 		config.DebugLogging = debug == "true" || debug == "1"
 	}
 
-	if ris, ok := cfg["refreshIntervalSeconds"]; ok && ris != "" {
-		secs, err := strconv.Atoi(ris)
-		if err != nil || secs < 0 {
-			return nil, fmt.Errorf("'refreshIntervalSeconds' must be a non-negative integer, got %q", ris)
+	if interval, ok := cfg["refreshInterval"]; ok && interval != "" {
+		dur, err := time.ParseDuration(interval)
+		if err != nil || dur < 0 {
+			return nil, fmt.Errorf("'refreshInterval' must be a valid non-negative duration, got %q", interval)
 		}
-		config.RefreshInterval = time.Duration(secs) * time.Second
+		config.RefreshInterval = dur
 	}
 
 	for k, v := range cfg {
@@ -110,7 +114,7 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 
 	typ, hasType := cfg["type"]
 	if !hasType || typ == "" {
-		return nil, fmt.Errorf("'type' is required (url, file, dir, or bundle)")
+		return nil, fmt.Errorf("'type' is required (file, dir, or bundle)")
 	}
 	config.Type = typ
 
@@ -121,13 +125,6 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 	config.Location = location
 
 	switch typ {
-	case "url":
-		for _, u := range strings.Split(location, ",") {
-			u = strings.TrimSpace(u)
-			if u != "" {
-				config.PolicyPaths = append(config.PolicyPaths, u)
-			}
-		}
 	case "file":
 		config.PolicyPaths = append(config.PolicyPaths, location)
 	case "dir":
@@ -136,7 +133,7 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 		config.IsBundle = true
 		config.PolicyPaths = append(config.PolicyPaths, location)
 	default:
-		return nil, fmt.Errorf("unsupported type %q (expected: url, file, dir, or bundle)", typ)
+		return nil, fmt.Errorf("unsupported type %q (expected: file, dir, or bundle)", typ)
 	}
 
 	query, hasQuery := cfg["query"]
@@ -170,6 +167,41 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 			return nil, fmt.Errorf("'fetchTimeoutSeconds' must be a positive integer, got %q", fts)
 		}
 		config.FetchTimeout = time.Duration(secs) * time.Second
+	}
+
+	if verificationEnabled, ok := cfg["verification.enabled"]; ok && verificationEnabled != "" {
+		enabled, err := strconv.ParseBool(verificationEnabled)
+		if err != nil {
+			return nil, fmt.Errorf("'verification.enabled' must be a boolean, got %q", verificationEnabled)
+		}
+		if enabled {
+			config.Verification = &ArtifactVerificationConfig{
+				Enabled:            true,
+				PublicKeyLookupURL: strings.TrimSpace(cfg["verification.publicKeyLookupUrl"]),
+				SignatureLocation:  strings.TrimSpace(cfg["verification.signatureLocation"]),
+				Algorithm:          strings.TrimSpace(cfg["verification.algorithm"]),
+			}
+			if config.Verification.Algorithm == "" {
+				config.Verification.Algorithm = defaultBundleVerificationAlgorithm
+			}
+
+			if config.Verification.PublicKeyLookupURL == "" {
+				return nil, fmt.Errorf("'verification.publicKeyLookupUrl' is required when verification.enabled=true")
+			}
+
+			switch config.Type {
+			case "bundle":
+				if config.Verification.SignatureLocation != "" {
+					return nil, fmt.Errorf("'verification.signatureLocation' must not be set for type=bundle; bundle signatures are read from inside the bundle")
+				}
+			case "dir":
+				return nil, fmt.Errorf("verification is not supported for type=dir; package the directory as a signed bundle instead")
+			case "file":
+				if config.Verification.SignatureLocation == "" {
+					return nil, fmt.Errorf("'verification.signatureLocation' is required when verification.enabled=true for type=%s", config.Type)
+				}
+			}
+		}
 	}
 
 	for k, v := range cfg {
@@ -253,6 +285,29 @@ func loadNetworkPolicies(configPath string) (map[string]map[string]string, error
 				cfg[k] = strconv.FormatInt(typed, 10)
 			case float64:
 				cfg[k] = strconv.FormatFloat(typed, 'f', -1, 64)
+			case map[string]interface{}:
+				if k != "verification" {
+					return nil, fmt.Errorf("network policy %q field %q must be a scalar value", policyName, k)
+				}
+				for subKey, subValue := range typed {
+					flatKey := "verification." + subKey
+					switch subTyped := subValue.(type) {
+					case string:
+						cfg[flatKey] = subTyped
+					case bool:
+						cfg[flatKey] = strconv.FormatBool(subTyped)
+					case int:
+						cfg[flatKey] = strconv.Itoa(subTyped)
+					case int64:
+						cfg[flatKey] = strconv.FormatInt(subTyped, 10)
+					case float64:
+						cfg[flatKey] = strconv.FormatFloat(subTyped, 'f', -1, 64)
+					case nil:
+						return nil, fmt.Errorf("network policy %q field %q cannot be null", policyName, flatKey)
+					default:
+						return nil, fmt.Errorf("network policy %q field %q must be a scalar value", policyName, flatKey)
+					}
+				}
 			case nil:
 				return nil, fmt.Errorf("network policy %q field %q cannot be null", policyName, k)
 			default:
@@ -298,6 +353,7 @@ func loadPolicy(policyName string, config *PolicyConfig, sharedRuntimeConfig map
 		policyConfig.RuntimeConfig,
 		policyConfig.IsBundle,
 		policyConfig.FetchTimeout,
+		policyConfig.Verification,
 	)
 	if err != nil {
 		return nil, err

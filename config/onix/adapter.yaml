@@ -51,14 +51,8 @@ modules:
         checkPolicy:
           id: opapolicychecker
           config:
-            # Policy source configuration.
-            # type: url | file | dir | bundle
-            # location: path or URL to policy source
-            # query: OPA query path to evaluate (required)
-            type: file
-            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
-            query: "data.policy.result"
-            refreshIntervalSeconds: "300"
+            networkPolicyConfig: /mnt/gcs/configs/opa-network-policies.yaml
+            refreshInterval: "5m"
         signValidator:
           id: signvalidator
         publisher:
@@ -113,10 +107,8 @@ modules:
         checkPolicy:
           id: opapolicychecker
           config:
-            type: file
-            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
-            query: "data.policy.result"
-            refreshIntervalSeconds: "300"
+            networkPolicyConfig: /mnt/gcs/configs/opa-network-policies.yaml
+            refreshInterval: "5m"
         signer:
           id: signer
         publisher:
@@ -172,10 +164,8 @@ modules:
         checkPolicy:
           id: opapolicychecker
           config:
-            type: file
-            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
-            query: "data.policy.result"
-            refreshIntervalSeconds: "300"
+            networkPolicyConfig: /mnt/gcs/configs/opa-network-policies.yaml
+            refreshInterval: "5m"
         signValidator:
           id: signvalidator
         publisher:
@@ -230,10 +220,8 @@ modules:
         checkPolicy:
           id: opapolicychecker
           config:
-            type: file
-            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
-            query: "data.policy.result"
-            refreshIntervalSeconds: "300"
+            networkPolicyConfig: /mnt/gcs/configs/opa-network-policies.yaml
+            refreshInterval: "5m"
         signer:
           id: signer
         publisher:
