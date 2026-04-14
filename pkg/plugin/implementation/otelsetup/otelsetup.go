@@ -173,6 +173,7 @@ func (Setup) New(ctx context.Context, cfg *Config) (*telemetry.Provider, error) 
 		processor := logsdk.NewBatchProcessor(logExporter)
 		logProvider = logsdk.NewLoggerProvider(logsdk.WithProcessor(processor), logsdk.WithResource(resAudit))
 		global.SetLoggerProvider(logProvider)
+		telemetry.SetLogsEnabled(true)
 	}
 
 	return &telemetry.Provider{

@@ -16,12 +16,15 @@ import (
 const auditLoggerName = "Beckn_ONIX"
 
 func EmitAuditLogs(ctx context.Context, body []byte, attrs ...log.KeyValue) {
-
-	provider := global.GetLoggerProvider()
-	if provider == nil {
+	// global.GetLoggerProvider() always returns a no-op provider (never nil).
+	// Use the logEnabled flag set by otelsetup to detect whether a real provider
+	// has been registered; warn once and drop if logging was not configured.
+	if !LogsEnabled() {
 		logger.Warnf(ctx, "failed to emit audit logs, logs disabled")
 		return
 	}
+
+	provider := global.GetLoggerProvider()
 
 	sum := sha256.Sum256(body)
 	auditBody := selectAuditPayload(ctx, body)

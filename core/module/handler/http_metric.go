@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"go.opentelemetry.io/otel"
@@ -17,14 +16,7 @@ type HTTPMetrics struct {
 	HttpRequestCount metric.Int64Counter
 }
 
-var (
-	httpMetricsInstance *HTTPMetrics
-	httpMetricsOnce     sync.Once
-	httpMetricsErr      error
-)
-
 func newHTTPMetrics() (*HTTPMetrics, error) {
-
 	meter := otel.GetMeterProvider().Meter(telemetry.ScopeName,
 		metric.WithInstrumentationVersion(telemetry.ScopeVersion))
 	m := &HTTPMetrics{}
@@ -41,11 +33,11 @@ func newHTTPMetrics() (*HTTPMetrics, error) {
 	return m, nil
 }
 
+// GetHTTPMetrics returns a fresh HTTPMetrics bound to the current global meter
+// provider. otel.GetMeterProvider() is safe to call repeatedly; the SDK
+// deduplicates instruments by name, so there is no double-registration risk.
 func GetHTTPMetrics(ctx context.Context) (*HTTPMetrics, error) {
-	httpMetricsOnce.Do(func() {
-		httpMetricsInstance, httpMetricsErr = newHTTPMetrics()
-	})
-	return httpMetricsInstance, httpMetricsErr
+	return newHTTPMetrics()
 }
 
 // StatusClass returns the HTTP status class string (e.g. 200 -> "2xx").

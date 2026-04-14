@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"go.opentelemetry.io/otel"
@@ -17,18 +16,11 @@ type StepMetrics struct {
 	StepErrorsTotal       metric.Int64Counter
 }
 
-var (
-	stepMetricsInstance *StepMetrics
-	stepMetricsOnce     sync.Once
-	stepMetricsErr      error
-)
-
-// GetStepMetrics lazily initializes step metric instruments and returns a cached reference.
+// GetStepMetrics returns fresh StepMetrics bound to the current global meter
+// provider. otel.GetMeterProvider() is safe to call repeatedly; the SDK
+// deduplicates instruments by name, so there is no double-registration risk.
 func GetStepMetrics(ctx context.Context) (*StepMetrics, error) {
-	stepMetricsOnce.Do(func() {
-		stepMetricsInstance, stepMetricsErr = newStepMetrics()
-	})
-	return stepMetricsInstance, stepMetricsErr
+	return newStepMetrics()
 }
 
 func newStepMetrics() (*StepMetrics, error) {
