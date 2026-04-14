@@ -7,8 +7,8 @@ End-to-end performance benchmarks for the beckn-onix ONIX adapter, using Go's na
 ## Quick Start
 
 ```bash
-# From the repo root
-go mod tidy                        # fetch miniredis + benchstat checksums
+# From the repo root — install benchstat first (one-time, see below)
+go install golang.org/x/perf/cmd/benchstat@latest
 bash benchmarks/run_benchmarks.sh  # compile plugins, run all scenarios, generate report
 ```
 
@@ -164,20 +164,28 @@ go test ./benchmarks/e2e/... \
 
 ## Comparing Two Runs with benchstat
 
+`benchstat` is a dev tool and is **not** tracked in `go.mod` (see [issue #659](https://github.com/beckn/beckn-onix/issues/659) for context — adding it as a module tool forced a Go 1.25 dependency on the main module). Install it once in your local Go bin:
+
+```bash
+go install golang.org/x/perf/cmd/benchstat@latest
+```
+
+Then compare two runs:
+
 ```bash
 go test ./benchmarks/e2e/... -bench=. -benchtime=10s -count=6 > before.txt
 # ... make your change ...
 go test ./benchmarks/e2e/... -bench=. -benchtime=10s -count=6 > after.txt
-go tool benchstat before.txt after.txt
+benchstat before.txt after.txt
 ```
 
 ---
 
 ## Dependencies
 
-| Package | Purpose |
-|---------|---------|
-| `github.com/alicebob/miniredis/v2` | In-process Redis for the `cache` plugin |
-| `golang.org/x/perf/cmd/benchstat` | Statistical benchmark comparison (CLI tool) |
+| Package | Purpose | Where declared |
+|---------|---------|----------------|
+| `github.com/alicebob/miniredis/v2` | In-process Redis for the `cache` plugin | `go.mod` |
+| `golang.org/x/perf/cmd/benchstat` | Statistical benchmark comparison (CLI tool) | **not in `go.mod`** — install manually (see above) |
 
-Both are declared in `go.mod`. Run `go mod tidy` once to fetch their checksums.
+`benchstat` is intentionally kept out of `go.mod`. Its transitive dependencies (`x/net`, `x/crypto`) require Go ≥ 1.25, which would force the entire module onto a newer toolchain. Install it once with `go install golang.org/x/perf/cmd/benchstat@latest`.
