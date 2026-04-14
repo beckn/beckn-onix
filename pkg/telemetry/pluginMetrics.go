@@ -22,12 +22,6 @@ type Metrics struct {
 	PluginErrorsTotal       metric.Int64Counter
 }
 
-var (
-	metricsInstance *Metrics
-	metricsOnce     sync.Once
-	metricsErr      error
-)
-
 // Attribute keys shared across instruments.
 var (
 	AttrModule               = attribute.Key("module")
@@ -78,12 +72,11 @@ func GetNetworkMetricsConfig() (granularity, frequency string) {
 	return networkMetricsGranularity, networkMetricsFrequency
 }
 
-// GetMetrics lazily initializes instruments and returns a cached reference.
+// GetMetrics returns fresh Metrics bound to the current global meter provider.
+// otel.GetMeterProvider() is safe to call repeatedly; the SDK deduplicates
+// instruments by name, so there is no double-registration risk.
 func GetMetrics(ctx context.Context) (*Metrics, error) {
-	metricsOnce.Do(func() {
-		metricsInstance, metricsErr = newMetrics()
-	})
-	return metricsInstance, metricsErr
+	return newMetrics()
 }
 
 func newMetrics() (*Metrics, error) {
