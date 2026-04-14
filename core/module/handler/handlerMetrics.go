@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
@@ -16,18 +15,11 @@ type HandlerMetrics struct {
 	RoutingDecisionsTotal     metric.Int64Counter
 }
 
-var (
-	handlerMetricsInstance *HandlerMetrics
-	handlerMetricsOnce     sync.Once
-	handlerMetricsErr      error
-)
-
-// GetHandlerMetrics lazily initializes handler metric instruments and returns a cached reference.
+// GetHandlerMetrics returns fresh HandlerMetrics bound to the current global
+// meter provider. otel.GetMeterProvider() is safe to call repeatedly; the SDK
+// deduplicates instruments by name, so there is no double-registration risk.
 func GetHandlerMetrics(ctx context.Context) (*HandlerMetrics, error) {
-	handlerMetricsOnce.Do(func() {
-		handlerMetricsInstance, handlerMetricsErr = newHandlerMetrics()
-	})
-	return handlerMetricsInstance, handlerMetricsErr
+	return newHandlerMetrics()
 }
 
 func newHandlerMetrics() (*HandlerMetrics, error) {

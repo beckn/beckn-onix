@@ -3,7 +3,6 @@ package cache
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
@@ -13,21 +12,14 @@ import (
 type CacheMetrics struct {
 	CacheOperationsTotal metric.Int64Counter
 	CacheHitsTotal       metric.Int64Counter
-	CacheMissesTotal    metric.Int64Counter
+	CacheMissesTotal     metric.Int64Counter
 }
 
-var (
-	cacheMetricsInstance *CacheMetrics
-	cacheMetricsOnce     sync.Once
-	cacheMetricsErr      error
-)
-
-// GetCacheMetrics lazily initializes cache metric instruments and returns a cached reference.
+// GetCacheMetrics returns fresh CacheMetrics bound to the current global meter
+// provider. otel.GetMeterProvider() is safe to call repeatedly; the SDK
+// deduplicates instruments by name, so there is no double-registration risk.
 func GetCacheMetrics(ctx context.Context) (*CacheMetrics, error) {
-	cacheMetricsOnce.Do(func() {
-		cacheMetricsInstance, cacheMetricsErr = newCacheMetrics()
-	})
-	return cacheMetricsInstance, cacheMetricsErr
+	return newCacheMetrics()
 }
 
 func newCacheMetrics() (*CacheMetrics, error) {
