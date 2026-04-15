@@ -174,6 +174,7 @@ func (Setup) New(ctx context.Context, cfg *Config) (*telemetry.Provider, error) 
 		processor := logsdk.NewBatchProcessor(logExporter)
 		logProvider = logsdk.NewLoggerProvider(logsdk.WithProcessor(processor), logsdk.WithResource(resAudit))
 		global.SetLoggerProvider(logProvider)
+		telemetry.SetLogsEnabled(true)
 	}
 
 	return &telemetry.Provider{
@@ -195,6 +196,7 @@ func (Setup) New(ctx context.Context, cfg *Config) (*telemetry.Provider, error) 
 			}
 
 			if logProvider != nil {
+				telemetry.SetLogsEnabled(false)
 				if err := logProvider.Shutdown(shutdownCtx); err != nil {
 					errs = append(errs, fmt.Errorf("logs shutdown: %w", err))
 				}
