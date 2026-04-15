@@ -138,6 +138,15 @@ Rules:
   - `PS256`, `PS384`, `PS512`
 - `EdDSA` is not supported by the current plugin implementation for bundle verification
 
+Single-file detached signature verification does not use a separate `algorithm` config field. The plugin chooses the verification path automatically from the key type returned by DeDi:
+
+- `RSA` key type:
+  - verifies detached signatures using RSA PKCS#1 v1.5 with SHA-256
+- `ECDSA` key type:
+  - verifies detached signatures using ECDSA with SHA-256
+- `Ed25519` key type:
+  - verifies detached signatures using Ed25519
+
 ## Policy Hot-Reload
 
 When `refreshInterval` is set, a background goroutine periodically re-fetches and recompiles all configured policy sources without restarting the adapter:
