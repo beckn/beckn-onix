@@ -1,0 +1,17 @@
+{
+  "context": {
+    "action": "discover",
+    "bapId": "sandbox.food-finder.com",
+    "bapUri": "http://bench-bap.example.com",
+    "messageId": "BENCH_MESSAGE_ID",
+    "transactionId": "BENCH_TRANSACTION_ID",
+    "timestamp": "BENCH_TIMESTAMP",
+    "ttl": "PT30S",
+    "version": "2.0.0"
+  },
+  "message": {
+    "intent": {
+      "textSearch": "pizza"
+    }
+  }
+}

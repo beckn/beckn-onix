@@ -1,0 +1,55 @@
+{
+  "context": {
+    "action": "select",
+    "bapId": "sandbox.food-finder.com",
+    "bapUri": "http://bench-bap.example.com",
+    "bppId": "bench-bpp.example.com",
+    "bppUri": "BENCH_BPP_URL",
+    "messageId": "BENCH_MESSAGE_ID",
+    "transactionId": "BENCH_TRANSACTION_ID",
+    "timestamp": "BENCH_TIMESTAMP",
+    "ttl": "PT30S",
+    "version": "2.0.0"
+  },
+  "message": {
+    "order": {
+      "provider": {
+        "id": "bench-provider-001"
+      },
+      "items": [
+        {
+          "id": "bench-item-001",
+          "quantity": {
+            "selected": {
+              "count": 1
+            }
+          }
+        }
+      ],
+      "fulfillments": [
+        {
+          "id": "f1",
+          "type": "Delivery",
+          "stops": [
+            {
+              "type": "end",
+              "location": {
+                "gps": "12.9716,77.5946",
+                "area_code": "560001"
+              },
+              "contact": {
+                "phone": "9999999999",
+                "email": "bench@example.com"
+              }
+            }
+          ]
+        }
+      ],
+      "payments": [
+        {
+          "type": "ON-FULFILLMENT"
+        }
+      ]
+    }
+  }
+}

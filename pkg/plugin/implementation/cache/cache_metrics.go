@@ -13,21 +13,43 @@ import (
 type CacheMetrics struct {
 	CacheOperationsTotal metric.Int64Counter
 	CacheHitsTotal       metric.Int64Counter
-	CacheMissesTotal    metric.Int64Counter
+	CacheMissesTotal     metric.Int64Counter
 }
 
-var (
-	cacheMetricsInstance *CacheMetrics
-	cacheMetricsOnce     sync.Once
-	cacheMetricsErr      error
-)
+// cacheMetricsCache caches the CacheMetrics for the current global MeterProvider.
+// Instruments are rebound only when otel.SetMeterProvider changes the provider pointer.
+var cacheMetricsCache struct {
+	mu       sync.RWMutex
+	provider metric.MeterProvider
+	m        *CacheMetrics
+}
 
-// GetCacheMetrics lazily initializes cache metric instruments and returns a cached reference.
-func GetCacheMetrics(ctx context.Context) (*CacheMetrics, error) {
-	cacheMetricsOnce.Do(func() {
-		cacheMetricsInstance, cacheMetricsErr = newCacheMetrics()
-	})
-	return cacheMetricsInstance, cacheMetricsErr
+// GetCacheMetrics returns CacheMetrics bound to the current global MeterProvider,
+// rebuilding only when the provider has been replaced since the last call.
+func GetCacheMetrics(_ context.Context) (*CacheMetrics, error) {
+	current := otel.GetMeterProvider()
+
+	cacheMetricsCache.mu.RLock()
+	if cacheMetricsCache.provider == current && cacheMetricsCache.m != nil {
+		m := cacheMetricsCache.m
+		cacheMetricsCache.mu.RUnlock()
+		return m, nil
+	}
+	cacheMetricsCache.mu.RUnlock()
+
+	cacheMetricsCache.mu.Lock()
+	defer cacheMetricsCache.mu.Unlock()
+	// Double-check after acquiring the write lock.
+	if cacheMetricsCache.provider == current && cacheMetricsCache.m != nil {
+		return cacheMetricsCache.m, nil
+	}
+	m, err := newCacheMetrics()
+	if err != nil {
+		return nil, err
+	}
+	cacheMetricsCache.provider = current
+	cacheMetricsCache.m = m
+	return m, nil
 }
 
 func newCacheMetrics() (*CacheMetrics, error) {

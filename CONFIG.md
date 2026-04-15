@@ -706,7 +706,7 @@ schemaValidator:
   id: schemav2validator
   config:
     type: url
-    location: https://raw.githubusercontent.com/beckn/protocol-specifications-new/refs/heads/draft/api-specs/beckn-protocol-api.yaml
+    location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/tags/core-v2.0.0-lts/api/v2.0.0/beckn.yaml
     cacheTTL: "3600"
     extendedSchema_enabled: "true"
     extendedSchema_cacheTTL: "86400"
