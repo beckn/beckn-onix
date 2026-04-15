@@ -76,8 +76,11 @@ Behavior:
 
 - all configured policies are loaded at startup
 - request-time selection uses exact match on `context.networkId` and falls back to `context.network_id`
+- if an exact network-specific policy matches, it is selected even when `enabled: false`
+- an exact network match with `enabled: false` intentionally overrides `default`
 - if no network-specific policy matches, `default` is used when configured
-- if neither a network-specific policy nor `default` matches, OPA evaluation is skipped
+- if neither a network-specific policy nor `default` matches, OPA evaluation is skipped by design
+- policy enforcement is opt-in by `network_id`; unmatched networks are skipped unless `default` is defined
 - if you want one global policy only, define just `default`
 
 Each entry under `networkPolicies` supports:
@@ -129,6 +132,9 @@ Rules:
 - `type: dir` is not recommended for production use and should be used only for testing or local development
 - `type: dir` does not support signature verification; package directories as signed bundles instead
 - `verification.publicKeyLookupUrl` should point to a DeDi public-key record lookup endpoint
+- DeDi public-key lookup currently expects `data.details.publicKey` and supports `keyFormat: base64`
+- as a fallback, raw PEM public keys, PEM certificates, and parseable DER key material are also accepted
+- formats such as `base58`, `hex`, and JWK are not supported by the current plugin implementation
 - when `verification.enabled: true` for `type: file`, `verification.signatureLocation` and `verification.publicKeyLookupUrl` are required
 - when `verification.enabled: true` for `type: bundle`, `verification.publicKeyLookupUrl` is required
 - `verification.algorithm` is optional for `type: bundle` and defaults to `ES256`
