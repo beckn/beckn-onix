@@ -105,7 +105,7 @@ networkPolicies:
     query: data.policy.result
     verification:
       enabled: true
-      publicKeyLookupUrl: https://api.dedi.global/dedi/lookup/<namespace-id>/public_key_test/retail-key
+      publicKeyLookupUrl: https://api.dedi.global/dedi/lookup/example-nfo.com/public_key_test/retail-key
       signatureLocation: ./policies/retail.rego.sig
 ```
 
@@ -119,7 +119,7 @@ networkPolicies:
     query: data.retail.validation.result
     verification:
       enabled: true
-      publicKeyLookupUrl: https://api.dedi.global/dedi/lookup/<namespace-id>/public_key_test/retail-key
+      publicKeyLookupUrl: https://api.dedi.global/dedi/lookup/example-nfo.com/public_key_test/retail-key
 ```
 
 Rules:
