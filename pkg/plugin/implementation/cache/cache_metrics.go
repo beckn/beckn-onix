@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
@@ -15,11 +16,40 @@ type CacheMetrics struct {
 	CacheMissesTotal     metric.Int64Counter
 }
 
-// GetCacheMetrics returns fresh CacheMetrics bound to the current global meter
-// provider. otel.GetMeterProvider() is safe to call repeatedly; the SDK
-// deduplicates instruments by name, so there is no double-registration risk.
-func GetCacheMetrics(ctx context.Context) (*CacheMetrics, error) {
-	return newCacheMetrics()
+// cacheMetricsCache caches the CacheMetrics for the current global MeterProvider.
+// Instruments are rebound only when otel.SetMeterProvider changes the provider pointer.
+var cacheMetricsCache struct {
+	mu       sync.RWMutex
+	provider metric.MeterProvider
+	m        *CacheMetrics
+}
+
+// GetCacheMetrics returns CacheMetrics bound to the current global MeterProvider,
+// rebuilding only when the provider has been replaced since the last call.
+func GetCacheMetrics(_ context.Context) (*CacheMetrics, error) {
+	current := otel.GetMeterProvider()
+
+	cacheMetricsCache.mu.RLock()
+	if cacheMetricsCache.provider == current && cacheMetricsCache.m != nil {
+		m := cacheMetricsCache.m
+		cacheMetricsCache.mu.RUnlock()
+		return m, nil
+	}
+	cacheMetricsCache.mu.RUnlock()
+
+	cacheMetricsCache.mu.Lock()
+	defer cacheMetricsCache.mu.Unlock()
+	// Double-check after acquiring the write lock.
+	if cacheMetricsCache.provider == current && cacheMetricsCache.m != nil {
+		return cacheMetricsCache.m, nil
+	}
+	m, err := newCacheMetrics()
+	if err != nil {
+		return nil, err
+	}
+	cacheMetricsCache.provider = current
+	cacheMetricsCache.m = m
+	return m, nil
 }
 
 func newCacheMetrics() (*CacheMetrics, error) {

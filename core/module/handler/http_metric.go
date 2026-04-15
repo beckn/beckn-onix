@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"go.opentelemetry.io/otel"
@@ -33,11 +34,42 @@ func newHTTPMetrics() (*HTTPMetrics, error) {
 	return m, nil
 }
 
-// GetHTTPMetrics returns a fresh HTTPMetrics bound to the current global meter
-// provider. otel.GetMeterProvider() is safe to call repeatedly; the SDK
-// deduplicates instruments by name, so there is no double-registration risk.
-func GetHTTPMetrics(ctx context.Context) (*HTTPMetrics, error) {
-	return newHTTPMetrics()
+// httpMetricsCache caches the HTTPMetrics for the current global MeterProvider.
+// When otel.SetMeterProvider is called (e.g. during startup or test setup) the
+// provider pointer changes, the cache misses, and instruments are rebound once.
+// Fast-path cost on every request: one atomic load + RLock + two pointer compares.
+var httpMetricsCache struct {
+	mu       sync.RWMutex
+	provider metric.MeterProvider
+	m        *HTTPMetrics
+}
+
+// GetHTTPMetrics returns HTTPMetrics bound to the current global MeterProvider,
+// rebuilding only when the provider has been replaced since the last call.
+func GetHTTPMetrics(_ context.Context) (*HTTPMetrics, error) {
+	current := otel.GetMeterProvider()
+
+	httpMetricsCache.mu.RLock()
+	if httpMetricsCache.provider == current && httpMetricsCache.m != nil {
+		m := httpMetricsCache.m
+		httpMetricsCache.mu.RUnlock()
+		return m, nil
+	}
+	httpMetricsCache.mu.RUnlock()
+
+	httpMetricsCache.mu.Lock()
+	defer httpMetricsCache.mu.Unlock()
+	// Double-check after acquiring the write lock.
+	if httpMetricsCache.provider == current && httpMetricsCache.m != nil {
+		return httpMetricsCache.m, nil
+	}
+	m, err := newHTTPMetrics()
+	if err != nil {
+		return nil, err
+	}
+	httpMetricsCache.provider = current
+	httpMetricsCache.m = m
+	return m, nil
 }
 
 // StatusClass returns the HTTP status class string (e.g. 200 -> "2xx").

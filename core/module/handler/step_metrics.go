@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"go.opentelemetry.io/otel"
@@ -16,11 +17,39 @@ type StepMetrics struct {
 	StepErrorsTotal       metric.Int64Counter
 }
 
-// GetStepMetrics returns fresh StepMetrics bound to the current global meter
-// provider. otel.GetMeterProvider() is safe to call repeatedly; the SDK
-// deduplicates instruments by name, so there is no double-registration risk.
-func GetStepMetrics(ctx context.Context) (*StepMetrics, error) {
-	return newStepMetrics()
+// stepMetricsCache caches StepMetrics for the current global MeterProvider.
+// Instruments are rebound only when otel.SetMeterProvider changes the provider pointer.
+var stepMetricsCache struct {
+	mu       sync.RWMutex
+	provider metric.MeterProvider
+	m        *StepMetrics
+}
+
+// GetStepMetrics returns StepMetrics bound to the current global MeterProvider,
+// rebuilding only when the provider has been replaced since the last call.
+func GetStepMetrics(_ context.Context) (*StepMetrics, error) {
+	current := otel.GetMeterProvider()
+
+	stepMetricsCache.mu.RLock()
+	if stepMetricsCache.provider == current && stepMetricsCache.m != nil {
+		m := stepMetricsCache.m
+		stepMetricsCache.mu.RUnlock()
+		return m, nil
+	}
+	stepMetricsCache.mu.RUnlock()
+
+	stepMetricsCache.mu.Lock()
+	defer stepMetricsCache.mu.Unlock()
+	if stepMetricsCache.provider == current && stepMetricsCache.m != nil {
+		return stepMetricsCache.m, nil
+	}
+	m, err := newStepMetrics()
+	if err != nil {
+		return nil, err
+	}
+	stepMetricsCache.provider = current
+	stepMetricsCache.m = m
+	return m, nil
 }
 
 func newStepMetrics() (*StepMetrics, error) {

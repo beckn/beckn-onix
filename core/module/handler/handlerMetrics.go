@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
@@ -15,11 +16,39 @@ type HandlerMetrics struct {
 	RoutingDecisionsTotal     metric.Int64Counter
 }
 
-// GetHandlerMetrics returns fresh HandlerMetrics bound to the current global
-// meter provider. otel.GetMeterProvider() is safe to call repeatedly; the SDK
-// deduplicates instruments by name, so there is no double-registration risk.
-func GetHandlerMetrics(ctx context.Context) (*HandlerMetrics, error) {
-	return newHandlerMetrics()
+// handlerMetricsCache caches HandlerMetrics for the current global MeterProvider.
+// Instruments are rebound only when otel.SetMeterProvider changes the provider pointer.
+var handlerMetricsCache struct {
+	mu       sync.RWMutex
+	provider metric.MeterProvider
+	m        *HandlerMetrics
+}
+
+// GetHandlerMetrics returns HandlerMetrics bound to the current global MeterProvider,
+// rebuilding only when the provider has been replaced since the last call.
+func GetHandlerMetrics(_ context.Context) (*HandlerMetrics, error) {
+	current := otel.GetMeterProvider()
+
+	handlerMetricsCache.mu.RLock()
+	if handlerMetricsCache.provider == current && handlerMetricsCache.m != nil {
+		m := handlerMetricsCache.m
+		handlerMetricsCache.mu.RUnlock()
+		return m, nil
+	}
+	handlerMetricsCache.mu.RUnlock()
+
+	handlerMetricsCache.mu.Lock()
+	defer handlerMetricsCache.mu.Unlock()
+	if handlerMetricsCache.provider == current && handlerMetricsCache.m != nil {
+		return handlerMetricsCache.m, nil
+	}
+	m, err := newHandlerMetrics()
+	if err != nil {
+		return nil, err
+	}
+	handlerMetricsCache.provider = current
+	handlerMetricsCache.m = m
+	return m, nil
 }
 
 func newHandlerMetrics() (*HandlerMetrics, error) {

@@ -72,11 +72,39 @@ func GetNetworkMetricsConfig() (granularity, frequency string) {
 	return networkMetricsGranularity, networkMetricsFrequency
 }
 
-// GetMetrics returns fresh Metrics bound to the current global meter provider.
-// otel.GetMeterProvider() is safe to call repeatedly; the SDK deduplicates
-// instruments by name, so there is no double-registration risk.
-func GetMetrics(ctx context.Context) (*Metrics, error) {
-	return newMetrics()
+// pluginMetricsCache caches Metrics for the current global MeterProvider.
+// Instruments are rebound only when otel.SetMeterProvider changes the provider pointer.
+var pluginMetricsCache struct {
+	mu       sync.RWMutex
+	provider metric.MeterProvider
+	m        *Metrics
+}
+
+// GetMetrics returns Metrics bound to the current global MeterProvider,
+// rebuilding only when the provider has been replaced since the last call.
+func GetMetrics(_ context.Context) (*Metrics, error) {
+	current := otel.GetMeterProvider()
+
+	pluginMetricsCache.mu.RLock()
+	if pluginMetricsCache.provider == current && pluginMetricsCache.m != nil {
+		m := pluginMetricsCache.m
+		pluginMetricsCache.mu.RUnlock()
+		return m, nil
+	}
+	pluginMetricsCache.mu.RUnlock()
+
+	pluginMetricsCache.mu.Lock()
+	defer pluginMetricsCache.mu.Unlock()
+	if pluginMetricsCache.provider == current && pluginMetricsCache.m != nil {
+		return pluginMetricsCache.m, nil
+	}
+	m, err := newMetrics()
+	if err != nil {
+		return nil, err
+	}
+	pluginMetricsCache.provider = current
+	pluginMetricsCache.m = m
+	return m, nil
 }
 
 func newMetrics() (*Metrics, error) {
