@@ -1,0 +1,84 @@
+{
+  "context": {
+    "action": "confirm",
+    "bapId": "sandbox.food-finder.com",
+    "bapUri": "http://bench-bap.example.com",
+    "bppId": "bench-bpp.example.com",
+    "bppUri": "BENCH_BPP_URL",
+    "messageId": "BENCH_MESSAGE_ID",
+    "transactionId": "BENCH_TRANSACTION_ID",
+    "timestamp": "BENCH_TIMESTAMP",
+    "ttl": "PT30S",
+    "version": "2.0.0"
+  },
+  "message": {
+    "order": {
+      "provider": {
+        "id": "bench-provider-001"
+      },
+      "items": [
+        {
+          "id": "bench-item-001",
+          "quantity": {
+            "selected": {
+              "count": 1
+            }
+          }
+        }
+      ],
+      "billing": {
+        "name": "Bench User",
+        "address": "123 Bench Street, Bangalore, 560001",
+        "city": {
+          "name": "Bangalore"
+        },
+        "state": {
+          "name": "Karnataka"
+        },
+        "country": {
+          "code": "IND"
+        },
+        "area_code": "560001",
+        "email": "bench@example.com",
+        "phone": "9999999999"
+      },
+      "fulfillments": [
+        {
+          "id": "f1",
+          "type": "Delivery",
+          "stops": [
+            {
+              "type": "end",
+              "location": {
+                "gps": "12.9716,77.5946",
+                "area_code": "560001"
+              },
+              "contact": {
+                "phone": "9999999999",
+                "email": "bench@example.com"
+              }
+            }
+          ],
+          "customer": {
+            "person": {
+              "name": "Bench User"
+            },
+            "contact": {
+              "phone": "9999999999",
+              "email": "bench@example.com"
+            }
+          }
+        }
+      ],
+      "payments": [
+        {
+          "type": "ON-FULFILLMENT",
+          "params": {
+            "amount": "150.00",
+            "currency": "INR"
+          }
+        }
+      ]
+    }
+  }
+}
