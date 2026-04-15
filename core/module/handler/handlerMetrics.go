@@ -16,18 +16,39 @@ type HandlerMetrics struct {
 	RoutingDecisionsTotal     metric.Int64Counter
 }
 
-var (
-	handlerMetricsInstance *HandlerMetrics
-	handlerMetricsOnce     sync.Once
-	handlerMetricsErr      error
-)
+// handlerMetricsCache caches HandlerMetrics for the current global MeterProvider.
+// Instruments are rebound only when otel.SetMeterProvider changes the provider pointer.
+var handlerMetricsCache struct {
+	mu       sync.RWMutex
+	provider metric.MeterProvider
+	m        *HandlerMetrics
+}
 
-// GetHandlerMetrics lazily initializes handler metric instruments and returns a cached reference.
-func GetHandlerMetrics(ctx context.Context) (*HandlerMetrics, error) {
-	handlerMetricsOnce.Do(func() {
-		handlerMetricsInstance, handlerMetricsErr = newHandlerMetrics()
-	})
-	return handlerMetricsInstance, handlerMetricsErr
+// GetHandlerMetrics returns HandlerMetrics bound to the current global MeterProvider,
+// rebuilding only when the provider has been replaced since the last call.
+func GetHandlerMetrics(_ context.Context) (*HandlerMetrics, error) {
+	current := otel.GetMeterProvider()
+
+	handlerMetricsCache.mu.RLock()
+	if handlerMetricsCache.provider == current && handlerMetricsCache.m != nil {
+		m := handlerMetricsCache.m
+		handlerMetricsCache.mu.RUnlock()
+		return m, nil
+	}
+	handlerMetricsCache.mu.RUnlock()
+
+	handlerMetricsCache.mu.Lock()
+	defer handlerMetricsCache.mu.Unlock()
+	if handlerMetricsCache.provider == current && handlerMetricsCache.m != nil {
+		return handlerMetricsCache.m, nil
+	}
+	m, err := newHandlerMetrics()
+	if err != nil {
+		return nil, err
+	}
+	handlerMetricsCache.provider = current
+	handlerMetricsCache.m = m
+	return m, nil
 }
 
 func newHandlerMetrics() (*HandlerMetrics, error) {

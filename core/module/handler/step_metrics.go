@@ -17,18 +17,39 @@ type StepMetrics struct {
 	StepErrorsTotal       metric.Int64Counter
 }
 
-var (
-	stepMetricsInstance *StepMetrics
-	stepMetricsOnce     sync.Once
-	stepMetricsErr      error
-)
+// stepMetricsCache caches StepMetrics for the current global MeterProvider.
+// Instruments are rebound only when otel.SetMeterProvider changes the provider pointer.
+var stepMetricsCache struct {
+	mu       sync.RWMutex
+	provider metric.MeterProvider
+	m        *StepMetrics
+}
 
-// GetStepMetrics lazily initializes step metric instruments and returns a cached reference.
-func GetStepMetrics(ctx context.Context) (*StepMetrics, error) {
-	stepMetricsOnce.Do(func() {
-		stepMetricsInstance, stepMetricsErr = newStepMetrics()
-	})
-	return stepMetricsInstance, stepMetricsErr
+// GetStepMetrics returns StepMetrics bound to the current global MeterProvider,
+// rebuilding only when the provider has been replaced since the last call.
+func GetStepMetrics(_ context.Context) (*StepMetrics, error) {
+	current := otel.GetMeterProvider()
+
+	stepMetricsCache.mu.RLock()
+	if stepMetricsCache.provider == current && stepMetricsCache.m != nil {
+		m := stepMetricsCache.m
+		stepMetricsCache.mu.RUnlock()
+		return m, nil
+	}
+	stepMetricsCache.mu.RUnlock()
+
+	stepMetricsCache.mu.Lock()
+	defer stepMetricsCache.mu.Unlock()
+	if stepMetricsCache.provider == current && stepMetricsCache.m != nil {
+		return stepMetricsCache.m, nil
+	}
+	m, err := newStepMetrics()
+	if err != nil {
+		return nil, err
+	}
+	stepMetricsCache.provider = current
+	stepMetricsCache.m = m
+	return m, nil
 }
 
 func newStepMetrics() (*StepMetrics, error) {
