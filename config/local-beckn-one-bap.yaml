@@ -33,7 +33,8 @@ plugins:
       enableTracing: "true"
       enableLogs: "true"
       timeInterval: "5"
-      auditFieldsConfig: "/app/config/audit-fields.yaml"
+      auditFieldsConfig: "/app/config/audit-fields.yaml" # this can be git url
+      cacheTTL: "3600"
 
 modules:
   - name: bapTxnReceiver
@@ -73,7 +74,7 @@ modules:
           id: schemav2validator
           config:
             type: url
-            location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/tags/core-v2.0.0-lts/api/v2.0.0/beckn.yaml
+            location: https://raw.githubusercontent.com/beckn/protocol-specifications-new/refs/heads/main/api/beckn.yaml
             cacheTTL: "3600"
             extendedSchema_enabled: "true"
             extendedSchema_cacheTTL: "86400"
@@ -86,17 +87,6 @@ modules:
           id: router
           config:
             routingConfig: ./config/local-beckn-one-routing-BAPReceiver.yaml
-        checkPolicy:
-          id: opapolicychecker
-          config:
-            # Policy source configuration.
-            # type: url | file | dir | bundle
-            # location: path or URL to policy source
-            # query: OPA query path to evaluate (required)
-            type: file
-            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
-            query: "data.policy.result"
-            refreshIntervalSeconds: "300"
         middleware:
           - id: reqpreprocessor
             config:
@@ -104,7 +94,6 @@ modules:
               role: bap
       steps:
         - validateSign
-        - checkPolicy
         - addRoute
         - validateSchema
   
@@ -145,7 +134,7 @@ modules:
           id: schemav2validator
           config:
             type: url
-            location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/tags/core-v2.0.0-lts/api/v2.0.0/beckn.yaml
+            location: https://raw.githubusercontent.com/beckn/protocol-specifications-new/refs/heads/main/api/beckn.yaml
             cacheTTL: "3600"
             extendedSchema_enabled: "true"
             extendedSchema_cacheTTL: "86400"
@@ -163,15 +152,7 @@ modules:
             config:
               contextKeys: transaction_id,message_id
               role: bap
-        checkPolicy:
-          id: opapolicychecker
-          config:
-            type: file
-            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
-            query: "data.policy.result"
-            refreshIntervalSeconds: "300"
       steps:
-        - checkPolicy
         - addRoute
         - sign
         - validateSchema

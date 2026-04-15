@@ -35,7 +35,6 @@ type stdHandler struct {
 	registry         definition.RegistryLookup
 	km               definition.KeyManager
 	schemaValidator  definition.SchemaValidator
-	policyChecker    definition.PolicyChecker
 	router           definition.Router
 	publisher        definition.Publisher
 	transportWrapper definition.TransportWrapper
@@ -144,19 +143,19 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Request(r.Context(), r, stepCtx.Body)
 
 	defer func() {
-		span.SetAttributes(attribute.Int("http.response.status_code", wrapped.statusCode), attribute.String("observedTimeUnixNano", strconv.FormatInt(time.Now().UnixNano(), 10)))
+		span.SetAttributes(attribute.Int("http.response.status_code", wrapped.statusCode), attribute.String("http.request.error", errString(err)), attribute.String("observedTimeUnixNano", strconv.FormatInt(time.Now().UnixNano(), 10)))
 		if wrapped.statusCode < 200 || wrapped.statusCode >= 400 {
 			span.SetStatus(codes.Error, "status code is invalid")
 		}
 
 		body := stepCtx.Body
-		telemetry.EmitAuditLogs(r.Context(), body, auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.response.error", errString(err)))
+		telemetry.EmitAuditLogs(r.Context(), body, auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.request.error", errString(err)), auditlog.String("sender.id", senderID), auditlog.String("receiver.id", receiverID))
 		span.End()
 	}()
 
 	// Execute processing steps.
 	for _, step := range h.steps {
-		if err := step.Run(stepCtx); err != nil {
+		if err = step.Run(stepCtx); err != nil {
 			log.Errorf(stepCtx, err, "%T.run():%v", step, err)
 			response.SendNack(stepCtx, wrapped, err)
 			return
@@ -319,9 +318,6 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.transportWrapper, err = loadPlugin(ctx, "TransportWrapper", cfg.TransportWrapper, mgr.TransportWrapper); err != nil {
 		return err
 	}
-	if h.policyChecker, err = loadPlugin(ctx, "PolicyChecker", cfg.PolicyChecker, mgr.PolicyChecker); err != nil {
-		return err
-	}
 
 	log.Debugf(ctx, "All required plugins successfully loaded for stdHandler")
 	return nil
@@ -354,8 +350,6 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			s, err = newValidateSchemaStep(h.schemaValidator)
 		case "addRoute":
 			s, err = newAddRouteStep(h.router)
-		case "checkPolicy":
-			s, err = newCheckPolicyStep(h.policyChecker)
 		default:
 			if customStep, exists := steps[step]; exists {
 				s = customStep

@@ -43,6 +43,7 @@ type Config struct {
 	AuditFieldsConfig string `yaml:"auditFieldsConfig"`
 	Producer          string `yaml:"producer"`
 	ProducerType      string `yaml:"producerType"`
+	CacheTTL          int64  `yaml:"cacheTTL"`
 }
 
 // DefaultConfig returns sensible defaults for telemetry configuration.
@@ -173,7 +174,6 @@ func (Setup) New(ctx context.Context, cfg *Config) (*telemetry.Provider, error) 
 		processor := logsdk.NewBatchProcessor(logExporter)
 		logProvider = logsdk.NewLoggerProvider(logsdk.WithProcessor(processor), logsdk.WithResource(resAudit))
 		global.SetLoggerProvider(logProvider)
-		telemetry.SetLogsEnabled(true)
 	}
 
 	return &telemetry.Provider{
@@ -198,9 +198,6 @@ func (Setup) New(ctx context.Context, cfg *Config) (*telemetry.Provider, error) 
 				if err := logProvider.Shutdown(shutdownCtx); err != nil {
 					errs = append(errs, fmt.Errorf("logs shutdown: %w", err))
 				}
-				// Clear the flag so EmitAuditLogs does not emit through the
-				// now-closed provider if telemetry is restarted with logs disabled.
-				telemetry.SetLogsEnabled(false)
 			}
 			if len(errs) > 0 {
 				return fmt.Errorf("shutdown errors: %v", errs)

@@ -3,516 +3,513 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// Test projectPath
-
-func TestProjectPath_EmptyParts(t *testing.T) {
-	root := map[string]interface{}{"a": "v"}
-	got, ok := projectPath(root, nil)
-	require.True(t, ok)
-	assert.Equal(t, root, got)
-
-	got, ok = projectPath(root, []string{})
-	require.True(t, ok)
-	assert.Equal(t, root, got)
-}
-
-func TestProjectPath_MapSingleLevel(t *testing.T) {
-	root := map[string]interface{}{"context": map[string]interface{}{"action": "search"}}
-	got, ok := projectPath(root, []string{"context"})
-	require.True(t, ok)
-	assert.Equal(t, map[string]interface{}{"context": map[string]interface{}{"action": "search"}}, got)
-}
-
-func TestProjectPath_MapNested(t *testing.T) {
-	root := map[string]interface{}{
-		"context": map[string]interface{}{
-			"action": "select",
-			"transaction_id": "tx-1",
-		},
-	}
-	got, ok := projectPath(root, []string{"context", "action"})
-	require.True(t, ok)
-	assert.Equal(t, map[string]interface{}{"context": map[string]interface{}{"action": "select"}}, got)
-}
-
-func TestProjectPath_MissingKey(t *testing.T) {
-	root := map[string]interface{}{"context": map[string]interface{}{"action": "search"}}
-	got, ok := projectPath(root, []string{"context", "missing"})
-	require.False(t, ok)
-	assert.Nil(t, got)
-}
-
-func TestProjectPath_ArrayTraverseAndProject(t *testing.T) {
-	root := map[string]interface{}{
-		"message": map[string]interface{}{
-			"order": map[string]interface{}{
-				"beckn:orderItems": []interface{}{
-					map[string]interface{}{"beckn:orderedItem": "item-1"},
-					map[string]interface{}{"beckn:orderedItem": "item-2"},
-				},
-			},
-		},
-	}
-	parts := []string{"message", "order", "beckn:orderItems", "beckn:orderedItem"}
-	got, ok := projectPath(root, parts)
-	require.True(t, ok)
-
-	expected := map[string]interface{}{
-		"message": map[string]interface{}{
-			"order": map[string]interface{}{
-				"beckn:orderItems": []interface{}{
-					map[string]interface{}{"beckn:orderedItem": "item-1"},
-					map[string]interface{}{"beckn:orderedItem": "item-2"},
-				},
-			},
-		},
-	}
-	assert.Equal(t, expected, got)
-}
-
-func TestProjectPath_NonMapOrSlice(t *testing.T) {
-	_, ok := projectPath("string", []string{"a"})
-	require.False(t, ok)
-
-	_, ok = projectPath(42, []string{"a"})
-	require.False(t, ok)
-}
-
-func TestProjectPath_EmptyArray(t *testing.T) {
-	root := map[string]interface{}{"items": []interface{}{}}
-	got, ok := projectPath(root, []string{"items", "id"})
-	require.False(t, ok)
-	assert.Nil(t, got)
-}
-
-// Test deepMerge
-
-func TestDeepMerge_NilDst(t *testing.T) {
-	src := map[string]interface{}{"a": 1}
-	got := deepMerge(nil, src)
-	assert.Equal(t, src, got)
-}
-
-func TestDeepMerge_MapIntoMap(t *testing.T) {
-	dst := map[string]interface{}{"a": 1, "b": 2}
-	src := map[string]interface{}{"b": 20, "c": 3}
-	got := deepMerge(dst, src)
-	assert.Equal(t, map[string]interface{}{"a": 1, "b": 20, "c": 3}, got)
-}
-
-func TestDeepMerge_MapNested(t *testing.T) {
-	dst := map[string]interface{}{
-		"context": map[string]interface{}{"action": "search", "domain": "retail"},
-	}
-	src := map[string]interface{}{
-		"context": map[string]interface{}{"action": "search", "transaction_id": "tx-1"},
-	}
-	got := deepMerge(dst, src)
-	ctx, ok := got.(map[string]interface{})["context"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "search", ctx["action"])
-	assert.Equal(t, "retail", ctx["domain"])
-	assert.Equal(t, "tx-1", ctx["transaction_id"])
-}
-
-func TestDeepMerge_ArrayIntoArray(t *testing.T) {
-	dst := []interface{}{
-		map[string]interface{}{"id": "a"},
-		map[string]interface{}{"id": "b"},
-	}
-	src := []interface{}{
-		map[string]interface{}{"id": "a", "name": "A"},
-		map[string]interface{}{"id": "b", "name": "B"},
-	}
-	got := deepMerge(dst, src)
-	sl, ok := got.([]interface{})
-	require.True(t, ok)
-	require.Len(t, sl, 2)
-	assert.Equal(t, map[string]interface{}{"id": "a", "name": "A"}, sl[0])
-	assert.Equal(t, map[string]interface{}{"id": "b", "name": "B"}, sl[1])
-}
-
-func TestDeepMerge_ArraySrcLonger(t *testing.T) {
-	dst := []interface{}{map[string]interface{}{"a": 1}}
-	src := []interface{}{
-		map[string]interface{}{"a": 1},
-		map[string]interface{}{"a": 2},
-	}
-	got := deepMerge(dst, src)
-	sl, ok := got.([]interface{})
-	require.True(t, ok)
-	require.Len(t, sl, 2)
-}
-
-func TestDeepMerge_ScalarSrc(t *testing.T) {
-	dst := map[string]interface{}{"a": 1}
-	src := "overwrite"
-	got := deepMerge(dst, src)
-	assert.Equal(t, "overwrite", got)
-}
-
-// Test getFieldForAction and selectAuditPayload (require loaded rules via temp file)
-
-func writeAuditRulesFile(t *testing.T, content string) string {
+// resetConfig clears the package-level compiled config between tests so they
+// do not interfere with each other through shared global state.
+func resetConfig(t *testing.T) {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "audit-fields.yaml")
-	err := os.WriteFile(path, []byte(content), 0600)
-	require.NoError(t, err)
-	return path
+	compiledCfgMu.Lock()
+	compiledCfg = nil
+	compiledCfgMu.Unlock()
 }
 
-func TestGetFieldForAction_ActionMatch(t *testing.T) {
-	ctx := context.Background()
-	path := writeAuditRulesFile(t, `
-auditRules:
-  default:
-    - context.transaction_id
-    - context.action
-  search:
-    - context.action
-    - context.timestamp
-  select:
-    - context.action
-    - message.order
-`)
-	require.NoError(t, LoadAuditFieldRules(ctx, path))
-
-	fields := getFieldForAction(ctx, "search")
-	assert.Equal(t, []string{"context.action", "context.timestamp"}, fields)
-
-	fields = getFieldForAction(ctx, "select")
-	assert.Equal(t, []string{"context.action", "message.order"}, fields)
+// serveYAML starts a test HTTP server that returns the given YAML string.
+func serveYAML(t *testing.T, yaml string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-yaml")
+		_, _ = w.Write([]byte(yaml))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
-func TestGetFieldForAction_FallbackToDefault(t *testing.T) {
-	ctx := context.Background()
-	path := writeAuditRulesFile(t, `
-auditRules:
-  default:
-    - context.transaction_id
-    - context.message_id
-  search:
-    - context.action
-`)
-	require.NoError(t, LoadAuditFieldRules(ctx, path))
-
-	fields := getFieldForAction(ctx, "unknown_action")
-	assert.Equal(t, []string{"context.transaction_id", "context.message_id"}, fields)
-
-	fields = getFieldForAction(ctx, "")
-	assert.Equal(t, []string{"context.transaction_id", "context.message_id"}, fields)
-}
-
-func TestGetFieldForAction_EmptyDefault(t *testing.T) {
-	ctx := context.Background()
-	path := writeAuditRulesFile(t, `
-auditRules:
-  default: []
-  search:
-    - context.action
-`)
-	require.NoError(t, LoadAuditFieldRules(ctx, path))
-
-	fields := getFieldForAction(ctx, "other")
-	assert.Empty(t, fields)
-}
-
-func TestSelectAuditPayload_InvalidJSON(t *testing.T) {
-	ctx := context.Background()
-	path := writeAuditRulesFile(t, `
-auditRules:
-  default:
-    - context.action
-`)
-	require.NoError(t, LoadAuditFieldRules(ctx, path))
-
-	got := selectAuditPayload(ctx, []byte("not json"))
-	assert.Nil(t, got)
-}
-
-func TestSelectAuditPayload_NoRulesLoaded(t *testing.T) {
-	ctx := context.Background()
-	// use a fresh context without loading any rules; auditRules may be from previous test
-	path := writeAuditRulesFile(t, `
-auditRules:
-  default: []
-`)
-	require.NoError(t, LoadAuditFieldRules(ctx, path))
-
-	body := []byte(`{"context":{"action":"search"}}`)
-	got := selectAuditPayload(ctx, body)
-	assert.Nil(t, got)
-}
-
-func TestSelectAuditPayload_ContextAndActionOnly(t *testing.T) {
-	ctx := context.Background()
-	path := writeAuditRulesFile(t, `
-auditRules:
-  default:
-    - context.transaction_id
-    - context.message_id
-    - context.action
-`)
-	require.NoError(t, LoadAuditFieldRules(ctx, path))
-
-	body := []byte(`{
-		"context": {
-			"action": "search",
-			"transaction_id": "tx-1",
-			"message_id": "msg-1",
-			"domain": "retail"
-		},
-		"message": {"intent": "buy"}
-	}`)
-	got := selectAuditPayload(ctx, body)
-	require.NotNil(t, got)
-
+// unmarshalJSON is a test helper that unmarshals JSON bytes and fails the test on error.
+func unmarshalJSON(t *testing.T, data []byte) map[string]interface{} {
+	t.Helper()
 	var out map[string]interface{}
-	require.NoError(t, json.Unmarshal(got, &out))
-	ctxMap, ok := out["context"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "search", ctxMap["action"])
-	assert.Equal(t, "tx-1", ctxMap["transaction_id"])
-	assert.Equal(t, "msg-1", ctxMap["message_id"])
-	_, hasMessage := out["message"]
-	assert.False(t, hasMessage)
+	require.NoError(t, json.Unmarshal(data, &out))
+	return out
 }
 
-func TestSelectAuditPayload_ActionSpecificRules(t *testing.T) {
-	ctx := context.Background()
-	path := writeAuditRulesFile(t, `
-auditRules:
-  default:
-    - context.action
-  search:
-    - context.action
-    - context.timestamp
-    - message.intent
+// ── LoadAuditConfig ──────────────────────────────────────────────────────────
+
+func TestLoadAuditConfig_FullMode(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  email:
+    maskType: replace
+    mask: "***@***.***"
+maskRules:
+  - keys: [email]
+    pattern: email
+pathOverrides: []
 `)
-	require.NoError(t, LoadAuditFieldRules(ctx, path))
-
-	body := []byte(`{
-		"context": {"action": "search", "timestamp": "2024-01-15T10:30:00Z", "domain": "retail"},
-		"message": {"intent": {"item": {"id": "x"}}}
-	}`)
-	got := selectAuditPayload(ctx, body)
-	require.NotNil(t, got)
-
-	var out map[string]interface{}
-	require.NoError(t, json.Unmarshal(got, &out))
-	ctxMap := out["context"].(map[string]interface{})
-	assert.Equal(t, "search", ctxMap["action"])
-	assert.Equal(t, "2024-01-15T10:30:00Z", ctxMap["timestamp"])
-	msg := out["message"].(map[string]interface{})
-	assert.NotNil(t, msg["intent"])
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+	cfg := GetCompiledConfig()
+	require.NotNil(t, cfg)
+	assert.Equal(t, "full", cfg.mode)
+	assert.NotNil(t, cfg.keyToPattern["email"])
+	assert.Nil(t, cfg.keepPaths, "keepPaths must be nil for full mode")
 }
 
-func TestSelectAuditPayload_ArrayFieldProjection(t *testing.T) {
-	ctx := context.Background()
-	path := writeAuditRulesFile(t, `
-auditRules:
+func TestLoadAuditConfig_SelectiveMode(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: selective
+patterns: {}
+maskRules: []
+selectedFields:
   default:
+    - context.transactionId
     - context.action
-  select:
-    - context.transaction_id
-    - context.action
-    - message.order.beckn:orderItems.beckn:orderedItem
 `)
-	require.NoError(t, LoadAuditFieldRules(ctx, path))
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+	cfg := GetCompiledConfig()
+	require.NotNil(t, cfg)
+	assert.Equal(t, "selective", cfg.mode)
+	require.NotNil(t, cfg.keepPaths["default"])
+	_, hasExact := cfg.keepPaths["default"]["context.transactionId"]
+	_, hasAnc := cfg.keepPaths["default"]["context"]
+	assert.True(t, hasExact, "exact path must be in keep set")
+	assert.True(t, hasAnc, "ancestor path must be in keep set")
+}
+
+func TestLoadAuditConfig_DefaultsToFull(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+patterns: {}
+maskRules: []
+`) // no mode field
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+	assert.Equal(t, "full", GetCompiledConfig().mode)
+}
+
+func TestLoadAuditConfig_UnknownMode(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: verbose
+patterns: {}
+maskRules: []
+`)
+	require.Error(t, LoadAuditConfig(context.Background(), url))
+}
+
+func TestLoadAuditConfig_MaskRuleUnknownPattern(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns: {}
+maskRules:
+  - keys: [email]
+    pattern: nonexistent
+`)
+	require.Error(t, LoadAuditConfig(context.Background(), url))
+}
+
+func TestLoadAuditConfig_PathOverrideUnknownPattern(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns: {}
+maskRules: []
+pathOverrides:
+  - path: context.someField
+    pattern: nonexistent
+`)
+	require.Error(t, LoadAuditConfig(context.Background(), url))
+}
+
+func TestLoadAuditConfig_EmptySource(t *testing.T) {
+	resetConfig(t)
+	require.Error(t, LoadAuditConfig(context.Background(), ""))
+}
+
+// ── ProcessAuditPayload — full mode ─────────────────────────────────────────
+
+func TestProcessAuditPayload_FullMode_MasksEmailByKeyName(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  email:
+    maskType: replace
+    mask: "***@***.***"
+maskRules:
+  - keys: [email, supportEmail]
+    pattern: email
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
 
 	body := []byte(`{
-		"context": {"action": "select", "transaction_id": "tx-2"},
+		"context": {"action": "confirm", "transactionId": "txn-1"},
 		"message": {
 			"order": {
-				"beckn:orderItems": [
-					{"beckn:orderedItem": "item-A", "other": "x"},
-					{"beckn:orderedItem": "item-B", "other": "y"}
+				"buyer": {"email": "buyer@example.com", "id": "u1"},
+				"support": {"supportEmail": "help@acme.com", "phone": "9999"}
+			}
+		}
+	}`)
+
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+
+	order := out["message"].(map[string]interface{})["order"].(map[string]interface{})
+	buyer := order["buyer"].(map[string]interface{})
+	support := order["support"].(map[string]interface{})
+
+	assert.Equal(t, "***@***.***", buyer["email"], "buyer.email should be masked")
+	assert.Equal(t, "u1", buyer["id"], "buyer.id should be unchanged")
+	assert.Equal(t, "***@***.***", support["supportEmail"], "support.supportEmail should be masked")
+	assert.Equal(t, "9999", support["phone"], "phone is not in maskRules — should be unchanged")
+	assert.Equal(t, "txn-1", out["context"].(map[string]interface{})["transactionId"])
+}
+
+func TestProcessAuditPayload_FullMode_MasksPhoneLast4(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  phone:
+    maskType: last4
+maskRules:
+  - keys: [phone, telephone]
+    pattern: phone
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	body := []byte(`{"message":{"buyer":{"telephone":"+91-9876543210","id":"u1"}}}`)
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+
+	buyer := out["message"].(map[string]interface{})["buyer"].(map[string]interface{})
+	assert.Equal(t, "**********3210", buyer["telephone"])
+	assert.Equal(t, "u1", buyer["id"])
+}
+
+func TestProcessAuditPayload_FullMode_MasksAcrossDepths(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  sensitive:
+    maskType: replace
+    mask: "[REDACTED]"
+maskRules:
+  - keys: [email]
+    pattern: sensitive
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	// email appears at different depths — both must be masked.
+	body := []byte(`{
+		"a": {"email": "a@a.com"},
+		"b": {"c": {"email": "b@b.com"}},
+		"d": {"e": {"f": {"email": "c@c.com"}}}
+	}`)
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+
+	assert.Equal(t, "[REDACTED]", out["a"].(map[string]interface{})["email"])
+	assert.Equal(t, "[REDACTED]", out["b"].(map[string]interface{})["c"].(map[string]interface{})["email"])
+	assert.Equal(t, "[REDACTED]", out["d"].(map[string]interface{})["e"].(map[string]interface{})["f"].(map[string]interface{})["email"])
+}
+
+func TestProcessAuditPayload_FullMode_ArrayTraversal(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  email:
+    maskType: replace
+    mask: "***@***.***"
+maskRules:
+  - keys: [email]
+    pattern: email
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	body := []byte(`{
+		"message": {
+			"order": {
+				"items": [
+					{"buyer": {"email": "a@b.com", "id": "u1"}},
+					{"buyer": {"email": "c@d.com", "id": "u2"}}
 				]
 			}
 		}
 	}`)
-	got := selectAuditPayload(ctx, body)
-	require.NotNil(t, got)
 
-	var out map[string]interface{}
-	require.NoError(t, json.Unmarshal(got, &out))
-	ctxMap := out["context"].(map[string]interface{})
-	assert.Equal(t, "select", ctxMap["action"])
-	assert.Equal(t, "tx-2", ctxMap["transaction_id"])
-
-	order := out["message"].(map[string]interface{})["order"].(map[string]interface{})
-	items := order["beckn:orderItems"].([]interface{})
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+	items := out["message"].(map[string]interface{})["order"].(map[string]interface{})["items"].([]interface{})
 	require.Len(t, items, 2)
-	assert.Equal(t, map[string]interface{}{"beckn:orderedItem": "item-A"}, items[0])
-	assert.Equal(t, map[string]interface{}{"beckn:orderedItem": "item-B"}, items[1])
+
+	for i, item := range items {
+		buyer := item.(map[string]interface{})["buyer"].(map[string]interface{})
+		assert.Equal(t, "***@***.***", buyer["email"], "email in item %d should be masked", i)
+		assert.NotEqual(t, "***@***.***", buyer["id"], "id in item %d should not be masked", i)
+	}
 }
 
-// TestSelectAuditPayload_SelectOrderExample uses a full select request payload and
-// select audit rules to verify that only configured fields are projected into the
-// audit log body. The request mirrors a real select with context, message.order,
-// beckn:orderItems (array), beckn:acceptedOffer, and beckn:orderAttributes.
-// Rules include array traversal (e.g. message.order.beckn:orderItems.beckn:orderedItem
-// projects that field from each array element) and nested paths like
-// message.order.beckn:orderItems.beckn:acceptedOffer.beckn:price.value.
-func TestSelectAuditPayload_SelectOrderExample(t *testing.T) {
-	ctx := context.Background()
-	path := writeAuditRulesFile(t, `
-auditRules:
-  default: []
-  select:
-    - context.transaction_id
-    - context.message_id
-    - context.action
-    - context.timestamp
-    - message.order
-    - message.order.beckn:seller
-    - message.order.beckn:buyer
-    - message.order.beckn:buyer.beckn:id
-    - message.order.beckn:orderItems
-    - message.order.beckn:orderItems.beckn:orderedItem
-    - message.order.beckn:orderItems.beckn:acceptedOffer
-    - message.order.beckn:orderItems.beckn:acceptedOffer.beckn:id
-    - message.order.beckn:orderItems.beckn:acceptedOffer.beckn:price
-    - message.order.beckn:orderItems.beckn:acceptedOffer.beckn:price.value
-    - message.order.beckn:orderAttributes
-    - message.order.beckn:orderAttributes.preferences
-    - message.order.beckn:orderAttributes.preferences.startTime
+func TestProcessAuditPayload_FullMode_PathOverride(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  sensitive:
+    maskType: replace
+    mask: "[REDACTED]"
+maskRules: []
+pathOverrides:
+  - path: context.internalRef
+    pattern: sensitive
 `)
-	require.NoError(t, LoadAuditFieldRules(ctx, path))
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
 
-	// Full select request example: context (version, action, domain, timestamp, ids, URIs, ttl)
-	// and message.order with orderStatus, seller, buyer, orderItems array (orderedItem, quantity,
-	// acceptedOffer with id, descriptor, items, provider, price), orderAttributes (buyerFinderFee, preferences).
+	body := []byte(`{"context":{"action":"confirm","internalRef":"ref-secret-42"},"message":{}}`)
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+
+	ctx := out["context"].(map[string]interface{})
+	assert.Equal(t, "[REDACTED]", ctx["internalRef"])
+	assert.Equal(t, "confirm", ctx["action"], "action should be unchanged")
+}
+
+// ── ProcessAuditPayload — selective mode ────────────────────────────────────
+
+func TestProcessAuditPayload_SelectiveMode_DropUnlistedFields(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: selective
+patterns: {}
+maskRules: []
+selectedFields:
+  default:
+    - context.transactionId
+    - context.action
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
 	body := []byte(`{
-  "context": {
-    "version": "1.0.0",
-    "action": "select",
-    "domain": "ev_charging",
-    "timestamp": "2024-01-15T10:30:00Z",
-    "message_id": "bb9f86db-9a3d-4e9c-8c11-81c8f1a7b901",
-    "transaction_id": "2b4d69aa-22e4-4c78-9f56-5a7b9e2b2002",
-    "bap_id": "bap.example.com",
-    "bap_uri": "https://bap.example.com",
-    "ttl": "PT30S",
-    "bpp_id": "bpp.example.com",
-    "bpp_uri": "https://bpp.example.com"
-  },
-  "message": {
-    "order": {
-      "@context": "https://raw.githubusercontent.com/beckn/protocol-specifications-new/refs/heads/main/schema/core/v2/context.jsonld",
-      "@type": "beckn:Order",
-      "beckn:orderStatus": "CREATED",
-      "beckn:seller": "ecopower-charging",
-      "beckn:buyer": {
-        "@context": "https://raw.githubusercontent.com/beckn/protocol-specifications-new/refs/heads/main/schema/core/v2/context.jsonld",
-        "@type": "beckn:Buyer",
-        "beckn:id": "user-123",
-        "beckn:role": "BUYER",
-        "beckn:displayName": "Ravi Kumar",
-        "beckn:telephone": "+91-9876543210",
-        "beckn:email": "ravi.kumar@example.com",
-        "beckn:taxID": "GSTIN29ABCDE1234F1Z5"
-      },
-      "beckn:orderItems": [
-        {
-          "beckn:orderedItem": "IND*ecopower-charging*cs-01*IN*ECO*BTM*01*CCS2*A*CCS2-A",
-          "beckn:quantity": {
-            "unitText": "Kilowatt Hour",
-            "unitCode": "KWH",
-            "unitQuantity": 2.5
-          },
-          "beckn:acceptedOffer": {
-            "@context": "https://raw.githubusercontent.com/beckn/protocol-specifications-new/refs/heads/main/schema/core/v2/context.jsonld",
-            "@type": "beckn:Offer",
-            "beckn:id": "offer-ccs2-60kw-kwh",
-            "beckn:descriptor": {
-              "@type": "beckn:Descriptor",
-              "schema:name": "Per-kWh Tariff - CCS2 60kW"
-            },
-            "beckn:items": [
-              "IND*ecopower-charging*cs-01*IN*ECO*BTM*01*CCS2*A*CCS2-A"
-            ],
-            "beckn:provider": "ecopower-charging",
-            "beckn:price": {
-              "currency": "INR",
-              "value": 45.0,
-              "applicableQuantity": {
-                "unitText": "Kilowatt Hour",
-                "unitCode": "KWH",
-                "unitQuantity": 1
-              }
-            }
-          }
-        }
-      ],
-      "beckn:orderAttributes": {
-        "@context": "https://raw.githubusercontent.com/beckn/protocol-specifications-new/refs/heads/main/schema/EvChargingSession/v1/context.jsonld",
-        "@type": "ChargingSession",
-        "buyerFinderFee": {
-          "feeType": "PERCENTAGE",
-          "feeValue": 2.5
-        },
-        "preferences": {
-          "startTime": "2026-01-04T08:00:00+05:30",
-          "endTime": "2026-01-04T20:00:00+05:30"
-        }
-      }
-    }
-  }
-}`)
-	got := selectAuditPayload(ctx, body)
-	require.NotNil(t, got, "selectAuditPayload should return projected body for select action")
+		"context": {
+			"transactionId": "txn-1",
+			"messageId": "msg-1",
+			"action": "confirm",
+			"domain": "retail"
+		},
+		"message": {"order": {"id": "ord-1"}}
+	}`)
 
-	var out map[string]interface{}
-	require.NoError(t, json.Unmarshal(got, &out))
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+	ctx := out["context"].(map[string]interface{})
 
-	// Context: only transaction_id, message_id, action, timestamp
-	ctxMap, ok := out["context"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "select", ctxMap["action"])
-	assert.Equal(t, "2b4d69aa-22e4-4c78-9f56-5a7b9e2b2002", ctxMap["transaction_id"])
-	assert.Equal(t, "bb9f86db-9a3d-4e9c-8c11-81c8f1a7b901", ctxMap["message_id"])
-	assert.Equal(t, "2024-01-15T10:30:00Z", ctxMap["timestamp"])
-	_, hasBapID := ctxMap["bap_id"]
-	assert.False(t, hasBapID, "context should not include bap_id when not in audit rules")
+	assert.Equal(t, "txn-1", ctx["transactionId"], "transactionId must be kept")
+	assert.Equal(t, "confirm", ctx["action"], "action must be kept")
+	assert.Nil(t, ctx["messageId"], "messageId is not selected — must be dropped")
+	assert.Nil(t, ctx["domain"], "domain is not selected — must be dropped")
+	assert.Nil(t, out["message"], "message is not selected — must be dropped")
+}
 
-	// message.order: full order merged with projected array fields
-	msg, ok := out["message"].(map[string]interface{})
-	require.True(t, ok)
-	order, ok := msg["order"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "ecopower-charging", order["beckn:seller"])
-	buyer, ok := order["beckn:buyer"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "user-123", buyer["beckn:id"])
+func TestProcessAuditPayload_SelectiveMode_PerActionOverridesDefault(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: selective
+patterns: {}
+maskRules: []
+selectedFields:
+  default:
+    - context.transactionId
+    - context.action
+  confirm:
+    - context.transactionId
+    - context.action
+    - message.order.id
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
 
-	// beckn:orderItems: array with projected fields from each element (beckn:orderedItem, beckn:acceptedOffer with id, price, price.value)
-	items, ok := order["beckn:orderItems"].([]interface{})
-	require.True(t, ok)
-	require.Len(t, items, 1)
-	item0, ok := items[0].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "IND*ecopower-charging*cs-01*IN*ECO*BTM*01*CCS2*A*CCS2-A", item0["beckn:orderedItem"])
-	acceptedOffer, ok := item0["beckn:acceptedOffer"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "offer-ccs2-60kw-kwh", acceptedOffer["beckn:id"])
-	price, ok := acceptedOffer["beckn:price"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, 45.0, price["value"])
+	body := []byte(`{
+		"context": {"transactionId": "txn-1", "action": "confirm", "domain": "retail"},
+		"message": {"order": {"id": "ord-99", "status": "ACTIVE"}}
+	}`)
 
-	// beckn:orderAttributes: only preferences and preferences.startTime
-	orderAttrs, ok := order["beckn:orderAttributes"].(map[string]interface{})
-	require.True(t, ok)
-	prefs, ok := orderAttrs["preferences"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "2026-01-04T08:00:00+05:30", prefs["startTime"])
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+	order := out["message"].(map[string]interface{})["order"].(map[string]interface{})
+
+	assert.Equal(t, "ord-99", order["id"], "message.order.id is in confirm list — must be kept")
+	assert.Nil(t, order["status"], "message.order.status is not in confirm list — must be dropped")
+	assert.Nil(t, out["context"].(map[string]interface{})["domain"])
+}
+
+func TestProcessAuditPayload_SelectiveMode_FallsBackToDefault(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: selective
+patterns: {}
+maskRules: []
+selectedFields:
+  default:
+    - context.transactionId
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	// action is "search" — not listed in selectedFields, so default applies.
+	body := []byte(`{"context":{"transactionId":"txn-1","action":"search","domain":"ev"}}`)
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+	ctx := out["context"].(map[string]interface{})
+
+	assert.Equal(t, "txn-1", ctx["transactionId"])
+	assert.Nil(t, ctx["action"], "action not in default list — must be dropped")
+	assert.Nil(t, ctx["domain"])
+}
+
+func TestProcessAuditPayload_SelectiveMode_NoSelectedFieldsPassThrough(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: selective
+patterns: {}
+maskRules: []
+`) // no selectedFields — keep set is nil → pass through
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	body := []byte(`{"context":{"transactionId":"txn-1","action":"search"}}`)
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+	ctx := out["context"].(map[string]interface{})
+
+	assert.Equal(t, "txn-1", ctx["transactionId"], "no selectedFields → full pass-through")
+	assert.Equal(t, "search", ctx["action"])
+}
+
+func TestProcessAuditPayload_SelectiveMode_MaskingAppliedAfterSelection(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: selective
+patterns:
+  email:
+    maskType: replace
+    mask: "***@***.***"
+maskRules:
+  - keys: [email]
+    pattern: email
+selectedFields:
+  default:
+    - context.transactionId
+    - message.buyer.email
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	body := []byte(`{
+		"context": {"transactionId": "txn-1", "action": "init", "domain": "retail"},
+		"message": {
+			"buyer": {"email": "secret@example.com", "name": "Alice"},
+			"order": {"id": "ord-1"}
+		}
+	}`)
+
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+	ctx := out["context"].(map[string]interface{})
+	buyer := out["message"].(map[string]interface{})["buyer"].(map[string]interface{})
+
+	assert.Equal(t, "txn-1", ctx["transactionId"])
+	assert.Nil(t, ctx["domain"], "domain not selected — must be dropped")
+	// email is selected AND in maskRules — key-name masking fires before selection check
+	assert.Equal(t, "***@***.***", buyer["email"])
+	assert.Nil(t, buyer["name"], "name not in selectedFields — must be dropped")
+	assert.Nil(t, out["message"].(map[string]interface{})["order"], "order not in selectedFields — must be dropped")
+}
+
+// ── Edge cases ───────────────────────────────────────────────────────────────
+
+func TestProcessAuditPayload_NilBodyReturnsNil(t *testing.T) {
+	resetConfig(t)
+	assert.Equal(t, []byte(nil), ProcessAuditPayload(context.Background(), nil))
+}
+
+func TestProcessAuditPayload_EmptyBodyReturnsEmpty(t *testing.T) {
+	resetConfig(t)
+	assert.Equal(t, []byte{}, ProcessAuditPayload(context.Background(), []byte{}))
+}
+
+func TestProcessAuditPayload_NoConfigPassThrough(t *testing.T) {
+	resetConfig(t)
+	body := []byte(`{"context":{"action":"search"}}`)
+	assert.Equal(t, body, ProcessAuditPayload(context.Background(), body))
+}
+
+func TestProcessAuditPayload_InvalidJSONReturnsOriginal(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  sensitive:
+    maskType: replace
+    mask: "[REDACTED]"
+maskRules:
+  - keys: [name]
+    pattern: sensitive
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	body := []byte("not valid json")
+	// Should return the original body, not nil or panic.
+	assert.Equal(t, body, ProcessAuditPayload(context.Background(), body))
+}
+
+func TestProcessAuditPayload_MissingPathIsNoOp(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  email:
+    maskType: replace
+    mask: "***@***.***"
+maskRules:
+  - keys: [email]
+    pattern: email
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	// Payload has no email field — should come through untouched.
+	body := []byte(`{"context":{"action":"search"},"message":{"id":"m1"}}`)
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+	assert.Equal(t, "search", out["context"].(map[string]interface{})["action"])
+	assert.Equal(t, "m1", out["message"].(map[string]interface{})["id"])
+}
+
+// ── applyMask / maskLast4 unit tests ────────────────────────────────────────
+
+func TestMaskLast4(t *testing.T) {
+	assert.Equal(t, "***", maskLast4("abc"))
+	assert.Equal(t, "****", maskLast4("abcd"))
+	assert.Equal(t, "*bcde", maskLast4("abcde"))
+	assert.Equal(t, "**********3210", maskLast4("+91-9876543210"))
+}
+
+func TestApplyMask_NilPatternReturnsDefault(t *testing.T) {
+	assert.Equal(t, defaultMask, applyMask("anything", nil))
+}
+
+func TestApplyMask_Replace(t *testing.T) {
+	p := &CompiledPattern{MaskType: "replace", Mask: "***@***.***"}
+	assert.Equal(t, "***@***.***", applyMask("real@email.com", p))
+}
+
+func TestApplyMask_ReplaceEmptyMaskFallsBackToDefault(t *testing.T) {
+	p := &CompiledPattern{MaskType: "replace", Mask: ""}
+	assert.Equal(t, defaultMask, applyMask("value", p))
+}
+
+func TestApplyMask_Last4(t *testing.T) {
+	p := &CompiledPattern{MaskType: "last4"}
+	assert.Equal(t, "**3456", applyMask("123456", p))
+}
+
+func TestApplyMask_NonStringValue(t *testing.T) {
+	p := &CompiledPattern{MaskType: "replace", Mask: "[REDACTED]"}
+	assert.Equal(t, "[REDACTED]", applyMask(42, p))
+	assert.Equal(t, "[REDACTED]", applyMask(true, p))
 }
