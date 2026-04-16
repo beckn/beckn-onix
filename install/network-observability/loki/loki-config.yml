@@ -1,5 +1,7 @@
 # Loki config for network-level audit logs (OTLP ingestion)
 # OTLP requires allow_structured_metadata for Loki 3.x
+# otlp_config maps resource attributes to Loki stream labels — without this
+# Loki has no labels and rejects the log stream.
 
 auth_enabled: false
 
@@ -20,6 +22,17 @@ common:
 
 limits_config:
   allow_structured_metadata: true
+  # Map OTel resource attributes to Loki stream labels.
+  # At least one index_label is required for Loki to accept a log stream.
+  # eid distinguishes AUDIT / METRIC / API signal types from otelsetup.
+  otlp_config:
+    resource_attributes:
+      attributes_config:
+        - action: index_label
+          attributes:
+            - service.name
+            - environment
+            - eid
 
 schema_config:
   configs:
