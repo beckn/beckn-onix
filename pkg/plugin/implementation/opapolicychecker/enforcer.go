@@ -31,7 +31,6 @@ type PolicyConfig struct {
 	Query         string
 	Actions       []string
 	Enabled       bool
-	DebugLogging  bool
 	FetchTimeout  time.Duration
 	IsBundle      bool
 	Verification  *ArtifactVerificationConfig
@@ -51,7 +50,6 @@ var policyEntryKnownKeys = map[string]bool{
 	"query":                           true,
 	"actions":                         true,
 	"enabled":                         true,
-	"debugLogging":                    true,
 	"fetchTimeoutSeconds":             true,
 	"verification.enabled":            true,
 	"verification.publicKeyLookupUrl": true,
@@ -155,10 +153,6 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 
 	if enabled, ok := cfg["enabled"]; ok {
 		config.Enabled = enabled == "true" || enabled == "1"
-	}
-
-	if debug, ok := cfg["debugLogging"]; ok {
-		config.DebugLogging = debug == "true" || debug == "1"
 	}
 
 	if fts, ok := cfg["fetchTimeoutSeconds"]; ok && fts != "" {
@@ -541,7 +535,7 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	action := extractAction(ctx.Request.URL.Path, ctx.Body)
 
 	if !policyConfig.IsActionEnabled(action) {
-		if policyConfig.DebugLogging {
+		if e.config.DebugLogging {
 			log.Debugf(ctx, "OPAPolicyChecker: action %q not in configured actions %v, skipping", action, policyConfig.Actions)
 		}
 		return nil
@@ -556,7 +550,7 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 		return model.NewBadReqErr(fmt.Errorf("policy evaluator is not initialized"))
 	}
 
-	if policyConfig.DebugLogging {
+	if e.config.DebugLogging {
 		log.Debugf(ctx, "OPAPolicyChecker: evaluating policy for networkID=%q action=%q (modules=%v)", selectedNetworkID, action, ev.ModuleNames())
 	}
 

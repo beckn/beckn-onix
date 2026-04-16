@@ -90,7 +90,6 @@ Each entry under `networkPolicies` supports:
 - `query`
 - optional `actions`
 - optional `enabled`
-- optional `debugLogging`
 - optional `fetchTimeoutSeconds`
 - optional `verification`
 
