@@ -87,6 +87,17 @@ modules:
           id: router
           config:
             routingConfig: ./config/local-beckn-one-routing-BAPReceiver.yaml
+        checkPolicy:
+          id: opapolicychecker
+          config:
+            # Policy source configuration.
+            # type: url | file | dir | bundle
+            # location: path or URL to policy source
+            # query: OPA query path to evaluate (required)
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
         middleware:
           - id: reqpreprocessor
             config:
@@ -94,6 +105,7 @@ modules:
               role: bap
       steps:
         - validateSign
+        - checkPolicy
         - addRoute
         - validateSchema
   
@@ -147,12 +159,20 @@ modules:
             routingConfig: ./config/local-beckn-one-routing-BAPCaller.yaml
         signer:
           id: signer
+        checkPolicy:
+          id: opapolicychecker
+          config:
+            type: file
+            location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
+            query: "data.policy.result"
+            refreshIntervalSeconds: "300"
         middleware:
           - id: reqpreprocessor
             config:
               contextKeys: transaction_id,message_id
               role: bap
       steps:
+        - checkPolicy
         - addRoute
         - sign
         - validateSchema
