@@ -74,7 +74,7 @@ modules:
           id: schemav2validator
           config:
             type: url
-            location: https://raw.githubusercontent.com/beckn/protocol-specifications-new/refs/heads/main/api/beckn.yaml
+            location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/tags/core-v2.0.0-lts/api/v2.0.0/beckn.yaml
             cacheTTL: "3600"
             extendedSchema_enabled: "true"
             extendedSchema_cacheTTL: "86400"
@@ -146,7 +146,7 @@ modules:
           id: schemav2validator
           config:
             type: url
-            location: https://raw.githubusercontent.com/beckn/protocol-specifications-new/refs/heads/main/api/beckn.yaml
+            location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/tags/core-v2.0.0-lts/api/v2.0.0/beckn.yaml
             cacheTTL: "3600"
             extendedSchema_enabled: "true"
             extendedSchema_cacheTTL: "86400"
@@ -159,6 +159,11 @@ modules:
             routingConfig: ./config/local-beckn-one-routing-BAPCaller.yaml
         signer:
           id: signer
+        middleware:
+          - id: reqpreprocessor
+            config:
+              contextKeys: transaction_id,message_id
+              role: bap
         checkPolicy:
           id: opapolicychecker
           config:
@@ -166,11 +171,6 @@ modules:
             location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
             query: "data.policy.result"
             refreshIntervalSeconds: "300"
-        middleware:
-          - id: reqpreprocessor
-            config:
-              contextKeys: transaction_id,message_id
-              role: bap
       steps:
         - checkPolicy
         - addRoute
