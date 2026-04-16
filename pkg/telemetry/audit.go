@@ -30,7 +30,7 @@ func EmitAuditLogs(ctx context.Context, body []byte, attrs ...log.KeyValue) {
 	provider := global.GetLoggerProvider()
 
 	sum := sha256.Sum256(body)
-	auditBody := selectAuditPayload(ctx, body)
+	auditBody := ProcessAuditPayload(ctx, body)
 	auditlog := provider.Logger(auditLoggerName)
 	record := log.Record{}
 	record.SetBody(log.StringValue(string(auditBody)))

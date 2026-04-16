@@ -144,19 +144,19 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Request(r.Context(), r, stepCtx.Body)
 
 	defer func() {
-		span.SetAttributes(attribute.Int("http.response.status_code", wrapped.statusCode), attribute.String("observedTimeUnixNano", strconv.FormatInt(time.Now().UnixNano(), 10)))
+		span.SetAttributes(attribute.Int("http.response.status_code", wrapped.statusCode), attribute.String("http.request.error", errString(err)), attribute.String("observedTimeUnixNano", strconv.FormatInt(time.Now().UnixNano(), 10)))
 		if wrapped.statusCode < 200 || wrapped.statusCode >= 400 {
 			span.SetStatus(codes.Error, "status code is invalid")
 		}
 
 		body := stepCtx.Body
-		telemetry.EmitAuditLogs(r.Context(), body, auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.response.error", errString(err)))
+		telemetry.EmitAuditLogs(r.Context(), body, auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.request.error", errString(err)), auditlog.String("sender.id", senderID), auditlog.String("receiver.id", receiverID))
 		span.End()
 	}()
 
 	// Execute processing steps.
 	for _, step := range h.steps {
-		if err := step.Run(stepCtx); err != nil {
+		if err = step.Run(stepCtx); err != nil {
 			log.Errorf(stepCtx, err, "%T.run():%v", step, err)
 			response.SendNack(stepCtx, wrapped, err)
 			return

@@ -38,6 +38,10 @@ exporters:
     endpoint: http://loki:3100/otlp
     compression: gzip
 
+  # Prints log records to collector stdout — use `docker logs otel-collector-network` to verify flow.
+  debug:
+    verbosity: normal
+
 service:
   pipelines:
     metrics:
@@ -53,7 +57,7 @@ service:
     logs:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlphttp/loki]
+      exporters: [otlphttp/loki, debug]
 
   telemetry:
     logs:
