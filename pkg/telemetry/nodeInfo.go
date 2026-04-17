@@ -33,12 +33,15 @@ func RegisterPluginInfo(_ context.Context, moduleName, subscriberID string, entr
 	}
 	_, err = meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
 		for _, e := range entries {
-			o.ObserveInt64(gauge, 1, metric.WithAttributes(
+			attrs := []attribute.KeyValue{
 				AttrModule.String(moduleName),
-				attribute.String("subscriber_id", subscriberID),
 				AttrPluginType.String(e.Type),
 				AttrPluginID.String(e.ID),
-			))
+			}
+			if subscriberID != "" {
+				attrs = append(attrs, attribute.String("subscriber_id", subscriberID))
+			}
+			o.ObserveInt64(gauge, 1, metric.WithAttributes(attrs...))
 		}
 		return nil
 	}, gauge)

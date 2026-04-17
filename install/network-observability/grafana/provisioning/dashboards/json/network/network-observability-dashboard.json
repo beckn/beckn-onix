@@ -133,7 +133,7 @@
       "options": {
         "footer": { "enablePagination": true, "show": false },
         "showHeader": true,
-        "sortBy": [{ "desc": false, "displayName": "subscriber_id" }]
+        "sortBy": [{ "desc": false, "displayName": "Subscriber ID" }]
       },
       "targets": [
         {
@@ -147,15 +147,20 @@
       "title": "Full Plugin Manifest (all nodes)",
       "transformations": [
         {
-          "id": "filterFieldsByName",
-          "options": {
-            "include": { "names": ["subscriber_id", "module", "plugin_type", "plugin_id", "Value"] }
-          }
-        },
-        {
           "id": "organize",
           "options": {
-            "excludeByName": { "Value": true },
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "exported_job": true,
+              "instance": true,
+              "job": true,
+              "observability": true,
+              "otel_scope_name": true,
+              "otel_scope_version": true,
+              "service_name": true,
+              "Value": true
+            },
             "indexByName": {
               "subscriber_id": 0,
               "module": 1,
@@ -163,7 +168,7 @@
               "plugin_id": 3
             },
             "renameByName": {
-              "subscriber_id": "Subscriber",
+              "subscriber_id": "Subscriber ID",
               "module": "Module",
               "plugin_type": "Plugin Type",
               "plugin_id": "Plugin ID"
@@ -207,17 +212,28 @@
       "title": "Custom / Non-standard Plugins",
       "transformations": [
         {
-          "id": "filterFieldsByName",
-          "options": {
-            "include": { "names": ["subscriber_id", "module", "plugin_type", "plugin_id", "Value"] }
-          }
-        },
-        {
           "id": "organize",
           "options": {
-            "excludeByName": { "Value": true },
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "exported_job": true,
+              "instance": true,
+              "job": true,
+              "observability": true,
+              "otel_scope_name": true,
+              "otel_scope_version": true,
+              "service_name": true,
+              "Value": true
+            },
+            "indexByName": {
+              "subscriber_id": 0,
+              "module": 1,
+              "plugin_type": 2,
+              "plugin_id": 3
+            },
             "renameByName": {
-              "subscriber_id": "Subscriber",
+              "subscriber_id": "Subscriber ID",
               "module": "Module",
               "plugin_type": "Plugin Type",
               "plugin_id": "Plugin ID"
@@ -252,7 +268,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "group by (subscriber_id, module) ({__name__=~\"onix.*plugin_info\"}) unless group by (subscriber_id, module) ({__name__=~\"onix.*plugin_info\", plugin_type=\"$required_plugin_type\"})",
+          "expr": "group by (service_name, subscriber_id, module) ({__name__=~\"onix.*plugin_info\"}) unless group by (service_name, subscriber_id, module) ({__name__=~\"onix.*plugin_info\", plugin_type=\"$required_plugin_type\"})",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -261,17 +277,26 @@
       "title": "Nodes Missing: $required_plugin_type",
       "transformations": [
         {
-          "id": "filterFieldsByName",
-          "options": {
-            "include": { "names": ["subscriber_id", "module", "Value"] }
-          }
-        },
-        {
           "id": "organize",
           "options": {
-            "excludeByName": { "Value": true },
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "exported_job": true,
+              "instance": true,
+              "job": true,
+              "observability": true,
+              "otel_scope_name": true,
+              "otel_scope_version": true,
+              "service_name": true,
+              "Value": true
+            },
+            "indexByName": {
+              "subscriber_id": 0,
+              "module": 1
+            },
             "renameByName": {
-              "subscriber_id": "Subscriber",
+              "subscriber_id": "Subscriber ID",
               "module": "Module"
             }
           }
