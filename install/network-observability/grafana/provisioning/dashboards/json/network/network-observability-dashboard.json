@@ -107,14 +107,187 @@
       "type": "timeseries"
     },
     {
+      "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+      "id": 11,
+      "title": "Node Plugin Manifest",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Complete plugin composition for every ONIX module on the network. Each row is one loaded plugin. Use this to verify nodes are running expected implementations.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "auto", "displayMode": "auto", "filterable": true, "inspect": false },
+          "noValue": "-"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Value" },
+            "properties": [{ "id": "custom.hidden", "value": true }]
+          }
+        ]
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 18 },
+      "id": 12,
+      "options": {
+        "footer": { "enablePagination": true, "show": false },
+        "showHeader": true,
+        "sortBy": [{ "desc": false, "displayName": "subscriber_id" }]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "{__name__=~\"onix.*plugin_info\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Full Plugin Manifest (all nodes)",
+      "transformations": [
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": { "names": ["subscriber_id", "module", "plugin_type", "plugin_id", "Value"] }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Value": true },
+            "indexByName": {
+              "subscriber_id": 0,
+              "module": 1,
+              "plugin_type": 2,
+              "plugin_id": 3
+            },
+            "renameByName": {
+              "subscriber_id": "Subscriber",
+              "module": "Module",
+              "plugin_type": "Plugin Type",
+              "plugin_id": "Plugin ID"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Plugins whose ID does not match the known blessed set. Update the regex in the query to reflect your network's approved plugin list.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "orange", "mode": "fixed" },
+          "custom": { "align": "auto", "displayMode": "color-background", "filterable": true, "inspect": false },
+          "noValue": "None — all plugins are standard"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Value" },
+            "properties": [{ "id": "custom.hidden", "value": true }]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "id": 13,
+      "options": {
+        "footer": { "show": false },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "{__name__=~\"onix.*plugin_info\", plugin_id!~\"schemav2validator|beckn_sign_validator|static_router|dediregistry|kafka|ed25519_signer|redis|http_wrapper|opa_policy|beckn_key_mgr\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Custom / Non-standard Plugins",
+      "transformations": [
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": { "names": ["subscriber_id", "module", "plugin_type", "plugin_id", "Value"] }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Value": true },
+            "renameByName": {
+              "subscriber_id": "Subscriber",
+              "module": "Module",
+              "plugin_type": "Plugin Type",
+              "plugin_id": "Plugin ID"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Modules that are missing the required plugin slot selected in the dropdown above. An empty table means all modules have the slot configured.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "red", "mode": "fixed" },
+          "custom": { "align": "auto", "displayMode": "color-background", "filterable": true, "inspect": false },
+          "noValue": "None — all modules have this slot"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Value" },
+            "properties": [{ "id": "custom.hidden", "value": true }]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "id": 14,
+      "options": {
+        "footer": { "show": false },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "group by (subscriber_id, module) ({__name__=~\"onix.*plugin_info\"}) unless group by (subscriber_id, module) ({__name__=~\"onix.*plugin_info\", plugin_type=\"$required_plugin_type\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Nodes Missing: $required_plugin_type",
+      "transformations": [
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": { "names": ["subscriber_id", "module", "Value"] }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Value": true },
+            "renameByName": {
+              "subscriber_id": "Subscriber",
+              "module": "Module"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
       "id": 6,
       "title": "Network Logs (Beckn Audit)",
       "type": "row"
     },
     {
       "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 18 },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 37 },
       "id": 7,
       "options": {
         "dedupStrategy": "none",
@@ -138,7 +311,7 @@
     },
     {
       "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 49 },
       "id": 71,
       "options": { "dedupStrategy": "none", "enableLogDetails": true, "showCommonLabels": true, "showLabels": true, "showTime": true, "sortOrder": "Descend" },
       "targets": [{ "datasource": { "type": "loki", "uid": "loki" }, "expr": "{}", "refId": "A" }],
@@ -146,14 +319,14 @@
       "type": "logs"
     },
     {
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 57 },
       "id": 8,
       "title": "Network Traces",
       "type": "row"
     },
     {
       "datasource": { "type": "zipkin", "uid": "zipkin" },
-      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 33 },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 58 },
       "id": 9,
       "options": {
         "dedupStrategy": "none",
@@ -174,10 +347,10 @@
       "type": "traces"
     },
     {
-      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 45 },
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 70 },
       "id": 10,
       "options": {
-        "content": "**Network-level observability**: Beckn API spans, audit logs, and HTTP request metrics from the network pipeline.\n\n**No Loki/Zipkin data?** 1) Restart stack after config changes: `docker compose -f network_observability/docker-compose.yml up -d --force-recreate`. 2) Trigger requests to generate audit logs (EmitAuditLogs runs on each request). 3) Use [Zipkin UI](http://localhost:9411) to search traces. 4) In Grafana Explore (Loki), try `{}` or `{service_name=~\".+\"}` to see all logs.",
+        "content": "**Network-level observability**: Beckn API spans, audit logs, and HTTP request metrics from the network pipeline.\n\n**Node Plugin Manifest**: Shows loaded plugins per ONIX module. The *Custom / Non-standard Plugins* panel highlights any `plugin_id` outside the approved list — update the regex in that panel's query to match your network's blessed plugins. The *Nodes Missing* panel uses the `$required_plugin_type` variable (dropdown above) to find modules lacking a specific slot.\n\n**No Loki/Zipkin data?** 1) Restart stack after config changes: `docker compose -f network_observability/docker-compose.yml up -d --force-recreate`. 2) Trigger requests to generate audit logs. 3) Use [Zipkin UI](http://localhost:9411) to search traces.",
         "mode": "markdown"
       },
       "title": "About",
@@ -188,7 +361,35 @@
   "schemaVersion": 38,
   "style": "dark",
   "tags": ["onix", "network", "observability"],
-  "templating": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "registry", "value": "registry" },
+        "description": "Plugin slot to check for absence across all modules",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Required plugin type",
+        "multi": false,
+        "name": "required_plugin_type",
+        "options": [
+          { "selected": false, "text": "schema_validator", "value": "schema_validator" },
+          { "selected": false, "text": "sign_validator", "value": "sign_validator" },
+          { "selected": false, "text": "router", "value": "router" },
+          { "selected": true, "text": "registry", "value": "registry" },
+          { "selected": false, "text": "publisher", "value": "publisher" },
+          { "selected": false, "text": "signer", "value": "signer" },
+          { "selected": false, "text": "cache", "value": "cache" },
+          { "selected": false, "text": "transport_wrapper", "value": "transport_wrapper" },
+          { "selected": false, "text": "policy_checker", "value": "policy_checker" },
+          { "selected": false, "text": "key_manager", "value": "key_manager" },
+          { "selected": false, "text": "step", "value": "step" },
+          { "selected": false, "text": "middleware", "value": "middleware" }
+        ],
+        "query": "schema_validator,sign_validator,router,registry,publisher,signer,cache,transport_wrapper,policy_checker,key_manager,step,middleware",
+        "type": "custom"
+      }
+    ]
+  },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "",
