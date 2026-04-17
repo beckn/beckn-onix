@@ -8,6 +8,8 @@ import (
 	"github.com/beckn-one/beckn-onix/core/module/handler"
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin"
+	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 )
 
 // Config represents the configuration for a module.
@@ -49,6 +51,9 @@ func Register(ctx context.Context, mCfgs []Config, mux *http.ServeMux, mgr handl
 
 		}
 		h = moduleCtxMiddleware(c.Name, h)
+		if err := telemetry.RegisterPluginInfo(ctx, c.Name, c.Handler.SubscriberID, pluginEntries(&c.Handler)); err != nil {
+			log.Warnf(ctx, "Failed to register plugin info for module %s: %v", c.Name, err)
+		}
 		log.Debugf(ctx, "Registering handler %s, of type %s @ %s", c.Name, c.Handler.Type, c.Path)
 		mux.Handle(c.Path, h)
 	}
@@ -75,6 +80,39 @@ func addMiddleware(ctx context.Context, mgr handler.PluginManager, handler http.
 
 	log.Debugf(ctx, "Middleware chain setup completed")
 	return handler, nil
+}
+
+// pluginEntries builds the list of loaded plugins for a handler config, one
+// entry per configured plugin slot and one per step/middleware item.
+func pluginEntries(cfg *handler.Config) []telemetry.PluginEntry {
+	pc := &cfg.Plugins
+	var entries []telemetry.PluginEntry
+	add := func(pluginType string, c *plugin.Config) {
+		if c != nil && c.ID != "" {
+			entries = append(entries, telemetry.PluginEntry{Type: pluginType, ID: c.ID})
+		}
+	}
+	add("schema_validator", pc.SchemaValidator)
+	add("sign_validator", pc.SignValidator)
+	add("router", pc.Router)
+	add("registry", pc.Registry)
+	add("publisher", pc.Publisher)
+	add("signer", pc.Signer)
+	add("cache", pc.Cache)
+	add("transport_wrapper", pc.TransportWrapper)
+	add("policy_checker", pc.PolicyChecker)
+	add("key_manager", pc.KeyManager)
+	for i := range pc.Steps {
+		if pc.Steps[i].ID != "" {
+			entries = append(entries, telemetry.PluginEntry{Type: "step", ID: pc.Steps[i].ID})
+		}
+	}
+	for i := range pc.Middleware {
+		if pc.Middleware[i].ID != "" {
+			entries = append(entries, telemetry.PluginEntry{Type: "middleware", ID: pc.Middleware[i].ID})
+		}
+	}
+	return entries
 }
 
 func moduleCtxMiddleware(moduleName string, next http.Handler) http.Handler {
