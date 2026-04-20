@@ -595,7 +595,7 @@ registry:
 ```
 
 **Parameters**:
-- `url`: DeDi wrapper API base URL including the `/dedi` path (Required)
+- `url`: Beckn registry base URL including the `/dedi` path (Required)
 - `registryName`: Registry name used in the lookup path. Keep this value as `subscribers.beckn.one` so lookups include all cached registries. Use `allowedNetworkIDs` if you want lookup to be restricted within one or more networks. (Required)
 - `allowedNetworkIDs`: Comma-separated list of allowed network IDs used to restrict lookup results to specific networks. See [Beckn network setup documentation](https://docs.beckn.io/creating-an-open-network/setting-up-the-network-environment#registering-the-network-on-beckn-fabric) for more on network IDs. (Optional)
 - `timeout`: Request timeout in seconds (Optional, default: client default)
