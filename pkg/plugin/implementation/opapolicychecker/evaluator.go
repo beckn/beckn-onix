@@ -66,19 +66,15 @@ type ArtifactVerificationConfig struct {
 
 // NewEvaluator creates an Evaluator by loading .rego files from local paths
 // and/or URLs, then compiling them. runtimeConfig is passed to Rego as data.config.
-// When isBundle is true, the first policyPath is treated as a URL to an OPA bundle (.tar.gz).
-func NewEvaluator(policyPaths []string, query string, runtimeConfig map[string]string, isBundle bool, fetchTimeout time.Duration, verification ...*ArtifactVerificationConfig) (*Evaluator, error) {
+// When isBundle is true, the first policyPath is treated as a local path or URL to an OPA bundle (.tar.gz).
+func NewEvaluator(policyPaths []string, query string, runtimeConfig map[string]string, isBundle bool, fetchTimeout time.Duration, verification *ArtifactVerificationConfig) (*Evaluator, error) {
 	if fetchTimeout <= 0 {
 		fetchTimeout = defaultPolicyFetchTimeout
 	}
-	var verifyCfg *ArtifactVerificationConfig
-	if len(verification) > 0 {
-		verifyCfg = verification[0]
-	}
 	if isBundle {
-		return newBundleEvaluator(policyPaths, query, runtimeConfig, fetchTimeout, verifyCfg)
+		return newBundleEvaluator(policyPaths, query, runtimeConfig, fetchTimeout, verification)
 	}
-	return newRegoEvaluator(policyPaths, query, runtimeConfig, fetchTimeout, verifyCfg)
+	return newRegoEvaluator(policyPaths, query, runtimeConfig, fetchTimeout, verification)
 }
 
 // newRegoEvaluator loads raw .rego files from local paths and/or URLs.
@@ -346,6 +342,7 @@ func parseVerificationPublicKeyResponse(data []byte) (any, error) {
 		return parsePublicKeyValue(response.Data.Details.PublicKey, response.Data.Details.KeyFormat)
 	}
 
+	// Local files and non-DeDi endpoints may return raw PEM/DER key material directly.
 	return parseVerificationPublicKey(data)
 }
 

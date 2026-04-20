@@ -16,6 +16,8 @@ Validates incoming Beckn messages against network-defined business rules using [
 
 ## Configuration
 
+This plugin now requires `networkPolicyConfig`. Older top-level policy keys such as `type`, `location`, `query`, `actions`, and `refreshIntervalSeconds` are no longer supported.
+
 ```yaml
 checkPolicy:
   id: opapolicychecker
