@@ -8,6 +8,7 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 )
 
 // PluginManager defines an interface for managing plugins dynamically.
@@ -49,6 +50,40 @@ type PluginCfg struct {
 	TransportWrapper *plugin.Config  `yaml:"transportWrapper,omitempty"`
 	Middleware       []plugin.Config `yaml:"middleware,omitempty"`
 	Steps            []plugin.Config
+}
+
+// PluginEntries returns a flat list of all configured plugins in this PluginCfg.
+// Each named slot contributes one entry; Steps and Middleware contribute one
+// entry per item. Update this method whenever a new plugin slot is added to
+// PluginCfg so that the onix_plugin_info gauge stays complete.
+func (p *PluginCfg) PluginEntries() []telemetry.PluginEntry {
+	var entries []telemetry.PluginEntry
+	add := func(pluginType string, c *plugin.Config) {
+		if c != nil && c.ID != "" {
+			entries = append(entries, telemetry.PluginEntry{Type: pluginType, ID: c.ID})
+		}
+	}
+	add("schema_validator", p.SchemaValidator)
+	add("sign_validator", p.SignValidator)
+	add("router", p.Router)
+	add("registry", p.Registry)
+	add("publisher", p.Publisher)
+	add("signer", p.Signer)
+	add("cache", p.Cache)
+	add("transport_wrapper", p.TransportWrapper)
+	add("policy_checker", p.PolicyChecker)
+	add("key_manager", p.KeyManager)
+	for i := range p.Steps {
+		if p.Steps[i].ID != "" {
+			entries = append(entries, telemetry.PluginEntry{Type: "step", ID: p.Steps[i].ID})
+		}
+	}
+	for i := range p.Middleware {
+		if p.Middleware[i].ID != "" {
+			entries = append(entries, telemetry.PluginEntry{Type: "middleware", ID: p.Middleware[i].ID})
+		}
+	}
+	return entries
 }
 
 // HttpClientConfig defines the configuration for the HTTP transport layer.
