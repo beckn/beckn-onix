@@ -843,6 +843,26 @@ networkPolicies:
 	}
 }
 
+func TestLoadNetworkPolicies_RejectsUnexpectedNestedMap(t *testing.T) {
+	configPath := writeNetworkPolicyConfig(t, `
+networkPolicies:
+  default:
+    type: file
+    location: ./policy.rego
+    query: data.policy.result
+    actions:
+      confirm: true
+`)
+
+	_, err := loadNetworkPolicies(configPath)
+	if err == nil {
+		t.Fatal("expected nested non-verification map to be rejected")
+	}
+	if !strings.Contains(err.Error(), "must be a scalar value") {
+		t.Fatalf("expected scalar value error, got %v", err)
+	}
+}
+
 func TestParseVerificationPublicKeyResponse_DeDiBase64Key(t *testing.T) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
