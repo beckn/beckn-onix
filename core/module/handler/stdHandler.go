@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -106,6 +107,19 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Header.Del("X-Role")
 	}()
 
+	// Read body early to extract Beckn action for metrics/tracing.
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Errorf(r.Context(), err, "failed to read request body for metrics: %v", err)
+		body = nil
+	}
+	r.Body = io.NopCloser(bytes.NewBuffer(body))
+
+	action := extractBecknAction(body)
+	if action == "" {
+		action = r.URL.Path
+	}
+
 	// to start a new trace
 	propagator := otel.GetTextMapPropagator()
 	traceCtx := propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
@@ -127,13 +141,13 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	httpMeter, _ := GetHTTPMetrics(r.Context())
 	if httpMeter != nil {
 		recordOnce = func() {
-			RecordHTTPRequest(r.Context(), wrapped.statusCode, r.URL.Path, string(h.role), senderID, receiverID)
+			RecordHTTPRequest(r.Context(), wrapped.statusCode, action, string(h.role), senderID, receiverID)
 		}
 		wrapped.record = recordOnce
 	}
 
 	// set beckn attribute
-	setBecknAttr(span, r, h)
+	setBecknAttr(span, r, h, action)
 
 	stepCtx, err := h.stepCtx(r, w.Header())
 	if err != nil {
@@ -388,7 +402,7 @@ func (h *stdHandler) resolveDirection(ctx context.Context) (senderID, receiverID
 	return remoteID, selfID
 }
 
-func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
+func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler, action string) {
 	senderID, receiverID := h.resolveDirection(r.Context())
 	attrs := []attribute.KeyValue{
 		telemetry.AttrRecipientID.String(receiverID),
@@ -396,6 +410,7 @@ func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
 		attribute.String("span_uuid", uuid.New().String()),
 		attribute.String("http.request.method", r.Method),
 		attribute.String("http.route", r.URL.Path),
+		telemetry.AttrAction.String(action),
 	}
 
 	if trxID, ok := r.Context().Value(model.ContextKeyTxnID).(string); ok {
@@ -421,6 +436,21 @@ func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
 	}
 
 	span.SetAttributes(attrs...)
+}
+
+func extractBecknAction(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var req struct {
+		Context struct {
+			Action string `json:"action"`
+		} `json:"context"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return ""
+	}
+	return req.Context.Action
 }
 
 func errString(e error) string {

@@ -9,10 +9,106 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/telemetry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/embedded"
 )
 
 // noopPluginManager satisfies PluginManager with nil plugins (unused loaders are never invoked when config is omitted).
 type noopPluginManager struct{}
+
+func TestExtractBecknAction(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected string
+	}{
+		{
+			name:     "Valid body",
+			body:     `{"context": {"action": "search"}}`,
+			expected: "search",
+		},
+		{
+			name:     "Different valid action",
+			body:     `{"context": {"action": "select"}}`,
+			expected: "select",
+		},
+		{
+			name:     "Missing context",
+			body:     `{"other": "data"}`,
+			expected: "",
+		},
+		{
+			name:     "Missing action",
+			body:     `{"context": {"other": "data"}}`,
+			expected: "",
+		},
+		{
+			name:     "Malformed JSON",
+			body:     `{"context": {"action": "search"`,
+			expected: "",
+		},
+		{
+			name:     "Empty body",
+			body:     "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractBecknAction([]byte(tt.body))
+			if got != tt.expected {
+				t.Errorf("extractBecknAction() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+type mockSpan struct {
+	embedded.Span
+	attributes []attribute.KeyValue
+}
+
+func (m *mockSpan) SetAttributes(attrs ...attribute.KeyValue) {
+	m.attributes = append(m.attributes, attrs...)
+}
+func (m *mockSpan) End(options ...trace.SpanEndOption)                  {}
+func (m *mockSpan) AddEvent(name string, options ...trace.EventOption) {}
+func (m *mockSpan) AddLink(link trace.Link)                             {}
+func (m *mockSpan) IsRecording() bool                                   { return true }
+func (m *mockSpan) RecordError(err error, options ...trace.EventOption) {}
+func (m *mockSpan) SpanContext() trace.SpanContext                      { return trace.SpanContext{} }
+func (m *mockSpan) SetStatus(code codes.Code, description string)       {}
+func (m *mockSpan) SetName(name string)                                 {}
+func (m *mockSpan) TracerProvider() trace.TracerProvider                { return nil }
+
+func TestSetBecknAttr(t *testing.T) {
+	h := &stdHandler{
+		SubscriberID: "test-sub",
+		moduleName:   "test-module",
+	}
+	span := &mockSpan{}
+	req, _ := http.NewRequest("POST", "/test", nil)
+	action := "search"
+
+	setBecknAttr(span, req, h, action)
+
+	found := false
+	for _, attr := range span.attributes {
+		if attr.Key == telemetry.AttrAction {
+			found = true
+			if attr.Value.AsString() != action {
+				t.Errorf("expected action attribute %v, got %v", action, attr.Value.AsString())
+			}
+		}
+	}
+	if !found {
+		t.Error("action attribute not found in span")
+	}
+}
 
 func (noopPluginManager) Middleware(context.Context, *plugin.Config) (func(http.Handler) http.Handler, error) {
 	return nil, nil
