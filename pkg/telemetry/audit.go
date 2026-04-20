@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"time"
 
-	logger "github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/log"
@@ -20,10 +19,9 @@ func EmitAuditLogs(ctx context.Context, body []byte, attrs ...log.KeyValue) {
 	// so a nil-check on the provider is ineffective. Instead we rely on the
 	// logEnabled atomic flag, which otelsetup sets to true after calling
 	// global.SetLoggerProvider with a real SDK provider. If logging was not
-	// configured, we warn and return early rather than silently dropping records
-	// into the no-op provider.
+	// configured, we return early and stay silent rather than emitting a noisy
+	// warning on every request.
 	if !LogsEnabled() {
-		logger.Warnf(ctx, "failed to emit audit logs, logs disabled")
 		return
 	}
 
