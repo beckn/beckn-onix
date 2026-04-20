@@ -30,6 +30,15 @@ type registryClient struct {
 // NewRegisteryClient creates a new instance of Client.
 func NewRegisteryClient(config *Config) *registryClient {
 	retryClient := retryablehttp.NewClient()
+	if config != nil {
+		retryClient.RetryMax = config.RetryMax
+		if config.RetryWaitMin > 0 {
+			retryClient.RetryWaitMin = config.RetryWaitMin
+		}
+		if config.RetryWaitMax > 0 {
+			retryClient.RetryWaitMax = config.RetryWaitMax
+		}
+	}
 
 	return &registryClient{config: config, client: retryClient}
 }

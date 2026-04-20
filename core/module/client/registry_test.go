@@ -44,6 +44,21 @@ func TestSubscribeSuccess(t *testing.T) {
 	}
 }
 
+// TestNewRegisteryClientAppliesRetryConfig verifies retry settings are copied into the retry client.
+func TestNewRegisteryClientAppliesRetryConfig(t *testing.T) {
+	client := NewRegisteryClient(&Config{
+		RetryMax:     7,
+		RetryWaitMin: 123 * time.Millisecond,
+		RetryWaitMax: 456 * time.Millisecond,
+	})
+
+	require.NotNil(t, client)
+	require.NotNil(t, client.client)
+	require.Equal(t, 7, client.client.RetryMax)
+	require.Equal(t, 123*time.Millisecond, client.client.RetryWaitMin)
+	require.Equal(t, 456*time.Millisecond, client.client.RetryWaitMax)
+}
+
 // TestSubscribeFailure tests different failure scenarios using a mock client.
 func TestSubscribeFailure(t *testing.T) {
 	tests := []struct {
