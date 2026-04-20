@@ -39,18 +39,38 @@ func TestGetStepMetrics_ConcurrentAccess(t *testing.T) {
 	require.NoError(t, err)
 	defer provider.Shutdown(context.Background())
 
-	// Test that GetStepMetrics is safe for concurrent access
-	// and returns the same instance (singleton pattern)
+	// Since sync.Once was removed, each call returns a fresh *StepMetrics wrapping
+	// the same underlying OTel instruments (the SDK deduplicates by name).
+	// Verify both calls succeed and return fully-initialized instruments.
 	metrics1, err1 := GetStepMetrics(ctx)
 	require.NoError(t, err1)
 	require.NotNil(t, metrics1)
+	assert.NotNil(t, metrics1.StepExecutionDuration)
+	assert.NotNil(t, metrics1.StepExecutionTotal)
+	assert.NotNil(t, metrics1.StepErrorsTotal)
 
 	metrics2, err2 := GetStepMetrics(ctx)
 	require.NoError(t, err2)
 	require.NotNil(t, metrics2)
+	assert.NotNil(t, metrics2.StepExecutionDuration)
+	assert.NotNil(t, metrics2.StepExecutionTotal)
+	assert.NotNil(t, metrics2.StepErrorsTotal)
 
-	// Should return the same instance
-	assert.Equal(t, metrics1, metrics2, "GetStepMetrics should return the same instance")
+	// Verify concurrent access is safe — 20 goroutines each calling GetStepMetrics
+	// while simultaneously recording on the returned instruments.
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m, err := GetStepMetrics(ctx)
+			require.NoError(t, err)
+			require.NotNil(t, m)
+			m.StepExecutionTotal.Add(ctx, 1,
+				metric.WithAttributes(telemetry.AttrStep.String("concurrent"), telemetry.AttrModule.String("test")))
+		}()
+	}
+	wg.Wait()
 }
 
 func TestGetStepMetrics_WithoutProvider(t *testing.T) {
