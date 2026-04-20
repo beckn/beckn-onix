@@ -153,3 +153,5 @@ beckn-adapter
 .env
 .env.*
 test_request.json
+
+.codex
