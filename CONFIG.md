@@ -578,15 +578,16 @@ registry:
 
 #### 2. Dediregistry Plugin
 
-**Purpose**: Lookup participant information from a Decentralized Discovery (DeDi) registry.
+**Purpose**: Lookup participant information from a Decentralized Directory (DeDi) registry.
 
 **Configuration**:
 ```yaml
 registry:
   id: dediregistry
   config:
-    url: "https://dedi-wrapper.example.com/dedi"
+    url: "https://fabric.nfh.global/registry/dedi"
     registryName: "subscribers.beckn.one"
+    allowedNetworkIDs: "commerce-network.org/prod,local-commerce.org/production"
     timeout: 30
     retry_max: 3
     retry_wait_min: 1s
@@ -594,8 +595,9 @@ registry:
 ```
 
 **Parameters**:
-- `url`: DeDi wrapper API base URL (Required)
-- `registryName`: Name of the registry (Required)
+- `url`: DeDi wrapper API base URL including the `/dedi` path (Required)
+- `registryName`: Registry name used in the lookup path. Keep this value as `subscribers.beckn.one` so lookups include all cached registries. Use `allowedNetworkIDs` if you want lookup to be restricted within one or more networks. (Required)
+- `allowedNetworkIDs`: Comma-separated list of allowed network IDs used to restrict lookup results to specific networks. See [Beckn network setup documentation](https://docs.beckn.io/creating-an-open-network/setting-up-the-network-environment#registering-the-network-on-beckn-fabric) for more on network IDs. (Optional)
 - `timeout`: Request timeout in seconds (Optional, default: client default)
 - `retry_max`: Maximum number of retry attempts (Optional, default: 4)
 - `retry_wait_min`: Minimum wait time between retries in duration format (Optional, default: 1s)
