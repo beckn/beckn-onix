@@ -405,7 +405,12 @@ func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
 		attrs = append(attrs, attribute.String("message_id", mesID))
 	}
 	if parentID, ok := r.Context().Value(model.ContextKeyParentID).(string); ok && parentID != "" {
-		attrs = append(attrs, attribute.String("parentSpanId", parentID))
+		// Attribute name matches audit.go ("parent_id") and the context key name so that
+		// cross-signal queries in Loki/Jaeger can join on a single consistent key.
+		// Previously named "parentSpanId" (camelCase), which was inconsistent and
+		// misleadingly implied an OTel span-parentage relationship; the value is the
+		// Beckn network identity of this adapter (role:subscriberID:pod), not a span ID.
+		attrs = append(attrs, attribute.String("parent_id", parentID))
 	}
 	if r.Host != "" {
 		attrs = append(attrs, attribute.String("server.address", r.Host))
