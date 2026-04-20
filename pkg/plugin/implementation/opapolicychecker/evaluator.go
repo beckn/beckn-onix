@@ -352,6 +352,8 @@ func parsePublicKeyValue(value, format string) (any, error) {
 	case "", "pem", "x.509", "x509":
 		return parseVerificationPublicKey([]byte(value))
 	case "base64":
+		// DeDi keyFormat=base64 currently expects standard padded base64; URL-safe or
+		// alternate encodings are not supported by this decode path.
 		decoded, err := base64.StdEncoding.DecodeString(clean)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode base64 public key: %w", err)
