@@ -354,7 +354,7 @@ Metrics are organized by module for better maintainability and encapsulation:
 - `onix_plugin_execution_duration_seconds`, `onix_plugin_errors_total`
 
 #### Node Plugin Info (from `telemetry` package)
-- `onix_plugin_info` – Observable gauge (value always `1`) emitted once per loaded plugin per module at startup. Each loaded plugin becomes its own time series. Labels: `module`, `subscriber_id`, `plugin_type`, `plugin_id`. Covers all plugin slots (`schema_validator`, `sign_validator`, `router`, `registry`, `publisher`, `signer`, `cache`, `transport_wrapper`, `policy_checker`, `key_manager`) and one series per `step` and `middleware` entry. Absent/unconfigured slots emit no series. Enables Network Orchestrators to verify plugin composition across ONIX nodes, including detection of custom or non-standard plugins.
+- `onix_plugin_info` – Observable gauge (value always `1`) emitted once per loaded plugin per module at startup. Each loaded plugin becomes its own time series. Labels: `module`, `plugin_type`, `plugin_id`, and `subscriber_id` (only present when `subscriberId` is set in the handler config — omitted otherwise). Covers all plugin slots (`schema_validator`, `sign_validator`, `router`, `registry`, `publisher`, `signer`, `cache`, `transport_wrapper`, `policy_checker`, `key_manager`) and one series per `step` and `middleware` entry. Absent/unconfigured slots emit no series. Enables Network Orchestrators to verify plugin composition across ONIX nodes, including detection of custom or non-standard plugins. **Note:** the `subscriber_id` column in Grafana will be blank unless `subscriberId` is configured in each module's handler config.
 
 #### Runtime Metrics
 - Go runtime metrics (`go_*`) and Redis instrumentation via `redisotel`

@@ -50,10 +50,11 @@ func Register(ctx context.Context, mCfgs []Config, mux *http.ServeMux, mgr handl
 
 		}
 		h = moduleCtxMiddleware(c.Name, h)
-		if c.Handler.SubscriberID == "" {
+		entries := c.Handler.Plugins.PluginEntries()
+		if c.Handler.SubscriberID == "" && len(entries) > 0 {
 			log.Warnf(ctx, "subscriberId not set for module %s: onix_plugin_info will be emitted without subscriber identity; set subscriberId in handler config for full network observability", c.Name)
 		}
-		if err := telemetry.RegisterPluginInfo(ctx, c.Name, c.Handler.SubscriberID, c.Handler.Plugins.PluginEntries()); err != nil {
+		if err := telemetry.RegisterPluginInfo(ctx, c.Name, c.Handler.SubscriberID, entries); err != nil {
 			log.Warnf(ctx, "Failed to register plugin info for module %s: %v", c.Name, err)
 		}
 		log.Debugf(ctx, "Registering handler %s, of type %s @ %s", c.Name, c.Handler.Type, c.Path)

@@ -268,7 +268,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "group by (service_name, subscriber_id, module) ({__name__=~\"onix.*plugin_info\"}) unless group by (service_name, subscriber_id, module) ({__name__=~\"onix.*plugin_info\", plugin_type=\"$required_plugin_type\"})",
+          "expr": "group by (subscriber_id, module) ({__name__=~\"onix.*plugin_info\"}) unless group by (subscriber_id, module) ({__name__=~\"onix.*plugin_info\", plugin_type=\"$required_plugin_type\"})",
           "format": "table",
           "instant": true,
           "refId": "A"
