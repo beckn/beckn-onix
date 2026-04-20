@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/hashicorp/go-retryablehttp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,6 +58,15 @@ func TestNewRegisteryClientAppliesRetryConfig(t *testing.T) {
 	require.Equal(t, 7, client.client.RetryMax)
 	require.Equal(t, 123*time.Millisecond, client.client.RetryWaitMin)
 	require.Equal(t, 456*time.Millisecond, client.client.RetryWaitMax)
+}
+
+// TestNewRegisteryClientKeepsDefaultRetryMax verifies that omitting RetryMax does not disable retries.
+func TestNewRegisteryClientKeepsDefaultRetryMax(t *testing.T) {
+	client := NewRegisteryClient(&Config{})
+
+	require.NotNil(t, client)
+	require.NotNil(t, client.client)
+	require.Equal(t, retryablehttp.NewClient().RetryMax, client.client.RetryMax)
 }
 
 // TestSubscribeFailure tests different failure scenarios using a mock client.
