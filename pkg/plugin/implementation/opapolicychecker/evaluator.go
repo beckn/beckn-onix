@@ -3,7 +3,15 @@ package opapolicychecker
 import (
 	"bytes"
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +24,7 @@ import (
 
 	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/bundle"
+	"github.com/open-policy-agent/opa/v1/keys"
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/open-policy-agent/opa/v1/storage/inmem"
 )
@@ -45,22 +54,60 @@ const maxPolicySize = 1 << 20
 // maxBundleSize is the maximum size of a bundle archive (10 MB).
 const maxBundleSize = 10 << 20
 
+const defaultBundleVerificationKeyID = "default"
+const defaultBundleVerificationAlgorithm = "ES256"
+
+type ArtifactVerificationConfig struct {
+	Enabled            bool
+	PublicKeyLookupURL string
+	SignatureLocation  string
+	Algorithm          string
+}
+
 // NewEvaluator creates an Evaluator by loading .rego files from local paths
 // and/or URLs, then compiling them. runtimeConfig is passed to Rego as data.config.
-// When isBundle is true, the first policyPath is treated as a URL to an OPA bundle (.tar.gz).
-func NewEvaluator(policyPaths []string, query string, runtimeConfig map[string]string, isBundle bool, fetchTimeout time.Duration) (*Evaluator, error) {
+// When isBundle is true, the first policyPath is treated as a local path or URL to an OPA bundle (.tar.gz).
+func NewEvaluator(policyPaths []string, query string, runtimeConfig map[string]string, isBundle bool, fetchTimeout time.Duration, verification *ArtifactVerificationConfig) (*Evaluator, error) {
 	if fetchTimeout <= 0 {
 		fetchTimeout = defaultPolicyFetchTimeout
 	}
 	if isBundle {
-		return newBundleEvaluator(policyPaths, query, runtimeConfig, fetchTimeout)
+		return newBundleEvaluator(policyPaths, query, runtimeConfig, fetchTimeout, verification)
 	}
-	return newRegoEvaluator(policyPaths, query, runtimeConfig, fetchTimeout)
+	return newRegoEvaluator(policyPaths, query, runtimeConfig, fetchTimeout, verification)
 }
 
 // newRegoEvaluator loads raw .rego files from local paths and/or URLs.
-func newRegoEvaluator(policyPaths []string, query string, runtimeConfig map[string]string, fetchTimeout time.Duration) (*Evaluator, error) {
+func newRegoEvaluator(policyPaths []string, query string, runtimeConfig map[string]string, fetchTimeout time.Duration, verification *ArtifactVerificationConfig) (*Evaluator, error) {
 	modules := make(map[string]string)
+
+	if verification != nil && verification.Enabled {
+		if len(policyPaths) != 1 {
+			return nil, fmt.Errorf("artifact verification requires exactly one policy source")
+		}
+
+		name, policyBytes, err := loadSinglePolicy(policyPaths[0], fetchTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load policy from %s: %w", policyPaths[0], err)
+		}
+
+		signatureBytes, err := readArtifact(verification.SignatureLocation, maxPolicySize, fetchTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load detached signature from %s: %w", verification.SignatureLocation, err)
+		}
+
+		publicKey, err := resolveVerificationPublicKey(verification.PublicKeyLookupURL, fetchTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load verification public key from %s: %w", verification.PublicKeyLookupURL, err)
+		}
+
+		if err := verifyDetachedSignature(policyBytes, signatureBytes, publicKey); err != nil {
+			return nil, fmt.Errorf("policy signature verification failed: %w", err)
+		}
+
+		modules[name] = string(policyBytes)
+		return compileAndPrepare(modules, nil, query, runtimeConfig, true)
+	}
 
 	// Load from policyPaths (resolved locations based on config Type)
 	for _, source := range policyPaths {
@@ -104,20 +151,20 @@ func newRegoEvaluator(policyPaths []string, query string, runtimeConfig map[stri
 	return compileAndPrepare(modules, nil, query, runtimeConfig, true)
 }
 
-// newBundleEvaluator loads an OPA bundle (.tar.gz) from a URL and compiles it.
-func newBundleEvaluator(policyPaths []string, query string, runtimeConfig map[string]string, fetchTimeout time.Duration) (*Evaluator, error) {
+// newBundleEvaluator loads an OPA bundle (.tar.gz) from a local path or URL and compiles it.
+func newBundleEvaluator(policyPaths []string, query string, runtimeConfig map[string]string, fetchTimeout time.Duration, verification *ArtifactVerificationConfig) (*Evaluator, error) {
 	if len(policyPaths) == 0 {
-		return nil, fmt.Errorf("bundle source URL is required")
+		return nil, fmt.Errorf("bundle source is required")
 	}
 
-	bundleURL := policyPaths[0]
-	modules, bundleData, err := loadBundle(bundleURL, fetchTimeout)
+	bundleSource := policyPaths[0]
+	modules, bundleData, err := loadBundle(bundleSource, fetchTimeout, verification)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load bundle from %s: %w", bundleURL, err)
+		return nil, fmt.Errorf("failed to load bundle from %s: %w", bundleSource, err)
 	}
 
 	if len(modules) == 0 {
-		return nil, fmt.Errorf("no .rego policy modules found in bundle from %s", bundleURL)
+		return nil, fmt.Errorf("no .rego policy modules found in bundle from %s", bundleSource)
 	}
 
 	return compileAndPrepare(modules, bundleData, query, runtimeConfig, true)
@@ -125,17 +172,99 @@ func newBundleEvaluator(policyPaths []string, query string, runtimeConfig map[st
 
 // loadBundle downloads a .tar.gz OPA bundle from a URL, parses it using OPA's
 // bundle reader, and returns the modules and data from the bundle.
-func loadBundle(bundleURL string, fetchTimeout time.Duration) (map[string]string, map[string]interface{}, error) {
-	data, err := fetchBundleArchive(bundleURL, fetchTimeout)
+func loadBundle(bundleSource string, fetchTimeout time.Duration, verification *ArtifactVerificationConfig) (map[string]string, map[string]interface{}, error) {
+	data, err := readArtifact(bundleSource, maxBundleSize, fetchTimeout)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return parseBundleArchive(data)
+	return parseBundleArchive(data, verification, fetchTimeout)
 }
 
-// fetchBundleArchive downloads a bundle .tar.gz from a URL.
-func fetchBundleArchive(rawURL string, fetchTimeout time.Duration) ([]byte, error) {
+// parseBundleArchive parses a .tar.gz OPA bundle archive and extracts
+// rego modules and data. Signature verification uses OPA's native bundle
+// verification when enabled.
+func parseBundleArchive(data []byte, verification *ArtifactVerificationConfig, fetchTimeout time.Duration) (map[string]string, map[string]interface{}, error) {
+	loader := bundle.NewTarballLoaderWithBaseURL(bytes.NewReader(data), "")
+	reader := bundle.NewCustomReader(loader).
+		WithRegoVersion(ast.RegoV1)
+
+	if verification != nil && verification.Enabled {
+		publicKey, err := resolveVerificationPublicKey(verification.PublicKeyLookupURL, fetchTimeout)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to load bundle verification public key from %s: %w", verification.PublicKeyLookupURL, err)
+		}
+
+		pemKey, err := publicKeyToPEM(publicKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to encode bundle verification key: %w", err)
+		}
+
+		algorithm := verification.Algorithm
+		if algorithm == "" {
+			algorithm = defaultBundleVerificationAlgorithm
+		}
+
+		keyConfig, err := keys.NewKeyConfig(string(pemKey), algorithm, "")
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse bundle verification key: %w", err)
+		}
+
+		reader = reader.WithBundleVerificationConfig(
+			bundle.NewVerificationConfig(map[string]*keys.Config{defaultBundleVerificationKeyID: keyConfig}, defaultBundleVerificationKeyID, "", nil),
+		)
+	} else {
+		reader = reader.WithSkipBundleVerification(true)
+	}
+
+	b, err := reader.Read()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read bundle: %w", err)
+	}
+
+	modules := make(map[string]string, len(b.Modules))
+	for _, m := range b.Modules {
+		modules[m.Path] = string(m.Raw)
+	}
+
+	return modules, b.Data, nil
+}
+
+func loadSinglePolicy(source string, fetchTimeout time.Duration) (string, []byte, error) {
+	if isURL(source) {
+		name, content, err := fetchPolicy(source, fetchTimeout)
+		if err != nil {
+			return "", nil, err
+		}
+		return name, []byte(content), nil
+	}
+
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to read policy file %s: %w", source, err)
+	}
+	if len(data) > maxPolicySize {
+		return "", nil, fmt.Errorf("policy file exceeds maximum size of %d bytes", maxPolicySize)
+	}
+	return filepath.Base(source), data, nil
+}
+
+func readArtifact(source string, maxSize int, fetchTimeout time.Duration) ([]byte, error) {
+	if isURL(source) {
+		return fetchRemoteArtifact(source, maxSize, fetchTimeout)
+	}
+
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxSize {
+		return nil, fmt.Errorf("artifact exceeds maximum size of %d bytes", maxSize)
+	}
+	return data, nil
+}
+
+func fetchRemoteArtifact(rawURL string, maxSize int, fetchTimeout time.Duration) ([]byte, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid URL: %w", err)
@@ -156,37 +285,136 @@ func fetchBundleArchive(rawURL string, fetchTimeout time.Duration) ([]byte, erro
 		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, rawURL)
 	}
 
-	limited := io.LimitReader(resp.Body, int64(maxBundleSize)+1)
+	limited := io.LimitReader(resp.Body, int64(maxSize)+1)
 	body, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	if len(body) > maxBundleSize {
-		return nil, fmt.Errorf("bundle exceeds maximum size of %d bytes", maxBundleSize)
+	if len(body) > maxSize {
+		return nil, fmt.Errorf("artifact exceeds maximum size of %d bytes", maxSize)
 	}
 
 	return body, nil
 }
 
-// parseBundleArchive parses a .tar.gz OPA bundle archive and extracts
-// rego modules and data. Signature verification is skipped.
-func parseBundleArchive(data []byte) (map[string]string, map[string]interface{}, error) {
-	loader := bundle.NewTarballLoaderWithBaseURL(bytes.NewReader(data), "")
-	reader := bundle.NewCustomReader(loader).
-		WithSkipBundleVerification(true).
-		WithRegoVersion(ast.RegoV1)
+func verifyDetachedSignature(content, signature []byte, key any) error {
+	sum := sha256.Sum256(content)
 
-	b, err := reader.Read()
+	switch pub := key.(type) {
+	case *rsa.PublicKey:
+		return rsa.VerifyPKCS1v15(pub, crypto.SHA256, sum[:], signature)
+	case *ecdsa.PublicKey:
+		if !ecdsa.VerifyASN1(pub, sum[:], signature) {
+			return fmt.Errorf("ECDSA signature verification failed")
+		}
+		return nil
+	case ed25519.PublicKey:
+		if !ed25519.Verify(pub, content, signature) {
+			return fmt.Errorf("Ed25519 signature verification failed")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported public key type %T", key)
+	}
+}
+
+func resolveVerificationPublicKey(source string, fetchTimeout time.Duration) (any, error) {
+	data, err := readArtifact(source, maxPolicySize, fetchTimeout)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to read bundle: %w", err)
+		return nil, err
+	}
+	return parseVerificationPublicKeyResponse(data)
+}
+
+func parseVerificationPublicKeyResponse(data []byte) (any, error) {
+	type dediResponse struct {
+		Data struct {
+			Details struct {
+				PublicKey string `json:"publicKey"`
+				KeyType   string `json:"keyType"`
+				KeyFormat string `json:"keyFormat"`
+			} `json:"details"`
+		} `json:"data"`
 	}
 
-	modules := make(map[string]string, len(b.Modules))
-	for _, m := range b.Modules {
-		modules[m.Path] = string(m.Raw)
+	var response dediResponse
+	if err := json.Unmarshal(data, &response); err == nil && response.Data.Details.PublicKey != "" {
+		return parsePublicKeyValue(response.Data.Details.PublicKey, response.Data.Details.KeyFormat)
 	}
 
-	return modules, b.Data, nil
+	// Local files and non-DeDi endpoints may return raw PEM/DER key material directly.
+	return parseVerificationPublicKey(data)
+}
+
+func parsePublicKeyValue(value, format string) (any, error) {
+	clean := strings.Join(strings.Fields(value), "")
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "pem", "x.509", "x509":
+		return parseVerificationPublicKey([]byte(value))
+	case "base64":
+		// DeDi keyFormat=base64 currently expects standard padded base64; URL-safe or
+		// alternate encodings are not supported by this decode path.
+		decoded, err := base64.StdEncoding.DecodeString(clean)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode base64 public key: %w", err)
+		}
+		return parseVerificationPublicKey(decoded)
+	default:
+		return nil, fmt.Errorf("unsupported public key format %q", format)
+	}
+}
+
+func parseVerificationPublicKey(data []byte) (any, error) {
+	block, _ := pem.Decode(data)
+	if block != nil {
+		switch block.Type {
+		case "PUBLIC KEY":
+			key, err := x509.ParsePKIXPublicKey(block.Bytes)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse PKIX public key: %w", err)
+			}
+			return key, nil
+		case "RSA PUBLIC KEY":
+			key, err := x509.ParsePKCS1PublicKey(block.Bytes)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse RSA public key: %w", err)
+			}
+			return key, nil
+		case "CERTIFICATE":
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse certificate: %w", err)
+			}
+			return cert.PublicKey, nil
+		default:
+			return nil, fmt.Errorf("unsupported PEM block type %q", block.Type)
+		}
+	}
+
+	key, err := x509.ParsePKIXPublicKey(data)
+	if err == nil {
+		return key, nil
+	}
+
+	cert, err := x509.ParseCertificate(data)
+	if err == nil {
+		return cert.PublicKey, nil
+	}
+
+	return nil, fmt.Errorf("failed to parse public key")
+}
+
+func publicKeyToPEM(key any) ([]byte, error) {
+	switch typed := key.(type) {
+	case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey:
+		der, err := x509.MarshalPKIXPublicKey(typed)
+		if err != nil {
+			return nil, err
+		}
+		return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), nil
+	default:
+		return nil, fmt.Errorf("unsupported public key type %T", key)
+	}
 }
 
 // compileAndPrepare compiles rego modules and prepares the OPA query for evaluation.
