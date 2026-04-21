@@ -255,7 +255,7 @@ func (s *validateSchemaStep) recordMetrics(ctx *model.StepContext, err error) {
 	if err != nil {
 		status = "failed"
 	}
-	version := extractSchemaVersion(ctx.Body)
+	version := extractProtocolVersion(ctx.Body)
 	s.metrics.SchemaValidationsTotal.Add(ctx.Context, 1,
 		metric.WithAttributes(
 			telemetry.AttrSchemaVersion.String(version),
@@ -301,7 +301,7 @@ func (s *addRouteStep) Run(ctx *model.StepContext) error {
 	return nil
 }
 
-func extractSchemaVersion(body []byte) string {
+func extractProtocolVersion(body []byte) string {
 	type contextEnvelope struct {
 		Context struct {
 			Version string `json:"version"`
@@ -309,11 +309,9 @@ func extractSchemaVersion(body []byte) string {
 	}
 	var payload contextEnvelope
 	if err := json.Unmarshal(body, &payload); err == nil {
-		if payload.Context.Version != "" {
-			return payload.Context.Version
-		}
+		return payload.Context.Version
 	}
-	return "unknown"
+	return ""
 }
 
 // checkPolicyStep adapts PolicyChecker into the Step interface.
