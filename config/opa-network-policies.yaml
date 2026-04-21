@@ -1,5 +1,6 @@
 networkPolicies:
   default:
+    # Example only. Replace this test policy path with your own policy before production use.
     type: file
     location: ./pkg/plugin/implementation/opapolicychecker/testdata/example.rego
     query: data.policy.result

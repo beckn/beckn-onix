@@ -44,6 +44,9 @@ var knownKeys = map[string]bool{
 	"refreshInterval":     true,
 }
 
+// policyEntryKnownKeys is matched against the post-flattening key shape produced
+// by loadNetworkPolicies, so nested YAML like verification.publicKeyLookupUrl is
+// validated here using dot-notation.
 var policyEntryKnownKeys = map[string]bool{
 	"type":                            true,
 	"location":                        true,
@@ -499,11 +502,10 @@ func (e *PolicyEnforcer) reloadNetworkPolicies(ctx context.Context) {
 	log.Infof(ctx, "OPAPolicyChecker: network policies reloaded in %s (policies=%d, hasDefault=%t)", time.Since(start), len(policies), defaultPolicy != nil)
 }
 
-func (e *PolicyEnforcer) selectedPolicy(body []byte) (*loadedPolicy, string) {
+func (e *PolicyEnforcer) selectedPolicy(networkID string) (*loadedPolicy, string) {
 	e.evaluatorMu.RLock()
 	defer e.evaluatorMu.RUnlock()
 
-	networkID := extractNetworkID(body)
 	if networkID != "" {
 		if policy, ok := e.policies[networkID]; ok {
 			return policy, networkID
@@ -524,15 +526,18 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 		return nil
 	}
 
-	policy, selectedNetworkID := e.selectedPolicy(ctx.Body)
+	reqCtx := parseRequestContext(ctx.Body)
+	policy, selectedNetworkID := e.selectedPolicy(reqCtx.NetworkID)
 	if policy == nil {
 		log.Debugf(ctx, "OPAPolicyChecker: no matching network policy for networkID=%q and no default configured, skipping", selectedNetworkID)
 		return nil
 	}
 	policyConfig := policy.config
-	ev := policy.evaluator
 
-	action := extractAction(ctx.Request.URL.Path, ctx.Body)
+	action := extractActionFromPath(ctx.Request.URL.Path)
+	if action == "" {
+		action = reqCtx.Action
+	}
 
 	if !policyConfig.IsActionEnabled(action) {
 		if e.config.DebugLogging {
@@ -546,6 +551,8 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 		return nil
 	}
 
+	// Disabled policies intentionally do not initialize an evaluator in loadPolicy.
+	ev := policy.evaluator
 	if ev == nil {
 		return model.NewBadReqErr(fmt.Errorf("policy evaluator is not initialized"))
 	}
@@ -554,7 +561,7 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 		log.Debugf(ctx, "OPAPolicyChecker: evaluating policy for networkID=%q action=%q (modules=%v)", selectedNetworkID, action, ev.ModuleNames())
 	}
 
-	requestLogCtx := formatRequestLogContext(ctx.Body)
+	requestLogCtx := formatRequestLogContext(reqCtx)
 
 	violations, err := ev.Evaluate(ctx, ctx.Body)
 	if err != nil {
@@ -580,42 +587,8 @@ func (e *PolicyEnforcer) Close() {
 	})
 }
 
-func extractAction(urlPath string, body []byte) string {
-	// /bpp/caller/confirm/extra as action "extra".
-	parts := strings.FieldsFunc(strings.Trim(urlPath, "/"), func(r rune) bool { return r == '/' })
-	if len(parts) == 3 && isBecknDirection(parts[1]) && parts[2] != "" {
-		return parts[2]
-	}
-
-	var payload struct {
-		Context struct {
-			Action string `json:"action"`
-		} `json:"context"`
-	}
-	if err := json.Unmarshal(body, &payload); err == nil && payload.Context.Action != "" {
-		return payload.Context.Action
-	}
-
-	return ""
-}
-
-func extractNetworkID(body []byte) string {
-	var payload struct {
-		Context struct {
-			NetworkIDCamel string `json:"networkId"`
-			NetworkIDSnake string `json:"network_id"`
-		} `json:"context"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return ""
-	}
-	if payload.Context.NetworkIDCamel != "" {
-		return payload.Context.NetworkIDCamel
-	}
-	return payload.Context.NetworkIDSnake
-}
-
-type requestLogContext struct {
+type parsedRequestContext struct {
+	NetworkID     string
 	BAPID         string
 	BPPID         string
 	MessageID     string
@@ -624,12 +597,12 @@ type requestLogContext struct {
 	Timestamp     string
 }
 
-func extractRequestLogContext(body []byte) requestLogContext {
+func parseRequestContext(body []byte) parsedRequestContext {
 	var payload struct {
 		Context map[string]interface{} `json:"context"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil || payload.Context == nil {
-		return requestLogContext{}
+		return parsedRequestContext{}
 	}
 
 	get := func(snakeKey, camelKey string) string {
@@ -642,7 +615,8 @@ func extractRequestLogContext(body []byte) requestLogContext {
 		return ""
 	}
 
-	return requestLogContext{
+	return parsedRequestContext{
+		NetworkID:     get("network_id", "networkId"),
 		BAPID:         get("bap_id", "bapId"),
 		BPPID:         get("bpp_id", "bppId"),
 		MessageID:     get("message_id", "messageId"),
@@ -652,8 +626,16 @@ func extractRequestLogContext(body []byte) requestLogContext {
 	}
 }
 
-func formatRequestLogContext(body []byte) string {
-	ctx := extractRequestLogContext(body)
+func extractActionFromPath(urlPath string) string {
+	// /bpp/caller/confirm/extra as action "extra".
+	parts := strings.FieldsFunc(strings.Trim(urlPath, "/"), func(r rune) bool { return r == '/' })
+	if len(parts) == 3 && isBecknDirection(parts[1]) && parts[2] != "" {
+		return parts[2]
+	}
+	return ""
+}
+
+func formatRequestLogContext(ctx parsedRequestContext) string {
 	parts := make([]string, 0, 6)
 	if ctx.BAPID != "" {
 		parts = append(parts, fmt.Sprintf("bap_id=%q", ctx.BAPID))
