@@ -32,12 +32,24 @@ func TestEmitAuditLogs_Disabled(t *testing.T) {
 	original := LogsEnabled()
 	t.Cleanup(func() { SetLogsEnabled(original) })
 
+	originalDebugf := auditDebugf
+	t.Cleanup(func() { auditDebugf = originalDebugf })
+
+	var debugCalls int
+	var gotMessage string
+	auditDebugf = func(ctx context.Context, format string, v ...any) {
+		debugCalls++
+		gotMessage = format
+		require.NotNil(t, ctx)
+		require.Len(t, v, 0)
+	}
+
 	SetLogsEnabled(false)
 
-	// Should return early without panicking.
-	require.NotPanics(t, func() {
-		EmitAuditLogs(context.Background(), []byte(`{"message":"test"}`))
-	}, "EmitAuditLogs should not panic when logs are disabled")
+	EmitAuditLogs(context.Background(), []byte(`{"message":"test"}`))
+
+	require.Equal(t, 1, debugCalls, "EmitAuditLogs should emit one debug breadcrumb when logs are disabled")
+	require.Equal(t, "audit logs disabled, skipping emit", gotMessage)
 }
 
 func TestEmitAuditLogs_Enabled(t *testing.T) {
