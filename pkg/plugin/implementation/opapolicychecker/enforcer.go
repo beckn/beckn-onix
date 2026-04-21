@@ -533,7 +533,6 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 		return nil
 	}
 	policyConfig := policy.config
-	ev := policy.evaluator
 
 	action := extractAction(ctx.Request.URL.Path, ctx.Body)
 
@@ -549,6 +548,8 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 		return nil
 	}
 
+	// Disabled policies intentionally do not initialize an evaluator in loadPolicy.
+	ev := policy.evaluator
 	if ev == nil {
 		return model.NewBadReqErr(fmt.Errorf("policy evaluator is not initialized"))
 	}
