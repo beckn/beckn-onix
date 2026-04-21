@@ -59,7 +59,15 @@ const (
 
 	// ContextKeyRemoteID is the context key for the caller who is calling the bap/bpp
 	ContextKeyRemoteID ContextKey = "remote_id"
+
+	// ContextKeyProtocolVersion is the context key for the Beckn protocol version
+	// extracted from context.version in the inbound request body.
+	ContextKeyProtocolVersion ContextKey = "protocol_version"
 )
+
+// ProtocolVersionLTS is the Beckn protocol version string for the v2.0.0 LTS release.
+// Steps and response functions gate LTS-specific behaviour on this value.
+const ProtocolVersionLTS = "2.0.0"
 
 var contextKeys = map[string]ContextKey{
 	// snake_case keys (legacy beckn spec)
@@ -159,12 +167,13 @@ type Keyset struct {
 // StepContext holds context information for a request processing step.
 type StepContext struct {
 	context.Context
-	Request    *http.Request
-	Body       []byte
-	Route      *Route
-	SubID      string
-	Role       Role
-	RespHeader http.Header
+	Request         *http.Request
+	Body            []byte
+	Route           *Route
+	SubID           string
+	Role            Role
+	RespHeader      http.Header
+	ProtocolVersion string // Protocol version parsed from context.version (e.g. "2.0.0")
 }
 
 // WithContext updates the existing StepContext with a new context.
