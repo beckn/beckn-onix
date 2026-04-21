@@ -180,14 +180,16 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 		return nil, model.NewBadReqErr(err)
 	}
 	r.Body.Close()
+	body := bodyBuffer.Bytes()
 	subID := h.subID(r.Context())
 	return &model.StepContext{
-		Context:    r.Context(),
-		Request:    r,
-		Body:       bodyBuffer.Bytes(),
-		Role:       h.role,
-		SubID:      subID,
-		RespHeader: rh,
+		Context:         r.Context(),
+		Request:         r,
+		Body:            body,
+		Role:            h.role,
+		SubID:           subID,
+		RespHeader:      rh,
+		ProtocolVersion: extractProtocolVersion(body),
 	}, nil
 }
 
