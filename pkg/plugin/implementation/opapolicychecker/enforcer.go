@@ -44,6 +44,9 @@ var knownKeys = map[string]bool{
 	"refreshInterval":     true,
 }
 
+// policyEntryKnownKeys is matched against the post-flattening key shape produced
+// by loadNetworkPolicies, so nested YAML like verification.publicKeyLookupUrl is
+// validated here using dot-notation.
 var policyEntryKnownKeys = map[string]bool{
 	"type":                            true,
 	"location":                        true,
