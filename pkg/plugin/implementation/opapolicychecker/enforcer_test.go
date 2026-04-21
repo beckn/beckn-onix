@@ -726,28 +726,45 @@ violations contains "blocked" if { input.context.action == "confirm" }
 	}
 }
 
-// --- extractAction Tests ---
+// --- Request Context Parsing Tests ---
 
-func TestExtractAction_FromURL(t *testing.T) {
-	action := extractAction("/bpp/caller/confirm", nil)
+func TestExtractActionFromPath_FromURL(t *testing.T) {
+	action := extractActionFromPath("/bpp/caller/confirm")
 	if action != "confirm" {
 		t.Errorf("expected 'confirm', got %q", action)
 	}
 }
 
-func TestExtractAction_FromBody(t *testing.T) {
-	body := []byte(`{"context": {"action": "select"}}`)
-	action := extractAction("/x", body)
-	if action != "select" {
-		t.Errorf("expected 'select', got %q", action)
+func TestParseRequestContext(t *testing.T) {
+	reqCtx := parseRequestContext([]byte(`{"context":{"action":"select","networkId":"retail.network/production","bap_id":"bap.example.com","bppId":"bpp.example.com","message_id":"msg-1","transactionId":"txn-1","timestamp":"2026-04-21T10:00:00Z"}}`))
+	if reqCtx.Action != "select" {
+		t.Fatalf("expected action select, got %q", reqCtx.Action)
+	}
+	if reqCtx.NetworkID != "retail.network/production" {
+		t.Fatalf("expected network ID retail.network/production, got %q", reqCtx.NetworkID)
+	}
+	if reqCtx.BAPID != "bap.example.com" {
+		t.Fatalf("expected bap_id bap.example.com, got %q", reqCtx.BAPID)
+	}
+	if reqCtx.BPPID != "bpp.example.com" {
+		t.Fatalf("expected bpp_id bpp.example.com, got %q", reqCtx.BPPID)
+	}
+	if reqCtx.MessageID != "msg-1" {
+		t.Fatalf("expected message_id msg-1, got %q", reqCtx.MessageID)
+	}
+	if reqCtx.TransactionID != "txn-1" {
+		t.Fatalf("expected transaction_id txn-1, got %q", reqCtx.TransactionID)
+	}
+	if reqCtx.Timestamp != "2026-04-21T10:00:00Z" {
+		t.Fatalf("expected timestamp 2026-04-21T10:00:00Z, got %q", reqCtx.Timestamp)
 	}
 }
 
-func TestExtractNetworkID(t *testing.T) {
-	if got := extractNetworkID([]byte(`{"context":{"networkId":"retail.network/production"}}`)); got != "retail.network/production" {
+func TestParseRequestContext_NetworkIDVariants(t *testing.T) {
+	if got := parseRequestContext([]byte(`{"context":{"networkId":"retail.network/production"}}`)).NetworkID; got != "retail.network/production" {
 		t.Fatalf("expected camelCase networkId, got %q", got)
 	}
-	if got := extractNetworkID([]byte(`{"context":{"network_id":"retail.network/sandbox"}}`)); got != "retail.network/sandbox" {
+	if got := parseRequestContext([]byte(`{"context":{"network_id":"retail.network/sandbox"}}`)).NetworkID; got != "retail.network/sandbox" {
 		t.Fatalf("expected snake_case network_id, got %q", got)
 	}
 }
@@ -1731,8 +1748,11 @@ violations := []`))
 }
 
 func TestExtractAction_NonStandardURLFallsBackToBody(t *testing.T) {
-	body := []byte(`{"context": {"action": "confirm"}}`)
-	action := extractAction("/bpp/caller/confirm/extra", body)
+	reqCtx := parseRequestContext([]byte(`{"context": {"action": "confirm"}}`))
+	action := extractActionFromPath("/bpp/caller/confirm/extra")
+	if action == "" {
+		action = reqCtx.Action
+	}
 	if action != "confirm" {
 		t.Fatalf("expected body fallback action 'confirm', got %q", action)
 	}
