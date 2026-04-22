@@ -61,13 +61,15 @@ func (is *InstrumentedStep) Run(ctx *model.StepContext) error {
 
 	// run step with context that contains the step span
 	stepCtx := &model.StepContext{
-		Context:    spanCtx,
-		Request:    ctx.Request,
-		Body:       ctx.Body,
-		Role:       ctx.Role,
-		SubID:      ctx.SubID,
-		RespHeader: ctx.RespHeader,
-		Route:      ctx.Route,
+		Context:         spanCtx,
+		Request:         ctx.Request,
+		Body:            ctx.Body,
+		Role:            ctx.Role,
+		SubID:           ctx.SubID,
+		RespHeader:      ctx.RespHeader,
+		Route:           ctx.Route,
+		ProtocolVersion: ctx.ProtocolVersion,
+		CounterSign:     ctx.CounterSign,
 	}
 
 	start := time.Now()
@@ -100,6 +102,8 @@ func (is *InstrumentedStep) Run(ctx *model.StepContext) error {
 	if stepCtx.Route != nil {
 		ctx.Route = stepCtx.Route
 	}
+	// Propagate fields that steps may write during Run.
+	ctx.CounterSign = stepCtx.CounterSign
 	ctx.WithContext(stepCtx.Context)
 	return err
 }
