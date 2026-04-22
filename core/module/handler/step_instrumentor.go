@@ -59,21 +59,14 @@ func (is *InstrumentedStep) Run(ctx *model.StepContext) error {
 	spanCtx, span := tracer.Start(ctx.Context, stepName)
 	defer span.End()
 
-	// run step with context that contains the step span
-	stepCtx := &model.StepContext{
-		Context:         spanCtx,
-		Request:         ctx.Request,
-		Body:            ctx.Body,
-		Role:            ctx.Role,
-		SubID:           ctx.SubID,
-		RespHeader:      ctx.RespHeader,
-		Route:           ctx.Route,
-		ProtocolVersion: ctx.ProtocolVersion,
-		CounterSign:     ctx.CounterSign,
-	}
+	// Shallow-copy the entire StepContext so new fields are carried in
+	// automatically, then replace only the embedded context with the span context.
+	// This prevents silent breakage when new fields are added to StepContext.
+	stepCtx := *ctx
+	stepCtx.Context = spanCtx
 
 	start := time.Now()
-	err := is.step.Run(stepCtx)
+	err := is.step.Run(&stepCtx)
 	duration := time.Since(start).Seconds()
 
 	attrs := []attribute.KeyValue{
@@ -99,10 +92,11 @@ func (is *InstrumentedStep) Run(ctx *model.StepContext) error {
 		log.Errorf(stepCtx.Context, err, "Step %s failed", is.stepName)
 	}
 
+	// Write back fields that steps are permitted to mutate during Run.
+	// ProtocolVersion is read-only — steps must not change it.
 	if stepCtx.Route != nil {
 		ctx.Route = stepCtx.Route
 	}
-	// Propagate fields that steps may write during Run.
 	ctx.CounterSign = stepCtx.CounterSign
 	ctx.WithContext(stepCtx.Context)
 	return err
