@@ -53,6 +53,7 @@ func TestSendNack(t *testing.T) {
 		err      error
 		expected string
 		status   int
+		ctx      context.Context // if nil, uses the default ctx above
 	}{
 		{
 			name: "SchemaValidationErr",
@@ -89,6 +90,52 @@ func TestSendNack(t *testing.T) {
 			status:   http.StatusInternalServerError,
 			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"Internal Server Error","message":"Internal server error, MessageID: 123456"}}}`,
 		},
+		// ── Beckn v2.0.0 LTS cases ──────────────────────────────────────────────
+		{
+			name: "v2 SchemaValidationErr - top-level error, renamed fields",
+			ctx: context.WithValue(
+				context.WithValue(context.Background(), model.ContextKeyMsgID, "123456"),
+				model.ContextKeyProtocolVersion, model.ProtocolVersionLTS,
+			),
+			err: &model.SchemaValidationErr{
+				Errors: []model.Error{
+					{Paths: "/path1", Message: "Error 1"},
+					{Paths: "/path2", Message: "Error 2"},
+				},
+			},
+			status:   http.StatusBadRequest,
+			expected: `{"message":{"ack":{"status":"NACK"}},"error":{"errorCode":"Bad Request","errorPaths":"/path1;/path2","errorMessage":"Error 1; Error 2"}}`,
+		},
+		{
+			name: "v2 SignValidationErr - top-level error, renamed fields",
+			ctx: context.WithValue(
+				context.WithValue(context.Background(), model.ContextKeyMsgID, "123456"),
+				model.ContextKeyProtocolVersion, model.ProtocolVersionLTS,
+			),
+			err:      model.NewSignValidationErr(errors.New("signature invalid")),
+			status:   http.StatusUnauthorized,
+			expected: `{"message":{"ack":{"status":"NACK"}},"error":{"errorCode":"Unauthorized","errorMessage":"Signature Validation Error: signature invalid"}}`,
+		},
+		{
+			name: "v2 BadReqErr - top-level error, renamed fields",
+			ctx: context.WithValue(
+				context.WithValue(context.Background(), model.ContextKeyMsgID, "123456"),
+				model.ContextKeyProtocolVersion, model.ProtocolVersionLTS,
+			),
+			err:      model.NewBadReqErr(errors.New("bad request error")),
+			status:   http.StatusBadRequest,
+			expected: `{"message":{"ack":{"status":"NACK"}},"error":{"errorCode":"Bad Request","errorMessage":"BAD Request: bad request error"}}`,
+		},
+		{
+			name: "v2 InternalServerError - top-level error, renamed fields",
+			ctx: context.WithValue(
+				context.WithValue(context.Background(), model.ContextKeyMsgID, "123456"),
+				model.ContextKeyProtocolVersion, model.ProtocolVersionLTS,
+			),
+			err:      errors.New("unexpected error"),
+			status:   http.StatusInternalServerError,
+			expected: `{"message":{"ack":{"status":"NACK"}},"error":{"errorCode":"Internal Server Error","errorMessage":"Internal server error, MessageID: 123456"}}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -99,7 +146,11 @@ func TestSendNack(t *testing.T) {
 			}
 			rr := httptest.NewRecorder()
 
-			SendNack(ctx, rr, tt.err)
+			testCtx := ctx
+			if tt.ctx != nil {
+				testCtx = tt.ctx
+			}
+			SendNack(testCtx, rr, tt.err)
 
 			if rr.Code != tt.status {
 				t.Errorf("wanted status code %d, got %d", tt.status, rr.Code)

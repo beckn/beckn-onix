@@ -59,7 +59,15 @@ const (
 
 	// ContextKeyRemoteID is the context key for the caller who is calling the bap/bpp
 	ContextKeyRemoteID ContextKey = "remote_id"
+
+	// ContextKeyProtocolVersion is the context key for the Beckn protocol version
+	// parsed from context.version in the request body (e.g. "2.0.0").
+	ContextKeyProtocolVersion ContextKey = "protocol_version"
 )
+
+// ProtocolVersionLTS is the Beckn protocol version string for the v2.0.0 LTS release.
+// Requests carrying this version use the new error envelope and field names.
+const ProtocolVersionLTS = "2.0.0"
 
 var contextKeys = map[string]ContextKey{
 	// snake_case keys (legacy beckn spec)
@@ -194,10 +202,22 @@ type Message struct {
 	// Ack contains the acknowledgment status.
 	Ack Ack `json:"ack"`
 	// Error holds error details, if any, in the response.
+	// Nil for Beckn v2.0.0 LTS responses (error moves to the top-level Response).
 	Error *Error `json:"error,omitempty"`
 }
 
 // Response represents the main response structure.
+// For Beckn v2.0.0 LTS, Error is populated at the top level and Message.Error
+// is left nil. For legacy versions, Message.Error is populated and Error is nil.
 type Response struct {
-	Message Message `json:"message"`
+	Message Message  `json:"message"`
+	Error   *V2Error `json:"error,omitempty"` // v2.0.0 LTS: top-level error
+}
+
+// V2Error is the error payload for Beckn v2.0.0 LTS responses.
+// Field names changed from code/message to errorCode/errorMessage.
+type V2Error struct {
+	ErrorCode    string `json:"errorCode"`
+	ErrorPaths   string `json:"errorPaths,omitempty"`
+	ErrorMessage string `json:"errorMessage"`
 }
