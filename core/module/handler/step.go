@@ -342,7 +342,9 @@ func newCounterSignStep(signer definition.Signer, km definition.KeyManager) (def
 // stores the resulting auth-header string in ctx.CounterSign for injection
 // into the ACK response. For protocol versions other than "2.0.0" this is a no-op.
 func (s *counterSignStep) Run(ctx *model.StepContext) error {
+	log.Debugf(ctx, "counterSign: Run called with protocol version %q", ctx.ProtocolVersion)
 	if ctx.ProtocolVersion != model.ProtocolVersionLTS {
+		log.Debugf(ctx, "counterSign: skipping — not LTS protocol version")
 		return nil // no-op for legacy protocol versions
 	}
 	if len(ctx.SubID) == 0 {
@@ -385,6 +387,7 @@ func (s *counterSignStep) Run(ctx *model.StepContext) error {
 // response body. It is a no-op when CounterSign is empty (i.e. non-LTS requests
 // or paths where the ACK was already sent directly without proxying).
 func (s *counterSignStep) RunOnResponse(ctx *model.StepContext, resp *http.Response) error {
+	log.Debugf(ctx, "counterSign: RunOnResponse called, CounterSign present=%v", ctx.CounterSign != "")
 	if ctx.CounterSign == "" {
 		return nil
 	}
@@ -465,7 +468,9 @@ func (s *validateCounterSignStep) Run(_ *model.StepContext) error {
 // RunOnResponse reads the upstream ACK, extracts counter_sign, and validates it.
 // ctx.Body is the original outbound request body that the receiver signed.
 func (s *validateCounterSignStep) RunOnResponse(ctx *model.StepContext, resp *http.Response) error {
+	log.Debugf(ctx, "validateCounterSign: RunOnResponse called with protocol version %q", ctx.ProtocolVersion)
 	if ctx.ProtocolVersion != model.ProtocolVersionLTS {
+		log.Debugf(ctx, "validateCounterSign: skipping — not LTS protocol version")
 		return nil
 	}
 
@@ -487,6 +492,7 @@ func (s *validateCounterSignStep) RunOnResponse(ctx *model.StepContext, resp *ht
 	}
 
 	counterSign := envelope.Message.Ack.CounterSign
+	log.Debugf(ctx, "validateCounterSign: ACK parsed, counter_sign present=%v", counterSign != "")
 	if counterSign == "" {
 		return model.NewSignValidationErr(fmt.Errorf("counter_sign missing in ACK response"))
 	}
