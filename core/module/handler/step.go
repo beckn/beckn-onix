@@ -314,6 +314,67 @@ func extractProtocolVersion(body []byte) string {
 	return ""
 }
 
+// counterSignStep generates a counter-signature for Beckn v2.0.0 LTS ACK responses.
+// It signs the inbound request body with the receiver's key and stores the result
+// in StepContext.CounterSign, which is later injected into the ACK response body.
+// For protocol versions other than "2.0.0" this step is a no-op.
+type counterSignStep struct {
+	signer definition.Signer
+	km     definition.KeyManager
+}
+
+// newCounterSignStep initialises and returns a new counter-sign step.
+func newCounterSignStep(signer definition.Signer, km definition.KeyManager) (definition.Step, error) {
+	if signer == nil {
+		return nil, fmt.Errorf("invalid config: Signer plugin not configured")
+	}
+	if km == nil {
+		return nil, fmt.Errorf("invalid config: KeyManager plugin not configured")
+	}
+	return &counterSignStep{signer: signer, km: km}, nil
+}
+
+// Run executes the counter-sign step.
+func (s *counterSignStep) Run(ctx *model.StepContext) error {
+	if ctx.ProtocolVersion != model.ProtocolVersionLTS {
+		return nil // no-op for legacy protocol versions
+	}
+	if len(ctx.SubID) == 0 {
+		return model.NewBadReqErr(fmt.Errorf("subscriberID not set"))
+	}
+
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
+
+	var keySet *model.Keyset
+	{
+		keySetCtx, keySetSpan := tracer.Start(ctx.Context, "counter-sign-keyset")
+		ks, err := s.km.Keyset(keySetCtx, ctx.SubID)
+		keySetSpan.End()
+		if err != nil {
+			return fmt.Errorf("counter-sign: failed to get signing key: %w", err)
+		}
+		keySet = ks
+	}
+
+	{
+		signerCtx, signerSpan := tracer.Start(ctx.Context, "counter-sign")
+		createdAt := time.Now().Unix()
+		validTill := time.Now().Add(5 * time.Minute).Unix()
+		sign, err := s.signer.Sign(signerCtx, ctx.Body, keySet.SigningPrivate, createdAt, validTill)
+		signerSpan.End()
+		if err != nil {
+			return fmt.Errorf("counter-sign: failed to sign request body: %w", err)
+		}
+		ctx.CounterSign = fmt.Sprintf(
+			"Signature keyId=\"%s|%s|ed25519\",algorithm=\"ed25519\",created=\"%d\",expires=\"%d\",headers=\"(created) (expires) digest\",signature=\"%s\"",
+			ctx.SubID, keySet.UniqueKeyID, createdAt, validTill, sign,
+		)
+		log.Debugf(ctx, "CounterSignature generated for subscriber: %s", ctx.SubID)
+	}
+
+	return nil
+}
+
 // checkPolicyStep adapts PolicyChecker into the Step interface.
 type checkPolicyStep struct {
 	checker definition.PolicyChecker

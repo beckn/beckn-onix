@@ -174,6 +174,7 @@ type StepContext struct {
 	Role            Role
 	RespHeader      http.Header
 	ProtocolVersion string // Protocol version parsed from context.version (e.g. "2.0.0")
+	CounterSign     string // Populated by counterSignStep for v2.0.0 LTS; injected into ACK response
 }
 
 // WithContext updates the existing StepContext with a new context.
@@ -195,6 +196,9 @@ const (
 type Ack struct {
 	// Status holds the acknowledgment status (ACK/NACK).
 	Status Status `json:"status"`
+	// CounterSign is the receiver's signature over the inbound request body,
+	// included only for Beckn v2.0.0 LTS responses as a signed receipt.
+	CounterSign string `json:"counter_sign,omitempty"`
 }
 
 // Message represents the structure of a response message.

@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -306,6 +307,60 @@ func TestStepCtx_ProtocolVersion(t *testing.T) {
 			}
 			if sctx.ProtocolVersion != tt.wantVer {
 				t.Errorf("ProtocolVersion = %q, want %q", sctx.ProtocolVersion, tt.wantVer)
+			}
+		})
+	}
+}
+
+func TestInjectCounterSign(t *testing.T) {
+	const testSign = `Signature keyId="bpp.example.com|key-1|ed25519",signature="abc123"`
+
+	tests := []struct {
+		name        string
+		counterSign string
+		respBody    string
+		wantBody    string
+		wantErr     bool
+	}{
+		{
+			name:        "injects counter_sign into valid ACK",
+			counterSign: testSign,
+			respBody:    `{"message":{"ack":{"status":"ACK"}}}`,
+			wantBody:    `{"message":{"ack":{"status":"ACK","counter_sign":"Signature keyId=\"bpp.example.com|key-1|ed25519\",signature=\"abc123\""}}}`,
+		},
+		{
+			name:        "no-op when CounterSign is empty",
+			counterSign: "",
+			respBody:    `{"message":{"ack":{"status":"ACK"}}}`,
+			wantBody:    `{"message":{"ack":{"status":"ACK"}}}`,
+		},
+		{
+			name:        "non-JSON body skipped gracefully",
+			counterSign: testSign,
+			respBody:    `not-json`,
+			wantBody:    `not-json`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := &model.StepContext{
+				Context:     context.Background(),
+				CounterSign: tt.counterSign,
+			}
+			resp := &http.Response{
+				Header: http.Header{},
+				Body:   io.NopCloser(bytes.NewBufferString(tt.respBody)),
+			}
+
+			err := injectCounterSign(ctx, resp)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("injectCounterSign() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			got, _ := io.ReadAll(resp.Body)
+			if string(got) != tt.wantBody {
+				t.Errorf("body = %s, want %s", got, tt.wantBody)
 			}
 		})
 	}

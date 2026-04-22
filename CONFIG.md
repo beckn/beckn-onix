@@ -516,6 +516,8 @@ modules:
 - `validateSchema` - Validate against JSON schema
 - `sign` - Sign outgoing request
 - `publish` - Publish to message queue
+- `counterSign` - Generate a counter-signature and embed it in the ACK response (`counter_sign` field inside `ack`). Required for Beckn v2.0.0 LTS receiver handlers. No-op for requests with `context.version != "2.0.0"`. Must be placed after all steps that can NACK (e.g. `validateSign`, `validateSchema`) so that counter-signatures are only computed for requests that will be acknowledged. Requires `signer` and `keyManager` plugins to be configured.
+- `checkPolicy` - Evaluate request against configured policy rules
 
 **Example**:
 ```yaml
