@@ -12,6 +12,7 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"gopkg.in/yaml.v3"
 )
 
@@ -115,33 +116,50 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 
 	typ, hasType := cfg["type"]
 	if !hasType || typ == "" {
-		return nil, fmt.Errorf("'type' is required (file, dir, or bundle)")
+		return nil, fmt.Errorf("'type' is required (file, dir, bundle, or manifest)")
 	}
 	config.Type = typ
 
-	location, hasLoc := cfg["location"]
-	if !hasLoc || location == "" {
-		return nil, fmt.Errorf("'location' is required")
-	}
-	config.Location = location
-
 	switch typ {
 	case "file":
+		location, hasLoc := cfg["location"]
+		if !hasLoc || location == "" {
+			return nil, fmt.Errorf("'location' is required")
+		}
+		config.Location = location
 		config.PolicyPaths = append(config.PolicyPaths, location)
 	case "dir":
+		location, hasLoc := cfg["location"]
+		if !hasLoc || location == "" {
+			return nil, fmt.Errorf("'location' is required")
+		}
+		config.Location = location
 		config.PolicyPaths = append(config.PolicyPaths, location)
 	case "bundle":
+		location, hasLoc := cfg["location"]
+		if !hasLoc || location == "" {
+			return nil, fmt.Errorf("'location' is required")
+		}
+		config.Location = location
 		config.IsBundle = true
 		config.PolicyPaths = append(config.PolicyPaths, location)
+	case "manifest":
+		if location := strings.TrimSpace(cfg["location"]); location != "" {
+			return nil, fmt.Errorf("'location' must not be set for type=manifest")
+		}
 	default:
-		return nil, fmt.Errorf("unsupported type %q (expected: file, dir, or bundle)", typ)
+		return nil, fmt.Errorf("unsupported type %q (expected: file, dir, bundle, or manifest)", typ)
 	}
 
-	query, hasQuery := cfg["query"]
-	if !hasQuery || query == "" {
-		return nil, fmt.Errorf("'query' is required (e.g., data.policy.violations)")
+	if typ != "manifest" {
+		query, hasQuery := cfg["query"]
+		if !hasQuery || query == "" {
+			return nil, fmt.Errorf("'query' is required (e.g., data.policy.violations)")
+		}
+		config.Query = query
+	} else if query := strings.TrimSpace(cfg["query"]); query != "" {
+		return nil, fmt.Errorf("'query' must not be set for type=manifest")
 	}
-	config.Query = query
 
 	if actions, ok := cfg["actions"]; ok && actions != "" {
 		actionList := strings.Split(actions, ",")
@@ -167,6 +185,9 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 	}
 
 	if verificationEnabled, ok := cfg["verification.enabled"]; ok && verificationEnabled != "" {
+		if config.Type == "manifest" {
+			return nil, fmt.Errorf("verification must not be configured for type=manifest; manifest verification is handled by the manifest loader")
+		}
 		enabled, err := strconv.ParseBool(verificationEnabled)
 		if err != nil {
 			return nil, fmt.Errorf("'verification.enabled' must be a boolean, got %q", verificationEnabled)
@@ -228,18 +249,64 @@ type loadedPolicy struct {
 	evaluator *Evaluator
 }
 
+type networkManifest struct {
+	ManifestVersion string                    `yaml:"manifest_version"`
+	ManifestType    string                    `yaml:"manifest_type"`
+	NetworkID       string                    `yaml:"network_id"`
+	ReleaseID       any                       `yaml:"release_id"`
+	Publisher       networkManifestPublisher  `yaml:"publisher"`
+	Policies        *networkManifestPolicies  `yaml:"policies"`
+	Governance      networkManifestGovernance `yaml:"governance"`
+}
+
+type networkManifestPublisher struct {
+	Role   string `yaml:"role"`
+	Domain string `yaml:"domain"`
+}
+
+type networkManifestPolicies struct {
+	Type   string                 `yaml:"type"`
+	Source string                 `yaml:"source"`
+	Bundle *networkManifestBundle `yaml:"bundle"`
+	File   *networkManifestFile   `yaml:"file"`
+}
+
+type networkManifestBundle struct {
+	ID                        string `yaml:"id"`
+	URL                       string `yaml:"url"`
+	PolicyQueryPath           string `yaml:"policy_query_path"`
+	Signed                    bool   `yaml:"signed"`
+	SigningPublicKeyLookupURL string `yaml:"signing_public_key_lookup_url"`
+}
+
+type networkManifestFile struct {
+	ID                        string `yaml:"id"`
+	URL                       string `yaml:"url"`
+	PolicyQueryPath           string `yaml:"policy_query_path"`
+	Signed                    bool   `yaml:"signed"`
+	SignatureURL              string `yaml:"signature_url"`
+	SigningPublicKeyLookupURL string `yaml:"signing_public_key_lookup_url"`
+}
+
+type networkManifestGovernance struct {
+	EffectiveFrom  string `yaml:"effective_from"`
+	EffectiveUntil string `yaml:"effective_until"`
+	Signed         *bool  `yaml:"signed"`
+}
+
 type networkPolicyFile struct {
 	NetworkPolicies map[string]map[string]interface{} `yaml:"networkPolicies"`
 }
 
 // PolicyEnforcer evaluates beckn messages against OPA policies and NACKs non-compliant messages.
 type PolicyEnforcer struct {
-	config        *Config
-	policies      map[string]*loadedPolicy
-	defaultPolicy *loadedPolicy
-	evaluatorMu   sync.RWMutex
-	closeOnce     sync.Once
-	done          chan struct{}
+	config         *Config
+	manifestLoader definition.ManifestLoader
+	policies       map[string]*loadedPolicy
+	defaultPolicy  *loadedPolicy
+	evaluatorMu    sync.RWMutex
+	closeOnce      sync.Once
+	done           chan struct{}
 }
 
 func loadNetworkPolicies(configPath string) (map[string]map[string]string, error) {
@@ -332,7 +399,162 @@ func mergeRuntimeConfig(base map[string]string, override map[string]string) map[
 	return merged
 }
 
-func loadPolicy(policyName string, config *PolicyConfig, sharedRuntimeConfig map[string]string) (*loadedPolicy, error) {
+func resolveManifestPolicyConfig(ctx context.Context, policyName string, baseConfig *PolicyConfig, manifestLoader definition.ManifestLoader) (*PolicyConfig, error) {
+	if policyName == "default" {
+		return nil, fmt.Errorf("default policy cannot use type=manifest")
+	}
+	if manifestLoader == nil {
+		return nil, fmt.Errorf("type=manifest requires ManifestLoader plugin to be configured")
+	}
+
+	doc, err := manifestLoader.GetByNetworkID(ctx, policyName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load manifest for network %q: %w", policyName, err)
+	}
+
+	var manifest networkManifest
+	if err := yaml.Unmarshal(doc.Content, &manifest); err != nil {
+		return nil, fmt.Errorf("failed to parse manifest YAML for network %q: %w", policyName, err)
+	}
+
+	now := time.Now().UTC()
+	if err := validateNetworkManifest(&manifest, policyName, now); err != nil {
+		return nil, err
+	}
+
+	resolved := *baseConfig
+	resolved.RuntimeConfig = mergeRuntimeConfig(nil, baseConfig.RuntimeConfig)
+	resolved.Type = manifest.Policies.Source
+	resolved.IsBundle = manifest.Policies.Source == "bundle"
+	resolved.PolicyPaths = nil
+	resolved.Location = ""
+	resolved.Query = ""
+	resolved.Verification = nil
+
+	switch manifest.Policies.Source {
+	case "bundle":
+		resolved.Location = manifest.Policies.Bundle.URL
+		resolved.PolicyPaths = []string{manifest.Policies.Bundle.URL}
+		resolved.Query = manifest.Policies.Bundle.PolicyQueryPath
+		if manifest.Policies.Bundle.Signed {
+			resolved.Verification = &ArtifactVerificationConfig{
+				Enabled:            true,
+				PublicKeyLookupURL: manifest.Policies.Bundle.SigningPublicKeyLookupURL,
+				Algorithm:          defaultBundleVerificationAlgorithm,
+			}
+		}
+	case "file":
+		resolved.Location = manifest.Policies.File.URL
+		resolved.PolicyPaths = []string{manifest.Policies.File.URL}
+		resolved.Query = manifest.Policies.File.PolicyQueryPath
+		if manifest.Policies.File.Signed {
+			resolved.Verification = &ArtifactVerificationConfig{
+				Enabled:            true,
+				PublicKeyLookupURL: manifest.Policies.File.SigningPublicKeyLookupURL,
+				SignatureLocation:  manifest.Policies.File.SignatureURL,
+			}
+		}
+	default:
+		return nil, fmt.Errorf("manifest for network %q uses unsupported policies.source %q", policyName, manifest.Policies.Source)
+	}
+
+	return &resolved, nil
+}
+
+func validateNetworkManifest(manifest *networkManifest, expectedNetworkID string, now time.Time) error {
+	if strings.TrimSpace(manifest.ManifestVersion) == "" {
+		return fmt.Errorf("manifest for network %q is missing manifest_version", expectedNetworkID)
+	}
+	if manifest.ManifestType != "network-manifest" {
+		return fmt.Errorf("manifest for network %q must have manifest_type=\"network-manifest\"", expectedNetworkID)
+	}
+	if manifest.NetworkID == "" {
+		return fmt.Errorf("manifest for network %q is missing network_id", expectedNetworkID)
+	}
+	if manifest.NetworkID != expectedNetworkID {
+		return fmt.Errorf("manifest network_id %q does not match configured network %q", manifest.NetworkID, expectedNetworkID)
+	}
+	if manifest.ReleaseID == nil || strings.TrimSpace(fmt.Sprintf("%v", manifest.ReleaseID)) == "" {
+		return fmt.Errorf("manifest for network %q is missing release_id", expectedNetworkID)
+	}
+	if strings.TrimSpace(manifest.Publisher.Role) == "" || strings.TrimSpace(manifest.Publisher.Domain) == "" {
+		return fmt.Errorf("manifest for network %q must include publisher.role and publisher.domain", expectedNetworkID)
+	}
+	if manifest.Policies == nil {
+		return fmt.Errorf("manifest for network %q is missing policies section", expectedNetworkID)
+	}
+	if manifest.Policies.Type != "rego" {
+		return fmt.Errorf("manifest for network %q must have policies.type=\"rego\"", expectedNetworkID)
+	}
+	if manifest.Governance.Signed == nil {
+		return fmt.Errorf("manifest for network %q is missing governance.signed", expectedNetworkID)
+	}
+
+	effectiveFrom, err := time.Parse(time.RFC3339, manifest.Governance.EffectiveFrom)
+	if err != nil {
+		return fmt.Errorf("manifest for network %q has invalid governance.effective_from: %w", expectedNetworkID, err)
+	}
+	if now.Before(effectiveFrom) {
+		return fmt.Errorf("manifest for network %q is not active until %s", expectedNetworkID, effectiveFrom.Format(time.RFC3339))
+	}
+
+	if manifest.Governance.EffectiveUntil != "" {
+		effectiveUntil, err := time.Parse(time.RFC3339, manifest.Governance.EffectiveUntil)
+		if err != nil {
+			return fmt.Errorf("manifest for network %q has invalid governance.effective_until: %w", expectedNetworkID, err)
+		}
+		if !effectiveUntil.After(effectiveFrom) {
+			return fmt.Errorf("manifest for network %q must have governance.effective_until later than governance.effective_from", expectedNetworkID)
+		}
+		if now.After(effectiveUntil) {
+			return fmt.Errorf("manifest for network %q expired at %s", expectedNetworkID, effectiveUntil.Format(time.RFC3339))
+		}
+	}
+
+	switch manifest.Policies.Source {
+	case "bundle":
+		if manifest.Policies.Bundle == nil {
+			return fmt.Errorf("manifest for network %q must include policies.bundle when policies.source=\"bundle\"", expectedNetworkID)
+		}
+		if manifest.Policies.File != nil {
+			return fmt.Errorf("manifest for network %q must not include policies.file when policies.source=\"bundle\"", expectedNetworkID)
+		}
+		if strings.TrimSpace(manifest.Policies.Bundle.ID) == "" ||
+			strings.TrimSpace(manifest.Policies.Bundle.URL) == "" ||
+			strings.TrimSpace(manifest.Policies.Bundle.PolicyQueryPath) == "" {
+			return fmt.Errorf("manifest for network %q is missing required policies.bundle fields", expectedNetworkID)
+		}
+		if manifest.Policies.Bundle.Signed && strings.TrimSpace(manifest.Policies.Bundle.SigningPublicKeyLookupURL) == "" {
+			return fmt.Errorf("manifest for network %q requires policies.bundle.signing_public_key_lookup_url when policies.bundle.signed=true", expectedNetworkID)
+		}
+	case "file":
+		if manifest.Policies.File == nil {
+			return fmt.Errorf("manifest for network %q must include policies.file when policies.source=\"file\"", expectedNetworkID)
+		}
+		if manifest.Policies.Bundle != nil {
+			return fmt.Errorf("manifest for network %q must not include policies.bundle when policies.source=\"file\"", expectedNetworkID)
+		}
+		if strings.TrimSpace(manifest.Policies.File.ID) == "" ||
+			strings.TrimSpace(manifest.Policies.File.URL) == "" ||
+			strings.TrimSpace(manifest.Policies.File.PolicyQueryPath) == "" {
+			return fmt.Errorf("manifest for network %q is missing required policies.file fields", expectedNetworkID)
+		}
+		if manifest.Policies.File.Signed {
+			if strings.TrimSpace(manifest.Policies.File.SignatureURL) == "" {
+				return fmt.Errorf("manifest for network %q requires policies.file.signature_url when policies.file.signed=true", expectedNetworkID)
+			}
+			if strings.TrimSpace(manifest.Policies.File.SigningPublicKeyLookupURL) == "" {
+				return fmt.Errorf("manifest for network %q requires policies.file.signing_public_key_lookup_url when policies.file.signed=true", expectedNetworkID)
+			}
+		}
+	default:
+		return fmt.Errorf("manifest for network %q uses unsupported policies.source %q", expectedNetworkID, manifest.Policies.Source)
+	}
+
+	return nil
+}
+
+func loadPolicy(ctx context.Context, manifestLoader definition.ManifestLoader, policyName string, config *PolicyConfig, sharedRuntimeConfig map[string]string) (*loadedPolicy, error) {
 	policyConfig := *config
 	policyConfig.RuntimeConfig = mergeRuntimeConfig(sharedRuntimeConfig, config.RuntimeConfig)
 
@@ -343,6 +565,17 @@ func loadPolicy(policyName string, config *PolicyConfig, sharedRuntimeConfig map
 	if !policyConfig.Enabled {
 		return loaded, nil
 	}
+
+	if policyConfig.Type == "manifest" {
+		resolvedConfig, err := resolveManifestPolicyConfig(ctx, policyName, &policyConfig, manifestLoader)
+		if err != nil {
+			return nil, err
+		}
+		policyConfig = *resolvedConfig
+		policyConfig.RuntimeConfig = mergeRuntimeConfig(sharedRuntimeConfig, resolvedConfig.RuntimeConfig)
+	}
+
+	loaded.config = &policyConfig
 
 	evaluator, err := NewEvaluator(
 		policyConfig.PolicyPaths,
@@ -359,7 +592,7 @@ func loadPolicy(policyName string, config *PolicyConfig, sharedRuntimeConfig map
 	return loaded, nil
 }
 
-func loadNetworkPoliciesForEnforcer(config *Config) (map[string]*loadedPolicy, *loadedPolicy, error) {
+func loadNetworkPoliciesForEnforcer(ctx context.Context, manifestLoader definition.ManifestLoader, config *Config) (map[string]*loadedPolicy, *loadedPolicy, error) {
 	rawPolicies, err := loadNetworkPolicies(config.NetworkPolicyConfig)
 	if err != nil {
 		return nil, nil, err
@@ -374,7 +607,7 @@ func loadNetworkPoliciesForEnforcer(config *Config) (map[string]*loadedPolicy, *
 			return nil, nil, fmt.Errorf("invalid network policy %q: %w", policyName, err)
 		}
 
-		loaded, err := loadPolicy(policyName, policyCfg, config.RuntimeConfig)
+		loaded, err := loadPolicy(ctx, manifestLoader, policyName, policyCfg, config.RuntimeConfig)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to initialize network policy %q: %w", policyName, err)
 		}
@@ -423,14 +656,19 @@ func logLoadedPolicy(ctx context.Context, networkScoped bool, policy *loadedPoli
 }
 
 func New(ctx context.Context, cfg map[string]string) (*PolicyEnforcer, error) {
+	return NewWithManifestLoader(ctx, nil, cfg)
+}
+
+func NewWithManifestLoader(ctx context.Context, manifestLoader definition.ManifestLoader, cfg map[string]string) (*PolicyEnforcer, error) {
 	config, err := ParseConfig(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("opapolicychecker: config error: %w", err)
 	}
 
 	enforcer := &PolicyEnforcer{
-		config: config,
-		done:   make(chan struct{}),
+		config:         config,
+		manifestLoader: manifestLoader,
+		done:           make(chan struct{}),
 	}
 
 	if !config.Enabled {
@@ -438,7 +676,7 @@ func New(ctx context.Context, cfg map[string]string) (*PolicyEnforcer, error) {
 		return enforcer, nil
 	}
 
-	enforcer.policies, enforcer.defaultPolicy, err = loadNetworkPoliciesForEnforcer(config)
+	enforcer.policies, enforcer.defaultPolicy, err = loadNetworkPoliciesForEnforcer(ctx, manifestLoader, config)
 	if err != nil {
 		return nil, fmt.Errorf("opapolicychecker: failed to initialize network policies: %w", err)
 	}
@@ -488,7 +726,7 @@ func (e *PolicyEnforcer) reloadPolicies(ctx context.Context) {
 func (e *PolicyEnforcer) reloadNetworkPolicies(ctx context.Context) {
 	start := time.Now()
 
-	policies, defaultPolicy, err := loadNetworkPoliciesForEnforcer(e.config)
+	policies, defaultPolicy, err := loadNetworkPoliciesForEnforcer(ctx, e.manifestLoader, e.config)
 	if err != nil {
 		log.Errorf(ctx, err, "OPAPolicyChecker: network policy reload failed (keeping previous policies): %v", err)
 		return

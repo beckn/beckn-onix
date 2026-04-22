@@ -19,7 +19,7 @@ func TestProviderNewSuccess(t *testing.T) {
 		"networkPolicyConfig": configPath,
 	}
 
-	checker, closer, err := provider.New(context.Background(), config)
+	checker, closer, err := provider.New(context.Background(), nil, config)
 	if err != nil {
 		t.Fatalf("New() unexpected error: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestProviderNewSuccess(t *testing.T) {
 func TestProviderNewFailure(t *testing.T) {
 	provider := provider{}
 
-	_, _, err := provider.New(context.Background(), map[string]string{
+	_, _, err := provider.New(context.Background(), nil, map[string]string{
 		"networkPolicyConfig": "",
 	})
 	if err == nil {

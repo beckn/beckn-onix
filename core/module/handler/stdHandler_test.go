@@ -35,7 +35,7 @@ func (noopPluginManager) Signer(context.Context, *plugin.Config) (definition.Sig
 func (noopPluginManager) Step(context.Context, *plugin.Config) (definition.Step, error) {
 	return nil, nil
 }
-func (noopPluginManager) PolicyChecker(context.Context, *plugin.Config) (definition.PolicyChecker, error) {
+func (noopPluginManager) PolicyChecker(context.Context, definition.ManifestLoader, *plugin.Config) (definition.PolicyChecker, error) {
 	return nil, nil
 }
 func (noopPluginManager) Cache(context.Context, *plugin.Config) (definition.Cache, error) {

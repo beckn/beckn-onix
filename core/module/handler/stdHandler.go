@@ -313,6 +313,21 @@ func loadManifestLoader(ctx context.Context, mgr PluginManager, cache definition
 	return loader, nil
 }
 
+func loadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
+	if cfg == nil {
+		log.Debug(ctx, "Skipping PolicyChecker plugin: not configured")
+		return nil, nil
+	}
+
+	checker, err := mgr.PolicyChecker(ctx, manifestLoader, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load PolicyChecker plugin (%s): %w", cfg.ID, err)
+	}
+
+	log.Debugf(ctx, "Loaded PolicyChecker plugin: %s", cfg.ID)
+	return checker, nil
+}
+
 // initPlugins initializes required plugins for the processor.
 func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *PluginCfg) error {
 	var err error
@@ -346,7 +361,7 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.transportWrapper, err = loadPlugin(ctx, "TransportWrapper", cfg.TransportWrapper, mgr.TransportWrapper); err != nil {
 		return err
 	}
-	if h.policyChecker, err = loadPlugin(ctx, "PolicyChecker", cfg.PolicyChecker, mgr.PolicyChecker); err != nil {
+	if h.policyChecker, err = loadPolicyChecker(ctx, mgr, h.manifestLoader, cfg.PolicyChecker); err != nil {
 		return err
 	}
 

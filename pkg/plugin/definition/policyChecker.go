@@ -13,5 +13,5 @@ type PolicyChecker interface {
 
 // PolicyCheckerProvider interface for creating policy checkers.
 type PolicyCheckerProvider interface {
-	New(ctx context.Context, config map[string]string) (PolicyChecker, func(), error)
+	New(ctx context.Context, manifestLoader ManifestLoader, config map[string]string) (PolicyChecker, func(), error)
 }
