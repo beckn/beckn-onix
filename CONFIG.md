@@ -509,15 +509,23 @@ modules:
 ##### `steps`
 **Type**: `array` of `string`  
 **Required**: Yes  
-**Description**: Ordered list of processing steps to execute for each request.  
-**Common Steps**:
-- `validateSign` - Validate digital signature
-- `addRoute` - Determine routing destination
-- `validateSchema` - Validate against JSON schema
-- `sign` - Sign outgoing request
-- `publish` - Publish to message queue
-- `counterSign` - Generate a counter-signature and embed it in the ACK response (`counter_sign` field inside `ack`). Required for Beckn v2.0.0 LTS receiver handlers. No-op for requests with `context.version != "2.0.0"`. Must be placed after all steps that can NACK (e.g. `validateSign`, `validateSchema`) so that counter-signatures are only computed for requests that will be acknowledged. Requires `signer` and `keyManager` plugins to be configured.
-- `checkPolicy` - Evaluate request against configured policy rules
+**Description**: Ordered list of processing steps to execute for each request.
+
+Each entry names a step that participates in the handler pipeline. A step can participate in one or both of two phases:
+
+- **Request phase** — runs on the inbound request before it is forwarded or published. All steps run this phase in the order listed.
+- **Response phase** — runs on the upstream response (proxied ACK) before it is returned to the caller. Only steps that opt into this phase run it; they do so automatically based on their implementation, with no extra configuration required. The order follows their position in the `steps` list.
+
+This means a single entry in `steps` can do work on both the request and the response. `counterSign`, for example, signs the request body during the request phase and injects the resulting `counter_sign` into the ACK during the response phase — both triggered by the single `counterSign` entry.
+
+**Available Steps**:
+- `validateSign` — Validate the digital signature on the inbound request. Request phase only.
+- `addRoute` — Determine the routing destination for the request. Request phase only.
+- `validateSchema` — Validate the request body against the configured JSON schema. Request phase only.
+- `sign` — Sign the outgoing request with the subscriber's private key. Request phase only. Requires `signer` and `keyManager` plugins.
+- `checkPolicy` — Evaluate the request against configured OPA policy rules. Request phase only. Requires `policyChecker` plugin.
+- `counterSign` — **(Beckn v2.0.0 LTS, Receiver handlers only)** Signs the inbound request body and embeds the result as `counter_sign` inside the ACK `ack` object. Participates in both phases: request phase computes the signature; response phase injects it into the proxied ACK when the downstream app responds. No-op for `context.version != "2.0.0"`. Must be placed after all steps that can NACK (e.g. `validateSign`, `validateSchema`) so counter-signatures are only computed for requests that pass validation. Requires `signer` and `keyManager` plugins.
+- `validateCounterSign` — **(Beckn v2.0.0 LTS, Caller handlers only)** Validates the `counter_sign` field in the ACK response received from the receiver. Participates in the response phase only (the request phase is a no-op). Reads `message.ack.counter_sign` from the upstream ACK, looks up the receiver's public key via the key manager, and verifies the signature against the original outbound request body. Returns a sign-validation error if `counter_sign` is absent or the signature is invalid. No-op for `context.version != "2.0.0"`. Requires `signValidator` and `keyManager` plugins.
 
 **Example**:
 ```yaml
