@@ -33,16 +33,18 @@ func SendAck(w http.ResponseWriter) {
 }
 
 // nack sends a negative acknowledgment (NACK) response with an error message.
+// When the request carries Beckn protocol version "2.0.0" (LTS), the error moves
+// to the top-level response field and field names change to errorCode/errorMessage.
 func nack(ctx context.Context, w http.ResponseWriter, err *model.Error, status int) {
 	resp := &model.Response{
-		Message: model.Message{
-			Ack: model.Ack{
-				Status: model.StatusNACK,
-			},
-			Error: err,
-		},
+		Message: model.Message{Ack: model.Ack{Status: model.StatusNACK}},
 	}
-	data, _ := json.Marshal(resp) //should not fail here
+	if version, _ := ctx.Value(model.ContextKeyProtocolVersion).(string); version == model.ProtocolVersionLTS {
+		resp.Error = err.ToV2Error() // v2: top-level error, renamed fields
+	} else {
+		resp.Message.Error = err // legacy: error nested inside message
+	}
+	data, _ := json.Marshal(resp) // should not fail here
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

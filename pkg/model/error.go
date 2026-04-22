@@ -18,6 +18,16 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("Error: Code=%s, Path=%s, Message=%s", e.Code, e.Paths, e.Message)
 }
 
+// ToV2Error converts the legacy Error to its Beckn v2.0.0 LTS representation,
+// mapping code→errorCode, message→errorMessage, and paths→errorPaths.
+func (e *Error) ToV2Error() *V2Error {
+	return &V2Error{
+		ErrorCode:    e.Code,
+		ErrorPaths:   e.Paths,
+		ErrorMessage: e.Message,
+	}
+}
+
 // SchemaValidationErr occurs when schema validation errors are encountered.
 type SchemaValidationErr struct {
 	Errors []Error
