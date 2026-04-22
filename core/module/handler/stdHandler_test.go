@@ -312,7 +312,7 @@ func TestStepCtx_ProtocolVersion(t *testing.T) {
 	}
 }
 
-func TestInjectCounterSign(t *testing.T) {
+func TestCounterSignStepRunOnResponse(t *testing.T) {
 	const testSign = `Signature keyId="bpp.example.com|key-1|ed25519",signature="abc123"`
 
 	tests := []struct {
@@ -353,9 +353,10 @@ func TestInjectCounterSign(t *testing.T) {
 				Body:   io.NopCloser(bytes.NewBufferString(tt.respBody)),
 			}
 
-			err := injectCounterSign(ctx, resp)
+			step := &counterSignStep{}
+			err := step.RunOnResponse(ctx, resp)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("injectCounterSign() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("counterSignStep.RunOnResponse() error = %v, wantErr %v", err, tt.wantErr)
 			}
 
 			got, _ := io.ReadAll(resp.Body)
