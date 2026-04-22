@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -337,7 +338,9 @@ func newCounterSignStep(signer definition.Signer, km definition.KeyManager) (def
 	return &counterSignStep{signer: signer, km: km}, nil
 }
 
-// Run executes the counter-sign step.
+// Run executes the counter-sign step. It signs the inbound request body and
+// stores the resulting auth-header string in ctx.CounterSign for injection
+// into the ACK response. For protocol versions other than "2.0.0" this is a no-op.
 func (s *counterSignStep) Run(ctx *model.StepContext) error {
 	if ctx.ProtocolVersion != model.ProtocolVersionLTS {
 		return nil // no-op for legacy protocol versions
@@ -375,6 +378,45 @@ func (s *counterSignStep) Run(ctx *model.StepContext) error {
 		log.Debugf(ctx, "CounterSignature generated for subscriber: %s", ctx.SubID)
 	}
 
+	return nil
+}
+
+// RunOnResponse injects the counter_sign computed in Run into the upstream ACK
+// response body. It is a no-op when CounterSign is empty (i.e. non-LTS requests
+// or paths where the ACK was already sent directly without proxying).
+func (s *counterSignStep) RunOnResponse(ctx *model.StepContext, resp *http.Response) error {
+	if ctx.CounterSign == "" {
+		return nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("counter-sign inject: failed to read response body: %w", err)
+	}
+
+	var envelope struct {
+		Message struct {
+			Ack model.Ack `json:"ack"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		// Not a JSON ACK body — restore original and skip injection.
+		log.Warnf(ctx, "counter-sign inject: response is not a JSON ACK, skipping: %v", err)
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return nil
+	}
+
+	envelope.Message.Ack.CounterSign = ctx.CounterSign
+	modified, err := json.Marshal(envelope)
+	if err != nil {
+		return fmt.Errorf("counter-sign inject: failed to marshal modified ACK: %w", err)
+	}
+
+	resp.Body = io.NopCloser(bytes.NewReader(modified))
+	resp.ContentLength = int64(len(modified))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(modified)))
+	log.Debugf(ctx, "CounterSignature injected into proxied ACK response")
 	return nil
 }
 
