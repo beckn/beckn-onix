@@ -6,6 +6,7 @@ Validates incoming Beckn messages against network-defined business rules using [
 
 - Evaluates business rules defined in Rego policies
 - Supports multiple policy sources: single policy file, local policy directory, or OPA bundle (`.tar.gz`)
+- Supports manifest-backed policy resolution through the `manifestloader` plugin
 - Signature verification for single-file policies and OPA bundles
 - Structured result format: `{"valid": bool, "violations": []string}`
 - Fail-closed on empty/undefined query results — misconfigured policies are treated as violations
@@ -19,6 +20,12 @@ Validates incoming Beckn messages against network-defined business rules using [
 This plugin now requires `networkPolicyConfig`. Older top-level policy keys such as `type`, `location`, `query`, `actions`, and `refreshIntervalSeconds` are no longer supported.
 
 ```yaml
+manifestLoader:
+  id: manifestloader
+  config:
+    cacheTTL: 24h
+    fetchTimeoutSeconds: "30"
+
 checkPolicy:
   id: opapolicychecker
   config:
@@ -57,11 +64,13 @@ Structured config file:
 
 ```yaml
 networkPolicies:
+  nfh.global/testnet:
+    type: manifest
+
   nfo.example.org/mobility-network:
     type: file
     location: https://nfo.example.org/policies/mobility.rego
     query: "data.mobility.policy.result"
-    actions: "confirm"
 
   nfo.example.org/logistics-network:
     type: bundle
@@ -87,13 +96,57 @@ Behavior:
 
 Each entry under `networkPolicies` supports:
 
-- `type`: `file`, `dir`, or `bundle`
-- `location`
-- `query`
+- `type`: `file`, `dir`, `bundle`, or `manifest`
+- `location` and `query` for `file`, `dir`, and `bundle`
 - optional `actions`
 - optional `enabled`
 - optional `fetchTimeoutSeconds`
-- optional `verification`
+- optional `verification` for `file` and `bundle`
+
+### Manifest-backed Policies
+
+Use `type: manifest` when the network policy should be resolved indirectly through a verified network manifest fetched by the `manifestloader` plugin.
+
+Guides for NFOs creating and publishing network policies can be found here:
+
+- https://docs.nfh.global/beckn/creating-an-open-network/configuring-network-policies
+
+```yaml
+manifestLoader:
+  id: manifestloader
+  config:
+    cacheTTL: 24h
+    fetchTimeoutSeconds: "30"
+    forceRefreshOnStartup: false
+    disableCache: false
+
+checkPolicy:
+  id: opapolicychecker
+  config:
+    networkPolicyConfig: ./config/opa-network-policies.yaml
+    refreshInterval: "5m"
+```
+
+```yaml
+networkPolicies:
+  nfh.global/testnet:
+    type: manifest
+```
+
+Rules for `type: manifest`:
+
+- `manifestLoader` must be configured in the same handler/module as `checkPolicy`
+- `location`, `query`, and `verification` must not be set on the `type: manifest` entry
+- the manifest is fetched by network ID using the network policy key
+- the manifest uses fields such as `manifest_version`, `manifest_type`, `network_id`, `policy_query_path`, and `signature_url`
+- the manifest must contain:
+  - `manifest_type: "network-manifest"`
+  - `network_id` matching the configured network policy key exactly
+  - `policies.type: "rego"`
+  - `policies.source: "file"` or `"bundle"`
+  - valid `governance.effective_from`
+- if `governance.effective_until` is present, it must be later than `effective_from` and not expired
+- resolved manifest policy sources are then loaded through the normal `file` or `bundle` OPA code paths
 
 ### Signature Verification
 
@@ -173,9 +226,10 @@ config:
 ### Initialization (Load Time)
 
 1. **Load Policy Config**: Reads the structured `networkPolicyConfig` file
-2. **Load Policy Sources**: Fetches `.rego` files or bundles for each configured network policy entry
-3. **Verify Signatures**: When enabled, verifies detached signatures for single-file policies or embedded signatures for signed bundles
-4. **Compile Policies**: Compiles one evaluator per configured `network_id` plus optional `default`
+2. **Resolve Manifest-backed Entries**: For `type: manifest`, fetches the verified manifest through `manifestloader`, validates it, and resolves it into a concrete `file` or `bundle` policy source
+3. **Load Policy Sources**: Fetches `.rego` files or bundles for each configured network policy entry
+4. **Verify Signatures**: When enabled, verifies detached signatures for single-file policies or embedded signatures for signed bundles
+5. **Compile Policies**: Compiles one evaluator per configured `network_id` plus optional `default`
 
 ### Request Evaluation (Runtime)
 
