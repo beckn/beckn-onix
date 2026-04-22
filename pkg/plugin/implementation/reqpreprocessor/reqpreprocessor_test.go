@@ -122,6 +122,76 @@ func TestNewPreProcessorSuccessCases(t *testing.T) {
 	}
 }
 
+func TestNewPreProcessorBecknVersionPropagation(t *testing.T) {
+	tests := []struct {
+		name         string
+		requestBody  map[string]any
+		wantBecknVer any
+	}{
+		{
+			name: "version absent",
+			requestBody: map[string]any{
+				"context": map[string]any{
+					"bap_id": "bap-123",
+				},
+			},
+			wantBecknVer: nil,
+		},
+		{
+			name: "version 2.0.0",
+			requestBody: map[string]any{
+				"context": map[string]any{
+					"bap_id":  "bap-123",
+					"version": "2.0.0",
+				},
+			},
+			wantBecknVer: "2.0.0",
+		},
+		{
+			name: "version 2.0.0-rc",
+			requestBody: map[string]any{
+				"context": map[string]any{
+					"bap_id":  "bap-123",
+					"version": "2.0.0-rc",
+				},
+			},
+			wantBecknVer: "2.0.0-rc",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			middleware, err := NewPreProcessor(&Config{Role: "bap"})
+			if err != nil {
+				t.Fatalf("NewPreProcessor() error = %v", err)
+			}
+
+			bodyBytes, err := json.Marshal(tt.requestBody)
+			if err != nil {
+				t.Fatalf("Failed to marshal request body: %v", err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(bodyBytes))
+
+			rec := httptest.NewRecorder()
+			var gotBecknVersion any
+
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotBecknVersion = r.Context().Value(model.ContextKeyBecknVersion)
+				w.WriteHeader(http.StatusOK)
+			})
+
+			middleware(handler).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d", rec.Code)
+			}
+			if gotBecknVersion != tt.wantBecknVer {
+				t.Fatalf("beckn version: got %v, want %v", gotBecknVersion, tt.wantBecknVer)
+			}
+		})
+	}
+}
+
 func TestNewPreProcessorErrorCases(t *testing.T) {
 	tests := []struct {
 		name         string

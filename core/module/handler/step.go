@@ -113,13 +113,14 @@ func (s *validateSignStep) Run(ctx *model.StepContext) error {
 	spanCtx, span := tracer.Start(ctx.Context, "validate-sign")
 	defer span.End()
 	stepCtx := &model.StepContext{
-		Context:    spanCtx,
-		Request:    ctx.Request,
-		Body:       ctx.Body,
-		Role:       ctx.Role,
-		SubID:      ctx.SubID,
-		RespHeader: ctx.RespHeader,
-		Route:      ctx.Route,
+		Context:      spanCtx,
+		Request:      ctx.Request,
+		Body:         ctx.Body,
+		Role:         ctx.Role,
+		BecknVersion: ctx.BecknVersion,
+		SubID:        ctx.SubID,
+		RespHeader:   ctx.RespHeader,
+		Route:        ctx.Route,
 	}
 	err := s.validateHeaders(stepCtx)
 	s.recordMetrics(stepCtx, err)

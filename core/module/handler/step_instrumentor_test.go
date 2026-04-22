@@ -11,10 +11,12 @@ import (
 )
 
 type stubStep struct {
-	err error
+	err        error
+	gotVersion string
 }
 
-func (s stubStep) Run(ctx *model.StepContext) error {
+func (s *stubStep) Run(ctx *model.StepContext) error {
+	s.gotVersion = ctx.BecknVersion
 	return s.err
 }
 
@@ -24,14 +26,17 @@ func TestInstrumentedStepSuccess(t *testing.T) {
 	require.NoError(t, err)
 	defer provider.Shutdown(context.Background())
 
-	step, err := NewInstrumentedStep(stubStep{}, "test-step", "test-module")
+	stub := &stubStep{}
+	step, err := NewInstrumentedStep(stub, "test-step", "test-module")
 	require.NoError(t, err)
 
 	stepCtx := &model.StepContext{
-		Context: context.Background(),
-		Role:    model.RoleBAP,
+		Context:      context.Background(),
+		Role:         model.RoleBAP,
+		BecknVersion: "2.0.0",
 	}
 	require.NoError(t, step.Run(stepCtx))
+	require.Equal(t, "2.0.0", stub.gotVersion)
 }
 
 func TestInstrumentedStepError(t *testing.T) {
@@ -40,13 +45,15 @@ func TestInstrumentedStepError(t *testing.T) {
 	require.NoError(t, err)
 	defer provider.Shutdown(context.Background())
 
-	step, err := NewInstrumentedStep(stubStep{err: errors.New("boom")}, "test-step", "test-module")
+	stub := &stubStep{err: errors.New("boom")}
+	step, err := NewInstrumentedStep(stub, "test-step", "test-module")
 	require.NoError(t, err)
 
 	stepCtx := &model.StepContext{
-		Context: context.Background(),
-		Role:    model.RoleBAP,
+		Context:      context.Background(),
+		Role:         model.RoleBAP,
+		BecknVersion: "2.0.0-rc",
 	}
 	require.Error(t, step.Run(stepCtx))
+	require.Equal(t, "2.0.0-rc", stub.gotVersion)
 }
-

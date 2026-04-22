@@ -78,6 +78,10 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				return
 			}
 
+			if becknVersion, ok := reqContext["version"].(string); ok && becknVersion != "" {
+				ctx = context.WithValue(ctx, model.ContextKeyBecknVersion, becknVersion)
+			}
+
 			// Resolve subscriber ID — checks snake_case key first, falls back to camelCase.
 			var subID any
 			switch cfg.Role {

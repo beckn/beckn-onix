@@ -61,13 +61,14 @@ func (is *InstrumentedStep) Run(ctx *model.StepContext) error {
 
 	// run step with context that contains the step span
 	stepCtx := &model.StepContext{
-		Context:    spanCtx,
-		Request:    ctx.Request,
-		Body:       ctx.Body,
-		Role:       ctx.Role,
-		SubID:      ctx.SubID,
-		RespHeader: ctx.RespHeader,
-		Route:      ctx.Route,
+		Context:      spanCtx,
+		Request:      ctx.Request,
+		Body:         ctx.Body,
+		Role:         ctx.Role,
+		BecknVersion: ctx.BecknVersion,
+		SubID:        ctx.SubID,
+		RespHeader:   ctx.RespHeader,
+		Route:        ctx.Route,
 	}
 
 	start := time.Now()

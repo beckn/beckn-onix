@@ -182,13 +182,21 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 	r.Body.Close()
 	subID := h.subID(r.Context())
 	return &model.StepContext{
-		Context:    r.Context(),
-		Request:    r,
-		Body:       bodyBuffer.Bytes(),
-		Role:       h.role,
-		SubID:      subID,
-		RespHeader: rh,
+		Context:      r.Context(),
+		Request:      r,
+		Body:         bodyBuffer.Bytes(),
+		Role:         h.role,
+		SubID:        subID,
+		BecknVersion: becknVersionFromContext(r.Context()),
+		RespHeader:   rh,
 	}, nil
+}
+
+func becknVersionFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(model.ContextKeyBecknVersion).(string); ok {
+		return v
+	}
+	return ""
 }
 
 // subID retrieves the subscriber ID from the request context.

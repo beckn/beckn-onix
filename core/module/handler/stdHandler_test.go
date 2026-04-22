@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
@@ -23,16 +24,24 @@ func (noopPluginManager) SignValidator(context.Context, *plugin.Config) (definit
 func (noopPluginManager) Validator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
-func (noopPluginManager) Router(context.Context, *plugin.Config) (definition.Router, error) { return nil, nil }
+func (noopPluginManager) Router(context.Context, *plugin.Config) (definition.Router, error) {
+	return nil, nil
+}
 func (noopPluginManager) Publisher(context.Context, *plugin.Config) (definition.Publisher, error) {
 	return nil, nil
 }
-func (noopPluginManager) Signer(context.Context, *plugin.Config) (definition.Signer, error) { return nil, nil }
-func (noopPluginManager) Step(context.Context, *plugin.Config) (definition.Step, error) { return nil, nil }
+func (noopPluginManager) Signer(context.Context, *plugin.Config) (definition.Signer, error) {
+	return nil, nil
+}
+func (noopPluginManager) Step(context.Context, *plugin.Config) (definition.Step, error) {
+	return nil, nil
+}
 func (noopPluginManager) PolicyChecker(context.Context, *plugin.Config) (definition.PolicyChecker, error) {
 	return nil, nil
 }
-func (noopPluginManager) Cache(context.Context, *plugin.Config) (definition.Cache, error) { return nil, nil }
+func (noopPluginManager) Cache(context.Context, *plugin.Config) (definition.Cache, error) {
+	return nil, nil
+}
 func (noopPluginManager) Registry(context.Context, *plugin.Config) (definition.RegistryLookup, error) {
 	return nil, nil
 }
@@ -61,6 +70,48 @@ func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "PolicyChecker plugin not configured") {
 		t.Fatalf("expected explicit PolicyChecker config error, got: %v", err)
+	}
+}
+
+func TestStepCtxPropagatesBecknVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		requestCtx  context.Context
+		wantVersion string
+	}{
+		{
+			name:        "version absent",
+			requestCtx:  context.Background(),
+			wantVersion: "",
+		},
+		{
+			name: "version present",
+			requestCtx: context.WithValue(
+				context.Background(),
+				model.ContextKeyBecknVersion,
+				"2.0.0",
+			),
+			wantVersion: "2.0.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &stdHandler{role: model.RoleBAP, SubscriberID: "fallback-subscriber"}
+			req, err := http.NewRequestWithContext(tt.requestCtx, http.MethodPost, "/", strings.NewReader(`{"context":{}}`))
+			if err != nil {
+				t.Fatalf("NewRequestWithContext() error = %v", err)
+			}
+
+			stepCtx, err := h.stepCtx(req, http.Header{})
+			if err != nil {
+				t.Fatalf("stepCtx() error = %v", err)
+			}
+
+			if stepCtx.BecknVersion != tt.wantVersion {
+				t.Fatalf("BecknVersion = %q, want %q", stepCtx.BecknVersion, tt.wantVersion)
+			}
+		})
 	}
 }
 
