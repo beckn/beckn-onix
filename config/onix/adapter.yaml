@@ -131,6 +131,7 @@ modules:
         - checkPolicy
         - addRoute
         - sign
+        - validateCounterSign
   - name: bppTxnReciever
     path: /bpp/reciever/
     handler:
@@ -245,3 +246,4 @@ modules:
         - checkPolicy
         - addRoute
         - sign
+        - validateCounterSign

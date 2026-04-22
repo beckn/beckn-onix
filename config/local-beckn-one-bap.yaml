@@ -169,4 +169,5 @@ modules:
         - addRoute
         - sign
         - validateSchema
+        - validateCounterSign
   
