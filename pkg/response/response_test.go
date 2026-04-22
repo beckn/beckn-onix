@@ -25,23 +25,35 @@ func (e *errorResponseWriter) Header() http.Header {
 }
 
 func TestSendAck(t *testing.T) {
-	_, err := http.NewRequest("GET", "/", nil)
-	if err != nil {
-		t.Fatal(err) // For tests
+	tests := []struct {
+		name        string
+		counterSign string
+		expected    string
+	}{
+		{
+			name:        "legacy — no counter_sign",
+			counterSign: "",
+			expected:    `{"message":{"ack":{"status":"ACK"}}}`,
+		},
+		{
+			name:        "v2.0.0 LTS — counter_sign present",
+			counterSign: `Signature keyId="bpp.example.com|key-1|ed25519",signature="abc123"`,
+			expected:    `{"message":{"ack":{"status":"ACK","counter_sign":"Signature keyId=\"bpp.example.com|key-1|ed25519\",signature=\"abc123\""}}}`,
+		},
 	}
-	rr := httptest.NewRecorder()
 
-	SendAck(rr)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			SendAck(rr, tt.counterSign)
 
-	if rr.Code != http.StatusOK {
-		t.Errorf("wanted status code %d, got %d", http.StatusOK, rr.Code)
-	}
-
-	expected := `{"message":{"ack":{"status":"ACK"}}}`
-	if rr.Body.String() != expected {
-		t.Errorf("err.Error() = %s, want %s",
-			rr.Body.String(), expected)
-
+			if rr.Code != http.StatusOK {
+				t.Errorf("wanted status code %d, got %d", http.StatusOK, rr.Code)
+			}
+			if rr.Body.String() != tt.expected {
+				t.Errorf("body = %s, want %s", rr.Body.String(), tt.expected)
+			}
+		})
 	}
 }
 
@@ -185,7 +197,7 @@ func compareJSON(expected, actual map[string]interface{}) bool {
 
 func TestSendAck_WriteError(t *testing.T) {
 	w := &errorResponseWriter{}
-	SendAck(w)
+	SendAck(w, "")
 }
 
 // Mock struct to force JSON marshalling error

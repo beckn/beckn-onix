@@ -114,6 +114,7 @@ The **Beckn Protocol** is an open protocol that enables location-aware, local co
 - `addRoute`: Determines routing based on configuration
 - `validateSchema`: Validates against JSON schemas
 - `sign`: Signs outgoing requests
+- `counterSign`: Generates a counter-signature and embeds it in the ACK response for Beckn v2.0.0 LTS; no-op for earlier versions
 - `cache`: Caches requests/responses
 - `publish`: Publishes messages to queue
 

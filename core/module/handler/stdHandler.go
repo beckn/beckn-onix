@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -165,7 +166,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Restore request body before forwarding or publishing.
 	r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
 	if stepCtx.Route == nil {
-		response.SendAck(wrapped)
+		response.SendAck(wrapped, stepCtx.CounterSign)
 		return
 	}
 
@@ -236,7 +237,7 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 		response.SendNack(ctx, w, err)
 		return
 	}
-	response.SendAck(w)
+	response.SendAck(w, ctx.CounterSign)
 }
 func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpClient *http.Client) {
 	target := ctx.Route.URL
@@ -252,9 +253,52 @@ func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpC
 	proxy := &httputil.ReverseProxy{
 		Director:  director,
 		Transport: httpClient.Transport,
+		ModifyResponse: func(resp *http.Response) error {
+			return injectCounterSign(ctx, resp)
+		},
 	}
 
 	proxy.ServeHTTP(w, r)
+}
+
+// injectCounterSign reads the downstream app's ACK response body, injects the
+// counter_sign field when a counter-signature has been computed (v2.0.0 LTS),
+// and rewrites the response body. It is a no-op when CounterSign is empty.
+func injectCounterSign(ctx *model.StepContext, resp *http.Response) error {
+	if ctx.CounterSign == "" {
+		return nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("counter-sign inject: failed to read response body: %w", err)
+	}
+
+	// Parse the ACK envelope and inject counter_sign.
+	var envelope struct {
+		Message struct {
+			Ack model.Ack `json:"ack"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		// Not a JSON ACK body — restore original and skip injection.
+		log.Warnf(ctx, "counter-sign inject: response is not a JSON ACK, skipping: %v", err)
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return nil
+	}
+
+	envelope.Message.Ack.CounterSign = ctx.CounterSign
+	modified, err := json.Marshal(envelope)
+	if err != nil {
+		return fmt.Errorf("counter-sign inject: failed to marshal modified ACK: %w", err)
+	}
+
+	resp.Body = io.NopCloser(bytes.NewReader(modified))
+	resp.ContentLength = int64(len(modified))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(modified)))
+	log.Debugf(ctx, "CounterSignature injected into proxied ACK response")
+	return nil
 }
 
 // loadPlugin is a generic function to load and validate plugins.
@@ -362,6 +406,8 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			s, err = newAddRouteStep(h.router)
 		case "checkPolicy":
 			s, err = newCheckPolicyStep(h.policyChecker)
+		case "counterSign":
+			s, err = newCounterSignStep(h.signer, h.km)
 		default:
 			if customStep, exists := steps[step]; exists {
 				s = customStep

@@ -69,6 +69,7 @@ modules:
         - validateSign
         - addRoute
         - validateSchema
+        - counterSign
   - name: bppTxnCaller
     path: /bpp/caller/
     handler:

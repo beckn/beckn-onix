@@ -74,6 +74,7 @@ modules:
         - checkPolicy
         - addRoute
         - validateSchema
+        - counterSign
   - name: bapTxnCaller
     path: /bap/caller/
     handler:
@@ -187,6 +188,7 @@ modules:
         - checkPolicy
         - addRoute
         - validateSchema
+        - counterSign
   - name: bppTxnCaller
     path: /bpp/caller/
     handler:

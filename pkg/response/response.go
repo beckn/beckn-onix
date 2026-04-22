@@ -12,11 +12,14 @@ import (
 )
 
 // SendAck sends an acknowledgment response (ACK) to the client.
-func SendAck(w http.ResponseWriter) {
+// counterSign is the v2.0.0 LTS counter-signature string; pass an empty string
+// for legacy protocol versions and the field will be omitted from the response.
+func SendAck(w http.ResponseWriter, counterSign string) {
 	resp := &model.Response{
 		Message: model.Message{
 			Ack: model.Ack{
-				Status: model.StatusACK,
+				Status:      model.StatusACK,
+				CounterSign: counterSign,
 			},
 		},
 	}
