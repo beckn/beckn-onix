@@ -3,6 +3,8 @@ package handler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +16,33 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
+
+// mockSignValidator is a configurable SignValidator for testing.
+type mockSignValidator struct {
+	err error
+}
+
+func (m *mockSignValidator) Validate(_ context.Context, _ []byte, _, _ string) error {
+	return m.err
+}
+
+// mockKeyManager is a configurable KeyManager for testing.
+type mockKeyManager struct {
+	signingPublicKey string
+	err              error
+}
+
+func (m *mockKeyManager) GenerateKeyset() (*model.Keyset, error)             { return nil, nil }
+func (m *mockKeyManager) InsertKeyset(_ context.Context, _ string, _ *model.Keyset) error {
+	return nil
+}
+func (m *mockKeyManager) Keyset(_ context.Context, _ string) (*model.Keyset, error) {
+	return nil, nil
+}
+func (m *mockKeyManager) LookupNPKeys(_ context.Context, _, _ string) (string, string, error) {
+	return m.signingPublicKey, "", m.err
+}
+func (m *mockKeyManager) DeleteKeyset(_ context.Context, _ string) error { return nil }
 
 // noopPluginManager satisfies PluginManager with nil plugins (unused loaders are never invoked when config is omitted).
 type noopPluginManager struct{}
@@ -362,6 +391,117 @@ func TestCounterSignStepRunOnResponse(t *testing.T) {
 			got, _ := io.ReadAll(resp.Body)
 			if string(got) != tt.wantBody {
 				t.Errorf("body = %s, want %s", got, tt.wantBody)
+			}
+		})
+	}
+}
+
+func TestValidateCounterSignStepRunOnResponse(t *testing.T) {
+	const validSign = `Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",created="1700000000",expires="1700000300",headers="(created) (expires) digest",signature="abc123"`
+
+	ltsCtx := func() *model.StepContext {
+		return &model.StepContext{
+			Context:         context.Background(),
+			ProtocolVersion: model.ProtocolVersionLTS,
+			Body:            []byte(`{"context":{"version":"2.0.0"}}`),
+		}
+	}
+
+	ackWith := func(counterSign string) string {
+		if counterSign == "" {
+			return `{"message":{"ack":{"status":"ACK"}}}`
+		}
+		// Use json.Marshal to correctly escape quotes inside the signature string.
+		escaped, _ := json.Marshal(counterSign)
+		return `{"message":{"ack":{"status":"ACK","counter_sign":` + string(escaped) + `}}}`
+	}
+
+	tests := []struct {
+		name        string
+		ctx         *model.StepContext
+		respBody    string
+		validator   *mockSignValidator
+		km          *mockKeyManager
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:     "no-op for non-LTS protocol version",
+			ctx:      &model.StepContext{Context: context.Background(), ProtocolVersion: "1.1.0"},
+			respBody: `{"message":{"ack":{"status":"ACK"}}}`,
+			// validator and km are nil — would panic if called, proving they are not reached
+		},
+		{
+			name:      "valid counter_sign passes validation",
+			ctx:       ltsCtx(),
+			respBody:  ackWith(validSign),
+			validator: &mockSignValidator{err: nil},
+			km:        &mockKeyManager{signingPublicKey: "some-public-key"},
+		},
+		{
+			name:        "missing counter_sign returns sign validation error",
+			ctx:         ltsCtx(),
+			respBody:    ackWith(""),
+			validator:   &mockSignValidator{},
+			km:          &mockKeyManager{},
+			wantErr:     true,
+			errContains: "counter_sign missing",
+		},
+		{
+			name:        "malformed counter_sign header returns parse error",
+			ctx:         ltsCtx(),
+			respBody:    `{"message":{"ack":{"status":"ACK","counter_sign":"BadHeader"}}}`,
+			validator:   &mockSignValidator{},
+			km:          &mockKeyManager{},
+			wantErr:     true,
+			errContains: "failed to parse counter_sign",
+		},
+		{
+			name:        "key lookup failure returns error",
+			ctx:         ltsCtx(),
+			respBody:    ackWith(validSign),
+			validator:   &mockSignValidator{},
+			km:          &mockKeyManager{err: fmt.Errorf("registry unavailable")},
+			wantErr:     true,
+			errContains: "failed to look up public key",
+		},
+		{
+			name:        "signature validation failure returns sign validation error",
+			ctx:         ltsCtx(),
+			respBody:    ackWith(validSign),
+			validator:   &mockSignValidator{err: fmt.Errorf("signature mismatch")},
+			km:          &mockKeyManager{signingPublicKey: "some-public-key"},
+			wantErr:     true,
+			errContains: "counter-sign validation failed",
+		},
+		{
+			name:        "non-JSON response body returns error",
+			ctx:         ltsCtx(),
+			respBody:    `not-json`,
+			validator:   &mockSignValidator{},
+			km:          &mockKeyManager{},
+			wantErr:     true,
+			errContains: "not a valid ACK",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			step := &validateCounterSignStep{
+				validator: tt.validator,
+				km:        tt.km,
+			}
+			resp := &http.Response{
+				Header: http.Header{},
+				Body:   io.NopCloser(bytes.NewBufferString(tt.respBody)),
+			}
+
+			err := step.RunOnResponse(tt.ctx, resp)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("RunOnResponse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr && tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tt.errContains)
 			}
 		})
 	}
