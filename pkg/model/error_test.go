@@ -25,6 +25,40 @@ func NewBadReqErrf(format string, a ...any) *BadReqErr {
 	return &BadReqErr{fmt.Errorf(format, a...)}
 }
 
+func TestError_ToV2Error(t *testing.T) {
+	tests := []struct {
+		name  string
+		input *Error
+		want  *V2Error
+	}{
+		{
+			name:  "full error with paths",
+			input: &Error{Code: "Bad Request", Paths: "/a;/b", Message: "field required"},
+			want:  &V2Error{ErrorCode: "Bad Request", ErrorPaths: "/a;/b", ErrorMessage: "field required"},
+		},
+		{
+			name:  "error without paths",
+			input: &Error{Code: "Unauthorized", Message: "Signature Validation Error: invalid"},
+			want:  &V2Error{ErrorCode: "Unauthorized", ErrorMessage: "Signature Validation Error: invalid"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.input.ToV2Error()
+			if got.ErrorCode != tt.want.ErrorCode {
+				t.Errorf("ErrorCode = %q, want %q", got.ErrorCode, tt.want.ErrorCode)
+			}
+			if got.ErrorPaths != tt.want.ErrorPaths {
+				t.Errorf("ErrorPaths = %q, want %q", got.ErrorPaths, tt.want.ErrorPaths)
+			}
+			if got.ErrorMessage != tt.want.ErrorMessage {
+				t.Errorf("ErrorMessage = %q, want %q", got.ErrorMessage, tt.want.ErrorMessage)
+			}
+		})
+	}
+}
+
 func TestError_Error(t *testing.T) {
 	err := &Error{
 		Code:    "404",

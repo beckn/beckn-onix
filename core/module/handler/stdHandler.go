@@ -182,14 +182,18 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 	r.Body.Close()
 	body := bodyBuffer.Bytes()
 	subID := h.subID(r.Context())
+	protocolVersion := extractProtocolVersion(body)
+	// Store the protocol version in the Go context so downstream functions that
+	// only receive a context.Context (e.g. response.SendNack) can read it.
+	ctx := context.WithValue(r.Context(), model.ContextKeyProtocolVersion, protocolVersion)
 	return &model.StepContext{
-		Context:         r.Context(),
+		Context:         ctx,
 		Request:         r,
 		Body:            body,
 		Role:            h.role,
 		SubID:           subID,
 		RespHeader:      rh,
-		ProtocolVersion: extractProtocolVersion(body),
+		ProtocolVersion: protocolVersion,
 	}, nil
 }
 
