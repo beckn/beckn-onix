@@ -120,3 +120,4 @@ modules:
         - validateSchema
         - addRoute
         - sign
+        - validateCounterSign

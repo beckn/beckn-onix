@@ -31,6 +31,7 @@ import (
 type stdHandler struct {
 	signer           definition.Signer
 	steps            []definition.Step
+	responseSteps    []definition.ResponseStep
 	signValidator    definition.SignValidator
 	cache            definition.Cache
 	registry         definition.RegistryLookup
@@ -77,10 +78,11 @@ func newHTTPClient(cfg *HttpClientConfig, wrapper definition.TransportWrapper) *
 // NewStdHandler initializes a new processor with plugins and steps.
 func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleName string) (http.Handler, error) {
 	h := &stdHandler{
-		steps:        []definition.Step{},
-		SubscriberID: cfg.SubscriberID,
-		role:         cfg.Role,
-		moduleName:   moduleName,
+		steps:         []definition.Step{},
+		responseSteps: []definition.ResponseStep{},
+		SubscriberID:  cfg.SubscriberID,
+		role:          cfg.Role,
+		moduleName:    moduleName,
 	}
 	// Initialize plugins.
 	if err := h.initPlugins(ctx, mgr, &cfg.Plugins); err != nil {
@@ -171,7 +173,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Handle routing based on the defined route type.
-	route(stepCtx, r, wrapped, h.publisher, h.httpClient)
+	route(stepCtx, r, wrapped, h.publisher, h.httpClient, h.responseSteps)
 }
 
 // stepCtx creates a new StepContext for processing an HTTP request.
@@ -210,12 +212,12 @@ func (h *stdHandler) subID(ctx context.Context) string {
 var proxyFunc = proxy
 
 // route handles request forwarding or message publishing based on the routing type.
-func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb definition.Publisher, httpClient *http.Client) {
+func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb definition.Publisher, httpClient *http.Client, responseSteps []definition.ResponseStep) {
 	log.Debugf(ctx, "Routing to ctx.Route to %#v", ctx.Route)
 	switch ctx.Route.TargetType {
 	case "url":
 		log.Infof(ctx.Context, "Forwarding request to URL: %s", ctx.Route.URL)
-		proxyFunc(ctx, r, w, httpClient)
+		proxyFunc(ctx, r, w, httpClient, responseSteps)
 		return
 	case "publisher":
 		if pb == nil {
@@ -239,7 +241,7 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 	}
 	response.SendAck(w, ctx.CounterSign)
 }
-func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpClient *http.Client) {
+func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpClient *http.Client, responseSteps []definition.ResponseStep) {
 	target := ctx.Route.URL
 	r.Header.Set("X-Forwarded-Host", r.Host)
 
@@ -254,7 +256,19 @@ func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpC
 		Director:  director,
 		Transport: httpClient.Transport,
 		ModifyResponse: func(resp *http.Response) error {
-			return injectCounterSign(ctx, resp)
+			if err := injectCounterSign(ctx, resp); err != nil {
+				return err
+			}
+			for _, rs := range responseSteps {
+				if err := rs.RunOnResponse(ctx, resp); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		ErrorHandler: func(rw http.ResponseWriter, req *http.Request, err error) {
+			log.Errorf(ctx, err, "proxy: upstream or response-step error: %v", err)
+			response.SendNack(ctx, rw, err)
 		},
 	}
 
@@ -408,6 +422,8 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			s, err = newCheckPolicyStep(h.policyChecker)
 		case "counterSign":
 			s, err = newCounterSignStep(h.signer, h.km)
+		case "validateCounterSign":
+			s, err = newValidateCounterSignStep(h.signValidator, h.km)
 		default:
 			if customStep, exists := steps[step]; exists {
 				s = customStep
@@ -418,6 +434,12 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 
 		if err != nil {
 			return err
+		}
+		// Collect response-phase steps before instrumentation wrapping.
+		// The InstrumentedStep wrapper only covers Run(); RunOnResponse() is
+		// called directly on the original step.
+		if rs, ok := s.(definition.ResponseStep); ok {
+			h.responseSteps = append(h.responseSteps, rs)
 		}
 		instrumentedStep, wrapErr := NewInstrumentedStep(s, step, h.moduleName)
 		if wrapErr != nil {

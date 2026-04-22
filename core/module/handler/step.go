@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -389,4 +392,80 @@ func newCheckPolicyStep(policyChecker definition.PolicyChecker) (definition.Step
 
 func (s *checkPolicyStep) Run(ctx *model.StepContext) error {
 	return s.checker.CheckPolicy(ctx)
+}
+
+// validateCounterSignStep validates the counter_sign field in the upstream ACK
+// response on Caller-side handlers. It implements both Step (no-op Run, since
+// there is nothing to do on the inbound request) and ResponseStep (RunOnResponse,
+// which reads the ACK body and verifies the counter-signature).
+// For protocol versions other than "2.0.0" this step is a no-op.
+type validateCounterSignStep struct {
+	validator definition.SignValidator
+	km        definition.KeyManager
+}
+
+// newValidateCounterSignStep initialises and returns a new validateCounterSign step.
+func newValidateCounterSignStep(signValidator definition.SignValidator, km definition.KeyManager) (definition.Step, error) {
+	if signValidator == nil {
+		return nil, fmt.Errorf("invalid config: SignValidator plugin not configured")
+	}
+	if km == nil {
+		return nil, fmt.Errorf("invalid config: KeyManager plugin not configured")
+	}
+	return &validateCounterSignStep{validator: signValidator, km: km}, nil
+}
+
+// Run is a no-op — all work is deferred to RunOnResponse.
+func (s *validateCounterSignStep) Run(_ *model.StepContext) error {
+	return nil
+}
+
+// RunOnResponse reads the upstream ACK, extracts counter_sign, and validates it.
+// ctx.Body is the original outbound request body that the receiver signed.
+func (s *validateCounterSignStep) RunOnResponse(ctx *model.StepContext, resp *http.Response) error {
+	if ctx.ProtocolVersion != model.ProtocolVersionLTS {
+		return nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("counter-sign validate: failed to read response body: %w", err)
+	}
+	// Always restore the body so downstream handlers can read it.
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+
+	var envelope struct {
+		Message struct {
+			Ack model.Ack `json:"ack"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return fmt.Errorf("counter-sign validate: response is not a valid ACK: %w", err)
+	}
+
+	counterSign := envelope.Message.Ack.CounterSign
+	if counterSign == "" {
+		return model.NewSignValidationErr(fmt.Errorf("counter_sign missing in ACK response"))
+	}
+
+	return s.validateCounterSign(ctx, counterSign)
+}
+
+// validateCounterSign parses the counter_sign header value, looks up the
+// receiver's public key, and verifies the signature against ctx.Body.
+func (s *validateCounterSignStep) validateCounterSign(ctx *model.StepContext, counterSign string) error {
+	headerVals, err := parseHeader(counterSign)
+	if err != nil {
+		return model.NewSignValidationErr(fmt.Errorf("counter-sign validate: failed to parse counter_sign: %w", err))
+	}
+	publicKey, _, err := s.km.LookupNPKeys(ctx, headerVals.SubscriberID, headerVals.UniqueID)
+	if err != nil {
+		return fmt.Errorf("counter-sign validate: failed to look up public key for %s: %w", headerVals.SubscriberID, err)
+	}
+	if err := s.validator.Validate(ctx, ctx.Body, counterSign, publicKey); err != nil {
+		return model.NewSignValidationErr(fmt.Errorf("counter-sign validation failed: %w", err))
+	}
+	log.Debugf(ctx, "CounterSignature validated for subscriber: %s", headerVals.SubscriberID)
+	return nil
 }
