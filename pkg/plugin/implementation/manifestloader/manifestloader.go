@@ -2,9 +2,7 @@ package manifestloader
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +14,7 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/security/artifactverifier"
 )
 
 // Config controls fetch and cache behavior for the manifest loader.
@@ -125,16 +124,8 @@ func (l *Loader) GetByMetadata(ctx context.Context, metadata model.ManifestMetad
 	if err != nil {
 		return nil, fmt.Errorf("fetch signing public key: %w", err)
 	}
-	signature, err := parseSignature(signatureBody)
-	if err != nil {
-		return nil, fmt.Errorf("parse manifest signature: %w", err)
-	}
-	publicKey, err := parsePublicKey(publicKeyBody)
-	if err != nil {
-		return nil, fmt.Errorf("parse signing public key: %w", err)
-	}
-	if !ed25519.Verify(publicKey, manifestBody, signature) {
-		return nil, fmt.Errorf("manifest signature verification failed")
+	if err := artifactverifier.VerifyDetachedArtifact(manifestBody, signatureBody, publicKeyBody); err != nil {
+		return nil, fmt.Errorf("manifest signature verification failed: %w", err)
 	}
 	digest := sha256.Sum256(manifestBody)
 	doc := &model.ManifestDocument{
@@ -228,84 +219,4 @@ func validateMetadata(metadata model.ManifestMetadata) error {
 		return fmt.Errorf("signing_public_key_lookup_url missing in metadata")
 	}
 	return nil
-}
-
-func parseSignature(body []byte) ([]byte, error) {
-	if value, ok := extractStringField(body, []string{"signature"}); ok {
-		return decodeBase64String(value)
-	}
-	trimmed := strings.TrimSpace(string(body))
-	if trimmed == "" {
-		return nil, fmt.Errorf("empty signature body")
-	}
-	if decoded, err := base64.StdEncoding.DecodeString(trimmed); err == nil {
-		return decoded, nil
-	}
-	return body, nil
-}
-
-func parsePublicKey(body []byte) (ed25519.PublicKey, error) {
-	if value, ok := extractStringField(body, []string{"signing_public_key", "public_key", "publicKey"}); ok {
-		decoded, err := decodeBase64String(value)
-		if err != nil {
-			return nil, err
-		}
-		if len(decoded) != ed25519.PublicKeySize {
-			return nil, fmt.Errorf("invalid public key length %d", len(decoded))
-		}
-		return ed25519.PublicKey(decoded), nil
-	}
-	trimmed := strings.TrimSpace(string(body))
-	if trimmed == "" {
-		return nil, fmt.Errorf("empty public key body")
-	}
-	decoded, err := decodeBase64String(trimmed)
-	if err != nil {
-		return nil, err
-	}
-	if len(decoded) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("invalid public key length %d", len(decoded))
-	}
-	return ed25519.PublicKey(decoded), nil
-}
-
-func decodeBase64String(value string) ([]byte, error) {
-	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(value))
-	if err != nil {
-		return nil, fmt.Errorf("base64 decode failed: %w", err)
-	}
-	return decoded, nil
-}
-
-func extractStringField(body []byte, keys []string) (string, bool) {
-	var data any
-	if err := json.Unmarshal(body, &data); err != nil {
-		return "", false
-	}
-	return findStringField(data, keys)
-}
-
-func findStringField(value any, keys []string) (string, bool) {
-	switch v := value.(type) {
-	case map[string]any:
-		for _, key := range keys {
-			if raw, ok := v[key]; ok {
-				if s, ok := raw.(string); ok && strings.TrimSpace(s) != "" {
-					return s, true
-				}
-			}
-		}
-		for _, child := range v {
-			if s, ok := findStringField(child, keys); ok {
-				return s, true
-			}
-		}
-	case []any:
-		for _, child := range v {
-			if s, ok := findStringField(child, keys); ok {
-				return s, true
-			}
-		}
-	}
-	return "", false
 }

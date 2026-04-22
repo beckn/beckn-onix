@@ -3,13 +3,10 @@ package opapolicychecker
 import (
 	"bytes"
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -27,6 +24,8 @@ import (
 	"github.com/open-policy-agent/opa/v1/keys"
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/open-policy-agent/opa/v1/storage/inmem"
+
+	"github.com/beckn-one/beckn-onix/pkg/security/artifactverifier"
 )
 
 // Evaluator wraps the OPA engine: loads and compiles .rego files at startup,
@@ -96,12 +95,12 @@ func newRegoEvaluator(policyPaths []string, query string, runtimeConfig map[stri
 			return nil, fmt.Errorf("failed to load detached signature from %s: %w", verification.SignatureLocation, err)
 		}
 
-		publicKey, err := resolveVerificationPublicKey(verification.PublicKeyLookupURL, fetchTimeout)
+		publicKeyBody, err := readArtifact(verification.PublicKeyLookupURL, maxPolicySize, fetchTimeout)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load verification public key from %s: %w", verification.PublicKeyLookupURL, err)
 		}
 
-		if err := verifyDetachedSignature(policyBytes, signatureBytes, publicKey); err != nil {
+		if err := artifactverifier.VerifyDetachedArtifact(policyBytes, signatureBytes, publicKeyBody); err != nil {
 			return nil, fmt.Errorf("policy signature verification failed: %w", err)
 		}
 
@@ -297,111 +296,12 @@ func fetchRemoteArtifact(rawURL string, maxSize int, fetchTimeout time.Duration)
 	return body, nil
 }
 
-func verifyDetachedSignature(content, signature []byte, key any) error {
-	sum := sha256.Sum256(content)
-
-	switch pub := key.(type) {
-	case *rsa.PublicKey:
-		return rsa.VerifyPKCS1v15(pub, crypto.SHA256, sum[:], signature)
-	case *ecdsa.PublicKey:
-		if !ecdsa.VerifyASN1(pub, sum[:], signature) {
-			return fmt.Errorf("ECDSA signature verification failed")
-		}
-		return nil
-	case ed25519.PublicKey:
-		if !ed25519.Verify(pub, content, signature) {
-			return fmt.Errorf("Ed25519 signature verification failed")
-		}
-		return nil
-	default:
-		return fmt.Errorf("unsupported public key type %T", key)
-	}
-}
-
 func resolveVerificationPublicKey(source string, fetchTimeout time.Duration) (any, error) {
 	data, err := readArtifact(source, maxPolicySize, fetchTimeout)
 	if err != nil {
 		return nil, err
 	}
-	return parseVerificationPublicKeyResponse(data)
-}
-
-func parseVerificationPublicKeyResponse(data []byte) (any, error) {
-	type dediResponse struct {
-		Data struct {
-			Details struct {
-				PublicKey string `json:"publicKey"`
-				KeyType   string `json:"keyType"`
-				KeyFormat string `json:"keyFormat"`
-			} `json:"details"`
-		} `json:"data"`
-	}
-
-	var response dediResponse
-	if err := json.Unmarshal(data, &response); err == nil && response.Data.Details.PublicKey != "" {
-		return parsePublicKeyValue(response.Data.Details.PublicKey, response.Data.Details.KeyFormat)
-	}
-
-	// Local files and non-DeDi endpoints may return raw PEM/DER key material directly.
-	return parseVerificationPublicKey(data)
-}
-
-func parsePublicKeyValue(value, format string) (any, error) {
-	clean := strings.Join(strings.Fields(value), "")
-	switch strings.ToLower(strings.TrimSpace(format)) {
-	case "", "pem", "x.509", "x509":
-		return parseVerificationPublicKey([]byte(value))
-	case "base64":
-		// DeDi keyFormat=base64 currently expects standard padded base64; URL-safe or
-		// alternate encodings are not supported by this decode path.
-		decoded, err := base64.StdEncoding.DecodeString(clean)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode base64 public key: %w", err)
-		}
-		return parseVerificationPublicKey(decoded)
-	default:
-		return nil, fmt.Errorf("unsupported public key format %q", format)
-	}
-}
-
-func parseVerificationPublicKey(data []byte) (any, error) {
-	block, _ := pem.Decode(data)
-	if block != nil {
-		switch block.Type {
-		case "PUBLIC KEY":
-			key, err := x509.ParsePKIXPublicKey(block.Bytes)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse PKIX public key: %w", err)
-			}
-			return key, nil
-		case "RSA PUBLIC KEY":
-			key, err := x509.ParsePKCS1PublicKey(block.Bytes)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse RSA public key: %w", err)
-			}
-			return key, nil
-		case "CERTIFICATE":
-			cert, err := x509.ParseCertificate(block.Bytes)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse certificate: %w", err)
-			}
-			return cert.PublicKey, nil
-		default:
-			return nil, fmt.Errorf("unsupported PEM block type %q", block.Type)
-		}
-	}
-
-	key, err := x509.ParsePKIXPublicKey(data)
-	if err == nil {
-		return key, nil
-	}
-
-	cert, err := x509.ParseCertificate(data)
-	if err == nil {
-		return cert.PublicKey, nil
-	}
-
-	return nil, fmt.Errorf("failed to parse public key")
+	return artifactverifier.ParsePublicKeyResponse(data)
 }
 
 func publicKeyToPEM(key any) ([]byte, error) {

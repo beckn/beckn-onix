@@ -21,6 +21,7 @@ import (
 	"github.com/open-policy-agent/opa/v1/bundle"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/security/artifactverifier"
 )
 
 // Helper: create a StepContext with the given action path and JSON body.
@@ -891,7 +892,7 @@ func TestParseVerificationPublicKeyResponse_DeDiBase64Key(t *testing.T) {
 	}
 
 	body := `{"data":{"details":{"keyType":"RSA","keyFormat":"base64","publicKey":"` + base64.StdEncoding.EncodeToString(der) + `"}}}`
-	key, err := parseVerificationPublicKeyResponse([]byte(body))
+	key, err := artifactverifier.ParsePublicKeyResponse([]byte(body))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
