@@ -25,8 +25,10 @@ func TestManifestLoaderProvider_New(t *testing.T) {
 	ctx := context.Background()
 	provider := manifestLoaderProvider{}
 	loader, closer, err := provider.New(ctx, stubCache{}, stubRegistry{}, map[string]string{
-		"cacheTTL":            "2h",
-		"fetchTimeoutSeconds": "10",
+		"cacheTTL":              "2h",
+		"fetchTimeoutSeconds":   "10",
+		"disableCache":          "true",
+		"forceRefreshOnStartup": "true",
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)

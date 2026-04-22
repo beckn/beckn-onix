@@ -10,8 +10,10 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/security/artifactverifier"
@@ -19,16 +21,20 @@ import (
 
 // Config controls fetch and cache behavior for the manifest loader.
 type Config struct {
-	CacheTTL     time.Duration
-	FetchTimeout time.Duration
+	CacheTTL            time.Duration
+	FetchTimeout        time.Duration
+	DisableCache        bool
+	ForceRefreshOnStart bool
 }
 
 // Loader fetches, verifies, caches, and returns manifests.
 type Loader struct {
-	cache    definition.Cache
-	registry definition.RegistryMetadataLookup
-	config   *Config
-	client   *http.Client
+	cache         definition.Cache
+	registry      definition.RegistryMetadataLookup
+	config        *Config
+	client        *http.Client
+	refreshMu     sync.Mutex
+	refreshedKeys map[string]bool
 }
 
 var (
@@ -64,10 +70,11 @@ func New(ctx context.Context, cache definition.Cache, registry definition.Regist
 	}
 
 	loader := &Loader{
-		cache:    cache,
-		registry: registry,
-		config:   cfg,
-		client:   httpClientFunc(cfg.FetchTimeout),
+		cache:         cache,
+		registry:      registry,
+		config:        cfg,
+		client:        httpClientFunc(cfg.FetchTimeout),
+		refreshedKeys: make(map[string]bool),
 	}
 	return loader, func() error { return nil }, nil
 }
@@ -76,8 +83,18 @@ func (l *Loader) GetByNetworkID(ctx context.Context, networkID string) (*model.M
 	if strings.TrimSpace(networkID) == "" {
 		return nil, fmt.Errorf("networkID cannot be empty")
 	}
-	if doc, err := l.loadFromCache(ctx, networkCacheKey(networkID)); err == nil {
-		return doc, nil
+
+	networkKey := networkCacheKey(networkID)
+	bypassCache := l.shouldBypassCache(networkKey)
+	if !bypassCache {
+		if doc, err := l.loadFromCache(ctx, networkKey); err == nil {
+			log.Infof(ctx, "ManifestLoader: cache hit for networkID=%q fetchedAt=%s source=%s", networkID, doc.FetchedAt.Format(time.RFC3339), doc.SourceURL)
+			return doc, nil
+		} else {
+			log.Debugf(ctx, "ManifestLoader: cache miss for networkID=%q key=%q: %v", networkID, networkKey, err)
+		}
+	} else {
+		log.Infof(ctx, "ManifestLoader: bypassing cache for networkID=%q", networkID)
 	}
 
 	namespaceIdentifier, registryName, err := splitNetworkID(networkID)
@@ -92,26 +109,38 @@ func (l *Loader) GetByNetworkID(ctx context.Context, networkID string) (*model.M
 	if err != nil {
 		return nil, err
 	}
-	doc, err := l.GetByMetadata(ctx, manifestMetadata)
+	doc, err := l.getByMetadata(ctx, manifestMetadata, bypassCache)
 	if err != nil {
 		return nil, err
 	}
 	doc.NetworkID = networkID
-	if err := l.store(ctx, networkCacheKey(networkID), doc); err != nil {
+	if err := l.store(ctx, networkKey, doc); err != nil {
 		return nil, err
 	}
 	return doc, nil
 }
 
 func (l *Loader) GetByMetadata(ctx context.Context, metadata model.ManifestMetadata) (*model.ManifestDocument, error) {
+	return l.getByMetadata(ctx, metadata, l.shouldBypassCache(metadata.CacheKey()))
+}
+
+func (l *Loader) getByMetadata(ctx context.Context, metadata model.ManifestMetadata, bypassCache bool) (*model.ManifestDocument, error) {
 	if err := validateMetadata(metadata); err != nil {
 		return nil, err
 	}
 	cacheKey := metadata.CacheKey()
-	if doc, err := l.loadFromCache(ctx, cacheKey); err == nil {
-		return doc, nil
+	if !bypassCache {
+		if doc, err := l.loadFromCache(ctx, cacheKey); err == nil {
+			log.Infof(ctx, "ManifestLoader: metadata cache hit for source=%s fetchedAt=%s", metadata.ManifestURL, doc.FetchedAt.Format(time.RFC3339))
+			return doc, nil
+		} else {
+			log.Debugf(ctx, "ManifestLoader: metadata cache miss for source=%s key=%q: %v", metadata.ManifestURL, cacheKey, err)
+		}
+	} else {
+		log.Infof(ctx, "ManifestLoader: bypassing metadata cache for source=%s", metadata.ManifestURL)
 	}
 
+	log.Infof(ctx, "ManifestLoader: fetching manifest source=%s signature=%s signingKey=%s", metadata.ManifestURL, metadata.ManifestSignatureURL, metadata.SigningPublicKeyLookupURL)
 	manifestBody, manifestContentType, err := l.fetchURL(ctx, metadata.ManifestURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch manifest: %w", err)
@@ -140,6 +169,7 @@ func (l *Loader) GetByMetadata(ctx context.Context, metadata model.ManifestMetad
 	if err := l.store(ctx, cacheKey, doc); err != nil {
 		return nil, err
 	}
+	log.Infof(ctx, "ManifestLoader: verified and cached manifest source=%s digest=%s", metadata.ManifestURL, doc.Digest)
 	return doc, nil
 }
 
@@ -177,11 +207,30 @@ func (l *Loader) loadFromCache(ctx context.Context, key string) (*model.Manifest
 }
 
 func (l *Loader) store(ctx context.Context, key string, doc *model.ManifestDocument) error {
+	if l.config.DisableCache {
+		return nil
+	}
 	payload, err := json.Marshal(doc)
 	if err != nil {
 		return err
 	}
 	return l.cache.Set(ctx, key, string(payload), l.config.CacheTTL)
+}
+
+func (l *Loader) shouldBypassCache(key string) bool {
+	if l.config.DisableCache {
+		return true
+	}
+	if !l.config.ForceRefreshOnStart {
+		return false
+	}
+	l.refreshMu.Lock()
+	defer l.refreshMu.Unlock()
+	if l.refreshedKeys[key] {
+		return false
+	}
+	l.refreshedKeys[key] = true
+	return true
 }
 
 func networkCacheKey(networkID string) string {

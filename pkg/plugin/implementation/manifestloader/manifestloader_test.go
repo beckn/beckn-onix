@@ -187,3 +187,122 @@ func TestGetByNetworkIDResolvesMetadata(t *testing.T) {
 		t.Fatal("expected network-specific cache key to be populated")
 	}
 }
+
+func TestGetByMetadata_DisableCacheBypassesAndDoesNotStore(t *testing.T) {
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	manifest := []byte("fresh manifest")
+	signature := ed25519.Sign(privateKey, manifest)
+	requests := 0
+
+	originalHTTPClientFunc := httpClientFunc
+	httpClientFunc = func(timeout time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests++
+			switch req.URL.String() {
+			case "https://example.org/manifest":
+				return response(200, string(manifest), "application/yaml"), nil
+			case "https://example.org/manifest.sig":
+				return response(200, base64.StdEncoding.EncodeToString(signature), "text/plain"), nil
+			case "https://example.org/pubkey":
+				return response(200, base64.StdEncoding.EncodeToString(publicKey), "text/plain"), nil
+			default:
+				return response(404, "not found", "text/plain"), nil
+			}
+		})}
+	}
+	defer func() { httpClientFunc = originalHTTPClientFunc }()
+
+	cache := &mockCache{store: map[string]string{
+		model.ManifestMetadata{
+			ManifestURL:               "https://example.org/manifest",
+			ManifestSignatureURL:      "https://example.org/manifest.sig",
+			SigningPublicKeyLookupURL: "https://example.org/pubkey",
+		}.CacheKey(): `{"content":"c3RhbGU=","verified":true}`,
+	}}
+	loader, _, err := New(context.Background(), cache, &mockRegistry{}, &Config{
+		DisableCache: true,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	doc, err := loader.GetByMetadata(context.Background(), model.ManifestMetadata{
+		ManifestURL:               "https://example.org/manifest",
+		ManifestSignatureURL:      "https://example.org/manifest.sig",
+		SigningPublicKeyLookupURL: "https://example.org/pubkey",
+	})
+	if err != nil {
+		t.Fatalf("GetByMetadata() error = %v", err)
+	}
+	if string(doc.Content) != string(manifest) {
+		t.Fatalf("expected fresh manifest content, got %q", string(doc.Content))
+	}
+	if requests != 3 {
+		t.Fatalf("expected 3 remote fetches when cache disabled, got %d", requests)
+	}
+	if len(cache.store) != 1 {
+		t.Fatalf("expected no new cache writes when cache disabled, got %d entries", len(cache.store))
+	}
+}
+
+func TestGetByMetadata_ForceRefreshOnStartBypassesOnce(t *testing.T) {
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	manifest := []byte("fresh manifest")
+	signature := ed25519.Sign(privateKey, manifest)
+	requests := 0
+
+	originalHTTPClientFunc := httpClientFunc
+	httpClientFunc = func(timeout time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests++
+			switch req.URL.String() {
+			case "https://example.org/manifest":
+				return response(200, string(manifest), "application/yaml"), nil
+			case "https://example.org/manifest.sig":
+				return response(200, base64.StdEncoding.EncodeToString(signature), "text/plain"), nil
+			case "https://example.org/pubkey":
+				return response(200, base64.StdEncoding.EncodeToString(publicKey), "text/plain"), nil
+			default:
+				return response(404, "not found", "text/plain"), nil
+			}
+		})}
+	}
+	defer func() { httpClientFunc = originalHTTPClientFunc }()
+
+	metadata := model.ManifestMetadata{
+		ManifestURL:               "https://example.org/manifest",
+		ManifestSignatureURL:      "https://example.org/manifest.sig",
+		SigningPublicKeyLookupURL: "https://example.org/pubkey",
+	}
+	cache := &mockCache{store: map[string]string{
+		metadata.CacheKey(): `{"content":"c3RhbGU=","verified":true}`,
+	}}
+	loader, _, err := New(context.Background(), cache, &mockRegistry{}, &Config{
+		ForceRefreshOnStart: true,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	doc, err := loader.GetByMetadata(context.Background(), metadata)
+	if err != nil {
+		t.Fatalf("first GetByMetadata() error = %v", err)
+	}
+	if string(doc.Content) != string(manifest) {
+		t.Fatalf("expected fresh manifest content on startup refresh, got %q", string(doc.Content))
+	}
+	if requests != 3 {
+		t.Fatalf("expected 3 remote fetches on first startup refresh, got %d", requests)
+	}
+
+	doc, err = loader.GetByMetadata(context.Background(), metadata)
+	if err != nil {
+		t.Fatalf("second GetByMetadata() error = %v", err)
+	}
+	if string(doc.Content) != string(manifest) {
+		t.Fatalf("expected cached fresh manifest on second lookup, got %q", string(doc.Content))
+	}
+	if requests != 3 {
+		t.Fatalf("expected second lookup to use cache after initial refresh, got %d remote fetches", requests)
+	}
+}

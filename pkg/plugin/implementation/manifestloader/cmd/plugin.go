@@ -30,6 +30,20 @@ func (p manifestLoaderProvider) New(ctx context.Context, cache definition.Cache,
 		}
 		config.FetchTimeout = time.Duration(secs) * time.Second
 	}
+	if raw := cfg["disableCache"]; raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		config.DisableCache = enabled
+	}
+	if raw := cfg["forceRefreshOnStartup"]; raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		config.ForceRefreshOnStart = enabled
+	}
 	log.Debugf(ctx, "ManifestLoader config mapped: %+v", config)
 	return newManifestLoaderFunc(ctx, cache, registry, config)
 }
