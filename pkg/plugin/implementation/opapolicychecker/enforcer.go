@@ -244,9 +244,18 @@ func (c *PolicyConfig) IsActionEnabled(action string) bool {
 }
 
 type loadedPolicy struct {
-	name      string
-	config    *PolicyConfig
-	evaluator *Evaluator
+	name                   string
+	config                 *PolicyConfig
+	evaluator              *Evaluator
+	sourceType             string
+	manifestDeclaredSigned *bool
+	manifestVerified       bool
+}
+
+type resolvedManifestPolicy struct {
+	config         *PolicyConfig
+	declaredSigned *bool
+	verified       bool
 }
 
 type networkManifest struct {
@@ -399,7 +408,7 @@ func mergeRuntimeConfig(base map[string]string, override map[string]string) map[
 	return merged
 }
 
-func resolveManifestPolicyConfig(ctx context.Context, policyName string, baseConfig *PolicyConfig, manifestLoader definition.ManifestLoader) (*PolicyConfig, error) {
+func resolveManifestPolicyConfig(ctx context.Context, policyName string, baseConfig *PolicyConfig, manifestLoader definition.ManifestLoader) (*resolvedManifestPolicy, error) {
 	if policyName == "default" {
 		return nil, fmt.Errorf("default policy cannot use type=manifest")
 	}
@@ -458,7 +467,11 @@ func resolveManifestPolicyConfig(ctx context.Context, policyName string, baseCon
 		return nil, fmt.Errorf("manifest for network %q uses unsupported policies.source %q", policyName, manifest.Policies.Source)
 	}
 
-	return &resolved, nil
+	return &resolvedManifestPolicy{
+		config:         &resolved,
+		declaredSigned: manifest.Governance.Signed,
+		verified:       doc.Verified,
+	}, nil
 }
 
 func validateNetworkManifest(manifest *networkManifest, expectedNetworkID string, now time.Time) error {
@@ -559,20 +572,23 @@ func loadPolicy(ctx context.Context, manifestLoader definition.ManifestLoader, p
 	policyConfig.RuntimeConfig = mergeRuntimeConfig(sharedRuntimeConfig, config.RuntimeConfig)
 
 	loaded := &loadedPolicy{
-		name:   policyName,
-		config: &policyConfig,
+		name:       policyName,
+		config:     &policyConfig,
+		sourceType: config.Type,
 	}
 	if !policyConfig.Enabled {
 		return loaded, nil
 	}
 
 	if policyConfig.Type == "manifest" {
-		resolvedConfig, err := resolveManifestPolicyConfig(ctx, policyName, &policyConfig, manifestLoader)
+		resolvedManifest, err := resolveManifestPolicyConfig(ctx, policyName, &policyConfig, manifestLoader)
 		if err != nil {
 			return nil, err
 		}
-		policyConfig = *resolvedConfig
-		policyConfig.RuntimeConfig = mergeRuntimeConfig(sharedRuntimeConfig, resolvedConfig.RuntimeConfig)
+		policyConfig = *resolvedManifest.config
+		policyConfig.RuntimeConfig = mergeRuntimeConfig(sharedRuntimeConfig, resolvedManifest.config.RuntimeConfig)
+		loaded.manifestDeclaredSigned = resolvedManifest.declaredSigned
+		loaded.manifestVerified = resolvedManifest.verified
 	}
 
 	loaded.config = &policyConfig
@@ -633,6 +649,24 @@ func logLoadedPolicy(ctx context.Context, networkScoped bool, policy *loadedPoli
 	}
 
 	if networkScoped {
+		if policy.sourceType == "manifest" {
+			manifestSigned := "unknown"
+			if policy.manifestDeclaredSigned != nil {
+				manifestSigned = strconv.FormatBool(*policy.manifestDeclaredSigned)
+			}
+			log.Infof(ctx, "OPAPolicyChecker: loaded network policy networkID=%q sourceType=manifest resolvedType=%s manifestSigned=%s manifestVerified=%t location=%s query=%s actions=%v enabled=%t modules=%v",
+				policy.name,
+				policy.config.Type,
+				manifestSigned,
+				policy.manifestVerified,
+				policy.config.Location,
+				policy.config.Query,
+				policy.config.Actions,
+				policy.config.Enabled,
+				moduleNames,
+			)
+			return
+		}
 		log.Infof(ctx, "OPAPolicyChecker: loaded network policy networkID=%q type=%s location=%s query=%s actions=%v enabled=%t modules=%v",
 			policy.name,
 			policy.config.Type,
