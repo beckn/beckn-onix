@@ -189,9 +189,14 @@ func parseBundleArchive(data []byte, verification *ArtifactVerificationConfig, f
 		WithRegoVersion(ast.RegoV1)
 
 	if verification != nil && verification.Enabled {
-		publicKey, err := resolveVerificationPublicKey(verification.PublicKeyLookupURL, fetchTimeout)
+		publicKeyBody, err := readArtifact(verification.PublicKeyLookupURL, maxPolicySize, fetchTimeout)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to load bundle verification public key from %s: %w", verification.PublicKeyLookupURL, err)
+		}
+
+		publicKey, err := artifactverifier.ParsePublicKeyResponse(publicKeyBody)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse bundle verification public key from %s: %w", verification.PublicKeyLookupURL, err)
 		}
 
 		pemKey, err := publicKeyToPEM(publicKey)
@@ -294,14 +299,6 @@ func fetchRemoteArtifact(rawURL string, maxSize int, fetchTimeout time.Duration)
 	}
 
 	return body, nil
-}
-
-func resolveVerificationPublicKey(source string, fetchTimeout time.Duration) (any, error) {
-	data, err := readArtifact(source, maxPolicySize, fetchTimeout)
-	if err != nil {
-		return nil, err
-	}
-	return artifactverifier.ParsePublicKeyResponse(data)
 }
 
 func publicKeyToPEM(key any) ([]byte, error) {
