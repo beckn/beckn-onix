@@ -135,6 +135,20 @@ func TestGetByNetworkIDUsesCacheFirst(t *testing.T) {
 	}
 }
 
+func TestGetByNetworkIDRejectsUnverifiedCacheEntry(t *testing.T) {
+	cache := &mockCache{store: map[string]string{
+		networkCacheKey("nfo.example.org/network"): `{"network_id":"nfo.example.org/network","content":"bWFuaWZlc3Q=","verified":false}`,
+	}}
+	registry := &mockRegistry{err: errors.New("should not resolve registry from poisoned cache in this test")}
+	loader, _, err := New(context.Background(), cache, registry, &Config{})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if _, err := loader.loadFromCache(context.Background(), networkCacheKey("nfo.example.org/network")); err == nil || !strings.Contains(err.Error(), "not marked verified") {
+		t.Fatalf("expected unverified cache rejection, got %v", err)
+	}
+}
+
 func TestGetByNetworkIDResolvesMetadata(t *testing.T) {
 	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
 	manifest := []byte("hello")
@@ -304,5 +318,166 @@ func TestGetByMetadata_ForceRefreshOnStartBypassesOnce(t *testing.T) {
 	}
 	if requests != 3 {
 		t.Fatalf("expected second lookup to use cache after initial refresh, got %d remote fetches", requests)
+	}
+}
+
+func TestGetByNetworkID_DisableCacheBypassesAndDoesNotStore(t *testing.T) {
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	manifest := []byte("fresh manifest")
+	signature := ed25519.Sign(privateKey, manifest)
+	requests := 0
+
+	originalHTTPClientFunc := httpClientFunc
+	httpClientFunc = func(timeout time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests++
+			switch req.URL.String() {
+			case "https://example.org/manifest":
+				return response(200, string(manifest), "application/yaml"), nil
+			case "https://example.org/manifest.sig":
+				return response(200, base64.StdEncoding.EncodeToString(signature), "text/plain"), nil
+			case "https://example.org/pubkey":
+				return response(200, base64.StdEncoding.EncodeToString(publicKey), "text/plain"), nil
+			default:
+				return response(404, "not found", "text/plain"), nil
+			}
+		})}
+	}
+	defer func() { httpClientFunc = originalHTTPClientFunc }()
+
+	cache := &mockCache{store: map[string]string{
+		networkCacheKey("nfo.example.org/network"): `{"network_id":"nfo.example.org/network","content":"c3RhbGU=","verified":true}`,
+		model.ManifestMetadata{
+			ManifestURL:               "https://example.org/manifest",
+			ManifestSignatureURL:      "https://example.org/manifest.sig",
+			SigningPublicKeyLookupURL: "https://example.org/pubkey",
+		}.CacheKey(): `{"content":"c3RhbGU=","verified":true}`,
+	}}
+	registry := &mockRegistry{
+		meta: &model.RegistryMetadata{
+			NamespaceIdentifier: "nfo.example.org",
+			RegistryName:        "network",
+			RawMeta: map[string]string{
+				"manifest_url":                  "https://example.org/manifest",
+				"manifest_signature_url":        "https://example.org/manifest.sig",
+				"signing_public_key_lookup_url": "https://example.org/pubkey",
+			},
+		},
+	}
+	loader, _, err := New(context.Background(), cache, registry, &Config{DisableCache: true})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	doc, err := loader.GetByNetworkID(context.Background(), "nfo.example.org/network")
+	if err != nil {
+		t.Fatalf("GetByNetworkID() error = %v", err)
+	}
+	if string(doc.Content) != string(manifest) {
+		t.Fatalf("expected fresh manifest content, got %q", string(doc.Content))
+	}
+	if requests != 3 {
+		t.Fatalf("expected 3 remote fetches when cache disabled, got %d", requests)
+	}
+	if registry.calls != 1 {
+		t.Fatalf("expected one registry lookup when bypassing cache, got %d", registry.calls)
+	}
+}
+
+func TestGetByNetworkID_ForceRefreshOnStartBypassesOnce(t *testing.T) {
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	manifest := []byte("fresh manifest")
+	signature := ed25519.Sign(privateKey, manifest)
+	requests := 0
+
+	originalHTTPClientFunc := httpClientFunc
+	httpClientFunc = func(timeout time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests++
+			switch req.URL.String() {
+			case "https://example.org/manifest":
+				return response(200, string(manifest), "application/yaml"), nil
+			case "https://example.org/manifest.sig":
+				return response(200, base64.StdEncoding.EncodeToString(signature), "text/plain"), nil
+			case "https://example.org/pubkey":
+				return response(200, base64.StdEncoding.EncodeToString(publicKey), "text/plain"), nil
+			default:
+				return response(404, "not found", "text/plain"), nil
+			}
+		})}
+	}
+	defer func() { httpClientFunc = originalHTTPClientFunc }()
+
+	metadata := model.ManifestMetadata{
+		ManifestURL:               "https://example.org/manifest",
+		ManifestSignatureURL:      "https://example.org/manifest.sig",
+		SigningPublicKeyLookupURL: "https://example.org/pubkey",
+	}
+	cache := &mockCache{store: map[string]string{
+		networkCacheKey("nfo.example.org/network"): `{"network_id":"nfo.example.org/network","content":"c3RhbGU=","verified":true}`,
+		metadata.CacheKey():                        `{"content":"c3RhbGU=","verified":true}`,
+	}}
+	registry := &mockRegistry{
+		meta: &model.RegistryMetadata{
+			NamespaceIdentifier: "nfo.example.org",
+			RegistryName:        "network",
+			RawMeta: map[string]string{
+				"manifest_url":                  metadata.ManifestURL,
+				"manifest_signature_url":        metadata.ManifestSignatureURL,
+				"signing_public_key_lookup_url": metadata.SigningPublicKeyLookupURL,
+			},
+		},
+	}
+	loader, _, err := New(context.Background(), cache, registry, &Config{ForceRefreshOnStart: true})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	doc, err := loader.GetByNetworkID(context.Background(), "nfo.example.org/network")
+	if err != nil {
+		t.Fatalf("first GetByNetworkID() error = %v", err)
+	}
+	if string(doc.Content) != string(manifest) {
+		t.Fatalf("expected fresh manifest content on startup refresh, got %q", string(doc.Content))
+	}
+	if requests != 3 {
+		t.Fatalf("expected 3 remote fetches on first startup refresh, got %d", requests)
+	}
+	if registry.calls != 1 {
+		t.Fatalf("expected one registry lookup on first startup refresh, got %d", registry.calls)
+	}
+
+	doc, err = loader.GetByNetworkID(context.Background(), "nfo.example.org/network")
+	if err != nil {
+		t.Fatalf("second GetByNetworkID() error = %v", err)
+	}
+	if string(doc.Content) != string(manifest) {
+		t.Fatalf("expected cached fresh manifest on second lookup, got %q", string(doc.Content))
+	}
+	if requests != 3 {
+		t.Fatalf("expected second lookup to use cache after initial refresh, got %d remote fetches", requests)
+	}
+	if registry.calls != 1 {
+		t.Fatalf("expected second lookup to use network cache and avoid registry lookup, got %d", registry.calls)
+	}
+}
+
+func TestFetchURL_RejectsOversizedResponse(t *testing.T) {
+	loader, _, err := New(context.Background(), &mockCache{store: map[string]string{}}, &mockRegistry{}, &Config{})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	originalHTTPClientFunc := httpClientFunc
+	httpClientFunc = func(timeout time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return response(200, strings.Repeat("a", maxManifestArtifactSize+1), "application/yaml"), nil
+		})}
+	}
+	defer func() { httpClientFunc = originalHTTPClientFunc }()
+	loader.client = httpClientFunc(time.Second)
+
+	if _, _, err := loader.fetchURL(context.Background(), "https://example.org/manifest"); err == nil || !strings.Contains(err.Error(), "exceeds maximum allowed size") {
+		t.Fatalf("expected oversized response error, got %v", err)
 	}
 }

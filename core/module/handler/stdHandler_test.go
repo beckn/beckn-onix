@@ -2,11 +2,13 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
@@ -57,6 +59,19 @@ func (noopPluginManager) SchemaValidator(context.Context, *plugin.Config) (defin
 	return nil, nil
 }
 
+type registryWithoutMetadata struct{}
+
+func (registryWithoutMetadata) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
+	return nil, errors.New("not implemented")
+}
+
+type stubCache struct{}
+
+func (stubCache) Get(context.Context, string) (string, error)              { return "", errors.New("cache miss") }
+func (stubCache) Set(context.Context, string, string, time.Duration) error { return nil }
+func (stubCache) Delete(context.Context, string) error                     { return nil }
+func (stubCache) Clear(context.Context) error                              { return nil }
+
 func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	ctx := context.Background()
 	cfg := &Config{
@@ -72,6 +87,27 @@ func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "PolicyChecker plugin not configured") {
 		t.Fatalf("expected explicit PolicyChecker config error, got: %v", err)
+	}
+}
+
+func TestLoadManifestLoader_RequiresCache(t *testing.T) {
+	_, err := loadManifestLoader(context.Background(), noopPluginManager{}, nil, registryWithoutMetadata{}, &plugin.Config{ID: "manifestloader"})
+	if err == nil || !strings.Contains(err.Error(), "Cache plugin not configured") {
+		t.Fatalf("expected cache requirement error, got %v", err)
+	}
+}
+
+func TestLoadManifestLoader_RequiresRegistry(t *testing.T) {
+	_, err := loadManifestLoader(context.Background(), noopPluginManager{}, stubCache{}, nil, &plugin.Config{ID: "manifestloader"})
+	if err == nil || !strings.Contains(err.Error(), "Registry plugin not configured") {
+		t.Fatalf("expected registry requirement error, got %v", err)
+	}
+}
+
+func TestLoadManifestLoader_RequiresRegistryMetadataLookup(t *testing.T) {
+	_, err := loadManifestLoader(context.Background(), noopPluginManager{}, stubCache{}, registryWithoutMetadata{}, &plugin.Config{ID: "manifestloader"})
+	if err == nil || !strings.Contains(err.Error(), "does not implement RegistryMetadataLookup") {
+		t.Fatalf("expected RegistryMetadataLookup error, got %v", err)
 	}
 }
 

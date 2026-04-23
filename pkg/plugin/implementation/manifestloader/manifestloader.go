@@ -43,8 +43,9 @@ var (
 )
 
 const (
-	defaultCacheTTL     = 6 * time.Hour
-	defaultFetchTimeout = 30 * time.Second
+	defaultCacheTTL         = 6 * time.Hour
+	defaultFetchTimeout     = 30 * time.Second
+	maxManifestArtifactSize = 10 << 20 // 10 MiB
 )
 
 var httpClientFunc = func(timeout time.Duration) *http.Client {
@@ -114,6 +115,8 @@ func (l *Loader) GetByNetworkID(ctx context.Context, networkID string) (*model.M
 		return nil, err
 	}
 	doc.NetworkID = networkID
+	// Store under the network key in addition to the metadata hash key so future
+	// GetByNetworkID calls can short-circuit registry metadata lookup.
 	if err := l.store(ctx, networkKey, doc); err != nil {
 		return nil, err
 	}
@@ -187,9 +190,12 @@ func (l *Loader) fetchURL(ctx context.Context, rawURL string) ([]byte, string, e
 		body, _ := io.ReadAll(resp.Body)
 		return nil, "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxManifestArtifactSize+1))
 	if err != nil {
 		return nil, "", err
+	}
+	if len(body) > maxManifestArtifactSize {
+		return nil, "", fmt.Errorf("response body exceeds maximum allowed size of %d bytes", maxManifestArtifactSize)
 	}
 	return body, resp.Header.Get("Content-Type"), nil
 }
@@ -202,6 +208,9 @@ func (l *Loader) loadFromCache(ctx context.Context, key string) (*model.Manifest
 	var doc model.ManifestDocument
 	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
 		return nil, err
+	}
+	if !doc.Verified {
+		return nil, fmt.Errorf("cached manifest %q is not marked verified", key)
 	}
 	return &doc, nil
 }

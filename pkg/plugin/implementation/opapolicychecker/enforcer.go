@@ -586,6 +586,8 @@ func loadPolicy(ctx context.Context, manifestLoader definition.ManifestLoader, p
 			return nil, err
 		}
 		policyConfig = *resolvedManifest.config
+		// Reapply shared runtime config on top of the manifest-resolved config so
+		// adapter-level values remain available under data.config.
 		policyConfig.RuntimeConfig = mergeRuntimeConfig(sharedRuntimeConfig, resolvedManifest.config.RuntimeConfig)
 		loaded.manifestDeclaredSigned = resolvedManifest.declaredSigned
 		loaded.manifestVerified = resolvedManifest.verified
