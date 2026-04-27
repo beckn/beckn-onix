@@ -335,28 +335,24 @@ func TestServeHTTP_ActionResolution(t *testing.T) {
 		name           string
 		body           string
 		path           string
-		expectedAction string
 		expectedStatus int
 	}{
 		{
 			name:           "Valid Beckn body",
 			body:           `{"context": {"action": "search"}}`,
 			path:           "/v1/search",
-			expectedAction: "search",
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "Empty body - fallback to path",
 			body:           "",
 			path:           "/v1/search",
-			expectedAction: "/v1/search",
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "Non-Beckn JSON - fallback to path",
 			body:           `{"other": "data"}`,
 			path:           "/v1/callback",
-			expectedAction: "/v1/callback",
 			expectedStatus: http.StatusOK,
 		},
 	}
@@ -373,13 +369,6 @@ func TestServeHTTP_ActionResolution(t *testing.T) {
 			req, _ := http.NewRequest("POST", tt.path, strings.NewReader(tt.body))
 			rr := httptest.NewRecorder()
 
-			// We need to capture the action used. 
-			// Since action is local to ServeHTTP, we can't check it directly easily.
-			// But we can check if it gets passed to RecordHTTPRequest if we could mock it.
-			// However, ServeHTTP also sets it on the span attribute.
-			
-			// For now, let's just ensure it doesn't crash and returns the expected status.
-			// A more thorough test would involve mocking telemetry or checking side effects.
 			h.ServeHTTP(rr, req)
 
 			if rr.Code != tt.expectedStatus {
