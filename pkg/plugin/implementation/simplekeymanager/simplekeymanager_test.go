@@ -411,10 +411,14 @@ func TestLoadKeysFromConfig(t *testing.T) {
 		return
 	}
 
-	// Verify keyset was loaded
+	// Verify keyset was loaded under both keys
 	_, exists := skm.keysets["test-np"]
 	if !exists {
-		t.Error("loadKeysFromConfig() did not load keyset")
+		t.Error("loadKeysFromConfig() did not load keyset under networkParticipant")
+	}
+	_, exists = skm.keysets["test-key"]
+	if !exists {
+		t.Error("loadKeysFromConfig() did not load keyset under keyId")
 	}
 
 	// Test with empty config (should not error)

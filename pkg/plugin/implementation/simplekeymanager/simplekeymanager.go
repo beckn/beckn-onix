@@ -333,9 +333,14 @@ func (skm *SimpleKeyMgr) loadKeysFromConfig(ctx context.Context, cfg *Config) er
 			EncrPublic:     encodeBase64(encrPublic),
 		}
 
-		// Store the keyset using the keyID
+		// Store the keyset using both the networkParticipant (SubscriberID)
+		// and the KeyID (UniqueKeyID) to ensure it can be retrieved by either
+		// through the public API or internal signing steps.
 		skm.keysets[networkParticipant] = keyset
-		log.Infof(ctx, "Successfully loaded keyset from configuration with keyID: %s", keyId)
+		if keyId != networkParticipant {
+			skm.keysets[keyId] = keyset
+		}
+		log.Infof(ctx, "Successfully loaded keyset from configuration for SubscriberID: %s and KeyID: %s", networkParticipant, keyId)
 	} else {
 		log.Debug(ctx, "No keys found in configuration, keyset storage will be empty initially")
 	}
