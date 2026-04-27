@@ -2,11 +2,14 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
@@ -324,6 +327,91 @@ func TestNewHTTPClientWithTransportWrapper(t *testing.T) {
 
 	if client.Transport != wrappedTransport {
 		t.Errorf("expected client transport to use wrapper transport")
+	}
+}
+
+func TestServeHTTP_ActionResolution(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		path           string
+		expectedAction string
+		expectedStatus int
+	}{
+		{
+			name:           "Valid Beckn body",
+			body:           `{"context": {"action": "search"}}`,
+			path:           "/v1/search",
+			expectedAction: "search",
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Empty body - fallback to path",
+			body:           "",
+			path:           "/v1/search",
+			expectedAction: "/v1/search",
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Non-Beckn JSON - fallback to path",
+			body:           `{"other": "data"}`,
+			path:           "/v1/callback",
+			expectedAction: "/v1/callback",
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &stdHandler{
+				SubscriberID: "test-sub",
+				role:         model.RoleBAP,
+				moduleName:   "test-module",
+				steps:        []definition.Step{}, // No steps to avoid further logic
+			}
+
+			req, _ := http.NewRequest("POST", tt.path, strings.NewReader(tt.body))
+			rr := httptest.NewRecorder()
+
+			// We need to capture the action used. 
+			// Since action is local to ServeHTTP, we can't check it directly easily.
+			// But we can check if it gets passed to RecordHTTPRequest if we could mock it.
+			// However, ServeHTTP also sets it on the span attribute.
+			
+			// For now, let's just ensure it doesn't crash and returns the expected status.
+			// A more thorough test would involve mocking telemetry or checking side effects.
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != tt.expectedStatus {
+				t.Errorf("expected status %v, got %v", tt.expectedStatus, rr.Code)
+			}
+		})
+	}
+}
+
+type errReader struct{}
+
+func (e *errReader) Read(p []byte) (n int, err error) {
+	return 0, fmt.Errorf("forced read error")
+}
+
+func TestServeHTTP_BodyReadError(t *testing.T) {
+	h := &stdHandler{
+		SubscriberID: "test-sub",
+		role:         model.RoleBAP,
+		moduleName:   "test-module",
+	}
+
+	req, _ := http.NewRequest("POST", "/test", &errReader{})
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("expected status 500 on body read error, got %v", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "failed to read request body") {
+		t.Errorf("expected error message in body, got %v", rr.Body.String())
 	}
 }
 

@@ -107,11 +107,14 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Header.Del("X-Role")
 	}()
 
-	// Read body early to extract Beckn action for metrics/tracing.
+	// Read body early to extract the Beckn action, which is needed for both
+	// the trace context span attributes and for the HTTP request metrics.
+	// This must happen before span creation so the attributes are available.
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		log.Errorf(r.Context(), err, "failed to read request body for metrics: %v", err)
-		body = nil
+		log.Errorf(r.Context(), err, "failed to read request body: %v", err)
+		http.Error(w, "failed to read request body", http.StatusInternalServerError)
+		return
 	}
 	r.Body = io.NopCloser(bytes.NewBuffer(body))
 
