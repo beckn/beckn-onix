@@ -211,10 +211,11 @@ Single-file detached signature verification does not use a separate `algorithm` 
 
 ## Policy Hot-Reload
 
-When `refreshInterval` is set, a background goroutine periodically re-fetches and recompiles all configured policy sources without restarting the adapter:
+When `refreshInterval` is set, a background goroutine periodically reloads and recompiles all configured policy sources without restarting the adapter:
 
 - **Atomic swap**: the old evaluator stays fully active until the new one is compiled — no gap in enforcement
 - **Non-fatal errors**: if the reload fails (e.g., file temporarily unreachable or parse error), the error is logged and the previous policy stays active
+- **Manifest cache boundary**: for `type: manifest`, each refresh asks `manifestloader` for the manifest again, but manifest freshness is still controlled by `manifestloader.cacheTTL`, `forceRefreshOnStartup`, and `disableCache`. A short OPA `refreshInterval` does not force a network manifest re-fetch while the manifest cache entry is still valid.
 - **Goroutine lifecycle**: the reload loop stops when the adapter context is cancelled or when plugin `Close()` is invoked during shutdown
 
 ```yaml
@@ -222,6 +223,8 @@ config:
   networkPolicyConfig: ./config/opa-network-policies.yaml
   refreshInterval: "5m"
 ```
+
+If operators expect manifest changes to become eligible on every OPA refresh, set the manifest loader `cacheTTL` less than or equal to the OPA `refreshInterval`, or use `disableCache` during debugging.
 
 ## How It Works
 

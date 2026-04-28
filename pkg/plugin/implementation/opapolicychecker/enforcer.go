@@ -372,6 +372,9 @@ func resolveManifestPolicyConfig(ctx context.Context, policyName string, baseCon
 		return nil, fmt.Errorf("type=manifest requires ManifestLoader plugin to be configured")
 	}
 
+	// OPA refresh re-resolves manifest-backed policies, but ManifestLoader owns
+	// manifest freshness. A newer manifest is fetched only when its cache entry
+	// is expired, bypassed, or disabled by manifestloader configuration.
 	doc, err := manifestLoader.GetByNetworkID(ctx, policyName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load manifest for network %q: %w", policyName, err)
