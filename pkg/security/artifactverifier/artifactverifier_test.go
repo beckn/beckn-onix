@@ -32,6 +32,34 @@ func TestParsePublicKeyResponse_DeDiBase64RSA(t *testing.T) {
 	}
 }
 
+func TestParsePublicKeyResponse_DeDiSigningPublicKeyPath(t *testing.T) {
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate Ed25519 key: %v", err)
+	}
+
+	body := `{"data":{"details":{"signing_public_key":"` + base64.StdEncoding.EncodeToString(publicKey) + `"}}}`
+	key, err := ParsePublicKeyResponse([]byte(body))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := key.(ed25519.PublicKey); !ok {
+		t.Fatalf("expected ed25519.PublicKey, got %T", key)
+	}
+}
+
+func TestParsePublicKeyResponse_IgnoresUnexpectedNestedKeys(t *testing.T) {
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate Ed25519 key: %v", err)
+	}
+
+	body := `{"unexpected":{"publicKey":"` + base64.StdEncoding.EncodeToString(publicKey) + `"}}`
+	if _, err := ParsePublicKeyResponse([]byte(body)); err == nil {
+		t.Fatal("expected error for public key outside accepted response paths")
+	}
+}
+
 func TestVerifyDetachedArtifact_Ed25519(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

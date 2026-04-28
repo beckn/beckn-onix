@@ -31,7 +31,7 @@ func VerifyDetachedArtifact(content, signaturePayload, publicKeyPayload []byte) 
 // ParseSignature accepts either a raw detached signature body or a base64-encoded
 // signature, and also supports JSON payloads that expose a "signature" field.
 func ParseSignature(body []byte) ([]byte, error) {
-	if value, ok := extractStringField(body, []string{"signature"}); ok {
+	if value, ok := extractTopLevelStringField(body, []string{"signature"}); ok {
 		return decodeBase64String(value)
 	}
 	trimmed := strings.TrimSpace(string(body))
@@ -47,22 +47,8 @@ func ParseSignature(body []byte) ([]byte, error) {
 // ParsePublicKeyResponse supports DeDi public-key lookup JSON, legacy JSON
 // wrappers that expose raw key strings, and direct PEM/DER responses.
 func ParsePublicKeyResponse(body []byte) (any, error) {
-	type dediResponse struct {
-		Data struct {
-			Details struct {
-				PublicKey string `json:"publicKey"`
-				KeyType   string `json:"keyType"`
-				KeyFormat string `json:"keyFormat"`
-			} `json:"details"`
-		} `json:"data"`
-	}
-
-	var response dediResponse
-	if err := json.Unmarshal(body, &response); err == nil && response.Data.Details.PublicKey != "" {
-		return parsePublicKeyValue(response.Data.Details.PublicKey, response.Data.Details.KeyFormat)
-	}
-	if value, ok := extractStringField(body, []string{"signing_public_key", "public_key", "publicKey"}); ok {
-		return parsePublicKeyValue(value, "base64")
+	if value, format, ok := extractPublicKeyField(body); ok {
+		return parsePublicKeyValue(value, format)
 	}
 	if trimmed := strings.TrimSpace(string(body)); trimmed != "" {
 		if key, err := parsePublicKeyValue(trimmed, "base64"); err == nil {
@@ -167,35 +153,64 @@ func decodeBase64String(value string) ([]byte, error) {
 	return decoded, nil
 }
 
-func extractStringField(body []byte, keys []string) (string, bool) {
-	var data any
+func extractPublicKeyField(body []byte) (string, string, bool) {
+	type publicKeyDetails struct {
+		PublicKey        string `json:"publicKey"`
+		PublicKeySnake   string `json:"public_key"`
+		SigningPublicKey string `json:"signing_public_key"`
+		KeyFormat        string `json:"keyFormat"`
+	}
+
+	type publicKeyResponse struct {
+		PublicKey        string `json:"publicKey"`
+		PublicKeySnake   string `json:"public_key"`
+		SigningPublicKey string `json:"signing_public_key"`
+		Data             struct {
+			Details publicKeyDetails `json:"details"`
+		} `json:"data"`
+	}
+
+	var response publicKeyResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", "", false
+	}
+
+	if value := firstNonEmpty(response.Data.Details.PublicKey); value != "" {
+		return value, response.Data.Details.KeyFormat, true
+	}
+	if value := firstNonEmpty(response.Data.Details.SigningPublicKey, response.Data.Details.PublicKeySnake); value != "" {
+		format := response.Data.Details.KeyFormat
+		if strings.TrimSpace(format) == "" {
+			format = "base64"
+		}
+		return value, format, true
+	}
+	if value := firstNonEmpty(response.SigningPublicKey, response.PublicKeySnake, response.PublicKey); value != "" {
+		return value, "base64", true
+	}
+	return "", "", false
+}
+
+func extractTopLevelStringField(body []byte, keys []string) (string, bool) {
+	var data map[string]any
 	if err := json.Unmarshal(body, &data); err != nil {
 		return "", false
 	}
-	return findStringField(data, keys)
-}
-
-func findStringField(value any, keys []string) (string, bool) {
-	switch v := value.(type) {
-	case map[string]any:
-		for _, key := range keys {
-			if raw, ok := v[key]; ok {
-				if s, ok := raw.(string); ok && strings.TrimSpace(s) != "" {
-					return s, true
-				}
-			}
-		}
-		for _, child := range v {
-			if s, ok := findStringField(child, keys); ok {
-				return s, true
-			}
-		}
-	case []any:
-		for _, child := range v {
-			if s, ok := findStringField(child, keys); ok {
+	for _, key := range keys {
+		if raw, ok := data[key]; ok {
+			if s, ok := raw.(string); ok && strings.TrimSpace(s) != "" {
 				return s, true
 			}
 		}
 	}
 	return "", false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
