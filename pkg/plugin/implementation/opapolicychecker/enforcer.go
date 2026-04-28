@@ -451,6 +451,8 @@ func resolveManifestPolicyConfig(ctx context.Context, policyName string, baseCon
 				PublicKeyLookupURL: manifest.Policies.Bundle.SigningPublicKeyLookupURL,
 				Algorithm:          defaultBundleVerificationAlgorithm,
 			}
+		} else if strings.HasPrefix(manifest.Policies.Bundle.URL, "http://") {
+			log.Warnf(ctx, "OPAPolicyChecker: policy bundle for network %q uses cleartext HTTP and signing is disabled — a MITM can inject arbitrary Rego", policyName)
 		}
 	case "file":
 		resolved.Location = manifest.Policies.File.URL
@@ -462,6 +464,8 @@ func resolveManifestPolicyConfig(ctx context.Context, policyName string, baseCon
 				PublicKeyLookupURL: manifest.Policies.File.SigningPublicKeyLookupURL,
 				SignatureLocation:  manifest.Policies.File.SignatureURL,
 			}
+		} else if strings.HasPrefix(manifest.Policies.File.URL, "http://") {
+			log.Warnf(ctx, "OPAPolicyChecker: policy file for network %q uses cleartext HTTP and signing is disabled — a MITM can inject arbitrary Rego", policyName)
 		}
 	default:
 		return nil, fmt.Errorf("manifest for network %q uses unsupported policies.source %q", policyName, manifest.Policies.Source)
