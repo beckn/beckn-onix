@@ -683,4 +683,25 @@ func TestLookupRegistry(t *testing.T) {
 			t.Fatal("expected non-string metadata value to be omitted")
 		}
 	})
+
+	t.Run("http error response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte("Record not found"))
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{
+			URL:          server.URL + "/dedi",
+			RegistryName: "subscribers.beckn.one",
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		if _, err := client.LookupRegistry(ctx, "nfo.example.org", "mobility-network"); err == nil {
+			t.Error("expected error for 404 response, got nil")
+		}
+	})
 }
