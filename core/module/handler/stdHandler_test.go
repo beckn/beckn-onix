@@ -3,7 +3,9 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -11,10 +13,106 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/telemetry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/embedded"
 )
 
 // noopPluginManager satisfies PluginManager with nil plugins (unused loaders are never invoked when config is omitted).
 type noopPluginManager struct{}
+
+func TestExtractBecknAction(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected string
+	}{
+		{
+			name:     "Valid body",
+			body:     `{"context": {"action": "search"}}`,
+			expected: "search",
+		},
+		{
+			name:     "Different valid action",
+			body:     `{"context": {"action": "select"}}`,
+			expected: "select",
+		},
+		{
+			name:     "Missing context",
+			body:     `{"other": "data"}`,
+			expected: "",
+		},
+		{
+			name:     "Missing action",
+			body:     `{"context": {"other": "data"}}`,
+			expected: "",
+		},
+		{
+			name:     "Malformed JSON",
+			body:     `{"context": {"action": "search"`,
+			expected: "",
+		},
+		{
+			name:     "Empty body",
+			body:     "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractBecknAction([]byte(tt.body))
+			if got != tt.expected {
+				t.Errorf("extractBecknAction() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+type mockSpan struct {
+	embedded.Span
+	attributes []attribute.KeyValue
+}
+
+func (m *mockSpan) SetAttributes(attrs ...attribute.KeyValue) {
+	m.attributes = append(m.attributes, attrs...)
+}
+func (m *mockSpan) End(options ...trace.SpanEndOption)                  {}
+func (m *mockSpan) AddEvent(name string, options ...trace.EventOption) {}
+func (m *mockSpan) AddLink(link trace.Link)                             {}
+func (m *mockSpan) IsRecording() bool                                   { return true }
+func (m *mockSpan) RecordError(err error, options ...trace.EventOption) {}
+func (m *mockSpan) SpanContext() trace.SpanContext                      { return trace.SpanContext{} }
+func (m *mockSpan) SetStatus(code codes.Code, description string)       {}
+func (m *mockSpan) SetName(name string)                                 {}
+func (m *mockSpan) TracerProvider() trace.TracerProvider                { return nil }
+
+func TestSetBecknAttr(t *testing.T) {
+	h := &stdHandler{
+		SubscriberID: "test-sub",
+		moduleName:   "test-module",
+	}
+	span := &mockSpan{}
+	req, _ := http.NewRequest("POST", "/test", nil)
+	action := "search"
+
+	setBecknAttr(span, req, h, action)
+
+	found := false
+	for _, attr := range span.attributes {
+		if attr.Key == telemetry.AttrAction {
+			found = true
+			if attr.Value.AsString() != action {
+				t.Errorf("expected action attribute %v, got %v", action, attr.Value.AsString())
+			}
+		}
+	}
+	if !found {
+		t.Error("action attribute not found in span")
+	}
+}
 
 func (noopPluginManager) Middleware(context.Context, *plugin.Config) (func(http.Handler) http.Handler, error) {
 	return nil, nil
@@ -275,6 +373,80 @@ func TestNewHTTPClientWithTransportWrapper(t *testing.T) {
 
 	if client.Transport != wrappedTransport {
 		t.Errorf("expected client transport to use wrapper transport")
+	}
+}
+
+func TestServeHTTP_ActionResolution(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		path           string
+		expectedStatus int
+	}{
+		{
+			name:           "Valid Beckn body",
+			body:           `{"context": {"action": "search"}}`,
+			path:           "/v1/search",
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Empty body - fallback to path",
+			body:           "",
+			path:           "/v1/search",
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Non-Beckn JSON - fallback to path",
+			body:           `{"other": "data"}`,
+			path:           "/v1/callback",
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &stdHandler{
+				SubscriberID: "test-sub",
+				role:         model.RoleBAP,
+				moduleName:   "test-module",
+				steps:        []definition.Step{}, // No steps to avoid further logic
+			}
+
+			req, _ := http.NewRequest("POST", tt.path, strings.NewReader(tt.body))
+			rr := httptest.NewRecorder()
+
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != tt.expectedStatus {
+				t.Errorf("expected status %v, got %v", tt.expectedStatus, rr.Code)
+			}
+		})
+	}
+}
+
+type errReader struct{}
+
+func (e *errReader) Read(p []byte) (n int, err error) {
+	return 0, fmt.Errorf("forced read error")
+}
+
+func TestServeHTTP_BodyReadError(t *testing.T) {
+	h := &stdHandler{
+		SubscriberID: "test-sub",
+		role:         model.RoleBAP,
+		moduleName:   "test-module",
+	}
+
+	req, _ := http.NewRequest("POST", "/test", &errReader{})
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("expected status 500 on body read error, got %v", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "failed to read request body") {
+		t.Errorf("expected error message in body, got %v", rr.Body.String())
 	}
 }
 

@@ -353,6 +353,9 @@ Metrics are organized by module for better maintainability and encapsulation:
 #### Plugin Metrics (from `telemetry` package)
 - `onix_plugin_execution_duration_seconds`, `onix_plugin_errors_total`
 
+#### Node Plugin Info (from `telemetry` package)
+- `onix_plugin_info` – Observable gauge (value always `1`) emitted once per loaded plugin per module at startup. Each loaded plugin becomes its own time series. Labels: `module`, `plugin_type`, `plugin_id`, and `subscriber_id` (only present when `subscriberId` is set in the handler config — omitted otherwise). Covers all plugin slots (`schema_validator`, `sign_validator`, `router`, `registry`, `publisher`, `signer`, `cache`, `transport_wrapper`, `policy_checker`, `key_manager`) and one series per `step` and `middleware` entry. Absent/unconfigured slots emit no series. Enables Network Orchestrators to verify plugin composition across ONIX nodes, including detection of custom or non-standard plugins. **Note:** the `subscriber_id` column in Grafana will be blank unless `subscriberId` is configured in each module's handler config.
+
 #### Runtime Metrics
 - Go runtime metrics (`go_*`) and Redis instrumentation via `redisotel`
 
@@ -364,6 +367,7 @@ Each metric includes consistent labels such as `module`, `role`, `action`, `stat
 - Handler metrics: `core/module/handler/handlerMetrics.go`
 - Cache metrics: `pkg/plugin/implementation/cache/cache_metrics.go`
 - Plugin metrics: `pkg/telemetry/pluginMetrics.go`
+- Node plugin info: `pkg/telemetry/nodeInfo.go`
 
 ---
 
@@ -574,15 +578,16 @@ registry:
 
 #### 2. Dediregistry Plugin
 
-**Purpose**: Lookup participant information from a Decentralized Discovery (DeDi) registry.
+**Purpose**: Lookup participant information from a Decentralized Directory (DeDi) registry.
 
 **Configuration**:
 ```yaml
 registry:
   id: dediregistry
   config:
-    url: "https://dedi-wrapper.example.com/dedi"
+    url: "https://fabric.nfh.global/registry/dedi"
     registryName: "subscribers.beckn.one"
+    allowedNetworkIDs: "commerce-network.org/prod,local-commerce.org/production"
     timeout: 30
     retry_max: 3
     retry_wait_min: 1s
@@ -590,8 +595,9 @@ registry:
 ```
 
 **Parameters**:
-- `url`: DeDi wrapper API base URL (Required)
-- `registryName`: Name of the registry (Required)
+- `url`: Beckn registry base URL including the `/dedi` path (Required)
+- `registryName`: Registry name used in the lookup path. Keep this value as `subscribers.beckn.one` so lookups include all cached registries. Use `allowedNetworkIDs` if you want lookup to be restricted within one or more networks. (Required)
+- `allowedNetworkIDs`: Comma-separated list of allowed network IDs used to restrict lookup results to specific networks. See [Beckn network setup documentation](https://docs.beckn.io/creating-an-open-network/setting-up-the-network-environment#registering-the-network-on-beckn-fabric) for more on network IDs. (Optional)
 - `timeout`: Request timeout in seconds (Optional, default: client default)
 - `retry_max`: Maximum number of retry attempts (Optional, default: 4)
 - `retry_wait_min`: Minimum wait time between retries in duration format (Optional, default: 1s)

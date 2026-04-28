@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -107,6 +108,22 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Header.Del("X-Role")
 	}()
 
+	// Read body early to extract the Beckn action, which is needed for both
+	// the trace context span attributes and for the HTTP request metrics.
+	// This must happen before span creation so the attributes are available.
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Errorf(r.Context(), err, "failed to read request body: %v", err)
+		http.Error(w, "failed to read request body", http.StatusInternalServerError)
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewBuffer(body))
+
+	action := extractBecknAction(body)
+	if action == "" {
+		action = r.URL.Path
+	}
+
 	// to start a new trace
 	propagator := otel.GetTextMapPropagator()
 	traceCtx := propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
@@ -128,13 +145,13 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	httpMeter, _ := GetHTTPMetrics(r.Context())
 	if httpMeter != nil {
 		recordOnce = func() {
-			RecordHTTPRequest(r.Context(), wrapped.statusCode, r.URL.Path, string(h.role), senderID, receiverID)
+			RecordHTTPRequest(r.Context(), wrapped.statusCode, action, string(h.role), senderID, receiverID)
 		}
 		wrapped.record = recordOnce
 	}
 
 	// set beckn attribute
-	setBecknAttr(span, r, h)
+	setBecknAttr(span, r, h, action)
 
 	stepCtx, err := h.stepCtx(r, w.Header())
 	if err != nil {
@@ -145,19 +162,19 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Request(r.Context(), r, stepCtx.Body)
 
 	defer func() {
-		span.SetAttributes(attribute.Int("http.response.status_code", wrapped.statusCode), attribute.String("observedTimeUnixNano", strconv.FormatInt(time.Now().UnixNano(), 10)))
+		span.SetAttributes(attribute.Int("http.response.status_code", wrapped.statusCode), attribute.String("http.request.error", errString(err)), attribute.String("observedTimeUnixNano", strconv.FormatInt(time.Now().UnixNano(), 10)))
 		if wrapped.statusCode < 200 || wrapped.statusCode >= 400 {
 			span.SetStatus(codes.Error, "status code is invalid")
 		}
 
 		body := stepCtx.Body
-		telemetry.EmitAuditLogs(r.Context(), body, auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.response.error", errString(err)))
+		telemetry.EmitAuditLogs(r.Context(), body, auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.request.error", errString(err)), auditlog.String("sender.id", senderID), auditlog.String("receiver.id", receiverID))
 		span.End()
 	}()
 
 	// Execute processing steps.
 	for _, step := range h.steps {
-		if err := step.Run(stepCtx); err != nil {
+		if err = step.Run(stepCtx); err != nil {
 			log.Errorf(stepCtx, err, "%T.run():%v", step, err)
 			response.SendNack(stepCtx, wrapped, err)
 			return
@@ -430,7 +447,7 @@ func (h *stdHandler) resolveDirection(ctx context.Context) (senderID, receiverID
 	return remoteID, selfID
 }
 
-func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
+func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler, action string) {
 	senderID, receiverID := h.resolveDirection(r.Context())
 	attrs := []attribute.KeyValue{
 		telemetry.AttrRecipientID.String(receiverID),
@@ -438,6 +455,7 @@ func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
 		attribute.String("span_uuid", uuid.New().String()),
 		attribute.String("http.request.method", r.Method),
 		attribute.String("http.route", r.URL.Path),
+		telemetry.AttrAction.String(action),
 	}
 
 	if trxID, ok := r.Context().Value(model.ContextKeyTxnID).(string); ok {
@@ -447,7 +465,12 @@ func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
 		attrs = append(attrs, attribute.String("message_id", mesID))
 	}
 	if parentID, ok := r.Context().Value(model.ContextKeyParentID).(string); ok && parentID != "" {
-		attrs = append(attrs, attribute.String("parentSpanId", parentID))
+		// Attribute name matches audit.go ("parent_id") and the context key name so that
+		// cross-signal queries in Loki/Jaeger can join on a single consistent key.
+		// Previously named "parentSpanId" (camelCase), which was inconsistent and
+		// misleadingly implied an OTel span-parentage relationship; the value is the
+		// Beckn network identity of this adapter (role:subscriberID:pod), not a span ID.
+		attrs = append(attrs, attribute.String("parent_id", parentID))
 	}
 	if r.Host != "" {
 		attrs = append(attrs, attribute.String("server.address", r.Host))
@@ -458,6 +481,21 @@ func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler) {
 	}
 
 	span.SetAttributes(attrs...)
+}
+
+func extractBecknAction(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var req struct {
+		Context struct {
+			Action string `json:"action"`
+		} `json:"context"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return ""
+	}
+	return req.Context.Action
 }
 
 func errString(e error) string {

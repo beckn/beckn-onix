@@ -9,8 +9,14 @@ receivers:
         endpoint: 0.0.0.0:4317
 
 processors:
-  # Map Beckn transaction_id -> trace_id and message_id -> span_id for UI correlation.
-  # UUID format: remove hyphens for trace_id (32 hex chars); first 16 hex chars for span_id.
+  # Map Beckn transaction_id -> trace_id for UI correlation in Zipkin/Jaeger.
+  # UUID format: remove hyphens to get 32 hex chars required by TraceID().
+  #
+  # Note: message_id is intentionally NOT mapped to span_id. At network level this
+  # collector receives one span from each node (BAP, BPP) for the same Beckn message,
+  # so multiple spans share the same message_id. Overwriting span_id with message_id
+  # would assign identical span IDs to distinct spans, corrupting the trace. message_id
+  # is already available as a span attribute and can be searched as a tag in Zipkin/Jaeger.
   transform/beckn_ids:
     error_mode: ignore
     trace_statements:
@@ -38,6 +44,10 @@ exporters:
     endpoint: http://loki:3100/otlp
     compression: gzip
 
+  # Prints log records to collector stdout — use `docker logs otel-collector-network` to verify flow.
+  debug:
+    verbosity: normal
+
 service:
   pipelines:
     metrics:
@@ -53,7 +63,7 @@ service:
     logs:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlphttp/loki]
+      exporters: [otlphttp/loki, debug]
 
   telemetry:
     logs:
