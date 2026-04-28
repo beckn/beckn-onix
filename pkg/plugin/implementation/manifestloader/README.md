@@ -4,6 +4,15 @@
 
 One primary use case is fetching network manifests published by Network Facilitator Organizations (NFOs). Other plugins can then consume the verified manifest to configure themselves according to the policies and artifact locations defined by the NFO.
 
+## Requirements
+
+`manifestloader` requires:
+
+- a cache plugin
+- a registry plugin that implements `RegistryMetadataLookup`
+
+The default `dediregistry` plugin supports `RegistryMetadataLookup`. Custom registry plugins that only implement `RegistryLookup` can still be used for participant key lookup, but cannot be used with `manifestloader` until they also support registry-level metadata lookup.
+
 ## Config
 
 ```yaml
