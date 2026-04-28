@@ -23,7 +23,7 @@ import (
 // MockPluginManager implements handler.PluginManager for testing.
 type MockPluginManager struct {
 	mock.Mock
-	policyCheckerFunc func(ctx context.Context, cfg *plugin.Config) (definition.PolicyChecker, error)
+	policyCheckerFunc func(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error)
 }
 
 type stubPolicyChecker struct {
@@ -99,9 +99,9 @@ func (m *MockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Con
 }
 
 // PolicyChecker returns a mock implementation of the PolicyChecker interface.
-func (m *MockPluginManager) PolicyChecker(ctx context.Context, cfg *plugin.Config) (definition.PolicyChecker, error) {
+func (m *MockPluginManager) PolicyChecker(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
 	if m.policyCheckerFunc != nil {
-		return m.policyCheckerFunc(ctx, cfg)
+		return m.policyCheckerFunc(ctx, manifestLoader, cfg)
 	}
 	return nil, nil
 }
@@ -355,7 +355,7 @@ func TestNewServerSuccess(t *testing.T) {
 
 func TestNewServerRejectsPolicyViolation(t *testing.T) {
 	mockMgr := &MockPluginManager{
-		policyCheckerFunc: func(ctx context.Context, cfg *plugin.Config) (definition.PolicyChecker, error) {
+		policyCheckerFunc: func(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
 			return stubPolicyChecker{err: model.NewBadReqErr(errors.New("blocked by policy"))}, nil
 		},
 	}

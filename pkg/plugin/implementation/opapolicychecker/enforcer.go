@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
+	manifestpkg "github.com/beckn-one/beckn-onix/pkg/manifest"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"gopkg.in/yaml.v3"
@@ -258,51 +259,6 @@ type resolvedManifestPolicy struct {
 	verified       bool
 }
 
-type networkManifest struct {
-	ManifestVersion string                    `yaml:"manifest_version"`
-	ManifestType    string                    `yaml:"manifest_type"`
-	NetworkID       string                    `yaml:"network_id"`
-	ReleaseID       any                       `yaml:"release_id"`
-	Publisher       networkManifestPublisher  `yaml:"publisher"`
-	Policies        *networkManifestPolicies  `yaml:"policies"`
-	Governance      networkManifestGovernance `yaml:"governance"`
-}
-
-type networkManifestPublisher struct {
-	Role   string `yaml:"role"`
-	Domain string `yaml:"domain"`
-}
-
-type networkManifestPolicies struct {
-	Type   string                 `yaml:"type"`
-	Source string                 `yaml:"source"`
-	Bundle *networkManifestBundle `yaml:"bundle"`
-	File   *networkManifestFile   `yaml:"file"`
-}
-
-type networkManifestBundle struct {
-	ID                        string `yaml:"id"`
-	URL                       string `yaml:"url"`
-	PolicyQueryPath           string `yaml:"policy_query_path"`
-	Signed                    bool   `yaml:"signed"`
-	SigningPublicKeyLookupURL string `yaml:"signing_public_key_lookup_url"`
-}
-
-type networkManifestFile struct {
-	ID                        string `yaml:"id"`
-	URL                       string `yaml:"url"`
-	PolicyQueryPath           string `yaml:"policy_query_path"`
-	Signed                    bool   `yaml:"signed"`
-	SignatureURL              string `yaml:"signature_url"`
-	SigningPublicKeyLookupURL string `yaml:"signing_public_key_lookup_url"`
-}
-
-type networkManifestGovernance struct {
-	EffectiveFrom  string `yaml:"effective_from"`
-	EffectiveUntil string `yaml:"effective_until"`
-	Signed         *bool  `yaml:"signed"`
-}
-
 type networkPolicyFile struct {
 	NetworkPolicies map[string]map[string]interface{} `yaml:"networkPolicies"`
 }
@@ -421,154 +377,61 @@ func resolveManifestPolicyConfig(ctx context.Context, policyName string, baseCon
 		return nil, fmt.Errorf("failed to load manifest for network %q: %w", policyName, err)
 	}
 
-	var manifest networkManifest
-	if err := yaml.Unmarshal(doc.Content, &manifest); err != nil {
+	networkManifest, err := manifestpkg.ParseNetworkManifest(doc.Content)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse manifest YAML for network %q: %w", policyName, err)
 	}
 
 	now := time.Now().UTC()
-	if err := validateNetworkManifest(&manifest, policyName, now); err != nil {
+	if err := manifestpkg.ValidateNetworkManifest(networkManifest, policyName, now); err != nil {
 		return nil, err
 	}
 
 	resolved := *baseConfig
 	resolved.RuntimeConfig = mergeRuntimeConfig(nil, baseConfig.RuntimeConfig)
-	resolved.Type = manifest.Policies.Source
-	resolved.IsBundle = manifest.Policies.Source == "bundle"
+	resolved.Type = networkManifest.Policies.Source
+	resolved.IsBundle = networkManifest.Policies.Source == manifestpkg.PolicySourceBundle
 	resolved.PolicyPaths = nil
 	resolved.Location = ""
 	resolved.Query = ""
 	resolved.Verification = nil
 
-	switch manifest.Policies.Source {
-	case "bundle":
-		resolved.Location = manifest.Policies.Bundle.URL
-		resolved.PolicyPaths = []string{manifest.Policies.Bundle.URL}
-		resolved.Query = manifest.Policies.Bundle.PolicyQueryPath
-		if manifest.Policies.Bundle.Signed {
+	switch networkManifest.Policies.Source {
+	case manifestpkg.PolicySourceBundle:
+		resolved.Location = networkManifest.Policies.Bundle.URL
+		resolved.PolicyPaths = []string{networkManifest.Policies.Bundle.URL}
+		resolved.Query = networkManifest.Policies.Bundle.PolicyQueryPath
+		if networkManifest.Policies.Bundle.Signed {
 			resolved.Verification = &ArtifactVerificationConfig{
 				Enabled:            true,
-				PublicKeyLookupURL: manifest.Policies.Bundle.SigningPublicKeyLookupURL,
+				PublicKeyLookupURL: networkManifest.Policies.Bundle.SigningPublicKeyLookupURL,
 				Algorithm:          defaultBundleVerificationAlgorithm,
 			}
-		} else if strings.HasPrefix(manifest.Policies.Bundle.URL, "http://") {
-			log.Warnf(ctx, "OPAPolicyChecker: policy bundle for network %q uses cleartext HTTP and signing is disabled — a MITM can inject arbitrary Rego", policyName)
+		} else if strings.HasPrefix(networkManifest.Policies.Bundle.URL, "http://") {
+			log.Warnf(ctx, "OPAPolicyChecker: policy bundle for network %q uses cleartext HTTP and signing is disabled; a MITM can inject arbitrary Rego", policyName)
 		}
-	case "file":
-		resolved.Location = manifest.Policies.File.URL
-		resolved.PolicyPaths = []string{manifest.Policies.File.URL}
-		resolved.Query = manifest.Policies.File.PolicyQueryPath
-		if manifest.Policies.File.Signed {
+	case manifestpkg.PolicySourceFile:
+		resolved.Location = networkManifest.Policies.File.URL
+		resolved.PolicyPaths = []string{networkManifest.Policies.File.URL}
+		resolved.Query = networkManifest.Policies.File.PolicyQueryPath
+		if networkManifest.Policies.File.Signed {
 			resolved.Verification = &ArtifactVerificationConfig{
 				Enabled:            true,
-				PublicKeyLookupURL: manifest.Policies.File.SigningPublicKeyLookupURL,
-				SignatureLocation:  manifest.Policies.File.SignatureURL,
+				PublicKeyLookupURL: networkManifest.Policies.File.SigningPublicKeyLookupURL,
+				SignatureLocation:  networkManifest.Policies.File.SignatureURL,
 			}
-		} else if strings.HasPrefix(manifest.Policies.File.URL, "http://") {
-			log.Warnf(ctx, "OPAPolicyChecker: policy file for network %q uses cleartext HTTP and signing is disabled — a MITM can inject arbitrary Rego", policyName)
+		} else if strings.HasPrefix(networkManifest.Policies.File.URL, "http://") {
+			log.Warnf(ctx, "OPAPolicyChecker: policy file for network %q uses cleartext HTTP and signing is disabled; a MITM can inject arbitrary Rego", policyName)
 		}
 	default:
-		return nil, fmt.Errorf("manifest for network %q uses unsupported policies.source %q", policyName, manifest.Policies.Source)
+		return nil, fmt.Errorf("manifest for network %q uses unsupported policies.source %q", policyName, networkManifest.Policies.Source)
 	}
 
 	return &resolvedManifestPolicy{
 		config:         &resolved,
-		declaredSigned: manifest.Governance.Signed,
+		declaredSigned: networkManifest.Governance.Signed,
 		verified:       doc.Verified,
 	}, nil
-}
-
-func validateNetworkManifest(manifest *networkManifest, expectedNetworkID string, now time.Time) error {
-	if strings.TrimSpace(manifest.ManifestVersion) == "" {
-		return fmt.Errorf("manifest for network %q is missing manifest_version", expectedNetworkID)
-	}
-	if manifest.ManifestType != "network-manifest" {
-		return fmt.Errorf("manifest for network %q must have manifest_type=\"network-manifest\"", expectedNetworkID)
-	}
-	if manifest.NetworkID == "" {
-		return fmt.Errorf("manifest for network %q is missing network_id", expectedNetworkID)
-	}
-	if manifest.NetworkID != expectedNetworkID {
-		return fmt.Errorf("manifest network_id %q does not match configured network %q", manifest.NetworkID, expectedNetworkID)
-	}
-	if manifest.ReleaseID == nil || strings.TrimSpace(fmt.Sprintf("%v", manifest.ReleaseID)) == "" {
-		return fmt.Errorf("manifest for network %q is missing release_id", expectedNetworkID)
-	}
-	if strings.TrimSpace(manifest.Publisher.Role) == "" || strings.TrimSpace(manifest.Publisher.Domain) == "" {
-		return fmt.Errorf("manifest for network %q must include publisher.role and publisher.domain", expectedNetworkID)
-	}
-	if manifest.Policies == nil {
-		return fmt.Errorf("manifest for network %q is missing policies section", expectedNetworkID)
-	}
-	if manifest.Policies.Type != "rego" {
-		return fmt.Errorf("manifest for network %q must have policies.type=\"rego\"", expectedNetworkID)
-	}
-	if manifest.Governance.Signed == nil {
-		return fmt.Errorf("manifest for network %q is missing governance.signed", expectedNetworkID)
-	}
-
-	effectiveFrom, err := time.Parse(time.RFC3339, manifest.Governance.EffectiveFrom)
-	if err != nil {
-		return fmt.Errorf("manifest for network %q has invalid governance.effective_from: %w", expectedNetworkID, err)
-	}
-	if now.Before(effectiveFrom) {
-		return fmt.Errorf("manifest for network %q is not active until %s", expectedNetworkID, effectiveFrom.Format(time.RFC3339))
-	}
-
-	if manifest.Governance.EffectiveUntil != "" {
-		effectiveUntil, err := time.Parse(time.RFC3339, manifest.Governance.EffectiveUntil)
-		if err != nil {
-			return fmt.Errorf("manifest for network %q has invalid governance.effective_until: %w", expectedNetworkID, err)
-		}
-		if !effectiveUntil.After(effectiveFrom) {
-			return fmt.Errorf("manifest for network %q must have governance.effective_until later than governance.effective_from", expectedNetworkID)
-		}
-		if now.After(effectiveUntil) {
-			return fmt.Errorf("manifest for network %q expired at %s", expectedNetworkID, effectiveUntil.Format(time.RFC3339))
-		}
-	}
-
-	switch manifest.Policies.Source {
-	case "bundle":
-		if manifest.Policies.Bundle == nil {
-			return fmt.Errorf("manifest for network %q must include policies.bundle when policies.source=\"bundle\"", expectedNetworkID)
-		}
-		if manifest.Policies.File != nil {
-			return fmt.Errorf("manifest for network %q must not include policies.file when policies.source=\"bundle\"", expectedNetworkID)
-		}
-		if strings.TrimSpace(manifest.Policies.Bundle.ID) == "" ||
-			strings.TrimSpace(manifest.Policies.Bundle.URL) == "" ||
-			strings.TrimSpace(manifest.Policies.Bundle.PolicyQueryPath) == "" {
-			return fmt.Errorf("manifest for network %q is missing required policies.bundle fields", expectedNetworkID)
-		}
-		if manifest.Policies.Bundle.Signed && strings.TrimSpace(manifest.Policies.Bundle.SigningPublicKeyLookupURL) == "" {
-			return fmt.Errorf("manifest for network %q requires policies.bundle.signing_public_key_lookup_url when policies.bundle.signed=true", expectedNetworkID)
-		}
-	case "file":
-		if manifest.Policies.File == nil {
-			return fmt.Errorf("manifest for network %q must include policies.file when policies.source=\"file\"", expectedNetworkID)
-		}
-		if manifest.Policies.Bundle != nil {
-			return fmt.Errorf("manifest for network %q must not include policies.bundle when policies.source=\"file\"", expectedNetworkID)
-		}
-		if strings.TrimSpace(manifest.Policies.File.ID) == "" ||
-			strings.TrimSpace(manifest.Policies.File.URL) == "" ||
-			strings.TrimSpace(manifest.Policies.File.PolicyQueryPath) == "" {
-			return fmt.Errorf("manifest for network %q is missing required policies.file fields", expectedNetworkID)
-		}
-		if manifest.Policies.File.Signed {
-			if strings.TrimSpace(manifest.Policies.File.SignatureURL) == "" {
-				return fmt.Errorf("manifest for network %q requires policies.file.signature_url when policies.file.signed=true", expectedNetworkID)
-			}
-			if strings.TrimSpace(manifest.Policies.File.SigningPublicKeyLookupURL) == "" {
-				return fmt.Errorf("manifest for network %q requires policies.file.signing_public_key_lookup_url when policies.file.signed=true", expectedNetworkID)
-			}
-		}
-	default:
-		return fmt.Errorf("manifest for network %q uses unsupported policies.source %q", expectedNetworkID, manifest.Policies.Source)
-	}
-
-	return nil
 }
 
 func loadPolicy(ctx context.Context, manifestLoader definition.ManifestLoader, policyName string, config *PolicyConfig, sharedRuntimeConfig map[string]string) (*loadedPolicy, error) {
