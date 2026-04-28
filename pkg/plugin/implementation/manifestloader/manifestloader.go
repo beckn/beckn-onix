@@ -125,14 +125,14 @@ func (l *Loader) GetByNetworkID(ctx context.Context, networkID string) (*model.M
 }
 
 func (l *Loader) GetByMetadata(ctx context.Context, metadata model.ManifestMetadata) (*model.ManifestDocument, error) {
-	return l.getByMetadata(ctx, metadata, l.shouldBypassCache(metadata.CacheKey()))
+	return l.getByMetadata(ctx, metadata, l.shouldBypassCache(metadataCacheKey(metadata)))
 }
 
 func (l *Loader) getByMetadata(ctx context.Context, metadata model.ManifestMetadata, bypassCache bool) (*model.ManifestDocument, error) {
 	if err := validateMetadata(metadata); err != nil {
 		return nil, err
 	}
-	cacheKey := metadata.CacheKey()
+	cacheKey := metadataCacheKey(metadata)
 	if !bypassCache {
 		if doc, err := l.loadFromCache(ctx, cacheKey); err == nil {
 			log.Infof(ctx, "ManifestLoader: metadata cache hit for source=%s fetchedAt=%s", metadata.ManifestURL, doc.FetchedAt.Format(time.RFC3339))
@@ -245,6 +245,11 @@ func (l *Loader) shouldBypassCache(key string) bool {
 
 func networkCacheKey(networkID string) string {
 	return "manifest:network:" + networkID
+}
+
+func metadataCacheKey(m model.ManifestMetadata) string {
+	hash := sha256.Sum256([]byte(m.ManifestURL + "|" + m.ManifestSignatureURL + "|" + m.SigningPublicKeyLookupURL))
+	return "manifest:metadata:" + hex.EncodeToString(hash[:])
 }
 
 func splitNetworkID(networkID string) (string, string, error) {

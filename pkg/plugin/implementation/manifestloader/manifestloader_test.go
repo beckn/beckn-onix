@@ -226,12 +226,13 @@ func TestGetByMetadata_DisableCacheBypassesAndDoesNotStore(t *testing.T) {
 	}
 	defer func() { httpClientFunc = originalHTTPClientFunc }()
 
+	staleMetadata := model.ManifestMetadata{
+		ManifestURL:               "https://example.org/manifest",
+		ManifestSignatureURL:      "https://example.org/manifest.sig",
+		SigningPublicKeyLookupURL: "https://example.org/pubkey",
+	}
 	cache := &mockCache{store: map[string]string{
-		model.ManifestMetadata{
-			ManifestURL:               "https://example.org/manifest",
-			ManifestSignatureURL:      "https://example.org/manifest.sig",
-			SigningPublicKeyLookupURL: "https://example.org/pubkey",
-		}.CacheKey(): `{"content":"c3RhbGU=","verified":true}`,
+		metadataCacheKey(staleMetadata): `{"content":"c3RhbGU=","verified":true}`,
 	}}
 	loader, _, err := New(context.Background(), cache, &mockRegistry{}, &Config{
 		DisableCache: true,
@@ -289,7 +290,7 @@ func TestGetByMetadata_ForceRefreshOnStartBypassesOnce(t *testing.T) {
 		SigningPublicKeyLookupURL: "https://example.org/pubkey",
 	}
 	cache := &mockCache{store: map[string]string{
-		metadata.CacheKey(): `{"content":"c3RhbGU=","verified":true}`,
+		metadataCacheKey(metadata): `{"content":"c3RhbGU=","verified":true}`,
 	}}
 	loader, _, err := New(context.Background(), cache, &mockRegistry{}, &Config{
 		ForceRefreshOnStart: true,
@@ -345,13 +346,14 @@ func TestGetByNetworkID_DisableCacheBypassesAndDoesNotStore(t *testing.T) {
 	}
 	defer func() { httpClientFunc = originalHTTPClientFunc }()
 
+	staleMetadata2 := model.ManifestMetadata{
+		ManifestURL:               "https://example.org/manifest",
+		ManifestSignatureURL:      "https://example.org/manifest.sig",
+		SigningPublicKeyLookupURL: "https://example.org/pubkey",
+	}
 	cache := &mockCache{store: map[string]string{
-		networkCacheKey("nfo.example.org/network"): `{"network_id":"nfo.example.org/network","content":"c3RhbGU=","verified":true}`,
-		model.ManifestMetadata{
-			ManifestURL:               "https://example.org/manifest",
-			ManifestSignatureURL:      "https://example.org/manifest.sig",
-			SigningPublicKeyLookupURL: "https://example.org/pubkey",
-		}.CacheKey(): `{"content":"c3RhbGU=","verified":true}`,
+		networkCacheKey("nfo.example.org/network"):  `{"network_id":"nfo.example.org/network","content":"c3RhbGU=","verified":true}`,
+		metadataCacheKey(staleMetadata2): `{"content":"c3RhbGU=","verified":true}`,
 	}}
 	registry := &mockRegistry{
 		meta: &model.RegistryMetadata{
@@ -415,7 +417,7 @@ func TestGetByNetworkID_ForceRefreshOnStartBypassesOnce(t *testing.T) {
 	}
 	cache := &mockCache{store: map[string]string{
 		networkCacheKey("nfo.example.org/network"): `{"network_id":"nfo.example.org/network","content":"c3RhbGU=","verified":true}`,
-		metadata.CacheKey():                        `{"content":"c3RhbGU=","verified":true}`,
+		metadataCacheKey(metadata):                        `{"content":"c3RhbGU=","verified":true}`,
 	}}
 	registry := &mockRegistry{
 		meta: &model.RegistryMetadata{

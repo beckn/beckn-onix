@@ -2,8 +2,6 @@ package model
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -44,12 +42,6 @@ type ManifestMetadata struct {
 	ManifestURL               string
 	ManifestSignatureURL      string
 	SigningPublicKeyLookupURL string
-}
-
-// CacheKey returns a deterministic cache key for metadata-driven manifest loading.
-func (m ManifestMetadata) CacheKey() string {
-	hash := sha256.Sum256([]byte(m.ManifestURL + "|" + m.ManifestSignatureURL + "|" + m.SigningPublicKeyLookupURL))
-	return "manifest:metadata:" + hex.EncodeToString(hash[:])
 }
 
 // ManifestDocument is the cached and returned verified manifest payload.
