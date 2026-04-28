@@ -53,7 +53,6 @@ var httpClientFunc = func(timeout time.Duration) *http.Client {
 }
 
 func New(ctx context.Context, cache definition.Cache, registry definition.RegistryMetadataLookup, cfg *Config) (*Loader, func() error, error) {
-	_ = ctx
 	if cache == nil {
 		return nil, nil, ErrNilCache
 	}
@@ -69,6 +68,8 @@ func New(ctx context.Context, cache definition.Cache, registry definition.Regist
 	if cfg.FetchTimeout <= 0 {
 		cfg.FetchTimeout = defaultFetchTimeout
 	}
+
+	log.Infof(ctx, "ManifestLoader: initialized cacheTTL=%s fetchTimeout=%s", cfg.CacheTTL, cfg.FetchTimeout)
 
 	loader := &Loader{
 		cache:         cache,
