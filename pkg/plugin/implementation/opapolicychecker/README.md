@@ -186,8 +186,10 @@ Rules:
 - `type: dir` is not recommended for production use and should be used only for testing or local development
 - `type: dir` does not support signature verification; package directories as signed bundles instead
 - `verification.publicKeyLookupUrl` should point to a DeDi public-key record lookup endpoint
-- DeDi public-key lookup currently expects `data.details.publicKey` and supports `keyFormat: base64` using standard padded base64
+- public-key lookup JSON is read only from supported fields: `data.details.publicKey`, `data.details.signing_public_key`, `data.details.public_key`, or legacy top-level `publicKey`, `signing_public_key`, and `public_key`
+- DeDi public-key lookup supports `keyFormat: base64` using standard padded base64
 - as a fallback, raw PEM public keys, PEM certificates, and parseable DER key material are also accepted
+- detached signature locations may return raw signature bytes, base64-encoded signature text, or JSON with a top-level `signature` field
 - formats such as `base58`, `hex`, and JWK are not supported by the current plugin implementation
 - when `verification.enabled: true` for `type: file`, `verification.signatureLocation` and `verification.publicKeyLookupUrl` are required
 - when `verification.enabled: true` for `type: bundle`, `verification.publicKeyLookupUrl` is required
