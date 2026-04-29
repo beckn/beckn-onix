@@ -1,4 +1,4 @@
-FROM golang:1.24-bullseye AS builder
+FROM golang:1.26.1-bookworm AS builder
 
 WORKDIR /workspace/app
 COPY cmd/adapter  ./cmd/adapter
@@ -11,7 +11,7 @@ RUN go mod download
 RUN go build -o server cmd/adapter/main.go
 
 # Create a minimal runtime image
-FROM cgr.dev/chainguard/wolfi-base
+FROM cgr.dev/chainguard/wolfi-base:latest
 # ✅ Alpine is removed; using minimal Debian
 WORKDIR /app
 
