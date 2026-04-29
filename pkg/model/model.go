@@ -37,25 +37,6 @@ type RegistryMetadata struct {
 	RawMeta             map[string]string
 }
 
-// ManifestMetadata describes the three inputs needed to fetch and verify a manifest.
-type ManifestMetadata struct {
-	ManifestURL               string
-	ManifestSignatureURL      string
-	SigningPublicKeyLookupURL string
-}
-
-// ManifestDocument is the cached and returned verified manifest payload.
-type ManifestDocument struct {
-	NetworkID    string    `json:"network_id,omitempty"`
-	ContentType  string    `json:"content_type,omitempty"`
-	Content      []byte    `json:"content"`
-	Digest       string    `json:"digest"`
-	SourceURL    string    `json:"source_url"`
-	SignatureURL string    `json:"signature_url"`
-	Verified     bool      `json:"verified"`
-	FetchedAt    time.Time `json:"fetched_at"`
-}
-
 // Authorization-related constants for headers.
 const (
 	AuthHeaderSubscriber          string = "Authorization"

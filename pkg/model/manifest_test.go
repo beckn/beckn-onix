@@ -1,4 +1,4 @@
-package manifest
+package model
 
 import (
 	"strings"
@@ -21,11 +21,11 @@ func validNetworkManifestForTest(networkID string, now time.Time) NetworkManifes
 			Type:   PolicyTypeRego,
 			Source: PolicySourceFile,
 			File: &NetworkManifestFile{
-				ID:                        "network-policy-file",
-				URL:                       "https://example.com/policy.rego",
-				PolicyQueryPath:           "data.logistics.result",
-				Signed:                    true,
-				SignatureURL:              "https://example.com/policy.rego.sig",
+				ID:                       "network-policy-file",
+				URL:                      "https://example.com/policy.rego",
+				PolicyQueryPath:          "data.logistics.result",
+				Signed:                   true,
+				SignatureURL:             "https://example.com/policy.rego.sig",
 				SigningPublicKeyLookupURL: "https://example.com/public-key",
 			},
 		},
@@ -122,7 +122,7 @@ func TestValidateNetworkManifest(t *testing.T) {
 				tt.mutate(&manifest)
 			}
 
-			err := ValidateNetworkManifest(&manifest, expectedNetworkID, now)
+			err := manifest.Validate(expectedNetworkID, now)
 			if tt.wantErrSub == "" {
 				if err != nil {
 					t.Fatalf("expected success, got error: %v", err)

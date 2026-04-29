@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
-	manifestpkg "github.com/beckn-one/beckn-onix/pkg/manifest"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"gopkg.in/yaml.v3"
@@ -380,27 +379,27 @@ func resolveManifestPolicyConfig(ctx context.Context, policyName string, baseCon
 		return nil, fmt.Errorf("failed to load manifest for network %q: %w", policyName, err)
 	}
 
-	networkManifest, err := manifestpkg.ParseNetworkManifest(doc.Content)
+	networkManifest, err := model.ParseNetworkManifest(doc.Content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse manifest YAML for network %q: %w", policyName, err)
 	}
 
 	now := time.Now().UTC()
-	if err := manifestpkg.ValidateNetworkManifest(networkManifest, policyName, now); err != nil {
+	if err := networkManifest.Validate(policyName, now); err != nil {
 		return nil, err
 	}
 
 	resolved := *baseConfig
 	resolved.RuntimeConfig = mergeRuntimeConfig(nil, baseConfig.RuntimeConfig)
 	resolved.Type = networkManifest.Policies.Source
-	resolved.IsBundle = networkManifest.Policies.Source == manifestpkg.PolicySourceBundle
+	resolved.IsBundle = networkManifest.Policies.Source == model.PolicySourceBundle
 	resolved.PolicyPaths = nil
 	resolved.Location = ""
 	resolved.Query = ""
 	resolved.Verification = nil
 
 	switch networkManifest.Policies.Source {
-	case manifestpkg.PolicySourceBundle:
+	case model.PolicySourceBundle:
 		resolved.Location = networkManifest.Policies.Bundle.URL
 		resolved.PolicyPaths = []string{networkManifest.Policies.Bundle.URL}
 		resolved.Query = networkManifest.Policies.Bundle.PolicyQueryPath
@@ -413,7 +412,7 @@ func resolveManifestPolicyConfig(ctx context.Context, policyName string, baseCon
 		} else if strings.HasPrefix(networkManifest.Policies.Bundle.URL, "http://") {
 			log.Warnf(ctx, "OPAPolicyChecker: policy bundle for network %q uses cleartext HTTP and signing is disabled; a MITM can inject arbitrary Rego", policyName)
 		}
-	case manifestpkg.PolicySourceFile:
+	case model.PolicySourceFile:
 		resolved.Location = networkManifest.Policies.File.URL
 		resolved.PolicyPaths = []string{networkManifest.Policies.File.URL}
 		resolved.Query = networkManifest.Policies.File.PolicyQueryPath
