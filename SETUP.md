@@ -12,7 +12,7 @@ This comprehensive guide walks you through setting up Beckn-ONIX from developmen
 6. [GUI Component Setup](#gui-component-setup)
 7. [Docker Deployment](#docker-deployment)
 8. [Kubernetes Deployment](#kubernetes-deployment)
-9. [Service Observability](#service-ob)
+9. [Observability](#observability)
 10. [Testing Your Setup](#testing-your-setup)
 11. [Troubleshooting](#troubleshooting)
 12. [Sample Payloads](#sample-payloads)
@@ -1345,44 +1345,50 @@ autoscaling:
 
 ---
 
-## Service Observability
-  - Pull-based metrics exposed via `/metrics`
-  - RED metrics for every module and action (rate, errors, duration)
-  - Per-step histograms with error attribution
-  - Cache, routing, plugin, and business KPIs (signature/schema validations, Beckn messages)
-  - Native Prometheus exporter with Grafana dashboards & alert rules (`monitoring/`)
-  - Opt-in: add a `plugins.otelsetup` block in your config to wire the `otelsetup` plugin; omit it to run without metrics. Example:
+## Observability
 
-    ```yaml
-    plugins:
-      otelsetup:
-        id: otelsetup
-        config:
-          serviceName: "beckn-onix"
-          serviceVersion: "1.0.0"
-          enableMetrics: "true"
-          environment: "development"
-    ```
-### Modular Metrics Architecture**: 
-Metrics are organized by module for better maintainability:
-    - OTel SDK wiring via `otelsetup` plugin
-    - Step execution metrics in `telemetry` package
-    - Handler metrics (signature, schema, routing) in `handler` module
-    - Cache metrics in `cache` plugin
-    
-#### Monitoring Quick Start
-```bash
-./install/build-plugins.sh
-go build -o beckn-adapter ./cmd/adapter
-./beckn-adapter --config=config/local-simple.yaml
-cd monitoring && docker-compose -f docker-compose-monitoring.yml up -d
-open http://localhost:3000 # Grafana (admin/admin)
+Beckn-ONIX has a built-in observability stack based entirely on [OpenTelemetry](https://opentelemetry.io). Every signal — metrics, traces, and structured audit logs — is emitted using the OTel Go SDK and exported over OTLP, which means any OTLP-compatible backend (open-source or commercial) works without changing the adapter.
+
+### Two consumers
+
+The observability architecture is designed to serve two distinct consumers simultaneously from the same signal stream:
+
+- **The node operator** (the network participant running the adapter) receives full-fidelity metrics, traces, and logs for their own node through a companion OTLP Collector deployed alongside the adapter.
+- **The network observer** (the central governing entity) receives a filtered subset of cross-node signals — traffic flows, participant plugin inventory, and distributed traces stitched across BAP and BPP nodes — through a shared network-level collector.
+
+### Enabling observability
+
+Add an `otelsetup` block under `plugins` in your config file. Omit it to run without telemetry.
+
+```yaml
+plugins:
+  otelsetup:
+    id: otelsetup
+    config:
+      serviceName: "beckn-onix"
+      serviceVersion: "1.0.0"
+      environment: "development"
+      otlpEndpoint: "localhost:4317"   # OTLP/gRPC endpoint of your collector
+      enableMetrics: "true"
+      enableTracing: "true"
+      enableLogs: "true"
+      auditFieldsConfig: "/app/config/audit-fields.yaml"
 ```
-Resources:
-- `monitoring/prometheus.yml` – scrape config
-- `monitoring/prometheus-alerts.yml` – alert rules (RED, cache, step, plugin)
-- `monitoring/grafana/dashboards/beckn-onix-overview.json` – curated dashboard
-- `docs/METRICS_RUNBOOK.md` – runbook with PromQL recipes & troubleshooting
+
+### Reference stack
+
+`install/network-observability/` contains a Docker Compose file that starts a complete two-tier stack (companion collectors, network-level collector, and open-source backends) alongside the BAP and BPP adapters:
+
+```bash
+# From the repository root
+docker compose -f install/network-observability/docker-compose.yml up -d
+```
+
+### Full documentation
+
+For the complete architecture, all emitted metrics and traces, audit log configuration, OTEL Collector configs, and guidance on connecting alternative backends, see:
+
+**[pkg/plugin/implementation/otelsetup/OBSERVABILITY.md](pkg/plugin/implementation/otelsetup/OBSERVABILITY.md)**
 
 ---
 
