@@ -21,10 +21,11 @@ import (
 
 // Config controls fetch and cache behavior for the manifest loader.
 type Config struct {
-	CacheTTL            time.Duration
-	FetchTimeout        time.Duration
-	DisableCache        bool
-	ForceRefreshOnStart bool
+	CacheTTL                  time.Duration
+	FetchTimeout              time.Duration
+	DisableCache              bool
+	ForceRefreshOnStart       bool
+	SkipSignatureVerification bool
 }
 
 // Loader fetches, verifies, caches, and returns manifests.
@@ -70,6 +71,9 @@ func New(ctx context.Context, cache definition.Cache, registry definition.Regist
 	}
 
 	log.Infof(ctx, "ManifestLoader: initialized cacheTTL=%s fetchTimeout=%s", cfg.CacheTTL, cfg.FetchTimeout)
+	if cfg.SkipSignatureVerification {
+		log.Warnf(ctx, "ManifestLoader: signature verification is DISABLED — manifest authenticity is NOT guaranteed; do not use in production")
+	}
 
 	loader := &Loader{
 		cache:         cache,
@@ -107,7 +111,7 @@ func (l *Loader) GetByNetworkID(ctx context.Context, networkID string) (*model.M
 	if err != nil {
 		return nil, err
 	}
-	manifestMetadata, err := metadataFromRegistry(meta)
+	manifestMetadata, err := metadataFromRegistry(meta, l.config.SkipSignatureVerification)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +133,7 @@ func (l *Loader) GetByMetadata(ctx context.Context, metadata model.ManifestMetad
 }
 
 func (l *Loader) getByMetadata(ctx context.Context, metadata model.ManifestMetadata, bypassCache bool) (*model.ManifestDocument, error) {
-	if err := validateMetadata(metadata); err != nil {
+	if err := validateMetadata(metadata, l.config.SkipSignatureVerification); err != nil {
 		return nil, err
 	}
 	cacheKey := metadataCacheKey(metadata)
@@ -149,16 +153,22 @@ func (l *Loader) getByMetadata(ctx context.Context, metadata model.ManifestMetad
 	if err != nil {
 		return nil, fmt.Errorf("fetch manifest: %w", err)
 	}
-	signatureBody, _, err := l.fetchURL(ctx, metadata.ManifestSignatureURL)
-	if err != nil {
-		return nil, fmt.Errorf("fetch manifest signature: %w", err)
-	}
-	publicKeyBody, _, err := l.fetchURL(ctx, metadata.SigningPublicKeyLookupURL)
-	if err != nil {
-		return nil, fmt.Errorf("fetch signing public key: %w", err)
-	}
-	if err := artifactverifier.VerifyDetachedArtifact(manifestBody, signatureBody, publicKeyBody); err != nil {
-		return nil, fmt.Errorf("manifest signature verification failed: %w", err)
+	verified := true
+	if l.config.SkipSignatureVerification {
+		log.Warnf(ctx, "ManifestLoader: skipping signature verification for source=%s", metadata.ManifestURL)
+		verified = false
+	} else {
+		signatureBody, _, err := l.fetchURL(ctx, metadata.ManifestSignatureURL)
+		if err != nil {
+			return nil, fmt.Errorf("fetch manifest signature: %w", err)
+		}
+		publicKeyBody, _, err := l.fetchURL(ctx, metadata.SigningPublicKeyLookupURL)
+		if err != nil {
+			return nil, fmt.Errorf("fetch signing public key: %w", err)
+		}
+		if err := artifactverifier.VerifyDetachedArtifact(manifestBody, signatureBody, publicKeyBody); err != nil {
+			return nil, fmt.Errorf("manifest signature verification failed: %w", err)
+		}
 	}
 	digest := sha256.Sum256(manifestBody)
 	doc := &model.ManifestDocument{
@@ -167,7 +177,7 @@ func (l *Loader) getByMetadata(ctx context.Context, metadata model.ManifestMetad
 		Digest:       hex.EncodeToString(digest[:]),
 		SourceURL:    metadata.ManifestURL,
 		SignatureURL: metadata.ManifestSignatureURL,
-		Verified:     true,
+		Verified:     verified,
 		FetchedAt:    time.Now().UTC(),
 	}
 	if err := l.store(ctx, cacheKey, doc); err != nil {
@@ -210,7 +220,7 @@ func (l *Loader) loadFromCache(ctx context.Context, key string) (*model.Manifest
 	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
 		return nil, err
 	}
-	if !doc.Verified {
+	if !doc.Verified && !l.config.SkipSignatureVerification {
 		return nil, fmt.Errorf("cached manifest %q is not marked verified", key)
 	}
 	return &doc, nil
@@ -260,7 +270,7 @@ func splitNetworkID(networkID string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-func metadataFromRegistry(meta *model.RegistryMetadata) (model.ManifestMetadata, error) {
+func metadataFromRegistry(meta *model.RegistryMetadata, skipSig bool) (model.ManifestMetadata, error) {
 	if meta == nil {
 		return model.ManifestMetadata{}, fmt.Errorf("registry metadata cannot be nil")
 	}
@@ -269,18 +279,20 @@ func metadataFromRegistry(meta *model.RegistryMetadata) (model.ManifestMetadata,
 		ManifestSignatureURL:      meta.RawMeta["manifest_signature_url"],
 		SigningPublicKeyLookupURL: meta.RawMeta["signing_public_key_lookup_url"],
 	}
-	return result, validateMetadata(result)
+	return result, validateMetadata(result, skipSig)
 }
 
-func validateMetadata(metadata model.ManifestMetadata) error {
+func validateMetadata(metadata model.ManifestMetadata, skipSig bool) error {
 	if strings.TrimSpace(metadata.ManifestURL) == "" {
 		return fmt.Errorf("manifest_url missing in metadata")
 	}
-	if strings.TrimSpace(metadata.ManifestSignatureURL) == "" {
-		return fmt.Errorf("manifest_signature_url missing in metadata")
-	}
-	if strings.TrimSpace(metadata.SigningPublicKeyLookupURL) == "" {
-		return fmt.Errorf("signing_public_key_lookup_url missing in metadata")
+	if !skipSig {
+		if strings.TrimSpace(metadata.ManifestSignatureURL) == "" {
+			return fmt.Errorf("manifest_signature_url missing in metadata")
+		}
+		if strings.TrimSpace(metadata.SigningPublicKeyLookupURL) == "" {
+			return fmt.Errorf("signing_public_key_lookup_url missing in metadata")
+		}
 	}
 	return nil
 }

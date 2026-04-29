@@ -464,6 +464,95 @@ func TestGetByNetworkID_ForceRefreshOnStartBypassesOnce(t *testing.T) {
 	}
 }
 
+func TestGetByMetadata_SkipSignatureVerification(t *testing.T) {
+	manifest := []byte("manifest: unsigned")
+	requests := 0
+
+	originalHTTPClientFunc := httpClientFunc
+	httpClientFunc = func(timeout time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests++
+			if req.URL.String() == "https://example.org/manifest" {
+				return response(200, string(manifest), "application/yaml"), nil
+			}
+			return response(404, "not found", "text/plain"), nil
+		})}
+	}
+	defer func() { httpClientFunc = originalHTTPClientFunc }()
+
+	cache := &mockCache{store: map[string]string{}}
+	loader, _, err := New(context.Background(), cache, &mockRegistry{}, &Config{
+		SkipSignatureVerification: true,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	doc, err := loader.GetByMetadata(context.Background(), model.ManifestMetadata{
+		ManifestURL: "https://example.org/manifest",
+	})
+	if err != nil {
+		t.Fatalf("GetByMetadata() error = %v", err)
+	}
+	if doc.Verified {
+		t.Fatal("expected Verified=false when signature verification is skipped")
+	}
+	if string(doc.Content) != string(manifest) {
+		t.Fatalf("unexpected manifest content: %q", string(doc.Content))
+	}
+	if requests != 1 {
+		t.Fatalf("expected exactly 1 HTTP fetch (manifest only), got %d", requests)
+	}
+}
+
+func TestGetByNetworkID_SkipSignatureVerification(t *testing.T) {
+	manifest := []byte("manifest: unsigned")
+	requests := 0
+
+	originalHTTPClientFunc := httpClientFunc
+	httpClientFunc = func(timeout time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests++
+			if req.URL.String() == "https://example.org/manifest" {
+				return response(200, string(manifest), "application/yaml"), nil
+			}
+			return response(404, "not found", "text/plain"), nil
+		})}
+	}
+	defer func() { httpClientFunc = originalHTTPClientFunc }()
+
+	cache := &mockCache{store: map[string]string{}}
+	registry := &mockRegistry{
+		meta: &model.RegistryMetadata{
+			NamespaceIdentifier: "nfo.example.org",
+			RegistryName:        "network",
+			RawMeta: map[string]string{
+				"manifest_url": "https://example.org/manifest",
+			},
+		},
+	}
+	loader, _, err := New(context.Background(), cache, registry, &Config{
+		SkipSignatureVerification: true,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	doc, err := loader.GetByNetworkID(context.Background(), "nfo.example.org/network")
+	if err != nil {
+		t.Fatalf("GetByNetworkID() error = %v", err)
+	}
+	if doc.Verified {
+		t.Fatal("expected Verified=false when signature verification is skipped")
+	}
+	if string(doc.Content) != string(manifest) {
+		t.Fatalf("unexpected manifest content: %q", string(doc.Content))
+	}
+	if requests != 1 {
+		t.Fatalf("expected exactly 1 HTTP fetch (manifest only), got %d", requests)
+	}
+}
+
 func TestFetchURL_RejectsOversizedResponse(t *testing.T) {
 	loader, _, err := New(context.Background(), &mockCache{store: map[string]string{}}, &mockRegistry{}, &Config{})
 	if err != nil {

@@ -44,6 +44,13 @@ func (p manifestLoaderProvider) New(ctx context.Context, cache definition.Cache,
 		}
 		config.ForceRefreshOnStart = enabled
 	}
+	if raw := cfg["skipSignatureVerification"]; raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		config.SkipSignatureVerification = enabled
+	}
 	log.Debugf(ctx, "ManifestLoader config mapped: %+v", config)
 	return newManifestLoaderFunc(ctx, cache, registry, config)
 }

@@ -23,6 +23,7 @@ manifestLoader:
     fetchTimeoutSeconds: "30"
     forceRefreshOnStartup: false
     disableCache: false
+    skipSignatureVerification: false
 ```
 
 Supported config keys:
@@ -31,6 +32,7 @@ Supported config keys:
 - `fetchTimeoutSeconds`: HTTP timeout for manifest, signature, and key fetches.
 - `forceRefreshOnStartup`: optional. Defaults to `false`. Bypasses cache once per manifest key after process start, then resumes normal cache use.
 - `disableCache`: optional. Defaults to `false`. Bypasses cache entirely and skips cache writes. Useful for debugging manifest changes.
+- `skipSignatureVerification`: optional. Defaults to `false`. Skips fetching and verifying the manifest signature and signing public key. When enabled, `ManifestDocument.Verified` is set to `false`. **For local testing and unsigned environments only — do not use in production.**
 
 ## Verification payloads
 
@@ -44,6 +46,7 @@ Supported config keys:
 - If Redis or another persistent cache backend is used, restarting ONIX does not clear cached manifests.
 - `forceRefreshOnStartup` is the operator-friendly way to refresh stale manifests on restart without manually deleting cache keys.
 - `disableCache` is intended for debugging and should generally be left `false` in production.
+- `skipSignatureVerification` is intended for local testing with unsigned manifests and must not be enabled in production.
 - The loader now logs whether a manifest came from cache, bypassed cache, or was fetched and re-verified remotely.
 
 ## Trust boundary
