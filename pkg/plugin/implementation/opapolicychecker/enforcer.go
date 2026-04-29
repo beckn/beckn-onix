@@ -38,6 +38,13 @@ type PolicyConfig struct {
 	RuntimeConfig map[string]string
 }
 
+const (
+	policyTypeFile     = "file"
+	policyTypeDir      = "dir"
+	policyTypeBundle   = "bundle"
+	policyTypeManifest = "manifest"
+)
+
 var knownKeys = map[string]bool{
 	"networkPolicyConfig": true,
 	"enabled":             true,
@@ -121,21 +128,21 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 	config.Type = typ
 
 	switch typ {
-	case "file":
+	case policyTypeFile:
 		location, hasLoc := cfg["location"]
 		if !hasLoc || location == "" {
 			return nil, fmt.Errorf("'location' is required")
 		}
 		config.Location = location
 		config.PolicyPaths = append(config.PolicyPaths, location)
-	case "dir":
+	case policyTypeDir:
 		location, hasLoc := cfg["location"]
 		if !hasLoc || location == "" {
 			return nil, fmt.Errorf("'location' is required")
 		}
 		config.Location = location
 		config.PolicyPaths = append(config.PolicyPaths, location)
-	case "bundle":
+	case policyTypeBundle:
 		location, hasLoc := cfg["location"]
 		if !hasLoc || location == "" {
 			return nil, fmt.Errorf("'location' is required")
@@ -143,7 +150,7 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 		config.Location = location
 		config.IsBundle = true
 		config.PolicyPaths = append(config.PolicyPaths, location)
-	case "manifest":
+	case policyTypeManifest:
 		if location := strings.TrimSpace(cfg["location"]); location != "" {
 			return nil, fmt.Errorf("'location' must not be set for type=manifest")
 		}
@@ -151,7 +158,7 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 		return nil, fmt.Errorf("unsupported type %q (expected: file, dir, bundle, or manifest)", typ)
 	}
 
-	if typ != "manifest" {
+	if typ != policyTypeManifest {
 		query, hasQuery := cfg["query"]
 		if !hasQuery || query == "" {
 			return nil, fmt.Errorf("'query' is required (e.g., data.policy.violations)")
@@ -185,7 +192,7 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 	}
 
 	if verificationEnabled, ok := cfg["verification.enabled"]; ok && verificationEnabled != "" {
-		if config.Type == "manifest" {
+		if config.Type == policyTypeManifest {
 			return nil, fmt.Errorf("verification must not be configured for type=manifest; manifest verification is handled by the manifest loader")
 		}
 		enabled, err := strconv.ParseBool(verificationEnabled)
@@ -208,13 +215,13 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 			}
 
 			switch config.Type {
-			case "bundle":
+			case policyTypeBundle:
 				if config.Verification.SignatureLocation != "" {
 					return nil, fmt.Errorf("'verification.signatureLocation' must not be set for type=bundle; bundle signatures are read from inside the bundle")
 				}
-			case "dir":
+			case policyTypeDir:
 				return nil, fmt.Errorf("verification is not supported for type=dir; package the directory as a signed bundle instead")
-			case "file":
+			case policyTypeFile:
 				if config.Verification.SignatureLocation == "" {
 					return nil, fmt.Errorf("'verification.signatureLocation' is required when verification.enabled=true for type=%s", config.Type)
 				}
@@ -449,7 +456,7 @@ func loadPolicy(ctx context.Context, manifestLoader definition.ManifestLoader, p
 		return loaded, nil
 	}
 
-	if policyConfig.Type == "manifest" {
+	if policyConfig.Type == policyTypeManifest {
 		resolvedManifest, err := resolveManifestPolicyConfig(ctx, policyName, &policyConfig, manifestLoader)
 		if err != nil {
 			return nil, err
@@ -520,7 +527,7 @@ func logLoadedPolicy(ctx context.Context, networkScoped bool, policy *loadedPoli
 	}
 
 	if networkScoped {
-		if policy.sourceType == "manifest" {
+		if policy.sourceType == policyTypeManifest {
 			manifestSigned := "unknown"
 			if policy.manifestDeclaredSigned != nil {
 				manifestSigned = strconv.FormatBool(*policy.manifestDeclaredSigned)
