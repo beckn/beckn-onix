@@ -123,7 +123,7 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 
 	typ, hasType := cfg["type"]
 	if !hasType || typ == "" {
-		return nil, fmt.Errorf("'type' is required (file, dir, bundle, or manifest)")
+		return nil, fmt.Errorf("'type' is required (%s, %s, %s, or %s)", policyTypeFile, policyTypeDir, policyTypeBundle, policyTypeManifest)
 	}
 	config.Type = typ
 
@@ -152,10 +152,10 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 		config.PolicyPaths = append(config.PolicyPaths, location)
 	case policyTypeManifest:
 		if location := strings.TrimSpace(cfg["location"]); location != "" {
-			return nil, fmt.Errorf("'location' must not be set for type=manifest")
+			return nil, fmt.Errorf("'location' must not be set for type=%s", policyTypeManifest)
 		}
 	default:
-		return nil, fmt.Errorf("unsupported type %q (expected: file, dir, bundle, or manifest)", typ)
+		return nil, fmt.Errorf("unsupported type %q (expected: %s, %s, %s, or %s)", typ, policyTypeFile, policyTypeDir, policyTypeBundle, policyTypeManifest)
 	}
 
 	if typ != policyTypeManifest {
@@ -165,7 +165,7 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 		}
 		config.Query = query
 	} else if query := strings.TrimSpace(cfg["query"]); query != "" {
-		return nil, fmt.Errorf("'query' must not be set for type=manifest")
+		return nil, fmt.Errorf("'query' must not be set for type=%s", policyTypeManifest)
 	}
 
 	if actions, ok := cfg["actions"]; ok && actions != "" {
@@ -193,7 +193,7 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 
 	if verificationEnabled, ok := cfg["verification.enabled"]; ok && verificationEnabled != "" {
 		if config.Type == policyTypeManifest {
-			return nil, fmt.Errorf("verification must not be configured for type=manifest; manifest verification is handled by the manifest loader")
+			return nil, fmt.Errorf("verification must not be configured for type=%s; manifest verification is handled by the manifest loader", policyTypeManifest)
 		}
 		enabled, err := strconv.ParseBool(verificationEnabled)
 		if err != nil {
@@ -217,10 +217,10 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 			switch config.Type {
 			case policyTypeBundle:
 				if config.Verification.SignatureLocation != "" {
-					return nil, fmt.Errorf("'verification.signatureLocation' must not be set for type=bundle; bundle signatures are read from inside the bundle")
+					return nil, fmt.Errorf("'verification.signatureLocation' must not be set for type=%s; bundle signatures are read from inside the bundle", policyTypeBundle)
 				}
 			case policyTypeDir:
-				return nil, fmt.Errorf("verification is not supported for type=dir; package the directory as a signed bundle instead")
+				return nil, fmt.Errorf("verification is not supported for type=%s; package the directory as a signed bundle instead", policyTypeDir)
 			case policyTypeFile:
 				if config.Verification.SignatureLocation == "" {
 					return nil, fmt.Errorf("'verification.signatureLocation' is required when verification.enabled=true for type=%s", config.Type)
@@ -372,10 +372,10 @@ func mergeRuntimeConfig(base map[string]string, override map[string]string) map[
 
 func resolveManifestPolicyConfig(ctx context.Context, policyName string, baseConfig *PolicyConfig, manifestLoader definition.ManifestLoader) (*resolvedManifestPolicy, error) {
 	if policyName == "default" {
-		return nil, fmt.Errorf("default policy cannot use type=manifest")
+		return nil, fmt.Errorf("default policy cannot use type=%s", policyTypeManifest)
 	}
 	if manifestLoader == nil {
-		return nil, fmt.Errorf("type=manifest requires ManifestLoader plugin to be configured")
+		return nil, fmt.Errorf("type=%s requires ManifestLoader plugin to be configured", policyTypeManifest)
 	}
 
 	// OPA refresh re-resolves manifest-backed policies, but ManifestLoader owns
