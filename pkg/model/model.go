@@ -30,6 +30,13 @@ type Subscription struct {
 	Nonce            string    `json:"nonce,omitzero"`
 }
 
+// RegistryMetadata represents metadata configured on a registry itself rather than on a specific record.
+type RegistryMetadata struct {
+	NamespaceIdentifier string
+	RegistryName        string
+	RawMeta             map[string]string
+}
+
 // Authorization-related constants for headers.
 const (
 	AuthHeaderSubscriber          string = "Authorization"

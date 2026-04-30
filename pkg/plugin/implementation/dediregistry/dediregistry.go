@@ -88,6 +88,47 @@ func New(ctx context.Context, cfg *Config) (*DeDiRegistryClient, func() error, e
 	return client, closer, nil
 }
 
+// fetchDeDiData executes a GET request to url, reads the body, checks the status,
+// unmarshals the JSON envelope, and returns the inner "data" object.
+// operation is used only in error and log messages (e.g. "lookup", "registry metadata").
+func (c *DeDiRegistryClient) fetchDeDiData(ctx context.Context, url, operation string) (map[string]any, error) {
+	httpReq, err := retryablehttp.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create %s request: %w", operation, err)
+	}
+	httpReq = httpReq.WithContext(ctx)
+
+	log.Debugf(ctx, "Making DeDi %s request to: %s", operation, url)
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send DeDi %s request: %w", operation, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s response body: %w", operation, err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Errorf(ctx, nil, "DeDi %s request failed with status: %s, response: %s", operation, resp.Status, string(body))
+		return nil, fmt.Errorf("DeDi %s request failed with status: %s", operation, resp.Status)
+	}
+
+	var responseData map[string]any
+	if err := json.Unmarshal(body, &responseData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal %s response body: %w", operation, err)
+	}
+
+	data, ok := responseData["data"].(map[string]any)
+	if !ok {
+		log.Errorf(ctx, nil, "Invalid DeDi %s response format: missing or invalid data field", operation)
+		return nil, fmt.Errorf("invalid %s response format: missing data field", operation)
+	}
+
+	return data, nil
+}
+
 // Lookup implements RegistryLookup interface - calls the DeDi wrapper lookup endpoint and returns Subscription.
 func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription) ([]model.Subscription, error) {
 	// Extract subscriber ID and key ID from request (both come from Authorization header parsing)
@@ -101,52 +142,16 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 		return nil, fmt.Errorf("key_id is required for DeDi lookup")
 	}
 
-	lookupURL := fmt.Sprintf("%s/lookup/%s/%s/%s",
-		c.config.URL, subscriberID, c.config.RegistryName, keyID)
+	lookupURL := fmt.Sprintf("%s/lookup/%s/%s/%s", c.config.URL, subscriberID, c.config.RegistryName, keyID)
 
-	httpReq, err := retryablehttp.NewRequest("GET", lookupURL, nil)
+	data, err := c.fetchDeDiData(ctx, lookupURL, "record lookup")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq = httpReq.WithContext(ctx)
-
-	log.Debugf(ctx, "Making DeDi lookup request to: %s", lookupURL)
-	resp, err := c.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send DeDi lookup request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		log.Errorf(ctx, nil, "DeDi lookup request failed with status: %s, response: %s", resp.Status, string(body))
-		return nil, fmt.Errorf("DeDi lookup request failed with status: %s", resp.Status)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	// Parse response
-	var responseData map[string]interface{}
-	err = json.Unmarshal(body, &responseData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response body: %w", err)
+		return nil, err
 	}
 
 	log.Debugf(ctx, "DeDi lookup request successful, parsing response")
 
-	// Extract data field
-	data, ok := responseData["data"].(map[string]interface{})
-	if !ok {
-		log.Errorf(ctx, nil, "Invalid DeDi response format: missing or invalid data field")
-		return nil, fmt.Errorf("invalid response format: missing data field")
-	}
-
-	// Extract details field
-	details, ok := data["details"].(map[string]interface{})
+	details, ok := data["details"].(map[string]any)
 	if !ok {
 		log.Errorf(ctx, nil, "Invalid DeDi response format: missing or invalid details field")
 		return nil, fmt.Errorf("invalid response format: missing details field")
@@ -198,6 +203,50 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 	return []model.Subscription{subscription}, nil
 }
 
+// LookupRegistry fetches registry-level metadata for the given DeDi registry path.
+func (c *DeDiRegistryClient) LookupRegistry(ctx context.Context, namespaceIdentifier, registryName string) (*model.RegistryMetadata, error) {
+	if namespaceIdentifier == "" {
+		return nil, fmt.Errorf("namespaceIdentifier is required for DeDi registry lookup")
+	}
+	if registryName == "" {
+		return nil, fmt.Errorf("registryName is required for DeDi registry lookup")
+	}
+
+	lookupURL := fmt.Sprintf("%s/lookup/%s/%s", c.config.URL, namespaceIdentifier, registryName)
+
+	data, err := c.fetchDeDiData(ctx, lookupURL, "registry lookup")
+	if err != nil {
+		return nil, err
+	}
+
+	rawMetaValue, ok := data["meta"]
+	if !ok {
+		log.Errorf(ctx, nil, "Invalid DeDi response format: missing meta field")
+		return nil, fmt.Errorf("invalid response format: missing meta field")
+	}
+	rawMeta, ok := rawMetaValue.(map[string]any)
+	if !ok {
+		log.Errorf(ctx, nil, "Invalid DeDi response format: invalid meta field")
+		return nil, fmt.Errorf("invalid response format: invalid meta field")
+	}
+
+	meta := make(map[string]string, len(rawMeta))
+	for key, value := range rawMeta {
+		strValue, ok := value.(string)
+		if !ok {
+			log.Warnf(ctx, "Ignoring non-string registry metadata value for key %q: got %T", key, value)
+			continue
+		}
+		meta[key] = strValue
+	}
+
+	return &model.RegistryMetadata{
+		NamespaceIdentifier: namespaceIdentifier,
+		RegistryName:        registryName,
+		RawMeta:             meta,
+	}, nil
+}
+
 // parseTime converts string timestamp to time.Time
 func parseTime(timeStr string) time.Time {
 	if timeStr == "" {
@@ -210,14 +259,14 @@ func parseTime(timeStr string) time.Time {
 	return parsedTime
 }
 
-func extractStringSlice(ctx context.Context, fieldName string, value interface{}) []string {
+func extractStringSlice(ctx context.Context, fieldName string, value any) []string {
 	if value == nil {
 		return nil
 	}
 	switch v := value.(type) {
 	case []string:
 		return v
-	case []interface{}:
+	case []any:
 		out := make([]string, 0, len(v))
 		for i, item := range v {
 			str, ok := item.(string)

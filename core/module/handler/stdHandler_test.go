@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -122,20 +123,31 @@ func (noopPluginManager) SignValidator(context.Context, *plugin.Config) (definit
 func (noopPluginManager) Validator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
-func (noopPluginManager) Router(context.Context, *plugin.Config) (definition.Router, error) { return nil, nil }
+func (noopPluginManager) Router(context.Context, *plugin.Config) (definition.Router, error) {
+	return nil, nil
+}
 func (noopPluginManager) Publisher(context.Context, *plugin.Config) (definition.Publisher, error) {
 	return nil, nil
 }
-func (noopPluginManager) Signer(context.Context, *plugin.Config) (definition.Signer, error) { return nil, nil }
-func (noopPluginManager) Step(context.Context, *plugin.Config) (definition.Step, error) { return nil, nil }
-func (noopPluginManager) PolicyChecker(context.Context, *plugin.Config) (definition.PolicyChecker, error) {
+func (noopPluginManager) Signer(context.Context, *plugin.Config) (definition.Signer, error) {
 	return nil, nil
 }
-func (noopPluginManager) Cache(context.Context, *plugin.Config) (definition.Cache, error) { return nil, nil }
+func (noopPluginManager) Step(context.Context, *plugin.Config) (definition.Step, error) {
+	return nil, nil
+}
+func (noopPluginManager) PolicyChecker(context.Context, definition.ManifestLoader, *plugin.Config) (definition.PolicyChecker, error) {
+	return nil, nil
+}
+func (noopPluginManager) Cache(context.Context, *plugin.Config) (definition.Cache, error) {
+	return nil, nil
+}
 func (noopPluginManager) Registry(context.Context, *plugin.Config) (definition.RegistryLookup, error) {
 	return nil, nil
 }
 func (noopPluginManager) KeyManager(context.Context, definition.Cache, definition.RegistryLookup, *plugin.Config) (definition.KeyManager, error) {
+	return nil, nil
+}
+func (noopPluginManager) ManifestLoader(context.Context, definition.Cache, definition.RegistryMetadataLookup, *plugin.Config) (definition.ManifestLoader, error) {
 	return nil, nil
 }
 func (noopPluginManager) TransportWrapper(context.Context, *plugin.Config) (definition.TransportWrapper, error) {
@@ -144,6 +156,19 @@ func (noopPluginManager) TransportWrapper(context.Context, *plugin.Config) (defi
 func (noopPluginManager) SchemaValidator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
+
+type registryWithoutMetadata struct{}
+
+func (registryWithoutMetadata) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
+	return nil, errors.New("not implemented")
+}
+
+type stubCache struct{}
+
+func (stubCache) Get(context.Context, string) (string, error)              { return "", errors.New("cache miss") }
+func (stubCache) Set(context.Context, string, string, time.Duration) error { return nil }
+func (stubCache) Delete(context.Context, string) error                     { return nil }
+func (stubCache) Clear(context.Context) error                              { return nil }
 
 func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	ctx := context.Background()
@@ -160,6 +185,27 @@ func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "PolicyChecker plugin not configured") {
 		t.Fatalf("expected explicit PolicyChecker config error, got: %v", err)
+	}
+}
+
+func TestLoadManifestLoader_RequiresCache(t *testing.T) {
+	_, err := loadManifestLoader(context.Background(), noopPluginManager{}, nil, registryWithoutMetadata{}, &plugin.Config{ID: "manifestloader"})
+	if err == nil || !strings.Contains(err.Error(), "Cache plugin not configured") {
+		t.Fatalf("expected cache requirement error, got %v", err)
+	}
+}
+
+func TestLoadManifestLoader_RequiresRegistry(t *testing.T) {
+	_, err := loadManifestLoader(context.Background(), noopPluginManager{}, stubCache{}, nil, &plugin.Config{ID: "manifestloader"})
+	if err == nil || !strings.Contains(err.Error(), "Registry plugin not configured") {
+		t.Fatalf("expected registry requirement error, got %v", err)
+	}
+}
+
+func TestLoadManifestLoader_RequiresRegistryMetadataLookup(t *testing.T) {
+	_, err := loadManifestLoader(context.Background(), noopPluginManager{}, stubCache{}, registryWithoutMetadata{}, &plugin.Config{ID: "manifestloader"})
+	if err == nil || !strings.Contains(err.Error(), "does not implement RegistryMetadataLookup") {
+		t.Fatalf("expected RegistryMetadataLookup error, got %v", err)
 	}
 }
 

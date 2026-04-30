@@ -259,12 +259,12 @@ func (m *Manager) Step(ctx context.Context, cfg *Config) (definition.Step, error
 
 // PolicyChecker returns a PolicyChecker instance based on the provided configuration.
 // It registers a cleanup function for resource management.
-func (m *Manager) PolicyChecker(ctx context.Context, cfg *Config) (definition.PolicyChecker, error) {
+func (m *Manager) PolicyChecker(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *Config) (definition.PolicyChecker, error) {
 	pp, err := provider[definition.PolicyCheckerProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	checker, closer, err := pp.New(ctx, cfg.Config)
+	checker, closer, err := pp.New(ctx, manifestLoader, cfg.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -424,6 +424,26 @@ func (m *Manager) SimpleKeyManager(ctx context.Context, cache definition.Cache, 
 		})
 	}
 	return km, nil
+}
+
+// ManifestLoader returns a ManifestLoader instance based on the provided configuration.
+func (m *Manager) ManifestLoader(ctx context.Context, cache definition.Cache, lookup definition.RegistryMetadataLookup, cfg *Config) (definition.ManifestLoader, error) {
+	mlp, err := provider[definition.ManifestLoaderProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	loader, closer, err := mlp.New(ctx, cache, lookup, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.closers = append(m.closers, func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return loader, nil
 }
 
 // Registry returns a RegistryLookup instance based on the provided configuration.

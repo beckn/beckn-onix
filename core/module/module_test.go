@@ -18,7 +18,7 @@ import (
 // with support for dynamically setting behavior.
 type mockPluginManager struct {
 	middlewareFunc    func(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error)
-	policyCheckerFunc func(ctx context.Context, cfg *plugin.Config) (definition.PolicyChecker, error)
+	policyCheckerFunc func(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error)
 }
 
 // Middleware returns a mock middleware function based on the provided configuration.
@@ -71,6 +71,10 @@ func (m *mockPluginManager) KeyManager(ctx context.Context, cache definition.Cac
 	return nil, nil
 }
 
+func (m *mockPluginManager) ManifestLoader(ctx context.Context, cache definition.Cache, lookup definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.ManifestLoader, error) {
+	return nil, nil
+}
+
 // TransportWrapper returns a mock transport wrapper implementation.
 func (m *mockPluginManager) TransportWrapper(ctx context.Context, cfg *plugin.Config) (definition.TransportWrapper, error) {
 	return nil, nil
@@ -82,9 +86,9 @@ func (m *mockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Con
 }
 
 // PolicyChecker returns a mock policy checker implementation.
-func (m *mockPluginManager) PolicyChecker(ctx context.Context, cfg *plugin.Config) (definition.PolicyChecker, error) {
+func (m *mockPluginManager) PolicyChecker(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
 	if m.policyCheckerFunc != nil {
-		return m.policyCheckerFunc(ctx, cfg)
+		return m.policyCheckerFunc(ctx, manifestLoader, cfg)
 	}
 	return nil, nil
 }
@@ -117,7 +121,7 @@ func TestRegisterRejectsPolicyViolation(t *testing.T) {
 		middlewareFunc: func(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error) {
 			return func(next http.Handler) http.Handler { return next }, nil
 		},
-		policyCheckerFunc: func(ctx context.Context, cfg *plugin.Config) (definition.PolicyChecker, error) {
+		policyCheckerFunc: func(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
 			return mockPolicyChecker{err: model.NewBadReqErr(errors.New("blocked by policy"))}, nil
 		},
 	}

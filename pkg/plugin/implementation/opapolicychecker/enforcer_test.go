@@ -10,6 +10,8 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,7 +23,28 @@ import (
 	"github.com/open-policy-agent/opa/v1/bundle"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/security/artifactverifier"
 )
+
+type stubManifestLoader struct {
+	docs map[string]*model.ManifestDocument
+	err  error
+}
+
+func (s stubManifestLoader) GetByNetworkID(ctx context.Context, networkID string) (*model.ManifestDocument, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	doc, ok := s.docs[networkID]
+	if !ok {
+		return nil, fmt.Errorf("manifest not found for %s", networkID)
+	}
+	return doc, nil
+}
+
+func (s stubManifestLoader) GetByMetadata(ctx context.Context, metadata model.ManifestMetadata) (*model.ManifestDocument, error) {
+	return nil, errors.New("not implemented in test")
+}
 
 // Helper: create a StepContext with the given action path and JSON body.
 func makeStepCtx(action string, body string) *model.StepContext {
@@ -57,6 +80,13 @@ func writeNetworkPolicyConfig(t *testing.T, content string) string {
 func writeDefaultOnlyNetworkPolicyConfig(t *testing.T, entry string) string {
 	t.Helper()
 	return writeNetworkPolicyConfig(t, "networkPolicies:\n  default:\n"+indentYAML(entry, "    "))
+}
+
+func validManifestGovernanceYAML() string {
+	return fmt.Sprintf("governance:\n  effective_from: %q\n  effective_until: %q\n  signed: true\n",
+		time.Now().UTC().Add(-1*time.Hour).Format(time.RFC3339),
+		time.Now().UTC().Add(1*time.Hour).Format(time.RFC3339),
+	)
 }
 
 func indentYAML(s, prefix string) string {
@@ -172,6 +202,22 @@ func TestParsePolicyConfig_PolicyPaths(t *testing.T) {
 	}
 	if cfg.PolicyPaths[0] != "https://example.com/a.rego" {
 		t.Errorf("path[0] = %q", cfg.PolicyPaths[0])
+	}
+}
+
+func TestParsePolicyConfig_ManifestType(t *testing.T) {
+	cfg, err := parsePolicyConfig(map[string]string{
+		"type":    "manifest",
+		"actions": "confirm",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Type != "manifest" {
+		t.Fatalf("expected type manifest, got %q", cfg.Type)
+	}
+	if cfg.Location != "" || cfg.Query != "" || len(cfg.PolicyPaths) != 0 {
+		t.Fatalf("expected manifest config to defer location/query resolution, got %#v", cfg)
 	}
 }
 
@@ -891,7 +937,7 @@ func TestParseVerificationPublicKeyResponse_DeDiBase64Key(t *testing.T) {
 	}
 
 	body := `{"data":{"details":{"keyType":"RSA","keyFormat":"base64","publicKey":"` + base64.StdEncoding.EncodeToString(der) + `"}}}`
-	key, err := parseVerificationPublicKeyResponse([]byte(body))
+	key, err := artifactverifier.ParsePublicKeyResponse([]byte(body))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1755,6 +1801,309 @@ func TestExtractAction_NonStandardURLFallsBackToBody(t *testing.T) {
 	}
 	if action != "confirm" {
 		t.Fatalf("expected body fallback action 'confirm', got %q", action)
+	}
+}
+
+func TestEnforcer_ManifestBackedFilePolicy(t *testing.T) {
+	policy := []byte(`
+package policy
+import rego.v1
+default result := {"valid": true, "violations": []}
+result := {"valid": false, "violations": ["missing provider"]} if {
+  input.context.action == "confirm"
+  not input.message.order.provider
+}
+`)
+	signature, publicPEM := signArtifactRSA(t, policy)
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/policy.rego":
+			w.Write(policy)
+		case "/policy.rego.sig":
+			w.Write(signature)
+		case "/public.pem":
+			w.Write([]byte(publicPEM))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	manifest := strings.Join([]string{
+		`manifest_version: "1.0"`,
+		`manifest_type: "network-manifest"`,
+		`network_id: "retail.network/production"`,
+		`release_id: "2026.04"`,
+		`publisher:`,
+		`  role: "NFO"`,
+		`  domain: "example.org"`,
+		`policies:`,
+		`  type: "rego"`,
+		`  source: "file"`,
+		`  file:`,
+		`    id: "network-policy-file"`,
+		`    url: "` + server.URL + `/policy.rego"`,
+		`    policy_query_path: "data.policy.result"`,
+		`    signed: true`,
+		`    signature_url: "` + server.URL + `/policy.rego.sig"`,
+		`    signing_public_key_lookup_url: "` + server.URL + `/public.pem"`,
+		strings.TrimSuffix(validManifestGovernanceYAML(), "\n"),
+	}, "\n") + "\n"
+
+	configPath := writeNetworkPolicyConfig(t, `
+networkPolicies:
+  retail.network/production:
+    type: manifest
+    actions: confirm
+`)
+	enforcer, err := NewWithManifestLoader(context.Background(), stubManifestLoader{
+		docs: map[string]*model.ManifestDocument{
+			"retail.network/production": {Content: []byte(manifest), Verified: true},
+		},
+	}, map[string]string{
+		"networkPolicyConfig": configPath,
+	})
+	if err != nil {
+		t.Fatalf("NewWithManifestLoader failed: %v", err)
+	}
+
+	ctx := makeStepCtx("confirm", `{"context":{"action":"confirm","networkId":"retail.network/production"},"message":{"order":{}}}`)
+	if err := enforcer.CheckPolicy(ctx); err == nil || !strings.Contains(err.Error(), "missing provider") {
+		t.Fatalf("expected manifest-backed file violation, got %v", err)
+	}
+}
+
+func TestEnforcer_ManifestBackedBundlePolicy(t *testing.T) {
+	policy := `
+package retail.policy
+import rego.v1
+default result := {"valid": true, "violations": []}
+result := {"valid": false, "violations": ["bundle blocked"]} if {
+  input.context.action == "confirm"
+  not input.message.order.provider
+}
+`
+	bundleData := buildTestBundle(t, map[string]string{
+		"retail/policy.rego": policy,
+	})
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/policy-bundle.tar.gz":
+			w.Header().Set("Content-Type", "application/gzip")
+			w.Write(bundleData)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	manifest := strings.Join([]string{
+		`manifest_version: "1.0"`,
+		`manifest_type: "network-manifest"`,
+		`network_id: "retail.network/production"`,
+		`release_id: "2026.04"`,
+		`publisher:`,
+		`  role: "NFO"`,
+		`  domain: "example.org"`,
+		`policies:`,
+		`  type: "rego"`,
+		`  source: "bundle"`,
+		`  bundle:`,
+		`    id: "network-policy-bundle"`,
+		`    url: "` + server.URL + `/policy-bundle.tar.gz"`,
+		`    policy_query_path: "data.retail.policy.result"`,
+		`    signed: false`,
+		strings.TrimSuffix(validManifestGovernanceYAML(), "\n"),
+	}, "\n") + "\n"
+
+	configPath := writeNetworkPolicyConfig(t, `
+networkPolicies:
+  retail.network/production:
+    type: manifest
+    actions: confirm
+`)
+	enforcer, err := NewWithManifestLoader(context.Background(), stubManifestLoader{
+		docs: map[string]*model.ManifestDocument{
+			"retail.network/production": {Content: []byte(manifest), Verified: true},
+		},
+	}, map[string]string{
+		"networkPolicyConfig": configPath,
+	})
+	if err != nil {
+		t.Fatalf("NewWithManifestLoader failed: %v", err)
+	}
+
+	ctx := makeStepCtx("confirm", `{"context":{"action":"confirm","networkId":"retail.network/production"},"message":{"order":{}}}`)
+	if err := enforcer.CheckPolicy(ctx); err == nil || !strings.Contains(err.Error(), "bundle blocked") {
+		t.Fatalf("expected manifest-backed bundle violation, got %v", err)
+	}
+}
+
+func TestEnforcer_ManifestPolicyRequiresLoader(t *testing.T) {
+	configPath := writeNetworkPolicyConfig(t, `
+networkPolicies:
+  retail.network/production:
+    type: manifest
+`)
+
+	if _, err := New(context.Background(), map[string]string{
+		"networkPolicyConfig": configPath,
+	}); err == nil || !strings.Contains(err.Error(), "ManifestLoader") {
+		t.Fatalf("expected manifest loader requirement error, got %v", err)
+	}
+}
+
+func TestEnforcer_ManifestPolicyMissingPoliciesSection(t *testing.T) {
+	manifest := strings.Join([]string{
+		`manifest_version: "1.0"`,
+		`manifest_type: "network-manifest"`,
+		`network_id: "retail.network/production"`,
+		`release_id: "2026.04"`,
+		`publisher:`,
+		`  role: "NFO"`,
+		`  domain: "example.org"`,
+		strings.TrimSuffix(validManifestGovernanceYAML(), "\n"),
+	}, "\n") + "\n"
+
+	configPath := writeNetworkPolicyConfig(t, `
+networkPolicies:
+  retail.network/production:
+    type: manifest
+`)
+	if _, err := NewWithManifestLoader(context.Background(), stubManifestLoader{
+		docs: map[string]*model.ManifestDocument{
+			"retail.network/production": {Content: []byte(manifest), Verified: true},
+		},
+	}, map[string]string{
+		"networkPolicyConfig": configPath,
+	}); err == nil || !strings.Contains(err.Error(), "missing policies section") {
+		t.Fatalf("expected missing policies error, got %v", err)
+	}
+}
+
+func TestEnforcer_ManifestPolicyUnsupportedSource(t *testing.T) {
+	manifest := strings.Join([]string{
+		`manifest_version: "1.0"`,
+		`manifest_type: "network-manifest"`,
+		`network_id: "retail.network/production"`,
+		`release_id: "2026.04"`,
+		`publisher:`,
+		`  role: "NFO"`,
+		`  domain: "example.org"`,
+		`policies:`,
+		`  type: "rego"`,
+		`  source: "dir"`,
+		strings.TrimSuffix(validManifestGovernanceYAML(), "\n"),
+	}, "\n") + "\n"
+
+	configPath := writeNetworkPolicyConfig(t, `
+networkPolicies:
+  retail.network/production:
+    type: manifest
+`)
+	if _, err := NewWithManifestLoader(context.Background(), stubManifestLoader{
+		docs: map[string]*model.ManifestDocument{
+			"retail.network/production": {Content: []byte(manifest), Verified: true},
+		},
+	}, map[string]string{
+		"networkPolicyConfig": configPath,
+	}); err == nil || !strings.Contains(err.Error(), `unsupported policies.source "dir"`) {
+		t.Fatalf("expected unsupported source error, got %v", err)
+	}
+}
+
+func TestEnforcer_ManifestPolicyNetworkMismatch(t *testing.T) {
+	manifest := strings.Join([]string{
+		`manifest_version: "1.0"`,
+		`manifest_type: "network-manifest"`,
+		`network_id: "retail.network/sandbox"`,
+		`release_id: "2026.04"`,
+		`publisher:`,
+		`  role: "NFO"`,
+		`  domain: "example.org"`,
+		`policies:`,
+		`  type: "rego"`,
+		`  source: "file"`,
+		`  file:`,
+		`    id: "network-policy-file"`,
+		`    url: "https://example.org/policy.rego"`,
+		`    policy_query_path: "data.policy.result"`,
+		`    signed: false`,
+		strings.TrimSuffix(validManifestGovernanceYAML(), "\n"),
+	}, "\n") + "\n"
+
+	configPath := writeNetworkPolicyConfig(t, `
+networkPolicies:
+  retail.network/production:
+    type: manifest
+`)
+	if _, err := NewWithManifestLoader(context.Background(), stubManifestLoader{
+		docs: map[string]*model.ManifestDocument{
+			"retail.network/production": {Content: []byte(manifest), Verified: true},
+		},
+	}, map[string]string{
+		"networkPolicyConfig": configPath,
+	}); err == nil || !strings.Contains(err.Error(), "does not match configured network") {
+		t.Fatalf("expected network mismatch error, got %v", err)
+	}
+}
+
+func TestEnforcer_ManifestPolicyExpired(t *testing.T) {
+	manifest := strings.Join([]string{
+		`manifest_version: "1.0"`,
+		`manifest_type: "network-manifest"`,
+		`network_id: "retail.network/production"`,
+		`release_id: "2026.04"`,
+		`publisher:`,
+		`  role: "NFO"`,
+		`  domain: "example.org"`,
+		`policies:`,
+		`  type: "rego"`,
+		`  source: "file"`,
+		`  file:`,
+		`    id: "network-policy-file"`,
+		`    url: "https://example.org/policy.rego"`,
+		`    policy_query_path: "data.policy.result"`,
+		`    signed: false`,
+		fmt.Sprintf("governance:\n  effective_from: %q\n  effective_until: %q\n  signed: true\n",
+			time.Now().UTC().Add(-2*time.Hour).Format(time.RFC3339),
+			time.Now().UTC().Add(-1*time.Hour).Format(time.RFC3339),
+		),
+	}, "\n")
+
+	configPath := writeNetworkPolicyConfig(t, `
+networkPolicies:
+  retail.network/production:
+    type: manifest
+`)
+	if _, err := NewWithManifestLoader(context.Background(), stubManifestLoader{
+		docs: map[string]*model.ManifestDocument{
+			"retail.network/production": {Content: []byte(manifest), Verified: true},
+		},
+	}, map[string]string{
+		"networkPolicyConfig": configPath,
+	}); err == nil || !strings.Contains(err.Error(), "expired") {
+		t.Fatalf("expected expired manifest error, got %v", err)
+	}
+}
+
+func TestEnforcer_ManifestLoaderError(t *testing.T) {
+	configPath := writeNetworkPolicyConfig(t, `
+networkPolicies:
+  retail.network/production:
+    type: manifest
+`)
+
+	if _, err := NewWithManifestLoader(context.Background(), stubManifestLoader{
+		err: errors.New("lookup failed"),
+	}, map[string]string{
+		"networkPolicyConfig": configPath,
+	}); err == nil || !strings.Contains(err.Error(), "lookup failed") {
+		t.Fatalf("expected manifest loader error, got %v", err)
 	}
 }
 
