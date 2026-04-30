@@ -1,7 +1,10 @@
 package telemetry
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"os"
 	"testing"
 
 	"go.opentelemetry.io/otel/log"
@@ -34,10 +37,23 @@ func TestEmitAuditLogs_Disabled(t *testing.T) {
 
 	SetLogsEnabled(false)
 
-	// Should return early without panicking.
+	// Capture stdout to assert the disabled path emits no WARN.
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+
 	require.NotPanics(t, func() {
 		EmitAuditLogs(context.Background(), []byte(`{"message":"test"}`))
 	}, "EmitAuditLogs should not panic when logs are disabled")
+
+	w.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	os.Stdout = oldStdout
+
+	assert.NotContains(t, buf.String(), `"level":"warn"`,
+		"disabled path must not emit a WARN log on every request")
 }
 
 func TestEmitAuditLogs_Enabled(t *testing.T) {
