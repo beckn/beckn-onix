@@ -384,7 +384,11 @@ func (v *schemav2Validator) extractActionFromSchema(schema *openapi3.Schema) str
 // getActionValue extracts action value from context schema.
 func (v *schemav2Validator) getActionValue(contextSchema *openapi3.Schema) string {
 	if actionProp := contextSchema.Properties["action"]; actionProp != nil && actionProp.Value != nil {
-		// Check const field
+		// Native OpenAPI 3.1 const (kin-openapi >= v0.137 parses this into the typed field).
+		if action, ok := actionProp.Value.Const.(string); ok && action != "" {
+			return action
+		}
+		// Fallback: older kin-openapi versions surfaced const via Extensions.
 		if constVal, ok := actionProp.Value.Extensions["const"]; ok {
 			if action, ok := constVal.(string); ok {
 				return action
