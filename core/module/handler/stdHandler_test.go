@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -469,4 +470,60 @@ type mockRoundTripper struct{}
 
 func (m *mockRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) {
 	return nil, nil
+}
+
+func TestStepCtx_ProtocolVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		wantVer  string
+	}{
+		{
+			name:    "LTS version 2.0.0",
+			body:    `{"context":{"version":"2.0.0"}}`,
+			wantVer: "2.0.0",
+		},
+		{
+			name:    "RC escape hatch 2.0.0-rc",
+			body:    `{"context":{"version":"2.0.0-rc"}}`,
+			wantVer: "2.0.0-rc",
+		},
+		{
+			name:    "legacy version 1.1.0",
+			body:    `{"context":{"version":"1.1.0"}}`,
+			wantVer: "1.1.0",
+		},
+		{
+			name:    "version field missing",
+			body:    `{"context":{}}`,
+			wantVer: "",
+		},
+		{
+			name:    "context field missing",
+			body:    `{}`,
+			wantVer: "",
+		},
+		{
+			name:    "invalid JSON",
+			body:    `not-json`,
+			wantVer: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &stdHandler{
+				role:         model.RoleBAP,
+				SubscriberID: "test-subscriber",
+			}
+			req := httptest.NewRequest(http.MethodPost, "/search", bytes.NewBufferString(tt.body))
+			sctx, err := h.stepCtx(req, http.Header{})
+			if err != nil {
+				t.Fatalf("stepCtx() returned unexpected error: %v", err)
+			}
+			if sctx.ProtocolVersion != tt.wantVer {
+				t.Errorf("ProtocolVersion = %q, want %q", sctx.ProtocolVersion, tt.wantVer)
+			}
+		})
+	}
 }

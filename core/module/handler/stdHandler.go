@@ -198,14 +198,27 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 		return nil, model.NewBadReqErr(err)
 	}
 	r.Body.Close()
+	body := bodyBuffer.Bytes()
 	subID := h.subID(r.Context())
+	protocolVersion := extractProtocolVersion(body)
+	// Log the first 512 bytes of the body so protocol-version extraction failures
+	// can be diagnosed without enabling full request logging.
+	if len(body) > 512 {
+		log.Debugf(r.Context(), "stepCtx: extracted protocol version %q from body (truncated): %.512s", protocolVersion, body)
+	} else {
+		log.Debugf(r.Context(), "stepCtx: extracted protocol version %q from body: %s", protocolVersion, body)
+	}
+	// Store the protocol version in the Go context so downstream functions that
+	// only receive a context.Context (e.g. response.SendNack) can read it.
+	ctx := context.WithValue(r.Context(), model.ContextKeyProtocolVersion, protocolVersion)
 	return &model.StepContext{
-		Context:    r.Context(),
-		Request:    r,
-		Body:       bodyBuffer.Bytes(),
-		Role:       h.role,
-		SubID:      subID,
-		RespHeader: rh,
+		Context:         ctx,
+		Request:         r,
+		Body:            body,
+		Role:            h.role,
+		SubID:           subID,
+		RespHeader:      rh,
+		ProtocolVersion: protocolVersion,
 	}, nil
 }
 
