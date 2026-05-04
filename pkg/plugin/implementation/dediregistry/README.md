@@ -44,7 +44,7 @@ registry:
 GET {url}/lookup/{subscriber_id}/{registryName}/{key_id}
 ```
 
-**Example**: `https://api.beckn.io/registry/dedi/lookup/bpp.example.com/subscribers.beckn.one/76EU7K8oC9EQbXPMRL5uw3KbmTxbg3YDXHvm9nVQpK2eGghASnwHzm`
+**Example**: `https://fabric.nfh.global/registry/dedi/lookup/bpp.example.com/subscribers.beckn.one/76EU7ofwRCF1aobQkShARrf1PAUsNpHqWUJoynPu9w45YFKmzqaPmy`
 
 ### Authentication
 **No authentication required** - Beckn Registry API is public.
@@ -55,12 +55,12 @@ GET {url}/lookup/{subscriber_id}/{registryName}/{key_id}
 {
   "message": "Record retrieved from registry cache",
   "data": {
-    "record_id": "76EU8vY9TkuJ9T62Sc3FyQLf5Kt9YAVgbZhryX6mFi56ipefkP9d9a",
+    "record_id": "76EU7ofwRCF1aobQkShARrf1PAUsNpHqWUJoynPu9w45YFKmzqaPmy",
     "details": {
-      "url": "http://dev.np2.com/beckn/bap",
+      "url": "http://bpp.example.com/beckn/bap",
       "type": "BAP",
       "domain": "energy",
-      "subscriber_id": "dev.np2.com",
+      "subscriber_id": "bpp.example.com",
       "signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
       "encr_public_key": "test-encr-key"
     },
