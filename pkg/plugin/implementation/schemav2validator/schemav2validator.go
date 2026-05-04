@@ -77,7 +77,16 @@ func New(ctx context.Context, config *Config) (*schemav2Validator, func() error,
 		if config.ExtendedSchemaConfig.MaxCacheSize > 0 {
 			maxSize = config.ExtendedSchemaConfig.MaxCacheSize
 		}
+
 		v.schemaCache = newSchemaCache(maxSize)
+
+		if config.ExtendedSchemaConfig.DevTest {
+			log.Infof(ctx, "DevTest mode: preloading schemas from %s to memory", localSchemaBasePath)
+			if err := PreloadSchemasToCache(ctx, v.schemaCache, localSchemaBasePath); err != nil {
+				return nil, nil, fmt.Errorf("failed to preload schemas: %w", err)
+			}
+		}
+
 		log.Infof(ctx, "Initialized extended schema cache with max size: %d", maxSize)
 	}
 

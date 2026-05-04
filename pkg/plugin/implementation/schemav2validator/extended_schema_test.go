@@ -261,11 +261,13 @@ func TestNewSchemaCache(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cache := newSchemaCache(tt.maxSize)
-			
+
 			assert.NotNil(t, cache)
 			assert.Equal(t, tt.maxSize, cache.maxSize)
 			assert.NotNil(t, cache.schemas)
 			assert.Equal(t, 0, len(cache.schemas))
+			assert.NotNil(t, cache.rawSchemas)
+			assert.Equal(t, 0, len(cache.rawSchemas))
 		})
 	}
 }
@@ -467,7 +469,7 @@ components:
 	assert.NoError(t, err)
 	tmpFile.Close()
 	
-	doc, err := cache.loadSchemaFromPath(ctx, tmpFile.Name(), 1*time.Hour, 30*time.Second)
+	doc, err := cache.loadSchemaFromPath(ctx, tmpFile.Name(), 1*time.Hour, 30*time.Second, false)
 	assert.NoError(t, err)
 	assert.NotNil(t, doc)
 	assert.Equal(t, "3.1.0", doc.OpenAPI)
@@ -489,10 +491,10 @@ info:
 	tmpFile.Write([]byte(schemaContent))
 	tmpFile.Close()
 	
-	doc1, err := cache.loadSchemaFromPath(ctx, tmpFile.Name(), 1*time.Hour, 30*time.Second)
+	doc1, err := cache.loadSchemaFromPath(ctx, tmpFile.Name(), 1*time.Hour, 30*time.Second, false)
 	assert.NoError(t, err)
-	
-	doc2, err := cache.loadSchemaFromPath(ctx, tmpFile.Name(), 1*time.Hour, 30*time.Second)
+
+	doc2, err := cache.loadSchemaFromPath(ctx, tmpFile.Name(), 1*time.Hour, 30*time.Second, false)
 	assert.NoError(t, err)
 	
 	assert.Equal(t, doc1, doc2)
@@ -502,7 +504,7 @@ func TestLoadSchemaFromPath_InvalidPath(t *testing.T) {
 	cache := newSchemaCache(10)
 	ctx := context.Background()
 	
-	_, err := cache.loadSchemaFromPath(ctx, "/nonexistent/schema.yaml", 1*time.Hour, 30*time.Second)
+	_, err := cache.loadSchemaFromPath(ctx, "/nonexistent/schema.yaml", 1*time.Hour, 30*time.Second, false)
 	assert.Error(t, err)
 }
 
@@ -529,9 +531,9 @@ components:
 	tmpFile.Write([]byte(schemaContent))
 	tmpFile.Close()
 	
-	doc, err := cache.loadSchemaFromPath(ctx, tmpFile.Name(), 1*time.Hour, 30*time.Second)
+	doc, err := cache.loadSchemaFromPath(ctx, tmpFile.Name(), 1*time.Hour, 30*time.Second, false)
 	assert.NoError(t, err)
-	
+
 	schema, err := findSchemaByType(ctx, doc, "TestType")
 	assert.NoError(t, err)
 	assert.NotNil(t, schema)
@@ -557,9 +559,9 @@ components:
 	tmpFile.Write([]byte(schemaContent))
 	tmpFile.Close()
 	
-	doc, err := cache.loadSchemaFromPath(ctx, tmpFile.Name(), 1*time.Hour, 30*time.Second)
+	doc, err := cache.loadSchemaFromPath(ctx, tmpFile.Name(), 1*time.Hour, 30*time.Second, false)
 	assert.NoError(t, err)
-	
+
 	_, err = findSchemaByType(ctx, doc, "NonExistentType")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no schema found")
@@ -605,7 +607,7 @@ components:
 		},
 	}
 	
-	err = cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, nil)
+	err = cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, nil, false)
 	assert.NoError(t, err)
 }
 
@@ -648,7 +650,7 @@ components:
 		},
 	}
 	
-	err = cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, nil)
+	err = cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, nil, false)
 	assert.Error(t, err)
 }
 
@@ -665,7 +667,7 @@ func TestValidateReferencedObject_DomainNotAllowed(t *testing.T) {
 	
 	allowedDomains := []string{"trusted.com"}
 	
-	err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, allowedDomains)
+	err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, allowedDomains, false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "domain not allowed")
 }
