@@ -3,7 +3,89 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
+
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/dediregistry"
 )
+
+func TestDediRegistryProvider_ParseConfig(t *testing.T) {
+	provider := dediRegistryProvider{}
+	ctx := context.Background()
+
+	cfg := provider.parseConfig(ctx, map[string]string{
+		"url":            "https://test.com/dedi",
+		"registryName":   "subscribers.beckn.one",
+		"timeout":        "30",
+		"retry_max":      "5",
+		"retry_wait_min": "100ms",
+		"retry_wait_max": "2s",
+	})
+
+	if cfg.URL != "https://test.com/dedi" {
+		t.Fatalf("expected URL to be parsed, got %q", cfg.URL)
+	}
+	if cfg.RegistryName != "subscribers.beckn.one" {
+		t.Fatalf("expected RegistryName to be parsed, got %q", cfg.RegistryName)
+	}
+	if cfg.Timeout != 30 {
+		t.Fatalf("expected Timeout 30, got %d", cfg.Timeout)
+	}
+	if cfg.RetryMax != 5 {
+		t.Fatalf("expected RetryMax 5, got %d", cfg.RetryMax)
+	}
+	if cfg.RetryWaitMin != 100*time.Millisecond {
+		t.Fatalf("expected RetryWaitMin 100ms, got %v", cfg.RetryWaitMin)
+	}
+	if cfg.RetryWaitMax != 2*time.Second {
+		t.Fatalf("expected RetryWaitMax 2s, got %v", cfg.RetryWaitMax)
+	}
+}
+
+func TestDediRegistryProvider_New_ForwardsRetryConfig(t *testing.T) {
+	provider := dediRegistryProvider{}
+	originalNewDediRegistryFunc := newDediRegistryFunc
+	t.Cleanup(func() {
+		newDediRegistryFunc = originalNewDediRegistryFunc
+	})
+
+	var captured *dediregistry.Config
+	newDediRegistryFunc = func(ctx context.Context, cfg *dediregistry.Config) (*dediregistry.DeDiRegistryClient, func() error, error) {
+		captured = cfg
+		return new(dediregistry.DeDiRegistryClient), func() error { return nil }, nil
+	}
+
+	config := map[string]string{
+		"url":            "https://test.com/dedi",
+		"registryName":   "subscribers.beckn.one",
+		"timeout":        "30",
+		"retry_max":      "5",
+		"retry_wait_min": "100ms",
+		"retry_wait_max": "2s",
+	}
+
+	_, closer, err := provider.New(context.Background(), config)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if closer == nil {
+		t.Fatal("expected closer to be non-nil")
+	}
+	if err := closer(); err != nil {
+		t.Fatalf("closer() error = %v", err)
+	}
+	if captured == nil {
+		t.Fatal("expected config to be forwarded to client constructor")
+	}
+	if captured.RetryMax != 5 {
+		t.Fatalf("expected RetryMax 5, got %d", captured.RetryMax)
+	}
+	if captured.RetryWaitMin != 100*time.Millisecond {
+		t.Fatalf("expected RetryWaitMin 100ms, got %v", captured.RetryWaitMin)
+	}
+	if captured.RetryWaitMax != 2*time.Second {
+		t.Fatalf("expected RetryWaitMax 2s, got %v", captured.RetryWaitMax)
+	}
+}
 
 func TestDediRegistryProvider_New(t *testing.T) {
 	ctx := context.Background()
