@@ -26,7 +26,7 @@ plugins:
   keymanager:
     id: simplekeymanager
     config:
-      networkParticipant: bap-network
+      subscriberId: bap-network
       keyId: bap-network-key
       signingPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
       signingPublicKey: kUSiFNAD3+6oE7KffKucxZ74e6g4i9VM6ypImg4rVCM=
@@ -38,7 +38,7 @@ plugins:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `networkParticipant` | string | Yes | Identifier for the keyset, represents subscriberId or networkParticipant name |
+| `subscriberId` | string | Yes | Beckn subscriber identity for this node (e.g. `bpp.example.com`). Matches `handler.subscriberId`. Deprecated alias: `networkParticipant` (still accepted with a warning). |
 | `keyId` | string | Yes | Unique Key id for the keyset |
 | `signingPrivateKey` | string | Yes* | Ed25519 private key for signing (Base64 or PEM) |
 | `signingPublicKey` | string | Yes* | Ed25519 public key for signing (Base64 or PEM) |

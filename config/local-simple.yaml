@@ -46,7 +46,7 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            networkParticipant: bap-network
+            subscriberId: bap-network
             keyId: bap-network-key
             signingPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
             signingPublicKey: UX1EDpL4YHOnfkuhrtS+Bz18qwidrX+oJxButD8xaCE=
@@ -102,7 +102,7 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            networkParticipant: bap-network
+            subscriberId: bap-network
             keyId: bap-network-key
             signingPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
             signingPublicKey: UX1EDpL4YHOnfkuhrtS+Bz18qwidrX+oJxButD8xaCE=
@@ -148,7 +148,7 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            networkParticipant: bpp-network
+            subscriberId: bpp-network
             keyId: bpp-network-key
             signingPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
             signingPublicKey: 8CANv4rto7u6RZEB9b6z6mXIIfBLlExIRLBLd5YYl/Y=
@@ -199,7 +199,7 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            networkParticipant: bpp-network
+            subscriberId: bpp-network
             keyId: bpp-network-key
             signingPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
             signingPublicKey: 8CANv4rto7u6RZEB9b6z6mXIIfBLlExIRLBLd5YYl/Y=

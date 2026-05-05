@@ -49,7 +49,7 @@ modules:
         registry:
           id: dediregistry
           config:
-            url: https://fabric.nfh.global/registry/dedi # This is the registry URL.
+            url: https://api.dev.beckn.io/registry/dedi # This is the testnet URL. The production URL is https://api.beckn.io/registry/dedi
             registryName: subscribers.beckn.one # This is the wildcard string used to lookup across registries in Beckn One. Do not change this.
             timeout: 10
             retry_max: 3
@@ -58,12 +58,12 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            networkParticipant: bpp.example.com
-            keyId: 76EU7ofwRCF1aobQkShARrf1PAUsNpHqWUJoynPu9w45YFKmzqaPmy
-            signingPrivateKey: 393fVJJsfqssJCRAjedKR2cKAjSLrjU3t+bICQ5KzYM=
-            signingPublicKey: CqVy97DW45bcZPPrWIYGe2ldl9C93NFeVciiAEYsvR0=
-            encrPrivateKey: 393fVJJsfqssJCRAjedKR2cKAjSLrjU3t+bICQ5KzYM=
-            encrPublicKey: CqVy97DW45bcZPPrWIYGe2ldl9C93NFeVciiAEYsvR0=
+            subscriberId: ev-charging.sandbox2.com
+            keyId: 76EU7ncBX74BMNTQJMcMYoTMSzU7k71owUF53fN4jdxmosxZrdjdDk
+            signingPrivateKey: hnMdzvcZBnLJ6W1f4Y2ZCLlJo4phKMvs48ZbXjbS7/k=
+            signingPublicKey: H1xM/ejGIJpH+DmAF1A9KjBBLJ74pZ8B0gnZ4z4DIkU=
+            encrPrivateKey: hnMdzvcZBnLJ6W1f4Y2ZCLlJo4phKMvs48ZbXjbS7/k=
+            encrPublicKey: H1xM/ejGIJpH+DmAF1A9KjBBLJ74pZ8B0gnZ4z4DIkU=
         cache:
           id: cache
           config:
@@ -110,7 +110,7 @@ modules:
         registry:
           id: dediregistry
           config:
-            url: https://fabric.nfh.global/registry/dedi # This is the registry URL.
+            url: https://api.dev.beckn.io/registry/dedi # This is the testnet URL. The production URL is https://api.beckn.io/registry/dedi
             registryName: subscribers.beckn.one # This is the wildcard string used to lookup across registries in Beckn One. Do not change this.
             timeout: 10
             retry_max: 3
@@ -119,12 +119,12 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            networkParticipant: bpp.example.com
-            keyId: 76EU7ofwRCF1aobQkShARrf1PAUsNpHqWUJoynPu9w45YFKmzqaPmy
-            signingPrivateKey: 393fVJJsfqssJCRAjedKR2cKAjSLrjU3t+bICQ5KzYM=
-            signingPublicKey: CqVy97DW45bcZPPrWIYGe2ldl9C93NFeVciiAEYsvR0=
-            encrPrivateKey: 393fVJJsfqssJCRAjedKR2cKAjSLrjU3t+bICQ5KzYM=
-            encrPublicKey: CqVy97DW45bcZPPrWIYGe2ldl9C93NFeVciiAEYsvR0=
+            subscriberId: ev-charging.sandbox2.com
+            keyId: 76EU7ncBX74BMNTQJMcMYoTMSzU7k71owUF53fN4jdxmosxZrdjdDk
+            signingPrivateKey: hnMdzvcZBnLJ6W1f4Y2ZCLlJo4phKMvs48ZbXjbS7/k=
+            signingPublicKey: H1xM/ejGIJpH+DmAF1A9KjBBLJ74pZ8B0gnZ4z4DIkU=
+            encrPrivateKey: hnMdzvcZBnLJ6W1f4Y2ZCLlJo4phKMvs48ZbXjbS7/k=
+            encrPublicKey: H1xM/ejGIJpH+DmAF1A9KjBBLJ74pZ8B0gnZ4z4DIkU=
         cache:
           id: cache
           config:

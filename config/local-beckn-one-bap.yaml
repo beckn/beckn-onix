@@ -51,7 +51,7 @@ modules:
         registry:
           id: dediregistry
           config:
-            url: https://fabric.nfh.global/registry/dedi # This is the registry URL.
+            url: https://api.dev.beckn.io/registry/dedi # This is the testnet URL. The production URL is https://api.beckn.io/registry/dedi
             registryName: subscribers.beckn.one # This is the wildcard string used to lookup across registries in Beckn One. Do not change this.
             timeout: 10
             retry_max: 3
@@ -60,12 +60,12 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            networkParticipant: bap.example.com
-            keyId: 76EU7LZ7gfqj13dWDKR1Uitnim11mCoxWBPdzLxUpAMBPVdANKgyFM
-            signingPrivateKey: TTQMAEy0xJcoRXRNofZAwZq1c3VH6j98UUaHP7budQQ=
-            signingPublicKey: g/3swjI93IhZ0SScrVZapeLjU+W0AeiSid3LViYZJFo=
-            encrPrivateKey: TTQMAEy0xJcoRXRNofZAwZq1c3VH6j98UUaHP7budQQ=
-            encrPublicKey: g/3swjI93IhZ0SScrVZapeLjU+W0AeiSid3LViYZJFo=
+            subscriberId: ev-charging.sandbox1.com
+            keyId: 76EU7PktCXdPoNEZBjmg4Eb25A2egsd5MYJ67Qxza7bJQFvBHCYxgk
+            signingPrivateKey: 9NBh67Pk/6v3irrkYZHlQ5E1qw+GivHdDFtKeCylzIM=
+            signingPublicKey: Z3Hnc8FZDo/7dwWApeRVs6OV560gr7uxPsFUDGUMsBg=
+            encrPrivateKey: 9NBh67Pk/6v3irrkYZHlQ5E1qw+GivHdDFtKeCylzIM=
+            encrPublicKey: Z3Hnc8FZDo/7dwWApeRVs6OV560gr7uxPsFUDGUMsBg=
         cache:
           id: cache
           config:
@@ -117,7 +117,7 @@ modules:
         registry:
           id: dediregistry
           config:
-            url: https://fabric.nfh.global/registry/dedi # This is the registry URL.
+            url: https://api.dev.beckn.io/registry/dedi # This is the testnet URL. The production URL is https://api.beckn.io/registry/dedi
             registryName: subscribers.beckn.one # This is the wildcard string used to lookup across registries in Beckn One. Do not change this.
             timeout: 10
             retry_max: 3
@@ -126,12 +126,12 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            networkParticipant: bap.example.com
-            keyId: 76EU7LZ7gfqj13dWDKR1Uitnim11mCoxWBPdzLxUpAMBPVdANKgyFM
-            signingPrivateKey: TTQMAEy0xJcoRXRNofZAwZq1c3VH6j98UUaHP7budQQ=
-            signingPublicKey: g/3swjI93IhZ0SScrVZapeLjU+W0AeiSid3LViYZJFo=
-            encrPrivateKey: TTQMAEy0xJcoRXRNofZAwZq1c3VH6j98UUaHP7budQQ=
-            encrPublicKey: g/3swjI93IhZ0SScrVZapeLjU+W0AeiSid3LViYZJFo=
+            subscriberId: ev-charging.sandbox1.com
+            keyId: 76EU7PktCXdPoNEZBjmg4Eb25A2egsd5MYJ67Qxza7bJQFvBHCYxgk
+            signingPrivateKey: 9NBh67Pk/6v3irrkYZHlQ5E1qw+GivHdDFtKeCylzIM=
+            signingPublicKey: Z3Hnc8FZDo/7dwWApeRVs6OV560gr7uxPsFUDGUMsBg=
+            encrPrivateKey: 9NBh67Pk/6v3irrkYZHlQ5E1qw+GivHdDFtKeCylzIM=
+            encrPublicKey: Z3Hnc8FZDo/7dwWApeRVs6OV560gr7uxPsFUDGUMsBg=
         cache:
           id: cache
           config:

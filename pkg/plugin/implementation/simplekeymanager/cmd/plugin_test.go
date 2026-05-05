@@ -53,8 +53,8 @@ func TestSimpleKeyManagerProvider_New(t *testing.T) {
 		{
 			name: "valid config with keys",
 			config: map[string]string{
-				"networkParticipant": "bap-one",
-				"keyId":              "test-key",
+				"subscriberId": "bap-one",
+				"keyId":        "test-key",
 				"signingPrivateKey":  "dGVzdC1zaWduaW5nLXByaXZhdGU=",
 				"signingPublicKey":   "dGVzdC1zaWduaW5nLXB1YmxpYw==",
 				"encrPrivateKey":     "dGVzdC1lbmNyLXByaXZhdGU=",
@@ -146,8 +146,8 @@ func TestConfigMapping(t *testing.T) {
 	registry := &mockRegistry{}
 
 	configMap := map[string]string{
-		"networkParticipant": "mapped-np",
-		"keyId":              "mapped-key-id",
+		"subscriberId": "mapped-np",
+		"keyId":        "mapped-key-id",
 		"signingPrivateKey":  "dGVzdC1zaWduaW5nLXByaXZhdGU=",
 		"signingPublicKey":   "dGVzdC1zaWduaW5nLXB1YmxpYw==",
 		"encrPrivateKey":     "dGVzdC1lbmNyLXByaXZhdGU=",
@@ -162,6 +162,46 @@ func TestConfigMapping(t *testing.T) {
 		return
 	}
 
+	if cleanup != nil {
+		cleanup()
+	}
+}
+
+func TestDeprecatedNetworkParticipantKey(t *testing.T) {
+	provider := &simpleKeyManagerProvider{}
+	ctx := context.Background()
+	cache := &mockCache{}
+	registry := &mockRegistry{}
+
+	// Config using the deprecated networkParticipant key should still work.
+	_, cleanup, err := provider.New(ctx, cache, registry, map[string]string{
+		"networkParticipant": "bap-one",
+		"keyId":              "test-key",
+		"signingPrivateKey":  "dGVzdC1zaWduaW5nLXByaXZhdGU=",
+		"signingPublicKey":   "dGVzdC1zaWduaW5nLXB1YmxpYw==",
+		"encrPrivateKey":     "dGVzdC1lbmNyLXByaXZhdGU=",
+		"encrPublicKey":      "dGVzdC1lbmNyLXB1YmxpYw==",
+	})
+	if err != nil {
+		t.Errorf("deprecated networkParticipant key should still work: %v", err)
+	}
+	if cleanup != nil {
+		cleanup()
+	}
+
+	// subscriberId takes precedence over deprecated networkParticipant when both are present.
+	_, cleanup, err = provider.New(ctx, cache, registry, map[string]string{
+		"subscriberId":       "bap-primary",
+		"networkParticipant": "bap-ignored",
+		"keyId":              "test-key",
+		"signingPrivateKey":  "dGVzdC1zaWduaW5nLXByaXZhdGU=",
+		"signingPublicKey":   "dGVzdC1zaWduaW5nLXB1YmxpYw==",
+		"encrPrivateKey":     "dGVzdC1lbmNyLXByaXZhdGU=",
+		"encrPublicKey":      "dGVzdC1lbmNyLXB1YmxpYw==",
+	})
+	if err != nil {
+		t.Errorf("subscriberId should take precedence over networkParticipant: %v", err)
+	}
 	if cleanup != nil {
 		cleanup()
 	}
