@@ -88,7 +88,7 @@ type referencedObject struct {
 type schemaCache struct {
 	mu         sync.RWMutex
 	schemas    map[string]*cachedDomainSchema
-	rawSchemas map[string][]byte // preloaded raw YAML bytes keyed by "TypeName/attributes.yaml"
+	rawSchemas map[string][]byte // preloaded raw YAML bytes
 	maxSize    int
 }
 
@@ -305,13 +305,10 @@ func (c *schemaCache) cleanupExpired() int {
 func (c *schemaCache) loadSchemaFromPath(ctx context.Context, schemaPath string, ttl, timeout time.Duration, devTest bool) (*openapi3.T, error) {
 	urlHash := hashURL(schemaPath)
 
-	// Check cache first
-	if doc, found := c.get(urlHash); found {
-		log.Debugf(ctx, "Schema cache hit for: %s", schemaPath)
-		return doc, nil
+	u, parseErr := url.Parse(schemaPath)
+	if parseErr != nil {
+		return nil, fmt.Errorf("failed to parse schema URL %s: %w", schemaPath, parseErr)
 	}
-
-	log.Debugf(ctx, "Schema cache miss, loading from: %s", schemaPath)
 
 	loader := openapi3.NewLoader()
 	loader.IsExternalRefsAllowed = true
@@ -319,58 +316,60 @@ func (c *schemaCache) loadSchemaFromPath(ctx context.Context, schemaPath string,
 	var doc *openapi3.T
 	var err error
 
+	// Step 1: rawSchemas — preloaded local schemas, only consulted when devTest is enabled.
 	if devTest {
-		u, parseErr := url.Parse(schemaPath)
-		if parseErr != nil {
-			return nil, fmt.Errorf("failed to parse schema URL %s: %w", schemaPath, parseErr)
-		}
 		relPath := extractRelativeSchemaPath(u)
-		log.Debugf(ctx, "DevTest: loading from memory: %s -> %s", schemaPath, relPath)
+		if schemaBytes, ok := c.rawSchemas[relPath]; ok {
+			log.Debugf(ctx, "Loading from memory: %s -> %s", schemaPath, relPath)
 
-		schemaBytes, ok := c.rawSchemas[relPath]
-		if !ok {
-			return nil, fmt.Errorf("failed to load schema from %s: schema not found in memory (key %s)", schemaPath, relPath)
-		}
-
-		loader.ReadFromURIFunc = func(l *openapi3.Loader, refURL *url.URL) ([]byte, error) {
-			var refRelPath string
-			switch refURL.Scheme {
-			case "http", "https", "file":
-				refRelPath = extractRelativeSchemaPath(refURL)
-			default:
-				refRelPath = strings.TrimPrefix(refURL.Path, localSchemaBasePath+"/")
+			// $ref lookups: memory first, network fallback.
+			loader.ReadFromURIFunc = func(l *openapi3.Loader, refURL *url.URL) ([]byte, error) {
+				refRelPath := extractRelativeSchemaPath(refURL)
+				if data, ok := c.rawSchemas[refRelPath]; ok {
+					log.Debugf(ctx, "$ref from memory: %s -> %s", refURL.String(), refRelPath)
+					return data, nil
+				}
+				log.Debugf(ctx, "$ref not in memory, fetching from network: %s", refURL.String())
+				return openapi3.DefaultReadFromURI(l, refURL)
 			}
-			log.Debugf(ctx, "DevTest: resolving $ref %s -> %s", refURL.String(), refRelPath)
-			data, ok := c.rawSchemas[refRelPath]
-			if !ok {
-				return nil, fmt.Errorf("$ref schema not found in memory (key %s)", refRelPath)
+
+			baseURL := &url.URL{Scheme: "https", Host: "schema.beckn.io", Path: "/" + relPath}
+			doc, err = loader.LoadFromDataWithPath(schemaBytes, baseURL)
+			if err != nil {
+				log.Errorf(ctx, err, "Failed to load schema from memory: %s", schemaPath)
+				return nil, fmt.Errorf("failed to load schema from %s: %w", schemaPath, err)
 			}
-			return data, nil
+			if err := doc.Validate(ctx); err != nil {
+				log.Debugf(ctx, "Schema validation warnings for %s: %v", schemaPath, err)
+			}
+			c.set(urlHash, doc, ttl)
+			log.Debugf(ctx, "Loaded and cached schema from memory: %s", schemaPath)
+			return doc, nil
 		}
+	}
 
-		baseURL := &url.URL{Scheme: "https", Host: "schema.beckn.io", Path: "/" + relPath}
-		doc, err = loader.LoadFromDataWithPath(schemaBytes, baseURL)
+	// Step 2: LRU schemaCache — previously parsed docs.
+	if doc, found := c.get(urlHash); found {
+		log.Debugf(ctx, "Schema LRU cache hit for: %s", schemaPath)
+		return doc, nil
+	}
 
+	// Step 3: Network — fetch from @context URL.
+	log.Debugf(ctx, "Schema not in memory or cache, fetching from network: %s", schemaPath)
+	if !isValidSchemaPath(schemaPath) {
+		return nil, fmt.Errorf("invalid schema path: %s", schemaPath)
+	}
+	if u.Scheme == "http" || u.Scheme == "https" {
+		loadCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		loader.Context = loadCtx
+		doc, err = loader.LoadFromURI(u)
 	} else {
-		if !isValidSchemaPath(schemaPath) {
-			return nil, fmt.Errorf("invalid schema path: %s", schemaPath)
+		filePath := schemaPath
+		if u.Scheme == "file" {
+			filePath = u.Path
 		}
-
-		u, parseErr := url.Parse(schemaPath)
-		if parseErr == nil && (u.Scheme == "http" || u.Scheme == "https") {
-			// Load from URL with timeout
-			loadCtx, cancel := context.WithTimeout(ctx, timeout)
-			defer cancel()
-			loader.Context = loadCtx
-			doc, err = loader.LoadFromURI(u)
-		} else {
-			// Load from local file (file:// or path)
-			filePath := schemaPath
-			if u != nil && u.Scheme == "file" {
-				filePath = u.Path
-			}
-			doc, err = loader.LoadFromFile(filePath)
-		}
+		doc, err = loader.LoadFromFile(filePath)
 	}
 
 	if err != nil {
@@ -477,14 +476,6 @@ func isAllowedDomain(schemaURL string, allowedDomains []string) bool {
 	return false
 }
 
-// typeNameFromAtType strips any namespace prefix from an @type value.
-func typeNameFromAtType(atType string) string {
-	if idx := strings.LastIndex(atType, ":"); idx != -1 {
-		return atType[idx+1:]
-	}
-	return atType
-}
-
 // validateReferencedObject validates a single object with @context.
 func (c *schemaCache) validateReferencedObject(
 	ctx context.Context,
@@ -498,19 +489,21 @@ func (c *schemaCache) validateReferencedObject(
 		return fmt.Errorf("domain not allowed: %s", obj.Context)
 	}
 
-	var schemaPath string
+	var doc *openapi3.T
+
+	// DevTest: try @type-based rawSchemas lookup first.
 	if devTest {
-		// Use @type directly as the schema name — no URL parsing needed.
-		schemaPath = typeNameFromAtType(obj.Type) + "/attributes.yaml"
-		log.Debugf(ctx, "DevTest: using @type %q -> schema path %s", obj.Type, schemaPath)
-	} else {
-		schemaPath = transformContextToSchemaURL(obj.Context)
-		log.Debugf(ctx, "Transformed %s -> %s", obj.Context, schemaPath)
+		doc, _ = c.loadSchemaFromPath(ctx, obj.Type+"/attributes.yaml", ttl, timeout, devTest)
 	}
 
-	doc, err := c.loadSchemaFromPath(ctx, schemaPath, ttl, timeout, devTest)
-	if err != nil {
-		return fmt.Errorf("at %s: %w", obj.Path, err)
+	if doc == nil {
+		schemaPath := transformContextToSchemaURL(obj.Context)
+		log.Debugf(ctx, "Transformed %s -> %s (devTest=%v)", obj.Context, schemaPath, devTest)
+		var err error
+		doc, err = c.loadSchemaFromPath(ctx, schemaPath, ttl, timeout, false)
+		if err != nil {
+			return fmt.Errorf("at %s: %w", obj.Path, err)
+		}
 	}
 
 	// Find schema by @type
