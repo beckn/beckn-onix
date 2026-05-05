@@ -60,7 +60,7 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            networkParticipant: bap.example.com
+            subscriberId: bap.example.com
             keyId: 76EU7LZ7gfqj13dWDKR1Uitnim11mCoxWBPdzLxUpAMBPVdANKgyFM
             signingPrivateKey: TTQMAEy0xJcoRXRNofZAwZq1c3VH6j98UUaHP7budQQ=
             signingPublicKey: g/3swjI93IhZ0SScrVZapeLjU+W0AeiSid3LViYZJFo=
@@ -126,7 +126,7 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            networkParticipant: bap.example.com
+            subscriberId: bap.example.com
             keyId: 76EU7LZ7gfqj13dWDKR1Uitnim11mCoxWBPdzLxUpAMBPVdANKgyFM
             signingPrivateKey: TTQMAEy0xJcoRXRNofZAwZq1c3VH6j98UUaHP7budQQ=
             signingPublicKey: g/3swjI93IhZ0SScrVZapeLjU+W0AeiSid3LViYZJFo=

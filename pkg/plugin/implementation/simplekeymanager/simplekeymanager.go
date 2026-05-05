@@ -23,8 +23,8 @@ import (
 
 // Config holds configuration parameters for SimpleKeyManager.
 type Config struct {
-	NetworkParticipant string `yaml:"networkParticipant" json:"networkParticipant"`
-	KeyID              string `yaml:"keyId" json:"keyId"`
+	SubscriberID      string `yaml:"subscriberId" json:"subscriberId"`
+	KeyID             string `yaml:"keyId" json:"keyId"`
 	SigningPrivateKey  string `yaml:"signingPrivateKey" json:"signingPrivateKey"`
 	SigningPublicKey   string `yaml:"signingPublicKey" json:"signingPublicKey"`
 	EncrPrivateKey     string `yaml:"encrPrivateKey" json:"encrPrivateKey"`
@@ -75,7 +75,7 @@ func ValidateCfg(cfg *Config) error {
 
 	// But if keys are provided, all must be provided
 	hasKeys := cfg.SigningPrivateKey != "" || cfg.SigningPublicKey != "" ||
-		cfg.EncrPrivateKey != "" || cfg.EncrPublicKey != "" || cfg.NetworkParticipant != "" ||
+		cfg.EncrPrivateKey != "" || cfg.EncrPublicKey != "" || cfg.SubscriberID != "" ||
 		cfg.KeyID != ""
 
 	if hasKeys {
@@ -91,8 +91,8 @@ func ValidateCfg(cfg *Config) error {
 		if cfg.EncrPublicKey == "" {
 			return fmt.Errorf("%w: encrPublicKey is required when keys are configured", ErrInvalidConfig)
 		}
-		if cfg.NetworkParticipant == "" {
-			return fmt.Errorf("%w: networkParticipant is required when keys are configured", ErrInvalidConfig)
+		if cfg.SubscriberID == "" {
+			return fmt.Errorf("%w: subscriberId is required when keys are configured", ErrInvalidConfig)
 		}
 		if cfg.KeyID == "" {
 			return fmt.Errorf("%w: keyId is required when keys are configured", ErrInvalidConfig)
@@ -319,13 +319,12 @@ func (skm *SimpleKeyMgr) loadKeysFromConfig(ctx context.Context, cfg *Config) er
 			return fmt.Errorf("failed to parse encrPublicKey: %w", err)
 		}
 
-		// Determine keyID - use configured keyId or default to "default"
-		networkParticipant := cfg.NetworkParticipant
+		subscriberID := cfg.SubscriberID
 		keyId := cfg.KeyID
 
 		// Create keyset from configuration
 		keyset := &model.Keyset{
-			SubscriberID:   networkParticipant,
+			SubscriberID:   subscriberID,
 			UniqueKeyID:    keyId,
 			SigningPrivate: encodeBase64(signingPrivate),
 			SigningPublic:  encodeBase64(signingPublic),
@@ -333,9 +332,8 @@ func (skm *SimpleKeyMgr) loadKeysFromConfig(ctx context.Context, cfg *Config) er
 			EncrPublic:     encodeBase64(encrPublic),
 		}
 
-		// Store the keyset using the keyID
-		skm.keysets[networkParticipant] = keyset
-		log.Infof(ctx, "Successfully loaded keyset from configuration with keyID: %s", keyId)
+		skm.keysets[subscriberID] = keyset
+		log.Infof(ctx, "Successfully loaded keyset from configuration for subscriberID: %s, keyId: %s", subscriberID, keyId)
 	} else {
 		log.Debug(ctx, "No keys found in configuration, keyset storage will be empty initially")
 	}
