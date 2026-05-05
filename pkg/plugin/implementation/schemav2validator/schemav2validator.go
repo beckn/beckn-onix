@@ -80,9 +80,9 @@ func New(ctx context.Context, config *Config) (*schemav2Validator, func() error,
 
 		v.schemaCache = newSchemaCache(maxSize)
 
-		if config.ExtendedSchemaConfig.DevTest {
-			log.Infof(ctx, "DevTest mode: preloading schemas from %s to memory", localSchemaBasePath)
-			if err := PreloadSchemasToCache(ctx, v.schemaCache, localSchemaBasePath); err != nil {
+		if p := config.ExtendedSchemaConfig.LocalSchemaPath; p != "" {
+			log.Warnf(ctx, "Local schema mode: preloading schemas from %s", p)
+			if err := preloadSchemasToCache(ctx, v.schemaCache, p); err != nil {
 				return nil, nil, fmt.Errorf("failed to preload schemas: %w", err)
 			}
 		}

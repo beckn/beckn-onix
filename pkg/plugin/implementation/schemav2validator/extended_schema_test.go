@@ -2,7 +2,9 @@ package schemav2validator
 
 import (
 	"context"
+	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -708,4 +710,278 @@ func TestValidateExtendedSchemas_MissingMessage(t *testing.T) {
 	err := v.validateExtendedSchemas(ctx, body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "missing 'message' field")
+}
+
+func TestIsSchemaVersionSegment(t *testing.T) {
+	tests := []struct {
+		name string
+		seg  string
+		want bool
+	}{
+		{name: "v1", seg: "v1", want: true},
+		{name: "v2.1", seg: "v2.1", want: true},
+		{name: "v1.2.3", seg: "v1.2.3", want: true},
+		{name: "V2 uppercase", seg: "V2", want: true},
+		{name: "1.0 no prefix", seg: "1.0", want: true},
+		{name: "bare v", seg: "v", want: false},
+		{name: "type name", seg: "JobType", want: false},
+		{name: "empty", seg: "", want: false},
+		{name: "v1beta", seg: "v1beta", want: false},
+		{name: "plain word", seg: "main", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isSchemaVersionSegment(tt.seg))
+		})
+	}
+}
+
+func TestExtractRelativeSchemaPath(t *testing.T) {
+	tests := []struct {
+		name string
+		rawURL string
+		want string
+	}{
+		{
+			name:   "URL with /schema/ marker and version",
+			rawURL: "https://example.com/schema/JobType/v2.1/attributes.yaml",
+			want:   "JobType/attributes.yaml",
+		},
+		{
+			name:   "namespaced URL extracts last non-version segment",
+			rawURL: "https://example.com/schema/common/CodedValue/v2.1/attributes.yaml",
+			want:   "CodedValue/attributes.yaml",
+		},
+		{
+			name:   "GitHub raw URL without /schema/ marker",
+			rawURL: "https://raw.githubusercontent.com/org/repo/main/hiring-jobs/HiringJobResource/v2.1/attributes.yaml",
+			want:   "HiringJobResource/attributes.yaml",
+		},
+		{
+			name:   "context.jsonld URL",
+			rawURL: "https://example.com/schema/ChargingSession/v1/context.jsonld",
+			want:   "ChargingSession/attributes.yaml",
+		},
+		{
+			name:   "no version segment",
+			rawURL: "https://example.com/schema/JobType/attributes.yaml",
+			want:   "JobType/attributes.yaml",
+		},
+		{
+			name:   "bare key no scheme",
+			rawURL: "JobType/attributes.yaml",
+			want:   "JobType/attributes.yaml",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u, err := url.Parse(tt.rawURL)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, extractRelativeSchemaPath(u))
+		})
+	}
+}
+
+func TestRawSchemaKey(t *testing.T) {
+	tests := []struct {
+		name string
+		rel  string
+		want string
+	}{
+		{
+			name: "2-part path unchanged",
+			rel:  "JobType/attributes.yaml",
+			want: "JobType/attributes.yaml",
+		},
+		{
+			name: "3-part path strips version segment",
+			rel:  "JobType/v2.1/attributes.yaml",
+			want: "JobType/attributes.yaml",
+		},
+		{
+			name: "3-part path with v1.0",
+			rel:  "AnotherType/v1.0/attributes.yaml",
+			want: "AnotherType/attributes.yaml",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, rawSchemaKey(tt.rel))
+		})
+	}
+}
+
+func TestRawSchemaKey_ConsistentWithExtractRelativeSchemaPath(t *testing.T) {
+	cases := []struct {
+		fileRel   string
+		schemaURL string
+	}{
+		{
+			fileRel:   "JobType/v2.1/attributes.yaml",
+			schemaURL: "https://example.com/schema/JobType/v2.1/attributes.yaml",
+		},
+		{
+			fileRel:   "HiringJobResource/v2.1/attributes.yaml",
+			schemaURL: "https://raw.githubusercontent.com/org/repo/main/hiring-jobs/HiringJobResource/v2.1/attributes.yaml",
+		},
+	}
+	for _, c := range cases {
+		fileKey := rawSchemaKey(c.fileRel)
+		u, _ := url.Parse(c.schemaURL)
+		urlKey := extractRelativeSchemaPath(u)
+		assert.Equal(t, fileKey, urlKey, "key mismatch for %s", c.fileRel)
+	}
+}
+
+func TestPreloadSchemasToCache(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "schema-test-*")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	schemaContent := []byte(`openapi: 3.1.0
+info:
+  title: Test
+  version: 1.0.0`)
+
+	os.MkdirAll(filepath.Join(tmpDir, "TypeA", "v2.1"), 0755)
+	os.WriteFile(filepath.Join(tmpDir, "TypeA", "v2.1", "attributes.yaml"), schemaContent, 0644)
+
+	os.MkdirAll(filepath.Join(tmpDir, "TypeB", "v1.0"), 0755)
+	os.WriteFile(filepath.Join(tmpDir, "TypeB", "v1.0", "attributes.yaml"), schemaContent, 0644)
+
+	cache := newSchemaCache(10)
+	ctx := context.Background()
+
+	err = preloadSchemasToCache(ctx, cache, tmpDir)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(cache.rawSchemas))
+	assert.Contains(t, cache.rawSchemas, "TypeA/attributes.yaml")
+	assert.Contains(t, cache.rawSchemas, "TypeB/attributes.yaml")
+}
+
+func TestPreloadSchemasToCache_InvalidDir(t *testing.T) {
+	cache := newSchemaCache(10)
+	err := preloadSchemasToCache(context.Background(), cache, "/nonexistent/dir")
+	assert.Error(t, err)
+}
+
+func TestLoadSchemaFromPath_RawSchemasHit(t *testing.T) {
+	cache := newSchemaCache(10)
+	ctx := context.Background()
+
+	schemaContent := `openapi: 3.1.0
+info:
+  title: Test Schema
+  version: 1.0.0
+components:
+  schemas:
+    TestType:
+      type: object`
+
+	cache.rawSchemas["TestType/attributes.yaml"] = []byte(schemaContent)
+
+	doc, err := cache.loadSchemaFromPath(ctx, "TestType/attributes.yaml", 1*time.Hour, 30*time.Second, true)
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Equal(t, "3.1.0", doc.OpenAPI)
+}
+
+func TestLoadSchemaFromPath_LRUHit(t *testing.T) {
+	cache := newSchemaCache(10)
+	ctx := context.Background()
+
+	expected := &openapi3.T{OpenAPI: "3.1.0"}
+	cache.set(hashURL("TestType/attributes.yaml"), expected, 1*time.Hour)
+
+	// localSchema=false skips rawSchemas step, goes straight to LRU
+	doc, err := cache.loadSchemaFromPath(ctx, "TestType/attributes.yaml", 1*time.Hour, 30*time.Second, false)
+	assert.NoError(t, err)
+	assert.Equal(t, expected, doc)
+}
+
+func TestLoadSchemaFromPath_LocalMissFallsBackToFile(t *testing.T) {
+	cache := newSchemaCache(10)
+	ctx := context.Background()
+
+	tmpFile, err := os.CreateTemp("", "test-schema-*.yaml")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+
+	tmpFile.Write([]byte(`openapi: 3.1.0
+info:
+  title: Test Schema
+  version: 1.0.0`))
+	tmpFile.Close()
+
+	// rawSchemas empty, localSchema=true — local miss, falls through to file load
+	doc, err := cache.loadSchemaFromPath(ctx, tmpFile.Name(), 1*time.Hour, 30*time.Second, true)
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+}
+
+func TestValidateReferencedObject_LocalSchemaHit(t *testing.T) {
+	cache := newSchemaCache(10)
+	ctx := context.Background()
+
+	cache.rawSchemas["TestType/attributes.yaml"] = []byte(`openapi: 3.1.0
+info:
+  title: Test Schema
+  version: 1.0.0
+components:
+  schemas:
+    TestType:
+      type: object
+      properties:
+        field1:
+          type: string`)
+
+	obj := referencedObject{
+		Path: "message.test",
+		Type: "TestType",
+		Data: map[string]interface{}{
+			"@type":  "TestType",
+			"field1": "value1",
+		},
+	}
+
+	// localSchema=true, no @context — relies entirely on rawSchemas lookup by @type
+	err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, nil, true)
+	assert.NoError(t, err)
+}
+
+func TestValidateReferencedObject_LocalMissFallsBackToContext(t *testing.T) {
+	cache := newSchemaCache(10)
+	ctx := context.Background()
+
+	tmpFile, err := os.CreateTemp("", "test-schema-*.yaml")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+
+	tmpFile.Write([]byte(`openapi: 3.1.0
+info:
+  title: Test Schema
+  version: 1.0.0
+components:
+  schemas:
+    TestType:
+      type: object
+      properties:
+        field1:
+          type: string`))
+	tmpFile.Close()
+
+	obj := referencedObject{
+		Path:    "message.test",
+		Context: tmpFile.Name(),
+		Type:    "TestType",
+		Data: map[string]interface{}{
+			"@context": tmpFile.Name(),
+			"@type":    "TestType",
+			"field1":   "value1",
+		},
+	}
+
+	// rawSchemas empty, localSchema=true — local miss, falls back to @context file path
+	err = cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, nil, true)
+	assert.NoError(t, err)
 }

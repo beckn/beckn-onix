@@ -66,8 +66,8 @@ func (vp schemav2ValidatorProvider) New(ctx context.Context, config map[string]s
 		if v, ok := config["extendedSchema_allowedDomains"]; ok && v != "" {
 			cfg.ExtendedSchemaConfig.AllowedDomains = strings.Split(v, ",")
 		}
-		if v, ok := config["extendedSchema_devTest"]; ok {
-			cfg.ExtendedSchemaConfig.DevTest = v == "true"
+		if v, ok := config["extendedSchema_localSchemaPath"]; ok && v != "" {
+			cfg.ExtendedSchemaConfig.LocalSchemaPath = v
 		}
 
 	}
