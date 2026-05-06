@@ -40,8 +40,22 @@ schemaValidator:
 | `extendedSchema_maxCacheSize` | string | No | "100" | Maximum number of cached domain schemas |
 | `extendedSchema_downloadTimeout` | string | No | "30" | Timeout for downloading domain schemas |
 | `extendedSchema_allowedDomains` | string | No | "" | Comma-separated domain whitelist (empty = all allowed) |
+| `extendedSchema_localSchemaPath` | string | No | "" | Path to local schema directory; schemas preloaded at startup, network used as fallback |
 
+### Local Schema Directory Layout
 
+When `extendedSchema_localSchemaPath` is set, schemas are preloaded from that directory at startup. Each schema must follow this structure:
+
+```
+config/
+ schema/
+  <TypeName>/
+    attributes.yaml
+  <AnotherType>/
+    attributes.yaml
+```
+
+A startup warning is logged if no schemas are found, which usually means the directory path is wrong or the layout doesn't match the expected structure.
 
 ## How It Works
 
