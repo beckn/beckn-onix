@@ -1640,6 +1640,11 @@ networkPolicies:
 	if err := enforcer.CheckPolicy(logisticsCtx); err == nil || !strings.Contains(err.Error(), "logistics policy violation") {
 		t.Fatalf("expected logistics policy violation, got %v", err)
 	}
+
+	retailSnakeCtx := makeStepCtx("confirm", `{"context":{"action":"confirm","network_id":"retail.network/production"}}`)
+	if err := enforcer.CheckPolicy(retailSnakeCtx); err == nil || !strings.Contains(err.Error(), "retail policy violation") {
+		t.Fatalf("expected retail policy violation via snake_case network_id, got %v", err)
+	}
 }
 
 func TestEnforcer_NetworkPolicyDefaultFallback(t *testing.T) {

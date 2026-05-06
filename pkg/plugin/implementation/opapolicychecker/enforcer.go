@@ -652,19 +652,19 @@ func (e *PolicyEnforcer) reloadNetworkPolicies(ctx context.Context) {
 	log.Infof(ctx, "OPAPolicyChecker: network policies reloaded in %s (policies=%d, hasDefault=%t)", time.Since(start), len(policies), defaultPolicy != nil)
 }
 
-func (e *PolicyEnforcer) selectedPolicy(networkID string) (*loadedPolicy, string) {
+func (e *PolicyEnforcer) selectedPolicy(networkID string) *loadedPolicy {
 	e.evaluatorMu.RLock()
 	defer e.evaluatorMu.RUnlock()
 
 	if networkID != "" {
 		if policy, ok := e.policies[networkID]; ok {
-			return policy, networkID
+			return policy
 		}
 	}
 	if e.defaultPolicy != nil {
-		return e.defaultPolicy, networkID
+		return e.defaultPolicy
 	}
-	return nil, networkID
+	return nil
 }
 
 // CheckPolicy evaluates the message body against loaded OPA policies.
@@ -677,9 +677,9 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	}
 
 	reqCtx := parseRequestContext(ctx.Body)
-	policy, selectedNetworkID := e.selectedPolicy(reqCtx.NetworkID)
+	policy := e.selectedPolicy(reqCtx.NetworkID)
 	if policy == nil {
-		log.Debugf(ctx, "OPAPolicyChecker: no matching network policy for networkID=%q and no default configured, skipping", selectedNetworkID)
+		log.Debugf(ctx, "OPAPolicyChecker: no matching network policy for networkID=%q and no default configured, skipping", reqCtx.NetworkID)
 		return nil
 	}
 	policyConfig := policy.config
@@ -708,14 +708,14 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	}
 
 	if e.config.DebugLogging {
-		log.Debugf(ctx, "OPAPolicyChecker: evaluating policy for networkID=%q action=%q (modules=%v)", selectedNetworkID, action, ev.ModuleNames())
+		log.Debugf(ctx, "OPAPolicyChecker: evaluating policy for networkID=%q action=%q (modules=%v)", reqCtx.NetworkID, action, ev.ModuleNames())
 	}
 
 	requestLogCtx := formatRequestLogContext(reqCtx)
 
 	violations, err := ev.Evaluate(ctx, ctx.Body)
 	if err != nil {
-		log.Errorf(ctx, err, "OPAPolicyChecker: policy evaluation failed for networkID=%q%s: %v", selectedNetworkID, requestLogCtx, err)
+		log.Errorf(ctx, err, "OPAPolicyChecker: policy evaluation failed for networkID=%q%s: %v", reqCtx.NetworkID, requestLogCtx, err)
 		return model.NewBadReqErr(fmt.Errorf("policy evaluation error: %w", err))
 	}
 
@@ -727,7 +727,7 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	}
 
 	msg := fmt.Sprintf("policy violation(s): %s", strings.Join(violations, "; "))
-	log.Warnf(ctx, "OPAPolicyChecker: networkID=%q%s %s", selectedNetworkID, requestLogCtx, msg)
+	log.Warnf(ctx, "OPAPolicyChecker: networkID=%q%s %s", reqCtx.NetworkID, requestLogCtx, msg)
 	return model.NewBadReqErr(fmt.Errorf("%s", msg))
 }
 
@@ -771,8 +771,8 @@ func parseRequestContext(body []byte) parsedRequestContext {
 		BPPID:         get("bpp_id", "bppId"),
 		MessageID:     get("message_id", "messageId"),
 		TransactionID: get("transaction_id", "transactionId"),
-		Action:        get("action", "action"),
-		Timestamp:     get("timestamp", "timestamp"),
+		Action:        get("action", "action"), // "action" has no camelCase variant
+		Timestamp:     get("timestamp", "timestamp"), // "timestamp" has no camelCase variant
 	}
 }
 
