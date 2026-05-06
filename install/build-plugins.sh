@@ -25,6 +25,7 @@ plugins=(
     "signer"
     "signvalidator"
     "opapolicychecker"
+    "agentenginetransportwrapper"
 )
 
 for plugin in "${plugins[@]}"; do
