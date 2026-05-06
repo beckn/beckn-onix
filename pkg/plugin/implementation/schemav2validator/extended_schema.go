@@ -139,7 +139,11 @@ func preloadSchemasToCache(ctx context.Context, c *schemaCache, baseDir string) 
 	if err != nil {
 		return fmt.Errorf("schema preload failed: %w", err)
 	}
-	log.Infof(ctx, "Preloaded %d schemas to memory from %s", count, baseDir)
+	if count == 0 {
+		log.Warnf(ctx, "No schemas loaded from %s — expected layout: TypeName/attributes.yaml", baseDir)
+	} else {
+		log.Infof(ctx, "Preloaded %d schemas to memory from %s", count, baseDir)
+	}
 	return nil
 }
 
@@ -325,13 +329,19 @@ func (c *schemaCache) loadSchemaFromPath(ctx context.Context, schemaPath string,
 	// Step 1: rawSchemas — preloaded local schemas, only consulted when localSchema is enabled.
 	if localSchema {
 		relPath := extractRelativeSchemaPath(u)
-		if schemaBytes, ok := c.rawSchemas[relPath]; ok {
+		c.mu.RLock()
+		schemaBytes, ok := c.rawSchemas[relPath]
+		c.mu.RUnlock()
+		if ok {
 			log.Debugf(ctx, "Loading from memory: %s -> %s", schemaPath, relPath)
 
 			// $ref lookups: memory first, network fallback.
 			loader.ReadFromURIFunc = func(l *openapi3.Loader, refURL *url.URL) ([]byte, error) {
 				refRelPath := extractRelativeSchemaPath(refURL)
-				if data, ok := c.rawSchemas[refRelPath]; ok {
+				c.mu.RLock()
+				data, ok := c.rawSchemas[refRelPath]
+				c.mu.RUnlock()
+				if ok {
 					log.Debugf(ctx, "$ref from memory: %s -> %s", refURL.String(), refRelPath)
 					return data, nil
 				}
@@ -339,8 +349,7 @@ func (c *schemaCache) loadSchemaFromPath(ctx context.Context, schemaPath string,
 				return openapi3.DefaultReadFromURI(l, refURL)
 			}
 
-			baseURL := &url.URL{Scheme: "https", Host: "schema.beckn.io", Path: "/" + relPath}
-			doc, err = loader.LoadFromDataWithPath(schemaBytes, baseURL)
+			doc, err = loader.LoadFromData(schemaBytes)
 			if err != nil {
 				log.Errorf(ctx, err, "Failed to load schema from memory: %s", schemaPath)
 				return nil, fmt.Errorf("failed to load schema from %s: %w", schemaPath, err)

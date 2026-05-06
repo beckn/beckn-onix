@@ -772,6 +772,11 @@ func TestExtractRelativeSchemaPath(t *testing.T) {
 			rawURL: "JobType/attributes.yaml",
 			want:   "JobType/attributes.yaml",
 		},
+		{
+			name:   "relative path with ../ segments",
+			rawURL: "../../../../common/VerificationSummary/v2.1/attributes.yaml",
+			want:   "VerificationSummary/attributes.yaml",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -843,11 +848,11 @@ info:
   title: Test
   version: 1.0.0`)
 
-	os.MkdirAll(filepath.Join(tmpDir, "TypeA", "v2.1"), 0755)
-	os.WriteFile(filepath.Join(tmpDir, "TypeA", "v2.1", "attributes.yaml"), schemaContent, 0644)
+	os.MkdirAll(filepath.Join(tmpDir, "TypeA"), 0755)
+	os.WriteFile(filepath.Join(tmpDir, "TypeA", "attributes.yaml"), schemaContent, 0644)
 
-	os.MkdirAll(filepath.Join(tmpDir, "TypeB", "v1.0"), 0755)
-	os.WriteFile(filepath.Join(tmpDir, "TypeB", "v1.0", "attributes.yaml"), schemaContent, 0644)
+	os.MkdirAll(filepath.Join(tmpDir, "TypeB"), 0755)
+	os.WriteFile(filepath.Join(tmpDir, "TypeB", "attributes.yaml"), schemaContent, 0644)
 
 	cache := newSchemaCache(10)
 	ctx := context.Background()
