@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ func TestDediRegistryProvider_ParseConfig(t *testing.T) {
 	provider := dediRegistryProvider{}
 	ctx := context.Background()
 
-	cfg := provider.parseConfig(ctx, map[string]string{
+	cfg, err := provider.parseConfig(ctx, map[string]string{
 		"url":            "https://test.com/dedi",
 		"registryName":   "subscribers.beckn.one",
 		"timeout":        "30",
@@ -20,6 +21,9 @@ func TestDediRegistryProvider_ParseConfig(t *testing.T) {
 		"retry_wait_min": "100ms",
 		"retry_wait_max": "2s",
 	})
+	if err != nil {
+		t.Fatalf("parseConfig() error = %v", err)
+	}
 
 	if cfg.URL != "https://test.com/dedi" {
 		t.Fatalf("expected URL to be parsed, got %q", cfg.URL)
@@ -38,6 +42,76 @@ func TestDediRegistryProvider_ParseConfig(t *testing.T) {
 	}
 	if cfg.RetryWaitMax != 2*time.Second {
 		t.Fatalf("expected RetryWaitMax 2s, got %v", cfg.RetryWaitMax)
+	}
+}
+
+func TestDediRegistryProvider_ParseConfig_InvalidRetryConfig(t *testing.T) {
+	provider := dediRegistryProvider{}
+	ctx := context.Background()
+
+	tests := []struct {
+		name        string
+		config      map[string]string
+		expectedErr string
+	}{
+		{
+			name: "invalid retry_max",
+			config: map[string]string{
+				"url":          "https://test.com/dedi",
+				"registryName": "subscribers.beckn.one",
+				"retry_max":    "abc",
+			},
+			expectedErr: "invalid retry_max value 'abc'",
+		},
+		{
+			name: "invalid retry_wait_min",
+			config: map[string]string{
+				"url":            "https://test.com/dedi",
+				"registryName":   "subscribers.beckn.one",
+				"retry_wait_min": "notaduration",
+			},
+			expectedErr: "invalid retry_wait_min value 'notaduration'",
+		},
+		{
+			name: "invalid retry_wait_max",
+			config: map[string]string{
+				"url":            "https://test.com/dedi",
+				"registryName":   "subscribers.beckn.one",
+				"retry_wait_max": "notaduration",
+			},
+			expectedErr: "invalid retry_wait_max value 'notaduration'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := provider.parseConfig(ctx, tt.config)
+			if err == nil {
+				t.Fatal("expected parseConfig() to return an error")
+			}
+			if cfg != nil {
+				t.Fatalf("expected nil config on error, got %#v", cfg)
+			}
+			if !strings.Contains(err.Error(), tt.expectedErr) {
+				t.Fatalf("expected error to contain %q, got %q", tt.expectedErr, err.Error())
+			}
+		})
+	}
+}
+
+func TestDediRegistryProvider_New_InvalidRetryConfig(t *testing.T) {
+	provider := dediRegistryProvider{}
+
+	_, _, err := provider.New(context.Background(), map[string]string{
+		"url":          "https://test.com/dedi",
+		"registryName": "subscribers.beckn.one",
+		"retry_max":    "abc",
+	})
+	if err == nil {
+		t.Fatal("expected New() to return an error for invalid retry config")
+	}
+	if !strings.Contains(err.Error(), "failed to parse DeDi registry configuration") {
+		t.Fatalf("expected wrapped parse error, got %q", err.Error())
 	}
 }
 

@@ -19,7 +19,7 @@ type dediRegistryProvider struct{}
 // newDediRegistryFunc creates a new DeDi registry instance.
 var newDediRegistryFunc = dediregistry.New
 
-func (d dediRegistryProvider) parseConfig(ctx context.Context, config map[string]string) *dediregistry.Config {
+func (d dediRegistryProvider) parseConfig(ctx context.Context, config map[string]string) (*dediregistry.Config, error) {
 	dediConfig := &dediregistry.Config{
 		URL:          config["url"],
 		RegistryName: config["registryName"],
@@ -36,32 +36,32 @@ func (d dediRegistryProvider) parseConfig(ctx context.Context, config map[string
 
 	// Parse retry_max if provided.
 	if retryMaxStr, exists := config["retry_max"]; exists && retryMaxStr != "" {
-		if retryMax, err := strconv.Atoi(retryMaxStr); err == nil {
-			dediConfig.RetryMax = retryMax
-		} else {
-			log.Warnf(ctx, "Invalid retry_max value '%s', using default", retryMaxStr)
+		retryMax, err := strconv.Atoi(retryMaxStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid retry_max value '%s': %w", retryMaxStr, err)
 		}
+		dediConfig.RetryMax = retryMax
 	}
 
 	// Parse retry_wait_min if provided.
 	if retryWaitMinStr, exists := config["retry_wait_min"]; exists && retryWaitMinStr != "" {
-		if retryWaitMin, err := time.ParseDuration(retryWaitMinStr); err == nil {
-			dediConfig.RetryWaitMin = retryWaitMin
-		} else {
-			log.Warnf(ctx, "Invalid retry_wait_min value '%s', using default", retryWaitMinStr)
+		retryWaitMin, err := time.ParseDuration(retryWaitMinStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid retry_wait_min value '%s': %w", retryWaitMinStr, err)
 		}
+		dediConfig.RetryWaitMin = retryWaitMin
 	}
 
 	// Parse retry_wait_max if provided.
 	if retryWaitMaxStr, exists := config["retry_wait_max"]; exists && retryWaitMaxStr != "" {
-		if retryWaitMax, err := time.ParseDuration(retryWaitMaxStr); err == nil {
-			dediConfig.RetryWaitMax = retryWaitMax
-		} else {
-			log.Warnf(ctx, "Invalid retry_wait_max value '%s', using default", retryWaitMaxStr)
+		retryWaitMax, err := time.ParseDuration(retryWaitMaxStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid retry_wait_max value '%s': %w", retryWaitMaxStr, err)
 		}
+		dediConfig.RetryWaitMax = retryWaitMax
 	}
 
-	return dediConfig
+	return dediConfig, nil
 }
 
 // New creates a new DeDi registry plugin instance.
@@ -70,7 +70,12 @@ func (d dediRegistryProvider) New(ctx context.Context, config map[string]string)
 		return nil, nil, errors.New("context cannot be nil")
 	}
 
-	dediConfig := d.parseConfig(ctx, config)
+	dediConfig, err := d.parseConfig(ctx, config)
+	if err != nil {
+		log.Errorf(ctx, err, "Failed to parse DeDi registry configuration")
+		return nil, nil, fmt.Errorf("failed to parse DeDi registry configuration: %w", err)
+	}
+
 	allowedNetworkIDs, err := resolveAllowedNetworkIDs(config)
 	if err != nil {
 		return nil, nil, err
