@@ -30,6 +30,9 @@ func (d dediRegistryProvider) parseConfig(config map[string]string) (*dediregist
 		if err != nil {
 			return nil, fmt.Errorf("invalid timeout value '%s': %w", timeoutStr, err)
 		}
+		if timeout <= 0 {
+			return nil, fmt.Errorf("timeout must be positive, got %d", timeout)
+		}
 		dediConfig.Timeout = timeout
 	}
 
@@ -67,6 +70,11 @@ func (d dediRegistryProvider) parseConfig(config map[string]string) (*dediregist
 			return nil, fmt.Errorf("retry_wait_max must be non-negative, got %v", retryWaitMax)
 		}
 		dediConfig.RetryWaitMax = retryWaitMax
+	}
+
+	// Validate retry wait bounds relationship.
+	if dediConfig.RetryWaitMin > 0 && dediConfig.RetryWaitMax > 0 && dediConfig.RetryWaitMin > dediConfig.RetryWaitMax {
+		return nil, fmt.Errorf("retry_wait_min (%v) must not exceed retry_wait_max (%v)", dediConfig.RetryWaitMin, dediConfig.RetryWaitMax)
 	}
 
 	return dediConfig, nil

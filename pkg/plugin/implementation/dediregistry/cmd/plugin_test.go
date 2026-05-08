@@ -115,6 +115,34 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 			},
 			expectedErr: "retry_wait_max must be non-negative",
 		},
+		{
+			name: "zero timeout",
+			config: map[string]string{
+				"url":          "https://test.com/dedi",
+				"registryName": "subscribers.beckn.one",
+				"timeout":      "0",
+			},
+			expectedErr: "timeout must be positive",
+		},
+		{
+			name: "negative timeout",
+			config: map[string]string{
+				"url":          "https://test.com/dedi",
+				"registryName": "subscribers.beckn.one",
+				"timeout":      "-5",
+			},
+			expectedErr: "timeout must be positive",
+		},
+		{
+			name: "retry_wait_min exceeds retry_wait_max",
+			config: map[string]string{
+				"url":            "https://test.com/dedi",
+				"registryName":   "subscribers.beckn.one",
+				"retry_wait_min": "5s",
+				"retry_wait_max": "1s",
+			},
+			expectedErr: "retry_wait_min (5s) must not exceed retry_wait_max (1s)",
+		},
 	}
 
 	for _, tt := range tests {
@@ -254,6 +282,7 @@ func TestDediRegistryProvider_New_InvalidConfig(t *testing.T) {
 }
 
 func TestDediRegistryProvider_New_InvalidTimeout(t *testing.T) {
+	// Invalid timeout is now a hard error, not a warn-and-continue fallback.
 	provider := dediRegistryProvider{newFunc: dediregistry.New}
 
 	_, _, err := provider.New(context.Background(), map[string]string{
