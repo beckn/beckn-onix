@@ -31,7 +31,8 @@ func (f *fakeTokenSource) Token() (*oauth2.Token, error) {
 
 // installFakeTokens swaps the OAuth2 token-source factories for the test's
 // lifetime. ADC and impersonation paths return distinct tokens so callers
-// can distinguish which path was taken.
+// can distinguish which path was taken. Must be called BEFORE New() because
+// New() builds the token source eagerly.
 func installFakeTokens(t *testing.T, token string) {
 	t.Helper()
 	origDef := defaultOAuth2TokenSource
@@ -51,7 +52,7 @@ func installFakeTokens(t *testing.T, token string) {
 // recordingServer is an httptest.Server that records the last request served.
 type recordingServer struct {
 	*httptest.Server
-	mu     atomic.Value // holds *recordedRequest
+	last   atomic.Value // holds *recordedRequest
 	status int          // 0 => 200
 }
 
@@ -67,7 +68,7 @@ func newRecordingServer(t *testing.T, status int) *recordingServer {
 	rs.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		_ = r.Body.Close()
-		rs.mu.Store(&recordedRequest{
+		rs.last.Store(&recordedRequest{
 			Method: r.Method,
 			Header: r.Header.Clone(),
 			Body:   body,
@@ -84,7 +85,7 @@ func newRecordingServer(t *testing.T, status int) *recordingServer {
 }
 
 func (rs *recordingServer) Last() *recordedRequest {
-	v := rs.mu.Load()
+	v := rs.last.Load()
 	if v == nil {
 		return nil
 	}
@@ -110,6 +111,7 @@ func drainAndClose(body io.ReadCloser) {
 // ---- New() ---------------------------------------------------------------
 
 func TestNew_RejectsNilContext(t *testing.T) {
+	installFakeTokens(t, "tok")
 	_, _, err := New(nil, map[string]any{})
 	if err == nil || !strings.Contains(err.Error(), "context cannot be nil") {
 		t.Errorf("expected nil-context error, got %v", err)
@@ -117,12 +119,13 @@ func TestNew_RejectsNilContext(t *testing.T) {
 }
 
 func TestNew_RejectsWrongTypedConfigValues(t *testing.T) {
-	t.Run("service_account wrong type", func(t *testing.T) {
+	installFakeTokens(t, "tok")
+	t.Run("serviceAccount non-string", func(t *testing.T) {
 		_, _, err := New(context.Background(), map[string]any{
-			"service_account": []any{"x"}, // not a string
+			"serviceAccount": 0,
 		})
-		if err == nil || !strings.Contains(err.Error(), "service_account") {
-			t.Errorf("expected error mentioning 'service_account', got %v", err)
+		if err == nil || !strings.Contains(err.Error(), "serviceAccount") {
+			t.Errorf("expected error mentioning 'serviceAccount', got %v", err)
 		}
 	})
 	t.Run("absent keys default to empty", func(t *testing.T) {
@@ -136,25 +139,66 @@ func TestNew_RejectsWrongTypedConfigValues(t *testing.T) {
 	})
 }
 
-func TestNew_AcceptsServiceAccount(t *testing.T) {
-	w, closer, err := New(context.Background(), map[string]any{
-		"service_account": "sa@p.iam.gserviceaccount.com",
+// TestNew_BuildsTokenSourceEagerly verifies that auth misconfiguration is
+// surfaced at adapter startup, not at first callback.
+func TestNew_BuildsTokenSourceEagerly(t *testing.T) {
+	t.Run("ADC factory called once at New", func(t *testing.T) {
+		var calls int32
+		origDef := defaultOAuth2TokenSource
+		defer func() { defaultOAuth2TokenSource = origDef }()
+		defaultOAuth2TokenSource = func(ctx context.Context, scopes ...string) (oauth2.TokenSource, error) {
+			atomic.AddInt32(&calls, 1)
+			return &fakeTokenSource{token: "t"}, nil
+		}
+		w, _, err := New(context.Background(), map[string]any{})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if got := atomic.LoadInt32(&calls); got != 1 {
+			t.Errorf("ADC factory calls during New = %d, want 1", got)
+		}
+		if w.tokenSrc == nil {
+			t.Error("Wrapper.tokenSrc should be populated by New()")
+		}
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if closer != nil {
-		closer()
-	}
-	if w.serviceAccount != "sa@p.iam.gserviceaccount.com" {
-		t.Errorf("service_account not parsed; got %q", w.serviceAccount)
-	}
+	t.Run("impersonation factory called when SA configured", func(t *testing.T) {
+		var calls int32
+		origImp := impersonateOAuth2TokenSource
+		defer func() { impersonateOAuth2TokenSource = origImp }()
+		impersonateOAuth2TokenSource = func(ctx context.Context, sa string, scopes []string) (oauth2.TokenSource, error) {
+			atomic.AddInt32(&calls, 1)
+			return &fakeTokenSource{token: "imp:" + sa}, nil
+		}
+		_, _, err := New(context.Background(), map[string]any{
+			"serviceAccount": "sa@p.iam.gserviceaccount.com",
+		})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if got := atomic.LoadInt32(&calls); got != 1 {
+			t.Errorf("impersonation factory calls during New = %d, want 1", got)
+		}
+	})
+	t.Run("token source error fails New", func(t *testing.T) {
+		origDef := defaultOAuth2TokenSource
+		defer func() { defaultOAuth2TokenSource = origDef }()
+		defaultOAuth2TokenSource = func(ctx context.Context, scopes ...string) (oauth2.TokenSource, error) {
+			return nil, errors.New("ADC unavailable")
+		}
+		_, _, err := New(context.Background(), map[string]any{})
+		if err == nil || !strings.Contains(err.Error(), "ADC unavailable") {
+			t.Errorf("expected wrapped ADC error from New, got %v", err)
+		}
+	})
 }
 
 // ---- Wrap() --------------------------------------------------------------
 
 func TestWrap_WithNilBaseUsesDefault(t *testing.T) {
-	w := &Wrapper{ctx: context.Background()}
+	w := &Wrapper{
+		ctx:      context.Background(),
+		tokenSrc: &fakeTokenSource{token: "t"},
+	}
 	rt := w.Wrap(nil)
 	if rt == nil {
 		t.Fatal("Wrap returned nil")
@@ -296,6 +340,20 @@ func TestRoundTrip_BadBodyReturnsError(t *testing.T) {
 	}
 }
 
+func TestRoundTrip_NilBodyReturnsError(t *testing.T) {
+	installFakeTokens(t, "tok")
+	w, _, _ := New(context.Background(), map[string]any{})
+	rt := w.Wrap(http.DefaultTransport)
+
+	// Request with no body at all (not even an empty Reader). extractAction
+	// should report "body is empty" and the wrapper should surface it.
+	req, _ := http.NewRequest(http.MethodPost, "http://example.com", nil)
+	_, err := rt.RoundTrip(req)
+	if err == nil || !strings.Contains(err.Error(), "body is empty") {
+		t.Errorf("expected 'body is empty' error, got %v", err)
+	}
+}
+
 func TestRoundTrip_OriginalRequestNotMutated(t *testing.T) {
 	installFakeTokens(t, "tok")
 	srv := newRecordingServer(t, http.StatusOK)
@@ -323,7 +381,7 @@ func TestRoundTrip_ImpersonationPathUsedWhenSAConfigured(t *testing.T) {
 
 	srv := newRecordingServer(t, http.StatusOK)
 	w, _, _ := New(context.Background(), map[string]any{
-		"service_account": "sa@p.iam.gserviceaccount.com",
+		"serviceAccount": "sa@p.iam.gserviceaccount.com",
 	})
 	rt := w.Wrap(http.DefaultTransport)
 
@@ -342,89 +400,136 @@ func TestRoundTrip_ImpersonationPathUsedWhenSAConfigured(t *testing.T) {
 	}
 }
 
-func TestRoundTrip_TokenMintErrorPropagates(t *testing.T) {
-	origDef := defaultOAuth2TokenSource
-	defer func() { defaultOAuth2TokenSource = origDef }()
-	defaultOAuth2TokenSource = func(ctx context.Context, scopes ...string) (oauth2.TokenSource, error) {
-		return nil, errors.New("boom from credentials lib")
-	}
+// TestRoundTrip_RedirectReplaysWrappedBody verifies that a 307 redirect from
+// the upstream replays the WRAPPED envelope, not the original Beckn body.
+// This guards against http.Request.GetBody (shallow-copied by req.Clone)
+// returning the unwrapped body.
+func TestRoundTrip_RedirectReplaysWrappedBody(t *testing.T) {
+	installFakeTokens(t, "tok")
+
+	// Capture every body the upstream sees.
+	var (
+		mu             sync.Mutex
+		bodiesReceived [][]byte
+	)
+	finalSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodiesReceived = append(bodiesReceived, body)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"message":{"ack":{"status":"ACK"}}}`))
+	}))
+	defer finalSrv.Close()
+
+	redirectSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodiesReceived = append(bodiesReceived, body)
+		mu.Unlock()
+		// 307 preserves method + body; the client must replay via GetBody.
+		http.Redirect(w, r, finalSrv.URL+"/redirected", http.StatusTemporaryRedirect)
+	}))
+	defer redirectSrv.Close()
 
 	w, _, _ := New(context.Background(), map[string]any{})
-	rt := w.Wrap(http.DefaultTransport)
+	// Use a dedicated client so we get redirect-following + access to our wrapper.
+	client := &http.Client{Transport: w.Wrap(http.DefaultTransport)}
 
-	body := []byte(`{"context":{"action":"on_discover"},"message":{}}`)
-	req, _ := http.NewRequest(http.MethodPost, "http://example.com",
-		bytes.NewReader(body))
-	_, err := rt.RoundTrip(req)
-	if err == nil || !strings.Contains(err.Error(), "boom") {
-		t.Errorf("expected wrapped 'boom' error, got %v", err)
+	originalBody := []byte(`{"context":{"action":"on_discover"},"message":{}}`)
+	req, _ := http.NewRequest(http.MethodPost, redirectSrv.URL,
+		bytes.NewReader(originalBody))
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("client.Do: %v", err)
 	}
-}
+	drainAndClose(resp.Body)
 
-// ---- tokenSource() cache + concurrency -----------------------------------
-
-func TestTokenSource_CachesSingleSource(t *testing.T) {
-	var calls int32
-	origDef := defaultOAuth2TokenSource
-	defer func() { defaultOAuth2TokenSource = origDef }()
-	defaultOAuth2TokenSource = func(ctx context.Context, scopes ...string) (oauth2.TokenSource, error) {
-		atomic.AddInt32(&calls, 1)
-		return &fakeTokenSource{token: "t"}, nil
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodiesReceived) != 2 {
+		t.Fatalf("upstream saw %d requests, want 2 (initial + redirect replay)",
+			len(bodiesReceived))
 	}
-
-	tr := &aeTransport{ctx: context.Background()}
-	for i := 0; i < 5; i++ {
-		if _, err := tr.tokenSource(); err != nil {
-			t.Fatalf("call %d failed: %v", i, err)
+	for i, b := range bodiesReceived {
+		if bytes.Equal(b, originalBody) {
+			t.Errorf("hop %d received the ORIGINAL unwrapped body; "+
+				"GetBody was not refreshed after setBody. body=%s", i, b)
+		}
+		// Sanity: each body must be the wrapped envelope.
+		var env agentEngineEnvelope
+		if err := json.Unmarshal(b, &env); err != nil {
+			t.Errorf("hop %d body is not JSON: %v (body=%s)", i, err, b)
+			continue
+		}
+		if env.ClassMethod != "on_discover" {
+			t.Errorf("hop %d class_method = %q, want on_discover", i, env.ClassMethod)
 		}
 	}
-	if calls != 1 {
-		t.Errorf("expected 1 underlying construction, got %d", calls)
-	}
 }
 
-func TestTokenSource_ConcurrentAccess(t *testing.T) {
-	var calls int32
+// TestRoundTrip_RespectsRequestContext verifies that a hung token-mint call
+// does not outlive the per-request context deadline.
+func TestRoundTrip_RespectsRequestContext(t *testing.T) {
+	// A token source whose Token() blocks until the test cleanup signals it.
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+
 	origDef := defaultOAuth2TokenSource
 	defer func() { defaultOAuth2TokenSource = origDef }()
 	defaultOAuth2TokenSource = func(ctx context.Context, scopes ...string) (oauth2.TokenSource, error) {
-		atomic.AddInt32(&calls, 1)
-		return &fakeTokenSource{token: "t"}, nil
+		return blockingTokenSource{stop: stop}, nil
 	}
 
-	tr := &aeTransport{ctx: context.Background()}
-	const goroutines = 50
-	var wg sync.WaitGroup
-	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
-		go func() {
-			defer wg.Done()
-			_, _ = tr.tokenSource()
-		}()
+	w, _, err := New(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
 	}
-	wg.Wait()
+	rt := w.Wrap(http.DefaultTransport)
 
-	// Allow 1-2 to tolerate the narrow race window; guards against gross over-construction.
-	if calls > 2 {
-		t.Errorf("expected at most 2 constructions under concurrency, got %d", calls)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	body := []byte(`{"context":{"action":"on_discover"},"message":{}}`)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.com",
+		bytes.NewReader(body))
+
+	start := time.Now()
+	_, err = rt.RoundTrip(req)
+	elapsed := time.Since(start)
+
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected DeadlineExceeded, got %v", err)
+	}
+	// Should bail roughly at the deadline; allow plenty of headroom for slow CI.
+	if elapsed > 2*time.Second {
+		t.Errorf("RoundTrip blocked for %s, expected ~50ms", elapsed)
 	}
 }
 
-func TestTokenSource_FactoryError(t *testing.T) {
+type blockingTokenSource struct{ stop <-chan struct{} }
+
+func (b blockingTokenSource) Token() (*oauth2.Token, error) {
+	<-b.stop
+	return &oauth2.Token{AccessToken: "never-returned"}, nil
+}
+
+// ---- buildTokenSource ----------------------------------------------------
+
+func TestBuildTokenSource_FactoryError(t *testing.T) {
 	origDef := defaultOAuth2TokenSource
 	defer func() { defaultOAuth2TokenSource = origDef }()
 	defaultOAuth2TokenSource = func(ctx context.Context, scopes ...string) (oauth2.TokenSource, error) {
 		return nil, errors.New("boom from credentials library")
 	}
 
-	tr := &aeTransport{ctx: context.Background()}
-	_, err := tr.tokenSource()
+	_, err := buildTokenSource(context.Background(), "")
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Errorf("expected error containing 'boom', got %v", err)
 	}
 }
 
-func TestTokenSource_ImpersonationFactoryUsed(t *testing.T) {
+func TestBuildTokenSource_ImpersonationFactoryUsed(t *testing.T) {
 	origDef := defaultOAuth2TokenSource
 	origImp := impersonateOAuth2TokenSource
 	defer func() {
@@ -439,11 +544,7 @@ func TestTokenSource_ImpersonationFactoryUsed(t *testing.T) {
 		return &fakeTokenSource{token: "imp:" + sa}, nil
 	}
 
-	tr := &aeTransport{
-		ctx:            context.Background(),
-		serviceAccount: "sa@p.iam.gserviceaccount.com",
-	}
-	ts, err := tr.tokenSource()
+	ts, err := buildTokenSource(context.Background(), "sa@p.iam.gserviceaccount.com")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

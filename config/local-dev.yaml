@@ -61,6 +61,18 @@ modules:
             config:
               contextKeys: transaction_id,message_id
               role: bap
+        # Optional: route inbound on_* callbacks straight to a Vertex AI
+        # Agent Engine reasoning engine instead of hopping through Pub/Sub.
+        # When this transportWrapper is enabled, the corresponding routing
+        # rule for bapTxnReceiver must use targetType: url with the engine's
+        # :query URL. See pkg/plugin/implementation/agentenginetransportwrapper/README.md.
+        # transportWrapper:
+        #   id: agentenginetransportwrapper
+        #   config:
+        #     # Optional. When set, the adapter Pod's identity must hold
+        #     # roles/iam.serviceAccountTokenCreator on this SA. Omit to use
+        #     # Application Default Credentials directly.
+        #     serviceAccount: agent-invoker-sa@PROJECT.iam.gserviceaccount.com
       steps:
         - addRoute
         - validateSchema

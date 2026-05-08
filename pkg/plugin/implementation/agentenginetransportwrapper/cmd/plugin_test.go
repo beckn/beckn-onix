@@ -1,3 +1,17 @@
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package main
 
 import (
@@ -6,51 +20,13 @@ import (
 	"testing"
 )
 
-// TestAgentEngineProviderSuccess verifies that valid configurations produce
-// a non-nil TransportWrapper.
-func TestAgentEngineProviderSuccess(t *testing.T) {
-	provider := agentEngineProvider{}
-
-	cases := []struct {
-		name   string
-		config map[string]any
-	}{
-		{
-			name:   "Empty config (ADC mode)",
-			config: map[string]any{},
-		},
-		{
-			name: "service_account configured (impersonation mode)",
-			config: map[string]any{
-				"service_account": "sa@p.iam.gserviceaccount.com",
-			},
-		},
-		{
-			name: "Unknown keys ignored",
-			config: map[string]any{
-				"unknown_key": "ignored",
-			},
-		},
-	}
-
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			wrapper, closer, err := provider.New(context.Background(), tt.config)
-			if err != nil {
-				t.Fatalf("provider.New: unexpected error: %v", err)
-			}
-			if wrapper == nil {
-				t.Fatal("provider.New returned nil wrapper")
-			}
-			if closer != nil {
-				closer()
-			}
-		})
-	}
-}
-
 // TestAgentEngineProviderFailure verifies that bad configurations produce
-// a clear error and no leaked wrapper / closer.
+// a clear error and no leaked wrapper / closer at the provider boundary.
+//
+// The success path is exercised in package-level tests in
+// agentenginetransportwrapper_test.go which can install fake token-source
+// factories. The cmd test focuses on the provider's wrapping behaviour for
+// errors (true-nil interface return on failure, error message preservation).
 func TestAgentEngineProviderFailure(t *testing.T) {
 	provider := agentEngineProvider{}
 
@@ -67,10 +43,10 @@ func TestAgentEngineProviderFailure(t *testing.T) {
 			wantErr: "context cannot be nil",
 		},
 		{
-			name:    "service_account wrong type",
+			name:    "serviceAccount wrong type",
 			ctx:     context.Background(),
-			config:  map[string]any{"service_account": 42},
-			wantErr: "service_account",
+			config:  map[string]any{"serviceAccount": 42},
+			wantErr: "serviceAccount",
 		},
 	}
 

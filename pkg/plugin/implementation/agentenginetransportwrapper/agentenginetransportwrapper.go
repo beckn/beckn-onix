@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -38,23 +37,50 @@ var (
 // Wrapper implements definition.TransportWrapper.
 type Wrapper struct {
 	serviceAccount string
-	ctx            context.Context // for token-source background refresh
+	// ctx is intentionally stored on the struct: the underlying Google
+	// oauth2 TokenSource refreshes the access token in the background and
+	// requires a long-lived context. Per-request contexts cannot be used
+	// because they're cancelled when the request completes.
+	ctx context.Context
+	// tokenSrc is built eagerly in New() so misconfiguration (no ADC, bogus
+	// impersonation target, missing iam.serviceAccountTokenCreator) surfaces
+	// at adapter startup rather than at first callback.
+	tokenSrc oauth2.TokenSource
 }
 
-// New parses config and returns a ready Wrapper.
+// New parses config, eagerly builds the OAuth2 token source so any auth
+// misconfiguration surfaces at startup, and returns a ready Wrapper.
 func New(ctx context.Context, config map[string]any) (*Wrapper, func(), error) {
 	if ctx == nil {
 		return nil, nil, fmt.Errorf("agentenginetransportwrapper: context cannot be nil")
 	}
 	w := &Wrapper{ctx: ctx}
-	if v, ok := config["service_account"]; ok {
+	if v, ok := config["serviceAccount"]; ok {
 		w.serviceAccount, ok = v.(string)
 		if !ok {
 			return nil, nil, fmt.Errorf(
-				"agentenginetransportwrapper: config 'service_account' must be a string, got %T", v)
+				"agentenginetransportwrapper: config 'serviceAccount' must be a string, got %T", v)
 		}
 	}
+
+	ts, err := buildTokenSource(ctx, w.serviceAccount)
+	if err != nil {
+		return nil, nil, fmt.Errorf(
+			"agentenginetransportwrapper: build token source: %w", err)
+	}
+	w.tokenSrc = ts
+
 	return w, nil, nil
+}
+
+// buildTokenSource constructs the OAuth2 access TokenSource (cloud-platform
+// scope) backed by service-account impersonation when serviceAccount is set,
+// otherwise by Application Default Credentials.
+func buildTokenSource(ctx context.Context, serviceAccount string) (oauth2.TokenSource, error) {
+	if serviceAccount != "" {
+		return impersonateOAuth2TokenSource(ctx, serviceAccount, []string{cloudPlatformScope})
+	}
+	return defaultOAuth2TokenSource(ctx, cloudPlatformScope)
 }
 
 // Wrap returns a RoundTripper that transforms the body, injects an OAuth2
@@ -64,18 +90,14 @@ func (w *Wrapper) Wrap(base http.RoundTripper) http.RoundTripper {
 		base = http.DefaultTransport
 	}
 	return &aeTransport{
-		base:           base,
-		serviceAccount: w.serviceAccount,
-		ctx:            w.ctx,
+		base:     base,
+		tokenSrc: w.tokenSrc,
 	}
 }
 
 type aeTransport struct {
-	base           http.RoundTripper
-	serviceAccount string
-	ctx            context.Context
-	mu             sync.RWMutex
-	tokenSrc       oauth2.TokenSource
+	base     http.RoundTripper
+	tokenSrc oauth2.TokenSource
 }
 
 func (t *aeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -102,11 +124,7 @@ func (t *aeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	setBody(newReq, wrapped)
 	newReq.Header.Set("Content-Type", "application/json")
 
-	ts, err := t.tokenSource()
-	if err != nil {
-		return nil, fmt.Errorf("agentenginetransportwrapper: token source: %w", err)
-	}
-	tok, err := ts.Token()
+	tok, err := fetchTokenWithContext(req.Context(), t.tokenSrc)
 	if err != nil {
 		return nil, fmt.Errorf("agentenginetransportwrapper: mint token: %w", err)
 	}
@@ -115,37 +133,26 @@ func (t *aeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(newReq)
 }
 
-// tokenSource returns a cached or freshly-built OAuth2 access TokenSource
-// (cloud-platform scope). Used for *.googleapis.com endpoints.
-func (t *aeTransport) tokenSource() (oauth2.TokenSource, error) {
-	t.mu.RLock()
-	if t.tokenSrc != nil {
-		ts := t.tokenSrc
-		t.mu.RUnlock()
-		return ts, nil
-	}
-	t.mu.RUnlock()
-
-	var (
-		ts  oauth2.TokenSource
+// fetchTokenWithContext calls ts.Token() in a goroutine so a hung
+// metadata-server / IAM call is bounded by the caller's request deadline.
+// The TokenSource itself uses the long-lived constructor context for its
+// own background refresh; this wrapper only serializes the per-call wait.
+func fetchTokenWithContext(ctx context.Context, ts oauth2.TokenSource) (*oauth2.Token, error) {
+	type result struct {
+		tok *oauth2.Token
 		err error
-	)
-	if t.serviceAccount != "" {
-		ts, err = impersonateOAuth2TokenSource(t.ctx, t.serviceAccount, []string{cloudPlatformScope})
-	} else {
-		ts, err = defaultOAuth2TokenSource(t.ctx, cloudPlatformScope)
 	}
-	if err != nil {
-		return nil, err
+	ch := make(chan result, 1)
+	go func() {
+		tok, err := ts.Token()
+		ch <- result{tok, err}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case r := <-ch:
+		return r.tok, r.err
 	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.tokenSrc != nil {
-		return t.tokenSrc, nil
-	}
-	t.tokenSrc = ts
-	return ts, nil
 }
 
 func readAndCloseBody(req *http.Request) ([]byte, error) {
@@ -156,11 +163,15 @@ func readAndCloseBody(req *http.Request) ([]byte, error) {
 	return io.ReadAll(req.Body)
 }
 
-// setBody installs body and refreshes the Content-Length on req.
+// setBody installs body, refreshes ContentLength, and overrides GetBody so
+// that downstream redirects (307/308) and HTTP/2 retries replay the wrapped
+// envelope rather than the original unwrapped body that req.Clone copied.
 func setBody(req *http.Request, body []byte) {
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	req.ContentLength = int64(len(body))
-	req.Header.Del("Content-Length")
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
 }
 
 // agentEngineEnvelope is the body shape Vertex AI Agent Engine's :query expects.
@@ -211,7 +222,10 @@ func extractAction(body []byte) (string, error) {
 	return action, nil
 }
 
-// wrapEnvelope builds the Agent Engine :query body, embedding originalBody verbatim.
+// wrapEnvelope builds the Agent Engine :query body, embedding originalBody
+// verbatim. The json.Valid check is a defensive package-level guard so that
+// non-RoundTrip callers can't accidentally produce malformed downstream
+// JSON; in the normal RoundTrip path extractAction already parsed the body.
 func wrapEnvelope(action string, originalBody []byte) ([]byte, error) {
 	if action == "" {
 		return nil, fmt.Errorf("action is empty")
