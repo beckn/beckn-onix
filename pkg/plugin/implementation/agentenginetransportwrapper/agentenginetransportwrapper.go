@@ -113,7 +113,6 @@ func (t *aeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	if !strings.HasPrefix(action, callbackActionPrefix) {
 		// Non-callback action: forward the original request unmodified.
-		// Body was already drained for action extraction, so re-install it.
 		newReq := req.Clone(req.Context())
 		setBody(newReq, originalBody)
 		return t.base.RoundTrip(newReq)
@@ -138,10 +137,6 @@ func (t *aeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(newReq)
 }
 
-// fetchTokenWithContext calls ts.Token() in a goroutine so a hung
-// metadata-server / IAM call is bounded by the caller's request deadline.
-// The TokenSource itself uses the long-lived constructor context for its
-// own background refresh; this wrapper only serializes the per-call wait.
 func fetchTokenWithContext(ctx context.Context, ts oauth2.TokenSource) (*oauth2.Token, error) {
 	type result struct {
 		tok *oauth2.Token
@@ -168,9 +163,6 @@ func readAndCloseBody(req *http.Request) ([]byte, error) {
 	return io.ReadAll(req.Body)
 }
 
-// setBody installs body, refreshes ContentLength, and overrides GetBody so
-// that downstream redirects (307/308) and HTTP/2 retries replay the wrapped
-// envelope rather than the original unwrapped body that req.Clone copied.
 func setBody(req *http.Request, body []byte) {
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	req.ContentLength = int64(len(body))
@@ -227,10 +219,6 @@ func extractAction(body []byte) (string, error) {
 	return action, nil
 }
 
-// wrapEnvelope builds the Agent Engine :query body, embedding originalBody
-// verbatim. The json.Valid check is a defensive package-level guard so that
-// non-RoundTrip callers can't accidentally produce malformed downstream
-// JSON; in the normal RoundTrip path extractAction already parsed the body.
 func wrapEnvelope(action string, originalBody []byte) ([]byte, error) {
 	if action == "" {
 		return nil, fmt.Errorf("action is empty")

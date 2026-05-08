@@ -1,17 +1,3 @@
-// Copyright 2026 Google LLC
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package main
 
 import (
@@ -20,13 +6,6 @@ import (
 	"testing"
 )
 
-// TestAgentEngineProviderFailure verifies that bad configurations produce
-// a clear error and no leaked wrapper / closer at the provider boundary.
-//
-// The success path is exercised in package-level tests in
-// agentenginetransportwrapper_test.go which can install fake token-source
-// factories. The cmd test focuses on the provider's wrapping behaviour for
-// errors (true-nil interface return on failure, error message preservation).
 func TestAgentEngineProviderFailure(t *testing.T) {
 	provider := agentEngineProvider{}
 
