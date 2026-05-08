@@ -300,20 +300,6 @@ func TestRoundTrip_AllSevenOnActions(t *testing.T) {
 	}
 }
 
-func TestRoundTrip_RejectsNonCallbackAction(t *testing.T) {
-	installFakeTokens(t, "tok")
-	w, _, _ := New(context.Background(), map[string]any{})
-	rt := w.Wrap(http.DefaultTransport)
-
-	body := []byte(`{"context":{"action":"discover"},"message":{}}`)
-	req, _ := http.NewRequest(http.MethodPost, "http://example.com",
-		bytes.NewReader(body))
-	_, err := rt.RoundTrip(req)
-	if err == nil || !strings.Contains(err.Error(), "does not match any allowed prefix") {
-		t.Errorf("expected prefix-mismatch error, got %v", err)
-	}
-}
-
 func TestRoundTrip_BadBodyReturnsError(t *testing.T) {
 	installFakeTokens(t, "tok")
 	w, _, _ := New(context.Background(), map[string]any{})
@@ -554,150 +540,20 @@ func TestBuildTokenSource_ImpersonationFactoryUsed(t *testing.T) {
 	}
 }
 
-// ---- allowedActionPrefixes / passthroughOther --------------------------
+// ---- non-callback pass-through ------------------------------------------
 
-func TestNew_AllowedActionPrefixes(t *testing.T) {
-	installFakeTokens(t, "tok")
-
-	t.Run("absent defaults to on_", func(t *testing.T) {
-		w, _, err := New(context.Background(), map[string]any{})
-		if err != nil {
-			t.Fatalf("New: %v", err)
-		}
-		if got := w.allowedActionPrefixes; len(got) != 1 || got[0] != "on_" {
-			t.Errorf("default allowedActionPrefixes = %v, want [on_]", got)
-		}
-	})
-	t.Run("explicit list parsed", func(t *testing.T) {
-		w, _, err := New(context.Background(), map[string]any{
-			"allowedActionPrefixes": []any{"on_", "search"},
-		})
-		if err != nil {
-			t.Fatalf("New: %v", err)
-		}
-		if got := w.allowedActionPrefixes; len(got) != 2 || got[0] != "on_" || got[1] != "search" {
-			t.Errorf("allowedActionPrefixes = %v, want [on_ search]", got)
-		}
-	})
-	t.Run("native []string accepted", func(t *testing.T) {
-		w, _, err := New(context.Background(), map[string]any{
-			"allowedActionPrefixes": []string{"on_"},
-		})
-		if err != nil {
-			t.Fatalf("New: %v", err)
-		}
-		if len(w.allowedActionPrefixes) != 1 {
-			t.Errorf("allowedActionPrefixes len = %d, want 1", len(w.allowedActionPrefixes))
-		}
-	})
-	t.Run("empty list rejected", func(t *testing.T) {
-		_, _, err := New(context.Background(), map[string]any{
-			"allowedActionPrefixes": []any{},
-		})
-		if err == nil || !strings.Contains(err.Error(), "at least one prefix") {
-			t.Errorf("expected 'at least one prefix' error, got %v", err)
-		}
-	})
-	t.Run("wrong type rejected", func(t *testing.T) {
-		_, _, err := New(context.Background(), map[string]any{
-			"allowedActionPrefixes": "on_",
-		})
-		if err == nil || !strings.Contains(err.Error(), "allowedActionPrefixes") {
-			t.Errorf("expected error mentioning 'allowedActionPrefixes', got %v", err)
-		}
-	})
-	t.Run("element wrong type rejected", func(t *testing.T) {
-		_, _, err := New(context.Background(), map[string]any{
-			"allowedActionPrefixes": []any{"on_", 42},
-		})
-		if err == nil || !strings.Contains(err.Error(), "element 1") {
-			t.Errorf("expected element-index error, got %v", err)
-		}
-	})
-}
-
-func TestNew_PassthroughOther(t *testing.T) {
-	installFakeTokens(t, "tok")
-
-	t.Run("absent defaults to false", func(t *testing.T) {
-		w, _, err := New(context.Background(), map[string]any{})
-		if err != nil {
-			t.Fatalf("New: %v", err)
-		}
-		if w.passthroughOther {
-			t.Error("default passthroughOther = true, want false")
-		}
-	})
-	t.Run("true honored", func(t *testing.T) {
-		w, _, err := New(context.Background(), map[string]any{
-			"passthroughOther": true,
-		})
-		if err != nil {
-			t.Fatalf("New: %v", err)
-		}
-		if !w.passthroughOther {
-			t.Error("passthroughOther = false, want true")
-		}
-	})
-	t.Run("wrong type rejected", func(t *testing.T) {
-		_, _, err := New(context.Background(), map[string]any{
-			"passthroughOther": "true",
-		})
-		if err == nil || !strings.Contains(err.Error(), "passthroughOther") {
-			t.Errorf("expected error mentioning 'passthroughOther', got %v", err)
-		}
-	})
-}
-
-func TestRoundTrip_CustomPrefixWrapped(t *testing.T) {
+func TestRoundTrip_NonCallbackForwardsUnmodified(t *testing.T) {
 	installFakeTokens(t, "tok")
 
 	srv := newRecordingServer(t, http.StatusOK)
-	w, _, _ := New(context.Background(), map[string]any{
-		"allowedActionPrefixes": []any{"search"},
-	})
-	rt := w.Wrap(http.DefaultTransport)
-
-	body := []byte(`{"context":{"action":"search"},"message":{}}`)
-	req, _ := http.NewRequest(http.MethodPost, srv.URL, bytes.NewReader(body))
-	resp, err := rt.RoundTrip(req)
-	if err != nil {
-		t.Fatalf("RoundTrip: %v", err)
-	}
-	drainAndClose(resp.Body)
-
-	last := srv.Last()
-	if last == nil {
-		t.Fatal("server received no request")
-	}
-	if got := last.Header.Get("Authorization"); got != "Bearer tok" {
-		t.Errorf("Authorization = %q, want Bearer tok", got)
-	}
-	// The body should be wrapped into the Agent Engine envelope with
-	// class_method = "search".
-	var env agentEngineEnvelope
-	if err := json.Unmarshal(last.Body, &env); err != nil {
-		t.Fatalf("server body is not the wrapped envelope: %v (body=%s)", err, last.Body)
-	}
-	if env.ClassMethod != "search" {
-		t.Errorf("class_method = %q, want search", env.ClassMethod)
-	}
-}
-
-func TestRoundTrip_PassthroughForwardsUnmodified(t *testing.T) {
-	installFakeTokens(t, "tok")
-
-	srv := newRecordingServer(t, http.StatusOK)
-	w, _, _ := New(context.Background(), map[string]any{
-		"passthroughOther": true,
-	})
+	w, _, _ := New(context.Background(), map[string]any{})
 	rt := w.Wrap(http.DefaultTransport)
 
 	originalBody := []byte(`{"context":{"action":"discover"},"message":{}}`)
 	req, _ := http.NewRequest(http.MethodPost, srv.URL,
 		bytes.NewReader(originalBody))
 	// Caller sets their own Authorization header (e.g., Beckn signature).
-	// Passthrough must preserve it.
+	// Pass-through must preserve it untouched.
 	req.Header.Set("Authorization", "BecknSignature keyId=foo")
 
 	resp, err := rt.RoundTrip(req)
@@ -716,16 +572,9 @@ func TestRoundTrip_PassthroughForwardsUnmodified(t *testing.T) {
 	if got := last.Header.Get("Authorization"); got != "BecknSignature keyId=foo" {
 		t.Errorf("Authorization = %q, want untouched 'BecknSignature keyId=foo'", got)
 	}
-	// Default Content-Type isn't forced in passthrough mode.
-	if got := last.Header.Get("Content-Type"); got == "application/json" {
-		// (httptest may infer it from the request, but our wrapper should not
-		// have set it explicitly. This assertion is informational rather than
-		// strict because Go's net/http machinery may auto-add headers.)
-		t.Logf("note: Content-Type=%q was set somewhere in the chain", got)
-	}
 }
 
-func TestRoundTrip_PassthroughPreservesBodyForRedirect(t *testing.T) {
+func TestRoundTrip_NonCallbackPreservesBodyForRedirect(t *testing.T) {
 	installFakeTokens(t, "tok")
 
 	// Capture every body the upstream sees.
@@ -752,9 +601,7 @@ func TestRoundTrip_PassthroughPreservesBodyForRedirect(t *testing.T) {
 	}))
 	defer redirectSrv.Close()
 
-	w, _, _ := New(context.Background(), map[string]any{
-		"passthroughOther": true,
-	})
+	w, _, _ := New(context.Background(), map[string]any{})
 	client := &http.Client{Transport: w.Wrap(http.DefaultTransport)}
 
 	originalBody := []byte(`{"context":{"action":"discover"},"message":{}}`)
@@ -779,9 +626,9 @@ func TestRoundTrip_PassthroughPreservesBodyForRedirect(t *testing.T) {
 	}
 }
 
-func TestRoundTrip_PassthroughTokenSourceNotInvoked(t *testing.T) {
-	// Even though New() builds a token source eagerly, the passthrough
-	// path must NOT mint or attach a token. Use a token source that errors
+func TestRoundTrip_NonCallbackDoesNotMintToken(t *testing.T) {
+	// Even though New() builds a token source eagerly, the pass-through
+	// path must NOT mint or attach a token. Use a token source that panics
 	// loudly if Token() is called.
 	origDef := defaultOAuth2TokenSource
 	defer func() { defaultOAuth2TokenSource = origDef }()
@@ -790,9 +637,7 @@ func TestRoundTrip_PassthroughTokenSourceNotInvoked(t *testing.T) {
 	}
 
 	srv := newRecordingServer(t, http.StatusOK)
-	w, _, err := New(context.Background(), map[string]any{
-		"passthroughOther": true,
-	})
+	w, _, err := New(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -811,7 +656,7 @@ func TestRoundTrip_PassthroughTokenSourceNotInvoked(t *testing.T) {
 type panickingTokenSource struct{}
 
 func (panickingTokenSource) Token() (*oauth2.Token, error) {
-	panic("Token() should not be called in passthrough mode")
+	panic("Token() should not be called for non-callback actions")
 }
 
 // ---- extractAction / wrapEnvelope ----------------------------------------

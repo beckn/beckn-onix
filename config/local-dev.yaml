@@ -63,9 +63,11 @@ modules:
               role: bap
         # Optional: route inbound on_* callbacks straight to a Vertex AI
         # Agent Engine reasoning engine instead of hopping through Pub/Sub.
-        # When this transportWrapper is enabled, the corresponding routing
-        # rule for bapTxnReceiver must use targetType: url with the engine's
-        # :query URL. See pkg/plugin/implementation/agentenginetransportwrapper/README.md.
+        # Non-callback actions (search, init, confirm, etc.) are forwarded
+        # unmodified through this wrapper. When this transportWrapper is
+        # enabled, the corresponding routing rule for bapTxnReceiver must
+        # use targetType: url with the engine's :query URL. See
+        # pkg/plugin/implementation/agentenginetransportwrapper/README.md.
         # transportWrapper:
         #   id: agentenginetransportwrapper
         #   config:
@@ -73,16 +75,6 @@ modules:
         #     # roles/iam.serviceAccountTokenCreator on this SA. Omit to use
         #     # Application Default Credentials directly.
         #     serviceAccount: agent-invoker-sa@PROJECT.iam.gserviceaccount.com
-        #     # Optional. Default ["on_"]. Action prefixes to wrap into the
-        #     # Agent Engine :query envelope. Add more prefixes only if this
-        #     # module also handles non-callback actions to be routed to
-        #     # Vertex AI.
-        #     # allowedActionPrefixes: ["on_"]
-        #     # Optional. Default false. If true, requests whose action does
-        #     # not match any allowedActionPrefixes are forwarded UNMODIFIED
-        #     # (no envelope, no token). Useful when this wrapper sits on a
-        #     # module that also handles forward-direction Beckn calls.
-        #     # passthroughOther: false
       steps:
         - addRoute
         - validateSchema
