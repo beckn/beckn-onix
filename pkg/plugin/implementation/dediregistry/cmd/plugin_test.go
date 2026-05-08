@@ -11,9 +11,8 @@ import (
 
 func TestDediRegistryProvider_ParseConfig(t *testing.T) {
 	provider := dediRegistryProvider{}
-	ctx := context.Background()
 
-	cfg, err := provider.parseConfig(ctx, map[string]string{
+	cfg, err := provider.parseConfig(map[string]string{
 		"url":            "https://test.com/dedi",
 		"registryName":   "subscribers.beckn.one",
 		"timeout":        "30",
@@ -45,15 +44,23 @@ func TestDediRegistryProvider_ParseConfig(t *testing.T) {
 	}
 }
 
-func TestDediRegistryProvider_ParseConfig_InvalidRetryConfig(t *testing.T) {
+func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 	provider := dediRegistryProvider{}
-	ctx := context.Background()
 
 	tests := []struct {
 		name        string
 		config      map[string]string
 		expectedErr string
 	}{
+		{
+			name: "invalid timeout",
+			config: map[string]string{
+				"url":          "https://test.com/dedi",
+				"registryName": "subscribers.beckn.one",
+				"timeout":      "abc",
+			},
+			expectedErr: "invalid timeout value 'abc'",
+		},
 		{
 			name: "invalid retry_max",
 			config: map[string]string{
@@ -62,6 +69,15 @@ func TestDediRegistryProvider_ParseConfig_InvalidRetryConfig(t *testing.T) {
 				"retry_max":    "abc",
 			},
 			expectedErr: "invalid retry_max value 'abc'",
+		},
+		{
+			name: "negative retry_max",
+			config: map[string]string{
+				"url":          "https://test.com/dedi",
+				"registryName": "subscribers.beckn.one",
+				"retry_max":    "-1",
+			},
+			expectedErr: "retry_max must be non-negative",
 		},
 		{
 			name: "invalid retry_wait_min",
@@ -73,6 +89,15 @@ func TestDediRegistryProvider_ParseConfig_InvalidRetryConfig(t *testing.T) {
 			expectedErr: "invalid retry_wait_min value 'notaduration'",
 		},
 		{
+			name: "negative retry_wait_min",
+			config: map[string]string{
+				"url":            "https://test.com/dedi",
+				"registryName":   "subscribers.beckn.one",
+				"retry_wait_min": "-100ms",
+			},
+			expectedErr: "retry_wait_min must be non-negative",
+		},
+		{
 			name: "invalid retry_wait_max",
 			config: map[string]string{
 				"url":            "https://test.com/dedi",
@@ -81,11 +106,20 @@ func TestDediRegistryProvider_ParseConfig_InvalidRetryConfig(t *testing.T) {
 			},
 			expectedErr: "invalid retry_wait_max value 'notaduration'",
 		},
+		{
+			name: "negative retry_wait_max",
+			config: map[string]string{
+				"url":            "https://test.com/dedi",
+				"registryName":   "subscribers.beckn.one",
+				"retry_wait_max": "-2s",
+			},
+			expectedErr: "retry_wait_max must be non-negative",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := provider.parseConfig(ctx, tt.config)
+			cfg, err := provider.parseConfig(tt.config)
 			if err == nil {
 				t.Fatal("expected parseConfig() to return an error")
 			}
@@ -116,16 +150,12 @@ func TestDediRegistryProvider_New_InvalidRetryConfig(t *testing.T) {
 }
 
 func TestDediRegistryProvider_New_ForwardsRetryConfig(t *testing.T) {
-	provider := dediRegistryProvider{}
-	originalNewDediRegistryFunc := newDediRegistryFunc
-	t.Cleanup(func() {
-		newDediRegistryFunc = originalNewDediRegistryFunc
-	})
-
 	var captured *dediregistry.Config
-	newDediRegistryFunc = func(ctx context.Context, cfg *dediregistry.Config) (*dediregistry.DeDiRegistryClient, func() error, error) {
-		captured = cfg
-		return new(dediregistry.DeDiRegistryClient), func() error { return nil }, nil
+	provider := dediRegistryProvider{
+		newFunc: func(ctx context.Context, cfg *dediregistry.Config) (*dediregistry.DeDiRegistryClient, func() error, error) {
+			captured = cfg
+			return new(dediregistry.DeDiRegistryClient), func() error { return nil }, nil
+		},
 	}
 
 	config := map[string]string{
@@ -163,7 +193,7 @@ func TestDediRegistryProvider_New_ForwardsRetryConfig(t *testing.T) {
 
 func TestDediRegistryProvider_New(t *testing.T) {
 	ctx := context.Background()
-	provider := dediRegistryProvider{}
+	provider := dediRegistryProvider{newFunc: dediregistry.New}
 
 	config := map[string]string{
 		"url":          "https://test.com/dedi",
@@ -193,7 +223,7 @@ func TestDediRegistryProvider_New(t *testing.T) {
 
 func TestDediRegistryProvider_New_InvalidConfig(t *testing.T) {
 	ctx := context.Background()
-	provider := dediRegistryProvider{}
+	provider := dediRegistryProvider{newFunc: dediregistry.New}
 
 	tests := []struct {
 		name   string
@@ -224,25 +254,18 @@ func TestDediRegistryProvider_New_InvalidConfig(t *testing.T) {
 }
 
 func TestDediRegistryProvider_New_InvalidTimeout(t *testing.T) {
-	ctx := context.Background()
-	provider := dediRegistryProvider{}
+	provider := dediRegistryProvider{newFunc: dediregistry.New}
 
-	config := map[string]string{
+	_, _, err := provider.New(context.Background(), map[string]string{
 		"url":          "https://test.com/dedi",
 		"registryName": "subscribers.beckn.one",
 		"timeout":      "invalid",
+	})
+	if err == nil {
+		t.Fatal("expected New() to return an error for invalid timeout")
 	}
-
-	// Invalid timeout should be ignored, not cause error
-	dediRegistry, closer, err := provider.New(ctx, config)
-	if err != nil {
-		t.Errorf("New() with invalid timeout should not return error, got: %v", err)
-	}
-	if dediRegistry == nil {
-		t.Error("New() should return valid registry even with invalid timeout")
-	}
-	if closer != nil {
-		closer()
+	if !strings.Contains(err.Error(), "invalid timeout value 'invalid'") {
+		t.Fatalf("expected timeout parse error, got %q", err.Error())
 	}
 }
 
