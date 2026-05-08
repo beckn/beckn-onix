@@ -73,6 +73,16 @@ modules:
         #     # roles/iam.serviceAccountTokenCreator on this SA. Omit to use
         #     # Application Default Credentials directly.
         #     serviceAccount: agent-invoker-sa@PROJECT.iam.gserviceaccount.com
+        #     # Optional. Default ["on_"]. Action prefixes to wrap into the
+        #     # Agent Engine :query envelope. Add more prefixes only if this
+        #     # module also handles non-callback actions to be routed to
+        #     # Vertex AI.
+        #     # allowedActionPrefixes: ["on_"]
+        #     # Optional. Default false. If true, requests whose action does
+        #     # not match any allowedActionPrefixes are forwarded UNMODIFIED
+        #     # (no envelope, no token). Useful when this wrapper sits on a
+        #     # module that also handles forward-direction Beckn calls.
+        #     # passthroughOther: false
       steps:
         - addRoute
         - validateSchema

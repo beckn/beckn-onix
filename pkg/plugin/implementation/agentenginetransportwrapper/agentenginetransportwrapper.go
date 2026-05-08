@@ -21,6 +21,10 @@ import (
 // Cloud-platform OAuth2 scope required by *.googleapis.com endpoints.
 const cloudPlatformScope = "https://www.googleapis.com/auth/cloud-platform"
 
+// defaultAllowedActionPrefix is the action-prefix the wrapper treats as a
+// Beckn callback eligible for envelope wrapping when no override is given.
+const defaultAllowedActionPrefix = "on_"
+
 // Package-level factory vars allow tests to substitute fakes.
 var (
 	defaultOAuth2TokenSource = func(ctx context.Context, scopes ...string) (oauth2.TokenSource, error) {
@@ -36,7 +40,9 @@ var (
 
 // Wrapper implements definition.TransportWrapper.
 type Wrapper struct {
-	serviceAccount string
+	serviceAccount        string
+	allowedActionPrefixes []string
+	passthroughOther      bool
 	// ctx is intentionally stored on the struct: the underlying Google
 	// oauth2 TokenSource refreshes the access token in the background and
 	// requires a long-lived context. Per-request contexts cannot be used
@@ -54,12 +60,37 @@ func New(ctx context.Context, config map[string]any) (*Wrapper, func(), error) {
 	if ctx == nil {
 		return nil, nil, fmt.Errorf("agentenginetransportwrapper: context cannot be nil")
 	}
-	w := &Wrapper{ctx: ctx}
+	w := &Wrapper{
+		ctx:                   ctx,
+		allowedActionPrefixes: []string{defaultAllowedActionPrefix},
+	}
+
 	if v, ok := config["serviceAccount"]; ok {
 		w.serviceAccount, ok = v.(string)
 		if !ok {
 			return nil, nil, fmt.Errorf(
 				"agentenginetransportwrapper: config 'serviceAccount' must be a string, got %T", v)
+		}
+	}
+
+	if v, ok := config["allowedActionPrefixes"]; ok {
+		prefixes, err := parseStringSlice(v)
+		if err != nil {
+			return nil, nil, fmt.Errorf(
+				"agentenginetransportwrapper: config 'allowedActionPrefixes': %w", err)
+		}
+		if len(prefixes) == 0 {
+			return nil, nil, fmt.Errorf(
+				"agentenginetransportwrapper: config 'allowedActionPrefixes' must contain at least one prefix")
+		}
+		w.allowedActionPrefixes = prefixes
+	}
+
+	if v, ok := config["passthroughOther"]; ok {
+		w.passthroughOther, ok = v.(bool)
+		if !ok {
+			return nil, nil, fmt.Errorf(
+				"agentenginetransportwrapper: config 'passthroughOther' must be a bool, got %T", v)
 		}
 	}
 
@@ -71,6 +102,27 @@ func New(ctx context.Context, config map[string]any) (*Wrapper, func(), error) {
 	w.tokenSrc = ts
 
 	return w, nil, nil
+}
+
+// parseStringSlice accepts either []string or []any (where every element is
+// a string) and returns the normalized []string.
+func parseStringSlice(v any) ([]string, error) {
+	switch s := v.(type) {
+	case []string:
+		return s, nil
+	case []any:
+		out := make([]string, 0, len(s))
+		for i, elem := range s {
+			str, ok := elem.(string)
+			if !ok {
+				return nil, fmt.Errorf("element %d must be a string, got %T", i, elem)
+			}
+			out = append(out, str)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("must be a list of strings, got %T", v)
+	}
 }
 
 // buildTokenSource constructs the OAuth2 access TokenSource (cloud-platform
@@ -90,14 +142,18 @@ func (w *Wrapper) Wrap(base http.RoundTripper) http.RoundTripper {
 		base = http.DefaultTransport
 	}
 	return &aeTransport{
-		base:     base,
-		tokenSrc: w.tokenSrc,
+		base:                  base,
+		tokenSrc:              w.tokenSrc,
+		allowedActionPrefixes: w.allowedActionPrefixes,
+		passthroughOther:      w.passthroughOther,
 	}
 }
 
 type aeTransport struct {
-	base     http.RoundTripper
-	tokenSrc oauth2.TokenSource
+	base                  http.RoundTripper
+	tokenSrc              oauth2.TokenSource
+	allowedActionPrefixes []string
+	passthroughOther      bool
 }
 
 func (t *aeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -110,8 +166,18 @@ func (t *aeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("agentenginetransportwrapper: %w", err)
 	}
-	if !strings.HasPrefix(action, "on_") {
-		return nil, fmt.Errorf("agentenginetransportwrapper: action %q is not an on_* callback", action)
+
+	if !matchesAnyPrefix(action, t.allowedActionPrefixes) {
+		if !t.passthroughOther {
+			return nil, fmt.Errorf(
+				"agentenginetransportwrapper: action %q does not match any allowed prefix %v",
+				action, t.allowedActionPrefixes)
+		}
+		// Passthrough mode: forward the original request unmodified. Body was
+		// already drained for action extraction, so re-install it.
+		newReq := req.Clone(req.Context())
+		setBody(newReq, originalBody)
+		return t.base.RoundTrip(newReq)
 	}
 
 	wrapped, err := wrapEnvelope(action, originalBody)
@@ -131,6 +197,16 @@ func (t *aeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	newReq.Header.Set("Authorization", "Bearer "+tok.AccessToken)
 
 	return t.base.RoundTrip(newReq)
+}
+
+// matchesAnyPrefix returns true if action begins with any of the prefixes.
+func matchesAnyPrefix(action string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(action, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // fetchTokenWithContext calls ts.Token() in a goroutine so a hung

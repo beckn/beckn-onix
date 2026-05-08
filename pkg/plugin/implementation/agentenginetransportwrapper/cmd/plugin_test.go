@@ -48,6 +48,18 @@ func TestAgentEngineProviderFailure(t *testing.T) {
 			config:  map[string]any{"serviceAccount": 42},
 			wantErr: "serviceAccount",
 		},
+		{
+			name:    "allowedActionPrefixes wrong type",
+			ctx:     context.Background(),
+			config:  map[string]any{"allowedActionPrefixes": "on_"},
+			wantErr: "allowedActionPrefixes",
+		},
+		{
+			name:    "passthroughOther wrong type",
+			ctx:     context.Background(),
+			config:  map[string]any{"passthroughOther": "true"},
+			wantErr: "passthroughOther",
+		},
 	}
 
 	for _, tt := range cases {
