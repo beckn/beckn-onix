@@ -243,8 +243,6 @@ violations contains "search: missing intent" if {
 
 The full Beckn message body is available as `input`. Adapter config values forwarded via the plugin config are available as `data.config.<key>`.
 
-> All policies are compiled in **Rego v1 mode** (`import rego.v1` is required). Policies written without this import will fail to compile at startup.
-
 ### Step 2 — Add the policy to the network policy config
 
 ```yaml
