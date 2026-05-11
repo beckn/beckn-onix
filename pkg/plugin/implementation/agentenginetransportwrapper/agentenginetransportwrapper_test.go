@@ -195,10 +195,7 @@ func TestNew_BuildsTokenSourceEagerly(t *testing.T) {
 // ---- Wrap() --------------------------------------------------------------
 
 func TestWrap_WithNilBaseUsesDefault(t *testing.T) {
-	w := &Wrapper{
-		ctx:      context.Background(),
-		tokenSrc: &fakeTokenSource{token: "t"},
-	}
+	w := &Wrapper{tokenSrc: &fakeTokenSource{token: "t"}}
 	rt := w.Wrap(nil)
 	if rt == nil {
 		t.Fatal("Wrap returned nil")

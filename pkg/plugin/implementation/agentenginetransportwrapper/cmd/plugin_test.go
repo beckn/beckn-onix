@@ -6,6 +6,30 @@ import (
 	"testing"
 )
 
+// TestAgentEngineProviderSuccess verifies the provider's success path:
+// a valid context + empty config returns a non-nil wrapper and a nil
+// error, with no leaked closer.
+//
+// The underlying agentenginetransportwrapper.New eagerly builds an OAuth2
+// access-token source via Application Default Credentials, so this test
+// requires a developer environment where ADC resolves (e.g. via
+// `gcloud auth application-default login`). On a CI runner without ADC,
+// this test will skip — the failure paths in TestAgentEngineProviderFailure
+// still cover provider's error-wrapping behaviour there.
+func TestAgentEngineProviderSuccess(t *testing.T) {
+	wrapper, closer, err := agentEngineProvider{}.New(
+		context.Background(), map[string]any{})
+	if err != nil {
+		t.Skipf("skipping: ADC unavailable in this environment: %v", err)
+	}
+	if wrapper == nil {
+		t.Fatal("provider.New returned nil wrapper without an error")
+	}
+	if closer != nil {
+		closer()
+	}
+}
+
 func TestAgentEngineProviderFailure(t *testing.T) {
 	provider := agentEngineProvider{}
 

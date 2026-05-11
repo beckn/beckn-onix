@@ -43,8 +43,7 @@ var (
 // Wrapper implements definition.TransportWrapper.
 type Wrapper struct {
 	serviceAccount string
-	ctx context.Context
-	tokenSrc oauth2.TokenSource
+	tokenSrc       oauth2.TokenSource
 }
 
 // New parses config, eagerly builds the OAuth2 token source so any auth
@@ -53,7 +52,7 @@ func New(ctx context.Context, config map[string]any) (*Wrapper, func(), error) {
 	if ctx == nil {
 		return nil, nil, fmt.Errorf("agentenginetransportwrapper: context cannot be nil")
 	}
-	w := &Wrapper{ctx: ctx}
+	w := &Wrapper{}
 	if v, ok := config["serviceAccount"]; ok {
 		w.serviceAccount, ok = v.(string)
 		if !ok {
