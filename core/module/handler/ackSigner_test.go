@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -67,7 +68,7 @@ func TestAckSignerStep_LTS_SetsSignatureHeader(t *testing.T) {
 	}
 
 	ctx := makeStepCtx("2.0.0", "msg-001", "bpp.example.com", "inboundSig==")
-	if err := step.RunOnResponse(ctx); err != nil {
+	if err := step.RunOnResponse(ctx, nil); err != nil {
 		t.Fatalf("RunOnResponse() unexpected error: %v", err)
 	}
 
@@ -96,7 +97,7 @@ func TestAckSignerStep_FutureVersion_SetsSignatureHeader(t *testing.T) {
 	step, _ := newAckSignerStep(signer, km)
 	ctx := makeStepCtx("3.0.0", "msg-future", "bap.example.com", "")
 
-	if err := step.RunOnResponse(ctx); err != nil {
+	if err := step.RunOnResponse(ctx, nil); err != nil {
 		t.Fatalf("RunOnResponse() unexpected error: %v", err)
 	}
 	if !signer.signAckCalled {
@@ -114,7 +115,7 @@ func TestAckSignerStep_LegacyVersion_Skips(t *testing.T) {
 	step, _ := newAckSignerStep(signer, km)
 	ctx := makeStepCtx("1.1.0", "msg-legacy", "sub.example.com", "")
 
-	if err := step.RunOnResponse(ctx); err != nil {
+	if err := step.RunOnResponse(ctx, nil); err != nil {
 		t.Fatalf("RunOnResponse() unexpected error: %v", err)
 	}
 	if signer.signAckCalled {
@@ -132,7 +133,7 @@ func TestAckSignerStep_EmptyVersion_Skips(t *testing.T) {
 	step, _ := newAckSignerStep(signer, km)
 	ctx := makeStepCtx("", "msg-empty", "sub.example.com", "")
 
-	if err := step.RunOnResponse(ctx); err != nil {
+	if err := step.RunOnResponse(ctx, nil); err != nil {
 		t.Fatalf("RunOnResponse() unexpected error: %v", err)
 	}
 	if signer.signAckCalled {
@@ -147,7 +148,7 @@ func TestAckSignerStep_KeyManagerError_ReturnsError(t *testing.T) {
 	step, _ := newAckSignerStep(signer, km)
 	ctx := makeStepCtx("2.0.0", "msg-002", "sub.example.com", "sig==")
 
-	if err := step.RunOnResponse(ctx); err == nil {
+	if err := step.RunOnResponse(ctx, nil); err == nil {
 		t.Fatal("expected error when KeyManager fails")
 	}
 }
@@ -159,7 +160,7 @@ func TestAckSignerStep_SignerError_ReturnsError(t *testing.T) {
 	step, _ := newAckSignerStep(signer, km)
 	ctx := makeStepCtx("2.0.0", "msg-003", "sub.example.com", "sig==")
 
-	if err := step.RunOnResponse(ctx); err == nil {
+	if err := step.RunOnResponse(ctx, nil); err == nil {
 		t.Fatal("expected error when signer fails")
 	}
 }
@@ -171,7 +172,7 @@ func TestAckSignerStep_MissingSubID_ReturnsError(t *testing.T) {
 	step, _ := newAckSignerStep(signer, km)
 	ctx := makeStepCtx("2.0.0", "msg-004", "", "sig==") // empty subID
 
-	if err := step.RunOnResponse(ctx); err == nil {
+	if err := step.RunOnResponse(ctx, nil); err == nil {
 		t.Fatal("expected error when SubID is empty")
 	}
 }
@@ -187,6 +188,83 @@ func TestNewAckSignerStep_NilKM_ReturnsError(t *testing.T) {
 	signer := &mockSigner{}
 	if _, err := newAckSignerStep(signer, nil); err == nil {
 		t.Fatal("expected error for nil key manager")
+	}
+}
+
+func TestAckSignerStep_URLRoutingPath_409_SetsSignatureOnResponse(t *testing.T) {
+	// 409 AckNoCallback: app decides, ONIX relays. ackSigner must still sign
+	// the response so the caller can verify the Signature header regardless of
+	// status code.
+	signer := &mockSigner{returnSig: "sig409=="}
+	km := &mockKM{keyset: &model.Keyset{UniqueKeyID: "key-409", SigningPrivate: "priv"}}
+
+	step, err := newAckSignerStep(signer, km)
+	if err != nil {
+		t.Fatalf("newAckSignerStep() unexpected error: %v", err)
+	}
+
+	ctx := makeStepCtx("2.0.0", "msg-409", "bpp.example.com", "inboundSig==")
+
+	body := `{"message":{"status":"ACK","error":{"code":"40901","message":"no matching catalog"}}}`
+	resp := &http.Response{
+		StatusCode: http.StatusConflict,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+
+	if err := step.RunOnResponse(ctx, resp); err != nil {
+		t.Fatalf("RunOnResponse() unexpected error on 409: %v", err)
+	}
+
+	if !signer.signAckCalled {
+		t.Error("expected SignAck to be called for 409 response")
+	}
+	if resp.Header.Get("Signature") == "" {
+		t.Fatal("expected Signature header on 409 response")
+	}
+	// Body must be restored so ReverseProxy forwards the original 409 body.
+	restored, _ := io.ReadAll(resp.Body)
+	if string(restored) != body {
+		t.Errorf("resp.Body not restored: got %q, want %q", restored, body)
+	}
+}
+
+func TestAckSignerStep_URLRoutingPath_SetsSignatureOnResponse(t *testing.T) {
+	signer := &mockSigner{returnSig: "urlSig=="}
+	km := &mockKM{keyset: &model.Keyset{UniqueKeyID: "key-url", SigningPrivate: "priv"}}
+
+	step, err := newAckSignerStep(signer, km)
+	if err != nil {
+		t.Fatalf("newAckSignerStep() unexpected error: %v", err)
+	}
+
+	ctx := makeStepCtx("2.0.0", "msg-url", "bpp.url.com", "inboundSig==")
+
+	// Simulate upstream app response body.
+	body := `{"message":{"ack":{"status":"ACK"}}}`
+	resp := &http.Response{
+		Header: http.Header{},
+		Body:   io.NopCloser(strings.NewReader(body)),
+	}
+
+	if err := step.RunOnResponse(ctx, resp); err != nil {
+		t.Fatalf("RunOnResponse() unexpected error: %v", err)
+	}
+
+	if !signer.signAckCalled {
+		t.Error("expected SignAck to be called on URL-routing path")
+	}
+	// Signature header must be on the upstream response, not ctx.RespHeader.
+	if resp.Header.Get("Signature") == "" {
+		t.Fatal("expected Signature header on upstream response")
+	}
+	if ctx.RespHeader.Get("Signature") != "" {
+		t.Error("expected Signature header NOT set on ctx.RespHeader for URL-routing path")
+	}
+	// Body must be restored so the proxy can forward it.
+	restored, _ := io.ReadAll(resp.Body)
+	if string(restored) != body {
+		t.Errorf("resp.Body not restored: got %q, want %q", restored, body)
 	}
 }
 

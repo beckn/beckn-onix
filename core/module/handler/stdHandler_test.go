@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -443,7 +444,7 @@ type mockResponseStep struct {
 	err    error
 }
 
-func (m *mockResponseStep) RunOnResponse(_ *model.StepContext) error {
+func (m *mockResponseStep) RunOnResponse(_ *model.StepContext, _ *http.Response) error {
 	m.called = true
 	return m.err
 }
@@ -527,7 +528,7 @@ type mockOrderResponseStep struct {
 	order *[]string
 }
 
-func (m *mockOrderResponseStep) RunOnResponse(_ *model.StepContext) error {
+func (m *mockOrderResponseStep) RunOnResponse(_ *model.StepContext, _ *http.Response) error {
 	*m.order = append(*m.order, m.name)
 	return nil
 }
@@ -667,5 +668,45 @@ func TestStepCtx_ProtocolVersion(t *testing.T) {
 				t.Errorf("InboundAuthSignature = %q, want %q", sctx.InboundAuthSignature, tt.wantAuthSig)
 			}
 		})
+	}
+}
+
+// TestProxy_ModifyResponse_409_InvokesResponseSteps verifies that the thin
+// ModifyResponse dispatcher in proxy() fires responseSteps on a 409 upstream
+// response. This covers the AckNoCallback relay path: app sends 409, ONIX
+// relays it, ackSigner (or any ResponseStep) runs via ModifyResponse.
+func TestProxy_ModifyResponse_409_InvokesResponseSteps(t *testing.T) {
+	const ackBody = `{"message":{"status":"ACK","error":{"code":"40901","message":"no catalog"}}}`
+
+	// Upstream app: returns 409 with AckNoCallback body.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		fmt.Fprint(w, ackBody)
+	}))
+	defer upstream.Close()
+
+	// ResponseStep that records being called and sets a sentinel header.
+	respStep := &mockResponseStep{}
+
+	upstreamURL, _ := url.Parse(upstream.URL)
+	stepCtx := &model.StepContext{
+		Context: context.Background(),
+		Route:   &model.Route{TargetType: "url", URL: upstreamURL},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/bpp/receiver/", strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+
+	proxy(stepCtx, req, rr, http.DefaultClient, []definition.ResponseStep{respStep})
+
+	if rr.Code != http.StatusConflict {
+		t.Errorf("expected upstream 409 to be relayed, got %d", rr.Code)
+	}
+	if !respStep.called {
+		t.Error("expected ResponseStep to be called via ModifyResponse on 409 upstream response")
+	}
+	if rr.Body.String() != ackBody {
+		t.Errorf("expected upstream body to be relayed unchanged: got %q", rr.Body.String())
 	}
 }

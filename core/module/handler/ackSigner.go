@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
@@ -32,7 +35,13 @@ func newAckSignerStep(signer definition.Signer, km definition.KeyManager) (defin
 }
 
 // RunOnResponse signs the Ack response and sets the Signature header.
-func (a *ackSignerStep) RunOnResponse(ctx *model.StepContext) error {
+//
+// resp is nil on the publisher path: ONIX controls the ACK body, so the digest
+// is computed over the deterministic body that SendAck will write.
+// resp is non-nil on the URL-routing path: the body comes from the upstream
+// app via ReverseProxy, so the digest covers the actual bytes the caller
+// receives. In both cases the Signature header value is identical in structure.
+func (a *ackSignerStep) RunOnResponse(ctx *model.StepContext, resp *http.Response) error {
 	if !model.IsAtLeastV2(ctx.ProtocolVersion) {
 		return nil
 	}
@@ -41,11 +50,25 @@ func (a *ackSignerStep) RunOnResponse(ctx *model.StepContext) error {
 		return model.NewBadReqErr(fmt.Errorf("subscriberID not set"))
 	}
 
-	// Build the deterministic ACK body for the digest — same shape that SendAck
-	// will write, so the signature covers the exact bytes the caller receives.
-	ackBody, err := buildAckBody(ctx.ProtocolVersion, ctx.MessageID)
-	if err != nil {
-		return fmt.Errorf("ackSigner: failed to build ack body: %w", err)
+	var ackBody []byte
+	var err error
+
+	if resp != nil {
+		// URL-routing path: sign the actual upstream response body so the
+		// digest covers exactly what the caller will receive.
+		ackBody, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("ackSigner: failed to read upstream response body: %w", err)
+		}
+		// Restore the body so the proxy can forward it unchanged.
+		resp.Body = io.NopCloser(bytes.NewReader(ackBody))
+	} else {
+		// Publisher path: ONIX writes the ACK — build the deterministic body
+		// that SendAck will write so the digest matches.
+		ackBody, err = buildAckBody(ctx.ProtocolVersion, ctx.MessageID)
+		if err != nil {
+			return fmt.Errorf("ackSigner: failed to build ack body: %w", err)
+		}
 	}
 
 	keySet, err := a.km.Keyset(ctx, ctx.SubID)
@@ -61,7 +84,15 @@ func (a *ackSignerStep) RunOnResponse(ctx *model.StepContext) error {
 		return fmt.Errorf("ackSigner: failed to sign ack: %w", err)
 	}
 
-	ctx.RespHeader.Set("Signature", buildSignatureHeader(ctx.SubID, keySet.UniqueKeyID, createdAt, validTill, sig))
+	sigHeader := buildSignatureHeader(ctx.SubID, keySet.UniqueKeyID, createdAt, validTill, sig)
+	if resp != nil {
+		// URL-routing path: set on the upstream response so ReverseProxy
+		// forwards it to the caller.
+		resp.Header.Set("Signature", sigHeader)
+	} else {
+		// Publisher path: set on the response writer headers.
+		ctx.RespHeader.Set("Signature", sigHeader)
+	}
 	return nil
 }
 

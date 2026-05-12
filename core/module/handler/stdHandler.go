@@ -181,24 +181,24 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Execute response steps (e.g. AckSigner sets the Signature response header).
-	// These run after all inbound steps succeed, before the ACK is written.
-	for _, step := range h.responseSteps {
-		if err = step.RunOnResponse(stepCtx); err != nil {
-			log.Errorf(stepCtx, err, "%T.RunOnResponse():%v", step, err)
-			response.SendNack(stepCtx, wrapped, err)
-			return
-		}
-	}
 	// Restore request body before forwarding or publishing.
 	r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
 	if stepCtx.Route == nil {
+		// No routing — ONIX writes the ACK directly. Run response steps here
+		// with resp=nil (publisher path semantics).
+		for _, step := range h.responseSteps {
+			if err = step.RunOnResponse(stepCtx, nil); err != nil {
+				log.Errorf(stepCtx, err, "%T.RunOnResponse():%v", step, err)
+				response.SendNack(stepCtx, wrapped, err)
+				return
+			}
+		}
 		response.SendAck(stepCtx, wrapped)
 		return
 	}
 
 	// Handle routing based on the defined route type.
-	route(stepCtx, r, wrapped, h.publisher, h.httpClient)
+	route(stepCtx, r, wrapped, h.publisher, h.httpClient, h.responseSteps)
 }
 
 // stepCtx creates a new StepContext for processing an HTTP request.
@@ -250,12 +250,12 @@ func (h *stdHandler) subID(ctx context.Context) string {
 var proxyFunc = proxy
 
 // route handles request forwarding or message publishing based on the routing type.
-func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb definition.Publisher, httpClient *http.Client) {
+func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb definition.Publisher, httpClient *http.Client, responseSteps []definition.ResponseStep) {
 	log.Debugf(ctx, "Routing to ctx.Route to %#v", ctx.Route)
 	switch ctx.Route.TargetType {
 	case "url":
 		log.Infof(ctx.Context, "Forwarding request to URL: %s", ctx.Route.URL)
-		proxyFunc(ctx, r, w, httpClient)
+		proxyFunc(ctx, r, w, httpClient, responseSteps)
 		return
 	case "publisher":
 		if pb == nil {
@@ -271,6 +271,14 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 			response.SendNack(ctx, w, err)
 			return
 		}
+		// Publisher path: ONIX writes the ACK. Run response steps with resp=nil.
+		for _, step := range responseSteps {
+			if err := step.RunOnResponse(ctx, nil); err != nil {
+				log.Errorf(ctx.Context, err, "response step failed: %v", err)
+				response.SendNack(ctx, w, err)
+				return
+			}
+		}
 	default:
 		err := fmt.Errorf("unknown route type: %s", ctx.Route.TargetType)
 		log.Errorf(ctx.Context, err, "Invalid configuration:%v", err)
@@ -279,7 +287,8 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 	}
 	response.SendAck(ctx, w)
 }
-func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpClient *http.Client) {
+
+func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpClient *http.Client, responseSteps []definition.ResponseStep) {
 	target := ctx.Route.URL
 	r.Header.Set("X-Forwarded-Host", r.Host)
 
@@ -290,12 +299,25 @@ func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpC
 		log.Request(req.Context(), req, ctx.Body)
 	}
 
-	proxy := &httputil.ReverseProxy{
-		Director:  director,
-		Transport: httpClient.Transport,
+	// modifyResponse is a thin dispatcher — zero business logic. It iterates
+	// response steps with the upstream *http.Response so each step can read
+	// the actual response body (e.g. for digest computation in ackSigner).
+	modifyResponse := func(resp *http.Response) error {
+		for _, step := range responseSteps {
+			if err := step.RunOnResponse(ctx, resp); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
-	proxy.ServeHTTP(w, r)
+	p := &httputil.ReverseProxy{
+		Director:       director,
+		Transport:      httpClient.Transport,
+		ModifyResponse: modifyResponse,
+	}
+
+	p.ServeHTTP(w, r)
 }
 
 // loadPlugin is a generic function to load and validate plugins.
