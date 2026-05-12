@@ -11,47 +11,107 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
-// SendAck sends an acknowledgment response (ACK) to the client.
-func SendAck(w http.ResponseWriter) {
-	resp := &model.Response{
-		Message: model.Message{
-			Ack: model.Ack{
-				Status: model.StatusACK,
-			},
-		},
-	}
+// legacyAck is the pre-LTS acknowledgment wrapper used for context.version != "2.0.0".
+// Wire format: {"ack":{"status":"ACK"}}
+type legacyAck struct {
+	Status model.Status `json:"status"`
+}
 
-	data, _ := json.Marshal(resp) //should not fail here
+// legacyMessage is the pre-LTS message envelope.
+// Wire format: {"message":{"ack":{"status":"ACK"},"error":{...}}}
+type legacyMessage struct {
+	Ack   legacyAck    `json:"ack"`
+	Error *model.Error `json:"error,omitempty"`
+}
+
+// legacyResponse is the pre-LTS top-level response.
+type legacyResponse struct {
+	Message legacyMessage `json:"message"`
+}
+
+// SendAck sends a synchronous ACK response to the client.
+// For context.version "2.0.0" the response uses the LTS envelope:
+//
+//	{"message":{"status":"ACK","messageId":"<uuid>"}}
+//
+// All other versions use the legacy envelope:
+//
+//	{"message":{"ack":{"status":"ACK"}}}
+func SendAck(ctx context.Context, w http.ResponseWriter) {
+	var data []byte
+
+	if isLTS(ctx) {
+		resp := &model.Response{
+			Message: model.Message{
+				Status:    model.StatusACK,
+				MessageID: msgID(ctx),
+			},
+		}
+		data, _ = json.Marshal(resp)
+	} else {
+		resp := &legacyResponse{
+			Message: legacyMessage{
+				Ack: legacyAck{Status: model.StatusACK},
+			},
+		}
+		data, _ = json.Marshal(resp)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, err := w.Write(data)
-	if err != nil {
+	if _, err := w.Write(data); err != nil {
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
-		return
 	}
 }
 
-// nack sends a negative acknowledgment (NACK) response with an error message.
+// nack sends a NACK response with an error payload.
+// For context.version "2.0.0":
+//
+//	{"message":{"status":"NACK","messageId":"<uuid>","error":{...}}}
+//
+// All other versions:
+//
+//	{"message":{"ack":{"status":"NACK"},"error":{...}}}
 func nack(ctx context.Context, w http.ResponseWriter, err *model.Error, status int) {
-	resp := &model.Response{
-		Message: model.Message{
-			Ack: model.Ack{
-				Status: model.StatusNACK,
+	var data []byte
+
+	if isLTS(ctx) {
+		resp := &model.Response{
+			Message: model.Message{
+				Status:    model.StatusNACK,
+				MessageID: msgID(ctx),
+				Error:     err,
 			},
-			Error: err,
-		},
+		}
+		data, _ = json.Marshal(resp)
+	} else {
+		resp := &legacyResponse{
+			Message: legacyMessage{
+				Ack:   legacyAck{Status: model.StatusNACK},
+				Error: err,
+			},
+		}
+		data, _ = json.Marshal(resp)
 	}
-	data, _ := json.Marshal(resp) //should not fail here
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_, er := w.Write(data)
-	if er != nil {
+	if _, er := w.Write(data); er != nil {
 		log.Debugf(ctx, "Error writing response: %v, MessageID: %s", er, ctx.Value(model.ContextKeyMsgID))
 		http.Error(w, fmt.Sprintf("Internal server error, MessageID: %s", ctx.Value(model.ContextKeyMsgID)), http.StatusInternalServerError)
-		return
 	}
+}
+
+// isLTS reports whether the request is a Beckn v2.0.0 LTS request.
+func isLTS(ctx context.Context) bool {
+	v, _ := ctx.Value(model.ContextKeyProtocolVersion).(string)
+	return v == model.ProtocolVersionLTS
+}
+
+// msgID returns the message ID stored in the context, or empty string if absent.
+func msgID(ctx context.Context) string {
+	v, _ := ctx.Value(model.ContextKeyMsgID).(string)
+	return v
 }
 
 // internalServerError generates an internal server error response.
@@ -72,18 +132,13 @@ func SendNack(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
 	case errors.As(err, &schemaErr):
 		nack(ctx, w, schemaErr.BecknError(), http.StatusBadRequest)
-		return
 	case errors.As(err, &signErr):
 		nack(ctx, w, signErr.BecknError(), http.StatusUnauthorized)
-		return
 	case errors.As(err, &badReqErr):
 		nack(ctx, w, badReqErr.BecknError(), http.StatusBadRequest)
-		return
 	case errors.As(err, &notFoundErr):
 		nack(ctx, w, notFoundErr.BecknError(), http.StatusNotFound)
-		return
 	default:
 		nack(ctx, w, internalServerError(ctx), http.StatusInternalServerError)
-		return
 	}
 }

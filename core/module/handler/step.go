@@ -314,6 +314,19 @@ func extractProtocolVersion(body []byte) string {
 	return ""
 }
 
+func extractMessageID(body []byte) string {
+	type contextEnvelope struct {
+		Context struct {
+			MessageID string `json:"messageId"`
+		} `json:"context"`
+	}
+	var payload contextEnvelope
+	if err := json.Unmarshal(body, &payload); err == nil {
+		return payload.Context.MessageID
+	}
+	return ""
+}
+
 // checkPolicyStep adapts PolicyChecker into the Step interface.
 type checkPolicyStep struct {
 	checker definition.PolicyChecker

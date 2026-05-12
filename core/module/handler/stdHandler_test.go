@@ -439,19 +439,22 @@ func (m *mockRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) {
 
 func TestStepCtx_ProtocolVersion(t *testing.T) {
 	tests := []struct {
-		name     string
-		body     string
-		wantVer  string
+		name      string
+		body      string
+		wantVer   string
+		wantMsgID string
 	}{
 		{
-			name:    "LTS version 2.0.0",
-			body:    `{"context":{"version":"2.0.0"}}`,
-			wantVer: "2.0.0",
+			name:      "LTS version with messageId",
+			body:      `{"context":{"version":"2.0.0","messageId":"550e8400-e29b-41d4-a716-446655440000"}}`,
+			wantVer:   "2.0.0",
+			wantMsgID: "550e8400-e29b-41d4-a716-446655440000",
 		},
 		{
-			name:    "RC escape hatch 2.0.0-rc",
-			body:    `{"context":{"version":"2.0.0-rc"}}`,
-			wantVer: "2.0.0-rc",
+			name:      "RC escape hatch 2.0.0-rc",
+			body:      `{"context":{"version":"2.0.0-rc","messageId":"abc-123"}}`,
+			wantVer:   "2.0.0-rc",
+			wantMsgID: "abc-123",
 		},
 		{
 			name:    "legacy version 1.1.0",
@@ -488,6 +491,13 @@ func TestStepCtx_ProtocolVersion(t *testing.T) {
 			}
 			if sctx.ProtocolVersion != tt.wantVer {
 				t.Errorf("ProtocolVersion = %q, want %q", sctx.ProtocolVersion, tt.wantVer)
+			}
+			if sctx.MessageID != tt.wantMsgID {
+				t.Errorf("MessageID = %q, want %q", sctx.MessageID, tt.wantMsgID)
+			}
+			// Verify messageId is also propagated into Go context for response functions.
+			if ctxMsgID, _ := sctx.Value(model.ContextKeyMsgID).(string); ctxMsgID != tt.wantMsgID {
+				t.Errorf("context ContextKeyMsgID = %q, want %q", ctxMsgID, tt.wantMsgID)
 			}
 		})
 	}

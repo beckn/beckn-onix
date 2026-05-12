@@ -174,6 +174,7 @@ type StepContext struct {
 	Role            Role
 	RespHeader      http.Header
 	ProtocolVersion string // Protocol version parsed from context.version (e.g. "2.0.0")
+	MessageID       string // Message ID parsed from context.messageId in the request body
 }
 
 // WithContext updates the existing StepContext with a new context.
@@ -191,17 +192,15 @@ const (
 	StatusNACK Status = "NACK"
 )
 
-// Ack represents an acknowledgment response.
-type Ack struct {
+// Message represents the synchronous response message envelope (Beckn v2.0.0 LTS shape).
+// The status and messageId are direct fields; the legacy "ack" wrapper is gone.
+// For wire format: {"message":{"status":"ACK","messageId":"<uuid>"}}.
+type Message struct {
 	// Status holds the acknowledgment status (ACK/NACK).
 	Status Status `json:"status"`
-}
-
-// Message represents the structure of a response message.
-type Message struct {
-	// Ack contains the acknowledgment status.
-	Ack Ack `json:"ack"`
-	// Error holds error details, if any, in the response.
+	// MessageID echoes the context.messageId from the inbound request.
+	MessageID string `json:"messageId,omitempty"`
+	// Error holds error details when Status is NACK.
 	Error *Error `json:"error,omitempty"`
 }
 

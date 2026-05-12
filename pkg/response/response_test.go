@@ -25,24 +25,54 @@ func (e *errorResponseWriter) Header() http.Header {
 }
 
 func TestSendAck(t *testing.T) {
-	_, err := http.NewRequest("GET", "/", nil)
-	if err != nil {
-		t.Fatal(err) // For tests
+	tests := []struct {
+		name     string
+		ctx      context.Context
+		expected string
+	}{
+		{
+			name:     "legacy — no protocol version",
+			ctx:      context.Background(),
+			expected: `{"message":{"ack":{"status":"ACK"}}}`,
+		},
+		{
+			name:     "legacy — non-LTS version",
+			ctx:      context.WithValue(context.Background(), model.ContextKeyProtocolVersion, "1.1.0"),
+			expected: `{"message":{"ack":{"status":"ACK"}}}`,
+		},
+		{
+			name: "LTS v2.0.0 — includes messageId",
+			ctx: func() context.Context {
+				ctx := context.WithValue(context.Background(), model.ContextKeyProtocolVersion, "2.0.0")
+				return context.WithValue(ctx, model.ContextKeyMsgID, "550e8400-e29b-41d4-a716-446655440000")
+			}(),
+			expected: `{"message":{"status":"ACK","messageId":"550e8400-e29b-41d4-a716-446655440000"}}`,
+		},
+		{
+			name:     "LTS v2.0.0 — empty messageId omitted",
+			ctx:      context.WithValue(context.Background(), model.ContextKeyProtocolVersion, "2.0.0"),
+			expected: `{"message":{"status":"ACK"}}`,
+		},
 	}
-	rr := httptest.NewRecorder()
 
-	SendAck(rr)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			SendAck(tt.ctx, rr)
 
-	if rr.Code != http.StatusOK {
-		t.Errorf("wanted status code %d, got %d", http.StatusOK, rr.Code)
+			if rr.Code != http.StatusOK {
+				t.Errorf("wanted status code %d, got %d", http.StatusOK, rr.Code)
+			}
+			if rr.Body.String() != tt.expected {
+				t.Errorf("body = %s, want %s", rr.Body.String(), tt.expected)
+			}
+		})
 	}
+}
 
-	expected := `{"message":{"ack":{"status":"ACK"}}}`
-	if rr.Body.String() != expected {
-		t.Errorf("err.Error() = %s, want %s",
-			rr.Body.String(), expected)
-
-	}
+func ltsCtx(msgID string) context.Context {
+	ctx := context.WithValue(context.Background(), model.ContextKeyProtocolVersion, model.ProtocolVersionLTS)
+	return context.WithValue(ctx, model.ContextKeyMsgID, msgID)
 }
 
 func TestSendNack(t *testing.T) {
@@ -91,6 +121,28 @@ func TestSendNack(t *testing.T) {
 		},
 	}
 
+	ltsTests := []struct {
+		name     string
+		err      error
+		expected string
+		status   int
+	}{
+		{
+			name:     "LTS SchemaValidationErr",
+			err:      model.NewBadReqErr(errors.New("field missing")),
+			status:   http.StatusBadRequest,
+			expected: `{"message":{"status":"NACK","messageId":"msg-lts-1","error":{"code":"Bad Request","message":"BAD Request: field missing"}}}`,
+		},
+		{
+			name:     "LTS SignValidationErr",
+			err:      model.NewSignValidationErr(errors.New("signature expired")),
+			status:   http.StatusUnauthorized,
+			expected: `{"message":{"status":"NACK","messageId":"msg-lts-1","error":{"code":"Unauthorized","message":"Signature Validation Error: signature expired"}}}`,
+		},
+	}
+
+	ltsContext := ltsCtx("msg-lts-1")
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := http.NewRequest("GET", "/", nil)
@@ -121,7 +173,29 @@ func TestSendNack(t *testing.T) {
 				t.Errorf("err.Error() = %s, want %s",
 					actual, expected)
 			}
+		})
+	}
 
+	for _, tt := range ltsTests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			SendNack(ltsContext, rr, tt.err)
+
+			if rr.Code != tt.status {
+				t.Errorf("wanted status code %d, got %d", tt.status, rr.Code)
+			}
+
+			var actual map[string]interface{}
+			if err := json.Unmarshal(rr.Body.Bytes(), &actual); err != nil {
+				t.Fatalf("failed to unmarshal response: %v", err)
+			}
+			var expected map[string]interface{}
+			if err := json.Unmarshal([]byte(tt.expected), &expected); err != nil {
+				t.Fatalf("failed to unmarshal expected: %v", err)
+			}
+			if !compareJSON(expected, actual) {
+				t.Errorf("body = %s, want %s", rr.Body.String(), tt.expected)
+			}
 		})
 	}
 }
@@ -134,7 +208,7 @@ func compareJSON(expected, actual map[string]interface{}) bool {
 
 func TestSendAck_WriteError(t *testing.T) {
 	w := &errorResponseWriter{}
-	SendAck(w)
+	SendAck(context.Background(), w)
 }
 
 // Mock struct to force JSON marshalling error

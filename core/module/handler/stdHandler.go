@@ -182,7 +182,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Restore request body before forwarding or publishing.
 	r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
 	if stepCtx.Route == nil {
-		response.SendAck(wrapped)
+		response.SendAck(stepCtx, wrapped)
 		return
 	}
 
@@ -207,9 +207,12 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 	} else {
 		log.Debugf(r.Context(), "stepCtx: extracted protocol version %q from body: %s", protocolVersion, body)
 	}
-	// Store the protocol version in the Go context so downstream functions that
-	// only receive a context.Context (e.g. response.SendNack) can read it.
+	messageID := extractMessageID(body)
+	// Store both protocol version and message ID in the Go context so downstream
+	// functions that only receive a context.Context (e.g. response.SendNack,
+	// response.SendAck) can read them without needing StepContext.
 	ctx := context.WithValue(r.Context(), model.ContextKeyProtocolVersion, protocolVersion)
+	ctx = context.WithValue(ctx, model.ContextKeyMsgID, messageID)
 	return &model.StepContext{
 		Context:         ctx,
 		Request:         r,
@@ -218,6 +221,7 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 		SubID:           subID,
 		RespHeader:      rh,
 		ProtocolVersion: protocolVersion,
+		MessageID:       messageID,
 	}, nil
 }
 
@@ -260,7 +264,7 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 		response.SendNack(ctx, w, err)
 		return
 	}
-	response.SendAck(w)
+	response.SendAck(ctx, w)
 }
 func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpClient *http.Client) {
 	target := ctx.Route.URL
