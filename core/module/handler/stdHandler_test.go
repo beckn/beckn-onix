@@ -437,6 +437,101 @@ func (m *mockRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) {
 	return nil, nil
 }
 
+// mockResponseStep is a test double for definition.ResponseStep.
+type mockResponseStep struct {
+	called bool
+	err    error
+}
+
+func (m *mockResponseStep) RunOnResponse(_ *model.StepContext) error {
+	m.called = true
+	return m.err
+}
+
+func TestServeHTTP_ResponseStepCalledAfterSteps(t *testing.T) {
+	respStep := &mockResponseStep{}
+	h := &stdHandler{
+		SubscriberID:  "test-sub",
+		role:          model.RoleBAP,
+		moduleName:    "test-module",
+		steps:         []definition.Step{},
+		responseSteps: []definition.ResponseStep{respStep},
+	}
+
+	req, _ := http.NewRequest("POST", "/search", strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if !respStep.called {
+		t.Error("expected ResponseStep.RunOnResponse to be called")
+	}
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestServeHTTP_ResponseStepErrorSendsNack(t *testing.T) {
+	respStep := &mockResponseStep{err: fmt.Errorf("response step failed")}
+	h := &stdHandler{
+		SubscriberID:  "test-sub",
+		role:          model.RoleBAP,
+		moduleName:    "test-module",
+		steps:         []definition.Step{},
+		responseSteps: []definition.ResponseStep{respStep},
+	}
+
+	req, _ := http.NewRequest("POST", "/search", strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on response step error, got %d", rr.Code)
+	}
+}
+
+func TestServeHTTP_ResponseStepRunsAfterAllInboundSteps(t *testing.T) {
+	order := []string{}
+
+	inboundStep := &mockOrderStep{name: "inbound", order: &order}
+	respStep := &mockOrderResponseStep{name: "response", order: &order}
+
+	h := &stdHandler{
+		SubscriberID:  "test-sub",
+		role:          model.RoleBAP,
+		moduleName:    "test-module",
+		steps:         []definition.Step{inboundStep},
+		responseSteps: []definition.ResponseStep{respStep},
+	}
+
+	req, _ := http.NewRequest("POST", "/search", strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if len(order) != 2 || order[0] != "inbound" || order[1] != "response" {
+		t.Errorf("unexpected execution order: %v", order)
+	}
+}
+
+type mockOrderStep struct {
+	name  string
+	order *[]string
+}
+
+func (m *mockOrderStep) Run(_ *model.StepContext) error {
+	*m.order = append(*m.order, m.name)
+	return nil
+}
+
+type mockOrderResponseStep struct {
+	name  string
+	order *[]string
+}
+
+func (m *mockOrderResponseStep) RunOnResponse(_ *model.StepContext) error {
+	*m.order = append(*m.order, m.name)
+	return nil
+}
+
 func TestExtractAuthSignature(t *testing.T) {
 	tests := []struct {
 		name     string

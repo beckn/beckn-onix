@@ -31,6 +31,7 @@ import (
 type stdHandler struct {
 	signer           definition.Signer
 	steps            []definition.Step
+	responseSteps    []definition.ResponseStep
 	signValidator    definition.SignValidator
 	cache            definition.Cache
 	registry         definition.RegistryLookup
@@ -77,10 +78,11 @@ func newHTTPClient(cfg *HttpClientConfig, wrapper definition.TransportWrapper) *
 // NewStdHandler initializes a new processor with plugins and steps.
 func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleName string) (http.Handler, error) {
 	h := &stdHandler{
-		steps:        []definition.Step{},
-		SubscriberID: cfg.SubscriberID,
-		role:         cfg.Role,
-		moduleName:   moduleName,
+		steps:         []definition.Step{},
+		responseSteps: []definition.ResponseStep{},
+		SubscriberID:  cfg.SubscriberID,
+		role:          cfg.Role,
+		moduleName:    moduleName,
 	}
 	// Initialize plugins.
 	if err := h.initPlugins(ctx, mgr, &cfg.Plugins); err != nil {
@@ -175,6 +177,15 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, step := range h.steps {
 		if err = step.Run(stepCtx); err != nil {
 			log.Errorf(stepCtx, err, "%T.run():%v", step, err)
+			response.SendNack(stepCtx, wrapped, err)
+			return
+		}
+	}
+	// Execute response steps (e.g. AckSigner sets the Signature response header).
+	// These run after all inbound steps succeed, before the ACK is written.
+	for _, step := range h.responseSteps {
+		if err = step.RunOnResponse(stepCtx); err != nil {
+			log.Errorf(stepCtx, err, "%T.RunOnResponse():%v", step, err)
 			response.SendNack(stepCtx, wrapped, err)
 			return
 		}
