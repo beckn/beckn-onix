@@ -70,6 +70,15 @@ modules:
           id: cache
           config:
             addr: redis:6379
+        payloadStore:
+          id: payloadstore
+          config:
+            ttl: "24h"
+            indexTTL: "25h"
+            maxBodyBytes: "1048576"
+            storeBody: "true"
+            storeSignature: "true"
+            compress: "false"
         schemaValidator:
           id: schemav2validator
           config:
@@ -136,6 +145,15 @@ modules:
           id: cache
           config:
             addr: redis:6379
+        payloadStore:
+          id: payloadstore
+          config:
+            ttl: "24h"
+            indexTTL: "25h"
+            maxBodyBytes: "1048576"
+            storeBody: "true"
+            storeSignature: "true"
+            compress: "false"
         schemaValidator:
           id: schemav2validator
           config:

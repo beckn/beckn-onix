@@ -8,6 +8,16 @@ ONIX has been stateless since inception. PayloadStore is the foundation for all 
 
 `payloadstore` requires a `cache` plugin configured in the same handler. It has no dependency on any specific cache backend — Redis, ElastiCache, Memcached, or an in-process test double all work without changes to the plugin.
 
+`payloadstore` also requires the `reqpreprocessor` middleware to be configured in the same handler with `contextKeys: transaction_id,message_id`. The middleware extracts those values from the request body into the Go request context, which PayloadStore reads for indexing and dedup. Without it, `message_id` and `transaction_id` will be empty in every stored entry and the duplicate-detection check will never fire.
+
+```yaml
+middleware:
+  - id: reqpreprocessor
+    config:
+      contextKeys: transaction_id,message_id
+      role: bap   # or bpp
+```
+
 ## Behaviour
 
 PayloadStore is an **infrastructure plugin**, not a step. It fires automatically at two fixed points in the handler when configured:
@@ -27,7 +37,7 @@ payloadStore:
     indexTTL: "25h"
     maxBodyBytes: "1048576"
     storeBody: "true"
-    storeSignature: "false"
+    storeSignature: "true"
     compress: "false"
 ```
 
