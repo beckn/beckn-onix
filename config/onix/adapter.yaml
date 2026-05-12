@@ -55,6 +55,8 @@ modules:
             refreshInterval: "5m"
         signValidator:
           id: signvalidator
+        signer:
+          id: signer
         publisher:
           id: publisher
           config:
@@ -74,6 +76,7 @@ modules:
         - checkPolicy
         - addRoute
         - validateSchema
+        - signAck
   - name: bapTxnCaller
     path: /bap/caller/
     handler:
@@ -168,6 +171,8 @@ modules:
             refreshInterval: "5m"
         signValidator:
           id: signvalidator
+        signer:
+          id: signer
         publisher:
           id: publisher
           config:
@@ -187,6 +192,7 @@ modules:
         - checkPolicy
         - addRoute
         - validateSchema
+        - signAck
   - name: bppTxnCaller
     path: /bpp/caller/
     handler:

@@ -52,6 +52,8 @@ modules:
             schemaDir: ./schemas
         signValidator:
           id: signvalidator
+        signer:
+          id: signer
         router:
           id: router
           config:
@@ -64,6 +66,7 @@ modules:
       steps:
         - addRoute
         - validateSchema
+        - signAck
   
   - name: bapTxnCaller
     path: /bap/caller/
@@ -144,6 +147,8 @@ modules:
             schemaDir: ./schemas
         signValidator:
           id: signvalidator
+        signer:
+          id: signer
         router:
           id: router
           config:
@@ -152,6 +157,7 @@ modules:
         - validateSign
         - addRoute
         - validateSchema
+        - signAck
   
   - name: bppTxnCaller
     path: /bpp/caller/

@@ -50,6 +50,8 @@ modules:
             schemaDir: /mnt/gcs/configs/schemas
         signValidator:
           id: signvalidator
+        signer:
+          id: signer
         publisher:
           id: publisher
           config:
@@ -68,6 +70,7 @@ modules:
         - validateSign
         - addRoute
         - validateSchema
+        - signAck
   - name: bapTxnCaller
     path: /bap/caller/
     handler:
