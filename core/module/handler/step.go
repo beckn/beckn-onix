@@ -314,6 +314,28 @@ func extractProtocolVersion(body []byte) string {
 	return ""
 }
 
+// extractAuthSignature extracts the raw Base64 signature value from a Beckn
+// Authorization (or X-Gateway-Authorization) header.
+// The header uses the form:
+//
+//	Signature keyId="...",algorithm="ed25519",...,signature="<base64>"
+//
+// The returned string is the value inside the signature="..." attribute, or
+// empty string if the attribute is absent or malformed.
+func extractAuthSignature(authHeader string) string {
+	const marker = `signature="`
+	idx := strings.Index(authHeader, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := authHeader[idx+len(marker):]
+	end := strings.IndexByte(rest, '"')
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
 func extractMessageID(body []byte) string {
 	type contextEnvelope struct {
 		Context struct {

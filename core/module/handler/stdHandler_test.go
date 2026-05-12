@@ -437,12 +437,62 @@ func (m *mockRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) {
 	return nil, nil
 }
 
+func TestExtractAuthSignature(t *testing.T) {
+	tests := []struct {
+		name     string
+		header   string
+		expected string
+	}{
+		{
+			name:     "valid Authorization header",
+			header:   `Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",created="1714000000",expires="1714000300",headers="(created) (expires) digest",signature="abc123=="`,
+			expected: "abc123==",
+		},
+		{
+			name:     "signature at end without trailing comma",
+			header:   `Signature keyId="sub|key|ed25519",algorithm="ed25519",signature="xyz+/base64=="`,
+			expected: "xyz+/base64==",
+		},
+		{
+			name:     "no signature attribute",
+			header:   `Signature keyId="sub|key|ed25519",algorithm="ed25519"`,
+			expected: "",
+		},
+		{
+			name:     "empty header",
+			header:   "",
+			expected: "",
+		},
+		{
+			name:     "malformed — signature marker present but no closing quote",
+			header:   `Signature signature="unclosed`,
+			expected: "",
+		},
+		{
+			name:     "empty signature value",
+			header:   `Signature keyId="sub|key|ed25519",signature=""`,
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractAuthSignature(tt.header)
+			if got != tt.expected {
+				t.Errorf("extractAuthSignature() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestStepCtx_ProtocolVersion(t *testing.T) {
 	tests := []struct {
-		name      string
-		body      string
-		wantVer   string
-		wantMsgID string
+		name        string
+		body        string
+		authHeader  string
+		wantVer     string
+		wantMsgID   string
+		wantAuthSig string
 	}{
 		{
 			name:      "LTS version with messageId",
@@ -476,6 +526,22 @@ func TestStepCtx_ProtocolVersion(t *testing.T) {
 			body:    `not-json`,
 			wantVer: "",
 		},
+		{
+			name:        "Authorization header with signature extracted",
+			body:        `{"context":{"version":"2.0.0","messageId":"msg-789"}}`,
+			authHeader:  `Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",created="1714000000",expires="1714000300",headers="(created) (expires) digest",signature="sigBase64=="`,
+			wantVer:     "2.0.0",
+			wantMsgID:   "msg-789",
+			wantAuthSig: "sigBase64==",
+		},
+		{
+			name:        "no Authorization header — empty signature",
+			body:        `{"context":{"version":"2.0.0","messageId":"msg-000"}}`,
+			authHeader:  "",
+			wantVer:     "2.0.0",
+			wantMsgID:   "msg-000",
+			wantAuthSig: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -485,6 +551,9 @@ func TestStepCtx_ProtocolVersion(t *testing.T) {
 				SubscriberID: "test-subscriber",
 			}
 			req := httptest.NewRequest(http.MethodPost, "/search", bytes.NewBufferString(tt.body))
+			if tt.authHeader != "" {
+				req.Header.Set(model.AuthHeaderSubscriber, tt.authHeader)
+			}
 			sctx, err := h.stepCtx(req, http.Header{})
 			if err != nil {
 				t.Fatalf("stepCtx() returned unexpected error: %v", err)
@@ -498,6 +567,9 @@ func TestStepCtx_ProtocolVersion(t *testing.T) {
 			// Verify messageId is also propagated into Go context for response functions.
 			if ctxMsgID, _ := sctx.Value(model.ContextKeyMsgID).(string); ctxMsgID != tt.wantMsgID {
 				t.Errorf("context ContextKeyMsgID = %q, want %q", ctxMsgID, tt.wantMsgID)
+			}
+			if sctx.InboundAuthSignature != tt.wantAuthSig {
+				t.Errorf("InboundAuthSignature = %q, want %q", sctx.InboundAuthSignature, tt.wantAuthSig)
 			}
 		})
 	}
