@@ -133,6 +133,7 @@ modules:
         - checkPolicy
         - addRoute
         - sign
+        - validateAckSign
   - name: bppTxnReciever
     path: /bpp/reciever/
     handler:
@@ -249,3 +250,4 @@ modules:
         - checkPolicy
         - addRoute
         - sign
+        - validateAckSign

@@ -423,6 +423,15 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			}
 			h.responseSteps = append(h.responseSteps, rs)
 			continue
+		case "validateAckSign":
+			// validateAckSign is a ResponseStep — verifies the Signature header
+			// on the ACK received by a Caller handler (NFH-004 §3.4).
+			rs, rsErr := newValidateAckSignatureStep(h.signValidator, h.km)
+			if rsErr != nil {
+				return rsErr
+			}
+			h.responseSteps = append(h.responseSteps, rs)
+			continue
 		case "sign":
 			s, err = newSignStep(h.signer, h.km)
 		case "validateSign":

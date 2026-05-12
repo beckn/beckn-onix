@@ -121,3 +121,4 @@ modules:
         - validateSchema
         - addRoute
         - sign
+        - validateAckSign

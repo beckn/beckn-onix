@@ -171,4 +171,5 @@ modules:
         - addRoute
         - sign
         - validateSchema
+        - validateAckSign
   
