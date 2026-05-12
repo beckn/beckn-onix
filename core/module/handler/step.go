@@ -86,13 +86,19 @@ func (s *signStep) generateAuthHeader(subID, keyID string, createdAt, validTill 
 
 // validateSignStep represents the signature validation step.
 type validateSignStep struct {
-	validator definition.SignValidator
-	km        definition.KeyManager
-	metrics   *HandlerMetrics
+	validator     definition.SignValidator
+	km            definition.KeyManager
+	metrics       *HandlerMetrics
+	outboundStore outboundAuthStore // nil until #707 merges; TODO(#679/#707)
 }
 
 // newValidateSignStep initializes and returns a new validate sign step.
-func newValidateSignStep(signValidator definition.SignValidator, km definition.KeyManager) (definition.Step, error) {
+// outboundStore may be nil; when non-nil it enables solicited-callback
+// request-signature chain verification (NFH-004 §6, issue #679).
+//
+// TODO(#679/#707): change outboundStore parameter type to definition.PayloadStore
+// after nirmalnr's PayloadStore branch (#707) merges.
+func newValidateSignStep(signValidator definition.SignValidator, km definition.KeyManager, outboundStore outboundAuthStore) (definition.Step, error) {
 	if signValidator == nil {
 		return nil, fmt.Errorf("invalid config: SignValidator plugin not configured")
 	}
@@ -101,9 +107,10 @@ func newValidateSignStep(signValidator definition.SignValidator, km definition.K
 	}
 	metrics, _ := GetHandlerMetrics(context.Background())
 	return &validateSignStep{
-		validator: signValidator,
-		km:        km,
-		metrics:   metrics,
+		validator:     signValidator,
+		km:            km,
+		metrics:       metrics,
+		outboundStore: outboundStore,
 	}, nil
 }
 
@@ -113,15 +120,22 @@ func (s *validateSignStep) Run(ctx *model.StepContext) error {
 	spanCtx, span := tracer.Start(ctx.Context, "validate-sign")
 	defer span.End()
 	stepCtx := &model.StepContext{
-		Context:    spanCtx,
-		Request:    ctx.Request,
-		Body:       ctx.Body,
-		Role:       ctx.Role,
-		SubID:      ctx.SubID,
-		RespHeader: ctx.RespHeader,
-		Route:      ctx.Route,
+		Context:         spanCtx,
+		Request:         ctx.Request,
+		Body:            ctx.Body,
+		Role:            ctx.Role,
+		SubID:           ctx.SubID,
+		RespHeader:      ctx.RespHeader,
+		Route:           ctx.Route,
+		ProtocolVersion: ctx.ProtocolVersion,
+		MessageID:       ctx.MessageID,
 	}
 	err := s.validateHeaders(stepCtx)
+	if err == nil {
+		// For solicited callbacks (v2, headers includes "request-signature"),
+		// additionally verify the request-signature chain (NFH-004 §6).
+		err = s.validateRequestSignatureChain(stepCtx)
+	}
 	s.recordMetrics(stepCtx, err)
 	return err
 }
@@ -177,6 +191,92 @@ func (s *validateSignStep) recordMetrics(ctx *model.StepContext, err error) {
 	}
 	s.metrics.SignatureValidationsTotal.Add(ctx.Context, 1,
 		metric.WithAttributes(telemetry.AttrStatus.String(status)))
+}
+
+// validateRequestSignatureChain verifies the request-signature field for
+// solicited callbacks (NFH-004 §6).
+//
+// A solicited callback is identified by the presence of "request-signature" in
+// the Authorization header's headers="..." attribute. In that case, the BPP
+// must include the BAP's original signature as request-signature="<sig>" in
+// its Authorization header, and ONIX verifies it matches what was sent.
+//
+// Provider-initiated pushes (headers without "request-signature") are passed
+// through without the chain check.
+//
+// No-ops:
+//   - outboundStore is nil (not wired until #707 merges) — TODO(#679/#707)
+//   - protocol version < 2.0.0
+//   - "request-signature" absent from headers attribute (provider-initiated)
+func (s *validateSignStep) validateRequestSignatureChain(ctx *model.StepContext) error {
+	if s.outboundStore == nil {
+		// TODO(#679/#707): store not wired until PayloadStore merges.
+		return nil
+	}
+	if !model.IsAtLeastV2(ctx.ProtocolVersion) {
+		return nil
+	}
+	authHeader := ctx.Request.Header.Get(model.AuthHeaderSubscriber)
+	if !authHeaderIncludesRequestSig(authHeader) {
+		// Provider-initiated callback — no chain to verify.
+		return nil
+	}
+
+	// Strip "on_" prefix: callback action "on_search" → lookup key "search".
+	action := strings.TrimPrefix(extractBecknAction(ctx.Body), "on_")
+	if action == "" {
+		log.Debugf(ctx, "validateRequestSignatureChain: empty action; skipping chain check")
+		return nil
+	}
+
+	storedEntry, err := s.outboundStore.GetByMessageID(ctx, ctx.MessageID, action)
+	if err != nil {
+		return model.NewSignValidationErr(fmt.Errorf("validateSign: outbound signature lookup failed for message_id=%s action=%s: %w", ctx.MessageID, action, err))
+	}
+	if storedEntry == nil {
+		return model.NewSignValidationErr(fmt.Errorf("validateSign: no outbound signature on record for message_id=%s action=%s — callback may be unsolicited or entry expired", ctx.MessageID, action))
+	}
+
+	reqSig := extractRequestSignatureValue(authHeader)
+	if reqSig != storedEntry.Signature {
+		return model.NewSignValidationErr(fmt.Errorf("validateSign: request-signature mismatch for message_id=%s action=%s", ctx.MessageID, action))
+	}
+	return nil
+}
+
+// authHeaderIncludesRequestSig returns true when the Authorization header's
+// headers="..." attribute lists "request-signature" as one of the covered fields.
+// This distinguishes solicited callbacks (4-line signing string) from
+// provider-initiated pushes (3-line signing string, no request-signature).
+func authHeaderIncludesRequestSig(header string) bool {
+	const hPrefix = `headers="`
+	idx := strings.Index(header, hPrefix)
+	if idx == -1 {
+		return false
+	}
+	idx += len(hPrefix)
+	end := strings.Index(header[idx:], `"`)
+	if end == -1 {
+		return false
+	}
+	return strings.Contains(header[idx:idx+end], "request-signature")
+}
+
+// extractRequestSignatureValue extracts the raw Base64 value of the
+// request-signature="..." field from a Beckn Authorization header.
+// Returns empty string if the field is absent or malformed.
+func extractRequestSignatureValue(authHeader string) string {
+	const marker = `request-signature="`
+	idx := strings.Index(authHeader, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := authHeader[idx+len(marker):]
+	end := strings.IndexByte(rest, '"')
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
 }
 
 // ParsedKeyID holds the components from the parsed Authorization header's keyId.

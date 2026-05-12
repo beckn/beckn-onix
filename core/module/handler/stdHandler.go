@@ -41,10 +41,16 @@ type stdHandler struct {
 	router           definition.Router
 	publisher        definition.Publisher
 	transportWrapper definition.TransportWrapper
-	SubscriberID     string
-	role             model.Role
-	httpClient       *http.Client
-	moduleName       string
+	// outboundStore persists the outbound Authorization signature on the Caller
+	// path so that solicited callbacks can verify the request-signature field
+	// (NFH-004 §6, issue #679).
+	// nil until nirmalnr's PayloadStore branch (#707) merges.
+	// TODO(#679/#707): replace with definition.PayloadStore after #707 merges.
+	outboundStore outboundAuthStore
+	SubscriberID  string
+	role          model.Role
+	httpClient    *http.Client
+	moduleName    string
 }
 
 // newHTTPClient creates a new HTTP client with a custom transport configuration.
@@ -181,6 +187,27 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Caller path: persist the outbound Authorization signature so that the
+	// corresponding solicited callback can verify request-signature (NFH-004 §6).
+	// This must run after sign step (which sets the Authorization header) and
+	// before route() so the entry is in the store before the callback arrives.
+	// TODO(#679/#707): replace outboundStore with definition.PayloadStore after #707 merges.
+	if h.outboundStore != nil && stepCtx.MessageID != "" {
+		outboundSig := extractAuthSignature(stepCtx.Request.Header.Get(model.AuthHeaderSubscriber))
+		if outboundSig != "" {
+			// Caller actions never start with "on_", but strip defensively.
+			bareAction := strings.TrimPrefix(action, "on_")
+			entry := outboundAuthEntry{
+				MessageID: stepCtx.MessageID,
+				Action:    bareAction,
+				Signature: outboundSig,
+			}
+			if storeErr := h.outboundStore.Store(stepCtx, entry); storeErr != nil {
+				log.Warnf(stepCtx, "outboundStore.Store: %v", storeErr)
+			}
+		}
+	}
+
 	// Restore request body before forwarding or publishing.
 	r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
 	if stepCtx.Route == nil {
@@ -435,7 +462,10 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 		case "sign":
 			s, err = newSignStep(h.signer, h.km)
 		case "validateSign":
-			s, err = newValidateSignStep(h.signValidator, h.km)
+			// outboundStore is nil until #707 merges; validateSignStep degrades
+			// gracefully (skips request-signature chain check) when nil.
+			// TODO(#679/#707): outboundStore will be definition.PayloadStore.
+			s, err = newValidateSignStep(h.signValidator, h.km, h.outboundStore)
 		case "validateSchema":
 			s, err = newValidateSchemaStep(h.schemaValidator)
 		case "addRoute":
