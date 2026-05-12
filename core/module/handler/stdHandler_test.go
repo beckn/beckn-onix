@@ -156,6 +156,9 @@ func (noopPluginManager) TransportWrapper(context.Context, *plugin.Config) (defi
 func (noopPluginManager) SchemaValidator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
+func (noopPluginManager) PayloadStore(_ context.Context, _ definition.Cache, _ string, _ *plugin.Config) (definition.PayloadStore, error) {
+	return nil, nil
+}
 
 type registryWithoutMetadata struct{}
 

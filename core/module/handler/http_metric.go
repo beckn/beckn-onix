@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -116,6 +117,7 @@ type responseRecorder struct {
 	statusCode int
 	written    bool
 	record     func()
+	body       bytes.Buffer
 }
 
 func (r *responseRecorder) WriteHeader(statusCode int) {
@@ -127,6 +129,11 @@ func (r *responseRecorder) WriteHeader(statusCode int) {
 		}
 	}
 	r.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (r *responseRecorder) Write(b []byte) (int, error) {
+	r.body.Write(b)
+	return r.ResponseWriter.Write(b)
 }
 
 func specHttpMetricAttr(metricCode, category string) []attribute.KeyValue {

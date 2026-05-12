@@ -41,6 +41,7 @@ type stdHandler struct {
 	router           definition.Router
 	publisher        definition.Publisher
 	transportWrapper definition.TransportWrapper
+	payloadStore     definition.PayloadStore
 	SubscriberID     string
 	role             model.Role
 	httpClient       *http.Client
@@ -172,23 +173,78 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		span.End()
 	}()
 
-	// Execute processing steps.
-	for _, step := range h.steps {
-		if err = step.Run(stepCtx); err != nil {
-			log.Errorf(stepCtx, err, "%T.run():%v", step, err)
-			response.SendNack(stepCtx, wrapped, err)
-			return
+	// PayloadStore: dedup pre-check before the step pipeline runs.
+	if h.payloadStore != nil {
+		if msgID, _ := r.Context().Value(model.ContextKeyMsgID).(string); msgID != "" {
+			if exists, checkErr := h.payloadStore.Exists(r.Context(), msgID); checkErr != nil {
+				log.Warnf(r.Context(), "payloadStore.Exists: %v", checkErr)
+			} else if exists {
+				// Do not overwrite the original entry — the legitimate message is already stored.
+				response.SendNack(stepCtx, wrapped, model.NewBadReqErr(fmt.Errorf("duplicate message_id")))
+				return
+			}
 		}
 	}
-	// Restore request body before forwarding or publishing.
-	r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
-	if stepCtx.Route == nil {
-		response.SendAck(wrapped)
-		return
+
+	// Execute processing steps.
+	var pipelineErr error
+	for _, step := range h.steps {
+		if pipelineErr = step.Run(stepCtx); pipelineErr != nil {
+			log.Errorf(stepCtx, pipelineErr, "%T.run():%v", step, pipelineErr)
+			response.SendNack(stepCtx, wrapped, pipelineErr)
+			break
+		}
 	}
 
-	// Handle routing based on the defined route type.
-	route(stepCtx, r, wrapped, h.publisher, h.httpClient)
+	// Send ACK / route on success (response must be sent before Store so wrapped.body is populated).
+	if pipelineErr == nil {
+		// Restore request body before forwarding or publishing.
+		r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
+		if stepCtx.Route == nil {
+			response.SendAck(wrapped)
+		} else {
+			// Handle routing based on the defined route type.
+			route(stepCtx, r, wrapped, h.publisher, h.httpClient)
+		}
+	}
+
+	// PayloadStore: outcome store after response is written so wrapped.body is populated.
+	if h.payloadStore != nil {
+		outcome, reason := definition.OutcomeACK, ""
+		if pipelineErr != nil {
+			outcome, reason = definition.OutcomeNACK, pipelineErr.Error()
+		}
+		entry := h.buildPayloadEntry(stepCtx, wrapped.body.Bytes(), outcome, reason)
+		if storeErr := h.payloadStore.Store(r.Context(), entry); storeErr != nil {
+			log.Warnf(r.Context(), "payloadStore.Store: %v", storeErr)
+		}
+	}
+}
+
+// buildPayloadEntry assembles a PayloadEntry from the current step context and response.
+func (h *stdHandler) buildPayloadEntry(stepCtx *model.StepContext, responseBody []byte, outcome definition.Outcome, reason string) definition.PayloadEntry {
+	txnID, _ := stepCtx.Value(model.ContextKeyTxnID).(string)
+	msgID, _ := stepCtx.Value(model.ContextKeyMsgID).(string)
+	var ctxFields struct {
+		Context struct {
+			NetworkID string `json:"network_id"`
+			Action    string `json:"action"`
+		} `json:"context"`
+	}
+	_ = json.Unmarshal(stepCtx.Body, &ctxFields)
+	return definition.PayloadEntry{
+		MessageID:     msgID,
+		TransactionID: txnID,
+		NetworkID:     ctxFields.Context.NetworkID,
+		Action:        ctxFields.Context.Action,
+		SubscriberID:  stepCtx.SubID,
+		Role:          stepCtx.Role,
+		RequestBody:   stepCtx.Body,
+		ResponseBody:  responseBody,
+		Signature:     stepCtx.Request.Header.Get(model.AuthHeaderSubscriber),
+		Outcome:       outcome,
+		OutcomeReason: reason,
+	}
 }
 
 // stepCtx creates a new StepContext for processing an HTTP request.
@@ -330,6 +386,22 @@ func loadManifestLoader(ctx context.Context, mgr PluginManager, cache definition
 	return loader, nil
 }
 
+func loadPayloadStore(ctx context.Context, mgr PluginManager, cache definition.Cache, namespace string, cfg *plugin.Config) (definition.PayloadStore, error) {
+	if cfg == nil {
+		log.Debug(ctx, "Skipping PayloadStore plugin: not configured")
+		return nil, nil
+	}
+	if cache == nil {
+		return nil, fmt.Errorf("failed to load PayloadStore plugin (%s): Cache plugin not configured", cfg.ID)
+	}
+	ps, err := mgr.PayloadStore(ctx, cache, namespace, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load PayloadStore plugin (%s): %w", cfg.ID, err)
+	}
+	log.Debugf(ctx, "Loaded PayloadStore plugin: %s", cfg.ID)
+	return ps, nil
+}
+
 func loadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping PolicyChecker plugin: not configured")
@@ -358,6 +430,9 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 		return err
 	}
 	if h.manifestLoader, err = loadManifestLoader(ctx, mgr, h.cache, h.registry, cfg.ManifestLoader); err != nil {
+		return err
+	}
+	if h.payloadStore, err = loadPayloadStore(ctx, mgr, h.cache, h.moduleName, cfg.PayloadStore); err != nil {
 		return err
 	}
 	if h.signValidator, err = loadPlugin(ctx, "SignValidator", cfg.SignValidator, mgr.SignValidator); err != nil {
