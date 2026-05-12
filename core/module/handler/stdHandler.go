@@ -393,6 +393,14 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 		var err error
 
 		switch step {
+		case "signAck":
+			// signAck is a ResponseStep — appended to responseSteps, not steps.
+			rs, rsErr := newAckSignerStep(h.signer, h.km)
+			if rsErr != nil {
+				return rsErr
+			}
+			h.responseSteps = append(h.responseSteps, rs)
+			continue
 		case "sign":
 			s, err = newSignStep(h.signer, h.km)
 		case "validateSign":

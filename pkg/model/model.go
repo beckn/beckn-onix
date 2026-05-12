@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -65,9 +67,24 @@ const (
 	ContextKeyProtocolVersion ContextKey = "protocol_version"
 )
 
-// ProtocolVersionLTS is the Beckn protocol version string for the v2.0.0 LTS release.
-// Steps and response functions gate LTS-specific behaviour on this value.
-const ProtocolVersionLTS = "2.0.0"
+// ProtocolVersionV2 is the Beckn protocol version string for the v2.0.0 release.
+// Steps and response functions gate v2+ behaviour on this value.
+const ProtocolVersionV2 = "2.0.0"
+
+// IsAtLeastV2 reports whether the given protocol version string is 2.0.0 or later.
+// The check is intentionally major-version based: any version with major >= 2
+// (e.g. "2.1.0", "3.0.0") is treated as v2-compatible, while legacy
+// 1.x versions and empty/unknown strings return false.
+func IsAtLeastV2(version string) bool {
+	if version == "" {
+		return false
+	}
+	major, err := strconv.Atoi(strings.SplitN(version, ".", 2)[0])
+	if err != nil {
+		return false
+	}
+	return major >= 2
+}
 
 var contextKeys = map[string]ContextKey{
 	// snake_case keys (legacy beckn spec)

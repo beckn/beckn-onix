@@ -71,3 +71,24 @@ func (s *Signer) Sign(ctx context.Context, body []byte, privateKeyBase64 string,
 
 	return base64.StdEncoding.EncodeToString(signature), nil
 }
+
+// SignAck generates a signature for a synchronous Ack response using the
+// NFH-004 §3.4 four-line signing string. If requestSignature is non-empty
+// it is appended as the fourth line; otherwise the signing string is the
+// same three-line format used by Sign.
+func (s *Signer) SignAck(ctx context.Context, ackBody []byte, requestSignature, privateKeyBase64 string, createdAt, expiresAt int64) (string, error) {
+	signingString, err := hash(ackBody, createdAt, expiresAt)
+	if err != nil {
+		return "", err
+	}
+	if requestSignature != "" {
+		signingString += "\nrequest-signature: " + requestSignature
+	}
+
+	signature, err := generateSignature([]byte(signingString), privateKeyBase64)
+	if err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(signature), nil
+}

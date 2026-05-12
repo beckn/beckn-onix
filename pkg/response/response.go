@@ -40,7 +40,7 @@ type legacyResponse struct {
 func SendAck(ctx context.Context, w http.ResponseWriter) {
 	var data []byte
 
-	if isLTS(ctx) {
+	if isAtLeastV2(ctx) {
 		resp := &model.Response{
 			Message: model.Message{
 				Status:    model.StatusACK,
@@ -75,7 +75,7 @@ func SendAck(ctx context.Context, w http.ResponseWriter) {
 func nack(ctx context.Context, w http.ResponseWriter, err *model.Error, status int) {
 	var data []byte
 
-	if isLTS(ctx) {
+	if isAtLeastV2(ctx) {
 		resp := &model.Response{
 			Message: model.Message{
 				Status:    model.StatusNACK,
@@ -102,10 +102,12 @@ func nack(ctx context.Context, w http.ResponseWriter, err *model.Error, status i
 	}
 }
 
-// isLTS reports whether the request is a Beckn v2.0.0 LTS request.
-func isLTS(ctx context.Context) bool {
+// isAtLeastV2 reports whether the request uses Beckn protocol v2.0.0 or later.
+// Uses a major-version check so future versions (2.1.0, 3.0.0, …) also get
+// the v2 response envelope automatically.
+func isAtLeastV2(ctx context.Context) bool {
 	v, _ := ctx.Value(model.ContextKeyProtocolVersion).(string)
-	return v == model.ProtocolVersionLTS
+	return model.IsAtLeastV2(v)
 }
 
 // msgID returns the message ID stored in the context, or empty string if absent.

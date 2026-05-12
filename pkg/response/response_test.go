@@ -53,6 +53,22 @@ func TestSendAck(t *testing.T) {
 			ctx:      context.WithValue(context.Background(), model.ContextKeyProtocolVersion, "2.0.0"),
 			expected: `{"message":{"status":"ACK"}}`,
 		},
+		{
+			name: "future v2.1.0 — uses LTS envelope",
+			ctx: func() context.Context {
+				ctx := context.WithValue(context.Background(), model.ContextKeyProtocolVersion, "2.1.0")
+				return context.WithValue(ctx, model.ContextKeyMsgID, "future-msg-id")
+			}(),
+			expected: `{"message":{"status":"ACK","messageId":"future-msg-id"}}`,
+		},
+		{
+			name: "future v3.0.0 — uses LTS envelope",
+			ctx: func() context.Context {
+				ctx := context.WithValue(context.Background(), model.ContextKeyProtocolVersion, "3.0.0")
+				return context.WithValue(ctx, model.ContextKeyMsgID, "v3-msg-id")
+			}(),
+			expected: `{"message":{"status":"ACK","messageId":"v3-msg-id"}}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -71,7 +87,7 @@ func TestSendAck(t *testing.T) {
 }
 
 func ltsCtx(msgID string) context.Context {
-	ctx := context.WithValue(context.Background(), model.ContextKeyProtocolVersion, model.ProtocolVersionLTS)
+	ctx := context.WithValue(context.Background(), model.ContextKeyProtocolVersion, model.ProtocolVersionV2)
 	return context.WithValue(ctx, model.ContextKeyMsgID, msgID)
 }
 
