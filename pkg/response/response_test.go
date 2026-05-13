@@ -31,17 +31,17 @@ func TestSendAck(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "legacy — no protocol version",
+			name:     "pre-v2 — no protocol version",
 			ctx:      context.Background(),
 			expected: `{"message":{"ack":{"status":"ACK"}}}`,
 		},
 		{
-			name:     "legacy — non-LTS version",
+			name:     "pre-v2 — version below 2.0.0",
 			ctx:      context.WithValue(context.Background(), model.ContextKeyProtocolVersion, "1.1.0"),
 			expected: `{"message":{"ack":{"status":"ACK"}}}`,
 		},
 		{
-			name: "LTS v2.0.0 — includes messageId",
+			name: "v2.0.0 — includes messageId",
 			ctx: func() context.Context {
 				ctx := context.WithValue(context.Background(), model.ContextKeyProtocolVersion, "2.0.0")
 				return context.WithValue(ctx, model.ContextKeyMsgID, "550e8400-e29b-41d4-a716-446655440000")
@@ -49,12 +49,12 @@ func TestSendAck(t *testing.T) {
 			expected: `{"message":{"status":"ACK","messageId":"550e8400-e29b-41d4-a716-446655440000"}}`,
 		},
 		{
-			name:     "LTS v2.0.0 — empty messageId omitted",
+			name:     "v2.0.0 — empty messageId omitted",
 			ctx:      context.WithValue(context.Background(), model.ContextKeyProtocolVersion, "2.0.0"),
 			expected: `{"message":{"status":"ACK"}}`,
 		},
 		{
-			name: "future v2.1.0 — uses LTS envelope",
+			name: "future v2.1.0 — uses v2 envelope",
 			ctx: func() context.Context {
 				ctx := context.WithValue(context.Background(), model.ContextKeyProtocolVersion, "2.1.0")
 				return context.WithValue(ctx, model.ContextKeyMsgID, "future-msg-id")
@@ -62,7 +62,7 @@ func TestSendAck(t *testing.T) {
 			expected: `{"message":{"status":"ACK","messageId":"future-msg-id"}}`,
 		},
 		{
-			name: "future v3.0.0 — uses LTS envelope",
+			name: "future v3.0.0 — uses v2 envelope",
 			ctx: func() context.Context {
 				ctx := context.WithValue(context.Background(), model.ContextKeyProtocolVersion, "3.0.0")
 				return context.WithValue(ctx, model.ContextKeyMsgID, "v3-msg-id")
@@ -86,7 +86,7 @@ func TestSendAck(t *testing.T) {
 	}
 }
 
-func ltsCtx(msgID string) context.Context {
+func v2Ctx(msgID string) context.Context {
 	ctx := context.WithValue(context.Background(), model.ContextKeyProtocolVersion, model.ProtocolVersionV2)
 	return context.WithValue(ctx, model.ContextKeyMsgID, msgID)
 }
@@ -137,27 +137,27 @@ func TestSendNack(t *testing.T) {
 		},
 	}
 
-	ltsTests := []struct {
+	v2Tests := []struct {
 		name     string
 		err      error
 		expected string
 		status   int
 	}{
 		{
-			name:     "LTS SchemaValidationErr",
+			name:     "v2 SchemaValidationErr",
 			err:      model.NewBadReqErr(errors.New("field missing")),
 			status:   http.StatusBadRequest,
-			expected: `{"message":{"status":"NACK","messageId":"msg-lts-1","error":{"code":"Bad Request","message":"BAD Request: field missing"}}}`,
+			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"Bad Request","message":"BAD Request: field missing"}}}`,
 		},
 		{
-			name:     "LTS SignValidationErr",
+			name:     "v2 SignValidationErr",
 			err:      model.NewSignValidationErr(errors.New("signature expired")),
 			status:   http.StatusUnauthorized,
-			expected: `{"message":{"status":"NACK","messageId":"msg-lts-1","error":{"code":"Unauthorized","message":"Signature Validation Error: signature expired"}}}`,
+			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"Unauthorized","message":"Signature Validation Error: signature expired"}}}`,
 		},
 	}
 
-	ltsContext := ltsCtx("msg-lts-1")
+	v2Context := v2Ctx("msg-v2-1")
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -192,10 +192,10 @@ func TestSendNack(t *testing.T) {
 		})
 	}
 
-	for _, tt := range ltsTests {
+	for _, tt := range v2Tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rr := httptest.NewRecorder()
-			SendNack(ltsContext, rr, tt.err)
+			SendNack(v2Context, rr, tt.err)
 
 			if rr.Code != tt.status {
 				t.Errorf("wanted status code %d, got %d", tt.status, rr.Code)

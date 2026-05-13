@@ -11,30 +11,30 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
-// legacyAck is the pre-LTS acknowledgment wrapper used for context.version != "2.0.0".
+// preV2Ack is the pre-v2 acknowledgment wrapper used for context.version < "2.0.0".
 // Wire format: {"ack":{"status":"ACK"}}
-type legacyAck struct {
+type preV2Ack struct {
 	Status model.Status `json:"status"`
 }
 
-// legacyMessage is the pre-LTS message envelope.
+// preV2Message is the pre-v2 message envelope.
 // Wire format: {"message":{"ack":{"status":"ACK"},"error":{...}}}
-type legacyMessage struct {
-	Ack   legacyAck    `json:"ack"`
+type preV2Message struct {
+	Ack   preV2Ack     `json:"ack"`
 	Error *model.Error `json:"error,omitempty"`
 }
 
-// legacyResponse is the pre-LTS top-level response.
-type legacyResponse struct {
-	Message legacyMessage `json:"message"`
+// preV2Response is the pre-v2 top-level response.
+type preV2Response struct {
+	Message preV2Message `json:"message"`
 }
 
 // SendAck sends a synchronous ACK response to the client.
-// For context.version "2.0.0" the response uses the LTS envelope:
+// For context.version "2.0.0" and later the response uses the v2 envelope:
 //
 //	{"message":{"status":"ACK","messageId":"<uuid>"}}
 //
-// All other versions use the legacy envelope:
+// All other versions use the pre-v2 envelope:
 //
 //	{"message":{"ack":{"status":"ACK"}}}
 func SendAck(ctx context.Context, w http.ResponseWriter) {
@@ -49,9 +49,9 @@ func SendAck(ctx context.Context, w http.ResponseWriter) {
 		}
 		data, _ = json.Marshal(resp)
 	} else {
-		resp := &legacyResponse{
-			Message: legacyMessage{
-				Ack: legacyAck{Status: model.StatusACK},
+		resp := &preV2Response{
+			Message: preV2Message{
+				Ack: preV2Ack{Status: model.StatusACK},
 			},
 		}
 		data, _ = json.Marshal(resp)
@@ -85,9 +85,9 @@ func nack(ctx context.Context, w http.ResponseWriter, err *model.Error, status i
 		}
 		data, _ = json.Marshal(resp)
 	} else {
-		resp := &legacyResponse{
-			Message: legacyMessage{
-				Ack:   legacyAck{Status: model.StatusNACK},
+		resp := &preV2Response{
+			Message: preV2Message{
+				Ack:   preV2Ack{Status: model.StatusNACK},
 				Error: err,
 			},
 		}

@@ -591,7 +591,7 @@ func TestStepCtx_ProtocolVersion(t *testing.T) {
 		wantAuthSig string
 	}{
 		{
-			name:      "LTS version with messageId",
+			name:      "v2 version with messageId",
 			body:      `{"context":{"version":"2.0.0","messageId":"550e8400-e29b-41d4-a716-446655440000"}}`,
 			wantVer:   "2.0.0",
 			wantMsgID: "550e8400-e29b-41d4-a716-446655440000",
@@ -603,7 +603,7 @@ func TestStepCtx_ProtocolVersion(t *testing.T) {
 			wantMsgID: "abc-123",
 		},
 		{
-			name:    "legacy version 1.1.0",
+			name:    "pre-v2 version 1.1.0",
 			body:    `{"context":{"version":"1.1.0"}}`,
 			wantVer: "1.1.0",
 		},

@@ -20,7 +20,7 @@ import (
 // the Signature response header. It is a ResponseStep — it runs after all
 // inbound steps succeed, before the ACK body is written to the caller.
 //
-// For protocol versions < 2.0.0 the step is a no-op so legacy flows are
+// For protocol versions < 2.0.0 the step is a no-op so pre-v2 flows are
 // unaffected. For 2.0.0 and any later version AckSigning is applied.
 type ackSignerStep struct {
 	signer definition.Signer
@@ -101,7 +101,7 @@ func (a *ackSignerStep) RunOnResponse(ctx *model.StepContext, resp *http.Respons
 }
 
 // buildAckBody constructs the deterministic JSON ACK body for the given protocol
-// version and messageID — mirroring the LTS branch of response.SendAck.
+// version and messageID — mirroring the v2 branch of response.SendAck.
 func buildAckBody(protocolVersion, messageID string) ([]byte, error) {
 	resp := &model.Response{
 		Message: model.Message{
@@ -154,7 +154,7 @@ func buildSignatureHeader(subID, keyID string, createdAt, validTill int64, signa
 //
 // No-ops:
 //   - publisher path (resp == nil) — no Signature header exists on async ACKs
-//   - protocol version < 2.0.0 — legacy flows are unaffected
+//   - protocol version < 2.0.0 — pre-v2 flows are unaffected
 type validateAckSignatureStep struct {
 	signValidator definition.SignValidator
 	km            definition.KeyManager

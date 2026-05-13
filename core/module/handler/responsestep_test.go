@@ -130,7 +130,7 @@ const testSigHeader = `Signature keyId="bpp.example.com|key-1|ed25519",algorithm
 // ackSignerStep tests
 // ---------------------------------------------------------------------------
 
-func TestAckSignerStep_LTS_SetsSignatureHeader(t *testing.T) {
+func TestAckSignerStep_V2_SetsSignatureHeader(t *testing.T) {
 	signer := &mockSigner{returnSig: "base64sig=="}
 	km := &mockKM{keyset: &model.Keyset{UniqueKeyID: "key-1", SigningPrivate: "priv"}}
 
@@ -180,21 +180,21 @@ func TestAckSignerStep_FutureVersion_SetsSignatureHeader(t *testing.T) {
 	}
 }
 
-func TestAckSignerStep_LegacyVersion_Skips(t *testing.T) {
+func TestAckSignerStep_PreV2Version_Skips(t *testing.T) {
 	signer := &mockSigner{}
 	km := &mockKM{keyset: &model.Keyset{}}
 
 	step, _ := newAckSignerStep(signer, km)
-	ctx := makeStepCtx("1.1.0", "msg-legacy", "sub.example.com", "")
+	ctx := makeStepCtx("1.1.0", "msg-pre-v2", "sub.example.com", "")
 
 	if err := step.RunOnResponse(ctx, nil); err != nil {
 		t.Fatalf("RunOnResponse() unexpected error: %v", err)
 	}
 	if signer.signAckCalled {
-		t.Error("expected SignAck NOT to be called for legacy version")
+		t.Error("expected SignAck NOT to be called for pre-v2 version")
 	}
 	if ctx.RespHeader.Get("Signature") != "" {
-		t.Error("expected no Signature header for legacy version")
+		t.Error("expected no Signature header for pre-v2 version")
 	}
 }
 
@@ -408,7 +408,7 @@ func TestValidateAckSignatureStep_PublisherPath_Skips(t *testing.T) {
 	}
 }
 
-func TestValidateAckSignatureStep_LegacyVersion_Skips(t *testing.T) {
+func TestValidateAckSignatureStep_PreV2Version_Skips(t *testing.T) {
 	sv := &mockSignValidatorWithAck{}
 	km := &mockKMWithLookup{publicKey: "pubKey=="}
 
@@ -417,10 +417,10 @@ func TestValidateAckSignatureStep_LegacyVersion_Skips(t *testing.T) {
 	resp := makeAckResponse(`{"message":{"ack":{"status":"ACK"}}}`, "")
 
 	if err := step.RunOnResponse(ctx, resp); err != nil {
-		t.Fatalf("RunOnResponse() unexpected error on legacy version: %v", err)
+		t.Fatalf("RunOnResponse() unexpected error on pre-v2 version: %v", err)
 	}
 	if sv.validateAckCalled {
-		t.Error("expected ValidateAck NOT to be called for legacy version")
+		t.Error("expected ValidateAck NOT to be called for pre-v2 version")
 	}
 }
 

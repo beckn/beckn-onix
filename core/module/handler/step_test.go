@@ -206,7 +206,7 @@ func TestValidateRequestSignatureChain_NilStore_Skips(t *testing.T) {
 	}
 }
 
-func TestValidateRequestSignatureChain_LegacyVersion_Skips(t *testing.T) {
+func TestValidateRequestSignatureChain_PreV2Version_Skips(t *testing.T) {
 	store := newMockOutboundStore()
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
@@ -217,7 +217,7 @@ func TestValidateRequestSignatureChain_LegacyVersion_Skips(t *testing.T) {
 		solicitedCallbackAuthHeader("bpp.example.com", "storedSig=="), onSearchBody)
 
 	if err := vStep.validateRequestSignatureChain(ctx); err != nil {
-		t.Fatalf("expected nil for legacy version, got: %v", err)
+		t.Fatalf("expected nil for pre-v2 version, got: %v", err)
 	}
 }
 
