@@ -52,6 +52,65 @@ func TestRoundTrip_Compress(t *testing.T) {
 	assertEntryEqual(t, entry, got)
 }
 
+// TestPrefix_NoCompress verifies the "j:" prefix is written for uncompressed entries.
+func TestPrefix_NoCompress(t *testing.T) {
+	raw, err := marshalEntry(testEntry(), false)
+	if err != nil {
+		t.Fatalf("marshalEntry: %v", err)
+	}
+	if len(raw) < 2 || raw[:2] != prefixJSON {
+		t.Errorf("expected %q prefix, got %q", prefixJSON, raw[:2])
+	}
+}
+
+// TestPrefix_Compress verifies the "c:" prefix is written for compressed entries.
+func TestPrefix_Compress(t *testing.T) {
+	raw, err := marshalEntry(testEntry(), true)
+	if err != nil {
+		t.Fatalf("marshalEntry: %v", err)
+	}
+	if len(raw) < 2 || raw[:2] != prefixGzip {
+		t.Errorf("expected %q prefix, got %q", prefixGzip, raw[:2])
+	}
+}
+
+// TestCrossFormat_CompressedReadAsUncompressed verifies an entry written with
+// compress=true can be read back even when the current config has compress=false.
+func TestCrossFormat_CompressedReadAsUncompressed(t *testing.T) {
+	entry := testEntry()
+	raw, _ := marshalEntry(entry, true)
+	got, err := unmarshalEntry(raw, false)
+	if err != nil {
+		t.Fatalf("unmarshalEntry: %v", err)
+	}
+	assertEntryEqual(t, entry, got)
+}
+
+// TestCrossFormat_UncompressedReadAsCompressed verifies an entry written with
+// compress=false can be read back even when the current config has compress=true.
+func TestCrossFormat_UncompressedReadAsCompressed(t *testing.T) {
+	entry := testEntry()
+	raw, _ := marshalEntry(entry, false)
+	got, err := unmarshalEntry(raw, true)
+	if err != nil {
+		t.Fatalf("unmarshalEntry: %v", err)
+	}
+	assertEntryEqual(t, entry, got)
+}
+
+// TestLegacy_NoPrefixFallback verifies that entries written before prefix support
+// (plain JSON, no "j:" prefix) are still decoded correctly.
+func TestLegacy_NoPrefixFallback(t *testing.T) {
+	legacyRaw := `{"MessageID":"msg1","TransactionID":"txn1","NetworkID":"net1","Action":"search","SubscriberID":"sub1","Role":"bap","RequestBody":"eyJoZWxsbyI6IndvcmxkIn0=","ResponseBody":"eyJhY2siOiJvayJ9","Signature":"sig123","Outcome":1,"OutcomeReason":"","StoredAt":"2026-01-01T00:00:00Z","ExpiresAt":"2026-01-02T00:00:00Z"}`
+	got, err := unmarshalEntry(legacyRaw, false)
+	if err != nil {
+		t.Fatalf("unmarshalEntry legacy: %v", err)
+	}
+	if got.MessageID != "msg1" {
+		t.Errorf("MessageID: want msg1, got %q", got.MessageID)
+	}
+}
+
 func assertEntryEqual(t *testing.T, want, got definition.PayloadEntry) {
 	t.Helper()
 	if want.MessageID != got.MessageID {

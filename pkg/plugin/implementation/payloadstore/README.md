@@ -22,7 +22,7 @@ middleware:
 
 PayloadStore is an **infrastructure plugin**, not a step. It fires automatically at two fixed points in the handler when configured:
 
-1. **Before the pipeline** — calls `Exists(message_id)`. If the message was already seen, the handler immediately returns a NACK and records the duplicate outcome. The step pipeline does not run.
+1. **Before the pipeline** — calls `Exists(message_id)`. If the message was already seen, the handler immediately returns a NACK. The original entry is preserved — the duplicate attempt is not stored. The step pipeline does not run.
 2. **After the pipeline** — stores the request body, response body, and the ACK or NACK outcome (including the error reason on failure).
 
 Do not add `payloadStore` to the `steps` list. It is wired into the handler automatically.
@@ -75,7 +75,7 @@ Keys are namespaced by the owning handler's module name, preventing collisions b
 
 | Key | Value | TTL |
 |-----|-------|-----|
-| `payload:{moduleName}:msg:{messageID}` | JSON-encoded `PayloadEntry` (gzip+base64 when `compress: true`) | `ttl` |
+| `payload:{moduleName}:msg:{messageID}` | `j:<JSON>` or `c:<base64(gzip(JSON))>` — format detected from prefix at read time | `ttl` |
 | `payload:{moduleName}:txn:{transactionID}:index` | JSON array of message IDs, oldest-first | `indexTTL` |
 
 The `{moduleName}` is taken from the handler's module name at construction time (e.g., `bap-txn-caller`). Each handler instance gets its own isolated keyspace.
@@ -110,6 +110,11 @@ handler:
       id: router
       config:
         routingConfig: ./config/routing.yaml
+    middleware:
+      - id: reqpreprocessor
+        config:
+          contextKeys: transaction_id,message_id
+          role: bap
   steps:
     - validateSign
     - validateSchema

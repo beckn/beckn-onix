@@ -173,8 +173,7 @@ func TestStore_StoreBodyFalse(t *testing.T) {
 	_ = s.Store(context.Background(), entry)
 
 	raw, _ := cache.Get(context.Background(), msgKey(testNamespace, "msgB"))
-	var stored definition.PayloadEntry
-	_ = json.Unmarshal([]byte(raw), &stored)
+	stored, _ := unmarshalEntry(raw, false)
 
 	if stored.RequestBody != nil {
 		t.Errorf("expected nil RequestBody; got %v", stored.RequestBody)
@@ -193,8 +192,7 @@ func TestStore_MaxBodyBytesTruncates(t *testing.T) {
 	_ = s.Store(context.Background(), entry)
 
 	raw, _ := cache.Get(context.Background(), msgKey(testNamespace, "msgT"))
-	var stored definition.PayloadEntry
-	_ = json.Unmarshal([]byte(raw), &stored)
+	stored, _ := unmarshalEntry(raw, false)
 
 	if len(stored.RequestBody) != 5 {
 		t.Errorf("RequestBody: expected 5 bytes, got %d", len(stored.RequestBody))
@@ -227,8 +225,7 @@ func TestStore_StoredAtAndExpiresAtSet(t *testing.T) {
 	after := time.Now().UTC()
 
 	raw, _ := cache.Get(context.Background(), msgKey(testNamespace, "msgTS"))
-	var stored definition.PayloadEntry
-	_ = json.Unmarshal([]byte(raw), &stored)
+	stored, _ := unmarshalEntry(raw, false)
 
 	if stored.StoredAt.Before(before) || stored.StoredAt.After(after) {
 		t.Errorf("StoredAt %v not between %v and %v", stored.StoredAt, before, after)
