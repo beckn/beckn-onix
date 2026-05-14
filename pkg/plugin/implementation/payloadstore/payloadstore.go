@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
@@ -66,6 +67,10 @@ func (s *store) Store(ctx context.Context, entry definition.PayloadEntry) error 
 		return fmt.Errorf("payloadstore: set msg key: %w", err)
 	}
 
+	if entry.TransactionID == "" {
+		log.Warnf(ctx, "payloadstore: transaction_id absent — skipping transaction index update for message %s", entry.MessageID)
+		return nil
+	}
 	return s.appendToIndex(ctx, entry.TransactionID, entry.MessageID)
 }
 

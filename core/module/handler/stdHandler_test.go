@@ -173,6 +173,44 @@ func (stubCache) Set(context.Context, string, string, time.Duration) error { ret
 func (stubCache) Delete(context.Context, string) error                     { return nil }
 func (stubCache) Clear(context.Context) error                              { return nil }
 
+func TestLoadPayloadStore_FailsWithoutReqpreprocessor(t *testing.T) {
+	_, err := loadPayloadStore(context.Background(), noopPluginManager{}, stubCache{}, "testModule",
+		&plugin.Config{ID: "payloadstore"},
+		nil, // no middleware
+	)
+	if err == nil || !strings.Contains(err.Error(), "reqpreprocessor middleware not configured") {
+		t.Fatalf("expected reqpreprocessor missing error, got: %v", err)
+	}
+}
+
+func TestLoadPayloadStore_FailsWhenMessageIDMissingFromContextKeys(t *testing.T) {
+	middleware := []plugin.Config{{
+		ID:     "reqpreprocessor",
+		Config: map[string]string{"contextKeys": "transaction_id"},
+	}}
+	_, err := loadPayloadStore(context.Background(), noopPluginManager{}, stubCache{}, "testModule",
+		&plugin.Config{ID: "payloadstore"},
+		middleware,
+	)
+	if err == nil || !strings.Contains(err.Error(), "missing message_id") {
+		t.Fatalf("expected message_id missing error, got: %v", err)
+	}
+}
+
+func TestLoadPayloadStore_SucceedsWithMessageIDInContextKeys(t *testing.T) {
+	middleware := []plugin.Config{{
+		ID:     "reqpreprocessor",
+		Config: map[string]string{"contextKeys": "transaction_id,message_id"},
+	}}
+	_, err := loadPayloadStore(context.Background(), noopPluginManager{}, stubCache{}, "testModule",
+		&plugin.Config{ID: "payloadstore"},
+		middleware,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	ctx := context.Background()
 	cfg := &Config{

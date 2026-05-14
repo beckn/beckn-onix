@@ -174,10 +174,13 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// PayloadStore: dedup pre-check before the step pipeline runs.
+	payloadStoreMsgID, _ := r.Context().Value(model.ContextKeyMsgID).(string)
 	if h.payloadStore != nil {
-		if msgID, _ := r.Context().Value(model.ContextKeyMsgID).(string); msgID != "" {
-			if exists, checkErr := h.payloadStore.Exists(r.Context(), msgID); checkErr != nil {
-				log.Warnf(r.Context(), "payloadStore.Exists: %v", checkErr)
+		if payloadStoreMsgID == "" {
+			log.Warnf(r.Context(), "payloadStore: message_id absent from request context — dedup check and outcome store skipped")
+		} else {
+			if exists, checkErr := h.payloadStore.Exists(r.Context(), payloadStoreMsgID); checkErr != nil {
+				log.Warnf(r.Context(), "payloadStore.Exists: cache error — dedup check skipped, message treated as new: %v", checkErr)
 			} else if exists {
 				// Do not overwrite the original entry — the legitimate message is already stored.
 				response.SendNack(stepCtx, wrapped, model.NewBadReqErr(fmt.Errorf("duplicate message_id")))
@@ -209,7 +212,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// PayloadStore: outcome store after response is written so wrapped.body is populated.
-	if h.payloadStore != nil {
+	if h.payloadStore != nil && payloadStoreMsgID != "" {
 		outcome, reason := definition.OutcomeACK, ""
 		if pipelineErr != nil {
 			outcome, reason = definition.OutcomeNACK, pipelineErr.Error()
@@ -386,7 +389,7 @@ func loadManifestLoader(ctx context.Context, mgr PluginManager, cache definition
 	return loader, nil
 }
 
-func loadPayloadStore(ctx context.Context, mgr PluginManager, cache definition.Cache, namespace string, cfg *plugin.Config) (definition.PayloadStore, error) {
+func loadPayloadStore(ctx context.Context, mgr PluginManager, cache definition.Cache, namespace string, cfg *plugin.Config, middleware []plugin.Config) (definition.PayloadStore, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping PayloadStore plugin: not configured")
 		return nil, nil
@@ -394,12 +397,39 @@ func loadPayloadStore(ctx context.Context, mgr PluginManager, cache definition.C
 	if cache == nil {
 		return nil, fmt.Errorf("failed to load PayloadStore plugin (%s): Cache plugin not configured", cfg.ID)
 	}
+	if err := validatePayloadStoreMiddleware(ctx, cfg.ID, middleware); err != nil {
+		return nil, err
+	}
 	ps, err := mgr.PayloadStore(ctx, cache, namespace, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load PayloadStore plugin (%s): %w", cfg.ID, err)
 	}
 	log.Debugf(ctx, "Loaded PayloadStore plugin: %s", cfg.ID)
 	return ps, nil
+}
+
+// validatePayloadStoreMiddleware checks that reqpreprocessor is configured with the
+// context keys PayloadStore depends on. message_id is fatal — without it dedup and
+// storage are broken. transaction_id is non-fatal but logs a warning.
+func validatePayloadStoreMiddleware(ctx context.Context, pluginID string, middleware []plugin.Config) error {
+	for _, m := range middleware {
+		if m.ID != "reqpreprocessor" {
+			continue
+		}
+		keys := strings.Split(m.Config["contextKeys"], ",")
+		keySet := make(map[string]bool, len(keys))
+		for _, k := range keys {
+			keySet[strings.TrimSpace(k)] = true
+		}
+		if !keySet["message_id"] {
+			return fmt.Errorf("failed to load PayloadStore plugin (%s): reqpreprocessor middleware is missing message_id in contextKeys", pluginID)
+		}
+		if !keySet["transaction_id"] {
+			log.Warnf(ctx, "PayloadStore plugin (%s): reqpreprocessor middleware is missing transaction_id in contextKeys — transaction history indexing unavailable", pluginID)
+		}
+		return nil
+	}
+	return fmt.Errorf("failed to load PayloadStore plugin (%s): reqpreprocessor middleware not configured — message_id will not be available for dedup", pluginID)
 }
 
 func loadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
@@ -432,7 +462,7 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.manifestLoader, err = loadManifestLoader(ctx, mgr, h.cache, h.registry, cfg.ManifestLoader); err != nil {
 		return err
 	}
-	if h.payloadStore, err = loadPayloadStore(ctx, mgr, h.cache, h.moduleName, cfg.PayloadStore); err != nil {
+	if h.payloadStore, err = loadPayloadStore(ctx, mgr, h.cache, h.moduleName, cfg.PayloadStore, cfg.Middleware); err != nil {
 		return err
 	}
 	if h.signValidator, err = loadPlugin(ctx, "SignValidator", cfg.SignValidator, mgr.SignValidator); err != nil {
