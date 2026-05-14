@@ -174,13 +174,13 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// PayloadStore: dedup pre-check before the step pipeline runs.
-	payloadStoreMsgID, _ := r.Context().Value(model.ContextKeyMsgID).(string)
+	payloadStoreMsgID, _ := stepCtx.Value(model.ContextKeyMsgID).(string)
 	if h.payloadStore != nil {
 		if payloadStoreMsgID == "" {
-			log.Warnf(r.Context(), "payloadStore: message_id absent from request context — dedup check and outcome store skipped")
+			log.Warnf(stepCtx, "payloadStore: message_id absent from request context — dedup check and outcome store skipped")
 		} else {
-			if exists, checkErr := h.payloadStore.Exists(r.Context(), payloadStoreMsgID); checkErr != nil {
-				log.Warnf(r.Context(), "payloadStore.Exists: cache error — dedup check skipped, message treated as new: %v", checkErr)
+			if exists, checkErr := h.payloadStore.Exists(stepCtx, payloadStoreMsgID); checkErr != nil {
+				log.Warnf(stepCtx, "payloadStore.Exists: cache error — dedup check skipped, message treated as new: %v", checkErr)
 			} else if exists {
 				// Do not overwrite the original entry — the legitimate message is already stored.
 				response.SendNack(stepCtx, wrapped, model.NewBadReqErr(fmt.Errorf("duplicate message_id")))
@@ -218,8 +218,8 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			outcome, reason = definition.OutcomeNACK, pipelineErr.Error()
 		}
 		entry := h.buildPayloadEntry(stepCtx, wrapped.body.Bytes(), outcome, reason)
-		if storeErr := h.payloadStore.Store(r.Context(), entry); storeErr != nil {
-			log.Warnf(r.Context(), "payloadStore.Store: %v", storeErr)
+		if storeErr := h.payloadStore.Store(stepCtx, entry); storeErr != nil {
+			log.Warnf(stepCtx, "payloadStore.Store: %v", storeErr)
 		}
 	}
 }

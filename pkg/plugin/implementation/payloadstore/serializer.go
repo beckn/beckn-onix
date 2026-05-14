@@ -44,9 +44,8 @@ func marshalEntry(entry definition.PayloadEntry, compress bool) (string, error) 
 
 // unmarshalEntry deserializes a string produced by marshalEntry.
 // The format is detected from the prefix ("j:" or "c:"), so entries written
-// with compress=false can be read back after switching to compress=true and
-// vice versa. The compress parameter is unused but kept for API compatibility.
-func unmarshalEntry(raw string, _ bool) (definition.PayloadEntry, error) {
+// with compress=false can be read back after switching to compress=true and vice versa.
+func unmarshalEntry(raw string) (definition.PayloadEntry, error) {
 	var data []byte
 	switch {
 	case len(raw) > 2 && raw[:2] == prefixGzip:

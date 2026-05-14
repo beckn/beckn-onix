@@ -120,7 +120,7 @@ func (s *store) GetByTransactionID(ctx context.Context, transactionID string) ([
 		if err != nil || entryRaw == "" {
 			continue // expired or missing — skip silently
 		}
-		entry, err := unmarshalEntry(entryRaw, s.config.Compress)
+		entry, err := unmarshalEntry(entryRaw)
 		if err != nil {
 			continue
 		}
@@ -136,7 +136,7 @@ func (s *store) GetByMessageID(ctx context.Context, messageID, action string) (*
 		return nil, nil
 	}
 
-	entry, err := unmarshalEntry(raw, s.config.Compress)
+	entry, err := unmarshalEntry(raw)
 	if err != nil {
 		return nil, err
 	}

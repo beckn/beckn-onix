@@ -32,7 +32,7 @@ func TestRoundTrip_NoCompress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshalEntry: %v", err)
 	}
-	got, err := unmarshalEntry(raw, false)
+	got, err := unmarshalEntry(raw)
 	if err != nil {
 		t.Fatalf("unmarshalEntry: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestRoundTrip_Compress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshalEntry (compress): %v", err)
 	}
-	got, err := unmarshalEntry(raw, true)
+	got, err := unmarshalEntry(raw)
 	if err != nil {
 		t.Fatalf("unmarshalEntry (compress): %v", err)
 	}
@@ -79,7 +79,7 @@ func TestPrefix_Compress(t *testing.T) {
 func TestCrossFormat_CompressedReadAsUncompressed(t *testing.T) {
 	entry := testEntry()
 	raw, _ := marshalEntry(entry, true)
-	got, err := unmarshalEntry(raw, false)
+	got, err := unmarshalEntry(raw)
 	if err != nil {
 		t.Fatalf("unmarshalEntry: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestCrossFormat_CompressedReadAsUncompressed(t *testing.T) {
 func TestCrossFormat_UncompressedReadAsCompressed(t *testing.T) {
 	entry := testEntry()
 	raw, _ := marshalEntry(entry, false)
-	got, err := unmarshalEntry(raw, true)
+	got, err := unmarshalEntry(raw)
 	if err != nil {
 		t.Fatalf("unmarshalEntry: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestCrossFormat_UncompressedReadAsCompressed(t *testing.T) {
 // (plain JSON, no "j:" prefix) are still decoded correctly.
 func TestLegacy_NoPrefixFallback(t *testing.T) {
 	legacyRaw := `{"MessageID":"msg1","TransactionID":"txn1","NetworkID":"net1","Action":"search","SubscriberID":"sub1","Role":"bap","RequestBody":"eyJoZWxsbyI6IndvcmxkIn0=","ResponseBody":"eyJhY2siOiJvayJ9","Signature":"sig123","Outcome":1,"OutcomeReason":"","StoredAt":"2026-01-01T00:00:00Z","ExpiresAt":"2026-01-02T00:00:00Z"}`
-	got, err := unmarshalEntry(legacyRaw, false)
+	got, err := unmarshalEntry(legacyRaw)
 	if err != nil {
 		t.Fatalf("unmarshalEntry legacy: %v", err)
 	}
