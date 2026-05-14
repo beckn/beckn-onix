@@ -44,6 +44,8 @@ docker compose -f docker-compose.yml -f docker-compose.with-telemetry.yml up -d
 | `onix-bpp` | 8082 | BPP adapter |
 | `otel-collector-bap` | 4317, 4318 | BAP companion collector |
 | `otel-collector-bpp` | 4321, 4322 | BPP companion collector |
+| `sandbox-bap` | 3001 | Mock BAP application (receives `on_*` callbacks) |
+| `sandbox-bpp` | 3002 | Mock BPP application (receives action requests) |
 
 ## Attaching to an existing devkit
 
