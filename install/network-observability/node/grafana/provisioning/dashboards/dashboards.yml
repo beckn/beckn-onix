@@ -1,0 +1,14 @@
+# Dashboard provisioning — application-level dashboards only.
+# Network dashboards are not included here (they belong in the network stack).
+apiVersion: 1
+
+providers:
+  - name: 'Application'
+    orgId: 1
+    folder: 'Onix / Application'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json/application

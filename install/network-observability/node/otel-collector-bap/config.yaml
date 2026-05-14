@@ -1,0 +1,64 @@
+# BAP companion collector — network-forwarding only.
+# Forwards filtered signals to the network-level collector operated by the network governing entity.
+# No local Prometheus or Jaeger exporters — node-level telemetry is not enabled in this config.
+#
+# To enable node-level telemetry, use docker-compose.with-telemetry.yml which mounts config-full.yaml instead.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    send_batch_size: 1024
+    timeout: 10s
+  batch/traces:
+    send_batch_size: 1024
+    timeout: 2s
+
+  # Pass only onix_http_request_count to the network observer.
+  filter/network_metrics:
+    error_mode: ignore
+    metrics:
+      metric:
+        - 'name != "onix_http_request_count"'
+
+  # Pass only spans that carry sender.id (inter-participant request spans).
+  filter/network_traces:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["sender.id"] == nil'
+
+exporters:
+  otlp_http/collector-network:
+    endpoint: ${env:NETWORK_COLLECTOR_ENDPOINT}
+    compression: gzip
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics/network:
+      receivers: [otlp]
+      processors: [filter/network_metrics, batch]
+      exporters: [otlp_http/collector-network]
+
+    traces/network:
+      receivers: [otlp]
+      processors: [filter/network_traces, batch/traces]
+      exporters: [otlp_http/collector-network]
+
+    logs/network:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/collector-network]
+
+  telemetry:
+    logs:
+      level: info

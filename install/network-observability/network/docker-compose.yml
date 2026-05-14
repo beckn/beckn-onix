@@ -1,0 +1,96 @@
+# Network-level observability stack — operated by the network governing entity.
+# Receives filtered telemetry (network pipeline) from every ONIX node's companion collector.
+# Node operators run install/network-observability/node/ instead.
+#
+# Run from the repository root:
+#   docker compose -f install/network-observability/network/docker-compose.yml up -d
+#
+# Required env var (set in .env or export before running):
+#   NETWORK_COLLECTOR_ENDPOINT — public address nodes use to reach this host (informational,
+#   not consumed by these containers directly; document it for node operators).
+#
+# UIs: Grafana http://localhost:3000 | Zipkin http://localhost:9411 | Prometheus http://localhost:9090
+
+services:
+  otel-collector-network:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector-network
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./otel-collector-network/config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4318:4318"   # OTLP/HTTP — inbound from node companion collectors
+      - "8890:8890"   # Prometheus scrape endpoint
+    networks:
+      - observability
+    restart: unless-stopped
+
+  zipkin:
+    image: openzipkin/zipkin:latest
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+    networks:
+      - observability
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - observability
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - observability
+    restart: unless-stopped
+    depends_on:
+      - otel-collector-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - observability
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - zipkin
+      - loki
+
+networks:
+  observability:
+    driver: bridge
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  loki_data:

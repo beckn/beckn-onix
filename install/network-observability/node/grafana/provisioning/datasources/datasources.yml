@@ -1,0 +1,20 @@
+# Grafana datasources for the node-level telemetry stack.
+# Used only when docker-compose.with-telemetry.yml overlay is active.
+# No Zipkin or Loki — those are network-level backends.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus-node:9090
+    isDefault: true
+    editable: false
+
+  - name: Jaeger
+    uid: jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    editable: false

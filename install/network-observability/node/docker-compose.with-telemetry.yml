@@ -1,0 +1,85 @@
+# Node telemetry overlay — adds local Jaeger, Prometheus, and Grafana for node-operator visibility.
+# Use with the base compose file:
+#   docker compose -f docker-compose.yml -f docker-compose.with-telemetry.yml up -d
+#
+# This overlay:
+#   - Overrides otel-collector-bap and otel-collector-bpp to use config-full.yaml,
+#     which enables the app-level pipelines (all metrics/traces to local backends) in
+#     addition to the network-forwarding pipelines.
+#   - Adds Prometheus, Jaeger, and Grafana connected to an internal observability network.
+#   - Joins the otel-collectors to the observability network so backends can scrape them.
+
+services:
+  otel-collector-bap:
+    volumes:
+      - ./otel-collector-bap/config-full.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "8889:8889"   # Prometheus scrape endpoint
+    networks:
+      - observability
+
+  otel-collector-bpp:
+    volumes:
+      - ./otel-collector-bpp/config-full.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "8891:8891"   # Prometheus scrape endpoint
+    networks:
+      - observability
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+    networks:
+      - observability
+    restart: unless-stopped
+
+  prometheus-node:
+    image: prom/prometheus:latest
+    container_name: prometheus-node
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_node_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - observability
+    restart: unless-stopped
+    depends_on:
+      - otel-collector-bap
+      - otel-collector-bpp
+
+  grafana-node:
+    image: grafana/grafana:latest
+    container_name: grafana-node
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+    volumes:
+      - grafana_node_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - observability
+    restart: unless-stopped
+    depends_on:
+      - prometheus-node
+      - jaeger
+
+networks:
+  observability:
+    driver: bridge
+
+volumes:
+  prometheus_node_data:
+  grafana_node_data:
