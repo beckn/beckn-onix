@@ -53,10 +53,17 @@ func ParseConfig(cfg map[string]string) (*Config, error) {
 		c.IndexTTL = c.TTL + time.Hour
 	}
 
+	if c.IndexTTL < c.TTL {
+		return nil, fmt.Errorf("payloadstore: indexTTL (%v) must be >= ttl (%v)", c.IndexTTL, c.TTL)
+	}
+
 	if raw := cfg["maxBodyBytes"]; raw != "" {
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("payloadstore: invalid maxBodyBytes %q: %w", raw, err)
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("payloadstore: maxBodyBytes must be >= 0, got %d", n)
 		}
 		c.MaxBodyBytes = n
 	}

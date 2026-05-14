@@ -89,3 +89,40 @@ func TestParseConfig_InvalidMaxBodyBytes(t *testing.T) {
 		t.Error("expected error for invalid maxBodyBytes")
 	}
 }
+
+func TestParseConfig_NegativeMaxBodyBytes(t *testing.T) {
+	_, err := ParseConfig(map[string]string{"maxBodyBytes": "-1"})
+	if err == nil {
+		t.Error("expected error for negative maxBodyBytes")
+	}
+}
+
+func TestParseConfig_ZeroMaxBodyBytes(t *testing.T) {
+	cfg, err := ParseConfig(map[string]string{"maxBodyBytes": "0"})
+	if err != nil {
+		t.Fatalf("expected no error for maxBodyBytes=0, got: %v", err)
+	}
+	if cfg.MaxBodyBytes != 0 {
+		t.Errorf("MaxBodyBytes: got %d, want 0", cfg.MaxBodyBytes)
+	}
+}
+
+func TestParseConfig_IndexTTLShorterThanTTL(t *testing.T) {
+	_, err := ParseConfig(map[string]string{
+		"ttl":      "24h",
+		"indexTTL": "1h",
+	})
+	if err == nil {
+		t.Error("expected error when indexTTL < ttl")
+	}
+}
+
+func TestParseConfig_IndexTTLEqualToTTL(t *testing.T) {
+	_, err := ParseConfig(map[string]string{
+		"ttl":      "24h",
+		"indexTTL": "24h",
+	})
+	if err != nil {
+		t.Errorf("expected no error when indexTTL == ttl, got: %v", err)
+	}
+}

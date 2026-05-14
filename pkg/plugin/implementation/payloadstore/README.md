@@ -45,7 +45,7 @@ Supported config keys:
 
 - `ttl`: Per-entry lifetime. Each `payload:msg:{id}` cache key expires after this duration. Default: `24h`.
 - `indexTTL`: Transaction index lifetime. Defaults to `ttl + 1h` if absent. Should be slightly longer than `ttl` so the index outlives the last entry it references.
-- `maxBodyBytes`: Maximum bytes stored for `requestBody` and `responseBody` individually. Bodies exceeding this limit are **truncated** before storage. Set to `"0"` for no limit. Default: `"1048576"` (1 MiB).
+- `maxBodyBytes`: Maximum bytes stored for `requestBody` and `responseBody` individually. Bodies exceeding this limit are **truncated** before storage. Set to `"0"` for no limit. Negative values are rejected. Default: `"1048576"` (1 MiB).
 - `storeBody`: Whether to persist request and response bodies. Set to `"false"` for metadata-only mode. Default: `"true"`.
 - `storeSignature`: Whether to persist the raw `Authorization` header value as the `Signature` field. Useful for non-repudiation and countersignature validation. Default: `"false"`.
 - `compress`: Applies gzip compression to stored body bytes before writing to cache, reducing Redis memory usage. This is **storage-level** compression — independent of HTTP `Content-Encoding`. Default: `"false"`.
