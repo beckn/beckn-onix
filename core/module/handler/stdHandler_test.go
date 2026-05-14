@@ -564,46 +564,23 @@ func requestWithMsgID(msgID string) *http.Request {
 	return req
 }
 
-// TestServeHTTP_DedupBlocksDuplicateMessage verifies the second request with the same
-// message_id is rejected with a NACK and the first request's entry is preserved.
-func TestServeHTTP_DedupBlocksDuplicateMessage(t *testing.T) {
+// TestServeHTTP_DuplicateMessageIDLogsWarningAndProceeds verifies that a duplicate
+// message_id logs a warning but still returns ACK and overwrites the stored entry.
+func TestServeHTTP_DuplicateMessageIDLogsWarningAndProceeds(t *testing.T) {
 	ps := newStubPayloadStore()
 	h := handlerWithPayloadStore(ps)
 
-	// First request — should pass through (no steps, so ACK).
-	rr1 := httptest.NewRecorder()
-	h.ServeHTTP(rr1, requestWithMsgID("msg-dup-1"))
-	if rr1.Code != http.StatusOK {
-		t.Fatalf("first request: expected 200, got %d — body: %s", rr1.Code, rr1.Body.String())
-	}
-
-	// Second request with the same message_id — must be rejected.
-	rr2 := httptest.NewRecorder()
-	h.ServeHTTP(rr2, requestWithMsgID("msg-dup-1"))
-	if rr2.Code != http.StatusBadRequest {
-		t.Fatalf("duplicate request: expected 400, got %d — body: %s", rr2.Code, rr2.Body.String())
-	}
-	if !strings.Contains(rr2.Body.String(), "duplicate message_id") {
-		t.Errorf("expected 'duplicate message_id' in response body, got: %s", rr2.Body.String())
-	}
-}
-
-// TestServeHTTP_DedupAllowsDifferentMessageIDs verifies distinct message IDs are not blocked.
-func TestServeHTTP_DedupAllowsDifferentMessageIDs(t *testing.T) {
-	ps := newStubPayloadStore()
-	h := handlerWithPayloadStore(ps)
-
-	for _, id := range []string{"msg-a", "msg-b", "msg-c"} {
+	for i := 0; i < 2; i++ {
 		rr := httptest.NewRecorder()
-		h.ServeHTTP(rr, requestWithMsgID(id))
+		h.ServeHTTP(rr, requestWithMsgID("msg-dup-1"))
 		if rr.Code != http.StatusOK {
-			t.Errorf("message_id %q: expected 200, got %d", id, rr.Code)
+			t.Errorf("request %d: expected 200, got %d — body: %s", i+1, rr.Code, rr.Body.String())
 		}
 	}
 }
 
 // TestServeHTTP_DedupSkippedWhenMessageIDAbsent verifies that without a message_id in
-// the context the dedup check is skipped and the request is processed normally.
+// the context the duplicate check is skipped and both requests are processed normally.
 func TestServeHTTP_DedupSkippedWhenMessageIDAbsent(t *testing.T) {
 	ps := newStubPayloadStore()
 	h := handlerWithPayloadStore(ps)
@@ -619,9 +596,9 @@ func TestServeHTTP_DedupSkippedWhenMessageIDAbsent(t *testing.T) {
 	}
 }
 
-// TestServeHTTP_DedupCacheErrorFailsOpen verifies that a cache error during the Exists
-// check does not block the request — it passes through (fail-open).
-func TestServeHTTP_DedupCacheErrorFailsOpen(t *testing.T) {
+// TestServeHTTP_DedupCacheErrorDoesNotBlockRequest verifies that a cache error during
+// the Exists check does not block the request — it proceeds normally.
+func TestServeHTTP_DedupCacheErrorDoesNotBlockRequest(t *testing.T) {
 	ps := &stubPayloadStore{
 		seen:      make(map[string]bool),
 		existsErr: errors.New("redis: connection refused"),
@@ -631,6 +608,6 @@ func TestServeHTTP_DedupCacheErrorFailsOpen(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, requestWithMsgID("msg-cache-err"))
 	if rr.Code != http.StatusOK {
-		t.Errorf("expected fail-open ACK on cache error, got %d — body: %s", rr.Code, rr.Body.String())
+		t.Errorf("expected ACK on cache error, got %d — body: %s", rr.Code, rr.Body.String())
 	}
 }
