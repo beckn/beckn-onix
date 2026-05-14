@@ -121,6 +121,18 @@ handler:
     - addRoute
 ```
 
+## Interface
+
+Plugins that need transaction history can depend on `definition.PayloadStore`. The interface exposes four methods:
+
+**`Store(ctx, entry) error`** — Persists a `PayloadEntry` to the cache. Sets `StoredAt` and `ExpiresAt` at write time. Respects `storeBody`, `storeSignature`, `maxBodyBytes`, and `compress` config. Also appends the message ID to the transaction index. Returns an error if the cache write fails.
+
+**`Exists(ctx, messageID) (bool, error)`** — O(1) check for whether a message has been seen. Returns `true` if a matching entry exists, `false` if not. Returns `false, nil` on cache errors (fail-open) so callers always get a usable result.
+
+**`GetByMessageID(ctx, messageID, action) (*PayloadEntry, error)`** — Returns the stored entry for a message ID. If `action` is non-empty, returns `nil` when the stored entry's action does not match. Returns `nil, nil` (not an error) on a cache miss.
+
+**`GetByTransactionID(ctx, transactionID) ([]PayloadEntry, error)`** — Returns all entries for a transaction in `StoredAt` ascending order (insertion order). Entries that have expired between index write and read are silently skipped. Returns `nil, nil` (not an error) if the transaction is unknown or the index has expired.
+
 ## Testing
 
 ```bash
