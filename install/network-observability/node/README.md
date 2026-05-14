@@ -29,6 +29,9 @@ Adds local Jaeger, Prometheus, and Grafana so the node operator can inspect thei
 docker compose -f docker-compose.yml -f docker-compose.with-telemetry.yml up -d
 ```
 
+> **Why do both files mention `otel-collector-bap/bpp`?**
+> Docker Compose merges service definitions when multiple `-f` files are given. The collector entries in `docker-compose.with-telemetry.yml` are not new containers — they extend the same collectors defined in the base file, swapping the config file and attaching them to the local observability network. Each collector still runs as a single container.
+
 | Service added | Port | Role |
 |---|---|---|
 | `prometheus-node` | 9090 | Node-level metrics |

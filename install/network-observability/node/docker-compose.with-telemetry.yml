@@ -2,29 +2,36 @@
 # Use with the base compose file:
 #   docker compose -f docker-compose.yml -f docker-compose.with-telemetry.yml up -d
 #
-# This overlay:
-#   - Overrides otel-collector-bap and otel-collector-bpp to use config-full.yaml,
-#     which enables the app-level pipelines (all metrics/traces to local backends) in
-#     addition to the network-forwarding pipelines.
-#   - Adds Prometheus, Jaeger, and Grafana connected to an internal observability network.
-#   - Joins the otel-collectors to the observability network so backends can scrape them.
+# HOW THE OVERLAY WORKS — NO DUPLICATE CONTAINERS
+# ------------------------------------------------
+# Docker Compose merges service definitions across files when multiple -f flags are used.
+# Services named here (otel-collector-bap, otel-collector-bpp) are the SAME containers
+# defined in docker-compose.yml — not new ones. Compose merges the two definitions at
+# startup, so each collector still runs as a single container. This overlay only:
+#   - Swaps the mounted config to config-full.yaml, which activates the app-level pipelines
+#     (all metrics and traces to local Prometheus/Jaeger) alongside the network pipeline.
+#   - Adds port 8889/8891 so Prometheus can scrape the collectors.
+#   - Attaches the collectors to the observability network so they can reach Jaeger/Prometheus.
+# The new services (jaeger, prometheus-node, grafana-node) are additions, not overrides.
 
 services:
   otel-collector-bap:
+    # Merges with otel-collector-bap in docker-compose.yml — same container, extended config.
     volumes:
       - ./otel-collector-bap/config-full.yaml:/etc/otel/config.yaml:ro
     ports:
-      - "8889:8889"   # Prometheus scrape endpoint
+      - "8889:8889"   # Prometheus scrape endpoint (not exposed in the base file)
     networks:
-      - observability
+      - observability  # added so Jaeger and Prometheus can be reached
 
   otel-collector-bpp:
+    # Merges with otel-collector-bpp in docker-compose.yml — same container, extended config.
     volumes:
       - ./otel-collector-bpp/config-full.yaml:/etc/otel/config.yaml:ro
     ports:
-      - "8891:8891"   # Prometheus scrape endpoint
+      - "8891:8891"   # Prometheus scrape endpoint (not exposed in the base file)
     networks:
-      - observability
+      - observability  # added so Jaeger and Prometheus can be reached
 
   jaeger:
     image: jaegertracing/all-in-one:latest
