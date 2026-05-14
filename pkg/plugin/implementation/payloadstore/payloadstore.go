@@ -1,14 +1,179 @@
 package payloadstore
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"strconv"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
+
+const (
+	defaultTTL          = 24 * time.Hour
+	defaultMaxBodyBytes = int64(1 << 20) // 1 MiB
+
+	prefixJSON = "j:"
+	prefixGzip = "c:"
+)
+
+// Config holds all configuration for the PayloadStore plugin.
+// Compress is storage-level gzip applied to RequestBody/ResponseBody before writing
+// to cache (reduces Redis memory usage). It is independent of HTTP Content-Encoding.
+type Config struct {
+	TTL            time.Duration
+	IndexTTL       time.Duration
+	MaxBodyBytes   int64
+	StoreBody      bool
+	StoreSignature bool
+	Compress       bool
+}
+
+// ParseConfig parses a map[string]string config into a Config, applying defaults for absent keys.
+func ParseConfig(cfg map[string]string) (*Config, error) {
+	c := &Config{
+		TTL:          defaultTTL,
+		MaxBodyBytes: defaultMaxBodyBytes,
+		StoreBody:    true,
+	}
+
+	if raw := cfg["ttl"]; raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return nil, fmt.Errorf("payloadstore: invalid ttl %q: %w", raw, err)
+		}
+		c.TTL = d
+	}
+
+	if c.TTL <= 0 {
+		return nil, fmt.Errorf("payloadstore: ttl must be positive")
+	}
+
+	if raw := cfg["indexTTL"]; raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return nil, fmt.Errorf("payloadstore: invalid indexTTL %q: %w", raw, err)
+		}
+		c.IndexTTL = d
+	} else {
+		c.IndexTTL = c.TTL + time.Hour
+	}
+
+	if c.IndexTTL < c.TTL {
+		return nil, fmt.Errorf("payloadstore: indexTTL (%v) must be >= ttl (%v)", c.IndexTTL, c.TTL)
+	}
+
+	if raw := cfg["maxBodyBytes"]; raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("payloadstore: invalid maxBodyBytes %q: %w", raw, err)
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("payloadstore: maxBodyBytes must be >= 0, got %d", n)
+		}
+		c.MaxBodyBytes = n
+	}
+
+	if raw := cfg["storeBody"]; raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("payloadstore: invalid storeBody %q: %w", raw, err)
+		}
+		c.StoreBody = b
+	}
+
+	if raw := cfg["storeSignature"]; raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("payloadstore: invalid storeSignature %q: %w", raw, err)
+		}
+		c.StoreSignature = b
+	}
+
+	if raw := cfg["compress"]; raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("payloadstore: invalid compress %q: %w", raw, err)
+		}
+		c.Compress = b
+	}
+
+	return c, nil
+}
+
+func msgKey(namespace, messageID string) string {
+	return "payload:" + namespace + ":msg:" + messageID
+}
+
+func txnIndexKey(namespace, transactionID string) string {
+	return "payload:" + namespace + ":txn:" + transactionID + ":index"
+}
+
+// marshalEntry serializes a PayloadEntry to a cache-storable string.
+// The output is prefixed with a format marker so unmarshalEntry can decode
+// it correctly regardless of the current compress config:
+//
+//	"j:" + plain JSON         (compress=false)
+//	"c:" + base64(gzip(JSON)) (compress=true)
+func marshalEntry(entry definition.PayloadEntry, compress bool) (string, error) {
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return "", fmt.Errorf("payloadstore: marshal entry: %w", err)
+	}
+	if !compress {
+		return prefixJSON + string(data), nil
+	}
+
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	if _, err := w.Write(data); err != nil {
+		return "", fmt.Errorf("payloadstore: gzip write: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return "", fmt.Errorf("payloadstore: gzip close: %w", err)
+	}
+	return prefixGzip + base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+}
+
+// unmarshalEntry deserializes a string produced by marshalEntry.
+// The format is detected from the prefix ("j:" or "c:"), so entries written
+// with compress=false can be read back after switching to compress=true and vice versa.
+func unmarshalEntry(raw string) (definition.PayloadEntry, error) {
+	var data []byte
+	switch {
+	case len(raw) > 2 && raw[:2] == prefixGzip:
+		decoded, err := base64.StdEncoding.DecodeString(raw[2:])
+		if err != nil {
+			return definition.PayloadEntry{}, fmt.Errorf("payloadstore: base64 decode: %w", err)
+		}
+		r, err := gzip.NewReader(bytes.NewReader(decoded))
+		if err != nil {
+			return definition.PayloadEntry{}, fmt.Errorf("payloadstore: gzip reader: %w", err)
+		}
+		defer r.Close()
+		data, err = io.ReadAll(r)
+		if err != nil {
+			return definition.PayloadEntry{}, fmt.Errorf("payloadstore: gzip read: %w", err)
+		}
+	case len(raw) > 2 && raw[:2] == prefixJSON:
+		data = []byte(raw[2:])
+	default:
+		// Legacy entries written before prefix support — treat as plain JSON.
+		data = []byte(raw)
+	}
+
+	var entry definition.PayloadEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return definition.PayloadEntry{}, fmt.Errorf("payloadstore: unmarshal entry: %w", err)
+	}
+	return entry, nil
+}
 
 type store struct {
 	cache     definition.Cache
