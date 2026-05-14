@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -510,4 +511,126 @@ type mockRoundTripper struct{}
 
 func (m *mockRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) {
 	return nil, nil
+}
+
+// stubPayloadStore is an in-memory PayloadStore for handler-level dedup tests.
+type stubPayloadStore struct {
+	mu      sync.Mutex
+	seen    map[string]bool
+	existsErr error // if set, Exists returns this error
+}
+
+func newStubPayloadStore() *stubPayloadStore {
+	return &stubPayloadStore{seen: make(map[string]bool)}
+}
+
+func (s *stubPayloadStore) Exists(_ context.Context, messageID string) (bool, error) {
+	if s.existsErr != nil {
+		return false, s.existsErr
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.seen[messageID], nil
+}
+
+func (s *stubPayloadStore) Store(_ context.Context, entry definition.PayloadEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seen[entry.MessageID] = true
+	return nil
+}
+
+func (s *stubPayloadStore) GetByTransactionID(_ context.Context, _ string) ([]definition.PayloadEntry, error) {
+	return nil, nil
+}
+
+func (s *stubPayloadStore) GetByMessageID(_ context.Context, _, _ string) (*definition.PayloadEntry, error) {
+	return nil, nil
+}
+
+func handlerWithPayloadStore(ps definition.PayloadStore) *stdHandler {
+	return &stdHandler{
+		SubscriberID: "test-sub",
+		role:         model.RoleBAP,
+		moduleName:   "test-module",
+		payloadStore: ps,
+	}
+}
+
+func requestWithMsgID(msgID string) *http.Request {
+	body := `{"context":{"action":"search","message_id":"` + msgID + `","transaction_id":"txn1"}}`
+	req, _ := http.NewRequest("POST", "/search", strings.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), model.ContextKeyMsgID, msgID))
+	return req
+}
+
+// TestServeHTTP_DedupBlocksDuplicateMessage verifies the second request with the same
+// message_id is rejected with a NACK and the first request's entry is preserved.
+func TestServeHTTP_DedupBlocksDuplicateMessage(t *testing.T) {
+	ps := newStubPayloadStore()
+	h := handlerWithPayloadStore(ps)
+
+	// First request — should pass through (no steps, so ACK).
+	rr1 := httptest.NewRecorder()
+	h.ServeHTTP(rr1, requestWithMsgID("msg-dup-1"))
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first request: expected 200, got %d — body: %s", rr1.Code, rr1.Body.String())
+	}
+
+	// Second request with the same message_id — must be rejected.
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, requestWithMsgID("msg-dup-1"))
+	if rr2.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate request: expected 400, got %d — body: %s", rr2.Code, rr2.Body.String())
+	}
+	if !strings.Contains(rr2.Body.String(), "duplicate message_id") {
+		t.Errorf("expected 'duplicate message_id' in response body, got: %s", rr2.Body.String())
+	}
+}
+
+// TestServeHTTP_DedupAllowsDifferentMessageIDs verifies distinct message IDs are not blocked.
+func TestServeHTTP_DedupAllowsDifferentMessageIDs(t *testing.T) {
+	ps := newStubPayloadStore()
+	h := handlerWithPayloadStore(ps)
+
+	for _, id := range []string{"msg-a", "msg-b", "msg-c"} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, requestWithMsgID(id))
+		if rr.Code != http.StatusOK {
+			t.Errorf("message_id %q: expected 200, got %d", id, rr.Code)
+		}
+	}
+}
+
+// TestServeHTTP_DedupSkippedWhenMessageIDAbsent verifies that without a message_id in
+// the context the dedup check is skipped and the request is processed normally.
+func TestServeHTTP_DedupSkippedWhenMessageIDAbsent(t *testing.T) {
+	ps := newStubPayloadStore()
+	h := handlerWithPayloadStore(ps)
+
+	body := `{"context":{"action":"search"}}`
+	for i := 0; i < 2; i++ {
+		req, _ := http.NewRequest("POST", "/search", strings.NewReader(body))
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("request %d: expected 200 when message_id absent, got %d", i+1, rr.Code)
+		}
+	}
+}
+
+// TestServeHTTP_DedupCacheErrorFailsOpen verifies that a cache error during the Exists
+// check does not block the request — it passes through (fail-open).
+func TestServeHTTP_DedupCacheErrorFailsOpen(t *testing.T) {
+	ps := &stubPayloadStore{
+		seen:      make(map[string]bool),
+		existsErr: errors.New("redis: connection refused"),
+	}
+	h := handlerWithPayloadStore(ps)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, requestWithMsgID("msg-cache-err"))
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected fail-open ACK on cache error, got %d — body: %s", rr.Code, rr.Body.String())
+	}
 }

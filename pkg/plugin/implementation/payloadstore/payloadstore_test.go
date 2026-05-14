@@ -217,6 +217,57 @@ func TestStore_IndexDedup(t *testing.T) {
 	}
 }
 
+// TestStore_EmptyTransactionID stores the message key but skips the transaction index.
+func TestStore_EmptyTransactionID(t *testing.T) {
+	s, cache := newTestStore(t, nil)
+	entry := sampleEntry("msgNoTxn", "")
+
+	if err := s.Store(context.Background(), entry); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+
+	msgVal, _ := cache.Get(context.Background(), msgKey(testNamespace, "msgNoTxn"))
+	if msgVal == "" {
+		t.Error("expected msg key to be set even without transaction_id")
+	}
+
+	// No transaction index should have been written for an empty transaction ID.
+	idxVal, _ := cache.Get(context.Background(), txnIndexKey(testNamespace, ""))
+	if idxVal != "" {
+		t.Errorf("expected no index entry for empty transaction_id, got: %q", idxVal)
+	}
+}
+
+// TestExists_EmptyMessageID returns false without error (empty key is never stored).
+func TestExists_EmptyMessageID(t *testing.T) {
+	s, _ := newTestStore(t, nil)
+	ok, err := s.Exists(context.Background(), "")
+	if err != nil {
+		t.Errorf("expected no error for empty message_id; got %v", err)
+	}
+	if ok {
+		t.Error("expected false for empty message_id")
+	}
+}
+
+// TestGetByMessageID_EmptyMessageID returns nil without error.
+func TestGetByMessageID_EmptyMessageID(t *testing.T) {
+	s, _ := newTestStore(t, nil)
+	got, err := s.GetByMessageID(context.Background(), "", "")
+	if err != nil || got != nil {
+		t.Errorf("expected nil, nil for empty message_id; got %v, %v", got, err)
+	}
+}
+
+// TestGetByTransactionID_EmptyTransactionID returns nil without error.
+func TestGetByTransactionID_EmptyTransactionID(t *testing.T) {
+	s, _ := newTestStore(t, nil)
+	entries, err := s.GetByTransactionID(context.Background(), "")
+	if err != nil || entries != nil {
+		t.Errorf("expected nil, nil for empty transaction_id; got %v, %v", entries, err)
+	}
+}
+
 // TestStore_StoredAtAndExpiresAtSet verifies timestamps are stamped at store time.
 func TestStore_StoredAtAndExpiresAtSet(t *testing.T) {
 	s, cache := newTestStore(t, nil)
