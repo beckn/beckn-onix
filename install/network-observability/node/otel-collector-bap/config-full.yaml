@@ -1,0 +1,88 @@
+# BAP companion collector — full dual-pipeline config.
+# App pipeline: all signals to local Prometheus and Jaeger (node operator visibility).
+# Network pipeline: filtered signals to the central network-level collector.
+#
+# Mounted by docker-compose.with-telemetry.yml instead of config.yaml.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    send_batch_size: 1024
+    timeout: 10s
+  batch/traces:
+    send_batch_size: 1024
+    timeout: 2s
+
+  # Pass only onix_http_request_count to the network observer.
+  filter/network_metrics:
+    error_mode: ignore
+    metrics:
+      metric:
+        - 'name != "onix_http_request_count"'
+
+  # Pass only spans that carry sender.id (inter-participant request spans).
+  filter/network_traces:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["sender.id"] == nil'
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: onix
+    const_labels:
+      observability: otel-collector-bap
+      service_name: beckn-one-bap
+
+  otlp_grpc/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  otlp_http/collector-network:
+    endpoint: ${env:NETWORK_COLLECTOR_ENDPOINT}
+    compression: gzip
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+service:
+  extensions: [health_check, zpages]
+  pipelines:
+    metrics/app:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+
+    metrics/network:
+      receivers: [otlp]
+      processors: [filter/network_metrics, batch]
+      exporters: [otlp_http/collector-network]
+
+    traces/app:
+      receivers: [otlp]
+      processors: [batch/traces]
+      exporters: [otlp_grpc/jaeger]
+
+    traces/network:
+      receivers: [otlp]
+      processors: [filter/network_traces, batch/traces]
+      exporters: [otlp_http/collector-network]
+
+    logs/network:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/collector-network]
+
+  telemetry:
+    logs:
+      level: info

@@ -1,0 +1,92 @@
+# Node telemetry overlay — adds local Jaeger, Prometheus, and Grafana for node-operator visibility.
+# Use with the base compose file:
+#   docker compose -f docker-compose.yml -f docker-compose.with-telemetry.yml up -d
+#
+# HOW THE OVERLAY WORKS — NO DUPLICATE CONTAINERS
+# ------------------------------------------------
+# Docker Compose merges service definitions across files when multiple -f flags are used.
+# Services named here (otel-collector-bap, otel-collector-bpp) are the SAME containers
+# defined in docker-compose.yml — not new ones. Compose merges the two definitions at
+# startup, so each collector still runs as a single container. This overlay only:
+#   - Swaps the mounted config to config-full.yaml, which activates the app-level pipelines
+#     (all metrics and traces to local Prometheus/Jaeger) alongside the network pipeline.
+#   - Adds port 8889/8891 so Prometheus can scrape the collectors.
+#   - Attaches the collectors to the observability network so they can reach Jaeger/Prometheus.
+# The new services (jaeger, prometheus-node, grafana-node) are additions, not overrides.
+
+services:
+  otel-collector-bap:
+    # Merges with otel-collector-bap in docker-compose.yml — same container, extended config.
+    volumes:
+      - ./otel-collector-bap/config-full.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "8889:8889"   # Prometheus scrape endpoint (not exposed in the base file)
+    networks:
+      - observability  # added so Jaeger and Prometheus can be reached
+
+  otel-collector-bpp:
+    # Merges with otel-collector-bpp in docker-compose.yml — same container, extended config.
+    volumes:
+      - ./otel-collector-bpp/config-full.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "8891:8891"   # Prometheus scrape endpoint (not exposed in the base file)
+    networks:
+      - observability  # added so Jaeger and Prometheus can be reached
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+    networks:
+      - observability
+    restart: unless-stopped
+
+  prometheus-node:
+    image: prom/prometheus:latest
+    container_name: prometheus-node
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_node_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - observability
+    restart: unless-stopped
+    depends_on:
+      - otel-collector-bap
+      - otel-collector-bpp
+
+  grafana-node:
+    image: grafana/grafana:latest
+    container_name: grafana-node
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+    volumes:
+      - grafana_node_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - observability
+    restart: unless-stopped
+    depends_on:
+      - prometheus-node
+      - jaeger
+
+networks:
+  observability:
+    driver: bridge
+
+volumes:
+  prometheus_node_data:
+  grafana_node_data:
