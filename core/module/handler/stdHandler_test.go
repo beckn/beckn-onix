@@ -174,38 +174,9 @@ func (stubCache) Set(context.Context, string, string, time.Duration) error { ret
 func (stubCache) Delete(context.Context, string) error                     { return nil }
 func (stubCache) Clear(context.Context) error                              { return nil }
 
-func TestLoadPayloadStore_FailsWithoutReqpreprocessor(t *testing.T) {
+func TestLoadPayloadStore_SucceedsWithCacheConfigured(t *testing.T) {
 	_, err := loadPayloadStore(context.Background(), noopPluginManager{}, stubCache{}, "testModule",
 		&plugin.Config{ID: "payloadstore"},
-		nil, // no middleware
-	)
-	if err == nil || !strings.Contains(err.Error(), "reqpreprocessor middleware not configured") {
-		t.Fatalf("expected reqpreprocessor missing error, got: %v", err)
-	}
-}
-
-func TestLoadPayloadStore_FailsWhenMessageIDMissingFromContextKeys(t *testing.T) {
-	middleware := []plugin.Config{{
-		ID:     "reqpreprocessor",
-		Config: map[string]string{"contextKeys": "transaction_id"},
-	}}
-	_, err := loadPayloadStore(context.Background(), noopPluginManager{}, stubCache{}, "testModule",
-		&plugin.Config{ID: "payloadstore"},
-		middleware,
-	)
-	if err == nil || !strings.Contains(err.Error(), "missing message_id") {
-		t.Fatalf("expected message_id missing error, got: %v", err)
-	}
-}
-
-func TestLoadPayloadStore_SucceedsWithMessageIDInContextKeys(t *testing.T) {
-	middleware := []plugin.Config{{
-		ID:     "reqpreprocessor",
-		Config: map[string]string{"contextKeys": "transaction_id,message_id"},
-	}}
-	_, err := loadPayloadStore(context.Background(), noopPluginManager{}, stubCache{}, "testModule",
-		&plugin.Config{ID: "payloadstore"},
-		middleware,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -513,7 +484,7 @@ func (m *mockRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) {
 	return nil, nil
 }
 
-// stubPayloadStore is an in-memory PayloadStore for handler-level dedup tests.
+// stubPayloadStore is an in-memory PayloadStore for handler-level duplicate detection tests.
 type stubPayloadStore struct {
 	mu      sync.Mutex
 	seen    map[string]bool
@@ -560,7 +531,6 @@ func handlerWithPayloadStore(ps definition.PayloadStore) *stdHandler {
 func requestWithMsgID(msgID string) *http.Request {
 	body := `{"context":{"action":"search","message_id":"` + msgID + `","transaction_id":"txn1"}}`
 	req, _ := http.NewRequest("POST", "/search", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), model.ContextKeyMsgID, msgID))
 	return req
 }
 
@@ -579,9 +549,9 @@ func TestServeHTTP_DuplicateMessageIDLogsWarningAndProceeds(t *testing.T) {
 	}
 }
 
-// TestServeHTTP_DedupSkippedWhenMessageIDAbsent verifies that without a message_id in
-// the context the duplicate check is skipped and both requests are processed normally.
-func TestServeHTTP_DedupSkippedWhenMessageIDAbsent(t *testing.T) {
+// TestServeHTTP_DuplicateDetectionSkippedWhenMessageIDAbsent verifies that without a
+// message_id in the request body duplicate detection is skipped and requests proceed normally.
+func TestServeHTTP_DuplicateDetectionSkippedWhenMessageIDAbsent(t *testing.T) {
 	ps := newStubPayloadStore()
 	h := handlerWithPayloadStore(ps)
 
@@ -596,9 +566,9 @@ func TestServeHTTP_DedupSkippedWhenMessageIDAbsent(t *testing.T) {
 	}
 }
 
-// TestServeHTTP_DedupCacheErrorDoesNotBlockRequest verifies that a cache error during
-// the Exists check does not block the request — it proceeds normally.
-func TestServeHTTP_DedupCacheErrorDoesNotBlockRequest(t *testing.T) {
+// TestServeHTTP_DuplicateDetectionCacheErrorDoesNotBlockRequest verifies that a cache
+// error during the Exists check does not block the request — it proceeds normally.
+func TestServeHTTP_DuplicateDetectionCacheErrorDoesNotBlockRequest(t *testing.T) {
 	ps := &stubPayloadStore{
 		seen:      make(map[string]bool),
 		existsErr: errors.New("redis: connection refused"),
@@ -609,5 +579,49 @@ func TestServeHTTP_DedupCacheErrorDoesNotBlockRequest(t *testing.T) {
 	h.ServeHTTP(rr, requestWithMsgID("msg-cache-err"))
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected ACK on cache error, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestParseBecknCtx covers snake_case, camelCase, and missing fields.
+func TestParseBecknCtx(t *testing.T) {
+	tests := []struct {
+		name  string
+		body  string
+		want  becknCtxFields
+	}{
+		{
+			name: "snake_case keys",
+			body: `{"context":{"message_id":"m1","transaction_id":"t1","network_id":"net1","action":"search"}}`,
+			want: becknCtxFields{MessageID: "m1", TransactionID: "t1", NetworkID: "net1", Action: "search"},
+		},
+		{
+			name: "camelCase keys",
+			body: `{"context":{"messageId":"m2","transactionId":"t2","networkId":"net2","action":"on_search"}}`,
+			want: becknCtxFields{MessageID: "m2", TransactionID: "t2", NetworkID: "net2", Action: "on_search"},
+		},
+		{
+			name: "snake_case takes priority over camelCase",
+			body: `{"context":{"message_id":"snake","messageId":"camel","transaction_id":"t1","network_id":"net1","action":"search"}}`,
+			want: becknCtxFields{MessageID: "snake", TransactionID: "t1", NetworkID: "net1", Action: "search"},
+		},
+		{
+			name: "missing context object",
+			body: `{"message":{}}`,
+			want: becknCtxFields{},
+		},
+		{
+			name: "empty body",
+			body: ``,
+			want: becknCtxFields{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseBecknCtx([]byte(tt.body))
+			if got != tt.want {
+				t.Errorf("parseBecknCtx() = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }

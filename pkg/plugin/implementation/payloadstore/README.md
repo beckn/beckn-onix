@@ -8,21 +8,13 @@ ONIX has been stateless since inception. PayloadStore is the foundation for all 
 
 `payloadstore` requires a `cache` plugin configured in the same handler. It has no dependency on any specific cache backend — Redis, ElastiCache, Memcached, or an in-process test double all work without changes to the plugin.
 
-`payloadstore` also requires the `reqpreprocessor` middleware to be configured in the same handler with `contextKeys: transaction_id,message_id`. The middleware extracts those values from the request body into the Go request context, which PayloadStore reads for indexing and dedup. Without it, `message_id` and `transaction_id` will be empty in every stored entry and the duplicate-detection check will never fire.
-
-```yaml
-middleware:
-  - id: reqpreprocessor
-    config:
-      contextKeys: transaction_id,message_id
-      role: bap   # or bpp
-```
+`payloadstore` reads `message_id`, `transaction_id`, `network_id`, and `action` directly from the Beckn `context` object in the request body. Both snake_case (`message_id`) and camelCase (`messageId`) key forms are accepted.
 
 ## Behaviour
 
 PayloadStore is an **infrastructure plugin**, not a step. It fires automatically at two fixed points in the handler when configured:
 
-1. **Before the pipeline** — calls `Exists(message_id)`. If the message was already seen, the handler immediately returns a NACK. The original entry is preserved — the duplicate attempt is not stored. The step pipeline does not run.
+1. **Before the pipeline** — calls `Exists(message_id)` for duplicate detection. If the message was already seen, a warning is logged and the request proceeds — the new entry will overwrite the existing one. This is observability only, not enforcement. If `message_id` is absent from the request body, duplicate detection and the outcome store are skipped entirely.
 2. **After the pipeline** — stores the request body, response body, and the ACK or NACK outcome (including the error reason on failure).
 
 Do not add `payloadStore` to the `steps` list. It is wired into the handler automatically.
@@ -56,7 +48,7 @@ When `storeBody: "false"`, request and response bodies are not stored. All envel
 
 | Field | Purpose |
 |-------|---------|
-| `MessageID` | Dedup and point lookup |
+| `MessageID` | Duplicate detection and point lookup |
 | `TransactionID` | Group all messages in a transaction |
 | `NetworkID` | Identify which network the message belongs to |
 | `Action` | Ordering and flow validation |
@@ -82,7 +74,7 @@ The `{moduleName}` is taken from the handler's module name at construction time 
 
 `GetByTransactionID` reads the index, fetches each entry individually, and silently skips any that have expired between the index write and read.
 
-**Known limitation**: The transaction index update is a non-atomic read-modify-write over the cache. Two concurrent `Store` calls for the same transaction can race — the last writer wins, potentially dropping one message ID from the index. Individual message keys are always written correctly; only `GetByTransactionID` may return an incomplete list under this race. Individual message lookup via `GetByMessageID` and dedup via `Exists` are unaffected.
+**Known limitation**: The transaction index update is a non-atomic read-modify-write over the cache. Two concurrent `Store` calls for the same transaction can race — the last writer wins, potentially dropping one message ID from the index. Individual message keys are always written correctly; only `GetByTransactionID` may return an incomplete list under this race. Individual message lookup via `GetByMessageID` and duplicate detection via `Exists` are unaffected.
 
 ## Example handler configuration
 

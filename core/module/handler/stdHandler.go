@@ -173,10 +173,14 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		span.End()
 	}()
 
-	payloadStoreMsgID, _ := stepCtx.Value(model.ContextKeyMsgID).(string)
+	bCtx := parseBecknCtx(stepCtx.Body)
+	payloadStoreMsgID := bCtx.MessageID
+	if h.payloadStore != nil && payloadStoreMsgID == "" {
+		log.Warnf(stepCtx, "payloadStore: message_id absent from request body — duplicate detection and outcome store skipped")
+	}
 	if h.payloadStore != nil && payloadStoreMsgID != "" {
 		if exists, checkErr := h.payloadStore.Exists(stepCtx, payloadStoreMsgID); checkErr != nil {
-			log.Warnf(stepCtx, "payloadStore.Exists: cache error — duplicate check skipped: %v", checkErr)
+			log.Warnf(stepCtx, "payloadStore.Exists: cache error — duplicate detection skipped: %v", checkErr)
 		} else if exists {
 			log.Warnf(stepCtx, "payloadStore: duplicate message_id %s — overwriting existing entry", payloadStoreMsgID)
 		}
@@ -210,29 +214,62 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if pipelineErr != nil {
 			outcome, reason = definition.OutcomeNACK, pipelineErr.Error()
 		}
-		entry := h.buildPayloadEntry(stepCtx, wrapped.body.Bytes(), outcome, reason)
+		entry := h.buildPayloadEntry(stepCtx, bCtx, wrapped.body.Bytes(), outcome, reason)
 		if storeErr := h.payloadStore.Store(stepCtx, entry); storeErr != nil {
 			log.Warnf(stepCtx, "payloadStore.Store: %v", storeErr)
 		}
 	}
 }
 
-// buildPayloadEntry assembles a PayloadEntry from the current step context and response.
-func (h *stdHandler) buildPayloadEntry(stepCtx *model.StepContext, responseBody []byte, outcome definition.Outcome, reason string) definition.PayloadEntry {
-	txnID, _ := stepCtx.Value(model.ContextKeyTxnID).(string)
-	msgID, _ := stepCtx.Value(model.ContextKeyMsgID).(string)
-	var ctxFields struct {
-		Context struct {
-			NetworkID string `json:"network_id"`
-			Action    string `json:"action"`
-		} `json:"context"`
+// becknCtxFields holds the four Beckn context fields PayloadStore needs,
+// parsed once from the request body and shared across duplicate detection and outcome store.
+type becknCtxFields struct {
+	MessageID     string
+	TransactionID string
+	NetworkID     string
+	Action        string
+}
+
+// parseBecknCtx extracts the four context fields from a Beckn request body.
+// Both snake_case (message_id) and camelCase (messageId) keys are accepted,
+// with snake_case taking priority, matching the reqpreprocessor convention.
+func parseBecknCtx(body []byte) becknCtxFields {
+	var wrapper struct {
+		Context map[string]json.RawMessage `json:"context"`
 	}
-	_ = json.Unmarshal(stepCtx.Body, &ctxFields)
+	if err := json.Unmarshal(body, &wrapper); err != nil || len(wrapper.Context) == 0 {
+		return becknCtxFields{}
+	}
+	c := wrapper.Context
+	return becknCtxFields{
+		MessageID:     firstJSONString(c, "message_id", "messageId"),
+		TransactionID: firstJSONString(c, "transaction_id", "transactionId"),
+		NetworkID:     firstJSONString(c, "network_id", "networkId"),
+		Action:        firstJSONString(c, "action"),
+	}
+}
+
+// firstJSONString returns the first non-empty string found under any of the given keys.
+func firstJSONString(m map[string]json.RawMessage, keys ...string) string {
+	for _, k := range keys {
+		if raw, ok := m[k]; ok {
+			var s string
+			if json.Unmarshal(raw, &s) == nil && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// buildPayloadEntry assembles a PayloadEntry from the current step context and response.
+// bCtx must be the result of parseBecknCtx called on stepCtx.Body earlier in the request.
+func (h *stdHandler) buildPayloadEntry(stepCtx *model.StepContext, bCtx becknCtxFields, responseBody []byte, outcome definition.Outcome, reason string) definition.PayloadEntry {
 	return definition.PayloadEntry{
-		MessageID:     msgID,
-		TransactionID: txnID,
-		NetworkID:     ctxFields.Context.NetworkID,
-		Action:        ctxFields.Context.Action,
+		MessageID:     bCtx.MessageID,
+		TransactionID: bCtx.TransactionID,
+		NetworkID:     bCtx.NetworkID,
+		Action:        bCtx.Action,
 		SubscriberID:  stepCtx.SubID,
 		Role:          stepCtx.Role,
 		RequestBody:   stepCtx.Body,
@@ -382,7 +419,7 @@ func loadManifestLoader(ctx context.Context, mgr PluginManager, cache definition
 	return loader, nil
 }
 
-func loadPayloadStore(ctx context.Context, mgr PluginManager, cache definition.Cache, namespace string, cfg *plugin.Config, middleware []plugin.Config) (definition.PayloadStore, error) {
+func loadPayloadStore(ctx context.Context, mgr PluginManager, cache definition.Cache, namespace string, cfg *plugin.Config) (definition.PayloadStore, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping PayloadStore plugin: not configured")
 		return nil, nil
@@ -390,39 +427,12 @@ func loadPayloadStore(ctx context.Context, mgr PluginManager, cache definition.C
 	if cache == nil {
 		return nil, fmt.Errorf("failed to load PayloadStore plugin (%s): Cache plugin not configured", cfg.ID)
 	}
-	if err := validatePayloadStoreMiddleware(ctx, cfg.ID, middleware); err != nil {
-		return nil, err
-	}
 	ps, err := mgr.PayloadStore(ctx, cache, namespace, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load PayloadStore plugin (%s): %w", cfg.ID, err)
 	}
 	log.Debugf(ctx, "Loaded PayloadStore plugin: %s", cfg.ID)
 	return ps, nil
-}
-
-// validatePayloadStoreMiddleware checks that reqpreprocessor is configured with the
-// context keys PayloadStore depends on. message_id is fatal — without it dedup and
-// storage are broken. transaction_id is non-fatal but logs a warning.
-func validatePayloadStoreMiddleware(ctx context.Context, pluginID string, middleware []plugin.Config) error {
-	for _, m := range middleware {
-		if m.ID != "reqpreprocessor" {
-			continue
-		}
-		keys := strings.Split(m.Config["contextKeys"], ",")
-		keySet := make(map[string]bool, len(keys))
-		for _, k := range keys {
-			keySet[strings.TrimSpace(k)] = true
-		}
-		if !keySet["message_id"] {
-			return fmt.Errorf("failed to load PayloadStore plugin (%s): reqpreprocessor middleware is missing message_id in contextKeys", pluginID)
-		}
-		if !keySet["transaction_id"] {
-			log.Warnf(ctx, "PayloadStore plugin (%s): reqpreprocessor middleware is missing transaction_id in contextKeys — transaction history indexing unavailable", pluginID)
-		}
-		return nil
-	}
-	return fmt.Errorf("failed to load PayloadStore plugin (%s): reqpreprocessor middleware not configured — message_id will not be available for dedup", pluginID)
 }
 
 func loadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
@@ -455,7 +465,7 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.manifestLoader, err = loadManifestLoader(ctx, mgr, h.cache, h.registry, cfg.ManifestLoader); err != nil {
 		return err
 	}
-	if h.payloadStore, err = loadPayloadStore(ctx, mgr, h.cache, h.moduleName, cfg.PayloadStore, cfg.Middleware); err != nil {
+	if h.payloadStore, err = loadPayloadStore(ctx, mgr, h.cache, h.moduleName, cfg.PayloadStore); err != nil {
 		return err
 	}
 	if h.signValidator, err = loadPlugin(ctx, "SignValidator", cfg.SignValidator, mgr.SignValidator); err != nil {
