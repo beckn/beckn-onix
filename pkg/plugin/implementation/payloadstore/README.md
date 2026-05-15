@@ -66,14 +66,11 @@ When `compress: "true"`, `RequestBody` and `ResponseBody` are gzip-compressed be
 
 ## Cache key layout
 
-Keys are namespaced by the owning handler's module name, preventing collisions between handlers that share the same cache backend (e.g., a BAP and BPP both connected to the same Redis instance, or two modules with the same role).
-
 | Key | Value | TTL |
 |-----|-------|-----|
-| `payload:{moduleName}:msg:{messageID}` | `j:<JSON>` or `c:<base64(gzip(JSON))>` — format detected from prefix at read time | `ttl` |
-| `payload:{moduleName}:txn:{transactionID}:index` | JSON array of message IDs, oldest-first | `indexTTL` |
+| `payload:onix:msg:{messageID}` | `j:<JSON>` or `c:<base64(gzip(JSON))>` — format detected from prefix at read time | `ttl` |
+| `payload:onix:txn:{transactionID}:index` | JSON array of message IDs, oldest-first | `indexTTL` |
 
-The `{moduleName}` is taken from the handler's module name at construction time (e.g., `bap-txn-caller`). Each handler instance gets its own isolated keyspace.
 
 `GetByTransactionID` reads the index, fetches each entry individually, and silently skips any that have expired between the index write and read.
 
@@ -126,7 +123,7 @@ Plugins that need transaction history can depend on `definition.PayloadStore`. T
 
 **`Store(ctx, entry) error`** — Persists a `PayloadEntry` to the cache. Sets `StoredAt` and `ExpiresAt` at write time. Respects `storeBody`, `storeSignature`, `maxBodyBytes`, and `compress` config. Also appends the message ID to the transaction index. Returns an error if the cache write fails.
 
-**`Exists(ctx, messageID) (bool, error)`** — O(1) check for whether a message has been seen. Returns `true` if a matching entry exists, `false` if not. Returns the cache error if the lookup fails — callers decide whether to block or proceed.
+**`Exists(ctx, messageID) (bool, error)`** — O(1) check for whether a message has been seen. Returns `true` if a matching entry exists, `false` if not. Cache errors are treated as a miss (fail-open).
 
 **`GetByMessageID(ctx, messageID, action) (*PayloadEntry, error)`** — Returns the stored entry for a message ID. If `action` is non-empty, returns `nil` when the stored entry's action does not match. Returns `nil, nil` (not an error) on a cache miss.
 

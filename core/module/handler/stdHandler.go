@@ -468,7 +468,7 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.manifestLoader, err = loadManifestLoader(ctx, mgr, h.cache, h.registry, cfg.ManifestLoader); err != nil {
 		return err
 	}
-	if h.payloadStore, err = loadPayloadStore(ctx, mgr, h.cache, h.moduleName, cfg.PayloadStore, h.role); err != nil {
+	if h.payloadStore, err = loadPayloadStore(ctx, mgr, h.cache, "onix", cfg.PayloadStore, h.role); err != nil {
 		return err
 	}
 	if h.signValidator, err = loadPlugin(ctx, "SignValidator", cfg.SignValidator, mgr.SignValidator); err != nil {
