@@ -176,7 +176,28 @@ func (stubCache) Clear(context.Context) error                              { ret
 
 func TestLoadPayloadStore_SucceedsWithCacheConfigured(t *testing.T) {
 	_, err := loadPayloadStore(context.Background(), noopPluginManager{}, stubCache{}, "testModule",
-		&plugin.Config{ID: "payloadstore"},
+		&plugin.Config{ID: "payloadstore"}, model.RoleBPP,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadPayloadStore_BAPWarnsWhenStoreSignatureDisabled(t *testing.T) {
+	// Should succeed — the warning is non-fatal.
+	_, err := loadPayloadStore(context.Background(), noopPluginManager{}, stubCache{}, "testModule",
+		&plugin.Config{ID: "payloadstore", Config: map[string]string{"storeSignature": "false"}},
+		model.RoleBAP,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadPayloadStore_BAPNoWarningWhenStoreSignatureEnabled(t *testing.T) {
+	_, err := loadPayloadStore(context.Background(), noopPluginManager{}, stubCache{}, "testModule",
+		&plugin.Config{ID: "payloadstore", Config: map[string]string{"storeSignature": "true"}},
+		model.RoleBAP,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

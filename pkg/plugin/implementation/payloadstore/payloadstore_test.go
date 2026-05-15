@@ -3,6 +3,7 @@ package payloadstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -500,6 +501,34 @@ func TestExists_EmptyMessageID(t *testing.T) {
 	}
 	if ok {
 		t.Error("expected false for empty message_id")
+	}
+}
+
+type errCache struct {
+	stubCache
+	getErr error
+}
+
+func (c *errCache) Get(ctx context.Context, key string) (string, error) {
+	if c.getErr != nil {
+		return "", c.getErr
+	}
+	return c.stubCache.Get(ctx, key)
+}
+
+func TestExists_CacheErrorPropagated(t *testing.T) {
+	cacheErr := errors.New("redis: connection refused")
+	ec := &errCache{getErr: cacheErr}
+	s, _, err := New(context.Background(), ec, testNamespace, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ok, got := s.Exists(context.Background(), "msgX")
+	if ok {
+		t.Error("expected false on cache error")
+	}
+	if !errors.Is(got, cacheErr) {
+		t.Errorf("expected cache error; got %v", got)
 	}
 }
 

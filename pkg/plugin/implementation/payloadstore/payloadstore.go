@@ -312,11 +312,10 @@ func (s *store) GetByMessageID(ctx context.Context, messageID, action string) (*
 }
 
 // Exists returns true if a payload with the given message ID is present in the store.
-// Errors from the cache are treated as a miss (fail-open).
 func (s *store) Exists(ctx context.Context, messageID string) (bool, error) {
 	raw, err := s.cache.Get(ctx, msgKey(s.namespace, messageID))
-	if err != nil || raw == "" {
-		return false, nil
+	if err != nil {
+		return false, err
 	}
-	return true, nil
+	return raw != "", nil
 }

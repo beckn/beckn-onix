@@ -419,13 +419,16 @@ func loadManifestLoader(ctx context.Context, mgr PluginManager, cache definition
 	return loader, nil
 }
 
-func loadPayloadStore(ctx context.Context, mgr PluginManager, cache definition.Cache, namespace string, cfg *plugin.Config) (definition.PayloadStore, error) {
+func loadPayloadStore(ctx context.Context, mgr PluginManager, cache definition.Cache, namespace string, cfg *plugin.Config, role model.Role) (definition.PayloadStore, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping PayloadStore plugin: not configured")
 		return nil, nil
 	}
 	if cache == nil {
 		return nil, fmt.Errorf("failed to load PayloadStore plugin (%s): Cache plugin not configured", cfg.ID)
+	}
+	if role == model.RoleBAP && cfg.Config["storeSignature"] != "true" {
+		log.Warnf(ctx, "PayloadStore plugin (%s): storeSignature is disabled for a BAP handler — Authorization header will not be stored", cfg.ID)
 	}
 	ps, err := mgr.PayloadStore(ctx, cache, namespace, cfg)
 	if err != nil {
@@ -465,7 +468,7 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.manifestLoader, err = loadManifestLoader(ctx, mgr, h.cache, h.registry, cfg.ManifestLoader); err != nil {
 		return err
 	}
-	if h.payloadStore, err = loadPayloadStore(ctx, mgr, h.cache, h.moduleName, cfg.PayloadStore); err != nil {
+	if h.payloadStore, err = loadPayloadStore(ctx, mgr, h.cache, h.moduleName, cfg.PayloadStore, h.role); err != nil {
 		return err
 	}
 	if h.signValidator, err = loadPlugin(ctx, "SignValidator", cfg.SignValidator, mgr.SignValidator); err != nil {
