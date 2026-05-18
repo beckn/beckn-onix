@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -124,20 +125,31 @@ func (noopPluginManager) SignValidator(context.Context, *plugin.Config) (definit
 func (noopPluginManager) Validator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
-func (noopPluginManager) Router(context.Context, *plugin.Config) (definition.Router, error) { return nil, nil }
+func (noopPluginManager) Router(context.Context, *plugin.Config) (definition.Router, error) {
+	return nil, nil
+}
 func (noopPluginManager) Publisher(context.Context, *plugin.Config) (definition.Publisher, error) {
 	return nil, nil
 }
-func (noopPluginManager) Signer(context.Context, *plugin.Config) (definition.Signer, error) { return nil, nil }
-func (noopPluginManager) Step(context.Context, *plugin.Config) (definition.Step, error) { return nil, nil }
-func (noopPluginManager) PolicyChecker(context.Context, *plugin.Config) (definition.PolicyChecker, error) {
+func (noopPluginManager) Signer(context.Context, *plugin.Config) (definition.Signer, error) {
 	return nil, nil
 }
-func (noopPluginManager) Cache(context.Context, *plugin.Config) (definition.Cache, error) { return nil, nil }
+func (noopPluginManager) Step(context.Context, *plugin.Config) (definition.Step, error) {
+	return nil, nil
+}
+func (noopPluginManager) PolicyChecker(context.Context, definition.ManifestLoader, *plugin.Config) (definition.PolicyChecker, error) {
+	return nil, nil
+}
+func (noopPluginManager) Cache(context.Context, *plugin.Config) (definition.Cache, error) {
+	return nil, nil
+}
 func (noopPluginManager) Registry(context.Context, *plugin.Config) (definition.RegistryLookup, error) {
 	return nil, nil
 }
 func (noopPluginManager) KeyManager(context.Context, definition.Cache, definition.RegistryLookup, *plugin.Config) (definition.KeyManager, error) {
+	return nil, nil
+}
+func (noopPluginManager) ManifestLoader(context.Context, definition.Cache, definition.RegistryMetadataLookup, *plugin.Config) (definition.ManifestLoader, error) {
 	return nil, nil
 }
 func (noopPluginManager) TransportWrapper(context.Context, *plugin.Config) (definition.TransportWrapper, error) {
@@ -146,6 +158,23 @@ func (noopPluginManager) TransportWrapper(context.Context, *plugin.Config) (defi
 func (noopPluginManager) SchemaValidator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
+func (noopPluginManager) PayloadStore(_ context.Context, _ definition.Cache, _ string, _ *plugin.Config) (definition.PayloadStore, error) {
+	return nil, nil
+}
+
+type registryWithoutMetadata struct{}
+
+func (registryWithoutMetadata) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
+	return nil, errors.New("not implemented")
+}
+
+type stubCache struct{}
+
+func (stubCache) Get(context.Context, string) (string, error)              { return "", errors.New("cache miss") }
+func (stubCache) Set(context.Context, string, string, time.Duration) error { return nil }
+func (stubCache) Delete(context.Context, string) error                     { return nil }
+func (stubCache) Clear(context.Context) error                              { return nil }
+
 
 func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	ctx := context.Background()
@@ -162,6 +191,27 @@ func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "PolicyChecker plugin not configured") {
 		t.Fatalf("expected explicit PolicyChecker config error, got: %v", err)
+	}
+}
+
+func TestLoadManifestLoader_RequiresCache(t *testing.T) {
+	_, err := loadManifestLoader(context.Background(), noopPluginManager{}, nil, registryWithoutMetadata{}, &plugin.Config{ID: "manifestloader"})
+	if err == nil || !strings.Contains(err.Error(), "Cache plugin not configured") {
+		t.Fatalf("expected cache requirement error, got %v", err)
+	}
+}
+
+func TestLoadManifestLoader_RequiresRegistry(t *testing.T) {
+	_, err := loadManifestLoader(context.Background(), noopPluginManager{}, stubCache{}, nil, &plugin.Config{ID: "manifestloader"})
+	if err == nil || !strings.Contains(err.Error(), "Registry plugin not configured") {
+		t.Fatalf("expected registry requirement error, got %v", err)
+	}
+}
+
+func TestLoadManifestLoader_RequiresRegistryMetadataLookup(t *testing.T) {
+	_, err := loadManifestLoader(context.Background(), noopPluginManager{}, stubCache{}, registryWithoutMetadata{}, &plugin.Config{ID: "manifestloader"})
+	if err == nil || !strings.Contains(err.Error(), "does not implement RegistryMetadataLookup") {
+		t.Fatalf("expected RegistryMetadataLookup error, got %v", err)
 	}
 }
 
@@ -337,28 +387,24 @@ func TestServeHTTP_ActionResolution(t *testing.T) {
 		name           string
 		body           string
 		path           string
-		expectedAction string
 		expectedStatus int
 	}{
 		{
 			name:           "Valid Beckn body",
 			body:           `{"context": {"action": "search"}}`,
 			path:           "/v1/search",
-			expectedAction: "search",
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "Empty body - fallback to path",
 			body:           "",
 			path:           "/v1/search",
-			expectedAction: "/v1/search",
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "Non-Beckn JSON - fallback to path",
 			body:           `{"other": "data"}`,
 			path:           "/v1/callback",
-			expectedAction: "/v1/callback",
 			expectedStatus: http.StatusOK,
 		},
 	}
@@ -375,13 +421,6 @@ func TestServeHTTP_ActionResolution(t *testing.T) {
 			req, _ := http.NewRequest("POST", tt.path, strings.NewReader(tt.body))
 			rr := httptest.NewRecorder()
 
-			// We need to capture the action used. 
-			// Since action is local to ServeHTTP, we can't check it directly easily.
-			// But we can check if it gets passed to RecordHTTPRequest if we could mock it.
-			// However, ServeHTTP also sets it on the span attribute.
-			
-			// For now, let's just ensure it doesn't crash and returns the expected status.
-			// A more thorough test would involve mocking telemetry or checking side effects.
 			h.ServeHTTP(rr, req)
 
 			if rr.Code != tt.expectedStatus {
@@ -708,5 +747,68 @@ func TestProxy_ModifyResponse_409_InvokesResponseSteps(t *testing.T) {
 	}
 	if rr.Body.String() != ackBody {
 		t.Errorf("expected upstream body to be relayed unchanged: got %q", rr.Body.String())
+	}
+}
+
+// stubPayloadStore is a minimal PayloadStore for storePayloadStep unit tests.
+type stubPayloadStore struct {
+	stored   []*model.StepContext
+	storeErr error
+}
+
+func (s *stubPayloadStore) Store(ctx *model.StepContext) error {
+	if s.storeErr != nil {
+		return s.storeErr
+	}
+	s.stored = append(s.stored, ctx)
+	return nil
+}
+
+func (s *stubPayloadStore) Exists(_ context.Context, _ string) (bool, error) { return false, nil }
+func (s *stubPayloadStore) GetByTransactionID(_ context.Context, _ string) ([]definition.PayloadEntry, error) {
+	return nil, nil
+}
+func (s *stubPayloadStore) GetByMessageID(_ context.Context, _, _ string) (*definition.PayloadEntry, error) {
+	return nil, nil
+}
+
+func TestNewStorePayloadStep_NilPayloadStoreFails(t *testing.T) {
+	_, err := newStorePayloadStep(nil)
+	if err == nil {
+		t.Fatal("expected error for nil PayloadStore")
+	}
+}
+
+func TestStorePayloadStep_Run_DelegatesToStore(t *testing.T) {
+	ps := &stubPayloadStore{}
+	step, err := newStorePayloadStep(ps)
+	if err != nil {
+		t.Fatalf("newStorePayloadStep: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	ctx := &model.StepContext{
+		Context: context.Background(),
+		Request: req,
+		Body:    []byte(`{"context":{"message_id":"m1","transaction_id":"t1","action":"search"}}`),
+	}
+
+	if err := step.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(ps.stored) != 1 || ps.stored[0] != ctx {
+		t.Errorf("expected Store called once with the same context; got %d calls", len(ps.stored))
+	}
+}
+
+func TestStorePayloadStep_Run_PropagatesError(t *testing.T) {
+	ps := &stubPayloadStore{storeErr: errors.New("cache down")}
+	step, _ := newStorePayloadStep(ps)
+
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	ctx := &model.StepContext{Context: context.Background(), Request: req}
+
+	if err := step.Run(ctx); err == nil {
+		t.Fatal("expected error from Run when Store fails")
 	}
 }

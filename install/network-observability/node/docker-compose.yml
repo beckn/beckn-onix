@@ -1,0 +1,151 @@
+# Node-level stack — deployed by each ONIX network participant (BAP / BPP operator).
+# Runs the adapters and their companion otel-collectors.
+# Collectors forward only the network pipeline to the central network-level collector.
+#
+# To add local Jaeger / Prometheus / Grafana for node-operator visibility, layer the telemetry override:
+#   docker compose -f docker-compose.yml -f docker-compose.with-telemetry.yml up -d
+#
+# Required env var (set in .env or export before running):
+#   NETWORK_COLLECTOR_ENDPOINT — OTLP/HTTP address of the network-level collector
+#   Example: NETWORK_COLLECTOR_ENDPOINT=http://network-host:4318
+#
+# Run from this directory:
+#   docker compose up -d
+#
+# beckn_network is declared external so this stack attaches to a devkit's network when one is already running.
+
+services:
+  redis:
+    image: redis:alpine
+    pull_policy: always
+    container_name: redis-onix
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass your-redis-password
+    networks:
+      beckn_network:
+        aliases:
+          - redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "your-redis-password", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  onix-bap:
+    image: fidedocker/onix-adapter
+    container_name: onix-bap
+    ports:
+      - "8081:8081"
+    volumes:
+      - ../../../config:/app/config:ro
+      - ../../../schemas:/app/schemas:ro
+    environment:
+      - CONFIG_FILE=/app/config/local-beckn-one-bap.yaml
+      - REDIS_PASSWORD=your-redis-password
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector-bap:4317
+    command: ["./server", "--config=/app/config/local-beckn-one-bap.yaml"]
+    networks:
+      - beckn_network
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      otel-collector-bap:
+        condition: service_started
+
+  onix-bpp:
+    image: fidedocker/onix-adapter
+    container_name: onix-bpp
+    ports:
+      - "8082:8082"
+    volumes:
+      - ../../../config:/app/config:ro
+      - ../../../schemas:/app/schemas:ro
+    environment:
+      - CONFIG_FILE=/app/config/local-beckn-one-bpp.yaml
+      - REDIS_PASSWORD=your-redis-password
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector-bpp:4317
+    command: ["./server", "--config=/app/config/local-beckn-one-bpp.yaml"]
+    networks:
+      - beckn_network
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      otel-collector-bpp:
+        condition: service_started
+
+  otel-collector-bap:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector-bap
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      # config.yaml has network-forwarding pipelines only.
+      # Overridden to config-full.yaml by docker-compose.with-telemetry.yml.
+      - ./otel-collector-bap/config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    networks:
+      - beckn_network
+    restart: unless-stopped
+
+  otel-collector-bpp:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector-bpp
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      # config.yaml has network-forwarding pipelines only.
+      # Overridden to config-full.yaml by docker-compose.with-telemetry.yml.
+      - ./otel-collector-bpp/config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4321:4317"
+      - "4322:4318"
+    networks:
+      - beckn_network
+    restart: unless-stopped
+
+  sandbox-bap:
+    container_name: sandbox-bap
+    image: fidedocker/sandbox-2.0:latest
+    platform: linux/amd64
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - beckn_network
+
+  sandbox-bpp:
+    container_name: sandbox-bpp
+    image: fidedocker/sandbox-2.0:latest
+    platform: linux/amd64
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+    ports:
+      - "3002:3002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - beckn_network
+
+networks:
+  beckn_network:
+    name: beckn_network
+    external: true

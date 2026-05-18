@@ -77,7 +77,16 @@ func New(ctx context.Context, config *Config) (*schemav2Validator, func() error,
 		if config.ExtendedSchemaConfig.MaxCacheSize > 0 {
 			maxSize = config.ExtendedSchemaConfig.MaxCacheSize
 		}
+
 		v.schemaCache = newSchemaCache(maxSize)
+
+		if p := config.ExtendedSchemaConfig.LocalSchemaPath; p != "" {
+			log.Warnf(ctx, "Local schema mode: preloading schemas from %s", p)
+			if err := preloadSchemasToCache(ctx, v.schemaCache, p); err != nil {
+				return nil, nil, fmt.Errorf("failed to preload schemas: %w", err)
+			}
+		}
+
 		log.Infof(ctx, "Initialized extended schema cache with max size: %d", maxSize)
 	}
 
@@ -384,7 +393,11 @@ func (v *schemav2Validator) extractActionFromSchema(schema *openapi3.Schema) str
 // getActionValue extracts action value from context schema.
 func (v *schemav2Validator) getActionValue(contextSchema *openapi3.Schema) string {
 	if actionProp := contextSchema.Properties["action"]; actionProp != nil && actionProp.Value != nil {
-		// Check const field
+		// Native OpenAPI 3.1 const (kin-openapi >= v0.137 parses this into the typed field).
+		if action, ok := actionProp.Value.Const.(string); ok && action != "" {
+			return action
+		}
+		// Fallback: older kin-openapi versions surfaced const via Extensions.
 		if constVal, ok := actionProp.Value.Extensions["const"]; ok {
 			if action, ok := constVal.(string); ok {
 				return action

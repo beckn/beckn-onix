@@ -1,4 +1,4 @@
-FROM golang:1.24-bullseye AS builder
+FROM golang:1.26.1-bookworm AS builder
 
 WORKDIR /workspace/app
 
@@ -20,7 +20,7 @@ RUN chmod +x install/build-plugins.sh && \
     ./install/build-plugins.sh
 
 # Create minimal runtime image
-FROM cgr.dev/chainguard/wolfi-base
+FROM cgr.dev/chainguard/wolfi-base:latest
 WORKDIR /app
 
 # Copy binary and plugins built with same Go version

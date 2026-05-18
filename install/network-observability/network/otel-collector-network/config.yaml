@@ -1,0 +1,70 @@
+# Collector 2 - receives network-level OTLP from Collector 1, exports to Loki, Zipkin, Prometheus
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  # Map Beckn transaction_id -> trace_id for UI correlation in Zipkin/Jaeger.
+  # UUID format: remove hyphens to get 32 hex chars required by TraceID().
+  #
+  # Note: message_id is intentionally NOT mapped to span_id. At network level this
+  # collector receives one span from each node (BAP, BPP) for the same Beckn message,
+  # so multiple spans share the same message_id. Overwriting span_id with message_id
+  # would assign identical span IDs to distinct spans, corrupting the trace. message_id
+  # is already available as a span attribute and can be searched as a tag in Zipkin/Jaeger.
+  transform/beckn_ids:
+    error_mode: ignore
+    trace_statements:
+      - set(span.attributes["_beckn_tx"], span.attributes["transaction_id"]) where span.attributes["transaction_id"] != nil
+      - replace_pattern(span.attributes["_beckn_tx"], "-", "") where span.attributes["_beckn_tx"] != nil
+      - set(span.trace_id, TraceID(span.attributes["_beckn_tx"])) where span.attributes["_beckn_tx"] != nil
+
+
+  batch:
+    send_batch_size: 1024
+    timeout: 10s
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:8890"
+    namespace: onix_network
+    const_labels:
+      observability: network-level
+
+  zipkin:
+    endpoint: http://zipkin:9411/api/v2/spans
+    format: json
+
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    compression: gzip
+
+  # Prints log records to collector stdout — use `docker logs otel-collector-network` to verify flow.
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+
+    traces:
+      receivers: [otlp]
+      processors: [transform/beckn_ids, batch]
+      exporters: [zipkin]
+
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/loki, debug]
+
+  telemetry:
+    logs:
+      level: info

@@ -41,28 +41,34 @@ func (m *mockKMBasic) LookupNPKeys(_ context.Context, _, _ string) (string, stri
 	return m.publicKey, "", m.lookupErr
 }
 
-// mockOutboundStore is an in-memory outboundAuthStore for testing.
-type mockOutboundStore struct {
-	stored   []outboundAuthEntry
+// mockPayloadStore is an in-memory definition.PayloadStore for testing.
+type mockPayloadStore struct {
 	storeErr error
-	entries  map[string]*outboundAuthEntry // key: "messageID:action"
+	entries  map[string]*definition.PayloadEntry // key: "messageID:action"
 	getErr   error
 }
 
-func newMockOutboundStore() *mockOutboundStore {
-	return &mockOutboundStore{entries: map[string]*outboundAuthEntry{}}
+func newMockPayloadStore() *mockPayloadStore {
+	return &mockPayloadStore{entries: map[string]*definition.PayloadEntry{}}
 }
 
-func (m *mockOutboundStore) Store(_ context.Context, entry outboundAuthEntry) error {
-	if m.storeErr != nil {
-		return m.storeErr
+// storeEntry pre-populates an entry for use in validateRequestSignatureChain tests.
+func (m *mockPayloadStore) storeEntry(messageID, action, signature string) {
+	m.entries[messageID+":"+action] = &definition.PayloadEntry{
+		MessageID: messageID,
+		Action:    action,
+		Signature: signature,
 	}
-	m.stored = append(m.stored, entry)
-	m.entries[entry.MessageID+":"+entry.Action] = &entry
-	return nil
 }
 
-func (m *mockOutboundStore) GetByMessageID(_ context.Context, messageID, action string) (*outboundAuthEntry, error) {
+func (m *mockPayloadStore) Store(_ *model.StepContext) error { return m.storeErr }
+func (m *mockPayloadStore) Exists(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+func (m *mockPayloadStore) GetByTransactionID(_ context.Context, _ string) ([]definition.PayloadEntry, error) {
+	return nil, nil
+}
+func (m *mockPayloadStore) GetByMessageID(_ context.Context, messageID, action string) (*definition.PayloadEntry, error) {
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
@@ -129,7 +135,7 @@ func TestNewValidateSignStep_NilKM_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestNewValidateSignStep_NilOutboundStore_OK(t *testing.T) {
+func TestNewValidateSignStep_NilPayloadStore_OK(t *testing.T) {
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
 	step, err := newValidateSignStep(sv, km, nil)
@@ -202,12 +208,12 @@ func TestValidateRequestSignatureChain_NilStore_Skips(t *testing.T) {
 		solicitedCallbackAuthHeader("bpp.example.com", "storedSig=="), onSearchBody)
 
 	if err := vStep.validateRequestSignatureChain(ctx); err != nil {
-		t.Fatalf("expected nil when outboundStore is nil, got: %v", err)
+		t.Fatalf("expected nil when payloadStore is nil, got: %v", err)
 	}
 }
 
 func TestValidateRequestSignatureChain_PreV2Version_Skips(t *testing.T) {
-	store := newMockOutboundStore()
+	store := newMockPayloadStore()
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
 	step, _ := newValidateSignStep(sv, km, store)
@@ -222,7 +228,7 @@ func TestValidateRequestSignatureChain_PreV2Version_Skips(t *testing.T) {
 }
 
 func TestValidateRequestSignatureChain_ProviderInitiated_Skips(t *testing.T) {
-	store := newMockOutboundStore()
+	store := newMockPayloadStore()
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
 	step, _ := newValidateSignStep(sv, km, store)
@@ -238,12 +244,8 @@ func TestValidateRequestSignatureChain_ProviderInitiated_Skips(t *testing.T) {
 }
 
 func TestValidateRequestSignatureChain_ValidChain(t *testing.T) {
-	store := newMockOutboundStore()
-	_ = store.Store(context.Background(), outboundAuthEntry{
-		MessageID: "msg-chain-004",
-		Action:    "search", // stored without "on_" prefix
-		Signature: "originalCallerSig==",
-	})
+	store := newMockPayloadStore()
+	store.storeEntry("msg-chain-004", "search", "originalCallerSig==")
 
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
@@ -260,12 +262,8 @@ func TestValidateRequestSignatureChain_ValidChain(t *testing.T) {
 }
 
 func TestValidateRequestSignatureChain_Mismatch_ReturnsError(t *testing.T) {
-	store := newMockOutboundStore()
-	_ = store.Store(context.Background(), outboundAuthEntry{
-		MessageID: "msg-chain-005",
-		Action:    "search",
-		Signature: "originalCallerSig==",
-	})
+	store := newMockPayloadStore()
+	store.storeEntry("msg-chain-005", "search", "originalCallerSig==")
 
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
@@ -282,7 +280,7 @@ func TestValidateRequestSignatureChain_Mismatch_ReturnsError(t *testing.T) {
 }
 
 func TestValidateRequestSignatureChain_NoEntry_ReturnsError(t *testing.T) {
-	store := newMockOutboundStore() // empty — no stored entry
+	store := newMockPayloadStore() // empty — no stored entry
 
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
@@ -298,7 +296,7 @@ func TestValidateRequestSignatureChain_NoEntry_ReturnsError(t *testing.T) {
 }
 
 func TestValidateRequestSignatureChain_StoreGetError_ReturnsError(t *testing.T) {
-	store := newMockOutboundStore()
+	store := newMockPayloadStore()
 	store.getErr = errors.New("redis connection error")
 
 	sv := &mockSignValidatorBasic{}
@@ -310,25 +308,25 @@ func TestValidateRequestSignatureChain_StoreGetError_ReturnsError(t *testing.T) 
 		solicitedCallbackAuthHeader("bpp.example.com", "anySig=="), onSearchBody)
 
 	if err := vStep.validateRequestSignatureChain(ctx); err == nil {
-		t.Fatal("expected error when outboundStore.GetByMessageID returns error")
+		t.Fatal("expected error when payloadStore.GetByMessageID returns error")
 	}
 }
 
 // ---------------------------------------------------------------------------
-// outboundStore.Store tests via ServeHTTP (integration-style, via mockOutboundStore)
+// PayloadStore wiring tests via initSteps
 // ---------------------------------------------------------------------------
 
-// TestValidateSignStep_InitSteps_WithOutboundStore verifies that initSteps wires
-// the outboundStore into the validateSign step without error.
-func TestValidateSignStep_InitSteps_WithOutboundStore(t *testing.T) {
+// TestValidateSignStep_InitSteps_WithPayloadStore verifies that initSteps wires
+// the payloadStore into the validateSign step without error.
+func TestValidateSignStep_InitSteps_WithPayloadStore(t *testing.T) {
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
-	store := newMockOutboundStore()
+	store := newMockPayloadStore()
 
 	h := &stdHandler{
 		signValidator: sv,
 		km:            km,
-		outboundStore: store,
+		payloadStore:  store,
 		steps:         []definition.Step{},
 		responseSteps: []definition.ResponseStep{},
 	}

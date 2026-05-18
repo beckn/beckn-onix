@@ -16,16 +16,24 @@ var newSimpleKeyManagerFunc = simplekeymanager.New
 
 // New creates and initializes a new SimpleKeyManager instance using the provided cache, registry lookup, and configuration.
 func (k *simpleKeyManagerProvider) New(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, cfg map[string]string) (definition.KeyManager, func() error, error) {
-	config := &simplekeymanager.Config{
-		NetworkParticipant: cfg["networkParticipant"],
-		KeyID:              cfg["keyId"],
-		SigningPrivateKey:  cfg["signingPrivateKey"],
-		SigningPublicKey:   cfg["signingPublicKey"],
-		EncrPrivateKey:     cfg["encrPrivateKey"],
-		EncrPublicKey:      cfg["encrPublicKey"],
+	subscriberID := cfg["subscriberId"]
+	if subscriberID == "" {
+		if np := cfg["networkParticipant"]; np != "" {
+			log.Warnf(ctx, "config key 'networkParticipant' is deprecated, use 'subscriberId' instead")
+			subscriberID = np
+		}
 	}
-	log.Debugf(ctx, "SimpleKeyManager config mapped: np=%s, keyId=%s, has_signing_private=%v, has_signing_public=%v, has_encr_private=%v, has_encr_public=%v",
-		config.NetworkParticipant,
+
+	config := &simplekeymanager.Config{
+		SubscriberID:     subscriberID,
+		KeyID:            cfg["keyId"],
+		SigningPrivateKey: cfg["signingPrivateKey"],
+		SigningPublicKey:  cfg["signingPublicKey"],
+		EncrPrivateKey:   cfg["encrPrivateKey"],
+		EncrPublicKey:    cfg["encrPublicKey"],
+	}
+	log.Debugf(ctx, "SimpleKeyManager config mapped: subscriberId=%s, keyId=%s, has_signing_private=%v, has_signing_public=%v, has_encr_private=%v, has_encr_public=%v",
+		config.SubscriberID,
 		config.KeyID,
 		config.SigningPrivateKey != "",
 		config.SigningPublicKey != "",

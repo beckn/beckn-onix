@@ -15,6 +15,7 @@ plugins=(
     "publisher"
     "registry"
     "dediregistry"
+    "manifestloader"
     "reqpreprocessor"
     "otelsetup"
     "reqmapper"
@@ -24,6 +25,7 @@ plugins=(
     "signer"
     "signvalidator"
     "opapolicychecker"
+    "payloadstore"
 )
 
 for plugin in "${plugins[@]}"; do

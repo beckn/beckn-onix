@@ -19,11 +19,11 @@ func EmitAuditLogs(ctx context.Context, body []byte, attrs ...log.KeyValue) {
 	// global.GetLoggerProvider() always returns a no-op provider (never nil),
 	// so a nil-check on the provider is ineffective. Instead we rely on the
 	// logEnabled atomic flag, which otelsetup sets to true after calling
-	// global.SetLoggerProvider with a real SDK provider. If logging was not
-	// configured, we warn and return early rather than silently dropping records
-	// into the no-op provider.
+	// global.SetLoggerProvider with a real SDK provider. Observability is
+	// optional, so a disabled logs path is expected in production — emit a
+	// debug breadcrumb rather than a warning to avoid per-request WARN noise.
 	if !LogsEnabled() {
-		logger.Warnf(ctx, "failed to emit audit logs, logs disabled")
+		logger.Debugf(ctx, "audit logs disabled, skipping emit")
 		return
 	}
 

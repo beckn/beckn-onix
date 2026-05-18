@@ -35,22 +35,18 @@ type stdHandler struct {
 	signValidator    definition.SignValidator
 	cache            definition.Cache
 	registry         definition.RegistryLookup
+	manifestLoader   definition.ManifestLoader
 	km               definition.KeyManager
 	schemaValidator  definition.SchemaValidator
 	policyChecker    definition.PolicyChecker
 	router           definition.Router
 	publisher        definition.Publisher
 	transportWrapper definition.TransportWrapper
-	// outboundStore persists the outbound Authorization signature on the Caller
-	// path so that solicited callbacks can verify the request-signature field
-	// (NFH-004 §6, issue #679).
-	// nil until nirmalnr's PayloadStore branch (#707) merges.
-	// TODO(#679/#707): replace with definition.PayloadStore after #707 merges.
-	outboundStore outboundAuthStore
-	SubscriberID  string
-	role          model.Role
-	httpClient    *http.Client
-	moduleName    string
+	payloadStore definition.PayloadStore
+	SubscriberID string
+	role         model.Role
+	httpClient   *http.Client
+	moduleName   string
 }
 
 // newHTTPClient creates a new HTTP client with a custom transport configuration.
@@ -180,52 +176,35 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Execute processing steps.
+	var pipelineErr error
 	for _, step := range h.steps {
-		if err = step.Run(stepCtx); err != nil {
-			log.Errorf(stepCtx, err, "%T.run():%v", step, err)
-			response.SendNack(stepCtx, wrapped, err)
+		if pipelineErr = step.Run(stepCtx); pipelineErr != nil {
+			log.Errorf(stepCtx, pipelineErr, "%T.run():%v", step, pipelineErr)
+			response.SendNack(stepCtx, wrapped, pipelineErr)
+			break
+		}
+	}
+
+	// Send ACK / route on success.
+	if pipelineErr == nil {
+		// Restore request body before forwarding or publishing.
+		r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
+		if stepCtx.Route == nil {
+			// No routing — ONIX writes the ACK directly. Run response steps here
+			// with resp=nil (publisher path semantics).
+			for _, step := range h.responseSteps {
+				if err = step.RunOnResponse(stepCtx, nil); err != nil {
+					log.Errorf(stepCtx, err, "%T.RunOnResponse():%v", step, err)
+					response.SendNack(stepCtx, wrapped, err)
+					return
+				}
+			}
+			response.SendAck(stepCtx, wrapped)
 			return
 		}
+		// Handle routing based on the defined route type.
+		route(stepCtx, r, wrapped, h.publisher, h.httpClient, h.responseSteps)
 	}
-	// Caller path: persist the outbound Authorization signature so that the
-	// corresponding solicited callback can verify request-signature (NFH-004 §6).
-	// This must run after sign step (which sets the Authorization header) and
-	// before route() so the entry is in the store before the callback arrives.
-	// TODO(#679/#707): replace outboundStore with definition.PayloadStore after #707 merges.
-	if h.outboundStore != nil && stepCtx.MessageID != "" {
-		outboundSig := extractAuthSignature(stepCtx.Request.Header.Get(model.AuthHeaderSubscriber))
-		if outboundSig != "" {
-			// Caller actions never start with "on_", but strip defensively.
-			bareAction := strings.TrimPrefix(action, "on_")
-			entry := outboundAuthEntry{
-				MessageID: stepCtx.MessageID,
-				Action:    bareAction,
-				Signature: outboundSig,
-			}
-			if storeErr := h.outboundStore.Store(stepCtx, entry); storeErr != nil {
-				log.Warnf(stepCtx, "outboundStore.Store: %v", storeErr)
-			}
-		}
-	}
-
-	// Restore request body before forwarding or publishing.
-	r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
-	if stepCtx.Route == nil {
-		// No routing — ONIX writes the ACK directly. Run response steps here
-		// with resp=nil (publisher path semantics).
-		for _, step := range h.responseSteps {
-			if err = step.RunOnResponse(stepCtx, nil); err != nil {
-				log.Errorf(stepCtx, err, "%T.RunOnResponse():%v", step, err)
-				response.SendNack(stepCtx, wrapped, err)
-				return
-			}
-		}
-		response.SendAck(stepCtx, wrapped)
-		return
-	}
-
-	// Handle routing based on the defined route type.
-	route(stepCtx, r, wrapped, h.publisher, h.httpClient, h.responseSteps)
 }
 
 // stepCtx creates a new StepContext for processing an HTTP request.
@@ -385,6 +364,63 @@ func loadKeyManager(ctx context.Context, mgr PluginManager, cache definition.Cac
 	return km, nil
 }
 
+func loadManifestLoader(ctx context.Context, mgr PluginManager, cache definition.Cache, registry definition.RegistryLookup, cfg *plugin.Config) (definition.ManifestLoader, error) {
+	if cfg == nil {
+		log.Debug(ctx, "Skipping ManifestLoader plugin: not configured")
+		return nil, nil
+	}
+	if cache == nil {
+		return nil, fmt.Errorf("failed to load ManifestLoader plugin (%s): Cache plugin not configured", cfg.ID)
+	}
+	if registry == nil {
+		return nil, fmt.Errorf("failed to load ManifestLoader plugin (%s): Registry plugin not configured", cfg.ID)
+	}
+	metadataLookup, ok := registry.(definition.RegistryMetadataLookup)
+	if !ok {
+		return nil, fmt.Errorf("failed to load ManifestLoader plugin (%s): Registry plugin does not implement RegistryMetadataLookup", cfg.ID)
+	}
+	loader, err := mgr.ManifestLoader(ctx, cache, metadataLookup, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load ManifestLoader plugin (%s): %w", cfg.ID, err)
+	}
+	log.Debugf(ctx, "Loaded ManifestLoader plugin: %s", cfg.ID)
+	return loader, nil
+}
+
+func loadPayloadStore(ctx context.Context, mgr PluginManager, cache definition.Cache, namespace string, cfg *plugin.Config, role model.Role) (definition.PayloadStore, error) {
+	if cfg == nil {
+		log.Debug(ctx, "Skipping PayloadStore plugin: not configured")
+		return nil, nil
+	}
+	if cache == nil {
+		return nil, fmt.Errorf("failed to load PayloadStore plugin (%s): Cache plugin not configured", cfg.ID)
+	}
+	if role == model.RoleBAP && cfg.Config["storeSignature"] == "false" {
+		log.Warnf(ctx, "PayloadStore plugin (%s): storeSignature is disabled for a BAP handler — Authorization header will not be stored", cfg.ID)
+	}
+	ps, err := mgr.PayloadStore(ctx, cache, namespace, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load PayloadStore plugin (%s): %w", cfg.ID, err)
+	}
+	log.Debugf(ctx, "Loaded PayloadStore plugin: %s", cfg.ID)
+	return ps, nil
+}
+
+func loadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
+	if cfg == nil {
+		log.Debug(ctx, "Skipping PolicyChecker plugin: not configured")
+		return nil, nil
+	}
+
+	checker, err := mgr.PolicyChecker(ctx, manifestLoader, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load PolicyChecker plugin (%s): %w", cfg.ID, err)
+	}
+
+	log.Debugf(ctx, "Loaded PolicyChecker plugin: %s", cfg.ID)
+	return checker, nil
+}
+
 // initPlugins initializes required plugins for the processor.
 func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *PluginCfg) error {
 	var err error
@@ -395,6 +431,12 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 		return err
 	}
 	if h.km, err = loadKeyManager(ctx, mgr, h.cache, h.registry, cfg.KeyManager); err != nil {
+		return err
+	}
+	if h.manifestLoader, err = loadManifestLoader(ctx, mgr, h.cache, h.registry, cfg.ManifestLoader); err != nil {
+		return err
+	}
+	if h.payloadStore, err = loadPayloadStore(ctx, mgr, h.cache, "onix", cfg.PayloadStore, h.role); err != nil {
 		return err
 	}
 	if h.signValidator, err = loadPlugin(ctx, "SignValidator", cfg.SignValidator, mgr.SignValidator); err != nil {
@@ -415,7 +457,7 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.transportWrapper, err = loadPlugin(ctx, "TransportWrapper", cfg.TransportWrapper, mgr.TransportWrapper); err != nil {
 		return err
 	}
-	if h.policyChecker, err = loadPlugin(ctx, "PolicyChecker", cfg.PolicyChecker, mgr.PolicyChecker); err != nil {
+	if h.policyChecker, err = loadPolicyChecker(ctx, mgr, h.manifestLoader, cfg.PolicyChecker); err != nil {
 		return err
 	}
 
@@ -462,16 +504,15 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 		case "sign":
 			s, err = newSignStep(h.signer, h.km)
 		case "validateSign":
-			// outboundStore is nil until #707 merges; validateSignStep degrades
-			// gracefully (skips request-signature chain check) when nil.
-			// TODO(#679/#707): outboundStore will be definition.PayloadStore.
-			s, err = newValidateSignStep(h.signValidator, h.km, h.outboundStore)
+			s, err = newValidateSignStep(h.signValidator, h.km, h.payloadStore)
 		case "validateSchema":
 			s, err = newValidateSchemaStep(h.schemaValidator)
 		case "addRoute":
 			s, err = newAddRouteStep(h.router)
 		case "checkPolicy":
 			s, err = newCheckPolicyStep(h.policyChecker)
+		case "storePayload":
+			s, err = newStorePayloadStep(h.payloadStore)
 		default:
 			if customStep, exists := steps[step]; exists {
 				s = customStep

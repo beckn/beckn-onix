@@ -12,9 +12,8 @@ import (
 // provider implements the PolicyCheckerProvider interface for plugin loading.
 type provider struct{}
 
-// New creates a new PolicyChecker instance.
-func (p provider) New(ctx context.Context, cfg map[string]string) (definition.PolicyChecker, func(), error) {
-	checker, err := opapolicychecker.New(ctx, cfg)
+func (p provider) New(ctx context.Context, manifestLoader definition.ManifestLoader, cfg map[string]string) (definition.PolicyChecker, func(), error) {
+	checker, err := opapolicychecker.NewWithManifestLoader(ctx, manifestLoader, cfg)
 	if err != nil {
 		return nil, nil, err
 	}

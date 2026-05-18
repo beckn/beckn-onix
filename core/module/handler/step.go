@@ -86,19 +86,16 @@ func (s *signStep) generateAuthHeader(subID, keyID string, createdAt, validTill 
 
 // validateSignStep represents the signature validation step.
 type validateSignStep struct {
-	validator     definition.SignValidator
-	km            definition.KeyManager
-	metrics       *HandlerMetrics
-	outboundStore outboundAuthStore // nil until #707 merges; TODO(#679/#707)
+	validator    definition.SignValidator
+	km           definition.KeyManager
+	metrics      *HandlerMetrics
+	payloadStore definition.PayloadStore
 }
 
 // newValidateSignStep initializes and returns a new validate sign step.
-// outboundStore may be nil; when non-nil it enables solicited-callback
+// payloadStore may be nil; when non-nil it enables solicited-callback
 // request-signature chain verification (NFH-004 §6, issue #679).
-//
-// TODO(#679/#707): change outboundStore parameter type to definition.PayloadStore
-// after nirmalnr's PayloadStore branch (#707) merges.
-func newValidateSignStep(signValidator definition.SignValidator, km definition.KeyManager, outboundStore outboundAuthStore) (definition.Step, error) {
+func newValidateSignStep(signValidator definition.SignValidator, km definition.KeyManager, payloadStore definition.PayloadStore) (definition.Step, error) {
 	if signValidator == nil {
 		return nil, fmt.Errorf("invalid config: SignValidator plugin not configured")
 	}
@@ -107,10 +104,10 @@ func newValidateSignStep(signValidator definition.SignValidator, km definition.K
 	}
 	metrics, _ := GetHandlerMetrics(context.Background())
 	return &validateSignStep{
-		validator:     signValidator,
-		km:            km,
-		metrics:       metrics,
-		outboundStore: outboundStore,
+		validator:    signValidator,
+		km:           km,
+		metrics:      metrics,
+		payloadStore: payloadStore,
 	}, nil
 }
 
@@ -205,12 +202,11 @@ func (s *validateSignStep) recordMetrics(ctx *model.StepContext, err error) {
 // through without the chain check.
 //
 // No-ops:
-//   - outboundStore is nil (not wired until #707 merges) — TODO(#679/#707)
+//   - payloadStore is nil (not configured)
 //   - protocol version < 2.0.0
 //   - "request-signature" absent from headers attribute (provider-initiated)
 func (s *validateSignStep) validateRequestSignatureChain(ctx *model.StepContext) error {
-	if s.outboundStore == nil {
-		// TODO(#679/#707): store not wired until PayloadStore merges.
+	if s.payloadStore == nil {
 		return nil
 	}
 	if !model.IsAtLeastV2(ctx.ProtocolVersion) {
@@ -229,7 +225,7 @@ func (s *validateSignStep) validateRequestSignatureChain(ctx *model.StepContext)
 		return nil
 	}
 
-	storedEntry, err := s.outboundStore.GetByMessageID(ctx, ctx.MessageID, action)
+	storedEntry, err := s.payloadStore.GetByMessageID(ctx, ctx.MessageID, action)
 	if err != nil {
 		return model.NewSignValidationErr(fmt.Errorf("validateSign: outbound signature lookup failed for message_id=%s action=%s: %w", ctx.MessageID, action, err))
 	}
@@ -463,4 +459,20 @@ func newCheckPolicyStep(policyChecker definition.PolicyChecker) (definition.Step
 
 func (s *checkPolicyStep) Run(ctx *model.StepContext) error {
 	return s.checker.CheckPolicy(ctx)
+}
+
+// storePayloadStep adapts PayloadStore into the Step interface.
+type storePayloadStep struct {
+	store definition.PayloadStore
+}
+
+func newStorePayloadStep(ps definition.PayloadStore) (definition.Step, error) {
+	if ps == nil {
+		return nil, fmt.Errorf("storePayload: PayloadStore not configured")
+	}
+	return &storePayloadStep{store: ps}, nil
+}
+
+func (s *storePayloadStep) Run(ctx *model.StepContext) error {
+	return s.store.Store(ctx)
 }

@@ -572,3 +572,136 @@ func TestLookup(t *testing.T) {
 		}
 	})
 }
+
+func TestLookupRegistry(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("successful registry metadata lookup", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != "GET" {
+				t.Errorf("Expected GET request, got %s", r.Method)
+			}
+			if r.URL.Path != "/dedi/lookup/nfo.example.org/mobility-network" {
+				t.Errorf("Unexpected path: %s", r.URL.Path)
+			}
+
+			response := map[string]interface{}{
+				"message": "Resource retrieved successfully",
+				"data": map[string]interface{}{
+					"registry_name": "mobility-network",
+					"meta": map[string]interface{}{
+						"manifest_url":                  "https://example.org/manifest.yaml",
+						"manifest_signature_url":        "https://example.org/manifest.yaml.sig",
+						"signing_public_key_lookup_url": "https://example.org/keys/manifest",
+					},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{
+			URL:          server.URL + "/dedi",
+			RegistryName: "subscribers.beckn.one",
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		got, err := client.LookupRegistry(ctx, "nfo.example.org", "mobility-network")
+		if err != nil {
+			t.Fatalf("LookupRegistry() error = %v", err)
+		}
+		if got.NamespaceIdentifier != "nfo.example.org" {
+			t.Fatalf("expected NamespaceIdentifier %q, got %q", "nfo.example.org", got.NamespaceIdentifier)
+		}
+		if got.RegistryName != "mobility-network" {
+			t.Fatalf("expected RegistryName %q, got %q", "mobility-network", got.RegistryName)
+		}
+		if got.RawMeta["manifest_url"] != "https://example.org/manifest.yaml" {
+			t.Fatalf("expected manifest_url metadata to be preserved")
+		}
+	})
+
+	t.Run("missing meta returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := map[string]interface{}{
+				"data": map[string]interface{}{
+					"registry_name": "mobility-network",
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{
+			URL:          server.URL,
+			RegistryName: "subscribers.beckn.one",
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		if _, err := client.LookupRegistry(ctx, "nfo.example.org", "mobility-network"); err == nil {
+			t.Fatal("expected error for missing meta")
+		}
+	})
+
+	t.Run("non-string meta values are ignored", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := map[string]interface{}{
+				"data": map[string]interface{}{
+					"meta": map[string]interface{}{
+						"manifest_url":   "https://example.org/manifest.yaml",
+						"non_string_key": true,
+					},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{
+			URL:          server.URL,
+			RegistryName: "subscribers.beckn.one",
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		got, err := client.LookupRegistry(ctx, "nfo.example.org", "mobility-network")
+		if err != nil {
+			t.Fatalf("LookupRegistry() error = %v", err)
+		}
+		if _, ok := got.RawMeta["non_string_key"]; ok {
+			t.Fatal("expected non-string metadata value to be omitted")
+		}
+	})
+
+	t.Run("http error response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte("Record not found"))
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{
+			URL:          server.URL + "/dedi",
+			RegistryName: "subscribers.beckn.one",
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		if _, err := client.LookupRegistry(ctx, "nfo.example.org", "mobility-network"); err == nil {
+			t.Error("expected error for 404 response, got nil")
+		}
+	})
+}
