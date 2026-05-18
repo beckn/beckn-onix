@@ -78,7 +78,7 @@ modules:
             maxBodyBytes: "1048576"
             storeBody: "true"
             storeSignature: "true"
-            compress: "false"
+            compress: "true"
         schemaValidator:
           id: schemav2validator
           config:
@@ -111,6 +111,7 @@ modules:
         - checkPolicy
         - addRoute
         - validateSchema
+        - storePayload
   
   - name: bapTxnCaller
     path: /bap/caller/
@@ -153,7 +154,7 @@ modules:
             maxBodyBytes: "1048576"
             storeBody: "true"
             storeSignature: "true"
-            compress: "false"
+            compress: "true"
         schemaValidator:
           id: schemav2validator
           config:
@@ -186,4 +187,5 @@ modules:
         - addRoute
         - sign
         - validateSchema
+        - storePayload
   

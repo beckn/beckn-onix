@@ -3,6 +3,9 @@ package payloadstore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -55,17 +58,19 @@ func newTestStore(t *testing.T, cfgOverrides map[string]string) (*store, *stubCa
 	return s, cache
 }
 
-func sampleEntry(msgID, txnID string) definition.PayloadEntry {
-	return definition.PayloadEntry{
-		MessageID:     msgID,
-		TransactionID: txnID,
-		NetworkID:     "net1",
-		Action:        "search",
-		SubscriberID:  "sub1",
-		Role:          model.RoleBAP,
-		RequestBody:   []byte(`{"context":{"action":"search"}}`),
-		ResponseBody:  []byte(`{"message":{"ack":{"status":"ACK"}}}`),
-		Outcome:       definition.OutcomeACK,
+// sampleStepCtx builds a *model.StepContext whose Body contains the given Beckn context fields.
+func sampleStepCtx(msgID, txnID string) *model.StepContext {
+	body := fmt.Sprintf(
+		`{"context":{"message_id":%q,"transaction_id":%q,"network_id":"net1","action":"search"}}`,
+		msgID, txnID,
+	)
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	return &model.StepContext{
+		Context: context.Background(),
+		Request: req,
+		Body:    []byte(body),
+		Role:    model.RoleBAP,
+		SubID:   "sub1",
 	}
 }
 
@@ -78,10 +83,7 @@ func testEntry() definition.PayloadEntry {
 		SubscriberID:  "sub1",
 		Role:          model.RoleBAP,
 		RequestBody:   []byte(`{"hello":"world"}`),
-		ResponseBody:  []byte(`{"ack":"ok"}`),
 		Signature:     "sig123",
-		Outcome:       definition.OutcomeACK,
-		OutcomeReason: "",
 		StoredAt:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		ExpiresAt:     time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
@@ -100,12 +102,6 @@ func assertEntryEqual(t *testing.T, want, got definition.PayloadEntry) {
 	}
 	if string(want.RequestBody) != string(got.RequestBody) {
 		t.Errorf("RequestBody: want %q got %q", want.RequestBody, got.RequestBody)
-	}
-	if string(want.ResponseBody) != string(got.ResponseBody) {
-		t.Errorf("ResponseBody: want %q got %q", want.ResponseBody, got.ResponseBody)
-	}
-	if want.Outcome != got.Outcome {
-		t.Errorf("Outcome: want %v got %v", want.Outcome, got.Outcome)
 	}
 	if !want.StoredAt.Equal(got.StoredAt) {
 		t.Errorf("StoredAt: want %v got %v", want.StoredAt, got.StoredAt)
@@ -131,8 +127,8 @@ func TestParseConfig_Defaults(t *testing.T) {
 	if !cfg.StoreBody {
 		t.Error("StoreBody: expected true by default")
 	}
-	if cfg.StoreSignature {
-		t.Error("StoreSignature: expected false by default")
+	if !cfg.StoreSignature {
+		t.Error("StoreSignature: expected true by default")
 	}
 	if cfg.Compress {
 		t.Error("Compress: expected false by default")
@@ -305,7 +301,9 @@ func TestCrossFormat_UncompressedReadAsCompressed(t *testing.T) {
 }
 
 func TestLegacy_NoPrefixFallback(t *testing.T) {
-	legacyRaw := `{"MessageID":"msg1","TransactionID":"txn1","NetworkID":"net1","Action":"search","SubscriberID":"sub1","Role":"bap","RequestBody":"eyJoZWxsbyI6IndvcmxkIn0=","ResponseBody":"eyJhY2siOiJvayJ9","Signature":"sig123","Outcome":1,"OutcomeReason":"","StoredAt":"2026-01-01T00:00:00Z","ExpiresAt":"2026-01-02T00:00:00Z"}`
+	// Simulates a legacy cache entry written before prefix support was added.
+	// Unknown fields (from old schema) are silently ignored by json.Unmarshal.
+	legacyRaw := `{"MessageID":"msg1","TransactionID":"txn1","NetworkID":"net1","Action":"search","SubscriberID":"sub1","Role":"bap","RequestBody":"eyJoZWxsbyI6IndvcmxkIn0=","Signature":"sig123","StoredAt":"2026-01-01T00:00:00Z","ExpiresAt":"2026-01-02T00:00:00Z"}`
 	got, err := unmarshalEntry(legacyRaw)
 	if err != nil {
 		t.Fatalf("unmarshalEntry legacy: %v", err)
@@ -319,9 +317,8 @@ func TestLegacy_NoPrefixFallback(t *testing.T) {
 
 func TestStore_SetsMessageAndIndexKeys(t *testing.T) {
 	s, cache := newTestStore(t, nil)
-	entry := sampleEntry("msg1", "txn1")
 
-	if err := s.Store(context.Background(), entry); err != nil {
+	if err := s.Store(sampleStepCtx("msg1", "txn1")); err != nil {
 		t.Fatalf("Store: %v", err)
 	}
 
@@ -337,11 +334,45 @@ func TestStore_SetsMessageAndIndexKeys(t *testing.T) {
 	}
 }
 
+func TestStore_MissingMessageID_Skips(t *testing.T) {
+	s, cache := newTestStore(t, nil)
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	ctx := &model.StepContext{
+		Context: context.Background(),
+		Request: req,
+		Body:    []byte(`{"context":{"transaction_id":"txn1"}}`),
+		Role:    model.RoleBAP,
+	}
+
+	if err := s.Store(ctx); err != nil {
+		t.Fatalf("Store returned unexpected error: %v", err)
+	}
+
+	// No msg key should be written since message_id is absent.
+	idxVal, _ := cache.Get(context.Background(), txnIndexKey(testNamespace, "txn1"))
+	if idxVal != "" {
+		t.Errorf("expected no index entry for missing message_id, got: %q", idxVal)
+	}
+}
+
+func TestStore_DuplicateMessageID_LogsWarning(t *testing.T) {
+	s, _ := newTestStore(t, nil)
+	ctx := sampleStepCtx("msgDup", "txnDup")
+
+	if err := s.Store(ctx); err != nil {
+		t.Fatalf("first Store: %v", err)
+	}
+	// Second Store with same message_id should succeed (warning logged, entry overwritten).
+	if err := s.Store(ctx); err != nil {
+		t.Fatalf("second Store (duplicate): %v", err)
+	}
+}
+
 func TestGetByTransactionID_ReturnsEntriesInOrder(t *testing.T) {
 	s, _ := newTestStore(t, nil)
 
 	for _, id := range []string{"m1", "m2", "m3"} {
-		if err := s.Store(context.Background(), sampleEntry(id, "txnA")); err != nil {
+		if err := s.Store(sampleStepCtx(id, "txnA")); err != nil {
 			t.Fatalf("Store %s: %v", id, err)
 		}
 	}
@@ -370,7 +401,7 @@ func TestGetByTransactionID_UnknownTransaction(t *testing.T) {
 
 func TestGetByMessageID_HitAndMiss(t *testing.T) {
 	s, _ := newTestStore(t, nil)
-	_ = s.Store(context.Background(), sampleEntry("msg42", "txnB"))
+	_ = s.Store(sampleStepCtx("msg42", "txnB"))
 
 	got, err := s.GetByMessageID(context.Background(), "msg42", "search")
 	if err != nil || got == nil {
@@ -399,7 +430,7 @@ func TestExists_TrueAfterStore(t *testing.T) {
 		t.Errorf("expected false before Store; got %v, %v", ok, err)
 	}
 
-	_ = s.Store(context.Background(), sampleEntry("msgX", "txnC"))
+	_ = s.Store(sampleStepCtx("msgX", "txnC"))
 
 	ok, err = s.Exists(context.Background(), "msgX")
 	if err != nil || !ok {
@@ -409,8 +440,7 @@ func TestExists_TrueAfterStore(t *testing.T) {
 
 func TestStore_StoreBodyFalse(t *testing.T) {
 	s, cache := newTestStore(t, map[string]string{"storeBody": "false"})
-	entry := sampleEntry("msgB", "txnD")
-	_ = s.Store(context.Background(), entry)
+	_ = s.Store(sampleStepCtx("msgB", "txnD"))
 
 	raw, _ := cache.Get(context.Background(), msgKey(testNamespace, "msgB"))
 	stored, _ := unmarshalEntry(raw)
@@ -418,17 +448,11 @@ func TestStore_StoreBodyFalse(t *testing.T) {
 	if stored.RequestBody != nil {
 		t.Errorf("expected nil RequestBody; got %v", stored.RequestBody)
 	}
-	if stored.ResponseBody != nil {
-		t.Errorf("expected nil ResponseBody; got %v", stored.ResponseBody)
-	}
 }
 
 func TestStore_MaxBodyBytesTruncates(t *testing.T) {
 	s, cache := newTestStore(t, map[string]string{"maxBodyBytes": "5"})
-	entry := sampleEntry("msgT", "txnE")
-	entry.RequestBody = []byte("0123456789")
-	entry.ResponseBody = []byte("abcdefghij")
-	_ = s.Store(context.Background(), entry)
+	_ = s.Store(sampleStepCtx("msgT", "txnE"))
 
 	raw, _ := cache.Get(context.Background(), msgKey(testNamespace, "msgT"))
 	stored, _ := unmarshalEntry(raw)
@@ -436,16 +460,13 @@ func TestStore_MaxBodyBytesTruncates(t *testing.T) {
 	if len(stored.RequestBody) != 5 {
 		t.Errorf("RequestBody: expected 5 bytes, got %d", len(stored.RequestBody))
 	}
-	if len(stored.ResponseBody) != 5 {
-		t.Errorf("ResponseBody: expected 5 bytes, got %d", len(stored.ResponseBody))
-	}
 }
 
 func TestStore_IndexDedup(t *testing.T) {
 	s, cache := newTestStore(t, nil)
-	entry := sampleEntry("msgD", "txnF")
-	_ = s.Store(context.Background(), entry)
-	_ = s.Store(context.Background(), entry)
+	ctx := sampleStepCtx("msgD", "txnF")
+	_ = s.Store(ctx)
+	_ = s.Store(ctx)
 
 	idxRaw, _ := cache.Get(context.Background(), txnIndexKey(testNamespace, "txnF"))
 	var ids []string
@@ -458,7 +479,7 @@ func TestStore_IndexDedup(t *testing.T) {
 func TestStore_StoredAtAndExpiresAtSet(t *testing.T) {
 	s, cache := newTestStore(t, nil)
 	before := time.Now().UTC()
-	_ = s.Store(context.Background(), sampleEntry("msgTS", "txnG"))
+	_ = s.Store(sampleStepCtx("msgTS", "txnG"))
 	after := time.Now().UTC()
 
 	raw, _ := cache.Get(context.Background(), msgKey(testNamespace, "msgTS"))
@@ -475,9 +496,8 @@ func TestStore_StoredAtAndExpiresAtSet(t *testing.T) {
 
 func TestStore_EmptyTransactionID(t *testing.T) {
 	s, cache := newTestStore(t, nil)
-	entry := sampleEntry("msgNoTxn", "")
 
-	if err := s.Store(context.Background(), entry); err != nil {
+	if err := s.Store(sampleStepCtx("msgNoTxn", "")); err != nil {
 		t.Fatalf("Store: %v", err)
 	}
 
@@ -502,7 +522,6 @@ func TestExists_EmptyMessageID(t *testing.T) {
 		t.Error("expected false for empty message_id")
 	}
 }
-
 
 func TestGetByMessageID_EmptyMessageID(t *testing.T) {
 	s, _ := newTestStore(t, nil)

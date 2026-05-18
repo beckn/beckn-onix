@@ -173,19 +173,6 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		span.End()
 	}()
 
-	bCtx := parseBecknCtx(stepCtx.Body)
-	payloadStoreMsgID := bCtx.MessageID
-	if h.payloadStore != nil && payloadStoreMsgID == "" {
-		log.Warnf(stepCtx, "payloadStore: message_id absent from request body — duplicate detection and outcome store skipped")
-	}
-	if h.payloadStore != nil && payloadStoreMsgID != "" {
-		if exists, checkErr := h.payloadStore.Exists(stepCtx, payloadStoreMsgID); checkErr != nil {
-			log.Warnf(stepCtx, "payloadStore.Exists: cache error — duplicate detection skipped: %v", checkErr)
-		} else if exists {
-			log.Warnf(stepCtx, "payloadStore: duplicate message_id %s — overwriting existing entry", payloadStoreMsgID)
-		}
-	}
-
 	// Execute processing steps.
 	var pipelineErr error
 	for _, step := range h.steps {
@@ -196,7 +183,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Send ACK / route on success (response must be sent before Store so wrapped.body is populated).
+	// Send ACK / route on success.
 	if pipelineErr == nil {
 		// Restore request body before forwarding or publishing.
 		r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
@@ -206,77 +193,6 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// Handle routing based on the defined route type.
 			route(stepCtx, r, wrapped, h.publisher, h.httpClient)
 		}
-	}
-
-	// PayloadStore: outcome store after response is written so wrapped.body is populated.
-	if h.payloadStore != nil && payloadStoreMsgID != "" {
-		outcome, reason := definition.OutcomeACK, ""
-		if pipelineErr != nil {
-			outcome, reason = definition.OutcomeNACK, pipelineErr.Error()
-		}
-		entry := h.buildPayloadEntry(stepCtx, bCtx, wrapped.body.Bytes(), outcome, reason)
-		if storeErr := h.payloadStore.Store(stepCtx, entry); storeErr != nil {
-			log.Warnf(stepCtx, "payloadStore.Store: %v", storeErr)
-		}
-	}
-}
-
-// becknCtxFields holds the four Beckn context fields PayloadStore needs,
-// parsed once from the request body and shared across duplicate detection and outcome store.
-type becknCtxFields struct {
-	MessageID     string
-	TransactionID string
-	NetworkID     string
-	Action        string
-}
-
-// parseBecknCtx extracts the four context fields from a Beckn request body.
-// Both snake_case (message_id) and camelCase (messageId) keys are accepted,
-// with snake_case taking priority, matching the reqpreprocessor convention.
-func parseBecknCtx(body []byte) becknCtxFields {
-	var wrapper struct {
-		Context map[string]json.RawMessage `json:"context"`
-	}
-	if err := json.Unmarshal(body, &wrapper); err != nil || len(wrapper.Context) == 0 {
-		return becknCtxFields{}
-	}
-	c := wrapper.Context
-	return becknCtxFields{
-		MessageID:     firstJSONString(c, "message_id", "messageId"),
-		TransactionID: firstJSONString(c, "transaction_id", "transactionId"),
-		NetworkID:     firstJSONString(c, "network_id", "networkId"),
-		Action:        firstJSONString(c, "action"),
-	}
-}
-
-// firstJSONString returns the first non-empty string found under any of the given keys.
-func firstJSONString(m map[string]json.RawMessage, keys ...string) string {
-	for _, k := range keys {
-		if raw, ok := m[k]; ok {
-			var s string
-			if json.Unmarshal(raw, &s) == nil && s != "" {
-				return s
-			}
-		}
-	}
-	return ""
-}
-
-// buildPayloadEntry assembles a PayloadEntry from the current step context and response.
-// bCtx must be the result of parseBecknCtx called on stepCtx.Body earlier in the request.
-func (h *stdHandler) buildPayloadEntry(stepCtx *model.StepContext, bCtx becknCtxFields, responseBody []byte, outcome definition.Outcome, reason string) definition.PayloadEntry {
-	return definition.PayloadEntry{
-		MessageID:     bCtx.MessageID,
-		TransactionID: bCtx.TransactionID,
-		NetworkID:     bCtx.NetworkID,
-		Action:        bCtx.Action,
-		SubscriberID:  stepCtx.SubID,
-		Role:          stepCtx.Role,
-		RequestBody:   stepCtx.Body,
-		ResponseBody:  responseBody,
-		Signature:     stepCtx.Request.Header.Get(model.AuthHeaderSubscriber),
-		Outcome:       outcome,
-		OutcomeReason: reason,
 	}
 }
 
@@ -427,7 +343,7 @@ func loadPayloadStore(ctx context.Context, mgr PluginManager, cache definition.C
 	if cache == nil {
 		return nil, fmt.Errorf("failed to load PayloadStore plugin (%s): Cache plugin not configured", cfg.ID)
 	}
-	if role == model.RoleBAP && cfg.Config["storeSignature"] != "true" {
+	if role == model.RoleBAP && cfg.Config["storeSignature"] == "false" {
 		log.Warnf(ctx, "PayloadStore plugin (%s): storeSignature is disabled for a BAP handler — Authorization header will not be stored", cfg.ID)
 	}
 	ps, err := mgr.PayloadStore(ctx, cache, namespace, cfg)
@@ -526,6 +442,8 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			s, err = newAddRouteStep(h.router)
 		case "checkPolicy":
 			s, err = newCheckPolicyStep(h.policyChecker)
+		case "storePayload":
+			s, err = newStorePayloadStep(h.payloadStore)
 		default:
 			if customStep, exists := steps[step]; exists {
 				s = customStep

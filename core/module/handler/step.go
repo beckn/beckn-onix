@@ -331,3 +331,19 @@ func newCheckPolicyStep(policyChecker definition.PolicyChecker) (definition.Step
 func (s *checkPolicyStep) Run(ctx *model.StepContext) error {
 	return s.checker.CheckPolicy(ctx)
 }
+
+// storePayloadStep adapts PayloadStore into the Step interface.
+type storePayloadStep struct {
+	store definition.PayloadStore
+}
+
+func newStorePayloadStep(ps definition.PayloadStore) (definition.Step, error) {
+	if ps == nil {
+		return nil, fmt.Errorf("storePayload: PayloadStore not configured")
+	}
+	return &storePayloadStep{store: ps}, nil
+}
+
+func (s *storePayloadStep) Run(ctx *model.StepContext) error {
+	return s.store.Store(ctx)
+}

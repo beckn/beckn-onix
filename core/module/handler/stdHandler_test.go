@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -174,35 +173,6 @@ func (stubCache) Set(context.Context, string, string, time.Duration) error { ret
 func (stubCache) Delete(context.Context, string) error                     { return nil }
 func (stubCache) Clear(context.Context) error                              { return nil }
 
-func TestLoadPayloadStore_SucceedsWithCacheConfigured(t *testing.T) {
-	_, err := loadPayloadStore(context.Background(), noopPluginManager{}, stubCache{}, "testModule",
-		&plugin.Config{ID: "payloadstore"}, model.RoleBPP,
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestLoadPayloadStore_BAPWarnsWhenStoreSignatureDisabled(t *testing.T) {
-	// Should succeed — the warning is non-fatal.
-	_, err := loadPayloadStore(context.Background(), noopPluginManager{}, stubCache{}, "testModule",
-		&plugin.Config{ID: "payloadstore", Config: map[string]string{"storeSignature": "false"}},
-		model.RoleBAP,
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestLoadPayloadStore_BAPNoWarningWhenStoreSignatureEnabled(t *testing.T) {
-	_, err := loadPayloadStore(context.Background(), noopPluginManager{}, stubCache{}, "testModule",
-		&plugin.Config{ID: "payloadstore", Config: map[string]string{"storeSignature": "true"}},
-		model.RoleBAP,
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
 
 func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	ctx := context.Background()
@@ -505,144 +475,65 @@ func (m *mockRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) {
 	return nil, nil
 }
 
-// stubPayloadStore is an in-memory PayloadStore for handler-level duplicate detection tests.
+// stubPayloadStore is a minimal PayloadStore for storePayloadStep unit tests.
 type stubPayloadStore struct {
-	mu      sync.Mutex
-	seen    map[string]bool
-	existsErr error // if set, Exists returns this error
+	stored []*model.StepContext
+	storeErr error
 }
 
-func newStubPayloadStore() *stubPayloadStore {
-	return &stubPayloadStore{seen: make(map[string]bool)}
-}
-
-func (s *stubPayloadStore) Exists(_ context.Context, messageID string) (bool, error) {
-	if s.existsErr != nil {
-		return false, s.existsErr
+func (s *stubPayloadStore) Store(ctx *model.StepContext) error {
+	if s.storeErr != nil {
+		return s.storeErr
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.seen[messageID], nil
-}
-
-func (s *stubPayloadStore) Store(_ context.Context, entry definition.PayloadEntry) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.seen[entry.MessageID] = true
+	s.stored = append(s.stored, ctx)
 	return nil
 }
 
+func (s *stubPayloadStore) Exists(_ context.Context, _ string) (bool, error) { return false, nil }
 func (s *stubPayloadStore) GetByTransactionID(_ context.Context, _ string) ([]definition.PayloadEntry, error) {
 	return nil, nil
 }
-
 func (s *stubPayloadStore) GetByMessageID(_ context.Context, _, _ string) (*definition.PayloadEntry, error) {
 	return nil, nil
 }
 
-func handlerWithPayloadStore(ps definition.PayloadStore) *stdHandler {
-	return &stdHandler{
-		SubscriberID: "test-sub",
-		role:         model.RoleBAP,
-		moduleName:   "test-module",
-		payloadStore: ps,
+func TestNewStorePayloadStep_NilPayloadStoreFails(t *testing.T) {
+	_, err := newStorePayloadStep(nil)
+	if err == nil {
+		t.Fatal("expected error for nil PayloadStore")
 	}
 }
 
-func requestWithMsgID(msgID string) *http.Request {
-	body := `{"context":{"action":"search","message_id":"` + msgID + `","transaction_id":"txn1"}}`
-	req, _ := http.NewRequest("POST", "/search", strings.NewReader(body))
-	return req
-}
+func TestStorePayloadStep_Run_DelegatesToStore(t *testing.T) {
+	ps := &stubPayloadStore{}
+	step, err := newStorePayloadStep(ps)
+	if err != nil {
+		t.Fatalf("newStorePayloadStep: %v", err)
+	}
 
-// TestServeHTTP_DuplicateMessageIDLogsWarningAndProceeds verifies that a duplicate
-// message_id logs a warning but still returns ACK and overwrites the stored entry.
-func TestServeHTTP_DuplicateMessageIDLogsWarningAndProceeds(t *testing.T) {
-	ps := newStubPayloadStore()
-	h := handlerWithPayloadStore(ps)
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	ctx := &model.StepContext{
+		Context: context.Background(),
+		Request: req,
+		Body:    []byte(`{"context":{"message_id":"m1","transaction_id":"t1","action":"search"}}`),
+	}
 
-	for i := 0; i < 2; i++ {
-		rr := httptest.NewRecorder()
-		h.ServeHTTP(rr, requestWithMsgID("msg-dup-1"))
-		if rr.Code != http.StatusOK {
-			t.Errorf("request %d: expected 200, got %d — body: %s", i+1, rr.Code, rr.Body.String())
-		}
+	if err := step.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(ps.stored) != 1 || ps.stored[0] != ctx {
+		t.Errorf("expected Store called once with the same context; got %d calls", len(ps.stored))
 	}
 }
 
-// TestServeHTTP_DuplicateDetectionSkippedWhenMessageIDAbsent verifies that without a
-// message_id in the request body duplicate detection is skipped and requests proceed normally.
-func TestServeHTTP_DuplicateDetectionSkippedWhenMessageIDAbsent(t *testing.T) {
-	ps := newStubPayloadStore()
-	h := handlerWithPayloadStore(ps)
+func TestStorePayloadStep_Run_PropagatesError(t *testing.T) {
+	ps := &stubPayloadStore{storeErr: errors.New("cache down")}
+	step, _ := newStorePayloadStep(ps)
 
-	body := `{"context":{"action":"search"}}`
-	for i := 0; i < 2; i++ {
-		req, _ := http.NewRequest("POST", "/search", strings.NewReader(body))
-		rr := httptest.NewRecorder()
-		h.ServeHTTP(rr, req)
-		if rr.Code != http.StatusOK {
-			t.Errorf("request %d: expected 200 when message_id absent, got %d", i+1, rr.Code)
-		}
-	}
-}
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	ctx := &model.StepContext{Context: context.Background(), Request: req}
 
-// TestServeHTTP_DuplicateDetectionCacheErrorDoesNotBlockRequest verifies that a cache
-// error during the Exists check does not block the request — it proceeds normally.
-func TestServeHTTP_DuplicateDetectionCacheErrorDoesNotBlockRequest(t *testing.T) {
-	ps := &stubPayloadStore{
-		seen:      make(map[string]bool),
-		existsErr: errors.New("redis: connection refused"),
-	}
-	h := handlerWithPayloadStore(ps)
-
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, requestWithMsgID("msg-cache-err"))
-	if rr.Code != http.StatusOK {
-		t.Errorf("expected ACK on cache error, got %d — body: %s", rr.Code, rr.Body.String())
-	}
-}
-
-// TestParseBecknCtx covers snake_case, camelCase, and missing fields.
-func TestParseBecknCtx(t *testing.T) {
-	tests := []struct {
-		name  string
-		body  string
-		want  becknCtxFields
-	}{
-		{
-			name: "snake_case keys",
-			body: `{"context":{"message_id":"m1","transaction_id":"t1","network_id":"net1","action":"search"}}`,
-			want: becknCtxFields{MessageID: "m1", TransactionID: "t1", NetworkID: "net1", Action: "search"},
-		},
-		{
-			name: "camelCase keys",
-			body: `{"context":{"messageId":"m2","transactionId":"t2","networkId":"net2","action":"on_search"}}`,
-			want: becknCtxFields{MessageID: "m2", TransactionID: "t2", NetworkID: "net2", Action: "on_search"},
-		},
-		{
-			name: "snake_case takes priority over camelCase",
-			body: `{"context":{"message_id":"snake","messageId":"camel","transaction_id":"t1","network_id":"net1","action":"search"}}`,
-			want: becknCtxFields{MessageID: "snake", TransactionID: "t1", NetworkID: "net1", Action: "search"},
-		},
-		{
-			name: "missing context object",
-			body: `{"message":{}}`,
-			want: becknCtxFields{},
-		},
-		{
-			name: "empty body",
-			body: ``,
-			want: becknCtxFields{},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseBecknCtx([]byte(tt.body))
-			if got != tt.want {
-				t.Errorf("parseBecknCtx() = %+v, want %+v", got, tt.want)
-			}
-		})
+	if err := step.Run(ctx); err == nil {
+		t.Fatal("expected error from Run when Store fails")
 	}
 }

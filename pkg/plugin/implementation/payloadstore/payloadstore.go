@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
@@ -24,7 +25,7 @@ const (
 )
 
 // Config holds all configuration for the PayloadStore plugin.
-// Compress is storage-level gzip applied to RequestBody/ResponseBody before writing
+// Compress is storage-level gzip applied to RequestBody before writing
 // to cache (reduces Redis memory usage). It is independent of HTTP Content-Encoding.
 type Config struct {
 	TTL            time.Duration
@@ -38,9 +39,10 @@ type Config struct {
 // ParseConfig parses a map[string]string config into a Config, applying defaults for absent keys.
 func ParseConfig(cfg map[string]string) (*Config, error) {
 	c := &Config{
-		TTL:          defaultTTL,
-		MaxBodyBytes: defaultMaxBodyBytes,
-		StoreBody:    true,
+		TTL:            defaultTTL,
+		MaxBodyBytes:   defaultMaxBodyBytes,
+		StoreBody:      true,
+		StoreSignature: true,
 	}
 
 	if raw := cfg["ttl"]; raw != "" {
@@ -175,6 +177,46 @@ func unmarshalEntry(raw string) (definition.PayloadEntry, error) {
 	return entry, nil
 }
 
+// becknCtxFields holds the four Beckn context fields extracted from a request body.
+type becknCtxFields struct {
+	MessageID     string
+	TransactionID string
+	NetworkID     string
+	Action        string
+}
+
+// parseBecknCtx extracts the four context fields from a Beckn request body.
+// Both snake_case (message_id) and camelCase (messageId) keys are accepted,
+// with snake_case taking priority, matching the reqpreprocessor convention.
+func parseBecknCtx(body []byte) becknCtxFields {
+	var wrapper struct {
+		Context map[string]json.RawMessage `json:"context"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err != nil || len(wrapper.Context) == 0 {
+		return becknCtxFields{}
+	}
+	c := wrapper.Context
+	return becknCtxFields{
+		MessageID:     firstJSONString(c, "message_id", "messageId"),
+		TransactionID: firstJSONString(c, "transaction_id", "transactionId"),
+		NetworkID:     firstJSONString(c, "network_id", "networkId"),
+		Action:        firstJSONString(c, "action"),
+	}
+}
+
+// firstJSONString returns the first non-empty string found under any of the given keys.
+func firstJSONString(m map[string]json.RawMessage, keys ...string) string {
+	for _, k := range keys {
+		if raw, ok := m[k]; ok {
+			var s string
+			if json.Unmarshal(raw, &s) == nil && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
 type store struct {
 	cache     definition.Cache
 	config    *Config
@@ -182,7 +224,6 @@ type store struct {
 }
 
 // New creates a PayloadStore backed by the provided Cache.
-// namespace should be the module name of the owning handler (e.g. "bap-txn-caller").
 func New(ctx context.Context, cache definition.Cache, namespace string, cfg map[string]string) (*store, func() error, error) {
 	if cache == nil {
 		return nil, nil, fmt.Errorf("payloadstore: cache cannot be nil")
@@ -197,27 +238,50 @@ func New(ctx context.Context, cache definition.Cache, namespace string, cfg map[
 	return &store{cache: cache, config: config, namespace: namespace}, func() error { return nil }, nil
 }
 
-// Store persists a PayloadEntry and updates the transaction index.
+// Store builds a PayloadEntry from the incoming request's StepContext, performs a
+// duplicate detection check, then persists the entry and updates the transaction index.
+func (s *store) Store(ctx *model.StepContext) error {
+	bCtx := parseBecknCtx(ctx.Body)
+	if bCtx.MessageID == "" {
+		log.Warnf(ctx, "payloadstore: message_id absent from request body — store skipped")
+		return nil
+	}
+
+	if exists, err := s.Exists(ctx, bCtx.MessageID); err != nil {
+		log.Warnf(ctx, "payloadstore.Exists: cache error — duplicate detection skipped: %v", err)
+	} else if exists {
+		log.Warnf(ctx, "payloadstore: duplicate message_id %s — overwriting existing entry", bCtx.MessageID)
+	}
+
+	entry := definition.PayloadEntry{
+		MessageID:     bCtx.MessageID,
+		TransactionID: bCtx.TransactionID,
+		NetworkID:     bCtx.NetworkID,
+		Action:        bCtx.Action,
+		SubscriberID:  ctx.SubID,
+		Role:          ctx.Role,
+		RequestBody:   ctx.Body,
+		Signature:     ctx.Request.Header.Get(model.AuthHeaderSubscriber),
+	}
+	return s.persist(ctx, entry)
+}
+
+// persist applies config policies (storeBody, storeSignature, maxBodyBytes, compress)
+// and writes the entry to the cache, then updates the transaction index.
 //
-// Index race: definition.Cache has no atomic append primitive, so concurrent Store
+// Index race: definition.Cache has no atomic append primitive, so concurrent persist
 // calls for the same transaction can race on the index (last writer wins). Individual
 // payload:msg:{id} keys are always written correctly; only GetByTransactionID may
 // return an incomplete list under concurrent writes for the same transaction.
-func (s *store) Store(ctx context.Context, entry definition.PayloadEntry) error {
+func (s *store) persist(ctx context.Context, entry definition.PayloadEntry) error {
 	if !s.config.StoreBody {
 		entry.RequestBody = nil
-		entry.ResponseBody = nil
 	}
 	if !s.config.StoreSignature {
 		entry.Signature = ""
 	}
-	if s.config.MaxBodyBytes > 0 {
-		if int64(len(entry.RequestBody)) > s.config.MaxBodyBytes {
-			entry.RequestBody = entry.RequestBody[:s.config.MaxBodyBytes]
-		}
-		if int64(len(entry.ResponseBody)) > s.config.MaxBodyBytes {
-			entry.ResponseBody = entry.ResponseBody[:s.config.MaxBodyBytes]
-		}
+	if s.config.MaxBodyBytes > 0 && int64(len(entry.RequestBody)) > s.config.MaxBodyBytes {
+		entry.RequestBody = entry.RequestBody[:s.config.MaxBodyBytes]
 	}
 
 	now := time.Now().UTC()
