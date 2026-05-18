@@ -68,6 +68,15 @@ modules:
           id: cache
           config:
             addr: redis:6379
+        payloadStore:
+          id: payloadstore
+          config:
+            ttl: "24h"
+            indexTTL: "25h"
+            maxBodyBytes: "1048576"
+            storeBody: "true"
+            storeSignature: "true"
+            compress: "true"
         schemaValidator:
           id: schemav2validator
           config:
@@ -90,11 +99,17 @@ modules:
           config:
             networkPolicyConfig: ./config/opa-network-policies.yaml
             refreshInterval: "5m"
+        middleware:
+          - id: reqpreprocessor
+            config:
+              contextKeys: transaction_id,message_id
+              role: bpp
       steps:
         - validateSign
         - checkPolicy
         - addRoute
         - validateSchema
+        - storePayload
   
   - name: bppTxnCaller
     path: /bpp/caller/
@@ -129,6 +144,15 @@ modules:
           id: cache
           config:
             addr: redis:6379
+        payloadStore:
+          id: payloadstore
+          config:
+            ttl: "24h"
+            indexTTL: "25h"
+            maxBodyBytes: "1048576"
+            storeBody: "true"
+            storeSignature: "true"
+            compress: "true"
         schemaValidator:
           id: schemav2validator
           config:
@@ -161,3 +185,4 @@ modules:
         - addRoute
         - sign
         - validateSchema
+        - storePayload

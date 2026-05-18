@@ -426,6 +426,27 @@ func (m *Manager) SimpleKeyManager(ctx context.Context, cache definition.Cache, 
 	return km, nil
 }
 
+// PayloadStore returns a PayloadStore instance backed by the provided cache.
+// namespace should be the module name of the owning handler to scope all cache keys.
+func (m *Manager) PayloadStore(ctx context.Context, cache definition.Cache, namespace string, cfg *Config) (definition.PayloadStore, error) {
+	pp, err := provider[definition.PayloadStoreProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	ps, closer, err := pp.New(ctx, cache, namespace, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.closers = append(m.closers, func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return ps, nil
+}
+
 // ManifestLoader returns a ManifestLoader instance based on the provided configuration.
 func (m *Manager) ManifestLoader(ctx context.Context, cache definition.Cache, lookup definition.RegistryMetadataLookup, cfg *Config) (definition.ManifestLoader, error) {
 	mlp, err := provider[definition.ManifestLoaderProvider](m.plugins, cfg.ID)

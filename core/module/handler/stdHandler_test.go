@@ -156,6 +156,9 @@ func (noopPluginManager) TransportWrapper(context.Context, *plugin.Config) (defi
 func (noopPluginManager) SchemaValidator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
+func (noopPluginManager) PayloadStore(_ context.Context, _ definition.Cache, _ string, _ *plugin.Config) (definition.PayloadStore, error) {
+	return nil, nil
+}
 
 type registryWithoutMetadata struct{}
 
@@ -169,6 +172,7 @@ func (stubCache) Get(context.Context, string) (string, error)              { ret
 func (stubCache) Set(context.Context, string, string, time.Duration) error { return nil }
 func (stubCache) Delete(context.Context, string) error                     { return nil }
 func (stubCache) Clear(context.Context) error                              { return nil }
+
 
 func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	ctx := context.Background()
@@ -469,4 +473,67 @@ type mockRoundTripper struct{}
 
 func (m *mockRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) {
 	return nil, nil
+}
+
+// stubPayloadStore is a minimal PayloadStore for storePayloadStep unit tests.
+type stubPayloadStore struct {
+	stored []*model.StepContext
+	storeErr error
+}
+
+func (s *stubPayloadStore) Store(ctx *model.StepContext) error {
+	if s.storeErr != nil {
+		return s.storeErr
+	}
+	s.stored = append(s.stored, ctx)
+	return nil
+}
+
+func (s *stubPayloadStore) Exists(_ context.Context, _ string) (bool, error) { return false, nil }
+func (s *stubPayloadStore) GetByTransactionID(_ context.Context, _ string) ([]definition.PayloadEntry, error) {
+	return nil, nil
+}
+func (s *stubPayloadStore) GetByMessageID(_ context.Context, _, _ string) (*definition.PayloadEntry, error) {
+	return nil, nil
+}
+
+func TestNewStorePayloadStep_NilPayloadStoreFails(t *testing.T) {
+	_, err := newStorePayloadStep(nil)
+	if err == nil {
+		t.Fatal("expected error for nil PayloadStore")
+	}
+}
+
+func TestStorePayloadStep_Run_DelegatesToStore(t *testing.T) {
+	ps := &stubPayloadStore{}
+	step, err := newStorePayloadStep(ps)
+	if err != nil {
+		t.Fatalf("newStorePayloadStep: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	ctx := &model.StepContext{
+		Context: context.Background(),
+		Request: req,
+		Body:    []byte(`{"context":{"message_id":"m1","transaction_id":"t1","action":"search"}}`),
+	}
+
+	if err := step.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(ps.stored) != 1 || ps.stored[0] != ctx {
+		t.Errorf("expected Store called once with the same context; got %d calls", len(ps.stored))
+	}
+}
+
+func TestStorePayloadStep_Run_PropagatesError(t *testing.T) {
+	ps := &stubPayloadStore{storeErr: errors.New("cache down")}
+	step, _ := newStorePayloadStep(ps)
+
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	ctx := &model.StepContext{Context: context.Background(), Request: req}
+
+	if err := step.Run(ctx); err == nil {
+		t.Fatal("expected error from Run when Store fails")
+	}
 }

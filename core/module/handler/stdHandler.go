@@ -41,6 +41,7 @@ type stdHandler struct {
 	router           definition.Router
 	publisher        definition.Publisher
 	transportWrapper definition.TransportWrapper
+	payloadStore     definition.PayloadStore
 	SubscriberID     string
 	role             model.Role
 	httpClient       *http.Client
@@ -173,22 +174,26 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Execute processing steps.
+	var pipelineErr error
 	for _, step := range h.steps {
-		if err = step.Run(stepCtx); err != nil {
-			log.Errorf(stepCtx, err, "%T.run():%v", step, err)
-			response.SendNack(stepCtx, wrapped, err)
-			return
+		if pipelineErr = step.Run(stepCtx); pipelineErr != nil {
+			log.Errorf(stepCtx, pipelineErr, "%T.run():%v", step, pipelineErr)
+			response.SendNack(stepCtx, wrapped, pipelineErr)
+			break
 		}
 	}
-	// Restore request body before forwarding or publishing.
-	r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
-	if stepCtx.Route == nil {
-		response.SendAck(wrapped)
-		return
-	}
 
-	// Handle routing based on the defined route type.
-	route(stepCtx, r, wrapped, h.publisher, h.httpClient)
+	// Send ACK / route on success.
+	if pipelineErr == nil {
+		// Restore request body before forwarding or publishing.
+		r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
+		if stepCtx.Route == nil {
+			response.SendAck(wrapped)
+		} else {
+			// Handle routing based on the defined route type.
+			route(stepCtx, r, wrapped, h.publisher, h.httpClient)
+		}
+	}
 }
 
 // stepCtx creates a new StepContext for processing an HTTP request.
@@ -330,6 +335,25 @@ func loadManifestLoader(ctx context.Context, mgr PluginManager, cache definition
 	return loader, nil
 }
 
+func loadPayloadStore(ctx context.Context, mgr PluginManager, cache definition.Cache, namespace string, cfg *plugin.Config, role model.Role) (definition.PayloadStore, error) {
+	if cfg == nil {
+		log.Debug(ctx, "Skipping PayloadStore plugin: not configured")
+		return nil, nil
+	}
+	if cache == nil {
+		return nil, fmt.Errorf("failed to load PayloadStore plugin (%s): Cache plugin not configured", cfg.ID)
+	}
+	if role == model.RoleBAP && cfg.Config["storeSignature"] == "false" {
+		log.Warnf(ctx, "PayloadStore plugin (%s): storeSignature is disabled for a BAP handler — Authorization header will not be stored", cfg.ID)
+	}
+	ps, err := mgr.PayloadStore(ctx, cache, namespace, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load PayloadStore plugin (%s): %w", cfg.ID, err)
+	}
+	log.Debugf(ctx, "Loaded PayloadStore plugin: %s", cfg.ID)
+	return ps, nil
+}
+
 func loadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping PolicyChecker plugin: not configured")
@@ -358,6 +382,9 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 		return err
 	}
 	if h.manifestLoader, err = loadManifestLoader(ctx, mgr, h.cache, h.registry, cfg.ManifestLoader); err != nil {
+		return err
+	}
+	if h.payloadStore, err = loadPayloadStore(ctx, mgr, h.cache, "onix", cfg.PayloadStore, h.role); err != nil {
 		return err
 	}
 	if h.signValidator, err = loadPlugin(ctx, "SignValidator", cfg.SignValidator, mgr.SignValidator); err != nil {
@@ -415,6 +442,8 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			s, err = newAddRouteStep(h.router)
 		case "checkPolicy":
 			s, err = newCheckPolicyStep(h.policyChecker)
+		case "storePayload":
+			s, err = newStorePayloadStep(h.payloadStore)
 		default:
 			if customStep, exists := steps[step]; exists {
 				s = customStep

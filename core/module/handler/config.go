@@ -27,6 +27,7 @@ type PluginManager interface {
 	ManifestLoader(ctx context.Context, cache definition.Cache, lookup definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.ManifestLoader, error)
 	TransportWrapper(ctx context.Context, cfg *plugin.Config) (definition.TransportWrapper, error)
 	SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)
+	PayloadStore(ctx context.Context, cache definition.Cache, namespace string, cfg *plugin.Config) (definition.PayloadStore, error)
 }
 
 // Type defines different handler types for processing requests.
@@ -50,6 +51,7 @@ type PluginCfg struct {
 	KeyManager       *plugin.Config  `yaml:"keyManager,omitempty"`
 	ManifestLoader   *plugin.Config  `yaml:"manifestLoader,omitempty"`
 	TransportWrapper *plugin.Config  `yaml:"transportWrapper,omitempty"`
+	PayloadStore     *plugin.Config  `yaml:"payloadStore,omitempty"`
 	Middleware       []plugin.Config `yaml:"middleware,omitempty"`
 	Steps            []plugin.Config
 }
@@ -75,6 +77,7 @@ func (p *PluginCfg) PluginEntries() []telemetry.PluginEntry {
 	add("transport_wrapper", p.TransportWrapper)
 	add("policy_checker", p.PolicyChecker)
 	add("key_manager", p.KeyManager)
+	add("payload_store", p.PayloadStore)
 	for i := range p.Steps {
 		if p.Steps[i].ID != "" {
 			entries = append(entries, telemetry.PluginEntry{Type: "step", ID: p.Steps[i].ID})
