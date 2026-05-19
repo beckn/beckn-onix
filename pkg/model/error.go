@@ -111,3 +111,32 @@ func (e *NotFoundErr) BecknError() *Error {
 		Message: "Endpoint not found: " + e.Error(),
 	}
 }
+
+// AckNoCallbackErr is returned by a step when the receiver has authenticated and
+// accepted the request but will not send an async callback — for example, no
+// matching catalog, inventory unavailable, or provider closed. ONIX maps this to
+// HTTP 409 Conflict using the v2 flat response shape. For protocol versions prior
+// to 2.0.0 this error falls through to a 500 Internal Server Error.
+type AckNoCallbackErr struct {
+	// Status is ACK when the request was accepted but no callback will follow,
+	// or NACK when the request was outright rejected.
+	Status Status
+	// Err explains why no callback will be sent. Required by the spec.
+	Err *Error
+}
+
+// NewAckNoCallbackErr constructs an AckNoCallbackErr.
+// Use StatusACK for "accepted but no callback" and StatusNACK for outright rejection.
+func NewAckNoCallbackErr(status Status, err *Error) *AckNoCallbackErr {
+	return &AckNoCallbackErr{Status: status, Err: err}
+}
+
+// Error implements the error interface.
+func (e *AckNoCallbackErr) Error() string {
+	return fmt.Sprintf("AckNoCallback(status=%s): %s", e.Status, e.Err.Error())
+}
+
+// BecknError returns the wrapped *Error payload.
+func (e *AckNoCallbackErr) BecknError() *Error {
+	return e.Err
+}
