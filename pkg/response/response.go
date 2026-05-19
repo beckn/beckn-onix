@@ -64,6 +64,64 @@ func SendAck(ctx context.Context, w http.ResponseWriter) {
 	}
 }
 
+// nackBecknError maps an error to its Beckn model.Error representation and HTTP
+// status code — the same mapping used by SendNack.
+func nackBecknError(ctx context.Context, err error) (*model.Error, int) {
+	var schemaErr *model.SchemaValidationErr
+	var signErr *model.SignValidationErr
+	var badReqErr *model.BadReqErr
+	var notFoundErr *model.NotFoundErr
+
+	switch {
+	case errors.As(err, &schemaErr):
+		return schemaErr.BecknError(), http.StatusBadRequest
+	case errors.As(err, &signErr):
+		return signErr.BecknError(), http.StatusUnauthorized
+	case errors.As(err, &badReqErr):
+		return badReqErr.BecknError(), http.StatusBadRequest
+	case errors.As(err, &notFoundErr):
+		return notFoundErr.BecknError(), http.StatusNotFound
+	default:
+		return internalServerError(ctx), http.StatusInternalServerError
+	}
+}
+
+// nackBodyBytes returns the serialised NACK response body for the given Beckn
+// error. The output is identical to the bytes that nack() writes to the wire.
+func nackBodyBytes(ctx context.Context, becknErr *model.Error) []byte {
+	var data []byte
+	if isAtLeastV2(ctx) {
+		resp := &model.Response{
+			Message: model.Message{
+				Status:    model.StatusNACK,
+				MessageID: msgID(ctx),
+				Error:     becknErr,
+			},
+		}
+		data, _ = json.Marshal(resp)
+	} else {
+		resp := &preV2Response{
+			Message: preV2Message{
+				Ack:   preV2Ack{Status: model.StatusNACK},
+				Error: becknErr,
+			},
+		}
+		data, _ = json.Marshal(resp)
+	}
+	return data
+}
+
+// NackBytes returns the NACK response body that SendNack would write for the
+// given error, without actually writing it.
+//
+// Use this when the caller needs to sign (or otherwise process) the response
+// body before it is written to the wire. The bytes returned here are guaranteed
+// to be identical to what SendNack writes.
+func NackBytes(ctx context.Context, err error) []byte {
+	becknErr, _ := nackBecknError(ctx, err)
+	return nackBodyBytes(ctx, becknErr)
+}
+
 // nack sends a NACK response with an error payload.
 // For context.version "2.0.0":
 //
@@ -72,28 +130,8 @@ func SendAck(ctx context.Context, w http.ResponseWriter) {
 // All other versions:
 //
 //	{"message":{"ack":{"status":"NACK"},"error":{...}}}
-func nack(ctx context.Context, w http.ResponseWriter, err *model.Error, status int) {
-	var data []byte
-
-	if isAtLeastV2(ctx) {
-		resp := &model.Response{
-			Message: model.Message{
-				Status:    model.StatusNACK,
-				MessageID: msgID(ctx),
-				Error:     err,
-			},
-		}
-		data, _ = json.Marshal(resp)
-	} else {
-		resp := &preV2Response{
-			Message: preV2Message{
-				Ack:   preV2Ack{Status: model.StatusNACK},
-				Error: err,
-			},
-		}
-		data, _ = json.Marshal(resp)
-	}
-
+func nack(ctx context.Context, w http.ResponseWriter, becknErr *model.Error, status int) {
+	data := nackBodyBytes(ctx, becknErr)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if _, er := w.Write(data); er != nil {
@@ -126,21 +164,6 @@ func internalServerError(ctx context.Context) *model.Error {
 
 // SendNack processes different types of errors and sends an appropriate NACK response.
 func SendNack(ctx context.Context, w http.ResponseWriter, err error) {
-	var schemaErr *model.SchemaValidationErr
-	var signErr *model.SignValidationErr
-	var badReqErr *model.BadReqErr
-	var notFoundErr *model.NotFoundErr
-
-	switch {
-	case errors.As(err, &schemaErr):
-		nack(ctx, w, schemaErr.BecknError(), http.StatusBadRequest)
-	case errors.As(err, &signErr):
-		nack(ctx, w, signErr.BecknError(), http.StatusUnauthorized)
-	case errors.As(err, &badReqErr):
-		nack(ctx, w, badReqErr.BecknError(), http.StatusBadRequest)
-	case errors.As(err, &notFoundErr):
-		nack(ctx, w, notFoundErr.BecknError(), http.StatusNotFound)
-	default:
-		nack(ctx, w, internalServerError(ctx), http.StatusInternalServerError)
-	}
+	becknErr, status := nackBecknError(ctx, err)
+	nack(ctx, w, becknErr, status)
 }

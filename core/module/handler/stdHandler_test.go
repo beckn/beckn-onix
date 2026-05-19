@@ -552,6 +552,44 @@ func TestServeHTTP_ResponseStepRunsAfterAllInboundSteps(t *testing.T) {
 	}
 }
 
+// TestServeHTTP_PipelineNack_SignedByAckSigner verifies that when the ackSigner
+// is configured (signAck step), pipeline NACKs carry a Signature header — per
+// NFH-007 CON-004-02 all synchronous responses MUST be signed.
+func TestServeHTTP_PipelineNack_SignedByAckSigner(t *testing.T) {
+	signer := &mockSigner{returnSig: "nackPipelineSig=="}
+	km := &mockKM{keyset: &model.Keyset{UniqueKeyID: "k1", SigningPrivate: "priv"}}
+
+	failingStep := &mockFailStep{err: model.NewBadReqErr(fmt.Errorf("schema error"))}
+
+	ackSignerConc := &ackSignerStep{signer: signer, km: km}
+	h := &stdHandler{
+		SubscriberID:  "bpp.example.com",
+		role:          model.RoleBPP,
+		moduleName:    "test",
+		steps:         []definition.Step{failingStep},
+		responseSteps: []definition.ResponseStep{ackSignerConc},
+		ackSigner:     ackSignerConc,
+	}
+
+	body := `{"context":{"version":"2.0.0","messageId":"m1","action":"search"}}`
+	req, _ := http.NewRequest("POST", "/search", strings.NewReader(body))
+	req.Header.Set("X-Subscriber-Id", "bpp.example.com")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rr.Code)
+	}
+	sig := rr.Header().Get("Signature")
+	if sig == "" {
+		t.Error("expected Signature header on pipeline NACK response — was unsigned")
+	}
+}
+
+type mockFailStep struct{ err error }
+
+func (m *mockFailStep) Run(_ *model.StepContext) error { return m.err }
+
 type mockOrderStep struct {
 	name  string
 	order *[]string
@@ -607,6 +645,22 @@ func TestExtractAuthSignature(t *testing.T) {
 			name:     "empty signature value",
 			header:   `Signature keyId="sub|key|ed25519",signature=""`,
 			expected: "",
+		},
+		{
+			// Regression: request-signature field appears AFTER signature in our
+			// generated headers (normal ordering); must return the signature value.
+			name:     "callback header — signature before request-signature",
+			header:   `Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",created="1",expires="2",headers="(created) (expires) digest request-signature",signature="correctSig==",request-signature="reqSig=="`,
+			expected: "correctSig==",
+		},
+		{
+			// Regression: if a peer implementation places request-signature BEFORE
+			// signature, the old bare-string match would have returned the value
+			// inside request-signature instead.  The comma-prefixed search must
+			// return the correct standalone signature value.
+			name:     "callback header — request-signature before signature (peer ordering)",
+			header:   `Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",created="1",expires="2",headers="(created) (expires) digest request-signature",request-signature="reqSig==",signature="correctSig=="`,
+			expected: "correctSig==",
 		},
 	}
 

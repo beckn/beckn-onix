@@ -463,8 +463,13 @@ func extractProtocolVersion(body []byte) string {
 //
 // The returned string is the value inside the signature="..." attribute, or
 // empty string if the attribute is absent or malformed.
+//
+// NOTE: The search uses ",signature=\"" (comma-prefixed) rather than the bare
+// "signature=\"" substring to avoid accidentally matching the request-signature
+// field (which also contains the substring "signature=") when it appears before
+// the standalone signature field in the header.
 func extractAuthSignature(authHeader string) string {
-	const marker = `signature="`
+	const marker = `,signature="`
 	idx := strings.Index(authHeader, marker)
 	if idx < 0 {
 		return ""
