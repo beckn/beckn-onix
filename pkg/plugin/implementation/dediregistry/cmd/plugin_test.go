@@ -14,7 +14,6 @@ func TestDediRegistryProvider_ParseConfig(t *testing.T) {
 
 	cfg, err := provider.parseConfig(map[string]string{
 		"url":            "https://test.com/dedi",
-		"registryName":   "subscribers.beckn.one",
 		"timeout":        "30",
 		"retry_max":      "5",
 		"retry_wait_min": "100ms",
@@ -26,9 +25,6 @@ func TestDediRegistryProvider_ParseConfig(t *testing.T) {
 
 	if cfg.URL != "https://test.com/dedi" {
 		t.Fatalf("expected URL to be parsed, got %q", cfg.URL)
-	}
-	if cfg.RegistryName != "subscribers.beckn.one" {
-		t.Fatalf("expected RegistryName to be parsed, got %q", cfg.RegistryName)
 	}
 	if cfg.Timeout != 30 {
 		t.Fatalf("expected Timeout 30, got %d", cfg.Timeout)
@@ -55,27 +51,24 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 		{
 			name: "invalid timeout",
 			config: map[string]string{
-				"url":          "https://test.com/dedi",
-				"registryName": "subscribers.beckn.one",
-				"timeout":      "abc",
+				"url":     "https://test.com/dedi",
+				"timeout": "abc",
 			},
 			expectedErr: "invalid timeout value 'abc'",
 		},
 		{
 			name: "invalid retry_max",
 			config: map[string]string{
-				"url":          "https://test.com/dedi",
-				"registryName": "subscribers.beckn.one",
-				"retry_max":    "abc",
+				"url":       "https://test.com/dedi",
+				"retry_max": "abc",
 			},
 			expectedErr: "invalid retry_max value 'abc'",
 		},
 		{
 			name: "negative retry_max",
 			config: map[string]string{
-				"url":          "https://test.com/dedi",
-				"registryName": "subscribers.beckn.one",
-				"retry_max":    "-1",
+				"url":       "https://test.com/dedi",
+				"retry_max": "-1",
 			},
 			expectedErr: "retry_max must be non-negative",
 		},
@@ -83,7 +76,6 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 			name: "invalid retry_wait_min",
 			config: map[string]string{
 				"url":            "https://test.com/dedi",
-				"registryName":   "subscribers.beckn.one",
 				"retry_wait_min": "notaduration",
 			},
 			expectedErr: "invalid retry_wait_min value 'notaduration'",
@@ -92,7 +84,6 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 			name: "negative retry_wait_min",
 			config: map[string]string{
 				"url":            "https://test.com/dedi",
-				"registryName":   "subscribers.beckn.one",
 				"retry_wait_min": "-100ms",
 			},
 			expectedErr: "retry_wait_min must be non-negative",
@@ -101,7 +92,6 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 			name: "invalid retry_wait_max",
 			config: map[string]string{
 				"url":            "https://test.com/dedi",
-				"registryName":   "subscribers.beckn.one",
 				"retry_wait_max": "notaduration",
 			},
 			expectedErr: "invalid retry_wait_max value 'notaduration'",
@@ -110,7 +100,6 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 			name: "negative retry_wait_max",
 			config: map[string]string{
 				"url":            "https://test.com/dedi",
-				"registryName":   "subscribers.beckn.one",
 				"retry_wait_max": "-2s",
 			},
 			expectedErr: "retry_wait_max must be non-negative",
@@ -118,18 +107,16 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 		{
 			name: "zero timeout",
 			config: map[string]string{
-				"url":          "https://test.com/dedi",
-				"registryName": "subscribers.beckn.one",
-				"timeout":      "0",
+				"url":     "https://test.com/dedi",
+				"timeout": "0",
 			},
 			expectedErr: "timeout must be positive",
 		},
 		{
 			name: "negative timeout",
 			config: map[string]string{
-				"url":          "https://test.com/dedi",
-				"registryName": "subscribers.beckn.one",
-				"timeout":      "-5",
+				"url":     "https://test.com/dedi",
+				"timeout": "-5",
 			},
 			expectedErr: "timeout must be positive",
 		},
@@ -137,7 +124,6 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 			name: "retry_wait_min exceeds retry_wait_max",
 			config: map[string]string{
 				"url":            "https://test.com/dedi",
-				"registryName":   "subscribers.beckn.one",
 				"retry_wait_min": "5s",
 				"retry_wait_max": "1s",
 			},
@@ -165,9 +151,8 @@ func TestDediRegistryProvider_New_InvalidRetryConfig(t *testing.T) {
 	provider := dediRegistryProvider{}
 
 	_, _, err := provider.New(context.Background(), map[string]string{
-		"url":          "https://test.com/dedi",
-		"registryName": "subscribers.beckn.one",
-		"retry_max":    "abc",
+		"url":       "https://test.com/dedi",
+		"retry_max": "abc",
 	})
 	if err == nil {
 		t.Fatal("expected New() to return an error for invalid retry config")
@@ -188,7 +173,6 @@ func TestDediRegistryProvider_New_ForwardsRetryConfig(t *testing.T) {
 
 	config := map[string]string{
 		"url":            "https://test.com/dedi",
-		"registryName":   "subscribers.beckn.one",
 		"timeout":        "30",
 		"retry_max":      "5",
 		"retry_wait_min": "100ms",
@@ -224,9 +208,8 @@ func TestDediRegistryProvider_New(t *testing.T) {
 	provider := dediRegistryProvider{newFunc: dediregistry.New}
 
 	config := map[string]string{
-		"url":          "https://test.com/dedi",
-		"registryName": "subscribers.beckn.one",
-		"timeout":      "30",
+		"url":     "https://test.com/dedi",
+		"timeout": "30",
 	}
 
 	dediRegistry, closer, err := provider.New(ctx, config)
@@ -259,11 +242,7 @@ func TestDediRegistryProvider_New_InvalidConfig(t *testing.T) {
 	}{
 		{
 			name:   "missing url",
-			config: map[string]string{"registryName": "subscribers.beckn.one", "timeout": "30"},
-		},
-		{
-			name:   "missing registryName",
-			config: map[string]string{"url": "https://test.com/dedi", "timeout": "30"},
+			config: map[string]string{"timeout": "30"},
 		},
 		{
 			name:   "empty config",
@@ -286,9 +265,8 @@ func TestDediRegistryProvider_New_InvalidTimeout(t *testing.T) {
 	provider := dediRegistryProvider{newFunc: dediregistry.New}
 
 	_, _, err := provider.New(context.Background(), map[string]string{
-		"url":          "https://test.com/dedi",
-		"registryName": "subscribers.beckn.one",
-		"timeout":      "invalid",
+		"url":     "https://test.com/dedi",
+		"timeout": "invalid",
 	})
 	if err == nil {
 		t.Fatal("expected New() to return an error for invalid timeout")
@@ -332,7 +310,6 @@ func TestResolveAllowedNetworkIDs_DeprecatedAllowedParentNamespacesErrorsWithout
 func TestResolveAllowedNetworkIDs_AllowedNetworkIDsTakesPrecedence(t *testing.T) {
 	config := map[string]string{
 		"url":                     "https://test.com/dedi",
-		"registryName":            "subscribers.beckn.one",
 		"allowedParentNamespaces": "deprecated-network.org/legacy",
 		"allowedNetworkIDs":       "commerce-network.org/prod, local-commerce.org/production",
 	}
@@ -362,7 +339,6 @@ func TestDediRegistryProvider_New_DeprecatedAllowedParentNamespacesErrorsWithout
 
 	config := map[string]string{
 		"url":                     "https://test.com/dedi",
-		"registryName":            "subscribers.beckn.one",
 		"allowedParentNamespaces": "commerce-network.org",
 	}
 
@@ -376,8 +352,7 @@ func TestDediRegistryProvider_New_NilContext(t *testing.T) {
 	provider := dediRegistryProvider{}
 
 	config := map[string]string{
-		"url":          "https://test.com/dedi",
-		"registryName": "subscribers.beckn.one",
+		"url": "https://test.com/dedi",
 	}
 
 	_, _, err := provider.New(nil, config)

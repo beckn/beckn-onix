@@ -20,8 +20,7 @@ type dediRegistryProvider struct {
 
 func (d dediRegistryProvider) parseConfig(config map[string]string) (*dediregistry.Config, error) {
 	dediConfig := &dediregistry.Config{
-		URL:          config["url"],
-		RegistryName: config["registryName"],
+		URL: config["url"],
 	}
 
 	// Parse timeout if provided.

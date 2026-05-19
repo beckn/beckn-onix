@@ -33,19 +33,10 @@ func TestValidate(t *testing.T) {
 		{
 			name: "valid config",
 			config: &Config{
-				URL:          "https://test.com/dedi",
-				RegistryName: "subscribers.beckn.one",
-				Timeout:      30,
-			},
-			wantErr: false,
-		},
-		{
-			name: "missing registry name",
-			config: &Config{
 				URL:     "https://test.com/dedi",
 				Timeout: 30,
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 	}
 
@@ -63,9 +54,8 @@ func TestNew(t *testing.T) {
 	ctx := context.Background()
 
 	validConfig := &Config{
-		URL:          "https://test.com/dedi",
-		RegistryName: "subscribers.beckn.one",
-		Timeout:      30,
+		URL:     "https://test.com/dedi",
+		Timeout: 30,
 	}
 
 	client, closer, err := New(ctx, validConfig)
@@ -89,9 +79,8 @@ func TestNew(t *testing.T) {
 
 	t.Run("should apply custom retry settings", func(t *testing.T) {
 		cfg := &Config{
-			URL:          "http://test.com",
-			RegistryName: "subscribers.beckn.one",
-			RetryMax:     10,
+			URL:      "http://test.com",
+			RetryMax: 10,
 			RetryWaitMin: 100 * time.Millisecond,
 			RetryWaitMax: 1 * time.Second,
 		}
@@ -180,7 +169,6 @@ func TestLookup(t *testing.T) {
 
 		config := &Config{
 			URL:          server.URL + "/dedi",
-			RegistryName: "subscribers.beckn.one",
 			Timeout:      30,
 		}
 
@@ -242,7 +230,6 @@ func TestLookup(t *testing.T) {
 
 		config := &Config{
 			URL:               server.URL + "/dedi",
-			RegistryName:      "subscribers.beckn.one",
 			AllowedNetworkIDs: []string{"commerce-network.org/prod"},
 		}
 
@@ -286,7 +273,6 @@ func TestLookup(t *testing.T) {
 
 		config := &Config{
 			URL:               server.URL + "/dedi",
-			RegistryName:      "subscribers.beckn.one",
 			AllowedNetworkIDs: []string{"commerce-network/subscriber-references"},
 		}
 
@@ -334,7 +320,6 @@ func TestLookup(t *testing.T) {
 
 		config := &Config{
 			URL:               server.URL + "/dedi",
-			RegistryName:      "subscribers.beckn.one",
 			AllowedNetworkIDs: []string{"commerce-network.org/prod"},
 		}
 
@@ -360,7 +345,6 @@ func TestLookup(t *testing.T) {
 	t.Run("empty subscriber ID", func(t *testing.T) {
 		config := &Config{
 			URL:          "https://test.com/dedi",
-			RegistryName: "subscribers.beckn.one",
 		}
 
 		client, closer, err := New(ctx, config)
@@ -388,7 +372,6 @@ func TestLookup(t *testing.T) {
 	t.Run("empty key ID", func(t *testing.T) {
 		config := &Config{
 			URL:          "https://test.com/dedi",
-			RegistryName: "subscribers.beckn.one",
 		}
 
 		client, closer, err := New(ctx, config)
@@ -422,7 +405,6 @@ func TestLookup(t *testing.T) {
 
 		config := &Config{
 			URL:          server.URL + "/dedi",
-			RegistryName: "subscribers.beckn.one",
 		}
 
 		client, closer, err := New(ctx, config)
@@ -460,7 +442,6 @@ func TestLookup(t *testing.T) {
 
 		config := &Config{
 			URL:          server.URL + "/dedi",
-			RegistryName: "subscribers.beckn.one",
 		}
 
 		client, closer, err := New(ctx, config)
@@ -491,7 +472,6 @@ func TestLookup(t *testing.T) {
 
 		config := &Config{
 			URL:          server.URL + "/dedi",
-			RegistryName: "subscribers.beckn.one",
 		}
 
 		client, closer, err := New(ctx, config)
@@ -525,7 +505,6 @@ func TestLookup(t *testing.T) {
 
 		config := &Config{
 			URL:          server.URL + "/dedi",
-			RegistryName: "subscribers.beckn.one",
 		}
 
 		client, closer, err := New(ctx, config)
@@ -550,7 +529,6 @@ func TestLookup(t *testing.T) {
 	t.Run("network error", func(t *testing.T) {
 		config := &Config{
 			URL:          "http://invalid-url-that-does-not-exist.local/dedi",
-			RegistryName: "subscribers.beckn.one",
 			Timeout:      1,
 		}
 
@@ -603,7 +581,6 @@ func TestLookupRegistry(t *testing.T) {
 
 		client, closer, err := New(ctx, &Config{
 			URL:          server.URL + "/dedi",
-			RegistryName: "subscribers.beckn.one",
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -639,7 +616,6 @@ func TestLookupRegistry(t *testing.T) {
 
 		client, closer, err := New(ctx, &Config{
 			URL:          server.URL,
-			RegistryName: "subscribers.beckn.one",
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -668,7 +644,6 @@ func TestLookupRegistry(t *testing.T) {
 
 		client, closer, err := New(ctx, &Config{
 			URL:          server.URL,
-			RegistryName: "subscribers.beckn.one",
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -693,7 +668,6 @@ func TestLookupRegistry(t *testing.T) {
 
 		client, closer, err := New(ctx, &Config{
 			URL:          server.URL + "/dedi",
-			RegistryName: "subscribers.beckn.one",
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)

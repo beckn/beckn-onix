@@ -586,7 +586,6 @@ registry:
   id: dediregistry
   config:
     url: "https://fabric.nfh.global/registry/dedi"
-    registryName: "subscribers.beckn.one"
     allowedNetworkIDs: "commerce-network.org/prod,local-commerce.org/production"
     timeout: 30
     retry_max: 3
@@ -596,7 +595,6 @@ registry:
 
 **Parameters**:
 - `url`: Beckn registry base URL including the `/dedi` path (Required)
-- `registryName`: Registry name used in the lookup path. Keep this value as `subscribers.beckn.one` so lookups include all cached registries. Use `allowedNetworkIDs` if you want lookup to be restricted within one or more networks. (Required)
 - `allowedNetworkIDs`: Comma-separated list of allowed network IDs used to restrict lookup results to specific networks. See [Beckn network setup documentation](https://docs.beckn.io/creating-an-open-network/setting-up-the-network-environment#registering-the-network-on-beckn-fabric) for more on network IDs. (Optional)
 - `timeout`: Request timeout in seconds (Optional, default: client default)
 - `retry_max`: Maximum number of retry attempts (Optional, default: 4)
