@@ -52,7 +52,6 @@ modules:
           id: dediregistry
           config:
             url: https://fabric.nfh.global/registry/dedi # This is the registry URL.
-            registryName: subscribers.beckn.one # This is the wildcard string used to lookup across registries in Beckn One. Do not change this.
             timeout: 10
             retry_max: 3
             retry_wait_min: 100ms
@@ -128,7 +127,6 @@ modules:
           id: dediregistry
           config:
             url: https://fabric.nfh.global/registry/dedi # This is the registry URL.
-            registryName: subscribers.beckn.one # This is the wildcard string used to lookup across registries in Beckn One. Do not change this.
             timeout: 10
             retry_max: 3
             retry_wait_min: 100ms
