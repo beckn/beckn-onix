@@ -1,4 +1,4 @@
-package response
+package handler
 
 import (
 	"context"
@@ -29,7 +29,7 @@ type preV2Response struct {
 	Message preV2Message `json:"message"`
 }
 
-// SendAck sends a synchronous ACK response to the client.
+// sendAck sends a synchronous ACK response to the client.
 // For context.version "2.0.0" and later the response uses the v2 envelope:
 //
 //	{"message":{"status":"ACK","messageId":"<uuid>"}}
@@ -37,7 +37,7 @@ type preV2Response struct {
 // All other versions use the pre-v2 envelope:
 //
 //	{"message":{"ack":{"status":"ACK"}}}
-func SendAck(ctx context.Context, w http.ResponseWriter) {
+func sendAck(ctx context.Context, w http.ResponseWriter) {
 	var data []byte
 
 	if isAtLeastV2(ctx) {
@@ -65,7 +65,7 @@ func SendAck(ctx context.Context, w http.ResponseWriter) {
 }
 
 // nackBecknError maps an error to its Beckn model.Error representation and HTTP
-// status code — the same mapping used by SendNack.
+// status code.
 func nackBecknError(ctx context.Context, err error) (*model.Error, int) {
 	var schemaErr *model.SchemaValidationErr
 	var signErr *model.SignValidationErr
@@ -111,13 +111,13 @@ func nackBodyBytes(ctx context.Context, becknErr *model.Error) []byte {
 	return data
 }
 
-// NackBytes returns the NACK response body that SendNack would write for the
+// nackBytes returns the NACK response body that sendNack would write for the
 // given error, without actually writing it.
 //
 // Use this when the caller needs to sign (or otherwise process) the response
 // body before it is written to the wire. The bytes returned here are guaranteed
-// to be identical to what SendNack writes.
-func NackBytes(ctx context.Context, err error) []byte {
+// to be identical to what sendNack writes.
+func nackBytes(ctx context.Context, err error) []byte {
 	becknErr, _ := nackBecknError(ctx, err)
 	return nackBodyBytes(ctx, becknErr)
 }
@@ -141,8 +141,6 @@ func nack(ctx context.Context, w http.ResponseWriter, becknErr *model.Error, sta
 }
 
 // isAtLeastV2 reports whether the request uses Beckn protocol v2.0.0 or later.
-// Uses a major-version check so future versions (2.1.0, 3.0.0, …) also get
-// the v2 response envelope automatically.
 func isAtLeastV2(ctx context.Context) bool {
 	v, _ := ctx.Value(model.ContextKeyProtocolVersion).(string)
 	return model.IsAtLeastV2(v)
@@ -162,8 +160,8 @@ func internalServerError(ctx context.Context) *model.Error {
 	}
 }
 
-// SendNack processes different types of errors and sends an appropriate NACK response.
-func SendNack(ctx context.Context, w http.ResponseWriter, err error) {
+// sendNack processes different types of errors and sends an appropriate NACK response.
+func sendNack(ctx context.Context, w http.ResponseWriter, err error) {
 	becknErr, status := nackBecknError(ctx, err)
 	nack(ctx, w, becknErr, status)
 }

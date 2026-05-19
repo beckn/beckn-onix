@@ -16,7 +16,6 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn-one/beckn-onix/pkg/response"
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
@@ -163,7 +162,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	stepCtx, err := h.stepCtx(r, w.Header())
 	if err != nil {
 		log.Errorf(r.Context(), err, "stepCtx(r):%v", err)
-		response.SendNack(r.Context(), wrapped, err)
+		sendNack(r.Context(), wrapped, err)
 		return
 	}
 	log.Request(r.Context(), r, stepCtx.Body)
@@ -186,7 +185,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			log.Errorf(stepCtx, pipelineErr, "%T.run():%v", step, pipelineErr)
 			// Sign the NACK before writing HTTP headers (NFH-007 CON-004-02).
 			h.signNackResponse(stepCtx, pipelineErr)
-			response.SendNack(stepCtx, wrapped, pipelineErr)
+			sendNack(stepCtx, wrapped, pipelineErr)
 			break
 		}
 	}
@@ -204,11 +203,11 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					// ackSignerStep itself failed — sign the NACK body if
 					// a different signing mechanism is available, or send unsigned.
 					h.signNackResponse(stepCtx, err)
-					response.SendNack(stepCtx, wrapped, err)
+					sendNack(stepCtx, wrapped, err)
 					return
 				}
 			}
-			response.SendAck(stepCtx, wrapped)
+			sendAck(stepCtx, wrapped)
 			return
 		}
 		// Handle routing based on the defined route type.
@@ -217,7 +216,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // signNackResponse signs the NACK response body and sets the Signature header
-// on ctx.RespHeader before response.SendNack writes the HTTP headers to the
+// on ctx.RespHeader before sendNack writes the HTTP headers to the
 // wire. This satisfies NFH-007 CON-004-02 for ONIX-generated error responses.
 //
 // Signing is a best-effort operation: if it fails (e.g. key manager unavailable)
@@ -234,7 +233,7 @@ func (h *stdHandler) signNackResponse(ctx *model.StepContext, err error) {
 	if len(ctx.SubID) == 0 {
 		return
 	}
-	nackBody := response.NackBytes(ctx.Context, err)
+	nackBody := nackBytes(ctx.Context, err)
 	if serr := h.ackSigner.signBodyAndSetHeader(ctx, nackBody); serr != nil {
 		log.Warnf(ctx, "signNackResponse: failed to sign NACK — sending unsigned: %v", serr)
 	}
@@ -260,8 +259,8 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 	messageID := extractMessageID(body)
 	inboundAuthSignature := extractAuthSignature(r.Header.Get(model.AuthHeaderSubscriber))
 	// Store both protocol version and message ID in the Go context so downstream
-	// functions that only receive a context.Context (e.g. response.SendNack,
-	// response.SendAck) can read them without needing StepContext.
+	// functions that only receive a context.Context (e.g. sendNack,
+	// sendAck) can read them without needing StepContext.
 	ctx := context.WithValue(r.Context(), model.ContextKeyProtocolVersion, protocolVersion)
 	ctx = context.WithValue(ctx, model.ContextKeyMsgID, messageID)
 	return &model.StepContext{
@@ -306,14 +305,14 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 			err := fmt.Errorf("publisher plugin not configured")
 			log.Errorf(ctx.Context, err, "Invalid configuration:%v", err)
 			signNack(ctx, err)
-			response.SendNack(ctx, w, err)
+			sendNack(ctx, w, err)
 			return
 		}
 		log.Infof(ctx.Context, "Publishing message to: %s", ctx.Route.PublisherID)
 		if err := pb.Publish(ctx, ctx.Route.PublisherID, ctx.Body); err != nil {
 			log.Errorf(ctx.Context, err, "Failed to publish message")
 			signNack(ctx, err)
-			response.SendNack(ctx, w, err)
+			sendNack(ctx, w, err)
 			return
 		}
 		// Publisher path: ONIX writes the ACK. Run response steps with resp=nil.
@@ -321,7 +320,7 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 			if err := step.RunOnResponse(ctx, nil); err != nil {
 				log.Errorf(ctx.Context, err, "response step failed: %v", err)
 				signNack(ctx, err)
-				response.SendNack(ctx, w, err)
+				sendNack(ctx, w, err)
 				return
 			}
 		}
@@ -329,10 +328,10 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 		err := fmt.Errorf("unknown route type: %s", ctx.Route.TargetType)
 		log.Errorf(ctx.Context, err, "Invalid configuration:%v", err)
 		signNack(ctx, err)
-		response.SendNack(ctx, w, err)
+		sendNack(ctx, w, err)
 		return
 	}
-	response.SendAck(ctx, w)
+	sendAck(ctx, w)
 }
 
 func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpClient *http.Client, responseSteps []definition.ResponseStep) {

@@ -80,7 +80,7 @@ func (a *ackSignerStep) signBodyAndSetHeader(ctx *model.StepContext, body []byte
 // This step signs ALL upstream responses including any status code — per
 // NFH-007 CON-004-02 every synchronous response MUST carry a Signature header.
 // ONIX-generated pipeline NACKs are signed separately via stdHandler.signNackResponse
-// (called before response.SendNack) because the pipelineErr guard prevents
+// (called before sendNack) because the pipelineErr guard prevents
 // response steps from running on pipeline failures.
 func (a *ackSignerStep) RunOnResponse(ctx *model.StepContext, resp *http.Response) error {
 	if !model.IsAtLeastV2(ctx.ProtocolVersion) {
@@ -127,7 +127,7 @@ func (a *ackSignerStep) RunOnResponse(ctx *model.StepContext, resp *http.Respons
 }
 
 // buildAckBody constructs the deterministic JSON ACK body for the given protocol
-// version and messageID — mirroring the v2 branch of response.SendAck.
+// version and messageID — mirroring the v2 branch of sendAck.
 func buildAckBody(protocolVersion, messageID string) ([]byte, error) {
 	resp := &model.Response{
 		Message: model.Message{

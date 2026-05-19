@@ -1,4 +1,4 @@
-package response
+package handler
 
 import (
 	"bytes"
@@ -14,7 +14,6 @@ import (
 
 type errorResponseWriter struct{}
 
-// TODO: Optimize the cases by removing these
 func (e *errorResponseWriter) Write([]byte) (int, error) {
 	return 0, errors.New("write error")
 }
@@ -74,7 +73,7 @@ func TestSendAck(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rr := httptest.NewRecorder()
-			SendAck(tt.ctx, rr)
+			sendAck(tt.ctx, rr)
 
 			if rr.Code != http.StatusOK {
 				t.Errorf("wanted status code %d, got %d", http.StatusOK, rr.Code)
@@ -163,11 +162,11 @@ func TestSendNack(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := http.NewRequest("GET", "/", nil)
 			if err != nil {
-				t.Fatal(err) // For tests
+				t.Fatal(err)
 			}
 			rr := httptest.NewRecorder()
 
-			SendNack(ctx, rr, tt.err)
+			sendNack(ctx, rr, tt.err)
 
 			if rr.Code != tt.status {
 				t.Errorf("wanted status code %d, got %d", tt.status, rr.Code)
@@ -186,8 +185,7 @@ func TestSendNack(t *testing.T) {
 			}
 
 			if !compareJSON(expected, actual) {
-				t.Errorf("err.Error() = %s, want %s",
-					actual, expected)
+				t.Errorf("err.Error() = %s, want %s", actual, expected)
 			}
 		})
 	}
@@ -195,7 +193,7 @@ func TestSendNack(t *testing.T) {
 	for _, tt := range v2Tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rr := httptest.NewRecorder()
-			SendNack(v2Context, rr, tt.err)
+			sendNack(v2Context, rr, tt.err)
 
 			if rr.Code != tt.status {
 				t.Errorf("wanted status code %d, got %d", tt.status, rr.Code)
@@ -224,7 +222,7 @@ func compareJSON(expected, actual map[string]interface{}) bool {
 
 func TestSendAck_WriteError(t *testing.T) {
 	w := &errorResponseWriter{}
-	SendAck(context.Background(), w)
+	sendAck(context.Background(), w)
 }
 
 // Mock struct to force JSON marshalling error
@@ -264,7 +262,7 @@ func TestNack_1(t *testing.T) {
 		},
 		{
 			name:       "JSON Marshal Error",
-			err:        nil, // This will be overridden to cause marshaling error
+			err:        nil,
 			status:     http.StatusInternalServerError,
 			expected:   `Internal server error, MessageID: 12345`,
 			useBadJSON: true,
@@ -291,12 +289,11 @@ func TestNack_1(t *testing.T) {
 
 			var w http.ResponseWriter
 			if tt.useBadWrite {
-				w = &errorResponseWriter{} // Simulate write error
+				w = &errorResponseWriter{}
 			} else {
 				w = httptest.NewRecorder()
 			}
 
-			// TODO: Fix this approach , should not be used like this.
 			if tt.useBadJSON {
 				data, _ := json.Marshal(&badMessage{})
 				w.Header().Set("Content-Type", "application/json")
@@ -322,8 +319,7 @@ func TestNack_1(t *testing.T) {
 
 				body := recorder.Body.String()
 				if body != tt.expected {
-					t.Errorf("err.Error() = %s, want %s",
-						body, tt.expected)
+					t.Errorf("err.Error() = %s, want %s", body, tt.expected)
 				}
 			}
 		})
