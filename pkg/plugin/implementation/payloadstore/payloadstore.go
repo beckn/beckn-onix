@@ -376,13 +376,10 @@ func (s *store) GetByMessageID(ctx context.Context, messageID, action string) (*
 }
 
 // Exists returns true if a payload with the given message ID is present in the store.
-// Cache errors are treated as a miss (fail-open) because the cache plugin currently
-// leaks redis.Nil (key not found) as an error rather than returning ("", nil).
-// Once the cache plugin is fixed, this should propagate real errors. See: #717.
 func (s *store) Exists(ctx context.Context, messageID string) (bool, error) {
 	raw, err := s.cache.Get(ctx, msgKey(s.namespace, messageID))
-	if err != nil || raw == "" {
-		return false, nil
+	if err != nil {
+		return false, err
 	}
-	return true, nil
+	return raw != "", nil
 }
