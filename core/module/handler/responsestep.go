@@ -45,6 +45,11 @@ func newAckSignerStep(signer definition.Signer, km definition.KeyManager) (defin
 // resp is non-nil on the URL-routing path: the body comes from the upstream
 // app via ReverseProxy, so the digest covers the actual bytes the caller
 // receives. In both cases the Signature header value is identical in structure.
+//
+// This step signs ALL upstream responses including 409 AckNoCallback — a valid
+// Beckn protocol response where the BPP acknowledges receipt but will not send
+// a callback. ONIX-generated NACKs (pipeline step failures) never reach this
+// step because ServeHTTP's pipelineErr guard skips response steps on failure.
 func (a *ackSignerStep) RunOnResponse(ctx *model.StepContext, resp *http.Response) error {
 	if !model.IsAtLeastV2(ctx.ProtocolVersion) {
 		return nil
@@ -179,6 +184,20 @@ func (v *validateAckSignatureStep) RunOnResponse(ctx *model.StepContext, resp *h
 		return nil
 	}
 	if !model.IsAtLeastV2(ctx.ProtocolVersion) {
+		return nil
+	}
+	// Skip signature validation for error responses other than 409 AckNoCallback.
+	//
+	// Two cases reach this point:
+	//  (a) ONIX-generated NACK — the peer's pipeline step failed (e.g. sign
+	//      validation → 401, schema → 400). These bypass the peer's ackSignerStep
+	//      entirely (ServeHTTP's pipelineErr guard) so there is no Signature header.
+	//  (b) Upstream-app error — the BPP app returned 4xx/5xx; ackSignerStep did
+	//      sign it, but the error status means the chain has already broken.
+	//
+	// 409 AckNoCallback is the exception: it is a valid Beckn protocol response
+	// (BPP received the request but will not callback) and must carry a Signature.
+	if resp.StatusCode >= 400 && resp.StatusCode != http.StatusConflict {
 		return nil
 	}
 
