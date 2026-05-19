@@ -183,6 +183,24 @@ func TestSendNack(t *testing.T) {
 			status:   http.StatusUnauthorized,
 			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"Unauthorized","message":"Signature Validation Error: signature expired"}}}`,
 		},
+		{
+			name: "v2 AckNoCallbackErr ACK status",
+			err: model.NewAckNoCallbackErr(model.StatusACK, &model.Error{
+				Code:    "40901",
+				Message: "no matching catalog",
+			}),
+			status:   http.StatusConflict,
+			expected: `{"message":{"status":"ACK","messageId":"msg-v2-1","error":{"code":"40901","message":"no matching catalog"}}}`,
+		},
+		{
+			name: "v2 AckNoCallbackErr NACK status",
+			err: model.NewAckNoCallbackErr(model.StatusNACK, &model.Error{
+				Code:    "40902",
+				Message: "provider closed",
+			}),
+			status:   http.StatusConflict,
+			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"40902","message":"provider closed"}}}`,
+		},
 	}
 
 	v2Context := v2Ctx("msg-v2-1")
@@ -240,6 +258,24 @@ func TestSendNack(t *testing.T) {
 				t.Errorf("body = %s, want %s", rr.Body.String(), tt.expected)
 			}
 		})
+	}
+}
+
+// TestSendNack_AckNoCallback_PreV2_FallsThrough verifies that AckNoCallbackErr on a
+// pre-v2 request is mapped to 500 Internal Server Error, not 409.
+func TestSendNack_AckNoCallback_PreV2_FallsThrough(t *testing.T) {
+	ctx := context.WithValue(context.Background(), model.ContextKeyMsgID, "pre-v2-msg")
+	// No protocol version in context → pre-v2 path.
+
+	rr := httptest.NewRecorder()
+	err := model.NewAckNoCallbackErr(model.StatusACK, &model.Error{
+		Code:    "40901",
+		Message: "no matching catalog",
+	})
+	sendNack(ctx, rr, err)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("pre-v2 AckNoCallbackErr: want 500, got %d", rr.Code)
 	}
 }
 
@@ -317,7 +353,7 @@ func TestNack_1(t *testing.T) {
 				return
 			}
 
-			nack(ctx, w, tt.err, tt.status)
+			nack(ctx, w, tt.err, tt.status, model.StatusNACK)
 			if !tt.useBadWrite {
 				recorder, ok := w.(*httptest.ResponseRecorder)
 				if !ok {

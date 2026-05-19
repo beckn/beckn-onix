@@ -70,36 +70,45 @@ func sendAck(ctx context.Context, w http.ResponseWriter) {
 	}
 }
 
-// nackBecknError maps an error to its Beckn model.Error representation and HTTP
-// status code.
-func nackBecknError(ctx context.Context, err error) (*model.Error, int) {
+// nackBecknError maps an error to its Beckn model.Error representation, HTTP
+// status code, and body-level status string. The body status is StatusNACK for
+// all error types except AckNoCallbackErr on v2+ requests, where it reflects the
+// caller-supplied Status (ACK or NACK).
+func nackBecknError(ctx context.Context, err error) (*model.Error, int, model.Status) {
 	var schemaErr *model.SchemaValidationErr
 	var signErr *model.SignValidationErr
 	var badReqErr *model.BadReqErr
 	var notFoundErr *model.NotFoundErr
+	var ackNoCallbackErr *model.AckNoCallbackErr
 
 	switch {
 	case errors.As(err, &schemaErr):
-		return schemaErr.BecknError(), http.StatusBadRequest
+		return schemaErr.BecknError(), http.StatusBadRequest, model.StatusNACK
 	case errors.As(err, &signErr):
-		return signErr.BecknError(), http.StatusUnauthorized
+		return signErr.BecknError(), http.StatusUnauthorized, model.StatusNACK
 	case errors.As(err, &badReqErr):
-		return badReqErr.BecknError(), http.StatusBadRequest
+		return badReqErr.BecknError(), http.StatusBadRequest, model.StatusNACK
 	case errors.As(err, &notFoundErr):
-		return notFoundErr.BecknError(), http.StatusNotFound
+		return notFoundErr.BecknError(), http.StatusNotFound, model.StatusNACK
+	case errors.As(err, &ackNoCallbackErr):
+		if !isAtLeastV2(ctx) {
+			return internalServerError(ctx), http.StatusInternalServerError, model.StatusNACK
+		}
+		return ackNoCallbackErr.BecknError(), http.StatusConflict, ackNoCallbackErr.Status
 	default:
-		return internalServerError(ctx), http.StatusInternalServerError
+		return internalServerError(ctx), http.StatusInternalServerError, model.StatusNACK
 	}
 }
 
-// nackBodyBytes returns the serialised NACK response body for the given Beckn
-// error. The output is identical to the bytes that nack() writes to the wire.
-func nackBodyBytes(ctx context.Context, becknErr *model.Error) []byte {
+// nackBodyBytes returns the serialised response body for the given Beckn error
+// and body-level status. The output is identical to the bytes that nack() writes
+// to the wire.
+func nackBodyBytes(ctx context.Context, becknErr *model.Error, bodyStatus model.Status) []byte {
 	var data []byte
 	if isAtLeastV2(ctx) {
 		resp := &model.Response{
 			Message: model.Message{
-				Status:    model.StatusNACK,
+				Status:    bodyStatus,
 				MessageID: msgID(ctx),
 				Error:     becknErr,
 			},
@@ -108,7 +117,7 @@ func nackBodyBytes(ctx context.Context, becknErr *model.Error) []byte {
 	} else {
 		resp := &preV2Response{
 			Message: preV2Message{
-				Ack:   preV2Ack{Status: model.StatusNACK},
+				Ack:   preV2Ack{Status: bodyStatus},
 				Error: becknErr,
 			},
 		}
@@ -117,36 +126,36 @@ func nackBodyBytes(ctx context.Context, becknErr *model.Error) []byte {
 	return data
 }
 
-// nackBytes returns the NACK response body that sendNack would write for the
-// given error, without actually writing it. Use this to sign the body before
-// it is flushed to the wire (see stdHandler.signNackResponse).
+// nackBytes returns the response body that sendNack would write for the given
+// error, without actually writing it. Use this to sign the body before it is
+// flushed to the wire (see stdHandler.signNackResponse).
 func nackBytes(ctx context.Context, err error) []byte {
-	becknErr, _ := nackBecknError(ctx, err)
-	return nackBodyBytes(ctx, becknErr)
+	becknErr, _, bodyStatus := nackBecknError(ctx, err)
+	return nackBodyBytes(ctx, becknErr, bodyStatus)
 }
 
-// nack sends a NACK response with an error payload.
+// nack writes an error response body with the given HTTP status code.
 // For context.version "2.0.0":
 //
-//	{"message":{"status":"NACK","messageId":"<uuid>","error":{...}}}
+//	{"message":{"status":"<bodyStatus>","messageId":"<uuid>","error":{...}}}
 //
 // All other versions:
 //
-//	{"message":{"ack":{"status":"NACK"},"error":{...}}}
-func nack(ctx context.Context, w http.ResponseWriter, becknErr *model.Error, status int) {
-	data := nackBodyBytes(ctx, becknErr)
+//	{"message":{"ack":{"status":"<bodyStatus>"},"error":{...}}}
+func nack(ctx context.Context, w http.ResponseWriter, becknErr *model.Error, httpStatus int, bodyStatus model.Status) {
+	data := nackBodyBytes(ctx, becknErr, bodyStatus)
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
+	w.WriteHeader(httpStatus)
 	if _, er := w.Write(data); er != nil {
 		log.Debugf(ctx, "Error writing response: %v, MessageID: %s", er, ctx.Value(model.ContextKeyMsgID))
 		http.Error(w, fmt.Sprintf("Internal server error, MessageID: %s", ctx.Value(model.ContextKeyMsgID)), http.StatusInternalServerError)
 	}
 }
 
-// sendNack maps err to its Beckn error type and sends an appropriate NACK response.
+// sendNack maps err to its Beckn error type and sends the appropriate response.
 func sendNack(ctx context.Context, w http.ResponseWriter, err error) {
-	becknErr, status := nackBecknError(ctx, err)
-	nack(ctx, w, becknErr, status)
+	becknErr, httpStatus, bodyStatus := nackBecknError(ctx, err)
+	nack(ctx, w, becknErr, httpStatus, bodyStatus)
 }
 
 // isAtLeastV2 reports whether the request uses Beckn protocol v2.0.0 or later.
