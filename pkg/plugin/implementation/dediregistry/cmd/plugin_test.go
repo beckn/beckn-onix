@@ -51,24 +51,24 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 		{
 			name: "invalid timeout",
 			config: map[string]string{
-				"url":          "https://test.com/dedi",
-		"timeout":      "abc",
+				"url":     "https://test.com/dedi",
+				"timeout": "abc",
 			},
 			expectedErr: "invalid timeout value 'abc'",
 		},
 		{
 			name: "invalid retry_max",
 			config: map[string]string{
-				"url":          "https://test.com/dedi",
-		"retry_max":    "abc",
+				"url":       "https://test.com/dedi",
+				"retry_max": "abc",
 			},
 			expectedErr: "invalid retry_max value 'abc'",
 		},
 		{
 			name: "negative retry_max",
 			config: map[string]string{
-				"url":          "https://test.com/dedi",
-		"retry_max":    "-1",
+				"url":       "https://test.com/dedi",
+				"retry_max": "-1",
 			},
 			expectedErr: "retry_max must be non-negative",
 		},
@@ -76,7 +76,7 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 			name: "invalid retry_wait_min",
 			config: map[string]string{
 				"url":            "https://test.com/dedi",
-		"retry_wait_min": "notaduration",
+				"retry_wait_min": "notaduration",
 			},
 			expectedErr: "invalid retry_wait_min value 'notaduration'",
 		},
@@ -84,7 +84,7 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 			name: "negative retry_wait_min",
 			config: map[string]string{
 				"url":            "https://test.com/dedi",
-		"retry_wait_min": "-100ms",
+				"retry_wait_min": "-100ms",
 			},
 			expectedErr: "retry_wait_min must be non-negative",
 		},
@@ -92,7 +92,7 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 			name: "invalid retry_wait_max",
 			config: map[string]string{
 				"url":            "https://test.com/dedi",
-		"retry_wait_max": "notaduration",
+				"retry_wait_max": "notaduration",
 			},
 			expectedErr: "invalid retry_wait_max value 'notaduration'",
 		},
@@ -100,23 +100,23 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 			name: "negative retry_wait_max",
 			config: map[string]string{
 				"url":            "https://test.com/dedi",
-		"retry_wait_max": "-2s",
+				"retry_wait_max": "-2s",
 			},
 			expectedErr: "retry_wait_max must be non-negative",
 		},
 		{
 			name: "zero timeout",
 			config: map[string]string{
-				"url":          "https://test.com/dedi",
-		"timeout":      "0",
+				"url":     "https://test.com/dedi",
+				"timeout": "0",
 			},
 			expectedErr: "timeout must be positive",
 		},
 		{
 			name: "negative timeout",
 			config: map[string]string{
-				"url":          "https://test.com/dedi",
-		"timeout":      "-5",
+				"url":     "https://test.com/dedi",
+				"timeout": "-5",
 			},
 			expectedErr: "timeout must be positive",
 		},
@@ -124,7 +124,7 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 			name: "retry_wait_min exceeds retry_wait_max",
 			config: map[string]string{
 				"url":            "https://test.com/dedi",
-		"retry_wait_min": "5s",
+				"retry_wait_min": "5s",
 				"retry_wait_max": "1s",
 			},
 			expectedErr: "retry_wait_min (5s) must not exceed retry_wait_max (1s)",
@@ -310,7 +310,7 @@ func TestResolveAllowedNetworkIDs_DeprecatedAllowedParentNamespacesErrorsWithout
 func TestResolveAllowedNetworkIDs_AllowedNetworkIDsTakesPrecedence(t *testing.T) {
 	config := map[string]string{
 		"url":                     "https://test.com/dedi",
-"allowedParentNamespaces": "deprecated-network.org/legacy",
+		"allowedParentNamespaces": "deprecated-network.org/legacy",
 		"allowedNetworkIDs":       "commerce-network.org/prod, local-commerce.org/production",
 	}
 
@@ -339,7 +339,7 @@ func TestDediRegistryProvider_New_DeprecatedAllowedParentNamespacesErrorsWithout
 
 	config := map[string]string{
 		"url":                     "https://test.com/dedi",
-"allowedParentNamespaces": "commerce-network.org",
+		"allowedParentNamespaces": "commerce-network.org",
 	}
 
 	_, _, err := provider.New(ctx, config)
