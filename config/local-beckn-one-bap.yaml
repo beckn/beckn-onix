@@ -92,6 +92,8 @@ modules:
             extendedSchema_allowedDomains: "beckn.org,example.com,raw.githubusercontent.com"
         signValidator:
           id: signvalidator
+        signer:
+          id: signer
         router:
           id: router
           config:
@@ -112,6 +114,7 @@ modules:
         - addRoute
         - validateSchema
         - storePayload
+        - signAck
   
   - name: bapTxnCaller
     path: /bap/caller/
@@ -188,4 +191,5 @@ modules:
         - sign
         - validateSchema
         - storePayload
+        - validateAckSign
   

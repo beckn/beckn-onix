@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -66,7 +68,30 @@ const (
 
 	// ContextKeyRemoteID is the context key for the caller who is calling the bap/bpp
 	ContextKeyRemoteID ContextKey = "remote_id"
+
+	// ContextKeyProtocolVersion is the context key for the Beckn protocol version
+	// extracted from context.version in the inbound request body.
+	ContextKeyProtocolVersion ContextKey = "protocol_version"
 )
+
+// ProtocolVersionV2 is the Beckn protocol version string for the v2.0.0 release.
+// Steps and response functions gate v2+ behaviour on this value.
+const ProtocolVersionV2 = "2.0.0"
+
+// IsAtLeastV2 reports whether the given protocol version string is 2.0.0 or later.
+// The check is intentionally major-version based: any version with major >= 2
+// (e.g. "2.1.0", "3.0.0") is treated as v2-compatible, while legacy
+// 1.x versions and empty/unknown strings return false.
+func IsAtLeastV2(version string) bool {
+	if version == "" {
+		return false
+	}
+	major, err := strconv.Atoi(strings.SplitN(version, ".", 2)[0])
+	if err != nil {
+		return false
+	}
+	return major >= 2
+}
 
 var contextKeys = map[string]ContextKey{
 	// snake_case keys (legacy beckn spec)
@@ -166,12 +191,15 @@ type Keyset struct {
 // StepContext holds context information for a request processing step.
 type StepContext struct {
 	context.Context
-	Request    *http.Request
-	Body       []byte
-	Route      *Route
-	SubID      string
-	Role       Role
-	RespHeader http.Header
+	Request         *http.Request
+	Body            []byte
+	Route           *Route
+	SubID           string
+	Role            Role
+	RespHeader      http.Header
+	ProtocolVersion      string // Protocol version parsed from context.version (e.g. "2.0.0")
+	MessageID            string // Message ID parsed from context.messageId in the request body
+	InboundAuthSignature string // Raw Base64 signature from the inbound Authorization header's signature="..." attribute
 }
 
 // WithContext updates the existing StepContext with a new context.
@@ -189,17 +217,15 @@ const (
 	StatusNACK Status = "NACK"
 )
 
-// Ack represents an acknowledgment response.
-type Ack struct {
+// Message represents the synchronous response message envelope (Beckn v2.0.0 LTS shape).
+// The status and messageId are direct fields; the legacy "ack" wrapper is gone.
+// For wire format: {"message":{"status":"ACK","messageId":"<uuid>"}}.
+type Message struct {
 	// Status holds the acknowledgment status (ACK/NACK).
 	Status Status `json:"status"`
-}
-
-// Message represents the structure of a response message.
-type Message struct {
-	// Ack contains the acknowledgment status.
-	Ack Ack `json:"ack"`
-	// Error holds error details, if any, in the response.
+	// MessageID echoes the context.messageId from the inbound request.
+	MessageID string `json:"messageId,omitempty"`
+	// Error holds error details when Status is NACK.
 	Error *Error `json:"error,omitempty"`
 }
 
