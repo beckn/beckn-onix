@@ -19,12 +19,17 @@ import (
 
 // signStep represents the signing step in the processing pipeline.
 type signStep struct {
-	signer definition.Signer
-	km     definition.KeyManager
+	signer       definition.Signer
+	km           definition.KeyManager
+	payloadStore definition.PayloadStore // may be nil; enables request-signature on solicited callbacks
 }
 
 // newSignStep initializes and returns a new signing step.
-func newSignStep(signer definition.Signer, km definition.KeyManager) (definition.Step, error) {
+// payloadStore may be nil; when non-nil and the outgoing action is a callback
+// (prefixed with "on_"), signStep looks up the originating request's signature
+// in the store and includes it as request-signature="..." in the Authorization
+// header, enabling the peer to verify the solicited-callback chain (NFH-004 §6).
+func newSignStep(signer definition.Signer, km definition.KeyManager, payloadStore definition.PayloadStore) (definition.Step, error) {
 	if signer == nil {
 		return nil, fmt.Errorf("invalid config: Signer plugin not configured")
 	}
@@ -32,7 +37,7 @@ func newSignStep(signer definition.Signer, km definition.KeyManager) (definition
 		return nil, fmt.Errorf("invalid config: KeyManager plugin not configured")
 	}
 
-	return &signStep{signer: signer, km: km}, nil
+	return &signStep{signer: signer, km: km, payloadStore: payloadStore}, nil
 }
 
 // Run executes the signing step.
@@ -63,8 +68,14 @@ func (s *signStep) Run(ctx *model.StepContext) error {
 		if err != nil {
 			return fmt.Errorf("failed to sign request: %w", err)
 		}
-		authHeader := s.generateAuthHeader(ctx.SubID, keySet.UniqueKeyID, createdAt, validTill, sign)
-		log.Debugf(ctx, "Signature generated: %v", sign)
+
+		// For solicited callbacks (action starts with "on_") look up the original
+		// request's signature in the store and include it as request-signature="..."
+		// so the receiving peer can verify the chain (NFH-004 §6).
+		requestSig := s.lookupRequestSignature(ctx)
+
+		authHeader := s.generateAuthHeader(ctx.SubID, keySet.UniqueKeyID, createdAt, validTill, sign, requestSig)
+		log.Debugf(ctx, "Signature generated: %v (request-signature included: %v)", sign, requestSig != "")
 		header := model.AuthHeaderSubscriber
 		if ctx.Role == model.RoleGateway {
 			header = model.AuthHeaderGateway
@@ -75,13 +86,47 @@ func (s *signStep) Run(ctx *model.StepContext) error {
 	return nil
 }
 
+// lookupRequestSignature returns the stored outbound signature for solicited
+// callbacks. For a callback action like "on_search" it strips the "on_" prefix
+// and looks up the PayloadStore by (messageID, "search").
+// Returns empty string when: payloadStore is nil, action is not a callback,
+// no entry found, or the store returns an error (non-fatal — we degrade to
+// omitting request-signature rather than failing the sign step).
+func (s *signStep) lookupRequestSignature(ctx *model.StepContext) string {
+	if s.payloadStore == nil {
+		return ""
+	}
+	action := extractBecknAction(ctx.Body)
+	if !strings.HasPrefix(action, "on_") {
+		return ""
+	}
+	bareAction := strings.TrimPrefix(action, "on_")
+	entry, err := s.payloadStore.GetByMessageID(ctx, ctx.MessageID, bareAction)
+	if err != nil {
+		log.Warnf(ctx, "signStep: PayloadStore lookup failed for message_id=%s action=%s: %v", ctx.MessageID, bareAction, err)
+		return ""
+	}
+	if entry == nil {
+		return ""
+	}
+	return entry.Signature
+}
+
 // generateAuthHeader constructs the authorization header for the signed request.
-// It includes key ID, algorithm, creation time, expiration time, required headers, and signature.
-func (s *signStep) generateAuthHeader(subID, keyID string, createdAt, validTill int64, signature string) string {
-	return fmt.Sprintf(
-		"Signature keyId=\"%s|%s|ed25519\",algorithm=\"ed25519\",created=\"%d\",expires=\"%d\",headers=\"(created) (expires) digest\",signature=\"%s\"",
-		subID, keyID, createdAt, validTill, signature,
+// When requestSig is non-empty (solicited callback path) it appends the
+// request-signature field and extends the headers coverage string accordingly.
+func (s *signStep) generateAuthHeader(subID, keyID string, createdAt, validTill int64, signature, requestSig string) string {
+	base := fmt.Sprintf(
+		"Signature keyId=\"%s|%s|ed25519\",algorithm=\"ed25519\",created=\"%d\",expires=\"%d\"",
+		subID, keyID, createdAt, validTill,
 	)
+	if requestSig != "" {
+		return base + fmt.Sprintf(
+			",headers=\"(created) (expires) digest request-signature\",signature=\"%s\",request-signature=\"%s\"",
+			signature, requestSig,
+		)
+	}
+	return base + fmt.Sprintf(",headers=\"(created) (expires) digest\",signature=\"%s\"", signature)
 }
 
 // validateSignStep represents the signature validation step.

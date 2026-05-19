@@ -339,3 +339,113 @@ func TestValidateSignStep_InitSteps_WithPayloadStore(t *testing.T) {
 		t.Errorf("expected 1 step, got %d", len(h.steps))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// signStep — constructor and generateAuthHeader tests
+// ---------------------------------------------------------------------------
+
+func TestNewSignStep_NilSigner_ReturnsError(t *testing.T) {
+	km := &mockKMBasic{}
+	if _, err := newSignStep(nil, km, nil); err == nil {
+		t.Fatal("expected error for nil Signer")
+	}
+}
+
+func TestNewSignStep_NilKM_ReturnsError(t *testing.T) {
+	if _, err := newSignStep(&mockSigner{}, nil, nil); err == nil {
+		t.Fatal("expected error for nil KeyManager")
+	}
+}
+
+func TestNewSignStep_NilPayloadStore_OK(t *testing.T) {
+	step, err := newSignStep(&mockSigner{returnSig: "sig=="}, &mockKMBasic{}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if step == nil {
+		t.Fatal("expected non-nil step")
+	}
+}
+
+func TestGenerateAuthHeader_WithoutRequestSig(t *testing.T) {
+	s := &signStep{}
+	h := s.generateAuthHeader("sub.example.com", "key-1", 1700000000, 1700003600, "mySig==", "")
+	if !strings.Contains(h, `headers="(created) (expires) digest"`) {
+		t.Errorf("expected standard headers field, got: %s", h)
+	}
+	if strings.Contains(h, "request-signature") {
+		t.Errorf("unexpected request-signature in header: %s", h)
+	}
+	if !strings.Contains(h, `signature="mySig=="`) {
+		t.Errorf("missing signature value, got: %s", h)
+	}
+}
+
+func TestGenerateAuthHeader_WithRequestSig(t *testing.T) {
+	s := &signStep{}
+	h := s.generateAuthHeader("sub.example.com", "key-1", 1700000000, 1700003600, "mySig==", "originalSig==")
+	if !strings.Contains(h, `headers="(created) (expires) digest request-signature"`) {
+		t.Errorf("expected extended headers field, got: %s", h)
+	}
+	if !strings.Contains(h, `request-signature="originalSig=="`) {
+		t.Errorf("missing request-signature value, got: %s", h)
+	}
+	if !strings.Contains(h, `signature="mySig=="`) {
+		t.Errorf("missing signature value, got: %s", h)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// signStep.lookupRequestSignature tests
+// ---------------------------------------------------------------------------
+
+const onSearchCallbackBody = `{"context":{"action":"on_search","messageId":"msg-sign-001","version":"2.0.0"}}`
+const searchCallerBody = `{"context":{"action":"search","messageId":"msg-sign-001","version":"2.0.0"}}`
+
+func TestLookupRequestSignature_NilStore_ReturnsEmpty(t *testing.T) {
+	s := &signStep{}
+	ctx := makeReceiverStepCtx("2.0.0", "msg-sign-001", "bpp.example.com", "", onSearchCallbackBody)
+	if got := s.lookupRequestSignature(ctx); got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+func TestLookupRequestSignature_NonCallbackAction_ReturnsEmpty(t *testing.T) {
+	store := newMockPayloadStore()
+	store.storeEntry("msg-sign-001", "search", "callerSig==")
+	s := &signStep{payloadStore: store}
+	ctx := makeReceiverStepCtx("2.0.0", "msg-sign-001", "bpp.example.com", "", searchCallerBody)
+	if got := s.lookupRequestSignature(ctx); got != "" {
+		t.Errorf("expected empty for non-callback action, got %q", got)
+	}
+}
+
+func TestLookupRequestSignature_EntryFound_ReturnsSig(t *testing.T) {
+	store := newMockPayloadStore()
+	store.storeEntry("msg-sign-001", "search", "callerSig==")
+	s := &signStep{payloadStore: store}
+	ctx := makeReceiverStepCtx("2.0.0", "msg-sign-001", "bpp.example.com", "", onSearchCallbackBody)
+	if got := s.lookupRequestSignature(ctx); got != "callerSig==" {
+		t.Errorf("expected %q, got %q", "callerSig==", got)
+	}
+}
+
+func TestLookupRequestSignature_NoEntry_ReturnsEmpty(t *testing.T) {
+	store := newMockPayloadStore() // empty
+	s := &signStep{payloadStore: store}
+	ctx := makeReceiverStepCtx("2.0.0", "msg-sign-001", "bpp.example.com", "", onSearchCallbackBody)
+	if got := s.lookupRequestSignature(ctx); got != "" {
+		t.Errorf("expected empty when no entry, got %q", got)
+	}
+}
+
+func TestLookupRequestSignature_StoreError_ReturnsEmpty(t *testing.T) {
+	store := newMockPayloadStore()
+	store.getErr = errors.New("redis down")
+	s := &signStep{payloadStore: store}
+	ctx := makeReceiverStepCtx("2.0.0", "msg-sign-001", "bpp.example.com", "", onSearchCallbackBody)
+	// Store error is non-fatal — should degrade to empty request-signature.
+	if got := s.lookupRequestSignature(ctx); got != "" {
+		t.Errorf("expected empty on store error, got %q", got)
+	}
+}

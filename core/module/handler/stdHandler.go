@@ -502,7 +502,7 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			h.responseSteps = append(h.responseSteps, rs)
 			continue
 		case "sign":
-			s, err = newSignStep(h.signer, h.km)
+			s, err = newSignStep(h.signer, h.km, h.payloadStore)
 		case "validateSign":
 			s, err = newValidateSignStep(h.signValidator, h.km, h.payloadStore)
 		case "validateSchema":
