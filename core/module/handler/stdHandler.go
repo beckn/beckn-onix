@@ -16,7 +16,6 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn-one/beckn-onix/pkg/response"
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
@@ -31,6 +30,7 @@ import (
 type stdHandler struct {
 	signer           definition.Signer
 	steps            []definition.Step
+	responseSteps    []definition.ResponseStep
 	signValidator    definition.SignValidator
 	cache            definition.Cache
 	registry         definition.RegistryLookup
@@ -42,10 +42,14 @@ type stdHandler struct {
 	publisher        definition.Publisher
 	transportWrapper definition.TransportWrapper
 	payloadStore     definition.PayloadStore
-	SubscriberID     string
-	role             model.Role
-	httpClient       *http.Client
-	moduleName       string
+	// ackSigner is non-nil only when the "signAck" step is configured (Receiver
+	// modules). It is also used to sign pipeline-NACK responses so that ALL
+	// synchronous responses carry a Signature header per NFH-007 CON-004-02.
+	ackSigner    *ackSignerStep
+	SubscriberID string
+	role         model.Role
+	httpClient   *http.Client
+	moduleName   string
 }
 
 // newHTTPClient creates a new HTTP client with a custom transport configuration.
@@ -79,10 +83,11 @@ func newHTTPClient(cfg *HttpClientConfig, wrapper definition.TransportWrapper) *
 // NewStdHandler initializes a new processor with plugins and steps.
 func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleName string) (http.Handler, error) {
 	h := &stdHandler{
-		steps:        []definition.Step{},
-		SubscriberID: cfg.SubscriberID,
-		role:         cfg.Role,
-		moduleName:   moduleName,
+		steps:         []definition.Step{},
+		responseSteps: []definition.ResponseStep{},
+		SubscriberID:  cfg.SubscriberID,
+		role:          cfg.Role,
+		moduleName:    moduleName,
 	}
 	// Initialize plugins.
 	if err := h.initPlugins(ctx, mgr, &cfg.Plugins); err != nil {
@@ -157,7 +162,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	stepCtx, err := h.stepCtx(r, w.Header())
 	if err != nil {
 		log.Errorf(r.Context(), err, "stepCtx(r):%v", err)
-		response.SendNack(r.Context(), wrapped, err)
+		sendNack(r.Context(), wrapped, err)
 		return
 	}
 	log.Request(r.Context(), r, stepCtx.Body)
@@ -178,7 +183,9 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, step := range h.steps {
 		if pipelineErr = step.Run(stepCtx); pipelineErr != nil {
 			log.Errorf(stepCtx, pipelineErr, "%T.run():%v", step, pipelineErr)
-			response.SendNack(stepCtx, wrapped, pipelineErr)
+			// Sign the NACK before writing HTTP headers (NFH-007 CON-004-02).
+			h.signNackResponse(stepCtx, pipelineErr)
+			sendNack(stepCtx, wrapped, pipelineErr)
 			break
 		}
 	}
@@ -188,11 +195,47 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Restore request body before forwarding or publishing.
 		r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
 		if stepCtx.Route == nil {
-			response.SendAck(wrapped)
-		} else {
-			// Handle routing based on the defined route type.
-			route(stepCtx, r, wrapped, h.publisher, h.httpClient)
+			// No routing — ONIX writes the ACK directly. Run response steps here
+			// with resp=nil (publisher path semantics).
+			for _, step := range h.responseSteps {
+				if err = step.RunOnResponse(stepCtx, nil); err != nil {
+					log.Errorf(stepCtx, err, "%T.RunOnResponse():%v", step, err)
+					// ackSignerStep itself failed — sign the NACK body if
+					// a different signing mechanism is available, or send unsigned.
+					h.signNackResponse(stepCtx, err)
+					sendNack(stepCtx, wrapped, err)
+					return
+				}
+			}
+			sendAck(stepCtx, wrapped)
+			return
 		}
+		// Handle routing based on the defined route type.
+		route(stepCtx, r, wrapped, h.publisher, h.httpClient, h.responseSteps, h.signNackResponse)
+	}
+}
+
+// signNackResponse signs the NACK response body and sets the Signature header
+// on ctx.RespHeader before sendNack writes the HTTP headers to the
+// wire. This satisfies NFH-007 CON-004-02 for ONIX-generated error responses.
+//
+// Signing is a best-effort operation: if it fails (e.g. key manager unavailable)
+// the NACK is sent unsigned with a warning log rather than blocking the error
+// path. The nil-ackSigner / pre-v2 / empty-subID fast paths are handled inside
+// ackSignerStep.signBodyAndSetHeader.
+func (h *stdHandler) signNackResponse(ctx *model.StepContext, err error) {
+	if h.ackSigner == nil {
+		return
+	}
+	if !model.IsAtLeastV2(ctx.ProtocolVersion) {
+		return
+	}
+	if len(ctx.SubID) == 0 {
+		return
+	}
+	nackBody := nackBytes(ctx.Context, err)
+	if serr := h.ackSigner.signBodyAndSetHeader(ctx, nackBody); serr != nil {
+		log.Warnf(ctx, "signNackResponse: failed to sign NACK — sending unsigned: %v", serr)
 	}
 }
 
@@ -203,14 +246,27 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 		return nil, model.NewBadReqErr(err)
 	}
 	r.Body.Close()
+	body := bodyBuffer.Bytes()
 	subID := h.subID(r.Context())
+	protocolVersion := extractProtocolVersion(body)
+	messageID := extractMessageID(body)
+	log.Debugf(r.Context(), "stepCtx: extracted protocolVersion=%q messageId=%q", protocolVersion, messageID)
+	inboundAuthSignature := extractAuthSignature(r.Header.Get(model.AuthHeaderSubscriber))
+	// Store both protocol version and message ID in the Go context so downstream
+	// functions that only receive a context.Context (e.g. sendNack,
+	// sendAck) can read them without needing StepContext.
+	ctx := context.WithValue(r.Context(), model.ContextKeyProtocolVersion, protocolVersion)
+	ctx = context.WithValue(ctx, model.ContextKeyMsgID, messageID)
 	return &model.StepContext{
-		Context:    r.Context(),
-		Request:    r,
-		Body:       bodyBuffer.Bytes(),
-		Role:       h.role,
-		SubID:      subID,
-		RespHeader: rh,
+		Context:              ctx,
+		Request:              r,
+		Body:                 body,
+		Role:                 h.role,
+		SubID:                subID,
+		RespHeader:           rh,
+		ProtocolVersion:      protocolVersion,
+		MessageID:            messageID,
+		InboundAuthSignature: inboundAuthSignature,
 	}, nil
 }
 
@@ -225,37 +281,54 @@ func (h *stdHandler) subID(ctx context.Context) string {
 
 var proxyFunc = proxy
 
+// nackSignerFunc is the function type used to sign NACK responses before they
+// are written to the wire. On Receiver modules h.signNackResponse is passed;
+// on Caller modules (no ackSigner) the function is a no-op.
+type nackSignerFunc func(ctx *model.StepContext, err error)
+
 // route handles request forwarding or message publishing based on the routing type.
-func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb definition.Publisher, httpClient *http.Client) {
+func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb definition.Publisher, httpClient *http.Client, responseSteps []definition.ResponseStep, signNack nackSignerFunc) {
 	log.Debugf(ctx, "Routing to ctx.Route to %#v", ctx.Route)
 	switch ctx.Route.TargetType {
 	case "url":
 		log.Infof(ctx.Context, "Forwarding request to URL: %s", ctx.Route.URL)
-		proxyFunc(ctx, r, w, httpClient)
+		proxyFunc(ctx, r, w, httpClient, responseSteps)
 		return
 	case "publisher":
 		if pb == nil {
 			err := fmt.Errorf("publisher plugin not configured")
 			log.Errorf(ctx.Context, err, "Invalid configuration:%v", err)
-			response.SendNack(ctx, w, err)
+			signNack(ctx, err)
+			sendNack(ctx, w, err)
 			return
 		}
 		log.Infof(ctx.Context, "Publishing message to: %s", ctx.Route.PublisherID)
 		if err := pb.Publish(ctx, ctx.Route.PublisherID, ctx.Body); err != nil {
 			log.Errorf(ctx.Context, err, "Failed to publish message")
-			http.Error(w, "Error publishing message", http.StatusInternalServerError)
-			response.SendNack(ctx, w, err)
+			signNack(ctx, err)
+			sendNack(ctx, w, err)
 			return
+		}
+		// Publisher path: ONIX writes the ACK. Run response steps with resp=nil.
+		for _, step := range responseSteps {
+			if err := step.RunOnResponse(ctx, nil); err != nil {
+				log.Errorf(ctx.Context, err, "response step failed: %v", err)
+				signNack(ctx, err)
+				sendNack(ctx, w, err)
+				return
+			}
 		}
 	default:
 		err := fmt.Errorf("unknown route type: %s", ctx.Route.TargetType)
 		log.Errorf(ctx.Context, err, "Invalid configuration:%v", err)
-		response.SendNack(ctx, w, err)
+		signNack(ctx, err)
+		sendNack(ctx, w, err)
 		return
 	}
-	response.SendAck(w)
+	sendAck(ctx, w)
 }
-func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpClient *http.Client) {
+
+func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpClient *http.Client, responseSteps []definition.ResponseStep) {
 	target := ctx.Route.URL
 	r.Header.Set("X-Forwarded-Host", r.Host)
 
@@ -266,12 +339,25 @@ func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpC
 		log.Request(req.Context(), req, ctx.Body)
 	}
 
-	proxy := &httputil.ReverseProxy{
-		Director:  director,
-		Transport: httpClient.Transport,
+	// modifyResponse is a thin dispatcher — zero business logic. It iterates
+	// response steps with the upstream *http.Response so each step can read
+	// the actual response body (e.g. for digest computation in ackSigner).
+	modifyResponse := func(resp *http.Response) error {
+		for _, step := range responseSteps {
+			if err := step.RunOnResponse(ctx, resp); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
-	proxy.ServeHTTP(w, r)
+	p := &httputil.ReverseProxy{
+		Director:       director,
+		Transport:      httpClient.Transport,
+		ModifyResponse: modifyResponse,
+	}
+
+	p.ServeHTTP(w, r)
 }
 
 // loadPlugin is a generic function to load and validate plugins.
@@ -432,10 +518,33 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 		var err error
 
 		switch step {
+		case "signAck":
+			// signAck is a ResponseStep — appended to responseSteps, not steps.
+			// Also stored as h.ackSigner so ServeHTTP can sign pipeline NACKs.
+			as, rsErr := newAckSignerStep(h.signer, h.km)
+			if rsErr != nil {
+				return rsErr
+			}
+			// newAckSignerStep returns definition.ResponseStep; assert to *ackSignerStep
+			// so signBodyAndSetHeader is accessible for NACK signing.
+			if concreteAS, ok := as.(*ackSignerStep); ok {
+				h.ackSigner = concreteAS
+			}
+			h.responseSteps = append(h.responseSteps, as)
+			continue
+		case "validateAckSign":
+			// validateAckSign is a ResponseStep — verifies the Signature header
+			// on the ACK received by a Caller handler (NFH-004 §3.4).
+			rs, rsErr := newValidateAckSignatureStep(h.signValidator, h.km)
+			if rsErr != nil {
+				return rsErr
+			}
+			h.responseSteps = append(h.responseSteps, rs)
+			continue
 		case "sign":
-			s, err = newSignStep(h.signer, h.km)
+			s, err = newSignStep(h.signer, h.km, h.payloadStore)
 		case "validateSign":
-			s, err = newValidateSignStep(h.signValidator, h.km)
+			s, err = newValidateSignStep(h.signValidator, h.km, h.payloadStore)
 		case "validateSchema":
 			s, err = newValidateSchemaStep(h.schemaValidator)
 		case "addRoute":

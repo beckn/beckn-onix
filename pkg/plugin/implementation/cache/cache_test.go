@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -48,16 +49,33 @@ func (m *MockRedisClient) Close() error {
 
 // TestCache_Get tests the Get method of the Cache type
 func TestCache_Get(t *testing.T) {
-	mockClient := new(MockRedisClient)
-	ctx := context.Background()
-	cache := &Cache{Client: mockClient}
-
-	mockClient.On("Get", mock.Anything, "my-key").Return("my-value", nil)
-
-	value, err := cache.Get(ctx, "my-key")
-	assert.NoError(t, err)
-	assert.Equal(t, "my-value", value)
-	mockClient.AssertExpectations(t)
+	tests := []struct {
+		name    string
+		mockVal string
+		mockErr error
+		wantVal string
+		wantErr bool
+	}{
+		{name: "hit", mockVal: "my-value", mockErr: nil, wantVal: "my-value", wantErr: false},
+		{name: "miss", mockVal: "", mockErr: redis.Nil, wantVal: "", wantErr: false},
+		{name: "error", mockVal: "", mockErr: errors.New("connection refused"), wantVal: "", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := new(MockRedisClient)
+			ctx := context.Background()
+			cache := &Cache{Client: mockClient}
+			mockClient.On("Get", mock.Anything, "my-key").Return(tt.mockVal, tt.mockErr)
+			value, err := cache.Get(ctx, "my-key")
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+			assert.Equal(t, tt.wantVal, value)
+			mockClient.AssertExpectations(t)
+		})
+	}
 }
 
 // TestCache_Set tests the Set method of the Cache type

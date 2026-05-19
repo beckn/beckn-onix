@@ -123,7 +123,7 @@ func (c *Cache) Get(ctx context.Context, key string) (string, error) {
 			telemetry.AttrOperation.String("get"),
 		}
 		switch {
-		case err == redis.Nil:
+		case errors.Is(err, redis.Nil):
 			c.metrics.CacheMissesTotal.Add(spanCtx, 1, metric.WithAttributes(attrs...))
 			c.metrics.CacheOperationsTotal.Add(spanCtx, 1,
 				metric.WithAttributes(append(attrs, telemetry.AttrStatus.String("miss"))...))
@@ -135,6 +135,9 @@ func (c *Cache) Get(ctx context.Context, key string) (string, error) {
 			c.metrics.CacheOperationsTotal.Add(spanCtx, 1,
 				metric.WithAttributes(append(attrs, telemetry.AttrStatus.String("hit"))...))
 		}
+	}
+	if errors.Is(err, redis.Nil) {
+		return "", nil
 	}
 	return result, err
 }
