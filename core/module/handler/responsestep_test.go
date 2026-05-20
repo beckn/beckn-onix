@@ -182,6 +182,24 @@ func TestSendNack(t *testing.T) {
 			status:   http.StatusUnauthorized,
 			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"Unauthorized","message":"Signature Validation Error: signature expired"}}}`,
 		},
+		{
+			name: "v2 AckNoCallbackErr ACK status",
+			err: model.NewAckNoCallbackErr(model.StatusACK, &model.Error{
+				Code:    "40901",
+				Message: "no matching catalog",
+			}),
+			status:   http.StatusConflict,
+			expected: `{"message":{"status":"ACK","messageId":"msg-v2-1","error":{"code":"40901","message":"no matching catalog"}}}`,
+		},
+		{
+			name: "v2 AckNoCallbackErr NACK status",
+			err: model.NewAckNoCallbackErr(model.StatusNACK, &model.Error{
+				Code:    "40902",
+				Message: "provider closed",
+			}),
+			status:   http.StatusConflict,
+			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"40902","message":"provider closed"}}}`,
+		},
 	}
 
 	v2Context := v2Ctx("msg-v2-1")
@@ -239,6 +257,87 @@ func TestSendNack(t *testing.T) {
 				t.Errorf("body = %s, want %s", rr.Body.String(), tt.expected)
 			}
 		})
+	}
+}
+
+// TestSendNack_AckNoCallback_PreV2_FallsThrough verifies that AckNoCallbackErr on a
+// pre-v2 request is mapped to 500 Internal Server Error with the pre-v2 body shape,
+// not a 409 with the v2 shape.
+func TestSendNack_AckNoCallback_PreV2_FallsThrough(t *testing.T) {
+	ctx := context.WithValue(context.Background(), model.ContextKeyMsgID, "pre-v2-msg")
+	// No protocol version in context → pre-v2 path.
+
+	rr := httptest.NewRecorder()
+	err := model.NewAckNoCallbackErr(model.StatusACK, &model.Error{
+		Code:    "40901",
+		Message: "no matching catalog",
+	})
+	sendNack(ctx, rr, err)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("pre-v2 AckNoCallbackErr: want status 500, got %d", rr.Code)
+	}
+	// Body must use the pre-v2 envelope with NACK status, not the 409 ACK shape.
+	var body map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to parse response body: %v", err)
+	}
+	msg, _ := body["message"].(map[string]interface{})
+	if msg == nil {
+		t.Fatal("response body missing 'message' field")
+	}
+	// Pre-v2 shape uses message.ack.status, not message.status.
+	if _, hasStatus := msg["status"]; hasStatus {
+		t.Error("pre-v2 body must not have message.status (v2 field)")
+	}
+	ack, _ := msg["ack"].(map[string]interface{})
+	if ack == nil {
+		t.Fatal("pre-v2 body missing message.ack")
+	}
+	if ack["status"] != "NACK" {
+		t.Errorf("pre-v2 body message.ack.status = %v, want NACK", ack["status"])
+	}
+}
+
+// TestNackBytes_AckNoCallback verifies that nackBytes (used by signNackResponse
+// before the 409 is written to the wire) produces the correct signed body for
+// AckNoCallbackErr — same bytes that sendNack will subsequently write.
+func TestNackBytes_AckNoCallback(t *testing.T) {
+	ctx := v2Ctx("sign-msg-1")
+
+	err := model.NewAckNoCallbackErr(model.StatusACK, &model.Error{
+		Code:    "40901",
+		Message: "no matching catalog",
+	})
+	body := nackBytes(ctx, err)
+
+	var parsed map[string]interface{}
+	if jerr := json.Unmarshal(body, &parsed); jerr != nil {
+		t.Fatalf("nackBytes produced invalid JSON: %v", jerr)
+	}
+	msg, _ := parsed["message"].(map[string]interface{})
+	if msg == nil {
+		t.Fatal("nackBytes body missing 'message'")
+	}
+	if msg["status"] != "ACK" {
+		t.Errorf("nackBytes message.status = %v, want ACK", msg["status"])
+	}
+	if msg["messageId"] != "sign-msg-1" {
+		t.Errorf("nackBytes message.messageId = %v, want sign-msg-1", msg["messageId"])
+	}
+	errField, _ := msg["error"].(map[string]interface{})
+	if errField == nil {
+		t.Fatal("nackBytes body missing message.error")
+	}
+	if errField["code"] != "40901" {
+		t.Errorf("nackBytes error.code = %v, want 40901", errField["code"])
+	}
+
+	// Also verify the body matches what sendNack writes — sign and send must be identical.
+	rr := httptest.NewRecorder()
+	sendNack(ctx, rr, err)
+	if !bytes.Equal(body, rr.Body.Bytes()) {
+		t.Errorf("nackBytes and sendNack produced different bodies:\n  nackBytes: %s\n  sendNack:  %s", body, rr.Body.String())
 	}
 }
 
@@ -316,7 +415,7 @@ func TestNack_1(t *testing.T) {
 				return
 			}
 
-			nack(ctx, w, tt.err, tt.status)
+			nack(ctx, w, tt.err, tt.status, model.StatusNACK)
 			if !tt.useBadWrite {
 				recorder, ok := w.(*httptest.ResponseRecorder)
 				if !ok {
