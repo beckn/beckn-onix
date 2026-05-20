@@ -483,7 +483,7 @@ type mockResponseStep struct {
 	err    error
 }
 
-func (m *mockResponseStep) RunOnResponse(_ *model.StepContext, _ *http.Response) error {
+func (m *mockResponseStep) RunOnResponse(_ *model.StepContext, _ *model.ResponseStepContext) error {
 	m.called = true
 	return m.err
 }
@@ -605,7 +605,7 @@ type mockOrderResponseStep struct {
 	order *[]string
 }
 
-func (m *mockOrderResponseStep) RunOnResponse(_ *model.StepContext, _ *http.Response) error {
+func (m *mockOrderResponseStep) RunOnResponse(_ *model.StepContext, _ *model.ResponseStepContext) error {
 	*m.order = append(*m.order, m.name)
 	return nil
 }

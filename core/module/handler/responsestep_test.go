@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -436,17 +435,18 @@ func makeCallerStepCtx(protocolVersion, messageID, subID, outboundAuth string) *
 	}
 }
 
-// makeAckResponse builds a synthetic upstream ACK *http.Response for testing.
-func makeAckResponse(body string, sig string) *http.Response {
-	resp := &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     http.Header{},
-		Body:       io.NopCloser(strings.NewReader(body)),
-	}
+// makeResponseStepContext builds a synthetic ResponseStepContext for testing,
+// mirroring what the handler constructs from *http.Response in modifyResponse.
+func makeResponseStepContext(statusCode int, body string, sig string) *model.ResponseStepContext {
+	h := http.Header{}
 	if sig != "" {
-		resp.Header.Set("Signature", sig)
+		h.Set("Signature", sig)
 	}
-	return resp
+	return &model.ResponseStepContext{
+		StatusCode: statusCode,
+		Header:     h,
+		Body:       []byte(body),
+	}
 }
 
 const testSigHeader = `Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",created="1700000000",expires="1700000300",headers="(created) (expires) digest request-signature",signature="dGVzdA=="`
@@ -601,28 +601,18 @@ func TestAckSignerStep_URLRoutingPath_409_SetsSignatureOnResponse(t *testing.T) 
 	}
 
 	ctx := makeStepCtx("2.0.0", "msg-409", "bpp.example.com", "inboundSig==")
-
 	body := `{"message":{"status":"ACK","error":{"code":"40901","message":"no matching catalog"}}}`
-	resp := &http.Response{
-		StatusCode: http.StatusConflict,
-		Header:     http.Header{},
-		Body:       io.NopCloser(strings.NewReader(body)),
-	}
+	rctx := makeResponseStepContext(http.StatusConflict, body, "")
 
-	if err := step.RunOnResponse(ctx, resp); err != nil {
+	if err := step.RunOnResponse(ctx, rctx); err != nil {
 		t.Fatalf("RunOnResponse() unexpected error on 409: %v", err)
 	}
 
 	if !signer.signAckCalled {
 		t.Error("expected SignAck to be called for 409 response")
 	}
-	if resp.Header.Get("Signature") == "" {
+	if rctx.Header.Get("Signature") == "" {
 		t.Fatal("expected Signature header on 409 response")
-	}
-	// Body must be restored so ReverseProxy forwards the original 409 body.
-	restored, _ := io.ReadAll(resp.Body)
-	if string(restored) != body {
-		t.Errorf("resp.Body not restored: got %q, want %q", restored, body)
 	}
 }
 
@@ -636,31 +626,21 @@ func TestAckSignerStep_URLRoutingPath_SetsSignatureOnResponse(t *testing.T) {
 	}
 
 	ctx := makeStepCtx("2.0.0", "msg-url", "bpp.url.com", "inboundSig==")
+	rctx := makeResponseStepContext(http.StatusOK, `{"message":{"ack":{"status":"ACK"}}}`, "")
 
-	body := `{"message":{"ack":{"status":"ACK"}}}`
-	resp := &http.Response{
-		Header: http.Header{},
-		Body:   io.NopCloser(strings.NewReader(body)),
-	}
-
-	if err := step.RunOnResponse(ctx, resp); err != nil {
+	if err := step.RunOnResponse(ctx, rctx); err != nil {
 		t.Fatalf("RunOnResponse() unexpected error: %v", err)
 	}
 
 	if !signer.signAckCalled {
 		t.Error("expected SignAck to be called on URL-routing path")
 	}
-	// Signature header must be on the upstream response, not ctx.RespHeader.
-	if resp.Header.Get("Signature") == "" {
-		t.Fatal("expected Signature header on upstream response")
+	// Signature must be on rctx.Header (shared ref to resp.Header), not ctx.RespHeader.
+	if rctx.Header.Get("Signature") == "" {
+		t.Fatal("expected Signature header on rctx.Header")
 	}
 	if ctx.RespHeader.Get("Signature") != "" {
 		t.Error("expected Signature header NOT set on ctx.RespHeader for URL-routing path")
-	}
-	// Body must be restored so the proxy can forward it.
-	restored, _ := io.ReadAll(resp.Body)
-	if string(restored) != body {
-		t.Errorf("resp.Body not restored: got %q, want %q", restored, body)
 	}
 }
 
@@ -701,19 +681,14 @@ func TestValidateAckSignatureStep_V2_ValidSignature(t *testing.T) {
 	}
 
 	ctx := makeCallerStepCtx("2.0.0", "msg-001", "bap.example.com", `Signature keyId="bap.example.com|key-1|ed25519",signature="outboundSig=="`)
-	resp := makeAckResponse(`{"message":{"status":"ACK","messageId":"msg-001"}}`, testSigHeader)
+	rctx := makeResponseStepContext(http.StatusOK, `{"message":{"status":"ACK","messageId":"msg-001"}}`, testSigHeader)
 
-	if err := step.RunOnResponse(ctx, resp); err != nil {
+	if err := step.RunOnResponse(ctx, rctx); err != nil {
 		t.Fatalf("RunOnResponse() unexpected error: %v", err)
 	}
 
 	if !sv.validateAckCalled {
 		t.Error("expected ValidateAck to be called")
-	}
-	// Body must be restored.
-	restored, _ := io.ReadAll(resp.Body)
-	if len(restored) == 0 {
-		t.Error("expected resp.Body to be restored after read")
 	}
 }
 
@@ -739,9 +714,9 @@ func TestValidateAckSignatureStep_PreV2Version_Skips(t *testing.T) {
 
 	step, _ := newValidateAckSignatureStep(sv, km)
 	ctx := makeCallerStepCtx("1.1.0", "msg-003", "bap.example.com", "outboundAuth==")
-	resp := makeAckResponse(`{"message":{"ack":{"status":"ACK"}}}`, "")
+	rctx := makeResponseStepContext(http.StatusOK, `{"message":{"ack":{"status":"ACK"}}}`, "")
 
-	if err := step.RunOnResponse(ctx, resp); err != nil {
+	if err := step.RunOnResponse(ctx, rctx); err != nil {
 		t.Fatalf("RunOnResponse() unexpected error on pre-v2 version: %v", err)
 	}
 	if sv.validateAckCalled {
@@ -758,9 +733,9 @@ func TestValidateAckSignatureStep_MissingSignatureHeader_Degrades(t *testing.T) 
 
 	step, _ := newValidateAckSignatureStep(sv, km)
 	ctx := makeCallerStepCtx("2.0.0", "msg-004", "bap.example.com", "outboundAuth==")
-	resp := makeAckResponse(`{"message":{"status":"ACK"}}`, "") // no Signature header
+	rctx := makeResponseStepContext(http.StatusOK, `{"message":{"status":"ACK"}}`, "") // no Signature header
 
-	if err := step.RunOnResponse(ctx, resp); err != nil {
+	if err := step.RunOnResponse(ctx, rctx); err != nil {
 		t.Fatalf("expected nil (degrade) for missing Signature header, got: %v", err)
 	}
 	if sv.validateAckCalled {
@@ -776,9 +751,9 @@ func TestValidateAckSignatureStep_InvalidSignatureHeader_Degrades(t *testing.T) 
 
 	step, _ := newValidateAckSignatureStep(sv, km)
 	ctx := makeCallerStepCtx("2.0.0", "msg-005", "bap.example.com", "outboundAuth==")
-	resp := makeAckResponse(`{"message":{"status":"ACK"}}`, "malformed-header-no-keyId")
+	rctx := makeResponseStepContext(http.StatusOK, `{"message":{"status":"ACK"}}`, "malformed-header-no-keyId")
 
-	if err := step.RunOnResponse(ctx, resp); err != nil {
+	if err := step.RunOnResponse(ctx, rctx); err != nil {
 		t.Fatalf("expected nil (degrade) for malformed Signature header, got: %v", err)
 	}
 }
@@ -791,9 +766,9 @@ func TestValidateAckSignatureStep_KeyManagerError_Degrades(t *testing.T) {
 
 	step, _ := newValidateAckSignatureStep(sv, km)
 	ctx := makeCallerStepCtx("2.0.0", "msg-006", "bap.example.com", "outboundAuth==")
-	resp := makeAckResponse(`{"message":{"status":"ACK"}}`, testSigHeader)
+	rctx := makeResponseStepContext(http.StatusOK, `{"message":{"status":"ACK"}}`, testSigHeader)
 
-	if err := step.RunOnResponse(ctx, resp); err != nil {
+	if err := step.RunOnResponse(ctx, rctx); err != nil {
 		t.Fatalf("expected nil (degrade) when KeyManager lookup fails, got: %v", err)
 	}
 }
@@ -806,9 +781,9 @@ func TestValidateAckSignatureStep_ValidatorError_Degrades(t *testing.T) {
 
 	step, _ := newValidateAckSignatureStep(sv, km)
 	ctx := makeCallerStepCtx("2.0.0", "msg-007", "bap.example.com", "outboundAuth==")
-	resp := makeAckResponse(`{"message":{"status":"ACK"}}`, testSigHeader)
+	rctx := makeResponseStepContext(http.StatusOK, `{"message":{"status":"ACK"}}`, testSigHeader)
 
-	if err := step.RunOnResponse(ctx, resp); err != nil {
+	if err := step.RunOnResponse(ctx, rctx); err != nil {
 		t.Fatalf("expected nil (degrade) when ValidateAck fails, got: %v", err)
 	}
 }
@@ -834,12 +809,8 @@ func TestValidateAckSignatureStep_MissingSignature_AllStatusCodes_Degrades(t *te
 		http.StatusInternalServerError,
 	}
 	for _, code := range codes {
-		resp := &http.Response{
-			StatusCode: code,
-			Header:     http.Header{},
-			Body:       io.NopCloser(strings.NewReader(`{"message":{"ack":{"status":"NACK"}}}`)),
-		}
-		if err := step.RunOnResponse(ctx, resp); err != nil {
+		rctx := makeResponseStepContext(code, `{"message":{"ack":{"status":"NACK"}}}`, "")
+		if err := step.RunOnResponse(ctx, rctx); err != nil {
 			t.Errorf("status %d: expected nil (degrade), got %v", code, err)
 		}
 		if sv.validateAckCalled {
@@ -867,12 +838,8 @@ func TestValidateAckSignatureStep_ValidSignature_AllStatusCodes(t *testing.T) {
 	}
 	for _, code := range codes {
 		sv.validateAckCalled = false
-		resp := &http.Response{
-			StatusCode: code,
-			Header:     http.Header{"Signature": []string{testSigHeader}},
-			Body:       io.NopCloser(strings.NewReader(`{"message":{"status":"ACK"}}`)),
-		}
-		if err := step.RunOnResponse(ctx, resp); err != nil {
+		rctx := makeResponseStepContext(code, `{"message":{"status":"ACK"}}`, testSigHeader)
+		if err := step.RunOnResponse(ctx, rctx); err != nil {
 			t.Errorf("status %d: unexpected error: %v", code, err)
 		}
 		if !sv.validateAckCalled {
@@ -890,19 +857,15 @@ func TestAckSignerStep_UpstreamApp_4xx_Signs(t *testing.T) {
 
 	step, _ := newAckSignerStep(signer, km)
 	ctx := makeStepCtx("2.0.0", "msg-nack", "bpp.example.com", "inboundSig==")
+	rctx := makeResponseStepContext(http.StatusBadRequest, `{"message":{"ack":{"status":"NACK"}}}`, "")
 
-	resp := &http.Response{
-		StatusCode: http.StatusBadRequest,
-		Header:     http.Header{},
-		Body:       io.NopCloser(strings.NewReader(`{"message":{"ack":{"status":"NACK"}}}`)),
-	}
-	if err := step.RunOnResponse(ctx, resp); err != nil {
+	if err := step.RunOnResponse(ctx, rctx); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !signer.signAckCalled {
 		t.Error("expected SignAck to be called even for upstream 4xx")
 	}
-	if resp.Header.Get("Signature") == "" {
+	if rctx.Header.Get("Signature") == "" {
 		t.Error("expected Signature header to be set on upstream 4xx response")
 	}
 }

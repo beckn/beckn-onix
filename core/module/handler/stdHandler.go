@@ -339,12 +339,23 @@ func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpC
 		log.Request(req.Context(), req, ctx.Body)
 	}
 
-	// modifyResponse is a thin dispatcher — zero business logic. It iterates
-	// response steps with the upstream *http.Response so each step can read
-	// the actual response body (e.g. for digest computation in ackSigner).
+	// modifyResponse pre-reads the upstream response body once, constructs a
+	// ResponseStepContext, then runs all response steps. Body restoration for
+	// ReverseProxy happens here — individual steps read from rctx.Body and do
+	// not need to touch resp.Body directly.
 	modifyResponse := func(resp *http.Response) error {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("modifyResponse: failed to read upstream response body: %w", err)
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		rctx := &model.ResponseStepContext{
+			StatusCode: resp.StatusCode,
+			Header:     resp.Header,
+			Body:       body,
+		}
 		for _, step := range responseSteps {
-			if err := step.RunOnResponse(ctx, resp); err != nil {
+			if err := step.RunOnResponse(ctx, rctx); err != nil {
 				return err
 			}
 		}
