@@ -41,6 +41,7 @@ type stdHandler struct {
 	router           definition.Router
 	publisher        definition.Publisher
 	transportWrapper definition.TransportWrapper
+	reqMapper        definition.Step
 	SubscriberID     string
 	role             model.Role
 	httpClient       *http.Client
@@ -180,8 +181,8 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Restore request body before forwarding or publishing.
-	r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
+	// Restore request body and metadata before forwarding or publishing.
+	syncRequestBody(r, stepCtx.Body)
 	if stepCtx.Route == nil {
 		response.SendAck(wrapped)
 		return
@@ -345,6 +346,21 @@ func loadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader de
 	return checker, nil
 }
 
+func loadReqMapperStep(ctx context.Context, mgr PluginManager, cfg *plugin.Config) (definition.Step, error) {
+	if cfg == nil {
+		log.Debug(ctx, "Skipping ReqMapper plugin: not configured")
+		return nil, nil
+	}
+
+	step, err := mgr.Step(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load ReqMapper plugin (%s): %w", cfg.ID, err)
+	}
+
+	log.Debugf(ctx, "Loaded ReqMapper plugin: %s", cfg.ID)
+	return step, nil
+}
+
 // initPlugins initializes required plugins for the processor.
 func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *PluginCfg) error {
 	var err error
@@ -381,6 +397,9 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.policyChecker, err = loadPolicyChecker(ctx, mgr, h.manifestLoader, cfg.PolicyChecker); err != nil {
 		return err
 	}
+	if h.reqMapper, err = loadReqMapperStep(ctx, mgr, cfg.ReqMapper); err != nil {
+		return err
+	}
 
 	log.Debugf(ctx, "All required plugins successfully loaded for stdHandler")
 	return nil
@@ -415,6 +434,8 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			s, err = newAddRouteStep(h.router)
 		case "checkPolicy":
 			s, err = newCheckPolicyStep(h.policyChecker)
+		case "reqMapper":
+			s, err = newReqMapperHandlerStep(h.reqMapper)
 		default:
 			if customStep, exists := steps[step]; exists {
 				s = customStep
@@ -436,6 +457,25 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 	}
 	log.Infof(ctx, "Processor steps initialized: %v", cfg.Steps)
 	return nil
+}
+
+func syncRequestBody(r *http.Request, body []byte) {
+	if r == nil {
+		return
+	}
+
+	reader := bytes.NewReader(body)
+	r.Body = io.NopCloser(reader)
+	r.ContentLength = int64(len(body))
+	r.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	r.TransferEncoding = nil
+	if len(body) == 0 {
+		r.Header.Del("Content-Length")
+		return
+	}
+	r.Header.Set("Content-Length", strconv.Itoa(len(body)))
 }
 
 func (h *stdHandler) resolveDirection(ctx context.Context) (senderID, receiverID string) {

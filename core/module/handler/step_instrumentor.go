@@ -97,6 +97,8 @@ func (is *InstrumentedStep) Run(ctx *model.StepContext) error {
 		log.Errorf(stepCtx.Context, err, "Step %s failed", is.stepName)
 	}
 
+	ctx.Body = stepCtx.Body
+	ctx.Request = stepCtx.Request
 	if stepCtx.Route != nil {
 		ctx.Route = stepCtx.Route
 	}

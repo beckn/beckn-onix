@@ -331,3 +331,10 @@ func newCheckPolicyStep(policyChecker definition.PolicyChecker) (definition.Step
 func (s *checkPolicyStep) Run(ctx *model.StepContext) error {
 	return s.checker.CheckPolicy(ctx)
 }
+
+func newReqMapperHandlerStep(step definition.Step) (definition.Step, error) {
+	if step == nil {
+		return nil, fmt.Errorf("invalid config: ReqMapper plugin not configured")
+	}
+	return step, nil
+}

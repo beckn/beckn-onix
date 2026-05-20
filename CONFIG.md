@@ -832,9 +832,9 @@ middleware:
 
 ---
 
-#### 11. Reqmapper Plugin
+#### 11. Reqmapper Plugins
 
-**Purpose**: Transform Beckn payloads between protocol versions or shapes using JSONata before the request continues through the handler. Mount it inside the `middleware` list wherever translation is required.
+**`reqmapper` middleware purpose**: Transform Beckn payloads before the handler pipeline. This is still useful on flows where middleware semantics are acceptable, but it runs before every handler step.
 
 ```yaml
 middleware:
@@ -842,6 +842,32 @@ middleware:
     config:
       role: bap               # Use `bpp` when running inside a BPP handler
       mappingsFile: ./config/mappings.yaml
+```
+
+**`reqMapper` handler-step purpose**: Run the same transformation logic at an explicit point in the step pipeline. This is the safe option for receiver flows where signature and schema validation must happen on the original inbound network payload before any mutation.
+
+```yaml
+plugins:
+  reqMapper:
+    id: reqmapperstep
+    config:
+      role: bap               # Use `bpp` when running inside a BPP handler
+      mappingsFile: ./config/mappings.yaml
+steps:
+  - validateSign
+  - validateSchema
+  - reqMapper
+  - addRoute
+```
+
+For caller modules, place `reqMapper` before signing:
+
+```yaml
+steps:
+  - reqMapper
+  - addRoute
+  - sign
+  - validateSchema
 ```
 
 **Parameters**:

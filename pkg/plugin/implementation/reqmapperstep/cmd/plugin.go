@@ -2,14 +2,14 @@ package main
 
 import (
 	"context"
-	"net/http"
 
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/reqmapper"
 )
 
 type provider struct{}
 
-func buildConfig(c map[string]string) *reqmapper.Config {
+func (p provider) New(ctx context.Context, c map[string]string) (definition.Step, func(), error) {
 	config := &reqmapper.Config{}
 	if role, ok := c["role"]; ok {
 		config.Role = role
@@ -17,11 +17,9 @@ func buildConfig(c map[string]string) *reqmapper.Config {
 	if mappingsFile, ok := c["mappingsFile"]; ok {
 		config.MappingsFile = mappingsFile
 	}
-	return config
-}
 
-func (p provider) New(ctx context.Context, c map[string]string) (func(http.Handler) http.Handler, error) {
-	return reqmapper.NewReqMapper(buildConfig(c))
+	step, err := reqmapper.NewReqMapperStep(config)
+	return step, nil, err
 }
 
 var Provider = provider{}

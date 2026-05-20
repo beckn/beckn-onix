@@ -12,11 +12,13 @@ import (
 	"sync"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
+	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/jsonata-go/jsonata"
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents the configuration for the request mapper middleware.
+// Config represents the configuration for the request mapper plugin.
 type Config struct {
 	Role         string `yaml:"role"`         // "bap" or "bpp"
 	MappingsFile string `yaml:"mappingsFile"` // required path to mappings YAML
@@ -48,13 +50,22 @@ var (
 	engineOnce     sync.Once
 )
 
-// NewReqMapper returns a middleware that maps requests using JSONata expressions
+type reqMapperStep struct {
+	engine *MappingEngine
+	role   string
+}
+
+type parsedRequest struct {
+	req    map[string]interface{}
+	action string
+}
+
+// NewReqMapper returns a middleware that maps requests using JSONata expressions.
 func NewReqMapper(cfg *Config) (func(http.Handler) http.Handler, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
 	}
 
-	// Initialize the mapping engine
 	engine, err := initMappingEngine(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize mapping engine: %w", err)
@@ -68,39 +79,95 @@ func NewReqMapper(cfg *Config) (func(http.Handler) http.Handler, error) {
 				return
 			}
 
-			var req map[string]interface{}
-			ctx := r.Context()
-
-			if err := json.Unmarshal(body, &req); err != nil {
-				http.Error(w, "Failed to decode request body", http.StatusBadRequest)
-				return
-			}
-
-			reqContext, ok := req["context"].(map[string]interface{})
-			if !ok {
-				http.Error(w, "context field not found or invalid", http.StatusBadRequest)
-				return
-			}
-
-			action, ok := reqContext["action"].(string)
-			if !ok {
-				http.Error(w, "action field not found or invalid", http.StatusBadRequest)
-				return
-			}
-
-			// Apply transformation
-			mappedBody, err := engine.Transform(ctx, action, req, cfg.Role)
+			parsed, err := parseRequestBody(body)
 			if err != nil {
-				log.Errorf(ctx, err, "Transformation failed for action %s", action)
-				// Fall back to original body on error
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			mappedBody, err := engine.Transform(r.Context(), parsed.action, parsed.req, cfg.Role)
+			if err != nil {
+				log.Errorf(r.Context(), err, "Transformation failed for action %s", parsed.action)
 				mappedBody = body
 			}
 
-			r.Body = io.NopCloser(bytes.NewBuffer(mappedBody))
+			r.Body = io.NopCloser(bytes.NewReader(mappedBody))
 			r.ContentLength = int64(len(mappedBody))
-			r = r.WithContext(ctx)
 			next.ServeHTTP(w, r)
 		})
+	}, nil
+}
+
+// NewReqMapperStep returns a handler step that applies the same reqmapper transformation logic.
+func NewReqMapperStep(cfg *Config) (definition.Step, error) {
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	engine, err := initMappingEngine(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &reqMapperStep{
+		engine: engine,
+		role:   cfg.Role,
+	}, nil
+}
+
+// Run transforms the current request body and updates the step context in place.
+func (s *reqMapperStep) Run(ctx *model.StepContext) error {
+	if ctx == nil {
+		return model.NewBadReqErr(errors.New("step context cannot be nil"))
+	}
+
+	mappedBody, err := s.transformBody(ctx.Context, ctx.Body)
+	if err != nil {
+		return err
+	}
+
+	ctx.Body = mappedBody
+	if ctx.Request != nil {
+		ctx.Request.Body = io.NopCloser(bytes.NewReader(mappedBody))
+		ctx.Request.ContentLength = int64(len(mappedBody))
+	}
+
+	return nil
+}
+
+func (s *reqMapperStep) transformBody(ctx context.Context, body []byte) ([]byte, error) {
+	parsed, err := parseRequestBody(body)
+	if err != nil {
+		return nil, model.NewBadReqErr(err)
+	}
+
+	mappedBody, err := s.engine.Transform(ctx, parsed.action, parsed.req, s.role)
+	if err != nil {
+		log.Errorf(ctx, err, "Transformation failed for action %s", parsed.action)
+		return body, nil
+	}
+
+	return mappedBody, nil
+}
+
+func parseRequestBody(body []byte) (*parsedRequest, error) {
+	var req map[string]interface{}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, fmt.Errorf("Failed to decode request body")
+	}
+
+	reqContext, ok := req["context"].(map[string]interface{})
+	if !ok {
+		return nil, errors.New("context field not found or invalid")
+	}
+
+	action, ok := reqContext["action"].(string)
+	if !ok || action == "" {
+		return nil, errors.New("action field not found or invalid")
+	}
+
+	return &parsedRequest{
+		req:    req,
+		action: action,
 	}, nil
 }
 
