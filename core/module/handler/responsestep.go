@@ -1,12 +1,10 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
@@ -227,18 +225,19 @@ func (a *ackSignerStep) signBodyAndSetHeader(ctx *model.StepContext, body []byte
 
 // RunOnResponse signs the Ack response and sets the Signature header.
 //
-// resp is nil on the publisher path: ONIX controls the ACK body, so the digest
+// rctx is nil on the publisher path: ONIX controls the ACK body, so the digest
 // is computed over the deterministic body that sendAck will write.
-// resp is non-nil on the URL-routing path: the body comes from the upstream
-// app via ReverseProxy, so the digest covers the actual bytes the caller
-// receives. In both cases the Signature header value is identical in structure.
+// rctx is non-nil on the URL-routing path: the body was pre-read by the handler
+// and is available in rctx.Body. rctx.Header is a shared reference to
+// resp.Header, so setting Signature here is forwarded by ReverseProxy without
+// any explicit write-back.
 //
 // This step signs ALL upstream responses including any status code — per
 // NFH-007 CON-004-02 every synchronous response MUST carry a Signature header.
 // ONIX-generated pipeline NACKs are signed separately via stdHandler.signNackResponse
 // (called before sendNack) because the pipelineErr guard prevents
 // response steps from running on pipeline failures.
-func (a *ackSignerStep) RunOnResponse(ctx *model.StepContext, resp *http.Response) error {
+func (a *ackSignerStep) RunOnResponse(ctx *model.StepContext, rctx *model.ResponseStepContext) error {
 	if !model.IsAtLeastV2(ctx.ProtocolVersion) {
 		return nil
 	}
@@ -246,33 +245,20 @@ func (a *ackSignerStep) RunOnResponse(ctx *model.StepContext, resp *http.Respons
 		return model.NewBadReqErr(fmt.Errorf("subscriberID not set"))
 	}
 
-	var ackBody []byte
-	var err error
-
-	if resp != nil {
-		// URL-routing path: sign the actual upstream response body so the
-		// digest covers exactly what the caller will receive.
-		ackBody, err = io.ReadAll(resp.Body)
+	if rctx != nil {
+		// URL-routing path: body is pre-read; rctx.Header is a shared reference
+		// to resp.Header so the Signature reaches ReverseProxy automatically.
+		sigHeader, err := a.computeSigHeader(ctx, rctx.Body)
 		if err != nil {
-			return fmt.Errorf("ackSigner: failed to read upstream response body: %w", err)
+			return err
 		}
-		// Restore the body so the proxy can forward it unchanged.
-		resp.Body = io.NopCloser(bytes.NewReader(ackBody))
-
-		// Set Signature on the upstream response so ReverseProxy forwards it
-		// to the caller. Do NOT set ctx.RespHeader on this path — that header
-		// map belongs to the current handler's own response, not the proxied one.
-		sigHeader, serr := a.computeSigHeader(ctx, ackBody)
-		if serr != nil {
-			return serr
-		}
-		resp.Header.Set("Signature", sigHeader)
+		rctx.Header.Set("Signature", sigHeader)
 		return nil
 	}
 
 	// Publisher / no-route path: ONIX writes the ACK — build the deterministic
 	// body that sendAck will write so the digest matches.
-	ackBody, err = buildAckBody(ctx.ProtocolVersion, ctx.MessageID)
+	ackBody, err := buildAckBody(ctx.ProtocolVersion, ctx.MessageID)
 	if err != nil {
 		return fmt.Errorf("ackSigner: failed to build ack body: %w", err)
 	}
@@ -361,19 +347,19 @@ func newValidateAckSignatureStep(sv definition.SignValidator, km definition.KeyM
 // (log a warning and continue) rather than hard-rejecting.
 //
 // No-ops:
-//   - publisher path (resp == nil) — async ACKs have no Signature header
+//   - publisher path (rctx == nil) — async ACKs have no Signature header
 //   - protocol version < 2.0.0 — pre-v2 flows are unaffected
-func (v *validateAckSignatureStep) RunOnResponse(ctx *model.StepContext, resp *http.Response) error {
-	if resp == nil {
+func (v *validateAckSignatureStep) RunOnResponse(ctx *model.StepContext, rctx *model.ResponseStepContext) error {
+	if rctx == nil {
 		return nil
 	}
 	if !model.IsAtLeastV2(ctx.ProtocolVersion) {
 		return nil
 	}
 
-	sigHeader := resp.Header.Get("Signature")
+	sigHeader := rctx.Header.Get("Signature")
 	if sigHeader == "" {
-		log.Warnf(ctx, "validateAckSign: missing Signature response header on v2 response (status=%d) — degraded trust", resp.StatusCode)
+		log.Warnf(ctx, "validateAckSign: missing Signature response header on v2 response (status=%d) — degraded trust", rctx.StatusCode)
 		return nil
 	}
 
@@ -381,13 +367,6 @@ func (v *validateAckSignatureStep) RunOnResponse(ctx *model.StepContext, resp *h
 	// (step.go signStep.Run). In ModifyResponse, ctx is captured from ServeHTTP
 	// so the header value is the one sent to the upstream BPP/BAP.
 	outboundAuth := extractAuthSignature(ctx.Request.Header.Get(model.AuthHeaderSubscriber))
-
-	ackBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Warnf(ctx, "validateAckSign: failed to read response body: %v — degraded trust", err)
-		return nil
-	}
-	resp.Body = io.NopCloser(bytes.NewReader(ackBody))
 
 	parsed, err := parseHeader(sigHeader)
 	if err != nil {
@@ -401,11 +380,11 @@ func (v *validateAckSignatureStep) RunOnResponse(ctx *model.StepContext, resp *h
 		return nil
 	}
 
-	if err := v.signValidator.ValidateAck(ctx, ackBody, sigHeader, outboundAuth, publicKey); err != nil {
-		log.Warnf(ctx, "validateAckSign: Signature verification failed (status=%d): %v — degraded trust", resp.StatusCode, err)
+	if err := v.signValidator.ValidateAck(ctx, rctx.Body, sigHeader, outboundAuth, publicKey); err != nil {
+		log.Warnf(ctx, "validateAckSign: Signature verification failed (status=%d): %v — degraded trust", rctx.StatusCode, err)
 		return nil
 	}
 
-	log.Debugf(ctx, "validateAckSign: Signature verified OK (status=%d)", resp.StatusCode)
+	log.Debugf(ctx, "validateAckSign: Signature verified OK (status=%d)", rctx.StatusCode)
 	return nil
 }

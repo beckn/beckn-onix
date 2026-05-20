@@ -207,6 +207,22 @@ func (ctx *StepContext) WithContext(newCtx context.Context) {
 	ctx.Context = newCtx
 }
 
+// ResponseStepContext carries response-phase data for the response step pipeline.
+// It is constructed by the handler from *http.Response before response steps run,
+// keeping transport types out of the ResponseStep interface.
+//
+// A nil ResponseStepContext signals the publisher path — ONIX writes the ACK
+// itself and there is no upstream response to inspect.
+//
+// Header is a shared reference to resp.Header; mutations made by steps (e.g.
+// writing the Signature header) are visible to the handler and forwarded by
+// ReverseProxy without any explicit write-back.
+type ResponseStepContext struct {
+	StatusCode int
+	Header     http.Header // shared reference — step mutations visible to caller
+	Body       []byte      // pre-read response body; nil on publisher path
+}
+
 // Status represents the acknowledgment status in a response.
 type Status string
 
