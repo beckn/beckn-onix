@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -200,17 +201,40 @@ func TestSchemaValidationErr_BecknError_NoErrors(t *testing.T) {
 }
 
 func TestNewAckNoCallbackErr(t *testing.T) {
-	becknErr := &Error{Code: "40901", Message: "no matching catalog"}
-	e := NewAckNoCallbackErr(StatusACK, becknErr)
+	tests := []struct {
+		name           string
+		status         Status
+		becknErr       *Error
+		wantErrContain string
+	}{
+		{
+			name:           "ACK status",
+			status:         StatusACK,
+			becknErr:       &Error{Code: "40901", Message: "no matching catalog"},
+			wantErrContain: "AckNoCallback(status=ACK)",
+		},
+		{
+			name:           "NACK status",
+			status:         StatusNACK,
+			becknErr:       &Error{Code: "40902", Message: "provider closed"},
+			wantErrContain: "AckNoCallback(status=NACK)",
+		},
+	}
 
-	if e.Status != StatusACK {
-		t.Errorf("Status = %s, want ACK", e.Status)
-	}
-	if e.BecknError() != becknErr {
-		t.Error("BecknError() did not return the wrapped error")
-	}
-	if e.Error() == "" {
-		t.Error("Error() returned empty string")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := NewAckNoCallbackErr(tt.status, tt.becknErr)
+
+			if e.Status != tt.status {
+				t.Errorf("Status = %s, want %s", e.Status, tt.status)
+			}
+			if e.BecknError() != tt.becknErr {
+				t.Error("BecknError() did not return the wrapped error")
+			}
+			if got := e.Error(); !strings.Contains(got, tt.wantErrContain) {
+				t.Errorf("Error() = %q, want it to contain %q", got, tt.wantErrContain)
+			}
+		})
 	}
 }
 
