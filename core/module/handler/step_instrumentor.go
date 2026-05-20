@@ -100,3 +100,82 @@ func (is *InstrumentedStep) Run(ctx *model.StepContext) error {
 	ctx.WithContext(stepCtx.Context)
 	return err
 }
+
+// ---------------------------------------------------------------------------
+// InstrumentedResponseStep
+// ---------------------------------------------------------------------------
+
+// ResponseStepRunner is the minimal contract required for response step instrumentation.
+type ResponseStepRunner interface {
+	RunOnResponse(*model.StepContext, *model.ResponseStepContext) error
+}
+
+// InstrumentedResponseStep wraps a response processing step with telemetry instrumentation.
+type InstrumentedResponseStep struct {
+	step       ResponseStepRunner
+	stepName   string
+	moduleName string
+	metrics    *StepMetrics
+}
+
+// NewInstrumentedResponseStep returns a telemetry-enabled wrapper around a definition.ResponseStep.
+func NewInstrumentedResponseStep(step ResponseStepRunner, stepName, moduleName string) (*InstrumentedResponseStep, error) {
+	metrics, err := GetStepMetrics(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &InstrumentedResponseStep{
+		step:       step,
+		stepName:   stepName,
+		moduleName: moduleName,
+		metrics:    metrics,
+	}, nil
+}
+
+// RunOnResponse executes the underlying response step and records RED style metrics.
+//
+// Note: validateAckSign is a soft-failure step — it returns nil even on signature
+// verification failures (degraded-trust design). onix_step_errors_total will never
+// increment for that step; its own log.Warnf calls are the only signal for soft failures.
+func (is *InstrumentedResponseStep) RunOnResponse(ctx *model.StepContext, rctx *model.ResponseStepContext) error {
+	if is.metrics == nil {
+		return is.step.RunOnResponse(ctx, rctx)
+	}
+
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
+	spanCtx, span := tracer.Start(ctx.Context, "response-step:"+is.stepName)
+	defer span.End()
+
+	stepCtx := *ctx
+	stepCtx.Context = spanCtx
+
+	start := time.Now()
+	err := is.step.RunOnResponse(&stepCtx, rctx)
+	duration := time.Since(start).Seconds()
+
+	attrs := []attribute.KeyValue{
+		telemetry.AttrModule.String(is.moduleName),
+		telemetry.AttrStep.String(is.stepName),
+		telemetry.AttrRole.String(string(stepCtx.Role)),
+	}
+
+	is.metrics.StepExecutionTotal.Add(stepCtx.Context, 1, metric.WithAttributes(attrs...))
+	is.metrics.StepExecutionDuration.Record(stepCtx.Context, duration, metric.WithAttributes(attrs...))
+
+	if err != nil {
+		errorType := fmt.Sprintf("%T", err)
+		var becknErr becknError
+		if errors.As(err, &becknErr) {
+			if be := becknErr.BecknError(); be != nil && be.Code != "" {
+				errorType = be.Code
+			}
+		}
+
+		errorAttrs := append(attrs, telemetry.AttrErrorType.String(errorType))
+		is.metrics.StepErrorsTotal.Add(stepCtx.Context, 1, metric.WithAttributes(errorAttrs...))
+		log.Errorf(stepCtx.Context, err, "Response step %s failed", is.stepName)
+	}
+
+	ctx.WithContext(stepCtx.Context)
+	return err
+}

@@ -541,7 +541,13 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			if concreteAS, ok := as.(*ackSignerStep); ok {
 				h.ackSigner = concreteAS
 			}
-			h.responseSteps = append(h.responseSteps, as)
+			instrumentedAS, wrapErr := NewInstrumentedResponseStep(as, step, h.moduleName)
+			if wrapErr != nil {
+				log.Warnf(ctx, "Failed to instrument response step %s: %v", step, wrapErr)
+				h.responseSteps = append(h.responseSteps, as)
+				continue
+			}
+			h.responseSteps = append(h.responseSteps, instrumentedAS)
 			continue
 		case "validateAckSign":
 			// validateAckSign is a ResponseStep — verifies the Signature header
@@ -550,7 +556,13 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			if rsErr != nil {
 				return rsErr
 			}
-			h.responseSteps = append(h.responseSteps, rs)
+			instrumentedRS, wrapErr := NewInstrumentedResponseStep(rs, step, h.moduleName)
+			if wrapErr != nil {
+				log.Warnf(ctx, "Failed to instrument response step %s: %v", step, wrapErr)
+				h.responseSteps = append(h.responseSteps, rs)
+				continue
+			}
+			h.responseSteps = append(h.responseSteps, instrumentedRS)
 			continue
 		case "sign":
 			s, err = newSignStep(h.signer, h.km, h.payloadStore)
