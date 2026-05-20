@@ -199,6 +199,30 @@ func TestSchemaValidationErr_BecknError_NoErrors(t *testing.T) {
 	}
 }
 
+func TestNewAckNoCallbackErr(t *testing.T) {
+	becknErr := &Error{Code: "40901", Message: "no matching catalog"}
+	e := NewAckNoCallbackErr(StatusACK, becknErr)
+
+	if e.Status != StatusACK {
+		t.Errorf("Status = %s, want ACK", e.Status)
+	}
+	if e.BecknError() != becknErr {
+		t.Error("BecknError() did not return the wrapped error")
+	}
+	if e.Error() == "" {
+		t.Error("Error() returned empty string")
+	}
+}
+
+func TestNewAckNoCallbackErr_NilErr_Panics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for nil Err, got none")
+		}
+	}()
+	NewAckNoCallbackErr(StatusACK, nil)
+}
+
 func TestParseContextKey_ValidKeys(t *testing.T) {
 	tests := []struct {
 		input    string

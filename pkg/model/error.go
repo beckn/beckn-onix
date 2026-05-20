@@ -127,7 +127,11 @@ type AckNoCallbackErr struct {
 
 // NewAckNoCallbackErr constructs an AckNoCallbackErr.
 // Use StatusACK for "accepted but no callback" and StatusNACK for outright rejection.
+// Panics if err is nil — the spec requires an error explanation on every 409 response.
 func NewAckNoCallbackErr(status Status, err *Error) *AckNoCallbackErr {
+	if err == nil {
+		panic("AckNoCallbackErr: Err is required")
+	}
 	return &AckNoCallbackErr{Status: status, Err: err}
 }
 
