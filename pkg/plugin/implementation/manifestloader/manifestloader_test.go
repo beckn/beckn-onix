@@ -16,8 +16,9 @@ import (
 )
 
 type mockCache struct {
-	store map[string]string
-	err   error
+	store  map[string]string
+	err    error // injected into every operation
+	setErr error // injected into Set only; Get still works
 }
 
 func (m *mockCache) Get(ctx context.Context, key string) (string, error) {
@@ -33,6 +34,9 @@ func (m *mockCache) Get(ctx context.Context, key string) (string, error) {
 func (m *mockCache) Set(ctx context.Context, key, value string, ttl time.Duration) error {
 	if m.err != nil {
 		return m.err
+	}
+	if m.setErr != nil {
+		return m.setErr
 	}
 	m.store[key] = value
 	return nil
@@ -213,6 +217,101 @@ func TestGetByNetworkIDResolvesMetadata(t *testing.T) {
 	}
 	if _, ok := cache.store[networkCacheKey("nfo.example.org/network")]; !ok {
 		t.Fatal("expected network-specific cache key to be populated")
+	}
+}
+
+func TestGetByMetadata_CacheWriteErrorStillReturnsManifest(t *testing.T) {
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	manifest := []byte("manifest: true")
+	signature := ed25519.Sign(privateKey, manifest)
+
+	originalHTTPClientFunc := httpClientFunc
+	httpClientFunc = func(timeout time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.String() {
+			case "https://example.org/manifest":
+				return response(200, string(manifest), "application/yaml"), nil
+			case "https://example.org/manifest.sig":
+				return response(200, base64.StdEncoding.EncodeToString(signature), "text/plain"), nil
+			case "https://example.org/pubkey":
+				return response(200, base64.StdEncoding.EncodeToString(publicKey), "text/plain"), nil
+			default:
+				return response(404, "not found", "text/plain"), nil
+			}
+		})}
+	}
+	defer func() { httpClientFunc = originalHTTPClientFunc }()
+
+	cache := &mockCache{store: map[string]string{}, setErr: errors.New("redis: connection refused")}
+	loader, _, err := New(context.Background(), cache, &mockRegistry{}, &Config{CacheTTL: time.Hour, FetchTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	doc, err := loader.GetByMetadata(context.Background(), model.ManifestMetadata{
+		ManifestURL:               "https://example.org/manifest",
+		ManifestSignatureURL:      "https://example.org/manifest.sig",
+		SigningPublicKeyLookupURL: "https://example.org/pubkey",
+	})
+	if err != nil {
+		t.Fatalf("expected manifest despite cache write error, got: %v", err)
+	}
+	if string(doc.Content) != string(manifest) {
+		t.Fatalf("unexpected manifest content: %q", string(doc.Content))
+	}
+	if len(cache.store) != 0 {
+		t.Errorf("expected nothing written to cache when Set fails, store had %d keys", len(cache.store))
+	}
+}
+
+func TestGetByNetworkID_CacheWriteErrorStillReturnsManifest(t *testing.T) {
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	manifest := []byte("hello")
+	signature := ed25519.Sign(privateKey, manifest)
+
+	originalHTTPClientFunc := httpClientFunc
+	httpClientFunc = func(timeout time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.String() {
+			case "https://example.org/manifest":
+				return response(200, string(manifest), "text/plain"), nil
+			case "https://example.org/manifest.sig":
+				return response(200, base64.StdEncoding.EncodeToString(signature), "text/plain"), nil
+			case "https://example.org/pubkey":
+				return response(200, `{"data":{"details":{"signing_public_key":"`+base64.StdEncoding.EncodeToString(publicKey)+`"}}}`, "application/json"), nil
+			default:
+				return response(404, "not found", "text/plain"), nil
+			}
+		})}
+	}
+	defer func() { httpClientFunc = originalHTTPClientFunc }()
+
+	cache := &mockCache{store: map[string]string{}, setErr: errors.New("redis: connection refused")}
+	registry := &mockRegistry{
+		meta: &model.RegistryMetadata{
+			NamespaceIdentifier: "nfo.example.org",
+			RegistryName:        "network",
+			RawMeta: map[string]string{
+				"manifest_url":                  "https://example.org/manifest",
+				"manifest_signature_url":        "https://example.org/manifest.sig",
+				"signing_public_key_lookup_url": "https://example.org/pubkey",
+			},
+		},
+	}
+	loader, _, err := New(context.Background(), cache, registry, &Config{})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	doc, err := loader.GetByNetworkID(context.Background(), "nfo.example.org/network")
+	if err != nil {
+		t.Fatalf("expected manifest despite cache write error, got: %v", err)
+	}
+	if doc.NetworkID != "nfo.example.org/network" {
+		t.Fatalf("expected networkID to be set on returned document")
+	}
+	if len(cache.store) != 0 {
+		t.Errorf("expected nothing written to cache when Set fails, store had %d keys", len(cache.store))
 	}
 }
 
