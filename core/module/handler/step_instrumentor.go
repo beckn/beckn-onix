@@ -99,9 +99,11 @@ func (is *InstrumentedStep) Run(ctx *model.StepContext) error {
 
 	ctx.Body = stepCtx.Body
 	ctx.Request = stepCtx.Request
-	if stepCtx.Route != nil {
-		ctx.Route = stepCtx.Route
-	}
+	ctx.Body = stepCtx.Body
+	ctx.Route = stepCtx.Route
+	ctx.SubID = stepCtx.SubID
+	ctx.Role = stepCtx.Role
+	ctx.RespHeader = stepCtx.RespHeader
 	ctx.WithContext(stepCtx.Context)
 	return err
 }

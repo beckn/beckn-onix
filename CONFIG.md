@@ -832,39 +832,29 @@ middleware:
 
 ---
 
-#### 11. Reqmapper Plugins
+#### 11. ReqMapper Plugin (Step)
 
-**`reqmapper` middleware purpose**: Transform Beckn payloads before the handler pipeline. This is still useful on flows where middleware semantics are acceptable, but it runs before every handler step.
-
-```yaml
-middleware:
-  - id: reqmapper
-    config:
-      role: bap               # Use `bpp` when running inside a BPP handler
-      mappingsFile: ./config/mappings.yaml
-```
-
-**`reqMapper` handler-step purpose**: Run the same transformation logic at an explicit point in the step pipeline. This is the safe option for receiver flows where signature and schema validation must happen on the original inbound network payload before any mutation.
+**Purpose**: Run payload transformation at an explicit point in the step pipeline. This is the safe option for receiver flows where signature and schema validation must happen on the original inbound network payload before any mutation.
 
 ```yaml
 plugins:
-  reqMapper:
-    id: reqmapperstep
+  payloadTransformer:
+    id: reqmapper
     config:
       role: bap               # Use `bpp` when running inside a BPP handler
       mappingsFile: ./config/mappings.yaml
 steps:
   - validateSign
   - validateSchema
-  - reqMapper
+  - transformPayload
   - addRoute
 ```
 
-For caller modules, place `reqMapper` before signing:
+For caller modules, place `transformPayload` before signing:
 
 ```yaml
 steps:
-  - reqMapper
+  - transformPayload
   - addRoute
   - sign
   - validateSchema

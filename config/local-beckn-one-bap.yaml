@@ -83,6 +83,11 @@ modules:
             extendedSchema_allowedDomains: "beckn.org,example.com,raw.githubusercontent.com"
         signValidator:
           id: signvalidator
+        payloadTransformer:
+          id: reqmapper
+          config:
+            role: bap
+            mappingsFile: ./config/mappings.yaml
         router:
           id: router
           config:
@@ -100,8 +105,9 @@ modules:
       steps:
         - validateSign
         - checkPolicy
-        - addRoute
         - validateSchema
+        - transformPayload
+        - addRoute
   
   - name: bapTxnCaller
     path: /bap/caller/
@@ -153,6 +159,11 @@ modules:
             routingConfig: ./config/local-beckn-one-routing-BAPCaller.yaml
         signer:
           id: signer
+        payloadTransformer:
+          id: reqmapper
+          config:
+            role: bap
+            mappingsFile: ./config/mappings.yaml
         middleware:
           - id: reqpreprocessor
             config:
@@ -164,6 +175,7 @@ modules:
             networkPolicyConfig: ./config/opa-network-policies.yaml
             refreshInterval: "5m"
       steps:
+        - transformPayload
         - checkPolicy
         - addRoute
         - sign

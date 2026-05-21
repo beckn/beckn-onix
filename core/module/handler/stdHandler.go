@@ -41,7 +41,7 @@ type stdHandler struct {
 	router           definition.Router
 	publisher        definition.Publisher
 	transportWrapper definition.TransportWrapper
-	reqMapper        definition.Step
+	payloadTransformer definition.Step
 	SubscriberID     string
 	role             model.Role
 	httpClient       *http.Client
@@ -346,18 +346,18 @@ func loadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader de
 	return checker, nil
 }
 
-func loadReqMapperStep(ctx context.Context, mgr PluginManager, cfg *plugin.Config) (definition.Step, error) {
+func loadPayloadTransformerStep(ctx context.Context, mgr PluginManager, cfg *plugin.Config) (definition.Step, error) {
 	if cfg == nil {
-		log.Debug(ctx, "Skipping ReqMapper plugin: not configured")
+		log.Debug(ctx, "Skipping PayloadTransformer plugin: not configured")
 		return nil, nil
 	}
 
 	step, err := mgr.Step(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load ReqMapper plugin (%s): %w", cfg.ID, err)
+		return nil, fmt.Errorf("failed to load PayloadTransformer plugin (%s): %w", cfg.ID, err)
 	}
 
-	log.Debugf(ctx, "Loaded ReqMapper plugin: %s", cfg.ID)
+	log.Debugf(ctx, "Loaded PayloadTransformer plugin: %s", cfg.ID)
 	return step, nil
 }
 
@@ -397,7 +397,7 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.policyChecker, err = loadPolicyChecker(ctx, mgr, h.manifestLoader, cfg.PolicyChecker); err != nil {
 		return err
 	}
-	if h.reqMapper, err = loadReqMapperStep(ctx, mgr, cfg.ReqMapper); err != nil {
+	if h.payloadTransformer, err = loadPayloadTransformerStep(ctx, mgr, cfg.PayloadTransformer); err != nil {
 		return err
 	}
 
@@ -434,8 +434,11 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			s, err = newAddRouteStep(h.router)
 		case "checkPolicy":
 			s, err = newCheckPolicyStep(h.policyChecker)
-		case "reqMapper":
-			s, err = newReqMapperHandlerStep(h.reqMapper)
+		case "transformPayload":
+			if h.payloadTransformer == nil {
+				return fmt.Errorf("invalid config: PayloadTransformer plugin not configured")
+			}
+			s = h.payloadTransformer
 		default:
 			if customStep, exists := steps[step]; exists {
 				s = customStep
@@ -471,11 +474,6 @@ func syncRequestBody(r *http.Request, body []byte) {
 		return io.NopCloser(bytes.NewReader(body)), nil
 	}
 	r.TransferEncoding = nil
-	if len(body) == 0 {
-		r.Header.Del("Content-Length")
-		return
-	}
-	r.Header.Set("Content-Length", strconv.Itoa(len(body)))
 }
 
 func (h *stdHandler) resolveDirection(ctx context.Context) (senderID, receiverID string) {

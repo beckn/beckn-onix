@@ -52,7 +52,7 @@ func TestCache_Get(t *testing.T) {
 	ctx := context.Background()
 	cache := &Cache{Client: mockClient}
 
-	mockClient.On("Get", ctx, "my-key").Return("my-value", nil)
+	mockClient.On("Get", mock.Anything, "my-key").Return("my-value", nil)
 
 	value, err := cache.Get(ctx, "my-key")
 	assert.NoError(t, err)
@@ -66,7 +66,7 @@ func TestCache_Set(t *testing.T) {
 	ctx := context.Background()
 	cache := &Cache{Client: mockClient}
 
-	mockClient.On("Set", ctx, "my-key", "my-value", time.Minute).Return("OK", nil)
+	mockClient.On("Set", mock.Anything, "my-key", "my-value", time.Minute).Return("OK", nil)
 
 	err := cache.Set(ctx, "my-key", "my-value", time.Minute)
 	assert.NoError(t, err)
@@ -79,7 +79,7 @@ func TestCache_Delete(t *testing.T) {
 	ctx := context.Background()
 	cache := &Cache{Client: mockClient}
 
-	mockClient.On("Del", ctx, []string{"my-key"}).Return(1, nil)
+	mockClient.On("Del", mock.Anything, []string{"my-key"}).Return(1, nil)
 
 	err := cache.Delete(ctx, "my-key")
 	assert.NoError(t, err)
@@ -92,7 +92,7 @@ func TestCache_Clear(t *testing.T) {
 	ctx := context.Background()
 	cache := &Cache{Client: mockClient}
 
-	mockClient.On("FlushDB", ctx).Return("OK", nil)
+	mockClient.On("FlushDB", mock.Anything).Return("OK", nil)
 
 	err := cache.Clear(ctx)
 	assert.NoError(t, err)
