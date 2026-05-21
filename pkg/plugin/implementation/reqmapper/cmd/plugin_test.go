@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestProviderNew_ReturnsStep(t *testing.T) {
@@ -10,13 +12,22 @@ func TestProviderNew_ReturnsStep(t *testing.T) {
 		"role":         "bap",
 		"mappingsFile": "../testdata/mappings.yaml",
 	})
-	if err != nil {
-		t.Fatalf("provider.New returned error: %v", err)
-	}
-	if closer != nil {
-		t.Fatalf("expected nil closer, got non-nil")
-	}
-	if step == nil {
-		t.Fatalf("expected step, got nil")
-	}
+	require.NoError(t, err)
+	require.Nil(t, closer)
+	require.NotNil(t, step)
+}
+
+func TestProviderNew_MissingRole(t *testing.T) {
+	_, _, err := (provider{}).New(context.Background(), map[string]string{
+		"mappingsFile": "../testdata/mappings.yaml",
+	})
+	require.Error(t, err)
+}
+
+func TestProviderNew_InvalidRole(t *testing.T) {
+	_, _, err := (provider{}).New(context.Background(), map[string]string{
+		"role":         "invalid",
+		"mappingsFile": "../testdata/mappings.yaml",
+	})
+	require.Error(t, err)
 }

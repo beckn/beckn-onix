@@ -72,11 +72,6 @@ func NewReqMapperStep(cfg *Config) (definition.Step, error) {
 
 // Run transforms the current request body and updates the step context in place.
 func (s *reqMapperStep) Run(ctx *model.StepContext) error {
-	if ctx == nil {
-		// Programmer error: the step pipeline must always pass a non-nil StepContext.
-		return fmt.Errorf("step context cannot be nil")
-	}
-
 	mappedBody, err := s.transformBody(ctx.Context, ctx.Body)
 	if err != nil {
 		return err

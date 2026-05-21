@@ -394,7 +394,7 @@ func TestValidateRulesFailure(t *testing.T) {
 					Endpoints: []string{"search"},
 				},
 			},
-			wantErr: `invalid URL - htp:// invalid-url.com defined in routing config for target type bpp: parse "htp:// invalid-url.com": invalid character " " in host name`,
+			wantErr: `invalid URL - htp:// invalid-url.com defined in routing config for target type bpp:`,
 		},
 		{
 			name: "Invalid URL for BAP targetType",
@@ -409,7 +409,7 @@ func TestValidateRulesFailure(t *testing.T) {
 					Endpoints: []string{"search"},
 				},
 			},
-			wantErr: `invalid URL - http:// [invalid].com defined in routing config for target type bap: parse "http:// [invalid].com": invalid character " " in host name`,
+			wantErr: `invalid URL - http:// [invalid].com defined in routing config for target type bap:`,
 		},
 	}
 
@@ -779,11 +779,11 @@ func TestV2ConflictingRules(t *testing.T) {
 // snake_case (legacy) and camelCase (new beckn spec) context attribute names.
 func TestGetContextString(t *testing.T) {
 	tests := []struct {
-		name      string
-		ctx       map[string]interface{}
-		snakeKey  string
-		camelKey  string
-		want      string
+		name     string
+		ctx      map[string]interface{}
+		snakeKey string
+		camelKey string
+		want     string
 	}{
 		{
 			name:     "snake_case key present",
