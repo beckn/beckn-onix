@@ -11,6 +11,9 @@
 //
 //	latency_report.csv    — per-benchmark mean, p50, p95, p99 latency, allocs
 //	throughput_report.csv — RPS and mean latency at each GOMAXPROCS level from the parallel sweep
+
+//go:build ignore
+
 package main
 
 import (
