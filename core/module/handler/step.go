@@ -19,12 +19,17 @@ import (
 
 // signStep represents the signing step in the processing pipeline.
 type signStep struct {
-	signer definition.Signer
-	km     definition.KeyManager
+	signer       definition.Signer
+	km           definition.KeyManager
+	payloadStore definition.PayloadStore // may be nil; enables request-signature on solicited callbacks
 }
 
 // newSignStep initializes and returns a new signing step.
-func newSignStep(signer definition.Signer, km definition.KeyManager) (definition.Step, error) {
+// payloadStore may be nil; when non-nil and the outgoing action is a callback
+// (prefixed with "on_"), signStep looks up the originating request's signature
+// in the store and includes it as request-signature="..." in the Authorization
+// header, enabling the peer to verify the solicited-callback chain (NFH-004 §6).
+func newSignStep(signer definition.Signer, km definition.KeyManager, payloadStore definition.PayloadStore) (definition.Step, error) {
 	if signer == nil {
 		return nil, fmt.Errorf("invalid config: Signer plugin not configured")
 	}
@@ -32,7 +37,7 @@ func newSignStep(signer definition.Signer, km definition.KeyManager) (definition
 		return nil, fmt.Errorf("invalid config: KeyManager plugin not configured")
 	}
 
-	return &signStep{signer: signer, km: km}, nil
+	return &signStep{signer: signer, km: km, payloadStore: payloadStore}, nil
 }
 
 // Run executes the signing step.
@@ -63,8 +68,14 @@ func (s *signStep) Run(ctx *model.StepContext) error {
 		if err != nil {
 			return fmt.Errorf("failed to sign request: %w", err)
 		}
-		authHeader := s.generateAuthHeader(ctx.SubID, keySet.UniqueKeyID, createdAt, validTill, sign)
-		log.Debugf(ctx, "Signature generated: %v", sign)
+
+		// For solicited callbacks (action starts with "on_") look up the original
+		// request's signature in the store and include it as request-signature="..."
+		// so the receiving peer can verify the chain (NFH-004 §6).
+		requestSig := s.lookupRequestSignature(ctx)
+
+		authHeader := s.generateAuthHeader(ctx.SubID, keySet.UniqueKeyID, createdAt, validTill, sign, requestSig)
+		log.Debugf(ctx, "Signature generated: %v (request-signature included: %v)", sign, requestSig != "")
 		header := model.AuthHeaderSubscriber
 		if ctx.Role == model.RoleGateway {
 			header = model.AuthHeaderGateway
@@ -75,24 +86,61 @@ func (s *signStep) Run(ctx *model.StepContext) error {
 	return nil
 }
 
+// lookupRequestSignature returns the stored outbound signature for solicited
+// callbacks. For a callback action like "on_search" it strips the "on_" prefix
+// and looks up the PayloadStore by (messageID, "search").
+// Returns empty string when: payloadStore is nil, action is not a callback,
+// no entry found, or the store returns an error (non-fatal — we degrade to
+// omitting request-signature rather than failing the sign step).
+func (s *signStep) lookupRequestSignature(ctx *model.StepContext) string {
+	if s.payloadStore == nil {
+		return ""
+	}
+	action := extractBecknAction(ctx.Body)
+	if !strings.HasPrefix(action, "on_") {
+		return ""
+	}
+	bareAction := strings.TrimPrefix(action, "on_")
+	entry, err := s.payloadStore.GetByMessageID(ctx, ctx.MessageID, bareAction)
+	if err != nil {
+		log.Warnf(ctx, "signStep: PayloadStore lookup failed for message_id=%s action=%s: %v", ctx.MessageID, bareAction, err)
+		return ""
+	}
+	if entry == nil {
+		return ""
+	}
+	return entry.Signature
+}
+
 // generateAuthHeader constructs the authorization header for the signed request.
-// It includes key ID, algorithm, creation time, expiration time, required headers, and signature.
-func (s *signStep) generateAuthHeader(subID, keyID string, createdAt, validTill int64, signature string) string {
-	return fmt.Sprintf(
-		"Signature keyId=\"%s|%s|ed25519\",algorithm=\"ed25519\",created=\"%d\",expires=\"%d\",headers=\"(created) (expires) digest\",signature=\"%s\"",
-		subID, keyID, createdAt, validTill, signature,
+// When requestSig is non-empty (solicited callback path) it appends the
+// request-signature field and extends the headers coverage string accordingly.
+func (s *signStep) generateAuthHeader(subID, keyID string, createdAt, validTill int64, signature, requestSig string) string {
+	base := fmt.Sprintf(
+		"Signature keyId=\"%s|%s|ed25519\",algorithm=\"ed25519\",created=\"%d\",expires=\"%d\"",
+		subID, keyID, createdAt, validTill,
 	)
+	if requestSig != "" {
+		return base + fmt.Sprintf(
+			",headers=\"(created) (expires) digest request-signature\",signature=\"%s\",request-signature=\"%s\"",
+			signature, requestSig,
+		)
+	}
+	return base + fmt.Sprintf(",headers=\"(created) (expires) digest\",signature=\"%s\"", signature)
 }
 
 // validateSignStep represents the signature validation step.
 type validateSignStep struct {
-	validator definition.SignValidator
-	km        definition.KeyManager
-	metrics   *HandlerMetrics
+	validator    definition.SignValidator
+	km           definition.KeyManager
+	metrics      *HandlerMetrics
+	payloadStore definition.PayloadStore
 }
 
 // newValidateSignStep initializes and returns a new validate sign step.
-func newValidateSignStep(signValidator definition.SignValidator, km definition.KeyManager) (definition.Step, error) {
+// payloadStore may be nil; when non-nil it enables solicited-callback
+// request-signature chain verification (NFH-004 §6, issue #679).
+func newValidateSignStep(signValidator definition.SignValidator, km definition.KeyManager, payloadStore definition.PayloadStore) (definition.Step, error) {
 	if signValidator == nil {
 		return nil, fmt.Errorf("invalid config: SignValidator plugin not configured")
 	}
@@ -101,9 +149,10 @@ func newValidateSignStep(signValidator definition.SignValidator, km definition.K
 	}
 	metrics, _ := GetHandlerMetrics(context.Background())
 	return &validateSignStep{
-		validator: signValidator,
-		km:        km,
-		metrics:   metrics,
+		validator:    signValidator,
+		km:           km,
+		metrics:      metrics,
+		payloadStore: payloadStore,
 	}, nil
 }
 
@@ -113,15 +162,22 @@ func (s *validateSignStep) Run(ctx *model.StepContext) error {
 	spanCtx, span := tracer.Start(ctx.Context, "validate-sign")
 	defer span.End()
 	stepCtx := &model.StepContext{
-		Context:    spanCtx,
-		Request:    ctx.Request,
-		Body:       ctx.Body,
-		Role:       ctx.Role,
-		SubID:      ctx.SubID,
-		RespHeader: ctx.RespHeader,
-		Route:      ctx.Route,
+		Context:         spanCtx,
+		Request:         ctx.Request,
+		Body:            ctx.Body,
+		Role:            ctx.Role,
+		SubID:           ctx.SubID,
+		RespHeader:      ctx.RespHeader,
+		Route:           ctx.Route,
+		ProtocolVersion: ctx.ProtocolVersion,
+		MessageID:       ctx.MessageID,
 	}
 	err := s.validateHeaders(stepCtx)
+	if err == nil {
+		// For solicited callbacks (v2, headers includes "request-signature"),
+		// additionally verify the request-signature chain (NFH-004 §6).
+		err = s.validateRequestSignatureChain(stepCtx)
+	}
 	s.recordMetrics(stepCtx, err)
 	return err
 }
@@ -177,6 +233,91 @@ func (s *validateSignStep) recordMetrics(ctx *model.StepContext, err error) {
 	}
 	s.metrics.SignatureValidationsTotal.Add(ctx.Context, 1,
 		metric.WithAttributes(telemetry.AttrStatus.String(status)))
+}
+
+// validateRequestSignatureChain verifies the request-signature field for
+// solicited callbacks (NFH-004 §6).
+//
+// A solicited callback is identified by the presence of "request-signature" in
+// the Authorization header's headers="..." attribute. In that case, the BPP
+// must include the BAP's original signature as request-signature="<sig>" in
+// its Authorization header, and ONIX verifies it matches what was sent.
+//
+// Provider-initiated pushes (headers without "request-signature") are passed
+// through without the chain check.
+//
+// No-ops:
+//   - payloadStore is nil (not configured)
+//   - protocol version < 2.0.0
+//   - "request-signature" absent from headers attribute (provider-initiated)
+func (s *validateSignStep) validateRequestSignatureChain(ctx *model.StepContext) error {
+	if s.payloadStore == nil {
+		return nil
+	}
+	if !model.IsAtLeastV2(ctx.ProtocolVersion) {
+		return nil
+	}
+	authHeader := ctx.Request.Header.Get(model.AuthHeaderSubscriber)
+	if !authHeaderIncludesRequestSig(authHeader) {
+		// Provider-initiated callback — no chain to verify.
+		return nil
+	}
+
+	// Strip "on_" prefix: callback action "on_search" → lookup key "search".
+	action := strings.TrimPrefix(extractBecknAction(ctx.Body), "on_")
+	if action == "" {
+		log.Debugf(ctx, "validateRequestSignatureChain: empty action; skipping chain check")
+		return nil
+	}
+
+	storedEntry, err := s.payloadStore.GetByMessageID(ctx, ctx.MessageID, action)
+	if err != nil {
+		return model.NewSignValidationErr(fmt.Errorf("validateSign: outbound signature lookup failed for message_id=%s action=%s: %w", ctx.MessageID, action, err))
+	}
+	if storedEntry == nil {
+		return model.NewSignValidationErr(fmt.Errorf("validateSign: no outbound signature on record for message_id=%s action=%s — callback may be unsolicited or entry expired", ctx.MessageID, action))
+	}
+
+	reqSig := extractRequestSignatureValue(authHeader)
+	if reqSig != storedEntry.Signature {
+		return model.NewSignValidationErr(fmt.Errorf("validateSign: request-signature mismatch for message_id=%s action=%s", ctx.MessageID, action))
+	}
+	return nil
+}
+
+// authHeaderIncludesRequestSig returns true when the Authorization header's
+// headers="..." attribute lists "request-signature" as one of the covered fields.
+// This distinguishes solicited callbacks (4-line signing string) from
+// provider-initiated pushes (3-line signing string, no request-signature).
+func authHeaderIncludesRequestSig(header string) bool {
+	const hPrefix = `headers="`
+	idx := strings.Index(header, hPrefix)
+	if idx == -1 {
+		return false
+	}
+	idx += len(hPrefix)
+	end := strings.Index(header[idx:], `"`)
+	if end == -1 {
+		return false
+	}
+	return strings.Contains(header[idx:idx+end], "request-signature")
+}
+
+// extractRequestSignatureValue extracts the raw Base64 value of the
+// request-signature="..." field from a Beckn Authorization header.
+// Returns empty string if the field is absent or malformed.
+func extractRequestSignatureValue(authHeader string) string {
+	const marker = `request-signature="`
+	idx := strings.Index(authHeader, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := authHeader[idx+len(marker):]
+	end := strings.IndexByte(rest, '"')
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
 }
 
 // ParsedKeyID holds the components from the parsed Authorization header's keyId.
@@ -255,7 +396,7 @@ func (s *validateSchemaStep) recordMetrics(ctx *model.StepContext, err error) {
 	if err != nil {
 		status = "failed"
 	}
-	version := extractSchemaVersion(ctx.Body)
+	version := extractProtocolVersion(ctx.Body)
 	s.metrics.SchemaValidationsTotal.Add(ctx.Context, 1,
 		metric.WithAttributes(
 			telemetry.AttrSchemaVersion.String(version),
@@ -301,7 +442,7 @@ func (s *addRouteStep) Run(ctx *model.StepContext) error {
 	return nil
 }
 
-func extractSchemaVersion(body []byte) string {
+func extractProtocolVersion(body []byte) string {
 	type contextEnvelope struct {
 		Context struct {
 			Version string `json:"version"`
@@ -309,11 +450,49 @@ func extractSchemaVersion(body []byte) string {
 	}
 	var payload contextEnvelope
 	if err := json.Unmarshal(body, &payload); err == nil {
-		if payload.Context.Version != "" {
-			return payload.Context.Version
-		}
+		return payload.Context.Version
 	}
-	return "unknown"
+	return ""
+}
+
+// extractAuthSignature extracts the raw Base64 signature value from a Beckn
+// Authorization (or X-Gateway-Authorization) header.
+// The header uses the form:
+//
+//	Signature keyId="...",algorithm="ed25519",...,signature="<base64>"
+//
+// The returned string is the value inside the signature="..." attribute, or
+// empty string if the attribute is absent or malformed.
+//
+// NOTE: The search uses ",signature=\"" (comma-prefixed) rather than the bare
+// "signature=\"" substring to avoid accidentally matching the request-signature
+// field (which also contains the substring "signature=") when it appears before
+// the standalone signature field in the header.
+func extractAuthSignature(authHeader string) string {
+	const marker = `,signature="`
+	idx := strings.Index(authHeader, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := authHeader[idx+len(marker):]
+	end := strings.IndexByte(rest, '"')
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+func extractMessageID(body []byte) string {
+	type contextEnvelope struct {
+		Context struct {
+			MessageID string `json:"messageId"`
+		} `json:"context"`
+	}
+	var payload contextEnvelope
+	if err := json.Unmarshal(body, &payload); err == nil {
+		return payload.Context.MessageID
+	}
+	return ""
 }
 
 // checkPolicyStep adapts PolicyChecker into the Step interface.
@@ -330,4 +509,20 @@ func newCheckPolicyStep(policyChecker definition.PolicyChecker) (definition.Step
 
 func (s *checkPolicyStep) Run(ctx *model.StepContext) error {
 	return s.checker.CheckPolicy(ctx)
+}
+
+// storePayloadStep adapts PayloadStore into the Step interface.
+type storePayloadStep struct {
+	store definition.PayloadStore
+}
+
+func newStorePayloadStep(ps definition.PayloadStore) (definition.Step, error) {
+	if ps == nil {
+		return nil, fmt.Errorf("storePayload: PayloadStore not configured")
+	}
+	return &storePayloadStep{store: ps}, nil
+}
+
+func (s *storePayloadStep) Run(ctx *model.StepContext) error {
+	return s.store.Store(ctx)
 }

@@ -62,8 +62,8 @@ func TestValidateCfg(t *testing.T) {
 		{
 			name: "valid config with all keys",
 			cfg: &Config{
-				NetworkParticipant: "test-np",
-				KeyID:              "test-key",
+				SubscriberID: "test-np",
+				KeyID:        "test-key",
 				SigningPrivateKey:  "dGVzdC1zaWduaW5nLXByaXZhdGU=",
 				SigningPublicKey:   "dGVzdC1zaWduaW5nLXB1YmxpYw==",
 				EncrPrivateKey:     "dGVzdC1lbmNyLXByaXZhdGU=",
@@ -115,8 +115,8 @@ func TestNew(t *testing.T) {
 		{
 			name: "valid config with keys",
 			cfg: &Config{
-				NetworkParticipant: "test-np",
-				KeyID:              "test-key",
+				SubscriberID: "test-np",
+				KeyID:        "test-key",
 				SigningPrivateKey:  "dGVzdC1zaWduaW5nLXByaXZhdGU=",
 				SigningPublicKey:   "dGVzdC1zaWduaW5nLXB1YmxpYw==",
 				EncrPrivateKey:     "dGVzdC1lbmNyLXByaXZhdGU=",
@@ -397,8 +397,8 @@ func TestLoadKeysFromConfig(t *testing.T) {
 
 	// Test with valid config
 	cfg := &Config{
-		NetworkParticipant: "test-np",
-		KeyID:              "test-key",
+		SubscriberID: "test-np",
+		KeyID:        "test-key",
 		SigningPrivateKey:  base64.StdEncoding.EncodeToString([]byte("signing-private")),
 		SigningPublicKey:   base64.StdEncoding.EncodeToString([]byte("signing-public")),
 		EncrPrivateKey:     base64.StdEncoding.EncodeToString([]byte("encr-private")),
@@ -411,10 +411,13 @@ func TestLoadKeysFromConfig(t *testing.T) {
 		return
 	}
 
-	// Verify keyset was loaded
+	// Verify keyset is stored under subscriberID and retrievable via Keyset()
 	_, exists := skm.keysets["test-np"]
 	if !exists {
-		t.Error("loadKeysFromConfig() did not load keyset")
+		t.Error("loadKeysFromConfig() did not store keyset under subscriberID")
+	}
+	if _, err := skm.Keyset(ctx, "test-np"); err != nil {
+		t.Errorf("Keyset() could not retrieve config-loaded keyset by subscriberID: %v", err)
 	}
 
 	// Test with empty config (should not error)

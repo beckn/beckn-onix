@@ -586,7 +586,6 @@ registry:
   id: dediregistry
   config:
     url: "https://fabric.nfh.global/registry/dedi"
-    registryName: "subscribers.beckn.one"
     allowedNetworkIDs: "commerce-network.org/prod,local-commerce.org/production"
     timeout: 30
     retry_max: 3
@@ -596,7 +595,6 @@ registry:
 
 **Parameters**:
 - `url`: Beckn registry base URL including the `/dedi` path (Required)
-- `registryName`: Registry name used in the lookup path. Keep this value as `subscribers.beckn.one` so lookups include all cached registries. Use `allowedNetworkIDs` if you want lookup to be restricted within one or more networks. (Required)
 - `allowedNetworkIDs`: Comma-separated list of allowed network IDs used to restrict lookup results to specific networks. See [Beckn network setup documentation](https://docs.beckn.io/creating-an-open-network/setting-up-the-network-environment#registering-the-network-on-beckn-fabric) for more on network IDs. (Optional)
 - `timeout`: Request timeout in seconds (Optional, default: client default)
 - `retry_max`: Maximum number of retry attempts (Optional, default: 4)
@@ -651,7 +649,7 @@ keyManager:
 
 ---
 
-#### 3. Cache Plugin
+#### 4. Cache Plugin
 
 **Purpose**: Redis-based caching for responses.
 
@@ -687,7 +685,7 @@ cache:
 
 ---
 
-#### 4. Schema Validator Plugin
+#### 5. Schema Validator Plugin
 
 **Purpose**: Validate requests/responses against JSON schemas.
 
@@ -703,7 +701,7 @@ schemaValidator:
 
 ---
 
-#### 5. Schema2Validator Plugin
+#### 6. Schema2Validator Plugin
 
 **Purpose**: Validate requests against OpenAPI 3.x specifications. Supports core protocol validation and optional extended validation for domain-specific objects with `@context` references.
 
@@ -745,7 +743,7 @@ schemaValidator:
 
 ---
 
-#### 6. Sign Validator Plugin
+#### 7. Sign Validator Plugin
 
 **Purpose**: Validate Ed25519 digital signatures on incoming requests.
 
@@ -758,7 +756,7 @@ signValidator:
 
 ---
 
-#### 7. Router Plugin
+#### 8. Router Plugin
 
 **Purpose**: Determine routing destination based on rules.
 
@@ -783,7 +781,7 @@ router:
 
 ---
 
-#### 8. Signer Plugin
+#### 9. Signer Plugin
 
 **Purpose**: Sign outgoing requests with Ed25519 signature.
 
@@ -796,7 +794,7 @@ signer:
 
 ---
 
-#### 9. Publisher Plugin
+#### 10. Publisher Plugin
 
 **Purpose**: Publish messages to RabbitMQ or Pub/Sub for asynchronous processing.
 
@@ -814,7 +812,7 @@ publisher:
 
 ---
 
-#### 10. Middleware Plugin
+#### 11. Middleware Plugin
 
 **Purpose**: Request preprocessing like UUID generation and header manipulation.
 
@@ -948,6 +946,45 @@ mappings:
       }
 ```
 The sample illustrates how a single mapping file can convert `search` requests and `on_search` responses between Beckn 1.1.0 (BAP) and Beckn 2.0.0 (BPP) payload shapes. You can define as many action entries as needed, and the plugin will compile and cache the JSONata expressions on startup.
+
+---
+
+#### 13. PayloadStore Plugin
+
+**Purpose**: Record every inbound request payload processed by the handler, indexed by `message_id` and `transaction_id`, with TTL-based expiration via the cache backend. Provides the stateful foundation for plugins that need transaction history.
+
+**Requirements**: A `cache` plugin must be configured in the same handler.
+
+**Configuration**:
+```yaml
+payloadStore:
+  id: payloadstore
+  config:
+    ttl: "24h"
+    indexTTL: "25h"
+    maxBodyBytes: "1048576"
+    storeBody: "true"
+    storeSignature: "true"
+    compress: "false"
+```
+
+**Parameters**:
+- `ttl`: Per-entry lifetime for each stored message. Default: `"24h"`.
+- `indexTTL`: Lifetime of the transaction-to-message-ID index. Must be >= `ttl`. Defaults to `ttl + 1h` if omitted. Set it slightly longer than `ttl` so the index outlives the last entry it references.
+- `maxBodyBytes`: Maximum bytes stored for the request body. Bodies exceeding this limit are truncated before storage. Set to `"0"` for no limit. Default: `"1048576"` (1 MiB).
+- `storeBody`: Whether to persist the request body. Set to `"false"` to store metadata only. Default: `"true"`.
+- `storeSignature`: Whether to persist the raw `Authorization` header as the `Signature` field. Useful for non-repudiation and countersignature validation. BAP handlers log a startup warning when this is explicitly set to `"false"`. Default: `"true"`.
+- `compress`: Applies gzip compression to stored body bytes before writing to cache, reducing Redis memory usage. Default: `"false"`.
+
+**Steps integration**: Add `storePayload` to the handler's `steps` list. Placement controls which requests are recorded — placing it after `validateSign` means only signed requests are stored.
+
+```yaml
+steps:
+  - validateSign
+  - storePayload
+  - validateSchema
+  - addRoute
+```
 
 ---
 

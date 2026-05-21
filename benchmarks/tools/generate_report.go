@@ -1,3 +1,5 @@
+//go:build ignore
+
 // generate_report.go — Fills REPORT_TEMPLATE.md with data from a completed
 // benchmark run and writes BENCHMARK_REPORT.md to the results directory.
 //
@@ -51,6 +53,7 @@
 //	__CACHE_DELTA__       formatted warm-vs-cold delta string
 //	__THROUGHPUT_TABLE__  generated markdown table from throughput_report.csv
 //	__BENCHSTAT_SUMMARY__ raw contents of benchstat_summary.txt
+
 package main
 
 import (

@@ -99,7 +99,44 @@ func parseAuthHeader(header string) (int64, int64, string, error) {
 	return createdTimestamp, expiredTimestamp, signature, nil
 }
 
-// hash constructs a signing string for verification.
+// ValidateAck verifies a Beckn v2.0.0 AckSignature per NFH-004 §3.4.
+// The signing string is identical to regular request signing with one addition:
+// if outboundAuthSignature is non-empty, a fourth line is appended:
+//
+//	request-signature: <outboundAuthSignature>
+//
+// This mirrors exactly what ackSigner builds in SignAck.
+func (v *validator) ValidateAck(ctx context.Context, ackBody []byte, signatureHeader, outboundAuthSignature, publicKeyBase64 string) error {
+	createdTimestamp, expiredTimestamp, signature, err := parseAuthHeader(signatureHeader)
+	if err != nil {
+		return model.NewSignValidationErr(fmt.Errorf("error parsing Signature header: %w", err))
+	}
+
+	signatureBytes, err := base64.StdEncoding.DecodeString(signature)
+	if err != nil {
+		return fmt.Errorf("error decoding signature: %w", err)
+	}
+
+	currentTime := time.Now().Unix()
+	if createdTimestamp > currentTime || currentTime > expiredTimestamp {
+		return model.NewSignValidationErr(fmt.Errorf("AckSignature is expired or not yet valid"))
+	}
+
+	signingString := hashAck(ackBody, createdTimestamp, expiredTimestamp, outboundAuthSignature)
+
+	decodedPublicKey, err := base64.StdEncoding.DecodeString(publicKeyBase64)
+	if err != nil {
+		return model.NewSignValidationErr(fmt.Errorf("error decoding public key: %w", err))
+	}
+
+	if !ed25519.Verify(ed25519.PublicKey(decodedPublicKey), []byte(signingString), signatureBytes) {
+		return model.NewSignValidationErr(fmt.Errorf("AckSignature verification failed"))
+	}
+
+	return nil
+}
+
+// hash constructs a signing string for regular request verification.
 func hash(payload []byte, createdTimestamp, expiredTimestamp int64) string {
 	hasher, _ := blake2b.New512(nil)
 	hasher.Write(payload)
@@ -107,4 +144,14 @@ func hash(payload []byte, createdTimestamp, expiredTimestamp int64) string {
 	digestB64 := base64.StdEncoding.EncodeToString(hashSum)
 
 	return fmt.Sprintf("(created): %d\n(expires): %d\ndigest: BLAKE-512=%s", createdTimestamp, expiredTimestamp, digestB64)
+}
+
+// hashAck constructs the NFH-004 §3.4 four-line signing string for AckSignature
+// verification. Mirrors ackSigner.SignAck signing-string construction exactly.
+func hashAck(payload []byte, createdTimestamp, expiredTimestamp int64, requestSignature string) string {
+	s := hash(payload, createdTimestamp, expiredTimestamp)
+	if requestSignature != "" {
+		s += "\nrequest-signature: " + requestSignature
+	}
+	return s
 }

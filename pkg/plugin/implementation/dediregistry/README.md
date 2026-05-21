@@ -17,7 +17,6 @@ registry:
   id: dediregistry
   config:
     url: "https://fabric.nfh.global/registry/dedi"
-    registryName: "subscribers.beckn.one"
     allowedNetworkIDs: "commerce-network.org/prod,local-commerce.org/production"
     timeout: 30
     retry_max: 3
@@ -30,7 +29,6 @@ registry:
 | Parameter | Required | Description | Default |
 |-----------|----------|-------------|---------|
 | `url` | Yes | DeDi wrapper API base URL (include /dedi path) | - |
-| `registryName` | Yes | Registry name for lookup path | - |
 | `allowedNetworkIDs` | No | Allowlist of network membership IDs from `data.network_memberships` for signature validation | - |
 | `timeout` | No | Request timeout in seconds | Client default |
 | `retry_max` | No | Maximum number of retry attempts | 4 (library default) |
@@ -41,10 +39,10 @@ registry:
 
 ### Beckn Registry API Format
 ```
-GET {url}/lookup/{subscriber_id}/{registryName}/{key_id}
+GET {url}/lookup/{subscriber_id}/subscribers.beckn.one/{key_id}
 ```
 
-**Example**: `https://api.beckn.io/registry/dedi/lookup/bpp.example.com/subscribers.beckn.one/76EU7K8oC9EQbXPMRL5uw3KbmTxbg3YDXHvm9nVQpK2eGghASnwHzm`
+**Example**: `https://fabric.nfh.global/registry/dedi/lookup/bpp.example.com/subscribers.beckn.one/76EU7ofwRCF1aobQkShARrf1PAUsNpHqWUJoynPu9w45YFKmzqaPmy`
 
 ### Authentication
 **No authentication required** - Beckn Registry API is public.
@@ -55,12 +53,12 @@ GET {url}/lookup/{subscriber_id}/{registryName}/{key_id}
 {
   "message": "Record retrieved from registry cache",
   "data": {
-    "record_id": "76EU8vY9TkuJ9T62Sc3FyQLf5Kt9YAVgbZhryX6mFi56ipefkP9d9a",
+    "record_id": "76EU7ofwRCF1aobQkShARrf1PAUsNpHqWUJoynPu9w45YFKmzqaPmy",
     "details": {
-      "url": "http://dev.np2.com/beckn/bap",
+      "url": "http://bpp.example.com/beckn/bap",
       "type": "BAP",
       "domain": "energy",
-      "subscriber_id": "dev.np2.com",
+      "subscriber_id": "bpp.example.com",
       "signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
       "encr_public_key": "test-encr-key"
     },
@@ -79,7 +77,7 @@ GET {url}/lookup/{subscriber_id}/{registryName}/{key_id}
 2. ONIX Receiver → parseHeader() extracts subscriberID/keyID  
 3. validateSign step → KeyManager.LookupNPKeys()
 4. KeyManager → DeDiRegistry.Lookup() with extracted values
-5. DeDi Registry → GET {url}/lookup/{subscriberID}/{registryName}/{keyID}
+5. DeDi Registry → GET {url}/lookup/{subscriberID}/subscribers.beckn.one/{keyID}
 6. DeDi Wrapper → Returns participant public keys
 7. SignValidator → Validates signature using retrieved public key
 ```
@@ -95,7 +93,6 @@ modules:
           id: dediregistry
           config:
             url: "https://fabric.nfh.global/registry/dedi"
-            registryName: "subscribers.beckn.one"
             allowedNetworkIDs: "commerce-network.org/prod,local-commerce.org/production"
             timeout: 30
             retry_max: 3
@@ -146,7 +143,6 @@ The tests cover:
 This plugin replaces direct DeDi API integration with the new DeDi Wrapper API format:
 
 - **Removed**: API key authentication, namespaceID parameters
-- **Added**: Configurable registryName parameter
 - **Changed**: POST requests → GET requests
 - **Updated**: Response structure parsing (`data.details` object)
 - **Updated**: Optional allowlist validation now checks `data.network_memberships`
@@ -160,7 +156,7 @@ This plugin replaces direct DeDi API integration with the new DeDi Wrapper API f
 
 ## Error Handling
 
-- **Configuration Errors**: Missing url or registryName
+- **Configuration Errors**: Missing url
 - **Network Errors**: Connection failures, timeouts
 - **HTTP Errors**: Non-200 status codes from DeDi wrapper
 - **Data Errors**: Missing required fields in response

@@ -85,6 +85,10 @@ func (m *mockPluginManager) SchemaValidator(ctx context.Context, cfg *plugin.Con
 	return nil, nil
 }
 
+func (m *mockPluginManager) PayloadStore(_ context.Context, _ definition.Cache, _ string, _ *plugin.Config) (definition.PayloadStore, error) {
+	return nil, nil
+}
+
 // PolicyChecker returns a mock policy checker implementation.
 func (m *mockPluginManager) PolicyChecker(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
 	if m.policyCheckerFunc != nil {

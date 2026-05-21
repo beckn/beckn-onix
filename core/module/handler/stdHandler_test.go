@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -156,6 +158,9 @@ func (noopPluginManager) TransportWrapper(context.Context, *plugin.Config) (defi
 func (noopPluginManager) SchemaValidator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
+func (noopPluginManager) PayloadStore(_ context.Context, _ definition.Cache, _ string, _ *plugin.Config) (definition.PayloadStore, error) {
+	return nil, nil
+}
 
 type registryWithoutMetadata struct{}
 
@@ -169,6 +174,7 @@ func (stubCache) Get(context.Context, string) (string, error)              { ret
 func (stubCache) Set(context.Context, string, string, time.Duration) error { return nil }
 func (stubCache) Delete(context.Context, string) error                     { return nil }
 func (stubCache) Clear(context.Context) error                              { return nil }
+
 
 func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	ctx := context.Background()
@@ -469,4 +475,394 @@ type mockRoundTripper struct{}
 
 func (m *mockRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) {
 	return nil, nil
+}
+
+// mockResponseStep is a test double for definition.ResponseStep.
+type mockResponseStep struct {
+	called bool
+	err    error
+}
+
+func (m *mockResponseStep) RunOnResponse(_ *model.StepContext, _ *model.ResponseStepContext) error {
+	m.called = true
+	return m.err
+}
+
+func TestServeHTTP_ResponseStepCalledAfterSteps(t *testing.T) {
+	respStep := &mockResponseStep{}
+	h := &stdHandler{
+		SubscriberID:  "test-sub",
+		role:          model.RoleBAP,
+		moduleName:    "test-module",
+		steps:         []definition.Step{},
+		responseSteps: []definition.ResponseStep{respStep},
+	}
+
+	req, _ := http.NewRequest("POST", "/search", strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if !respStep.called {
+		t.Error("expected ResponseStep.RunOnResponse to be called")
+	}
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestServeHTTP_ResponseStepErrorSendsNack(t *testing.T) {
+	respStep := &mockResponseStep{err: fmt.Errorf("response step failed")}
+	h := &stdHandler{
+		SubscriberID:  "test-sub",
+		role:          model.RoleBAP,
+		moduleName:    "test-module",
+		steps:         []definition.Step{},
+		responseSteps: []definition.ResponseStep{respStep},
+	}
+
+	req, _ := http.NewRequest("POST", "/search", strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on response step error, got %d", rr.Code)
+	}
+}
+
+func TestServeHTTP_ResponseStepRunsAfterAllInboundSteps(t *testing.T) {
+	order := []string{}
+
+	inboundStep := &mockOrderStep{name: "inbound", order: &order}
+	respStep := &mockOrderResponseStep{name: "response", order: &order}
+
+	h := &stdHandler{
+		SubscriberID:  "test-sub",
+		role:          model.RoleBAP,
+		moduleName:    "test-module",
+		steps:         []definition.Step{inboundStep},
+		responseSteps: []definition.ResponseStep{respStep},
+	}
+
+	req, _ := http.NewRequest("POST", "/search", strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if len(order) != 2 || order[0] != "inbound" || order[1] != "response" {
+		t.Errorf("unexpected execution order: %v", order)
+	}
+}
+
+// TestServeHTTP_PipelineNack_SignedByAckSigner verifies that when the ackSigner
+// is configured (signAck step), pipeline NACKs carry a Signature header — per
+// NFH-007 CON-004-02 all synchronous responses MUST be signed.
+func TestServeHTTP_PipelineNack_SignedByAckSigner(t *testing.T) {
+	signer := &mockSigner{returnSig: "nackPipelineSig=="}
+	km := &mockKM{keyset: &model.Keyset{UniqueKeyID: "k1", SigningPrivate: "priv"}}
+
+	failingStep := &mockFailStep{err: model.NewBadReqErr(fmt.Errorf("schema error"))}
+
+	ackSignerConc := &ackSignerStep{signer: signer, km: km}
+	h := &stdHandler{
+		SubscriberID:  "bpp.example.com",
+		role:          model.RoleBPP,
+		moduleName:    "test",
+		steps:         []definition.Step{failingStep},
+		responseSteps: []definition.ResponseStep{ackSignerConc},
+		ackSigner:     ackSignerConc,
+	}
+
+	body := `{"context":{"version":"2.0.0","messageId":"m1","action":"search"}}`
+	req, _ := http.NewRequest("POST", "/search", strings.NewReader(body))
+	req.Header.Set("X-Subscriber-Id", "bpp.example.com")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rr.Code)
+	}
+	sig := rr.Header().Get("Signature")
+	if sig == "" {
+		t.Error("expected Signature header on pipeline NACK response — was unsigned")
+	}
+}
+
+type mockFailStep struct{ err error }
+
+func (m *mockFailStep) Run(_ *model.StepContext) error { return m.err }
+
+type mockOrderStep struct {
+	name  string
+	order *[]string
+}
+
+func (m *mockOrderStep) Run(_ *model.StepContext) error {
+	*m.order = append(*m.order, m.name)
+	return nil
+}
+
+type mockOrderResponseStep struct {
+	name  string
+	order *[]string
+}
+
+func (m *mockOrderResponseStep) RunOnResponse(_ *model.StepContext, _ *model.ResponseStepContext) error {
+	*m.order = append(*m.order, m.name)
+	return nil
+}
+
+func TestExtractAuthSignature(t *testing.T) {
+	tests := []struct {
+		name     string
+		header   string
+		expected string
+	}{
+		{
+			name:     "valid Authorization header",
+			header:   `Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",created="1714000000",expires="1714000300",headers="(created) (expires) digest",signature="abc123=="`,
+			expected: "abc123==",
+		},
+		{
+			name:     "signature at end without trailing comma",
+			header:   `Signature keyId="sub|key|ed25519",algorithm="ed25519",signature="xyz+/base64=="`,
+			expected: "xyz+/base64==",
+		},
+		{
+			name:     "no signature attribute",
+			header:   `Signature keyId="sub|key|ed25519",algorithm="ed25519"`,
+			expected: "",
+		},
+		{
+			name:     "empty header",
+			header:   "",
+			expected: "",
+		},
+		{
+			name:     "malformed — signature marker present but no closing quote",
+			header:   `Signature signature="unclosed`,
+			expected: "",
+		},
+		{
+			name:     "empty signature value",
+			header:   `Signature keyId="sub|key|ed25519",signature=""`,
+			expected: "",
+		},
+		{
+			// Regression: request-signature field appears AFTER signature in our
+			// generated headers (normal ordering); must return the signature value.
+			name:     "callback header — signature before request-signature",
+			header:   `Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",created="1",expires="2",headers="(created) (expires) digest request-signature",signature="correctSig==",request-signature="reqSig=="`,
+			expected: "correctSig==",
+		},
+		{
+			// Regression: if a peer implementation places request-signature BEFORE
+			// signature, the old bare-string match would have returned the value
+			// inside request-signature instead.  The comma-prefixed search must
+			// return the correct standalone signature value.
+			name:     "callback header — request-signature before signature (peer ordering)",
+			header:   `Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",created="1",expires="2",headers="(created) (expires) digest request-signature",request-signature="reqSig==",signature="correctSig=="`,
+			expected: "correctSig==",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractAuthSignature(tt.header)
+			if got != tt.expected {
+				t.Errorf("extractAuthSignature() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestStepCtx_ProtocolVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		authHeader  string
+		wantVer     string
+		wantMsgID   string
+		wantAuthSig string
+	}{
+		{
+			name:      "v2 version with messageId",
+			body:      `{"context":{"version":"2.0.0","messageId":"550e8400-e29b-41d4-a716-446655440000"}}`,
+			wantVer:   "2.0.0",
+			wantMsgID: "550e8400-e29b-41d4-a716-446655440000",
+		},
+		{
+			name:      "RC escape hatch 2.0.0-rc",
+			body:      `{"context":{"version":"2.0.0-rc","messageId":"abc-123"}}`,
+			wantVer:   "2.0.0-rc",
+			wantMsgID: "abc-123",
+		},
+		{
+			name:    "pre-v2 version 1.1.0",
+			body:    `{"context":{"version":"1.1.0"}}`,
+			wantVer: "1.1.0",
+		},
+		{
+			name:    "version field missing",
+			body:    `{"context":{}}`,
+			wantVer: "",
+		},
+		{
+			name:    "context field missing",
+			body:    `{}`,
+			wantVer: "",
+		},
+		{
+			name:    "invalid JSON",
+			body:    `not-json`,
+			wantVer: "",
+		},
+		{
+			name:        "Authorization header with signature extracted",
+			body:        `{"context":{"version":"2.0.0","messageId":"msg-789"}}`,
+			authHeader:  `Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",created="1714000000",expires="1714000300",headers="(created) (expires) digest",signature="sigBase64=="`,
+			wantVer:     "2.0.0",
+			wantMsgID:   "msg-789",
+			wantAuthSig: "sigBase64==",
+		},
+		{
+			name:        "no Authorization header — empty signature",
+			body:        `{"context":{"version":"2.0.0","messageId":"msg-000"}}`,
+			authHeader:  "",
+			wantVer:     "2.0.0",
+			wantMsgID:   "msg-000",
+			wantAuthSig: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &stdHandler{
+				role:         model.RoleBAP,
+				SubscriberID: "test-subscriber",
+			}
+			req := httptest.NewRequest(http.MethodPost, "/search", bytes.NewBufferString(tt.body))
+			if tt.authHeader != "" {
+				req.Header.Set(model.AuthHeaderSubscriber, tt.authHeader)
+			}
+			sctx, err := h.stepCtx(req, http.Header{})
+			if err != nil {
+				t.Fatalf("stepCtx() returned unexpected error: %v", err)
+			}
+			if sctx.ProtocolVersion != tt.wantVer {
+				t.Errorf("ProtocolVersion = %q, want %q", sctx.ProtocolVersion, tt.wantVer)
+			}
+			if sctx.MessageID != tt.wantMsgID {
+				t.Errorf("MessageID = %q, want %q", sctx.MessageID, tt.wantMsgID)
+			}
+			// Verify messageId is also propagated into Go context for response functions.
+			if ctxMsgID, _ := sctx.Value(model.ContextKeyMsgID).(string); ctxMsgID != tt.wantMsgID {
+				t.Errorf("context ContextKeyMsgID = %q, want %q", ctxMsgID, tt.wantMsgID)
+			}
+			if sctx.InboundAuthSignature != tt.wantAuthSig {
+				t.Errorf("InboundAuthSignature = %q, want %q", sctx.InboundAuthSignature, tt.wantAuthSig)
+			}
+		})
+	}
+}
+
+// TestProxy_ModifyResponse_409_InvokesResponseSteps verifies that the thin
+// ModifyResponse dispatcher in proxy() fires responseSteps on a 409 upstream
+// response. This covers the AckNoCallback relay path: app sends 409, ONIX
+// relays it, ackSigner (or any ResponseStep) runs via ModifyResponse.
+func TestProxy_ModifyResponse_409_InvokesResponseSteps(t *testing.T) {
+	const ackBody = `{"message":{"status":"ACK","error":{"code":"40901","message":"no catalog"}}}`
+
+	// Upstream app: returns 409 with AckNoCallback body.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		fmt.Fprint(w, ackBody)
+	}))
+	defer upstream.Close()
+
+	// ResponseStep that records being called and sets a sentinel header.
+	respStep := &mockResponseStep{}
+
+	upstreamURL, _ := url.Parse(upstream.URL)
+	stepCtx := &model.StepContext{
+		Context: context.Background(),
+		Route:   &model.Route{TargetType: "url", URL: upstreamURL},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/bpp/receiver/", strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+
+	proxy(stepCtx, req, rr, http.DefaultClient, []definition.ResponseStep{respStep})
+
+	if rr.Code != http.StatusConflict {
+		t.Errorf("expected upstream 409 to be relayed, got %d", rr.Code)
+	}
+	if !respStep.called {
+		t.Error("expected ResponseStep to be called via ModifyResponse on 409 upstream response")
+	}
+	if rr.Body.String() != ackBody {
+		t.Errorf("expected upstream body to be relayed unchanged: got %q", rr.Body.String())
+	}
+}
+
+// stubPayloadStore is a minimal PayloadStore for storePayloadStep unit tests.
+type stubPayloadStore struct {
+	stored   []*model.StepContext
+	storeErr error
+}
+
+func (s *stubPayloadStore) Store(ctx *model.StepContext) error {
+	if s.storeErr != nil {
+		return s.storeErr
+	}
+	s.stored = append(s.stored, ctx)
+	return nil
+}
+
+func (s *stubPayloadStore) Exists(_ context.Context, _ string) (bool, error) { return false, nil }
+func (s *stubPayloadStore) GetByTransactionID(_ context.Context, _ string) ([]definition.PayloadEntry, error) {
+	return nil, nil
+}
+func (s *stubPayloadStore) GetByMessageID(_ context.Context, _, _ string) (*definition.PayloadEntry, error) {
+	return nil, nil
+}
+
+func TestNewStorePayloadStep_NilPayloadStoreFails(t *testing.T) {
+	_, err := newStorePayloadStep(nil)
+	if err == nil {
+		t.Fatal("expected error for nil PayloadStore")
+	}
+}
+
+func TestStorePayloadStep_Run_DelegatesToStore(t *testing.T) {
+	ps := &stubPayloadStore{}
+	step, err := newStorePayloadStep(ps)
+	if err != nil {
+		t.Fatalf("newStorePayloadStep: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	ctx := &model.StepContext{
+		Context: context.Background(),
+		Request: req,
+		Body:    []byte(`{"context":{"message_id":"m1","transaction_id":"t1","action":"search"}}`),
+	}
+
+	if err := step.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(ps.stored) != 1 || ps.stored[0] != ctx {
+		t.Errorf("expected Store called once with the same context; got %d calls", len(ps.stored))
+	}
+}
+
+func TestStorePayloadStep_Run_PropagatesError(t *testing.T) {
+	ps := &stubPayloadStore{storeErr: errors.New("cache down")}
+	step, _ := newStorePayloadStep(ps)
+
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	ctx := &model.StepContext{Context: context.Background(), Request: req}
+
+	if err := step.Run(ctx); err == nil {
+		t.Fatal("expected error from Run when Store fails")
+	}
 }

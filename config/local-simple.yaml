@@ -46,7 +46,7 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            networkParticipant: bap-network
+            subscriberId: bap-network
             keyId: bap-network-key
             signingPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
             signingPublicKey: UX1EDpL4YHOnfkuhrtS+Bz18qwidrX+oJxButD8xaCE=
@@ -62,6 +62,8 @@ modules:
             schemaDir: ./schemas
         signValidator:
           id: signvalidator
+        signer:
+          id: signer
         router:
           id: router
           config:
@@ -80,6 +82,7 @@ modules:
         - validateSign
         - checkPolicy
         - addRoute
+        - signAck
   
   - name: bapTxnCaller
     path: /bap/caller/
@@ -102,7 +105,7 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            networkParticipant: bap-network
+            subscriberId: bap-network
             keyId: bap-network-key
             signingPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
             signingPublicKey: UX1EDpL4YHOnfkuhrtS+Bz18qwidrX+oJxButD8xaCE=
@@ -148,7 +151,7 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            networkParticipant: bpp-network
+            subscriberId: bpp-network
             keyId: bpp-network-key
             signingPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
             signingPublicKey: 8CANv4rto7u6RZEB9b6z6mXIIfBLlExIRLBLd5YYl/Y=
@@ -164,6 +167,8 @@ modules:
             schemaDir: ./schemas
         signValidator:
           id: signvalidator
+        signer:
+          id: signer
         router:
           id: router
           config:
@@ -177,6 +182,7 @@ modules:
         - validateSign
         - checkPolicy
         - addRoute
+        - signAck
   
   - name: bppTxnCaller
     path: /bpp/caller/
@@ -199,7 +205,7 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            networkParticipant: bpp-network
+            subscriberId: bpp-network
             keyId: bpp-network-key
             signingPrivateKey: uc5WYG/eke0PVGyQ9JNVLpwQL0K9JIZfHfqUHdLBTaY=
             signingPublicKey: 8CANv4rto7u6RZEB9b6z6mXIIfBLlExIRLBLd5YYl/Y=

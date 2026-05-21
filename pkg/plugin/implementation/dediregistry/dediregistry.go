@@ -13,10 +13,13 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 )
 
+// dediAllRegistriesWildcard is the wildcard constant required by the DeDi registry service
+// to search across all cached registries in Beckn One. This value must not be configured externally.
+const dediAllRegistriesWildcard = "subscribers.beckn.one"
+
 // Config holds configuration parameters for the DeDi registry client.
 type Config struct {
 	URL               string        `yaml:"url" json:"url"`
-	RegistryName      string        `yaml:"registryName" json:"registryName"`
 	AllowedNetworkIDs []string      `yaml:"allowedNetworkIDs" json:"allowedNetworkIDs"`
 	Timeout           int           `yaml:"timeout" json:"timeout"`
 	RetryMax          int           `yaml:"retry_max" json:"retry_max"`
@@ -37,9 +40,6 @@ func validate(cfg *Config) error {
 	}
 	if cfg.URL == "" {
 		return fmt.Errorf("url cannot be empty")
-	}
-	if cfg.RegistryName == "" {
-		return fmt.Errorf("registryName cannot be empty")
 	}
 	return nil
 }
@@ -142,7 +142,7 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 		return nil, fmt.Errorf("key_id is required for DeDi lookup")
 	}
 
-	lookupURL := fmt.Sprintf("%s/lookup/%s/%s/%s", c.config.URL, subscriberID, c.config.RegistryName, keyID)
+	lookupURL := fmt.Sprintf("%s/lookup/%s/%s/%s", c.config.URL, subscriberID, dediAllRegistriesWildcard, keyID)
 
 	data, err := c.fetchDeDiData(ctx, lookupURL, "record lookup")
 	if err != nil {

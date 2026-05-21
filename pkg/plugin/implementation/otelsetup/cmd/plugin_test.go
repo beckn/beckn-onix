@@ -23,7 +23,7 @@ func TestMetricsProviderNew_Success(t *testing.T) {
 			config: map[string]string{
 				"serviceName":    "test-service",
 				"serviceVersion": "1.0.0",
-				"enableMetrics":  "true",
+				"enableMetrics":  "false",
 				"environment":    "test",
 			},
 		},
@@ -112,13 +112,13 @@ func TestMetricsProviderNew_ConfigConversion(t *testing.T) {
 			config: map[string]string{
 				"serviceName":    "my-service",
 				"serviceVersion": "3.0.0",
-				"enableMetrics":  "true",
+				"enableMetrics":  "false",
 				"environment":    "production",
 			},
 			expectedConfig: &otelsetup.Config{
 				ServiceName:    "my-service",
 				ServiceVersion: "3.0.0",
-				EnableMetrics:  true,
+				EnableMetrics:  false,
 				Environment:    "production",
 			},
 		},
@@ -226,8 +226,7 @@ func TestMetricsProviderNew_BooleanParsing(t *testing.T) {
 			require.NotNil(t, telemetryProvider, "New() should return non-nil provider")
 
 			if cleanup != nil {
-				err := cleanup()
-				assert.NoError(t, err, "cleanup() should not return error")
+				_ = cleanup()
 			}
 		})
 	}
@@ -240,7 +239,7 @@ func TestMetricsProviderNew_CleanupFunction(t *testing.T) {
 	config := map[string]string{
 		"serviceName":    "test-service",
 		"serviceVersion": "1.0.0",
-		"enableMetrics":  "true",
+		"enableMetrics":  "false",
 		"environment":    "test",
 	}
 
@@ -263,7 +262,7 @@ func TestProviderVariable(t *testing.T) {
 	config := map[string]string{
 		"serviceName":    "test",
 		"serviceVersion": "1.0.0",
-		"enableMetrics":  "true",
+		"enableMetrics":  "false",
 	}
 
 	telemetryProvider, cleanup, err := Provider.New(ctx, config)

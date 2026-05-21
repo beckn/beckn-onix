@@ -542,27 +542,20 @@ Spans forwarded via the `traces/network` pipeline, combined with the `transactio
 
 ## OTEL Collector Configuration
 
-The repository includes three pre-configured collector configs under `install/network-observability/`. The backend exporters in these configs are reference defaults and can be replaced with any OTLP-compatible product.
+The repository ships three sets of pre-configured collector configs, one per deployment mode under `install/network-observability/`. The backend exporters in these configs are reference defaults and can be replaced with any OTLP-compatible product.
 
 ### Companion collector (BAP / BPP)
 
 One instance alongside each adapter. Receives all signals on OTLP/gRPC `:4317`.
 
-**Node pipeline** — full fidelity to the node operator's backends:
+Two config variants are provided under `install/network-observability/node/otel-collector-bap/` (and `otel-collector-bpp/`):
 
-```yaml
-metrics/app:
-  receivers: [otlp]
-  processors: [batch]
-  exporters: [<node-operator metrics backend>]
+| File | Pipelines active | When to use |
+|---|---|---|
+| `config.yaml` | Network pipeline only | Default node deployment — no local telemetry backends |
+| `config-full.yaml` | App pipeline + network pipeline | Node operator wants local Prometheus / Jaeger / Grafana |
 
-traces/app:
-  receivers: [otlp]
-  processors: [batch/traces]
-  exporters: [<node-operator trace backend>]
-```
-
-**Network pipeline** — filtered signals forwarded to the network-level collector:
+**Network pipeline** — filtered signals forwarded to the network-level collector (both configs):
 
 ```yaml
 metrics/network:
@@ -579,6 +572,20 @@ logs/network:
   receivers: [otlp]
   processors: [batch]
   exporters: [otlp_http/collector-network]
+```
+
+**App pipeline** — full fidelity to the node operator's backends (`config-full.yaml` only):
+
+```yaml
+metrics/app:
+  receivers: [otlp]
+  processors: [batch]
+  exporters: [<node-operator metrics backend>]
+
+traces/app:
+  receivers: [otlp]
+  processors: [batch/traces]
+  exporters: [<node-operator trace backend>]
 ```
 
 **`filter/network_metrics`** — passes only `onix_http_request_count`:
@@ -601,7 +608,7 @@ filter/network_traces:
 
 ### Network-level collector
 
-Operated by the network governing entity. Receives filtered signals from all companion collectors over OTLP/HTTP `:4318`.
+Operated by the network governing entity. Receives filtered signals from all companion collectors over OTLP/HTTP `:4318`. Config at `install/network-observability/network/otel-collector-network/config.yaml`.
 
 **`transform/beckn_ids`** — rewrites `trace_id` from `transaction_id` so cross-node traces are queryable by Beckn transaction ID:
 ```yaml
@@ -627,15 +634,21 @@ logs:      receivers: [otlp]  processors: [batch]                 exporters: [<n
 
 | Collector | OTLP gRPC | OTLP HTTP | Prometheus scrape |
 |---|---|---|---|
-| `otel-collector-bap` | 4317 | 4318 | 8889 |
-| `otel-collector-bpp` | 4321 | 4322 | 8891 |
-| `otel-collector-network` | 4319 | 4320 | 8890 |
+| `otel-collector-bap` | 4317 | 4318 | 8889 (telemetry overlay only) |
+| `otel-collector-bpp` | 4321 | 4322 | 8891 (telemetry overlay only) |
+| `otel-collector-network` | — | 4318 | 8890 |
 
 ---
 
 ## Reference Stack Setup
 
-`install/network-observability/` contains a Docker Compose file that brings up a complete, runnable two-tier observability stack. The backend services used (Prometheus, Jaeger, Loki, Grafana, Zipkin) are open-source reference implementations. Any of them can be replaced by editing only the exporter block in the relevant collector config — the adapter does not change.
+`install/network-observability/` contains three subdirectories, each with its own Docker Compose file for a different deployment scenario. The backend services used (Prometheus, Jaeger, Loki, Grafana, Zipkin) are open-source reference implementations. Any of them can be replaced by editing only the exporter block in the relevant collector config — the adapter does not change.
+
+| Directory | Purpose | Run by |
+|---|---|---|
+| `all-in-one/` | Everything in one stack — local dev and demos | Developer on a single machine |
+| `network/` | Central network-level stack | Network governing entity |
+| `node/` | Per-node adapter stack | Each ONIX participant |
 
 ### Prerequisites
 
@@ -647,46 +660,85 @@ docker build -f Dockerfile.adapter-with-plugins -t beckn-onix:latest .
 unzip schemas.zip
 ```
 
-### Start the stack
+---
+
+### all-in-one — local development
+
+Runs the complete two-tier stack on a single machine. No configuration needed.
 
 ```bash
 # Run from the repository root
-docker compose -f install/network-observability/docker-compose.yml up -d
+docker compose -f install/network-observability/all-in-one/docker-compose.yml up -d
 ```
 
-### Services started
+**Services:**
 
 | Service | Port(s) | Role |
 |---|---|---|
-| `onix-bap` | 8081 | BAP adapter (`config/local-beckn-one-bap.yaml`) |
-| `onix-bpp` | 8082 | BPP adapter (`config/local-beckn-one-bpp.yaml`) |
+| `onix-bap` | 8081 | BAP adapter |
+| `onix-bpp` | 8082 | BPP adapter |
 | `redis` | 6379 | Caching backend |
 | `otel-collector-bap` | 4317, 4318, 8889 | BAP companion collector |
 | `otel-collector-bpp` | 4321, 4322, 8891 | BPP companion collector |
 | `otel-collector-network` | 4319, 4320, 8890 | Network-level aggregator |
-| `prometheus` | 9090 | Reference metrics backend |
-| `jaeger` | 16686 | Reference trace backend — node-level (app pipeline) |
-| `zipkin` | 9411 | Reference trace backend — network-level |
-| `loki` | 3100 | Reference log backend |
-| `grafana` | 3000 | Reference dashboards — admin / admin |
+| `prometheus` | 9090 | Metrics backend |
+| `jaeger` | 16686 | Trace backend — node-level (app pipeline) |
+| `zipkin` | 9411 | Trace backend — network-level |
+| `loki` | 3100 | Log backend |
+| `grafana` | 3000 | Dashboards — admin / admin |
 | `sandbox-bap` | 3001 | Beckn BAP test sandbox |
 | `sandbox-bpp` | 3002 | Beckn BPP test sandbox |
 
-### Network topology
+```bash
+docker compose -f install/network-observability/all-in-one/docker-compose.yml down
+docker compose -f install/network-observability/all-in-one/docker-compose.yml down -v
+```
 
-Two Docker networks:
+---
 
-- **`beckn_network`** — adapter-to-adapter and adapter-to-Redis/sandbox traffic
-- **`observability`** — all telemetry traffic between adapters, collectors, and backends
+### network — central stack
 
-Adapter containers are on both networks. All observability services are on `observability` only.
+Operated by the network governing entity. Receives filtered signals from all node companion collectors.
+
+```bash
+# Run from the repository root
+docker compose -f install/network-observability/network/docker-compose.yml up -d
+```
+
+**Services:** `otel-collector-network`, `prometheus`, `zipkin`, `loki`, `grafana`
+
+Expose port **4318** (OTLP/HTTP) publicly so node companion collectors can forward their network pipeline to this host.
+
+---
+
+### node — per-node stack
+
+Deployed by each ONIX participant. Set `NETWORK_COLLECTOR_ENDPOINT` to the network governing entity's collector address before starting.
+
+**Default — network forwarding only (no local telemetry backends):**
+
+```bash
+# From install/network-observability/node/
+NETWORK_COLLECTOR_ENDPOINT=http://<network-host>:4318 docker compose up -d
+```
+
+**With node-level telemetry (adds Jaeger, Prometheus, Grafana for the node operator):**
+
+```bash
+NETWORK_COLLECTOR_ENDPOINT=http://<network-host>:4318 \
+  docker compose -f docker-compose.yml -f docker-compose.with-telemetry.yml up -d
+```
+
+The `beckn_network` Docker network is declared `external: true`, so this stack attaches to any devkit network that already exists.
+
+---
 
 ### Replacing a backend
 
 To send traces to a different backend, change only the exporter in the collector config. Example — replacing Jaeger with Honeycomb for the node operator trace pipeline:
 
 ```yaml
-# install/network-observability/otel-collector-bap/config.yaml
+# install/network-observability/node/otel-collector-bap/config-full.yaml
 exporters:
   otlp/honeycomb:
     endpoint: api.honeycomb.io:443
@@ -702,12 +754,3 @@ service:
 ```
 
 No changes to the adapter, the network pipeline, or the network-level collector are needed.
-
-### Stopping the stack
-
-```bash
-docker compose -f install/network-observability/docker-compose.yml down
-
-# Include -v to also remove stored metrics, traces, and logs
-docker compose -f install/network-observability/docker-compose.yml down -v
-```

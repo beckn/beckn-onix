@@ -1,0 +1,11 @@
+# Prometheus — scrapes only the network-level otel-collector.
+# Node-level collector metrics (BAP, BPP) are not scraped here.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "otel-collector-network"
+    static_configs:
+      - targets: ["otel-collector-network:8890"]
+    metrics_path: /metrics
