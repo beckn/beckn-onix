@@ -58,10 +58,8 @@ func TestMetricsProviderNew_Success(t *testing.T) {
 
 			// Metrics server is started inside provider when enabled; MetricsHandler is not exposed.
 			if cleanup != nil {
-				// Cleanup can fail when metrics/tracing are enabled but there is no OTLP backend
-				// in unit tests (e.g., empty/unreachable endpoint). The important guarantee here
-				// is that cleanup is safe to call.
-				_ = cleanup()
+				err := cleanup()
+				assert.NoError(t, err, "cleanup() should not return error")
 			}
 		})
 	}
@@ -168,7 +166,8 @@ func TestMetricsProviderNew_ConfigConversion(t *testing.T) {
 			require.NotNil(t, telemetryProvider, "New() should return non-nil provider")
 
 			if cleanup != nil {
-				_ = cleanup()
+				err := cleanup()
+				assert.NoError(t, err, "cleanup() should not return error")
 			}
 		})
 	}
