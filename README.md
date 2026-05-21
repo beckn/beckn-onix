@@ -131,7 +131,7 @@ The **Beckn Protocol** is an open protocol that enables location-aware, local co
 - **Encrypter**: AES encryption for sensitive data protection
 - **Decrypter**: AES decryption for encrypted data processing
 - **ReqPreprocessor**: Request preprocessing (UUID generation, headers)
-- **ReqMapper**: Middleware to transform payload either between Beckn versions or against other platforms.
+- **ReqMapper**: Step plugin (id: `reqmapper`) used by the handler's `transformPayload` step to transform payloads at an explicit point in the pipeline.
 - **OtelSetup**: Observability setup for metrics, traces, and logs (OTLP). Supports optional audit log configuration via `auditFieldsConfig` (YAML mapping actions to fields) . See [CONFIG.md](CONFIG.md) for details.
 
 

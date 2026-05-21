@@ -28,20 +28,21 @@ import (
 
 // stdHandler orchestrates the execution of defined processing steps.
 type stdHandler struct {
-	signer           definition.Signer
-	steps            []definition.Step
-	responseSteps    []definition.ResponseStep
-	signValidator    definition.SignValidator
-	cache            definition.Cache
-	registry         definition.RegistryLookup
-	manifestLoader   definition.ManifestLoader
-	km               definition.KeyManager
-	schemaValidator  definition.SchemaValidator
-	policyChecker    definition.PolicyChecker
-	router           definition.Router
-	publisher        definition.Publisher
-	transportWrapper definition.TransportWrapper
-	payloadStore     definition.PayloadStore
+	signer             definition.Signer
+	steps              []definition.Step
+	responseSteps      []definition.ResponseStep
+	signValidator      definition.SignValidator
+	cache              definition.Cache
+	registry           definition.RegistryLookup
+	manifestLoader     definition.ManifestLoader
+	km                 definition.KeyManager
+	schemaValidator    definition.SchemaValidator
+	policyChecker      definition.PolicyChecker
+	router             definition.Router
+	publisher          definition.Publisher
+	transportWrapper   definition.TransportWrapper
+	payloadTransformer definition.Step
+	payloadStore       definition.PayloadStore
 	// ackSigner is non-nil only when the "signAck" step is configured (Receiver
 	// modules). It is also used to sign pipeline-NACK responses so that ALL
 	// synchronous responses carry a Signature header per NFH-007 CON-004-02.
@@ -192,8 +193,8 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Send ACK / route on success.
 	if pipelineErr == nil {
-		// Restore request body before forwarding or publishing.
-		r.Body = io.NopCloser(bytes.NewReader(stepCtx.Body))
+		// Restore request body and metadata before forwarding or publishing.
+		syncRequestBody(r, stepCtx.Body)
 		if stepCtx.Route == nil {
 			// No routing — ONIX writes the ACK directly. Run response steps here
 			// with resp=nil (publisher path semantics).
@@ -466,6 +467,21 @@ func loadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader de
 	return checker, nil
 }
 
+func loadPayloadTransformerStep(ctx context.Context, mgr PluginManager, cfg *plugin.Config) (definition.Step, error) {
+	if cfg == nil {
+		log.Debug(ctx, "Skipping PayloadTransformer plugin: not configured")
+		return nil, nil
+	}
+
+	step, err := mgr.Step(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load PayloadTransformer plugin (%s): %w", cfg.ID, err)
+	}
+
+	log.Debugf(ctx, "Loaded PayloadTransformer plugin: %s", cfg.ID)
+	return step, nil
+}
+
 // initPlugins initializes required plugins for the processor.
 func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *PluginCfg) error {
 	var err error
@@ -503,6 +519,9 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 		return err
 	}
 	if h.policyChecker, err = loadPolicyChecker(ctx, mgr, h.manifestLoader, cfg.PolicyChecker); err != nil {
+		return err
+	}
+	if h.payloadTransformer, err = loadPayloadTransformerStep(ctx, mgr, cfg.PayloadTransformer); err != nil {
 		return err
 	}
 
@@ -574,6 +593,11 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			s, err = newAddRouteStep(h.router)
 		case "checkPolicy":
 			s, err = newCheckPolicyStep(h.policyChecker)
+		case "transformPayload":
+			if h.payloadTransformer == nil {
+				return fmt.Errorf("invalid config: PayloadTransformer plugin not configured")
+			}
+			s = h.payloadTransformer
 		case "storePayload":
 			s, err = newStorePayloadStep(h.payloadStore)
 		default:
@@ -597,6 +621,20 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 	}
 	log.Infof(ctx, "Processor steps initialized: %v", cfg.Steps)
 	return nil
+}
+
+func syncRequestBody(r *http.Request, body []byte) {
+	if r == nil {
+		return
+	}
+
+	reader := bytes.NewReader(body)
+	r.Body = io.NopCloser(reader)
+	r.ContentLength = int64(len(body))
+	r.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	r.TransferEncoding = nil
 }
 
 func (h *stdHandler) resolveDirection(ctx context.Context) (senderID, receiverID string) {

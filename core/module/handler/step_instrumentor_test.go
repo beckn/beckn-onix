@@ -18,6 +18,16 @@ func (s stubStep) Run(ctx *model.StepContext) error {
 	return s.err
 }
 
+type mutatingStep struct{}
+
+func (mutatingStep) Run(ctx *model.StepContext) error {
+	ctx.Body = []byte(`{"mutated":true}`)
+	ctx.Route = nil
+	ctx.SubID = "sub-updated"
+	ctx.Role = model.RoleBPP
+	return nil
+}
+
 func TestInstrumentedStepSuccess(t *testing.T) {
 	ctx := context.Background()
 	provider, err := telemetry.NewTestProvider(ctx)
@@ -48,6 +58,30 @@ func TestInstrumentedStepError(t *testing.T) {
 		Role:    model.RoleBAP,
 	}
 	require.Error(t, step.Run(stepCtx))
+}
+
+func TestInstrumentedStep_PropagatesMutations(t *testing.T) {
+	ctx := context.Background()
+	provider, err := telemetry.NewTestProvider(ctx)
+	require.NoError(t, err)
+	defer provider.Shutdown(context.Background())
+
+	step, err := NewInstrumentedStep(mutatingStep{}, "test-step", "test-module")
+	require.NoError(t, err)
+
+	stepCtx := &model.StepContext{
+		Context: context.Background(),
+		Body:    []byte(`{"original":true}`),
+		Route:   &model.Route{TargetType: "url"},
+		SubID:   "sub-initial",
+		Role:    model.RoleBAP,
+	}
+	require.NoError(t, step.Run(stepCtx))
+
+	require.Equal(t, `{"mutated":true}`, string(stepCtx.Body))
+	require.Nil(t, stepCtx.Route)
+	require.Equal(t, "sub-updated", stepCtx.SubID)
+	require.Equal(t, model.RoleBPP, stepCtx.Role)
 }
 
 // ---------------------------------------------------------------------------
@@ -116,4 +150,3 @@ func TestInstrumentedResponseStepPassesRctx(t *testing.T) {
 	require.NoError(t, step.RunOnResponse(stepCtx, rctx))
 	require.Equal(t, rctx, stub.gotRctx)
 }
-

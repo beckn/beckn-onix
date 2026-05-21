@@ -110,8 +110,8 @@ modules:
       steps:
         - validateSign
         - checkPolicy
-        - addRoute
         - validateSchema
+        - addRoute
         - storePayload
         - signAck
   

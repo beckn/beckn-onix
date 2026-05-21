@@ -779,11 +779,11 @@ func TestV2ConflictingRules(t *testing.T) {
 // snake_case (legacy) and camelCase (new beckn spec) context attribute names.
 func TestGetContextString(t *testing.T) {
 	tests := []struct {
-		name      string
-		ctx       map[string]interface{}
-		snakeKey  string
-		camelKey  string
-		want      string
+		name     string
+		ctx      map[string]interface{}
+		snakeKey string
+		camelKey string
+		want     string
 	}{
 		{
 			name:     "snake_case key present",

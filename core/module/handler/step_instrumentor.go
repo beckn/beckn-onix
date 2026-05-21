@@ -92,11 +92,10 @@ func (is *InstrumentedStep) Run(ctx *model.StepContext) error {
 		log.Errorf(stepCtx.Context, err, "Step %s failed", is.stepName)
 	}
 
-	// Write back fields that steps are permitted to mutate during Run.
-	// ProtocolVersion is read-only — steps must not change it.
-	if stepCtx.Route != nil {
-		ctx.Route = stepCtx.Route
-	}
+	ctx.Body = stepCtx.Body
+	ctx.Route = stepCtx.Route
+	ctx.SubID = stepCtx.SubID
+	ctx.Role = stepCtx.Role
 	ctx.WithContext(stepCtx.Context)
 	return err
 }

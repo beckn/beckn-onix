@@ -7,16 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"sync"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
+	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/jsonata-go/jsonata"
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents the configuration for the request mapper middleware.
+// Config represents the configuration for the request mapper plugin.
 type Config struct {
 	Role         string `yaml:"role"`         // "bap" or "bpp"
 	MappingsFile string `yaml:"mappingsFile"` // required path to mappings YAML
@@ -43,102 +44,125 @@ type mappingFile struct {
 	Mappings map[string]builtinMapping `yaml:"mappings"`
 }
 
-var (
-	engineInstance *MappingEngine
-	engineOnce     sync.Once
-)
+type reqMapperStep struct {
+	engine *MappingEngine
+	role   string
+}
 
-// NewReqMapper returns a middleware that maps requests using JSONata expressions
-func NewReqMapper(cfg *Config) (func(http.Handler) http.Handler, error) {
+type parsedRequest struct {
+	req    map[string]interface{}
+	action string
+}
+
+// NewReqMapperStep returns a handler step that applies the same reqmapper transformation logic.
+func NewReqMapperStep(cfg *Config) (definition.Step, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
 	}
 
-	// Initialize the mapping engine
 	engine, err := initMappingEngine(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize mapping engine: %w", err)
+		return nil, err
 	}
-
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				http.Error(w, "Failed to read request body", http.StatusBadRequest)
-				return
-			}
-
-			var req map[string]interface{}
-			ctx := r.Context()
-
-			if err := json.Unmarshal(body, &req); err != nil {
-				http.Error(w, "Failed to decode request body", http.StatusBadRequest)
-				return
-			}
-
-			reqContext, ok := req["context"].(map[string]interface{})
-			if !ok {
-				http.Error(w, "context field not found or invalid", http.StatusBadRequest)
-				return
-			}
-
-			action, ok := reqContext["action"].(string)
-			if !ok {
-				http.Error(w, "action field not found or invalid", http.StatusBadRequest)
-				return
-			}
-
-			// Apply transformation
-			mappedBody, err := engine.Transform(ctx, action, req, cfg.Role)
-			if err != nil {
-				log.Errorf(ctx, err, "Transformation failed for action %s", action)
-				// Fall back to original body on error
-				mappedBody = body
-			}
-
-			r.Body = io.NopCloser(bytes.NewBuffer(mappedBody))
-			r.ContentLength = int64(len(mappedBody))
-			r = r.WithContext(ctx)
-			next.ServeHTTP(w, r)
-		})
+	return &reqMapperStep{
+		engine: engine,
+		role:   cfg.Role,
 	}, nil
 }
 
-// initMappingEngine initializes or returns existing mapping engine
+// Run transforms the current request body and updates the step context in place.
+func (s *reqMapperStep) Run(ctx *model.StepContext) error {
+	mappedBody, err := s.transformBody(ctx.Context, ctx.Body)
+	if err != nil {
+		return err
+	}
+
+	ctx.Body = mappedBody
+	if ctx.Request != nil {
+		ctx.Request.Body = io.NopCloser(bytes.NewReader(mappedBody))
+		ctx.Request.ContentLength = int64(len(mappedBody))
+		ctx.Request.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(mappedBody)), nil
+		}
+		ctx.Request.TransferEncoding = nil
+	}
+
+	return nil
+}
+
+func (s *reqMapperStep) transformBody(ctx context.Context, body []byte) ([]byte, error) {
+	parsed, err := parseRequestBody(body)
+	if err != nil {
+		return nil, model.NewBadReqErr(err)
+	}
+
+	mappedBody, err := s.engine.Transform(ctx, parsed.action, parsed.req, s.role)
+	if err != nil {
+		log.Errorf(ctx, err, "Transformation failed for action %s", parsed.action)
+		return body, nil
+	}
+
+	return mappedBody, nil
+}
+
+func parseRequestBody(body []byte) (*parsedRequest, error) {
+	var req map[string]interface{}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, fmt.Errorf("failed to decode request body: %w", err)
+	}
+
+	reqContext, ok := req["context"].(map[string]interface{})
+	if !ok {
+		return nil, errors.New("context field not found or invalid")
+	}
+
+	action, ok := reqContext["action"].(string)
+	if !ok || action == "" {
+		return nil, errors.New("action field not found or invalid")
+	}
+
+	return &parsedRequest{
+		req:    req,
+		action: action,
+	}, nil
+}
+
+// BuildConfig parses the generic plugin config map into a strongly typed reqmapper Config.
+func BuildConfig(c map[string]string) *Config {
+	cfg := &Config{}
+	if role, ok := c["role"]; ok {
+		cfg.Role = role
+	}
+	if mappingsFile, ok := c["mappingsFile"]; ok {
+		cfg.MappingsFile = mappingsFile
+	}
+	return cfg
+}
+
+// initMappingEngine initializes a mapping engine for the provided config.
 func initMappingEngine(cfg *Config) (*MappingEngine, error) {
-	var initErr error
-
-	engineOnce.Do(func() {
-		engineInstance = &MappingEngine{
-			config:  cfg,
-			bapMaps: make(map[string]jsonata.Expression),
-			bppMaps: make(map[string]jsonata.Expression),
-		}
-
-		instance, err := jsonata.OpenLatest()
-		if err != nil {
-			initErr = fmt.Errorf("failed to initialize jsonata: %w", err)
-			return
-		}
-		engineInstance.jsonataInstance = instance
-
-		if err := engineInstance.loadBuiltinMappings(); err != nil {
-			initErr = err
-			return
-		}
-
-		engineInstance.initialized = true
-	})
-
-	if initErr != nil {
-		return nil, initErr
+	if cfg == nil {
+		return nil, errors.New("config cannot be nil")
 	}
 
-	if !engineInstance.initialized {
-		return nil, errors.New("mapping engine failed to initialize")
+	engine := &MappingEngine{
+		config:  cfg,
+		bapMaps: make(map[string]jsonata.Expression),
+		bppMaps: make(map[string]jsonata.Expression),
 	}
 
-	return engineInstance, nil
+	instance, err := jsonata.OpenLatest()
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize jsonata: %w", err)
+	}
+	engine.jsonataInstance = instance
+
+	if err := engine.loadBuiltinMappings(); err != nil {
+		return nil, err
+	}
+
+	engine.initialized = true
+	return engine, nil
 }
 
 func (e *MappingEngine) loadMappingsFromConfig() (map[string]builtinMapping, string, error) {

@@ -4,5 +4,6 @@ plugins:
   - router
   - publisher
   - reqpreprocessor
+  - reqmapper
   - nopschemavalidator
   - nopsignvalidator

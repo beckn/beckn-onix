@@ -1,0 +1,52 @@
+mappings:
+  search:
+    bapMappings: |
+      $
+    bppMappings: |
+      $
+  select:
+    bapMappings: |
+      $
+    bppMappings: |
+      $
+  init:
+    bapMappings: |
+      $
+    bppMappings: |
+      $
+  confirm:
+    bapMappings: |
+      $
+    bppMappings: |
+      $
+  status:
+    bapMappings: |
+      $
+    bppMappings: |
+      $
+  on_search:
+    bapMappings: |
+      $
+    bppMappings: |
+      $
+  on_select:
+    bapMappings: |
+      $
+    bppMappings: |
+      $
+  on_init:
+    bapMappings: |
+      $
+    bppMappings: |
+      $
+  on_confirm:
+    bapMappings: |
+      $
+    bppMappings: |
+      $
+  on_status:
+    bapMappings: |
+      $
+    bppMappings: |
+      $
+

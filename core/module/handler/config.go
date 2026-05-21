@@ -42,6 +42,7 @@ const (
 type PluginCfg struct {
 	SchemaValidator  *plugin.Config  `yaml:"schemaValidator,omitempty"`
 	PolicyChecker    *plugin.Config  `yaml:"checkPolicy,omitempty"`
+	PayloadTransformer *plugin.Config `yaml:"payloadTransformer,omitempty"`
 	SignValidator    *plugin.Config  `yaml:"signValidator,omitempty"`
 	Publisher        *plugin.Config  `yaml:"publisher,omitempty"`
 	Signer           *plugin.Config  `yaml:"signer,omitempty"`
@@ -76,6 +77,7 @@ func (p *PluginCfg) PluginEntries() []telemetry.PluginEntry {
 	add("cache", p.Cache)
 	add("transport_wrapper", p.TransportWrapper)
 	add("policy_checker", p.PolicyChecker)
+	add("payload_transformer", p.PayloadTransformer)
 	add("key_manager", p.KeyManager)
 	add("payload_store", p.PayloadStore)
 	for i := range p.Steps {
