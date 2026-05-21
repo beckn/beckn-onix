@@ -226,7 +226,8 @@ func TestMetricsProviderNew_BooleanParsing(t *testing.T) {
 			require.NotNil(t, telemetryProvider, "New() should return non-nil provider")
 
 			if cleanup != nil {
-				_ = cleanup()
+				err := cleanup()
+				assert.NoError(t, err, "cleanup() should not return error")
 			}
 		})
 	}
@@ -250,7 +251,8 @@ func TestMetricsProviderNew_CleanupFunction(t *testing.T) {
 	require.NotNil(t, cleanup, "New() should return non-nil cleanup function")
 
 	// Test that cleanup can be called successfully
-	_ = cleanup()
+	err = cleanup()
+	assert.NoError(t, err, "cleanup() should not return error")
 }
 
 func TestProviderVariable(t *testing.T) {
@@ -270,7 +272,8 @@ func TestProviderVariable(t *testing.T) {
 	require.NotNil(t, telemetryProvider, "Provider.New() should return non-nil provider")
 
 	if cleanup != nil {
-		_ = cleanup()
+		err := cleanup()
+		assert.NoError(t, err, "cleanup() should not return error")
 	}
 }
 
@@ -287,6 +290,7 @@ func TestMetricsProviderNew_DefaultValues(t *testing.T) {
 	require.NotNil(t, telemetryProvider, "New() should return non-nil provider")
 
 	if cleanup != nil {
-		_ = cleanup()
+		err := cleanup()
+		assert.NoError(t, err, "cleanup() should not return error")
 	}
 }
