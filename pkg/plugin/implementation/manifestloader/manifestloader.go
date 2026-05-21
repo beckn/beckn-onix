@@ -99,7 +99,7 @@ func (l *Loader) GetByNetworkID(ctx context.Context, networkID string) (*model.M
 		} else if err != nil {
 			log.Warnf(ctx, "ManifestLoader: cache error for networkID=%q key=%q: %v", networkID, networkKey, err)
 		} else {
-			log.Infof(ctx, "ManifestLoader: cache miss for networkID=%q key=%q", networkID, networkKey)
+			log.Debugf(ctx, "ManifestLoader: cache miss for networkID=%q key=%q", networkID, networkKey)
 		}
 	} else {
 		log.Infof(ctx, "ManifestLoader: bypassing cache for networkID=%q", networkID)
@@ -146,7 +146,7 @@ func (l *Loader) getByMetadata(ctx context.Context, metadata model.ManifestMetad
 		} else if err != nil {
 			log.Warnf(ctx, "ManifestLoader: metadata cache error for source=%s key=%q: %v", metadata.ManifestURL, cacheKey, err)
 		} else {
-			log.Infof(ctx, "ManifestLoader: metadata cache miss for source=%s key=%q", metadata.ManifestURL, cacheKey)
+			log.Debugf(ctx, "ManifestLoader: metadata cache miss for source=%s key=%q", metadata.ManifestURL, cacheKey)
 		}
 	} else {
 		log.Infof(ctx, "ManifestLoader: bypassing metadata cache for source=%s", metadata.ManifestURL)
