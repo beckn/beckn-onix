@@ -26,7 +26,7 @@ func (m *mockCache) Get(ctx context.Context, key string) (string, error) {
 	}
 	value, ok := m.store[key]
 	if !ok {
-		return "", errors.New("cache miss")
+		return "", nil
 	}
 	return value, nil
 }
@@ -146,6 +146,20 @@ func TestGetByNetworkIDRejectsUnverifiedCacheEntry(t *testing.T) {
 	}
 	if _, err := loader.loadFromCache(context.Background(), networkCacheKey("nfo.example.org/network")); err == nil || !strings.Contains(err.Error(), "not marked verified") {
 		t.Fatalf("expected unverified cache rejection, got %v", err)
+	}
+}
+
+func TestLoadFromCacheOnCacheMissReturnsNilNil(t *testing.T) {
+	loader, _, err := New(context.Background(), &mockCache{store: map[string]string{}}, &mockRegistry{}, &Config{})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	doc, err := loader.loadFromCache(context.Background(), "any-key")
+	if err != nil {
+		t.Fatalf("expected nil error on cache miss, got %v", err)
+	}
+	if doc != nil {
+		t.Fatalf("expected nil doc on cache miss, got %+v", doc)
 	}
 }
 
