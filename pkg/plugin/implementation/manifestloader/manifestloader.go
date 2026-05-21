@@ -93,11 +93,13 @@ func (l *Loader) GetByNetworkID(ctx context.Context, networkID string) (*model.M
 	networkKey := networkCacheKey(networkID)
 	bypassCache := l.shouldBypassCache(networkKey)
 	if !bypassCache {
-		if doc, err := l.loadFromCache(ctx, networkKey); err == nil {
+		if doc, err := l.loadFromCache(ctx, networkKey); err == nil && doc != nil {
 			log.Infof(ctx, "ManifestLoader: cache hit for networkID=%q fetchedAt=%s source=%s", networkID, doc.FetchedAt.Format(time.RFC3339), doc.SourceURL)
 			return doc, nil
+		} else if err != nil {
+			log.Warnf(ctx, "ManifestLoader: cache error for networkID=%q key=%q: %v", networkID, networkKey, err)
 		} else {
-			log.Debugf(ctx, "ManifestLoader: cache miss for networkID=%q key=%q: %v", networkID, networkKey, err)
+			log.Debugf(ctx, "ManifestLoader: cache miss for networkID=%q key=%q", networkID, networkKey)
 		}
 	} else {
 		log.Infof(ctx, "ManifestLoader: bypassing cache for networkID=%q", networkID)
@@ -138,11 +140,13 @@ func (l *Loader) getByMetadata(ctx context.Context, metadata model.ManifestMetad
 	}
 	cacheKey := metadataCacheKey(metadata)
 	if !bypassCache {
-		if doc, err := l.loadFromCache(ctx, cacheKey); err == nil {
+		if doc, err := l.loadFromCache(ctx, cacheKey); err == nil && doc != nil {
 			log.Infof(ctx, "ManifestLoader: metadata cache hit for source=%s fetchedAt=%s", metadata.ManifestURL, doc.FetchedAt.Format(time.RFC3339))
 			return doc, nil
+		} else if err != nil {
+			log.Warnf(ctx, "ManifestLoader: metadata cache error for source=%s key=%q: %v", metadata.ManifestURL, cacheKey, err)
 		} else {
-			log.Debugf(ctx, "ManifestLoader: metadata cache miss for source=%s key=%q: %v", metadata.ManifestURL, cacheKey, err)
+			log.Debugf(ctx, "ManifestLoader: metadata cache miss for source=%s key=%q", metadata.ManifestURL, cacheKey)
 		}
 	} else {
 		log.Infof(ctx, "ManifestLoader: bypassing metadata cache for source=%s", metadata.ManifestURL)
@@ -216,6 +220,9 @@ func (l *Loader) loadFromCache(ctx context.Context, key string) (*model.Manifest
 	if err != nil {
 		return nil, err
 	}
+	if raw == "" {
+		return nil, nil
+	}
 	var doc model.ManifestDocument
 	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
 		return nil, err
@@ -232,9 +239,18 @@ func (l *Loader) store(ctx context.Context, key string, doc *model.ManifestDocum
 	}
 	payload, err := json.Marshal(doc)
 	if err != nil {
+		// Marshal failure is a code bug (ManifestDocument contains a non-serialisable type),
+		// not a transient infrastructure problem — surface it immediately.
 		return err
 	}
-	return l.cache.Set(ctx, key, string(payload), l.config.CacheTTL)
+	if err := l.cache.Set(ctx, key, string(payload), l.config.CacheTTL); err != nil {
+		// A write failure means the next request will be a cache miss and re-fetch from the
+		// registry, which is acceptable degraded behaviour. Propagating the error would cause
+		// the caller to return nothing to the client even though the manifest was successfully
+		// fetched and verified — that trade-off is wrong.
+		log.Warnf(ctx, "ManifestLoader: failed to cache manifest key=%q: %v", key, err)
+	}
+	return nil
 }
 
 func (l *Loader) shouldBypassCache(key string) bool {

@@ -22,9 +22,21 @@ type stubCache struct {
 func (c *stubCache) Get(_ context.Context, key string) (string, error) {
 	v, ok := c.mu.Load(key)
 	if !ok {
-		return "", nil
+		return "", nil // miss — matches real cache.Get contract (no error on key-not-found)
 	}
 	return v.(string), nil
+}
+
+// errGetCache wraps stubCache and injects a fixed error on every Get call,
+// simulating a Redis connection failure. Set/Delete/Clear still work so Store
+// can persist after Exists fails.
+type errGetCache struct {
+	stubCache
+	err error
+}
+
+func (c *errGetCache) Get(_ context.Context, _ string) (string, error) {
+	return "", c.err
 }
 
 func (c *stubCache) Set(_ context.Context, key, value string, _ time.Duration) error {
@@ -536,5 +548,39 @@ func TestGetByTransactionID_EmptyTransactionID(t *testing.T) {
 	entries, err := s.GetByTransactionID(context.Background(), "")
 	if err != nil || entries != nil {
 		t.Errorf("expected nil, nil for empty transaction_id; got %v, %v", entries, err)
+	}
+}
+
+func TestExists_CacheErrorPropagated(t *testing.T) {
+	cacheErr := fmt.Errorf("redis: connection refused")
+	ec := &errGetCache{err: cacheErr}
+	s, _, err := New(context.Background(), ec, testNamespace, map[string]string{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ok, err := s.Exists(context.Background(), "any")
+	if err == nil {
+		t.Error("expected error from Exists when cache.Get fails, got nil")
+	}
+	if ok {
+		t.Error("expected false from Exists when cache.Get fails")
+	}
+}
+
+func TestStore_ContinuesAfterExistsCacheError(t *testing.T) {
+	// When cache.Get fails, Exists returns an error and duplicate detection is
+	// skipped — but Store must still persist the entry rather than aborting.
+	ec := &errGetCache{err: fmt.Errorf("redis: connection refused")}
+	s, _, err := New(context.Background(), ec, testNamespace, map[string]string{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := s.Store(sampleStepCtx("msgErrExists", "txnErrExists")); err != nil {
+		t.Errorf("Store should succeed despite Exists cache error, got: %v", err)
+	}
+	// Verify the entry was written: peek directly at the underlying stubCache.
+	raw, _ := ec.stubCache.Get(context.Background(), msgKey(testNamespace, "msgErrExists"))
+	if raw == "" {
+		t.Error("expected msg key to be stored even when Exists returned a cache error")
 	}
 }

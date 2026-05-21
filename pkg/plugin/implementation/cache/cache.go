@@ -137,8 +137,13 @@ func (c *Cache) Get(ctx context.Context, key string) (string, error) {
 		}
 	}
 	if errors.Is(err, redis.Nil) {
+		// redis.Nil means the key does not exist — a normal cache miss, not an error.
+		// Callers distinguish a miss from a hit by checking whether the returned string is
+		// empty; they must not treat a non-nil error as the only miss signal.
 		return "", nil
 	}
+	// go-redis guarantees result == "" whenever err != nil, so returning result here is
+	// equivalent to returning "" on any error path.
 	return result, err
 }
 
