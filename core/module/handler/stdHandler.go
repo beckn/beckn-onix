@@ -190,11 +190,11 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	syncRequestBody(r, stepCtx.Body)
 
 	// Send ACK / route on success.
 	if pipelineErr == nil {
 		// Restore request body and metadata before forwarding or publishing.
+		syncRequestBody(r, stepCtx.Body)
 		if stepCtx.Route == nil {
 			// No routing — ONIX writes the ACK directly. Run response steps here
 			// with resp=nil (publisher path semantics).
