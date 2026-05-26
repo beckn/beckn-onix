@@ -32,9 +32,10 @@ type schemav2Validator struct {
 
 // cachedSpec holds a cached OpenAPI spec.
 type cachedSpec struct {
-	doc           *openapi3.T
-	actionSchemas map[string]*openapi3.SchemaRef // O(1) action lookup
-	loadedAt      time.Time
+	doc             *openapi3.T
+	actionSchemas   map[string]*openapi3.SchemaRef // body operations: action → schema (O(1) lookup)
+	bodylessActions map[string]struct{}             // bodyless operations: path without leading slash → exists
+	loadedAt        time.Time
 }
 
 // Config struct for Schemav2Validator.
@@ -100,7 +101,29 @@ func New(ctx context.Context, config *Config) (*schemav2Validator, func() error,
 }
 
 // Validate validates the given data against the OpenAPI schema.
+// When the request body is empty (GET/DELETE) it performs an O(1) lookup in
+// the pre-built bodylessActions index to confirm the path is a known bodyless
+// endpoint, then returns without body schema validation. For body-bearing
+// requests it validates the JSON payload against the indexed action schema.
 func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data []byte) error {
+	if len(data) == 0 {
+		v.specMutex.RLock()
+		spec := v.spec
+		v.specMutex.RUnlock()
+
+		if spec == nil || spec.doc == nil {
+			return model.NewBadReqErr(fmt.Errorf("no OpenAPI spec loaded"))
+		}
+
+		key := strings.TrimPrefix(reqURL.Path, "/")
+		if _, ok := spec.bodylessActions[key]; !ok {
+			return model.NewBadReqErr(fmt.Errorf("unsupported bodyless request for endpoint: %s", key))
+		}
+
+		log.Debugf(ctx, "bodyless request to %s: skipping body schema validation", reqURL.Path)
+		return nil
+	}
+
 	var payloadData payload
 	err := json.Unmarshal(data, &payloadData)
 	if err != nil {
@@ -201,18 +224,20 @@ func (v *schemav2Validator) loadSpec(ctx context.Context) error {
 		log.Debugf(ctx, "Spec validation passed")
 	}
 
-	// Build action→schema index for O(1) lookup
-	actionSchemas := v.buildActionIndex(ctx, doc)
+	// Build action→schema index (body operations) and bodyless action set (GET/DELETE)
+	actionSchemas, bodylessActions := v.buildActionIndex(ctx, doc)
 
 	v.specMutex.Lock()
 	v.spec = &cachedSpec{
-		doc:           doc,
-		actionSchemas: actionSchemas,
-		loadedAt:      time.Now(),
+		doc:             doc,
+		actionSchemas:   actionSchemas,
+		bodylessActions: bodylessActions,
+		loadedAt:        time.Now(),
 	}
 	v.specMutex.Unlock()
 
-	log.Debugf(ctx, "Loaded OpenAPI spec from %s: %s with %d actions indexed", v.config.Type, v.config.Location, len(actionSchemas))
+	log.Debugf(ctx, "Loaded OpenAPI spec from %s: %s with %d body actions and %d bodyless actions indexed",
+		v.config.Type, v.config.Location, len(actionSchemas), len(bodylessActions))
 	return nil
 }
 
@@ -337,15 +362,21 @@ func (v *schemav2Validator) extractSchemaErrors(err error, schemaErrors *[]model
 	}
 }
 
-// buildActionIndex builds a map of action→schema for O(1) lookup.
-func (v *schemav2Validator) buildActionIndex(ctx context.Context, doc *openapi3.T) map[string]*openapi3.SchemaRef {
+// buildActionIndex builds two indexes from the loaded OpenAPI spec:
+//   - actionSchemas: body-bearing operations (POST/PUT/PATCH) keyed by context.action value
+//   - bodylessActions: GET/DELETE operations without a requestBody, keyed by path without leading slash
+//
+// Both are built in a single pass over the spec paths for efficiency.
+func (v *schemav2Validator) buildActionIndex(ctx context.Context, doc *openapi3.T) (map[string]*openapi3.SchemaRef, map[string]struct{}) {
 	actionSchemas := make(map[string]*openapi3.SchemaRef)
+	bodylessActions := make(map[string]struct{})
 
-	for path, item := range doc.Paths.Map() {
+	for specPath, item := range doc.Paths.Map() {
 		if item == nil {
 			continue
 		}
-		// Check all HTTP methods
+
+		// Body-bearing operations: extract action from the requestBody schema.
 		for _, op := range []*openapi3.Operation{item.Post, item.Get, item.Put, item.Patch, item.Delete} {
 			if op == nil || op.RequestBody == nil || op.RequestBody.Value == nil {
 				continue
@@ -354,17 +385,27 @@ func (v *schemav2Validator) buildActionIndex(ctx context.Context, doc *openapi3.
 			if content == nil || content.Schema == nil || content.Schema.Value == nil {
 				continue
 			}
-
-			// Extract action from schema
 			action := v.extractActionFromSchema(content.Schema.Value)
 			if action != "" {
 				actionSchemas[action] = content.Schema
-				log.Debugf(ctx, "Indexed action '%s' from path %s", action, path)
+				log.Debugf(ctx, "Indexed body action '%s' from path %s", action, specPath)
 			}
+		}
+
+		// Bodyless operations: GET and DELETE without a requestBody.
+		// Key is the spec path without its leading slash so it matches
+		// strings.TrimPrefix(reqURL.Path, "/") in ValidateBodyless.
+		for _, op := range []*openapi3.Operation{item.Get, item.Delete} {
+			if op == nil || op.RequestBody != nil {
+				continue
+			}
+			key := strings.TrimPrefix(specPath, "/")
+			bodylessActions[key] = struct{}{}
+			log.Debugf(ctx, "Indexed bodyless action '%s' from path %s", key, specPath)
 		}
 	}
 
-	return actionSchemas
+	return actionSchemas, bodylessActions
 }
 
 // extractActionFromSchema extracts the action value from a schema.

@@ -4,9 +4,81 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"testing"
 )
+
+// testSpecBodyless mirrors the Beckn 2.0 /catalog/subscription path which
+// carries GET and DELETE (both bodyless) alongside POST (body-bearing).
+// It also includes /search (POST-only) for rejection-case coverage.
+const testSpecBodyless = `openapi: 3.1.0
+info:
+  title: Test API (bodyless)
+  version: 1.0.0
+paths:
+  /catalog/subscription:
+    get:
+      summary: Get subscriptions (no body — query params only)
+      parameters:
+        - in: query
+          name: subscriptionId
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+    delete:
+      summary: Deactivate subscription (no body — query param only)
+      parameters:
+        - in: query
+          name: subscriptionId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Create subscription (body required)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [context, message]
+              properties:
+                context:
+                  type: object
+                  properties:
+                    action:
+                      const: catalog/subscription
+                message:
+                  type: object
+      responses:
+        "200":
+          description: OK
+  /search:
+    post:
+      summary: Search (body required — no GET/DELETE defined)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [context]
+              properties:
+                context:
+                  type: object
+                  properties:
+                    action:
+                      const: search
+      responses:
+        "200":
+          description: OK
+`
 
 const testSpec = `openapi: 3.1.0
 info:
@@ -185,6 +257,78 @@ func TestValidate_NestedValidation(t *testing.T) {
 			err := validator.Validate(context.Background(), nil, []byte(tt.payload))
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestValidate_BodylessRequest covers GET/DELETE requests (Beckn 2.0
+// catalog/subscription verbs) that carry no body. Validate() detects
+// len(data)==0, looks up the path in the pre-built bodylessActions index,
+// and either passes (known bodyless endpoint) or rejects (unknown/body-only).
+func TestValidate_BodylessRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testSpecBodyless))
+	}))
+	defer server.Close()
+
+	validator, _, err := New(context.Background(), &Config{Type: "url", Location: server.URL, CacheTTL: 3600})
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	mustURL := func(raw string) *url.URL {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("url.Parse(%q): %v", raw, err)
+		}
+		return u
+	}
+
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			// Multi-segment path with GET — indexed in bodylessActions, must pass.
+			name:    "GET /catalog/subscription — empty body passes",
+			path:    "/catalog/subscription",
+			wantErr: false,
+		},
+		{
+			// Same path, DELETE is also indexed as bodyless.
+			name:    "DELETE /catalog/subscription — empty body passes",
+			path:    "/catalog/subscription",
+			wantErr: false,
+		},
+		{
+			// /search only has a POST with requestBody — not in bodylessActions.
+			name:    "POST-only endpoint /search with empty body is rejected",
+			path:    "/search",
+			wantErr: true,
+			errMsg:  "unsupported bodyless request for endpoint: search",
+		},
+		{
+			// Path absent from spec entirely.
+			name:    "unknown endpoint /nonsense with empty body is rejected",
+			path:    "/nonsense",
+			wantErr: true,
+			errMsg:  "unsupported bodyless request for endpoint: nonsense",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validator.Validate(context.Background(), mustURL(tt.path), []byte{})
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr && tt.errMsg != "" && err != nil {
+				if !contains(err.Error(), tt.errMsg) {
+					t.Errorf("Validate() error = %q, want it to contain %q", err.Error(), tt.errMsg)
+				}
 			}
 		})
 	}
