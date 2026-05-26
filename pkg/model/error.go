@@ -115,7 +115,7 @@ func (e *NotFoundErr) BecknError() *Error {
 // AckNoCallbackErr is returned by a step when the receiver has authenticated and
 // accepted the request but will not send an async callback — for example, no
 // matching catalog, inventory unavailable, or provider closed. ONIX maps this to
-// HTTP 409 Conflict using the v2 flat response shape. For protocol versions prior
+// HTTP 202 Accepted using the v2 flat response shape. For protocol versions prior
 // to 2.0.0 this error falls through to a 500 Internal Server Error.
 type AckNoCallbackErr struct {
 	// Status is ACK when the request was accepted but no callback will follow,
@@ -127,7 +127,7 @@ type AckNoCallbackErr struct {
 
 // NewAckNoCallbackErr constructs an AckNoCallbackErr.
 // Use StatusACK for "accepted but no callback" and StatusNACK for outright rejection.
-// Panics if err is nil — the spec requires an error explanation on every 409 response.
+// Panics if err is nil — the spec requires an error explanation on every AckNoCallback (202) response.
 func NewAckNoCallbackErr(status Status, err *Error) *AckNoCallbackErr {
 	if err == nil {
 		panic("AckNoCallbackErr: Err is required")
