@@ -285,6 +285,10 @@ func TestValidate_BodylessRequest(t *testing.T) {
 		return u
 	}
 
+	// NOTE: bodylessActions is keyed by path only — it does not distinguish HTTP
+	// methods. GET, DELETE, and even an empty-body POST to the same path all resolve
+	// to the same map key. Method-aware validation requires the Option C StepContext
+	// refactor. The "known limitation" case below documents this current behaviour.
 	tests := []struct {
 		name    string
 		path    string
@@ -298,8 +302,17 @@ func TestValidate_BodylessRequest(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			// Same path, DELETE is also indexed as bodyless.
+			// Same path, DELETE is also indexed as bodyless (path-only key, no
+			// method distinction at this layer).
 			name:    "DELETE /catalog/subscription — empty body passes",
+			path:    "/catalog/subscription",
+			wantErr: false,
+		},
+		{
+			// Known limitation (Option A): bodylessActions is path-only. An empty-body
+			// POST to a bodyless-indexed path passes through without body validation.
+			// This will become wantErr:true once the Option C StepContext refactor lands.
+			name:    "empty-body POST to bodyless-indexed path passes (known limitation)",
 			path:    "/catalog/subscription",
 			wantErr: false,
 		},

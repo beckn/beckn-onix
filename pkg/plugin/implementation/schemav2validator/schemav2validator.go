@@ -107,6 +107,10 @@ func New(ctx context.Context, config *Config) (*schemav2Validator, func() error,
 // requests it validates the JSON payload against the indexed action schema.
 func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data []byte) error {
 	if len(data) == 0 {
+		if reqURL == nil {
+			return model.NewBadReqErr(fmt.Errorf("request URL is required for bodyless validation"))
+		}
+
 		v.specMutex.RLock()
 		spec := v.spec
 		v.specMutex.RUnlock()
@@ -115,6 +119,12 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 			return model.NewBadReqErr(fmt.Errorf("no OpenAPI spec loaded"))
 		}
 
+		// Key is the full path without its leading slash, matching the index built in
+		// buildActionIndex. strings.TrimPrefix is used (not path.Base) so that
+		// multi-segment paths like /catalog/subscription are preserved verbatim.
+		// Note: the check is path-only — it does not distinguish HTTP methods. A POST
+		// with an empty body to a bodyless-indexed path would pass here. Method-aware
+		// validation requires the Option C StepContext refactor.
 		key := strings.TrimPrefix(reqURL.Path, "/")
 		if _, ok := spec.bodylessActions[key]; !ok {
 			return model.NewBadReqErr(fmt.Errorf("unsupported bodyless request for endpoint: %s", key))
@@ -376,7 +386,9 @@ func (v *schemav2Validator) buildActionIndex(ctx context.Context, doc *openapi3.
 			continue
 		}
 
-		// Body-bearing operations: extract action from the requestBody schema.
+		// Pass 1: body-bearing operations (any verb that declares a requestBody).
+		// All five standard verbs are checked so that unusual specs (e.g. GET with
+		// body) are still indexed correctly.
 		for _, op := range []*openapi3.Operation{item.Post, item.Get, item.Put, item.Patch, item.Delete} {
 			if op == nil || op.RequestBody == nil || op.RequestBody.Value == nil {
 				continue
@@ -392,9 +404,11 @@ func (v *schemav2Validator) buildActionIndex(ctx context.Context, doc *openapi3.
 			}
 		}
 
-		// Bodyless operations: GET and DELETE without a requestBody.
+		// Pass 2: bodyless operations — GET and DELETE that declare no requestBody.
+		// A separate loop (rather than sharing pass 1) keeps the two indexing concerns
+		// independent and avoids complicating the guard logic for body-bearing ops.
 		// Key is the spec path without its leading slash so it matches
-		// strings.TrimPrefix(reqURL.Path, "/") in ValidateBodyless.
+		// strings.TrimPrefix(reqURL.Path, "/") in Validate's bodyless branch.
 		for _, op := range []*openapi3.Operation{item.Get, item.Delete} {
 			if op == nil || op.RequestBody != nil {
 				continue
