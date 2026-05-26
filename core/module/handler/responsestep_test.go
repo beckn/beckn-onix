@@ -330,7 +330,7 @@ func TestNackBytes_AckNoCallback(t *testing.T) {
 		t.Fatal("nackBytes body missing message.error")
 	}
 	if errField["code"] != "NO_CATALOG" {
-		t.Errorf("nackBytes error.code = %v, want 40901", errField["code"])
+		t.Errorf("nackBytes error.code = %v, want NO_CATALOG", errField["code"])
 	}
 
 	// Also verify the body matches what sendNack writes — sign and send must be identical.
