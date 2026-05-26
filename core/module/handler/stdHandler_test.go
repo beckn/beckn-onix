@@ -764,17 +764,17 @@ func TestStepCtx_ProtocolVersion(t *testing.T) {
 	}
 }
 
-// TestProxy_ModifyResponse_409_InvokesResponseSteps verifies that the thin
-// ModifyResponse dispatcher in proxy() fires responseSteps on a 409 upstream
-// response. This covers the AckNoCallback relay path: app sends 409, ONIX
+// TestProxy_ModifyResponse_202_InvokesResponseSteps verifies that the thin
+// ModifyResponse dispatcher in proxy() fires responseSteps on a 202 upstream
+// response. This covers the AckNoCallback relay path: app sends 202, ONIX
 // relays it, ackSigner (or any ResponseStep) runs via ModifyResponse.
-func TestProxy_ModifyResponse_409_InvokesResponseSteps(t *testing.T) {
+func TestProxy_ModifyResponse_202_InvokesResponseSteps(t *testing.T) {
 	const ackBody = `{"message":{"status":"ACK","error":{"code":"40901","message":"no catalog"}}}`
 
-	// Upstream app: returns 409 with AckNoCallback body.
+	// Upstream app: returns 202 with AckNoCallback body.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
+		w.WriteHeader(http.StatusAccepted)
 		fmt.Fprint(w, ackBody)
 	}))
 	defer upstream.Close()
@@ -793,11 +793,11 @@ func TestProxy_ModifyResponse_409_InvokesResponseSteps(t *testing.T) {
 
 	proxy(stepCtx, req, rr, http.DefaultClient, []definition.ResponseStep{respStep})
 
-	if rr.Code != http.StatusConflict {
-		t.Errorf("expected upstream 409 to be relayed, got %d", rr.Code)
+	if rr.Code != http.StatusAccepted {
+		t.Errorf("expected upstream 202 to be relayed, got %d", rr.Code)
 	}
 	if !respStep.called {
-		t.Error("expected ResponseStep to be called via ModifyResponse on 409 upstream response")
+		t.Error("expected ResponseStep to be called via ModifyResponse on 202 upstream response")
 	}
 	if rr.Body.String() != ackBody {
 		t.Errorf("expected upstream body to be relayed unchanged: got %q", rr.Body.String())

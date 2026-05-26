@@ -92,7 +92,7 @@ func nackBecknError(ctx context.Context, err error) (*model.Error, int, model.St
 		if !isAtLeastV2(ctx) {
 			return internalServerError(ctx), http.StatusInternalServerError, model.StatusNACK
 		}
-		return ackNoCallbackErr.BecknError(), http.StatusConflict, ackNoCallbackErr.Status
+		return ackNoCallbackErr.BecknError(), http.StatusAccepted, ackNoCallbackErr.Status
 	default:
 		return internalServerError(ctx), http.StatusInternalServerError, model.StatusNACK
 	}

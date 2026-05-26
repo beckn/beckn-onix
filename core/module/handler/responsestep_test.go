@@ -188,7 +188,7 @@ func TestSendNack(t *testing.T) {
 				Code:    "40901",
 				Message: "no matching catalog",
 			}),
-			status:   http.StatusConflict,
+			status:   http.StatusAccepted,
 			expected: `{"message":{"status":"ACK","messageId":"msg-v2-1","error":{"code":"40901","message":"no matching catalog"}}}`,
 		},
 		{
@@ -197,7 +197,7 @@ func TestSendNack(t *testing.T) {
 				Code:    "40902",
 				Message: "provider closed",
 			}),
-			status:   http.StatusConflict,
+			status:   http.StatusAccepted,
 			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"40902","message":"provider closed"}}}`,
 		},
 	}
@@ -262,7 +262,7 @@ func TestSendNack(t *testing.T) {
 
 // TestSendNack_AckNoCallback_PreV2_FallsThrough verifies that AckNoCallbackErr on a
 // pre-v2 request is mapped to 500 Internal Server Error with the pre-v2 body shape,
-// not a 409 with the v2 shape.
+// not a 202 with the v2 shape.
 func TestSendNack_AckNoCallback_PreV2_FallsThrough(t *testing.T) {
 	ctx := context.WithValue(context.Background(), model.ContextKeyMsgID, "pre-v2-msg")
 	// No protocol version in context → pre-v2 path.
@@ -277,7 +277,7 @@ func TestSendNack_AckNoCallback_PreV2_FallsThrough(t *testing.T) {
 	if rr.Code != http.StatusInternalServerError {
 		t.Errorf("pre-v2 AckNoCallbackErr: want status 500, got %d", rr.Code)
 	}
-	// Body must use the pre-v2 envelope with NACK status, not the 409 ACK shape.
+	// Body must use the pre-v2 envelope with NACK status, not the 202 ACK shape.
 	var body map[string]interface{}
 	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
 		t.Fatalf("failed to parse response body: %v", err)
@@ -300,7 +300,7 @@ func TestSendNack_AckNoCallback_PreV2_FallsThrough(t *testing.T) {
 }
 
 // TestNackBytes_AckNoCallback verifies that nackBytes (used by signNackResponse
-// before the 409 is written to the wire) produces the correct signed body for
+// before the 202 is written to the wire) produces the correct signed body for
 // AckNoCallbackErr — same bytes that sendNack will subsequently write.
 func TestNackBytes_AckNoCallback(t *testing.T) {
 	ctx := v2Ctx("sign-msg-1")
@@ -687,31 +687,31 @@ func TestNewAckSignerStep_NilKM_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestAckSignerStep_URLRoutingPath_409_SetsSignatureOnResponse(t *testing.T) {
-	// 409 AckNoCallback: app decides, ONIX relays. ackSigner must still sign
+func TestAckSignerStep_URLRoutingPath_202_SetsSignatureOnResponse(t *testing.T) {
+	// 202 AckNoCallback: app decides, ONIX relays. ackSigner must still sign
 	// the response so the caller can verify the Signature header regardless of
 	// status code.
-	signer := &mockSigner{returnSig: "sig409=="}
-	km := &mockKM{keyset: &model.Keyset{UniqueKeyID: "key-409", SigningPrivate: "priv"}}
+	signer := &mockSigner{returnSig: "sig202=="}
+	km := &mockKM{keyset: &model.Keyset{UniqueKeyID: "key-202", SigningPrivate: "priv"}}
 
 	step, err := newAckSignerStep(signer, km)
 	if err != nil {
 		t.Fatalf("newAckSignerStep() unexpected error: %v", err)
 	}
 
-	ctx := makeStepCtx("2.0.0", "msg-409", "bpp.example.com", "inboundSig==")
+	ctx := makeStepCtx("2.0.0", "msg-202", "bpp.example.com", "inboundSig==")
 	body := `{"message":{"status":"ACK","error":{"code":"40901","message":"no matching catalog"}}}`
-	rctx := makeResponseStepContext(http.StatusConflict, body, "")
+	rctx := makeResponseStepContext(http.StatusAccepted, body, "")
 
 	if err := step.RunOnResponse(ctx, rctx); err != nil {
-		t.Fatalf("RunOnResponse() unexpected error on 409: %v", err)
+		t.Fatalf("RunOnResponse() unexpected error on 202: %v", err)
 	}
 
 	if !signer.signAckCalled {
-		t.Error("expected SignAck to be called for 409 response")
+		t.Error("expected SignAck to be called for 202 response")
 	}
 	if rctx.Header.Get("Signature") == "" {
-		t.Fatal("expected Signature header on 409 response")
+		t.Fatal("expected Signature header on 202 response")
 	}
 }
 
@@ -888,7 +888,7 @@ func TestValidateAckSignatureStep_ValidatorError_Degrades(t *testing.T) {
 }
 
 // TestValidateAckSignatureStep_MissingSignature_AllStatusCodes_Degrades verifies
-// that a missing Signature header on ANY status code (200, 4xx, 409, 500) causes
+// that a missing Signature header on ANY status code (200, 202, 4xx, 500) causes
 // a degrade warning — not a rejection. Per NFH-007 CON-004-02 every synchronous
 // response MUST carry a Signature; per conformance SHOULD NOT invalidate the
 // transaction when it is absent.
@@ -904,7 +904,7 @@ func TestValidateAckSignatureStep_MissingSignature_AllStatusCodes_Degrades(t *te
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
 		http.StatusNotFound,
-		http.StatusConflict,       // 409 AckNoCallback
+		http.StatusAccepted,        // 202 AckNoCallback
 		http.StatusInternalServerError,
 	}
 	for _, code := range codes {
@@ -926,13 +926,13 @@ func TestValidateAckSignatureStep_ValidSignature_AllStatusCodes(t *testing.T) {
 	km := &mockKMWithLookup{publicKey: "pubKey=="}
 
 	step, _ := newValidateAckSignatureStep(sv, km)
-	ctx := makeCallerStepCtx("2.0.0", "msg-409", "bap.example.com", `Signature keyId="bap.example.com|key-1|ed25519",signature="outSig=="`)
+	ctx := makeCallerStepCtx("2.0.0", "msg-202", "bap.example.com", `Signature keyId="bap.example.com|key-1|ed25519",signature="outSig=="`)
 
 	codes := []int{
 		http.StatusOK,
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
-		http.StatusConflict, // 409 AckNoCallback
+		http.StatusAccepted, // 202 AckNoCallback
 		http.StatusInternalServerError,
 	}
 	for _, code := range codes {
