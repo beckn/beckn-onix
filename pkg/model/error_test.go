@@ -210,13 +210,13 @@ func TestNewAckNoCallbackErr(t *testing.T) {
 		{
 			name:           "ACK status",
 			status:         StatusACK,
-			becknErr:       &Error{Code: "40901", Message: "no matching catalog"},
+			becknErr:       &Error{Code: "NO_CATALOG", Message: "no matching catalog"},
 			wantErrContain: "AckNoCallback(status=ACK)",
 		},
 		{
 			name:           "NACK status",
 			status:         StatusNACK,
-			becknErr:       &Error{Code: "40902", Message: "provider closed"},
+			becknErr:       &Error{Code: "PROVIDER_CLOSED", Message: "provider closed"},
 			wantErrContain: "AckNoCallback(status=NACK)",
 		},
 	}

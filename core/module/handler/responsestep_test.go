@@ -185,20 +185,20 @@ func TestSendNack(t *testing.T) {
 		{
 			name: "v2 AckNoCallbackErr ACK status",
 			err: model.NewAckNoCallbackErr(model.StatusACK, &model.Error{
-				Code:    "40901",
+				Code:    "NO_CATALOG",
 				Message: "no matching catalog",
 			}),
 			status:   http.StatusAccepted,
-			expected: `{"message":{"status":"ACK","messageId":"msg-v2-1","error":{"code":"40901","message":"no matching catalog"}}}`,
+			expected: `{"message":{"status":"ACK","messageId":"msg-v2-1","error":{"code":"NO_CATALOG","message":"no matching catalog"}}}`,
 		},
 		{
 			name: "v2 AckNoCallbackErr NACK status",
 			err: model.NewAckNoCallbackErr(model.StatusNACK, &model.Error{
-				Code:    "40902",
+				Code:    "PROVIDER_CLOSED",
 				Message: "provider closed",
 			}),
 			status:   http.StatusAccepted,
-			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"40902","message":"provider closed"}}}`,
+			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"PROVIDER_CLOSED","message":"provider closed"}}}`,
 		},
 	}
 
@@ -269,7 +269,7 @@ func TestSendNack_AckNoCallback_PreV2_FallsThrough(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	err := model.NewAckNoCallbackErr(model.StatusACK, &model.Error{
-		Code:    "40901",
+		Code:    "NO_CATALOG",
 		Message: "no matching catalog",
 	})
 	sendNack(ctx, rr, err)
@@ -306,7 +306,7 @@ func TestNackBytes_AckNoCallback(t *testing.T) {
 	ctx := v2Ctx("sign-msg-1")
 
 	err := model.NewAckNoCallbackErr(model.StatusACK, &model.Error{
-		Code:    "40901",
+		Code:    "NO_CATALOG",
 		Message: "no matching catalog",
 	})
 	body := nackBytes(ctx, err)
@@ -329,7 +329,7 @@ func TestNackBytes_AckNoCallback(t *testing.T) {
 	if errField == nil {
 		t.Fatal("nackBytes body missing message.error")
 	}
-	if errField["code"] != "40901" {
+	if errField["code"] != "NO_CATALOG" {
 		t.Errorf("nackBytes error.code = %v, want 40901", errField["code"])
 	}
 
@@ -700,7 +700,7 @@ func TestAckSignerStep_URLRoutingPath_202_SetsSignatureOnResponse(t *testing.T) 
 	}
 
 	ctx := makeStepCtx("2.0.0", "msg-202", "bpp.example.com", "inboundSig==")
-	body := `{"message":{"status":"ACK","error":{"code":"40901","message":"no matching catalog"}}}`
+	body := `{"message":{"status":"ACK","error":{"code":"NO_CATALOG","message":"no matching catalog"}}}`
 	rctx := makeResponseStepContext(http.StatusAccepted, body, "")
 
 	if err := step.RunOnResponse(ctx, rctx); err != nil {

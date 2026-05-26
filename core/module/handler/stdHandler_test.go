@@ -769,7 +769,7 @@ func TestStepCtx_ProtocolVersion(t *testing.T) {
 // response. This covers the AckNoCallback relay path: app sends 202, ONIX
 // relays it, ackSigner (or any ResponseStep) runs via ModifyResponse.
 func TestProxy_ModifyResponse_202_InvokesResponseSteps(t *testing.T) {
-	const ackBody = `{"message":{"status":"ACK","error":{"code":"40901","message":"no catalog"}}}`
+	const ackBody = `{"message":{"status":"ACK","error":{"code":"NO_CATALOG","message":"no catalog"}}}`
 
 	// Upstream app: returns 202 with AckNoCallback body.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
