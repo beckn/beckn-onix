@@ -17,6 +17,13 @@ import (
 // Config holds the configuration for the Router plugin.
 type Config struct {
 	RoutingConfig string `json:"routingConfig"`
+	// BasePath is the HTTP path prefix at which this adapter module is mounted
+	// (e.g. "/bap/caller/"). When set, it is stripped from the incoming request
+	// URL before extracting the action endpoint, enabling compound action paths
+	// like "catalog/push" to be matched correctly against routing rules.
+	// If unset, the router falls back to path.Base behaviour (last URL segment
+	// only), which supports single-word actions but not compound ones.
+	BasePath string `json:"basePath,omitempty"`
 }
 
 // RoutingConfig represents the structure of the routing configuration file.
@@ -26,7 +33,8 @@ type routingConfig struct {
 
 // Router implements Router interface.
 type Router struct {
-	rules map[string]map[string]map[string]*model.Route // domain -> version -> endpoint -> route
+	rules    map[string]map[string]map[string]*model.Route // domain -> version -> endpoint -> route
+	basePath string                                        // module mount prefix stripped before endpoint lookup
 }
 
 // RoutingRule represents a single routing rule.
@@ -62,7 +70,8 @@ func New(ctx context.Context, config *Config) (*Router, func() error, error) {
 		return nil, nil, fmt.Errorf("config cannot be nil")
 	}
 	router := &Router{
-		rules: make(map[string]map[string]map[string]*model.Route),
+		rules:    make(map[string]map[string]map[string]*model.Route),
+		basePath: config.BasePath,
 	}
 
 	// Load rules at bootup
@@ -214,7 +223,17 @@ func getContextString(ctx map[string]interface{}, snakeKey, camelKey string) str
 
 // Route determines the routing destination based on the request context.
 func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.Route, error) {
-	// Parse domain and version via typed struct — unchanged from original.
+	// Extract the endpoint from the URL, stripping the module base path so that
+	// compound action paths like "catalog/push" are preserved verbatim.
+	endpoint := r.extractEndpoint(url.Path)
+
+	// Bodyless requests (GET/DELETE) carry no JSON body; domain, version, and
+	// BAP/BPP URIs are not available. Route using the v2 config version.
+	if len(body) == 0 {
+		return r.routeBodyless(endpoint)
+	}
+
+	// Parse domain and version via typed struct.
 	var requestBody struct {
 		Context struct {
 			Domain  string `json:"domain"`
@@ -238,9 +257,6 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.R
 	}
 	bppURI := getContextString(uriBody.Context, "bpp_uri", "bppUri")
 	bapURI := getContextString(uriBody.Context, "bap_uri", "bapUri")
-
-	// Extract the endpoint from the URL
-	endpoint := path.Base(url.Path)
 
 	// For v2.x.x, ignore domain and use wildcard; for v1.x.x, use actual domain
 	domain := requestBody.Context.Domain
@@ -281,6 +297,54 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.R
 		return handleProtocolMapping(route, bapURI, endpoint)
 	}
 	return route, nil
+}
+
+// extractEndpoint derives the action endpoint key from the incoming URL path.
+// When basePath is configured (e.g. "/bap/caller/"), it is stripped first so
+// that compound paths like "/bap/caller/catalog/push" → "catalog/push".
+// Without basePath, the function falls back to path.Base (last URL segment),
+// preserving backward compatibility for deployments that only use single-word
+// actions and have not set basePath.
+func (r *Router) extractEndpoint(urlPath string) string {
+	if r.basePath != "" {
+		// Strip the module mount prefix, then any residual leading slash.
+		stripped := strings.TrimPrefix(urlPath, r.basePath)
+		return strings.TrimPrefix(stripped, "/")
+	}
+	return path.Base(urlPath)
+}
+
+// routeBodyless handles routing for GET/DELETE requests that carry no body.
+// Since domain and version cannot be read from a missing payload, the version
+// registered in the v2 wildcard config ("*") is used for the rules lookup.
+//
+// Supported target types:
+//   - url:       routed to the configured static URL (primary use case).
+//   - publisher: technically permitted — the empty-body message is forwarded
+//     to the queue as-is. No known protocol use case exists for routing
+//     catalog GET/DELETE requests through a message queue; this is allowed
+//     rather than rejected to avoid unnecessary constraint, but operators
+//     should not configure publisher targets for bodyless endpoints.
+//   - bpp / bap: rejected — the target URI is read from the request body,
+//     which is absent for bodyless requests.
+func (r *Router) routeBodyless(endpoint string) (*model.Route, error) {
+	v2Rules, ok := r.rules["*"]
+	if !ok {
+		return nil, fmt.Errorf("no v2 routing rules found; bodyless requests require a v2 config")
+	}
+
+	for version, versionRules := range v2Rules {
+		route, ok := versionRules[endpoint]
+		if !ok {
+			continue
+		}
+		if route.TargetType == targetTypeBPP || route.TargetType == targetTypeBAP {
+			return nil, fmt.Errorf("bodyless endpoint '%s' (version %s) is configured with target type '%s': dynamic BAP/BPP URI routing is not supported for bodyless requests", endpoint, version, route.TargetType)
+		}
+		return route, nil
+	}
+
+	return nil, fmt.Errorf("endpoint '%s' is not supported in v2 routing config", endpoint)
 }
 
 // handleProtocolMapping handles both BPP and BAP routing with proper URL construction

@@ -1,0 +1,5 @@
+routingRules:
+  - version: 2.0.0
+    targetType: bpp
+    endpoints:
+      - catalog/subscription

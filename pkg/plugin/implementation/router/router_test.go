@@ -876,3 +876,190 @@ func TestV1DomainRequired(t *testing.T) {
 		t.Errorf("loadRules() error = %v, want error containing %q", err, expectedErr)
 	}
 }
+
+// setupRouterWithBasePath is a helper that creates a Router with a basePath set.
+func setupRouterWithBasePath(t *testing.T, configFile, basePath string) (*Router, string) {
+	t.Helper()
+	rulesFilePath := setupTestConfig(t, configFile)
+	config := &Config{
+		RoutingConfig: rulesFilePath,
+		BasePath:      basePath,
+	}
+	router, _, err := New(context.Background(), config)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	return router, rulesFilePath
+}
+
+// TestExtractEndpoint tests the endpoint extraction helper for both basePath
+// and fallback (path.Base) modes.
+func TestExtractEndpoint(t *testing.T) {
+	tests := []struct {
+		name     string
+		basePath string
+		urlPath  string
+		want     string
+	}{
+		{
+			name:     "no basePath - single-word action falls back to path.Base",
+			basePath: "",
+			urlPath:  "/bap/caller/search",
+			want:     "search",
+		},
+		{
+			name:     "no basePath - root-level single-word action",
+			basePath: "",
+			urlPath:  "/search",
+			want:     "search",
+		},
+		{
+			name:     "basePath with trailing slash - single-word action",
+			basePath: "/bap/caller/",
+			urlPath:  "/bap/caller/search",
+			want:     "search",
+		},
+		{
+			name:     "basePath without trailing slash - single-word action",
+			basePath: "/bap/caller",
+			urlPath:  "/bap/caller/search",
+			want:     "search",
+		},
+		{
+			name:     "basePath - two-segment compound action",
+			basePath: "/bap/caller/",
+			urlPath:  "/bap/caller/catalog/push",
+			want:     "catalog/push",
+		},
+		{
+			name:     "basePath - two-segment compound action (subscription)",
+			basePath: "/bap/receiver/",
+			urlPath:  "/bap/receiver/catalog/subscription",
+			want:     "catalog/subscription",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &Router{basePath: tt.basePath}
+			got := r.extractEndpoint(tt.urlPath)
+			if got != tt.want {
+				t.Errorf("extractEndpoint(%q) with basePath=%q = %q, want %q",
+					tt.urlPath, tt.basePath, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRouteCompoundEndpointSuccess tests that compound action paths are routed
+// correctly when basePath is configured.
+func TestRouteCompoundEndpointSuccess(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		basePath string
+		url      string
+		body     string
+	}{
+		{
+			name:     "compound endpoint catalog/push routed via url target",
+			basePath: "/bap/caller/",
+			url:      "https://example.com/bap/caller/catalog/push",
+			body:     `{"context": {"version": "2.0.0"}}`,
+		},
+		{
+			name:     "compound endpoint catalog/subscription (POST) routed via url target",
+			basePath: "/bap/caller/",
+			url:      "https://example.com/bap/caller/catalog/subscription",
+			body:     `{"context": {"version": "2.0.0"}}`,
+		},
+		{
+			name:     "compound endpoint catalog/search routed via url target",
+			basePath: "/bap/caller/",
+			url:      "https://example.com/bap/caller/catalog/search",
+			body:     `{"context": {"version": "2.0.0"}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router, rulesFilePath := setupRouterWithBasePath(t, "v2_catalog_url.yaml", tt.basePath)
+			defer os.RemoveAll(filepath.Dir(rulesFilePath))
+
+			parsedURL, _ := url.Parse(tt.url)
+			_, err := router.Route(ctx, parsedURL, []byte(tt.body))
+			if err != nil {
+				t.Errorf("Route() = %v, want nil error", err)
+			}
+		})
+	}
+}
+
+// TestRouteBodyless tests routing where the body is empty (GET/DELETE requests).
+// The router receives only the URL and a nil body — it does not see the HTTP
+// method. Method-level distinction (GET vs DELETE on the same path) is the
+// handler's responsibility, not the router's. A single bodyless success case
+// therefore covers both methods.
+func TestRouteBodyless(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		configFile string
+		basePath   string
+		url        string
+		wantErr    string
+	}{
+		{
+			// Covers both GET and DELETE: the router sees only the URL and nil body;
+			// HTTP method distinction is handled upstream by the request pipeline.
+			name:       "bodyless request to catalog/subscription succeeds",
+			configFile: "v2_catalog_url.yaml",
+			basePath:   "/bap/receiver/",
+			url:        "https://example.com/bap/receiver/catalog/subscription",
+			wantErr:    "",
+		},
+		{
+			name:       "bodyless to unsupported endpoint returns clear error",
+			configFile: "v2_catalog_url.yaml",
+			basePath:   "/bap/receiver/",
+			url:        "https://example.com/bap/receiver/catalog/unknown",
+			wantErr:    "endpoint 'catalog/unknown' is not supported in v2 routing config",
+		},
+		{
+			name:       "bodyless to BPP target type returns error",
+			configFile: "v2_catalog_bpp.yaml",
+			basePath:   "/bap/receiver/",
+			url:        "https://example.com/bap/receiver/catalog/subscription",
+			wantErr:    "dynamic BAP/BPP URI routing is not supported for bodyless requests",
+		},
+		{
+			name:       "bodyless request with no v2 rules returns error",
+			configFile: "bpp_receiver.yaml",
+			basePath:   "/bap/receiver/",
+			url:        "https://example.com/bap/receiver/catalog/subscription",
+			wantErr:    "no v2 routing rules found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router, rulesFilePath := setupRouterWithBasePath(t, tt.configFile, tt.basePath)
+			defer os.RemoveAll(filepath.Dir(rulesFilePath))
+
+			parsedURL, _ := url.Parse(tt.url)
+			_, err := router.Route(ctx, parsedURL, nil)
+
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("Route() = %v, want nil error", err)
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("Route() = %v, want error containing %q", err, tt.wantErr)
+				}
+			}
+		})
+	}
+}

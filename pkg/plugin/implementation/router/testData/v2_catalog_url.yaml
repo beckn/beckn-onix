@@ -1,0 +1,13 @@
+routingRules:
+  - version: 2.0.0
+    targetType: url
+    target:
+      url: https://catalog.example.com
+    endpoints:
+      - catalog/publish
+      - catalog/on_publish
+      - catalog/push
+      - catalog/subscription
+      - catalog/pull
+      - catalog/on_pull
+      - catalog/search
