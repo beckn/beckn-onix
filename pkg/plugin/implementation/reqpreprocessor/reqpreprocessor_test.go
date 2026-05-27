@@ -373,6 +373,109 @@ func TestCamelCaseContextKeys(t *testing.T) {
 	}
 }
 
+// TestBodylessRequest verifies that GET/DELETE requests with no body pass through
+// the middleware without a 400, that body-derived context values are not set,
+// and that the static ParentID config value is still injected.
+func TestBodylessRequest(t *testing.T) {
+	tests := []struct {
+		name          string
+		method        string
+		path          string
+		role          string
+		parentID      string
+		wantParentID  bool
+	}{
+		{
+			name:   "GET catalog/subscription — bap role",
+			method: http.MethodGet,
+			path:   "/catalog/subscription",
+			role:   "bap",
+		},
+		{
+			name:   "DELETE catalog/subscription — bap role",
+			method: http.MethodDelete,
+			path:   "/catalog/subscription",
+			role:   "bap",
+		},
+		{
+			name:   "GET catalog — bap role",
+			method: http.MethodGet,
+			path:   "/catalog",
+			role:   "bap",
+		},
+		{
+			name:   "GET catalog/subscription — bpp role",
+			method: http.MethodGet,
+			path:   "/catalog/subscription",
+			role:   "bpp",
+		},
+		{
+			name:         "GET with ParentID set — injected despite no body",
+			method:       http.MethodGet,
+			path:         "/catalog/subscription",
+			role:         "bap",
+			parentID:     "bap:bap-123",
+			wantParentID: true,
+		},
+		{
+			name:         "GET with ParentID empty — not injected",
+			method:       http.MethodGet,
+			path:         "/catalog/subscription",
+			role:         "bap",
+			parentID:     "",
+			wantParentID: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				Role:        tt.role,
+				ParentID:    tt.parentID,
+				ContextKeys: []string{"transaction_id", "message_id"},
+			}
+			middleware, err := NewPreProcessor(cfg)
+			if err != nil {
+				t.Fatalf("NewPreProcessor() error = %v", err)
+			}
+
+			req := httptest.NewRequest(tt.method, tt.path, http.NoBody)
+			rec := httptest.NewRecorder()
+
+			reached := false
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached = true
+				if r.Context().Value(model.ContextKeySubscriberID) != nil {
+					t.Errorf("expected no subscriber ID in context, got one")
+				}
+				if r.Context().Value(model.ContextKeyRemoteID) != nil {
+					t.Errorf("expected no caller ID in context, got one")
+				}
+				gotParentID := r.Context().Value(model.ContextKeyParentID)
+				if tt.wantParentID {
+					if gotParentID != tt.parentID {
+						t.Errorf("expected parentID %q, got %v", tt.parentID, gotParentID)
+					}
+				} else {
+					if gotParentID != nil {
+						t.Errorf("expected no parentID in context, got %v", gotParentID)
+					}
+				}
+				w.WriteHeader(http.StatusOK)
+			})
+
+			middleware(handler).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Errorf("expected 200, got %d", rec.Code)
+			}
+			if !reached {
+				t.Error("expected next handler to be called, but it was not")
+			}
+		})
+	}
+}
+
 func TestNewPreProcessorAddsSubscriberIDToContext(t *testing.T) {
 	cfg := &Config{Role: "bap"}
 	middleware, err := NewPreProcessor(cfg)

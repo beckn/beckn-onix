@@ -64,8 +64,25 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				http.Error(w, "Failed to read request body", http.StatusBadRequest)
 				return
 			}
-			var req map[string]interface{}
 			ctx := r.Context()
+
+			// Bodyless requests (GET/DELETE) carry no JSON body and no context
+			// fields — skip body extraction and pass through directly.
+			// ParentID is a static config value, not derived from the body,
+			// so it is injected here before the early return.
+			if len(body) == 0 {
+				log.Debugf(ctx, "bodyless request to %s: skipping context extraction", r.URL.Path)
+				if cfg.ParentID != "" {
+					log.Debugf(ctx, "adding parentID to request:%s, %v", model.ContextKeyParentID, cfg.ParentID)
+					ctx = context.WithValue(ctx, model.ContextKeyParentID, cfg.ParentID)
+				}
+				r = r.WithContext(ctx)
+				r.Body = io.NopCloser(bytes.NewBuffer(body))
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			var req map[string]interface{}
 			if err := json.Unmarshal(body, &req); err != nil {
 				http.Error(w, "Failed to decode request body", http.StatusBadRequest)
 				return
