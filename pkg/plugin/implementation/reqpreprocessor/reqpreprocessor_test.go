@@ -373,6 +373,58 @@ func TestCamelCaseContextKeys(t *testing.T) {
 	}
 }
 
+// TestBodylessRequest verifies that GET/DELETE requests with no body pass through
+// the middleware without a 400, and that no context values are set.
+func TestBodylessRequest(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"GET catalog/subscription", http.MethodGet, "/catalog/subscription"},
+		{"DELETE catalog/subscription", http.MethodDelete, "/catalog/subscription"},
+		{"GET catalog", http.MethodGet, "/catalog"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				Role:        "bap",
+				ContextKeys: []string{"transaction_id", "message_id"},
+			}
+			middleware, err := NewPreProcessor(cfg)
+			if err != nil {
+				t.Fatalf("NewPreProcessor() error = %v", err)
+			}
+
+			req := httptest.NewRequest(tt.method, tt.path, http.NoBody)
+			rec := httptest.NewRecorder()
+
+			reached := false
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached = true
+				// No context values should be set for bodyless requests
+				if r.Context().Value(model.ContextKeySubscriberID) != nil {
+					t.Errorf("expected no subscriber ID in context, got one")
+				}
+				if r.Context().Value(model.ContextKeyRemoteID) != nil {
+					t.Errorf("expected no caller ID in context, got one")
+				}
+				w.WriteHeader(http.StatusOK)
+			})
+
+			middleware(handler).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Errorf("expected 200, got %d", rec.Code)
+			}
+			if !reached {
+				t.Error("expected next handler to be called, but it was not")
+			}
+		})
+	}
+}
+
 func TestNewPreProcessorAddsSubscriberIDToContext(t *testing.T) {
 	cfg := &Config{Role: "bap"}
 	middleware, err := NewPreProcessor(cfg)

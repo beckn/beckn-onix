@@ -64,8 +64,19 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				http.Error(w, "Failed to read request body", http.StatusBadRequest)
 				return
 			}
-			var req map[string]interface{}
 			ctx := r.Context()
+
+			// Bodyless requests (GET/DELETE) carry no JSON body and no context
+			// fields — skip all extraction and pass through directly.
+			if len(body) == 0 {
+				log.Debugf(ctx, "bodyless request to %s: skipping context extraction", r.URL.Path)
+				r = r.WithContext(ctx)
+				r.Body = io.NopCloser(bytes.NewBuffer(body))
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			var req map[string]interface{}
 			if err := json.Unmarshal(body, &req); err != nil {
 				http.Error(w, "Failed to decode request body", http.StatusBadRequest)
 				return
