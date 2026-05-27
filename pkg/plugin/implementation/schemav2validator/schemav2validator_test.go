@@ -292,6 +292,7 @@ func TestValidate_BodylessRequest(t *testing.T) {
 	tests := []struct {
 		name    string
 		path    string
+		nilURL  bool // pass nil *url.URL instead of parsing path
 		wantErr bool
 		errMsg  string
 	}{
@@ -317,6 +318,22 @@ func TestValidate_BodylessRequest(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			// Query string must not pollute the path key — reqURL.Path strips RawQuery,
+			// so /catalog/subscription?subscriptionId=abc resolves to the same map key
+			// as /catalog/subscription and must pass.
+			name:    "GET with query string — query params do not affect path match",
+			path:    "/catalog/subscription?subscriptionId=abc-123",
+			wantErr: false,
+		},
+		{
+			// nil reqURL with empty body must return an error, not panic.
+			// Guards the reqURL == nil check added in the self-review.
+			name:    "nil URL with empty body returns error",
+			nilURL:  true,
+			wantErr: true,
+			errMsg:  "request URL is required for bodyless validation",
+		},
+		{
 			// /search only has a POST with requestBody — not in bodylessActions.
 			name:    "POST-only endpoint /search with empty body is rejected",
 			path:    "/search",
@@ -334,7 +351,11 @@ func TestValidate_BodylessRequest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validator.Validate(context.Background(), mustURL(tt.path), []byte{})
+			var reqURL *url.URL
+			if !tt.nilURL {
+				reqURL = mustURL(tt.path)
+			}
+			err := validator.Validate(context.Background(), reqURL, []byte{})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
