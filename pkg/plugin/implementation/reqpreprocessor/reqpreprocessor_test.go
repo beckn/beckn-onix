@@ -374,22 +374,64 @@ func TestCamelCaseContextKeys(t *testing.T) {
 }
 
 // TestBodylessRequest verifies that GET/DELETE requests with no body pass through
-// the middleware without a 400, and that no context values are set.
+// the middleware without a 400, that body-derived context values are not set,
+// and that the static ParentID config value is still injected.
 func TestBodylessRequest(t *testing.T) {
 	tests := []struct {
-		name   string
-		method string
-		path   string
+		name          string
+		method        string
+		path          string
+		role          string
+		parentID      string
+		wantParentID  bool
 	}{
-		{"GET catalog/subscription", http.MethodGet, "/catalog/subscription"},
-		{"DELETE catalog/subscription", http.MethodDelete, "/catalog/subscription"},
-		{"GET catalog", http.MethodGet, "/catalog"},
+		{
+			name:   "GET catalog/subscription — bap role",
+			method: http.MethodGet,
+			path:   "/catalog/subscription",
+			role:   "bap",
+		},
+		{
+			name:   "DELETE catalog/subscription — bap role",
+			method: http.MethodDelete,
+			path:   "/catalog/subscription",
+			role:   "bap",
+		},
+		{
+			name:   "GET catalog — bap role",
+			method: http.MethodGet,
+			path:   "/catalog",
+			role:   "bap",
+		},
+		{
+			name:   "GET catalog/subscription — bpp role",
+			method: http.MethodGet,
+			path:   "/catalog/subscription",
+			role:   "bpp",
+		},
+		{
+			name:         "GET with ParentID set — injected despite no body",
+			method:       http.MethodGet,
+			path:         "/catalog/subscription",
+			role:         "bap",
+			parentID:     "bap:bap-123",
+			wantParentID: true,
+		},
+		{
+			name:         "GET with ParentID empty — not injected",
+			method:       http.MethodGet,
+			path:         "/catalog/subscription",
+			role:         "bap",
+			parentID:     "",
+			wantParentID: false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{
-				Role:        "bap",
+				Role:        tt.role,
+				ParentID:    tt.parentID,
 				ContextKeys: []string{"transaction_id", "message_id"},
 			}
 			middleware, err := NewPreProcessor(cfg)
@@ -403,12 +445,21 @@ func TestBodylessRequest(t *testing.T) {
 			reached := false
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				reached = true
-				// No context values should be set for bodyless requests
 				if r.Context().Value(model.ContextKeySubscriberID) != nil {
 					t.Errorf("expected no subscriber ID in context, got one")
 				}
 				if r.Context().Value(model.ContextKeyRemoteID) != nil {
 					t.Errorf("expected no caller ID in context, got one")
+				}
+				gotParentID := r.Context().Value(model.ContextKeyParentID)
+				if tt.wantParentID {
+					if gotParentID != tt.parentID {
+						t.Errorf("expected parentID %q, got %v", tt.parentID, gotParentID)
+					}
+				} else {
+					if gotParentID != nil {
+						t.Errorf("expected no parentID in context, got %v", gotParentID)
+					}
 				}
 				w.WriteHeader(http.StatusOK)
 			})
