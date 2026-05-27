@@ -317,8 +317,16 @@ func (r *Router) extractEndpoint(urlPath string) string {
 // routeBodyless handles routing for GET/DELETE requests that carry no body.
 // Since domain and version cannot be read from a missing payload, the version
 // registered in the v2 wildcard config ("*") is used for the rules lookup.
-// Dynamic BAP/BPP URI routing is not supported for bodyless requests because
-// the target URI would normally come from the request body.
+//
+// Supported target types:
+//   - url:       routed to the configured static URL (primary use case).
+//   - publisher: technically permitted — the empty-body message is forwarded
+//     to the queue as-is. No known protocol use case exists for routing
+//     catalog GET/DELETE requests through a message queue; this is allowed
+//     rather than rejected to avoid unnecessary constraint, but operators
+//     should not configure publisher targets for bodyless endpoints.
+//   - bpp / bap: rejected — the target URI is read from the request body,
+//     which is absent for bodyless requests.
 func (r *Router) routeBodyless(endpoint string) (*model.Route, error) {
 	v2Rules, ok := r.rules["*"]
 	if !ok {

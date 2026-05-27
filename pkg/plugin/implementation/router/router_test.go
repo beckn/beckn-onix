@@ -996,7 +996,11 @@ func TestRouteCompoundEndpointSuccess(t *testing.T) {
 	}
 }
 
-// TestRouteBodyless tests GET/DELETE request routing where the body is empty.
+// TestRouteBodyless tests routing where the body is empty (GET/DELETE requests).
+// The router receives only the URL and a nil body — it does not see the HTTP
+// method. Method-level distinction (GET vs DELETE on the same path) is the
+// handler's responsibility, not the router's. A single bodyless success case
+// therefore covers both methods.
 func TestRouteBodyless(t *testing.T) {
 	ctx := context.Background()
 
@@ -1008,14 +1012,9 @@ func TestRouteBodyless(t *testing.T) {
 		wantErr    string
 	}{
 		{
-			name:       "bodyless GET to catalog/subscription succeeds",
-			configFile: "v2_catalog_url.yaml",
-			basePath:   "/bap/receiver/",
-			url:        "https://example.com/bap/receiver/catalog/subscription",
-			wantErr:    "",
-		},
-		{
-			name:       "bodyless DELETE to catalog/subscription succeeds",
+			// Covers both GET and DELETE: the router sees only the URL and nil body;
+			// HTTP method distinction is handled upstream by the request pipeline.
+			name:       "bodyless request to catalog/subscription succeeds",
 			configFile: "v2_catalog_url.yaml",
 			basePath:   "/bap/receiver/",
 			url:        "https://example.com/bap/receiver/catalog/subscription",
