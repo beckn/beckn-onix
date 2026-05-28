@@ -595,6 +595,29 @@ func TestValidateSchemaStep_Run_NoBasePath_UsesRawAction(t *testing.T) {
 	}
 }
 
+func TestValidateSchemaStep_Run_EmptyBodyPost_ReturnsError(t *testing.T) {
+	mv := &mockRecordingValidator{}
+	step, _ := newValidateSchemaStep(mv, "")
+	req, _ := http.NewRequest(http.MethodPost, "http://localhost/catalog/subscription", nil)
+	ctx := &model.StepContext{
+		Context:    context.Background(),
+		Request:    req,
+		Body:       []byte{},
+		RespHeader: http.Header{},
+	}
+	err := step.Run(ctx)
+	if err == nil {
+		t.Fatal("expected error for empty-body POST, got nil")
+	}
+	var badReq *model.BadReqErr
+	if !errors.As(err, &badReq) {
+		t.Errorf("expected BadReqErr, got %T: %v", err, err)
+	}
+	if mv.gotURL != nil {
+		t.Error("Validate should not have been called for empty-body POST")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // addRouteStep constructor + stripBasePath wiring tests
 // ---------------------------------------------------------------------------
