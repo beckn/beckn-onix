@@ -361,18 +361,16 @@ func parseHeader(header string) (*authHeader, error) {
 }
 
 // stripBasePath returns a shallow copy of u with basePath stripped from the
-// front of its Path, then re-adding a leading slash so the URL remains valid.
-// When basePath is empty or u is nil the original pointer is returned unchanged.
+// front of its Path and the leading slash removed, leaving the clean endpoint
+// action (e.g. "search" or "catalog/subscription") in Path.Path.
+// Returns nil when u is nil.
 func stripBasePath(u *url.URL, basePath string) *url.URL {
-	if basePath == "" || u == nil {
-		return u
+	if u == nil {
+		return nil
 	}
 	stripped := *u
 	p := strings.TrimPrefix(u.Path, basePath)
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p
-	}
-	stripped.Path = p
+	stripped.Path = strings.TrimPrefix(p, "/")
 	return &stripped
 }
 

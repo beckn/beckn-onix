@@ -213,11 +213,10 @@ func getContextString(ctx map[string]interface{}, snakeKey, camelKey string) str
 }
 
 // Route determines the routing destination based on the request context.
-func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.Route, error) {
-	// Extract the endpoint from the URL, stripping the module base path so that
-	// compound action paths like "catalog/push" are preserved verbatim.
-	endpoint := r.extractEndpoint(url.Path)
-
+// reqURL.Path holds the Beckn endpoint action already stripped of the module
+// base path by the step layer (e.g. "search" or "catalog/subscription").
+func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*model.Route, error) {
+	endpoint := reqURL.Path
 	// Bodyless requests (GET/DELETE) carry no JSON body; domain, version, and
 	// BAP/BPP URIs are not available. Route using the v2 config version.
 	if len(body) == 0 {
@@ -288,14 +287,6 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.R
 		return handleProtocolMapping(route, bapURI, endpoint)
 	}
 	return route, nil
-}
-
-// extractEndpoint derives the action endpoint key from the URL path.
-// The step layer is responsible for stripping the module base path before
-// calling Route, so urlPath is expected to be of the form "/action" or
-// "/compound/action". The leading slash is removed to produce the map key.
-func (r *Router) extractEndpoint(urlPath string) string {
-	return strings.TrimPrefix(urlPath, "/")
 }
 
 // routeBodyless handles routing for GET/DELETE requests that carry no body.

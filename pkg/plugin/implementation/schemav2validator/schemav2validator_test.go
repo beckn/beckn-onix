@@ -211,6 +211,7 @@ func TestValidate_ActionExtraction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// endpointAction is not used for body-bearing requests; pass "" for clarity.
 			err := validator.Validate(context.Background(), nil, []byte(tt.payload))
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -263,9 +264,9 @@ func TestValidate_NestedValidation(t *testing.T) {
 }
 
 // TestValidate_BodylessRequest covers GET/DELETE requests (Beckn 2.0
-// catalog/subscription verbs) that carry no body. Validate() detects
-// len(data)==0, looks up the path in the pre-built bodylessActions index,
-// and either passes (known bodyless endpoint) or rejects (unknown/body-only).
+// catalog/subscription verbs) that carry no body. The step layer has already
+// stripped the module base path and extracted the action string before calling
+// Validate, so endpointAction is a clean key like "catalog/subscription".
 func TestValidate_BodylessRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(testSpecBodyless))
@@ -277,73 +278,53 @@ func TestValidate_BodylessRequest(t *testing.T) {
 		t.Fatalf("Failed to create validator: %v", err)
 	}
 
-	mustURL := func(raw string) *url.URL {
-		u, err := url.Parse(raw)
-		if err != nil {
-			t.Fatalf("url.Parse(%q): %v", raw, err)
-		}
-		return u
-	}
-
-	// NOTE: bodylessActions is keyed by path only — it does not distinguish HTTP
-	// methods. GET, DELETE, and even an empty-body POST to the same path all resolve
-	// to the same map key. Method-aware validation requires the Option C StepContext
-	// refactor. The "known limitation" case below documents this current behaviour.
+	// NOTE: bodylessActions is keyed by endpoint action only — it does not
+	// distinguish HTTP methods. GET, DELETE, and even an empty-body POST with the
+	// same action all resolve to the same map key.
 	tests := []struct {
 		name    string
-		path    string
-		nilURL  bool // pass nil *url.URL instead of parsing path
+		urlPath string // set to "" to pass nil URL
 		wantErr bool
 		errMsg  string
 	}{
 		{
-			// Multi-segment path with GET — indexed in bodylessActions, must pass.
-			name:    "GET /catalog/subscription — empty body passes",
-			path:    "/catalog/subscription",
+			// Multi-segment action — indexed in bodylessActions, must pass.
+			name:    "GET catalog/subscription — empty body passes",
+			urlPath: "catalog/subscription",
 			wantErr: false,
 		},
 		{
-			// Same path, DELETE is also indexed as bodyless (path-only key, no
-			// method distinction at this layer).
-			name:    "DELETE /catalog/subscription — empty body passes",
-			path:    "/catalog/subscription",
+			// DELETE on the same action — same key, passes for the same reason.
+			name:    "DELETE catalog/subscription — empty body passes",
+			urlPath: "catalog/subscription",
 			wantErr: false,
 		},
 		{
-			// Known limitation (Option A): bodylessActions is path-only. An empty-body
-			// POST to a bodyless-indexed path passes through without body validation.
-			// This will become wantErr:true once the Option C StepContext refactor lands.
-			name:    "empty-body POST to bodyless-indexed path passes (known limitation)",
-			path:    "/catalog/subscription",
+			// Known limitation: bodylessActions is method-agnostic. An empty-body POST
+			// with a bodyless-indexed action passes without body validation.
+			name:    "empty-body POST to bodyless-indexed action passes (known limitation)",
+			urlPath: "catalog/subscription",
 			wantErr: false,
 		},
 		{
-			// Query string must not pollute the path key — reqURL.Path strips RawQuery,
-			// so /catalog/subscription?subscriptionId=abc resolves to the same map key
-			// as /catalog/subscription and must pass.
-			name:    "GET with query string — query params do not affect path match",
-			path:    "/catalog/subscription?subscriptionId=abc-123",
-			wantErr: false,
-		},
-		{
-			// nil reqURL with empty body must return an error, not panic.
-			// Guards the reqURL == nil check added in the self-review.
+			// Nil URL with empty body must return an error.
+			// The step layer passes nil when ctx.Request.URL is nil.
 			name:    "nil URL with empty body returns error",
-			nilURL:  true,
+			urlPath: "",
 			wantErr: true,
 			errMsg:  "request URL is required for bodyless validation",
 		},
 		{
 			// /search only has a POST with requestBody — not in bodylessActions.
-			name:    "POST-only endpoint /search with empty body is rejected",
-			path:    "/search",
+			name:    "POST-only endpoint search with empty body is rejected",
+			urlPath: "search",
 			wantErr: true,
 			errMsg:  "unsupported bodyless request for endpoint: search",
 		},
 		{
-			// Path absent from spec entirely.
-			name:    "unknown endpoint /nonsense with empty body is rejected",
-			path:    "/nonsense",
+			// Action absent from spec entirely.
+			name:    "unknown action nonsense with empty body is rejected",
+			urlPath: "nonsense",
 			wantErr: true,
 			errMsg:  "unsupported bodyless request for endpoint: nonsense",
 		},
@@ -352,8 +333,8 @@ func TestValidate_BodylessRequest(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var reqURL *url.URL
-			if !tt.nilURL {
-				reqURL = mustURL(tt.path)
+			if tt.urlPath != "" {
+				reqURL = &url.URL{Path: tt.urlPath}
 			}
 			err := validator.Validate(context.Background(), reqURL, []byte{})
 			if (err != nil) != tt.wantErr {
