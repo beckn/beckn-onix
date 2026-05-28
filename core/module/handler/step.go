@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -397,9 +398,14 @@ func newValidateSchemaStep(schemaValidator definition.SchemaValidator, basePath 
 
 // Run executes the schema validation step.
 func (s *validateSchemaStep) Run(ctx *model.StepContext) error {
-	err := s.validator.Validate(ctx, stripBasePath(ctx.Request.URL, s.basePath), ctx.Body)
-	if err != nil {
-		err = fmt.Errorf("schema validation failed: %w", err)
+	var err error
+	if len(ctx.Body) == 0 && ctx.Request.Method == http.MethodPost {
+		err = fmt.Errorf("schema validation failed: %w", model.NewBadReqErr(fmt.Errorf("POST request requires a body")))
+	} else {
+		err = s.validator.Validate(ctx, stripBasePath(ctx.Request.URL, s.basePath), ctx.Body)
+		if err != nil {
+			err = fmt.Errorf("schema validation failed: %w", err)
+		}
 	}
 	s.recordMetrics(ctx, err)
 	return err

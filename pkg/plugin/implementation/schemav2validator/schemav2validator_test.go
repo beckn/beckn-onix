@@ -278,9 +278,6 @@ func TestValidate_BodylessRequest(t *testing.T) {
 		t.Fatalf("Failed to create validator: %v", err)
 	}
 
-	// NOTE: bodylessActions is keyed by endpoint action only — it does not
-	// distinguish HTTP methods. GET, DELETE, and even an empty-body POST with the
-	// same action all resolve to the same map key.
 	tests := []struct {
 		name    string
 		urlPath string // set to "" to pass nil URL
@@ -300,9 +297,9 @@ func TestValidate_BodylessRequest(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			// Known limitation: bodylessActions is method-agnostic. An empty-body POST
-			// with a bodyless-indexed action passes without body validation.
-			name:    "empty-body POST to bodyless-indexed action passes (known limitation)",
+			// The plugin itself is method-agnostic; empty-body POST rejection is
+			// enforced upstream by validateSchemaStep before Validate is called.
+			name:    "empty-body POST to bodyless-indexed action passes — method enforcement is upstream",
 			urlPath: "catalog/subscription",
 			wantErr: false,
 		},

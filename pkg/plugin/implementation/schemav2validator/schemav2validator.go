@@ -123,9 +123,8 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 
 		// reqURL.Path is the clean endpoint action (e.g. "catalog/subscription"),
 		// matching the keys built in buildActionIndex. No further stripping needed.
-		// Note: the check is path-only — it does not distinguish HTTP methods. A POST
-		// with an empty body to a bodyless-indexed path would pass here.
-		// Method-aware validation is tracked in issue #740.
+		// Empty-body POST requests are rejected upstream by validateSchemaStep before
+		// reaching here, so only GET/DELETE arrive at this branch.
 		action := reqURL.Path
 		if _, ok := spec.bodylessActions[action]; !ok {
 			return model.NewBadReqErr(fmt.Errorf("unsupported bodyless request for endpoint: %s", action))
