@@ -441,13 +441,16 @@ func TestNack_1(t *testing.T) {
 
 // mockSigner satisfies definition.Signer for testing.
 type mockSigner struct {
+	signCalled    bool
 	signAckCalled bool
 	signAckErr    error
-	returnSig     string
+	returnSig     string // returned by SignAck
+	returnSignSig string // returned by Sign (default "")
 }
 
 func (m *mockSigner) Sign(_ context.Context, _ []byte, _ string, _, _ int64) (string, error) {
-	return "", nil
+	m.signCalled = true
+	return m.returnSignSig, nil
 }
 
 func (m *mockSigner) SignAck(_ context.Context, _ []byte, _ string, _ string, _, _ int64) (string, error) {
