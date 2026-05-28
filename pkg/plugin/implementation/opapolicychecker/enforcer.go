@@ -30,7 +30,6 @@ type PolicyConfig struct {
 	Location      string
 	PolicyPaths   []string
 	Query         string
-	Actions       []string
 	Enabled       bool
 	FetchTimeout  time.Duration
 	IsBundle      bool
@@ -59,7 +58,6 @@ var policyEntryKnownKeys = map[string]bool{
 	"type":                            true,
 	"location":                        true,
 	"query":                           true,
-	"actions":                         true,
 	"enabled":                         true,
 	"fetchTimeoutSeconds":             true,
 	"verification.enabled":            true,
@@ -168,16 +166,6 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 		return nil, fmt.Errorf("'query' must not be set for type=%s", policyTypeManifest)
 	}
 
-	if actions, ok := cfg["actions"]; ok && actions != "" {
-		actionList := strings.Split(actions, ",")
-		config.Actions = make([]string, 0, len(actionList))
-		for _, action := range actionList {
-			action = strings.TrimSpace(action)
-			if action != "" {
-				config.Actions = append(config.Actions, action)
-			}
-		}
-	}
 
 	if enabled, ok := cfg["enabled"]; ok {
 		config.Enabled = enabled == "true" || enabled == "1"
@@ -238,17 +226,6 @@ func parsePolicyConfig(cfg map[string]string) (*PolicyConfig, error) {
 	return config, nil
 }
 
-func (c *PolicyConfig) IsActionEnabled(action string) bool {
-	if len(c.Actions) == 0 {
-		return true
-	}
-	for _, a := range c.Actions {
-		if a == action {
-			return true
-		}
-	}
-	return false
-}
 
 type loadedPolicy struct {
 	name                   string
@@ -532,36 +509,33 @@ func logLoadedPolicy(ctx context.Context, networkScoped bool, policy *loadedPoli
 			if policy.manifestDeclaredSigned != nil {
 				manifestSigned = strconv.FormatBool(*policy.manifestDeclaredSigned)
 			}
-			log.Infof(ctx, "OPAPolicyChecker: loaded network policy networkID=%q sourceType=manifest resolvedType=%s manifestSigned=%s manifestVerified=%t location=%s query=%s actions=%v enabled=%t modules=%v",
+			log.Infof(ctx, "OPAPolicyChecker: loaded network policy networkID=%q sourceType=manifest resolvedType=%s manifestSigned=%s manifestVerified=%t location=%s query=%s enabled=%t modules=%v",
 				policy.name,
 				policy.config.Type,
 				manifestSigned,
 				policy.manifestVerified,
 				policy.config.Location,
 				policy.config.Query,
-				policy.config.Actions,
 				policy.config.Enabled,
 				moduleNames,
 			)
 			return
 		}
-		log.Infof(ctx, "OPAPolicyChecker: loaded network policy networkID=%q type=%s location=%s query=%s actions=%v enabled=%t modules=%v",
+		log.Infof(ctx, "OPAPolicyChecker: loaded network policy networkID=%q type=%s location=%s query=%s enabled=%t modules=%v",
 			policy.name,
 			policy.config.Type,
 			policy.config.Location,
 			policy.config.Query,
-			policy.config.Actions,
 			policy.config.Enabled,
 			moduleNames,
 		)
 		return
 	}
 
-	log.Infof(ctx, "OPAPolicyChecker: loaded default policy type=%s location=%s query=%s actions=%v enabled=%t modules=%v",
+	log.Infof(ctx, "OPAPolicyChecker: loaded default policy type=%s location=%s query=%s enabled=%t modules=%v",
 		policy.config.Type,
 		policy.config.Location,
 		policy.config.Query,
-		policy.config.Actions,
 		policy.config.Enabled,
 		moduleNames,
 	)
@@ -684,18 +658,6 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	}
 	policyConfig := policy.config
 
-	action := extractActionFromPath(ctx.Request.URL.Path)
-	if action == "" {
-		action = reqCtx.Action
-	}
-
-	if !policyConfig.IsActionEnabled(action) {
-		if e.config.DebugLogging {
-			log.Debugf(ctx, "OPAPolicyChecker: action %q not in configured actions %v, skipping", action, policyConfig.Actions)
-		}
-		return nil
-	}
-
 	if !policyConfig.Enabled {
 		log.Debug(ctx, "OPAPolicyChecker: selected policy is disabled, skipping")
 		return nil
@@ -708,7 +670,7 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	}
 
 	if e.config.DebugLogging {
-		log.Debugf(ctx, "OPAPolicyChecker: evaluating policy for networkID=%q action=%q (modules=%v)", reqCtx.NetworkID, action, ev.ModuleNames())
+		log.Debugf(ctx, "OPAPolicyChecker: evaluating policy for networkID=%q action=%q (modules=%v)", reqCtx.NetworkID, reqCtx.Action, ev.ModuleNames())
 	}
 
 	requestLogCtx := formatRequestLogContext(reqCtx)
@@ -721,7 +683,7 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 
 	if len(violations) == 0 {
 		if e.config.DebugLogging {
-			log.Debugf(ctx, "OPAPolicyChecker: message compliant for action %q", action)
+			log.Debugf(ctx, "OPAPolicyChecker: message compliant for action %q", reqCtx.Action)
 		}
 		return nil
 	}
@@ -776,15 +738,6 @@ func parseRequestContext(body []byte) parsedRequestContext {
 	}
 }
 
-func extractActionFromPath(urlPath string) string {
-	// /bpp/caller/confirm/extra as action "extra".
-	parts := strings.FieldsFunc(strings.Trim(urlPath, "/"), func(r rune) bool { return r == '/' })
-	if len(parts) == 3 && isBecknDirection(parts[1]) && parts[2] != "" {
-		return parts[2]
-	}
-	return ""
-}
-
 func formatRequestLogContext(ctx parsedRequestContext) string {
 	parts := make([]string, 0, 6)
 	if ctx.BAPID != "" {
@@ -811,11 +764,3 @@ func formatRequestLogContext(ctx parsedRequestContext) string {
 	return " " + strings.Join(parts, " ")
 }
 
-func isBecknDirection(part string) bool {
-	switch part {
-	case "caller", "receiver", "reciever":
-		return true
-	default:
-		return false
-	}
-}
