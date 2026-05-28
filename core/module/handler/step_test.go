@@ -605,8 +605,13 @@ func TestValidateSchemaStep_Run_EmptyBodyPost_ReturnsError(t *testing.T) {
 		Body:       []byte{},
 		RespHeader: http.Header{},
 	}
-	if err := step.Run(ctx); err == nil {
+	err := step.Run(ctx)
+	if err == nil {
 		t.Fatal("expected error for empty-body POST, got nil")
+	}
+	var badReq *model.BadReqErr
+	if !errors.As(err, &badReq) {
+		t.Errorf("expected BadReqErr, got %T: %v", err, err)
 	}
 	if mv.gotURL != nil {
 		t.Error("Validate should not have been called for empty-body POST")
