@@ -284,6 +284,41 @@ func TestSignStep_Run_NonCallback_UsesSign(t *testing.T) {
 	}
 }
 
+func TestSignStep_Run_SolicitedCallback_NoStoredEntry_FallsBackToSign(t *testing.T) {
+	// PayloadStore configured but no entry for this messageID — lookupRequestSignature
+	// returns "" so Sign (3-line) is used rather than failing the sign step.
+	store := newMockPayloadStore() // empty
+
+	signer := &mockSigner{returnSignSig: "fallbackSig=="}
+	km := &mockKMBasic{keyset: testKeyset()}
+	step, _ := newSignStep(signer, km, store)
+
+	ctx := makeSignStepCtx("on_search", "msg-sign-run-003", "bpp.example.com")
+	if err := step.Run(ctx); err != nil {
+		t.Fatalf("Run() unexpected error: %v", err)
+	}
+	if signer.signAckCalled {
+		t.Error("expected SignAck NOT to be called when no stored entry exists")
+	}
+	if !signer.signCalled {
+		t.Error("expected Sign to be called when no stored entry exists")
+	}
+}
+
+func TestSignStep_Run_SignAckError_ReturnsError(t *testing.T) {
+	store := newMockPayloadStore()
+	store.storeEntry("msg-sign-run-004", "search", "callerSig==")
+
+	signer := &mockSigner{signAckErr: errors.New("key unavailable")}
+	km := &mockKMBasic{keyset: testKeyset()}
+	step, _ := newSignStep(signer, km, store)
+
+	ctx := makeSignStepCtx("on_search", "msg-sign-run-004", "bpp.example.com")
+	if err := step.Run(ctx); err == nil {
+		t.Fatal("expected error when SignAck fails")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // validateHeaders — 3-line vs 4-line dispatch
 // ---------------------------------------------------------------------------

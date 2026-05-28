@@ -230,6 +230,7 @@ func (s *validateSignStep) lookupCallbackRequestSig(ctx *model.StepContext, auth
 	}
 	action := strings.TrimPrefix(extractBecknAction(ctx.Body), "on_")
 	if action == "" {
+		log.Debugf(ctx, "lookupCallbackRequestSig: no on_ action in body; skipping 4-line path")
 		return "", nil
 	}
 	entry, err := s.payloadStore.GetByMessageID(ctx, ctx.MessageID, action)
@@ -256,14 +257,14 @@ func (s *validateSignStep) validate(ctx *model.StepContext, value, requestSig st
 	if err != nil {
 		return fmt.Errorf("failed to get validation key: %w", err)
 	}
+	var validErr error
 	if requestSig != "" {
-		if err := s.validator.ValidateAck(ctx, ctx.Body, value, requestSig, signingPublicKey); err != nil {
-			return fmt.Errorf("sign validation failed: %w", err)
-		}
-		return nil
+		validErr = s.validator.ValidateAck(ctx, ctx.Body, value, requestSig, signingPublicKey)
+	} else {
+		validErr = s.validator.Validate(ctx, ctx.Body, value, signingPublicKey)
 	}
-	if err := s.validator.Validate(ctx, ctx.Body, value, signingPublicKey); err != nil {
-		return fmt.Errorf("sign validation failed: %w", err)
+	if validErr != nil {
+		return fmt.Errorf("sign validation failed: %w", validErr)
 	}
 	return nil
 }
