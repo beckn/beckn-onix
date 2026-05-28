@@ -437,50 +437,50 @@ func TestRouteSuccess(t *testing.T) {
 		{
 			name:       "Valid domain, version, and endpoint (bpp routing with gateway URL)",
 			configFile: "bap_caller.yaml",
-			url:        "https://example.com/v1/ondc/search",
+			url:        "https://example.com/search",
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0"}}`,
 		},
 		{
 			name:       "Valid domain, version, and endpoint (bpp routing with bpp_uri)",
 			configFile: "bap_caller.yaml",
-			url:        "https://example.com/v1/ondc/select",
+			url:        "https://example.com/select",
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_uri": "https://bpp1.example.com"}}`,
 		},
 		{
 			name:       "Valid domain, version, and endpoint (url routing)",
 			configFile: "bpp_receiver.yaml",
-			url:        "https://example.com/v1/ondc/select",
+			url:        "https://example.com/select",
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0"}}`,
 		},
 		{
 			name:       "Valid domain, version, and endpoint (publisher routing)",
 			configFile: "bpp_receiver.yaml",
-			url:        "https://example.com/v1/ondc/search",
+			url:        "https://example.com/search",
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0"}}`,
 		},
 		{
 			name:       "Valid domain, version, and endpoint (bap routing with bap_uri)",
 			configFile: "bpp_caller.yaml",
-			url:        "https://example.com/v1/ondc/on_select",
+			url:        "https://example.com/on_select",
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bap_uri": "https://bap1.example.com"}}`,
 		},
 		{
 			name:       "Valid domain, version, and endpoint (bpp routing with bpp_uri)",
 			configFile: "bap_receiver.yaml",
-			url:        "https://example.com/v1/ondc/on_select",
+			url:        "https://example.com/on_select",
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_uri": "https://bpp1.example.com"}}`,
 		},
 		// camelCase variants (beckn spec camelCase migration)
 		{
 			name:       "camelCase: bppUri in context is resolved for bpp routing",
 			configFile: "bap_caller.yaml",
-			url:        "https://example.com/v1/ondc/select",
+			url:        "https://example.com/select",
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bppUri": "https://bpp1.example.com"}}`,
 		},
 		{
 			name:       "camelCase: bapUri in context is resolved for bap routing",
 			configFile: "bpp_caller.yaml",
-			url:        "https://example.com/v1/ondc/on_select",
+			url:        "https://example.com/on_select",
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bapUri": "https://bap1.example.com"}}`,
 		},
 	}
@@ -516,35 +516,35 @@ func TestRouteFailure(t *testing.T) {
 		{
 			name:       "Unsupported endpoint",
 			configFile: "bpp_receiver.yaml",
-			url:        "https://example.com/v1/ondc/unsupported",
+			url:        "https://example.com/unsupported",
 			body:       `{"context": {"domain": "ONDC:TRV11", "version": "1.1.0"}}`,
 			wantErr:    "endpoint 'unsupported' is not supported for domain ONDC:TRV11 and version 1.1.0",
 		},
 		{
 			name:       "No matching rule",
 			configFile: "bpp_receiver.yaml",
-			url:        "https://example.com/v1/ondc/select",
+			url:        "https://example.com/select",
 			body:       `{"context": {"domain": "ONDC:SRV11", "version": "1.1.0"}}`,
 			wantErr:    "no routing rules found for domain ONDC:SRV11",
 		},
 		{
 			name:       "Missing bap_uri for bap routing",
 			configFile: "bpp_caller.yaml",
-			url:        "https://example.com/v1/ondc/on_search",
+			url:        "https://example.com/on_search",
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0"}}`,
 			wantErr:    "could not determine destination for endpoint 'on_search': neither request contained a BAP URI nor was a default URL configured in routing rules",
 		},
 		{
 			name:       "Missing bpp_uri for bpp routing",
 			configFile: "bap_caller.yaml",
-			url:        "https://example.com/v1/ondc/select",
+			url:        "https://example.com/select",
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0"}}`,
 			wantErr:    "could not determine destination for endpoint 'select': neither request contained a BPP URI nor was a default URL configured in routing rules",
 		},
 		{
 			name:       "Invalid bpp_uri format in request",
 			configFile: "bap_caller.yaml",
-			url:        "https://example.com/v1/ondc/select",
+			url:        "https://example.com/select",
 			body:       `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_uri": "htp:// invalid-url"}}`, // Invalid scheme (htp instead of http)
 			wantErr:    `invalid BPP URI - htp:// invalid-url in request body for select: parse "htp:// invalid-url": invalid character " " in host name`,
 		},
@@ -709,19 +709,19 @@ func TestV2RouteSuccess(t *testing.T) {
 		{
 			name:       "v2 BAP caller - domain ignored",
 			configFile: "v2_bap_caller.yaml",
-			url:        "https://example.com/v2/search",
+			url:        "https://example.com/search",
 			body:       `{"context": {"domain": "any_domain", "version": "2.0.0"}}`,
 		},
 		{
 			name:       "v2 BPP receiver - domain ignored",
 			configFile: "v2_bpp_receiver.yaml",
-			url:        "https://example.com/v2/select",
+			url:        "https://example.com/select",
 			body:       `{"context": {"domain": "different_domain", "version": "2.0.0"}}`,
 		},
 		{
 			name:       "v2 request without domain field",
 			configFile: "v2_bap_caller.yaml",
-			url:        "https://example.com/v2/search",
+			url:        "https://example.com/search",
 			body:       `{"context": {"version": "2.0.0"}}`,
 		},
 	}
@@ -839,7 +839,7 @@ func TestRouteNilContext(t *testing.T) {
 	router, _, rulesFilePath := setupRouter(t, "bap_caller.yaml")
 	defer os.RemoveAll(filepath.Dir(rulesFilePath))
 
-	parsedURL, _ := url.Parse("https://example.com/v1/ondc/select")
+	parsedURL, _ := url.Parse("https://example.com/select")
 	_, err := router.Route(ctx, parsedURL, []byte(`{"message": {}}`))
 
 	if err == nil || !strings.Contains(err.Error(), "context field not found or invalid") {
@@ -877,114 +877,74 @@ func TestV1DomainRequired(t *testing.T) {
 	}
 }
 
-// setupRouterWithBasePath is a helper that creates a Router with a basePath set.
-func setupRouterWithBasePath(t *testing.T, configFile, basePath string) (*Router, string) {
-	t.Helper()
-	rulesFilePath := setupTestConfig(t, configFile)
-	config := &Config{
-		RoutingConfig: rulesFilePath,
-		BasePath:      basePath,
-	}
-	router, _, err := New(context.Background(), config)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
-	return router, rulesFilePath
-}
-
-// TestExtractEndpoint tests the endpoint extraction helper for both basePath
-// and fallback (path.Base) modes.
+// TestExtractEndpoint tests the endpoint extraction helper.
+// The step layer strips the module base path before calling Route, so the
+// router always receives paths of the form "/action" or "/compound/action".
 func TestExtractEndpoint(t *testing.T) {
+	r := &Router{}
 	tests := []struct {
-		name     string
-		basePath string
-		urlPath  string
-		want     string
+		name    string
+		urlPath string
+		want    string
 	}{
 		{
-			name:     "no basePath - single-word action falls back to path.Base",
-			basePath: "",
-			urlPath:  "/bap/caller/search",
-			want:     "search",
+			name:    "single-word action",
+			urlPath: "/search",
+			want:    "search",
 		},
 		{
-			name:     "no basePath - root-level single-word action",
-			basePath: "",
-			urlPath:  "/search",
-			want:     "search",
+			name:    "compound two-segment action",
+			urlPath: "/catalog/subscription",
+			want:    "catalog/subscription",
 		},
 		{
-			name:     "basePath with trailing slash - single-word action",
-			basePath: "/bap/caller/",
-			urlPath:  "/bap/caller/search",
-			want:     "search",
-		},
-		{
-			name:     "basePath without trailing slash - single-word action",
-			basePath: "/bap/caller",
-			urlPath:  "/bap/caller/search",
-			want:     "search",
-		},
-		{
-			name:     "basePath - two-segment compound action",
-			basePath: "/bap/caller/",
-			urlPath:  "/bap/caller/catalog/push",
-			want:     "catalog/push",
-		},
-		{
-			name:     "basePath - two-segment compound action (subscription)",
-			basePath: "/bap/receiver/",
-			urlPath:  "/bap/receiver/catalog/subscription",
-			want:     "catalog/subscription",
+			name:    "compound two-segment action (push)",
+			urlPath: "/catalog/push",
+			want:    "catalog/push",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &Router{basePath: tt.basePath}
 			got := r.extractEndpoint(tt.urlPath)
 			if got != tt.want {
-				t.Errorf("extractEndpoint(%q) with basePath=%q = %q, want %q",
-					tt.urlPath, tt.basePath, got, tt.want)
+				t.Errorf("extractEndpoint(%q) = %q, want %q", tt.urlPath, got, tt.want)
 			}
 		})
 	}
 }
 
 // TestRouteCompoundEndpointSuccess tests that compound action paths are routed
-// correctly when basePath is configured.
+// correctly. The step layer strips the module base path before calling Route,
+// so the router receives pre-stripped URLs like "/catalog/push".
 func TestRouteCompoundEndpointSuccess(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name     string
-		basePath string
-		url      string
-		body     string
+		name string
+		url  string
+		body string
 	}{
 		{
-			name:     "compound endpoint catalog/push routed via url target",
-			basePath: "/bap/caller/",
-			url:      "https://example.com/bap/caller/catalog/push",
-			body:     `{"context": {"version": "2.0.0"}}`,
+			name: "compound endpoint catalog/push routed via url target",
+			url:  "https://example.com/catalog/push",
+			body: `{"context": {"version": "2.0.0"}}`,
 		},
 		{
-			name:     "compound endpoint catalog/subscription (POST) routed via url target",
-			basePath: "/bap/caller/",
-			url:      "https://example.com/bap/caller/catalog/subscription",
-			body:     `{"context": {"version": "2.0.0"}}`,
+			name: "compound endpoint catalog/subscription (POST) routed via url target",
+			url:  "https://example.com/catalog/subscription",
+			body: `{"context": {"version": "2.0.0"}}`,
 		},
 		{
-			name:     "compound endpoint catalog/search routed via url target",
-			basePath: "/bap/caller/",
-			url:      "https://example.com/bap/caller/catalog/search",
-			body:     `{"context": {"version": "2.0.0"}}`,
+			name: "compound endpoint catalog/search routed via url target",
+			url:  "https://example.com/catalog/search",
+			body: `{"context": {"version": "2.0.0"}}`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router, rulesFilePath := setupRouterWithBasePath(t, "v2_catalog_url.yaml", tt.basePath)
+			router, _, rulesFilePath := setupRouter(t, "v2_catalog_url.yaml")
 			defer os.RemoveAll(filepath.Dir(rulesFilePath))
 
 			parsedURL, _ := url.Parse(tt.url)
@@ -999,15 +959,14 @@ func TestRouteCompoundEndpointSuccess(t *testing.T) {
 // TestRouteBodyless tests routing where the body is empty (GET/DELETE requests).
 // The router receives only the URL and a nil body — it does not see the HTTP
 // method. Method-level distinction (GET vs DELETE on the same path) is the
-// handler's responsibility, not the router's. A single bodyless success case
-// therefore covers both methods.
+// handler's responsibility, not the router's. URLs are pre-stripped of the
+// module base path by the step layer before reaching the router.
 func TestRouteBodyless(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
 		name       string
 		configFile string
-		basePath   string
 		url        string
 		wantErr    string
 	}{
@@ -1016,36 +975,32 @@ func TestRouteBodyless(t *testing.T) {
 			// HTTP method distinction is handled upstream by the request pipeline.
 			name:       "bodyless request to catalog/subscription succeeds",
 			configFile: "v2_catalog_url.yaml",
-			basePath:   "/bap/receiver/",
-			url:        "https://example.com/bap/receiver/catalog/subscription",
+			url:        "https://example.com/catalog/subscription",
 			wantErr:    "",
 		},
 		{
 			name:       "bodyless to unsupported endpoint returns clear error",
 			configFile: "v2_catalog_url.yaml",
-			basePath:   "/bap/receiver/",
-			url:        "https://example.com/bap/receiver/catalog/unknown",
+			url:        "https://example.com/catalog/unknown",
 			wantErr:    "endpoint 'catalog/unknown' is not supported in v2 routing config",
 		},
 		{
 			name:       "bodyless to BPP target type returns error",
 			configFile: "v2_catalog_bpp.yaml",
-			basePath:   "/bap/receiver/",
-			url:        "https://example.com/bap/receiver/catalog/subscription",
+			url:        "https://example.com/catalog/subscription",
 			wantErr:    "dynamic BAP/BPP URI routing is not supported for bodyless requests",
 		},
 		{
 			name:       "bodyless request with no v2 rules returns error",
 			configFile: "bpp_receiver.yaml",
-			basePath:   "/bap/receiver/",
-			url:        "https://example.com/bap/receiver/catalog/subscription",
+			url:        "https://example.com/catalog/subscription",
 			wantErr:    "no v2 routing rules found",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router, rulesFilePath := setupRouterWithBasePath(t, tt.configFile, tt.basePath)
+			router, _, rulesFilePath := setupRouter(t, tt.configFile)
 			defer os.RemoveAll(filepath.Dir(rulesFilePath))
 
 			parsedURL, _ := url.Parse(tt.url)

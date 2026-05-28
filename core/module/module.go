@@ -40,6 +40,7 @@ func Register(ctx context.Context, mCfgs []Config, mux *http.ServeMux, mgr handl
 		if !ok {
 			return fmt.Errorf("invalid module : %s", c.Name)
 		}
+		c.Handler.BasePath = c.Path
 		h, err := rmp(ctx, mgr, &c.Handler, c.Name)
 		if err != nil {
 			return fmt.Errorf("%s : %w", c.Name, err)

@@ -119,12 +119,14 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 			return model.NewBadReqErr(fmt.Errorf("no OpenAPI spec loaded"))
 		}
 
-		// Key is the full path without its leading slash, matching the index built in
-		// buildActionIndex. strings.TrimPrefix is used (not path.Base) so that
-		// multi-segment paths like /catalog/subscription are preserved verbatim.
-		// Note: the check is path-only — it does not distinguish HTTP methods. A POST
-		// with an empty body to a bodyless-indexed path would pass here. Method-aware
-		// validation requires the Option C StepContext refactor.
+		// The step layer strips the module base path before calling Validate, so
+		// reqURL.Path is of the form "/catalog/subscription". Remove the leading
+		// slash to match the index keys built in buildActionIndex.
+		// strings.TrimPrefix is used (not path.Base) so multi-segment compound
+		// paths are preserved verbatim (e.g. "catalog/subscription").
+		// Note: the check is path-only — it does not distinguish HTTP methods. A
+		// POST with an empty body to a bodyless-indexed path would pass here.
+		// Method-aware validation is tracked in issue #740.
 		key := strings.TrimPrefix(reqURL.Path, "/")
 		if _, ok := spec.bodylessActions[key]; !ok {
 			return model.NewBadReqErr(fmt.Errorf("unsupported bodyless request for endpoint: %s", key))
