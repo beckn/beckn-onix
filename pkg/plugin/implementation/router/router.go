@@ -17,13 +17,6 @@ import (
 // Config holds the configuration for the Router plugin.
 type Config struct {
 	RoutingConfig string `json:"routingConfig"`
-	// BasePath is the HTTP path prefix at which this adapter module is mounted
-	// (e.g. "/bap/caller/"). When set, it is stripped from the incoming request
-	// URL before extracting the action endpoint, enabling compound action paths
-	// like "catalog/push" to be matched correctly against routing rules.
-	// If unset, the router falls back to path.Base behaviour (last URL segment
-	// only), which supports single-word actions but not compound ones.
-	BasePath string `json:"basePath,omitempty"`
 }
 
 // RoutingConfig represents the structure of the routing configuration file.
@@ -33,8 +26,7 @@ type routingConfig struct {
 
 // Router implements Router interface.
 type Router struct {
-	rules    map[string]map[string]map[string]*model.Route // domain -> version -> endpoint -> route
-	basePath string                                        // module mount prefix stripped before endpoint lookup
+	rules map[string]map[string]map[string]*model.Route // domain -> version -> endpoint -> route
 }
 
 // RoutingRule represents a single routing rule.
@@ -70,8 +62,7 @@ func New(ctx context.Context, config *Config) (*Router, func() error, error) {
 		return nil, nil, fmt.Errorf("config cannot be nil")
 	}
 	router := &Router{
-		rules:    make(map[string]map[string]map[string]*model.Route),
-		basePath: config.BasePath,
+		rules: make(map[string]map[string]map[string]*model.Route),
 	}
 
 	// Load rules at bootup
@@ -222,11 +213,10 @@ func getContextString(ctx map[string]interface{}, snakeKey, camelKey string) str
 }
 
 // Route determines the routing destination based on the request context.
-func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.Route, error) {
-	// Extract the endpoint from the URL, stripping the module base path so that
-	// compound action paths like "catalog/push" are preserved verbatim.
-	endpoint := r.extractEndpoint(url.Path)
-
+// reqURL.Path holds the Beckn endpoint action already stripped of the module
+// base path by the step layer (e.g. "search" or "catalog/subscription").
+func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*model.Route, error) {
+	endpoint := reqURL.Path
 	// Bodyless requests (GET/DELETE) carry no JSON body; domain, version, and
 	// BAP/BPP URIs are not available. Route using the v2 config version.
 	if len(body) == 0 {
@@ -297,21 +287,6 @@ func (r *Router) Route(ctx context.Context, url *url.URL, body []byte) (*model.R
 		return handleProtocolMapping(route, bapURI, endpoint)
 	}
 	return route, nil
-}
-
-// extractEndpoint derives the action endpoint key from the incoming URL path.
-// When basePath is configured (e.g. "/bap/caller/"), it is stripped first so
-// that compound paths like "/bap/caller/catalog/push" → "catalog/push".
-// Without basePath, the function falls back to path.Base (last URL segment),
-// preserving backward compatibility for deployments that only use single-word
-// actions and have not set basePath.
-func (r *Router) extractEndpoint(urlPath string) string {
-	if r.basePath != "" {
-		// Strip the module mount prefix, then any residual leading slash.
-		stripped := strings.TrimPrefix(urlPath, r.basePath)
-		return strings.TrimPrefix(stripped, "/")
-	}
-	return path.Base(urlPath)
 }
 
 // routeBodyless handles routing for GET/DELETE requests that carry no body.

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -54,7 +53,9 @@ func New(ctx context.Context, config *Config) (*schemaValidator, func() error, e
 }
 
 // Validate validates the given data against the schema.
-func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byte) error {
+// reqURL.Path holds the Beckn endpoint action already stripped of the module
+// base path by the step layer (e.g. "search") — no leading slash.
+func (v *schemaValidator) Validate(ctx context.Context, reqURL *url.URL, data []byte) error {
 	var payloadData payload
 	err := json.Unmarshal(data, &payloadData)
 	if err != nil {
@@ -68,12 +69,12 @@ func (v *schemaValidator) Validate(ctx context.Context, url *url.URL, data []byt
 		return model.NewBadReqErr(fmt.Errorf("missing field Version in context"))
 	}
 
-	// Extract domain, version, and endpoint from the payload and uri.
+	// Extract domain and version from the payload; use reqURL.Path as the endpoint action.
 	cxtDomain := payloadData.Context.Domain
 	version := payloadData.Context.Version
 	version = fmt.Sprintf("v%s", version)
 
-	endpoint := path.Base(url.String())
+	endpoint := reqURL.Path
 	log.Debugf(ctx, "Handling request for endpoint: %s", endpoint)
 	domain := strings.ToLower(cxtDomain)
 	domain = strings.ReplaceAll(domain, ":", "_")

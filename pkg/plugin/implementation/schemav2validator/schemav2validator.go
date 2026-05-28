@@ -101,10 +101,12 @@ func New(ctx context.Context, config *Config) (*schemav2Validator, func() error,
 }
 
 // Validate validates the given data against the OpenAPI schema.
+// reqURL carries the Beckn endpoint action in its Path field, already stripped
+// of the module base path by the step layer (e.g. "catalog/subscription").
 // When the request body is empty (GET/DELETE) it performs an O(1) lookup in
-// the pre-built bodylessActions index to confirm the path is a known bodyless
-// endpoint, then returns without body schema validation. For body-bearing
-// requests it validates the JSON payload against the indexed action schema.
+// the pre-built bodylessActions index using reqURL.Path as the key.
+// For body-bearing requests the action is extracted from the JSON payload
+// and reqURL is not used.
 func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data []byte) error {
 	if len(data) == 0 {
 		if reqURL == nil {
@@ -119,18 +121,17 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 			return model.NewBadReqErr(fmt.Errorf("no OpenAPI spec loaded"))
 		}
 
-		// Key is the full path without its leading slash, matching the index built in
-		// buildActionIndex. strings.TrimPrefix is used (not path.Base) so that
-		// multi-segment paths like /catalog/subscription are preserved verbatim.
+		// reqURL.Path is the clean endpoint action (e.g. "catalog/subscription"),
+		// matching the keys built in buildActionIndex. No further stripping needed.
 		// Note: the check is path-only — it does not distinguish HTTP methods. A POST
-		// with an empty body to a bodyless-indexed path would pass here. Method-aware
-		// validation requires the Option C StepContext refactor.
-		key := strings.TrimPrefix(reqURL.Path, "/")
-		if _, ok := spec.bodylessActions[key]; !ok {
-			return model.NewBadReqErr(fmt.Errorf("unsupported bodyless request for endpoint: %s", key))
+		// with an empty body to a bodyless-indexed path would pass here.
+		// Method-aware validation is tracked in issue #740.
+		action := reqURL.Path
+		if _, ok := spec.bodylessActions[action]; !ok {
+			return model.NewBadReqErr(fmt.Errorf("unsupported bodyless request for endpoint: %s", action))
 		}
 
-		log.Debugf(ctx, "bodyless request to %s: skipping body schema validation", reqURL.Path)
+		log.Debugf(ctx, "bodyless request to %s: skipping body schema validation", action)
 		return nil
 	}
 
@@ -408,7 +409,7 @@ func (v *schemav2Validator) buildActionIndex(ctx context.Context, doc *openapi3.
 		// A separate loop (rather than sharing pass 1) keeps the two indexing concerns
 		// independent and avoids complicating the guard logic for body-bearing ops.
 		// Key is the spec path without its leading slash so it matches
-		// strings.TrimPrefix(reqURL.Path, "/") in Validate's bodyless branch.
+		// the endpointAction passed to Validate's bodyless branch.
 		for _, op := range []*openapi3.Operation{item.Get, item.Delete} {
 			if op == nil || op.RequestBody != nil {
 				continue

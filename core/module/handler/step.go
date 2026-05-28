@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -359,14 +360,29 @@ func parseHeader(header string) (*authHeader, error) {
 	}, nil
 }
 
+// stripBasePath returns a shallow copy of u with basePath stripped from the
+// front of its Path and the leading slash removed, leaving the clean endpoint
+// action (e.g. "search" or "catalog/subscription") in Path.Path.
+// Returns nil when u is nil.
+func stripBasePath(u *url.URL, basePath string) *url.URL {
+	if u == nil {
+		return nil
+	}
+	stripped := *u
+	p := strings.TrimPrefix(u.Path, basePath)
+	stripped.Path = strings.TrimPrefix(p, "/")
+	return &stripped
+}
+
 // validateSchemaStep represents the schema validation step.
 type validateSchemaStep struct {
 	validator definition.SchemaValidator
+	basePath  string
 	metrics   *HandlerMetrics
 }
 
 // newValidateSchemaStep creates and returns the validateSchema step after validation.
-func newValidateSchemaStep(schemaValidator definition.SchemaValidator) (definition.Step, error) {
+func newValidateSchemaStep(schemaValidator definition.SchemaValidator, basePath string) (definition.Step, error) {
 	if schemaValidator == nil {
 		return nil, fmt.Errorf("invalid config: SchemaValidator plugin not configured")
 	}
@@ -374,13 +390,14 @@ func newValidateSchemaStep(schemaValidator definition.SchemaValidator) (definiti
 	metrics, _ := GetHandlerMetrics(context.Background())
 	return &validateSchemaStep{
 		validator: schemaValidator,
+		basePath:  basePath,
 		metrics:   metrics,
 	}, nil
 }
 
 // Run executes the schema validation step.
 func (s *validateSchemaStep) Run(ctx *model.StepContext) error {
-	err := s.validator.Validate(ctx, ctx.Request.URL, ctx.Body)
+	err := s.validator.Validate(ctx, stripBasePath(ctx.Request.URL, s.basePath), ctx.Body)
 	if err != nil {
 		err = fmt.Errorf("schema validation failed: %w", err)
 	}
@@ -406,25 +423,27 @@ func (s *validateSchemaStep) recordMetrics(ctx *model.StepContext, err error) {
 
 // addRouteStep represents the route determination step.
 type addRouteStep struct {
-	router  definition.Router
-	metrics *HandlerMetrics
+	router   definition.Router
+	basePath string
+	metrics  *HandlerMetrics
 }
 
 // newAddRouteStep creates and returns the addRoute step after validation.
-func newAddRouteStep(router definition.Router) (definition.Step, error) {
+func newAddRouteStep(router definition.Router, basePath string) (definition.Step, error) {
 	if router == nil {
 		return nil, fmt.Errorf("invalid config: Router plugin not configured")
 	}
 	metrics, _ := GetHandlerMetrics(context.Background())
 	return &addRouteStep{
-		router:  router,
-		metrics: metrics,
+		router:   router,
+		basePath: basePath,
+		metrics:  metrics,
 	}, nil
 }
 
 // Run executes the routing step.
 func (s *addRouteStep) Run(ctx *model.StepContext) error {
-	route, err := s.router.Route(ctx, ctx.Request.URL, ctx.Body)
+	route, err := s.router.Route(ctx, stripBasePath(ctx.Request.URL, s.basePath), ctx.Body)
 	if err != nil {
 		return fmt.Errorf("failed to determine route: %w", err)
 	}

@@ -49,6 +49,7 @@ type stdHandler struct {
 	ackSigner    *ackSignerStep
 	SubscriberID string
 	role         model.Role
+	basePath     string
 	httpClient   *http.Client
 	moduleName   string
 }
@@ -88,6 +89,7 @@ func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleNa
 		responseSteps: []definition.ResponseStep{},
 		SubscriberID:  cfg.SubscriberID,
 		role:          cfg.Role,
+		basePath:      cfg.BasePath,
 		moduleName:    moduleName,
 	}
 	// Initialize plugins.
@@ -588,9 +590,9 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 		case "validateSign":
 			s, err = newValidateSignStep(h.signValidator, h.km, h.payloadStore)
 		case "validateSchema":
-			s, err = newValidateSchemaStep(h.schemaValidator)
+			s, err = newValidateSchemaStep(h.schemaValidator, h.basePath)
 		case "addRoute":
-			s, err = newAddRouteStep(h.router)
+			s, err = newAddRouteStep(h.router, h.basePath)
 		case "checkPolicy":
 			s, err = newCheckPolicyStep(h.policyChecker)
 		case "transformPayload":

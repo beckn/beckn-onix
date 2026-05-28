@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -447,5 +448,186 @@ func TestLookupRequestSignature_StoreError_ReturnsEmpty(t *testing.T) {
 	// Store error is non-fatal — should degrade to empty request-signature.
 	if got := s.lookupRequestSignature(ctx); got != "" {
 		t.Errorf("expected empty on store error, got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// stripBasePath unit tests
+// ---------------------------------------------------------------------------
+
+func TestStripBasePath_NilURL_ReturnsNil(t *testing.T) {
+	if got := stripBasePath(nil, "/bap/receiver/"); got != nil {
+		t.Errorf("expected nil for nil URL, got %+v", got)
+	}
+}
+
+func TestStripBasePath_EmptyBasePath_StripsLeadingSlash(t *testing.T) {
+	u, _ := url.Parse("/search")
+	got := stripBasePath(u, "")
+	if got.Path != "search" {
+		t.Errorf("stripBasePath() Path = %q, want %q", got.Path, "search")
+	}
+}
+
+func TestStripBasePath_SingleWordAction(t *testing.T) {
+	u, _ := url.Parse("/bap/receiver/search")
+	got := stripBasePath(u, "/bap/receiver/")
+	if got.Path != "search" {
+		t.Errorf("stripBasePath() Path = %q, want %q", got.Path, "search")
+	}
+}
+
+func TestStripBasePath_CompoundAction(t *testing.T) {
+	u, _ := url.Parse("/bap/receiver/catalog/subscription")
+	got := stripBasePath(u, "/bap/receiver/")
+	if got.Path != "catalog/subscription" {
+		t.Errorf("stripBasePath() Path = %q, want %q", got.Path, "catalog/subscription")
+	}
+}
+
+func TestStripBasePath_BasePathWithoutTrailingSlash(t *testing.T) {
+	// basePath without trailing slash: TrimPrefix leaves a leading "/" which is
+	// then stripped by the second TrimPrefix.
+	u, _ := url.Parse("/bap/receiver/search")
+	got := stripBasePath(u, "/bap/receiver")
+	if got.Path != "search" {
+		t.Errorf("stripBasePath() Path = %q, want %q", got.Path, "search")
+	}
+}
+
+func TestStripBasePath_URLEqualsBasePath_ReturnsEmpty(t *testing.T) {
+	u, _ := url.Parse("/bap/receiver/")
+	got := stripBasePath(u, "/bap/receiver/")
+	if got.Path != "" {
+		t.Errorf("stripBasePath() Path = %q, want empty string", got.Path)
+	}
+}
+
+func TestStripBasePath_QueryParamsNotIncluded(t *testing.T) {
+	// url.URL.Path does not include the query string, so the returned Path is
+	// never polluted by query parameters.
+	u, _ := url.Parse("/bap/receiver/catalog/subscription?subscriptionId=abc-123")
+	got := stripBasePath(u, "/bap/receiver/")
+	if got.Path != "catalog/subscription" {
+		t.Errorf("stripBasePath() Path = %q, want %q", got.Path, "catalog/subscription")
+	}
+}
+
+func TestStripBasePath_DoesNotMutateURL(t *testing.T) {
+	u, _ := url.Parse("/bap/receiver/search")
+	original := u.Path
+	stripBasePath(u, "/bap/receiver/")
+	if u.Path != original {
+		t.Errorf("stripBasePath() mutated original URL.Path: %q", u.Path)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Mocks for validateSchemaStep / addRouteStep wiring tests
+// ---------------------------------------------------------------------------
+
+// mockRecordingValidator records the *url.URL passed to Validate.
+type mockRecordingValidator struct {
+	gotURL *url.URL
+	retErr error
+}
+
+func (m *mockRecordingValidator) Validate(_ context.Context, u *url.URL, _ []byte) error {
+	m.gotURL = u
+	return m.retErr
+}
+
+// mockRecordingRouter records the *url.URL passed to Route.
+type mockRecordingRouter struct {
+	gotURL *url.URL
+	retErr error
+}
+
+func (m *mockRecordingRouter) Route(_ context.Context, u *url.URL, _ []byte) (*model.Route, error) {
+	m.gotURL = u
+	if m.retErr != nil {
+		return nil, m.retErr
+	}
+	return &model.Route{TargetType: "url"}, nil
+}
+
+// makeStepCtxWithURL builds a minimal StepContext with the given raw URL string.
+func makeStepCtxWithURL(rawURL string) *model.StepContext {
+	req, _ := http.NewRequest(http.MethodPost, rawURL, nil)
+	return &model.StepContext{
+		Context:    context.Background(),
+		Request:    req,
+		Body:       []byte(`{"context":{"action":"search"}}`),
+		RespHeader: http.Header{},
+	}
+}
+
+// ---------------------------------------------------------------------------
+// validateSchemaStep constructor + stripBasePath wiring tests
+// ---------------------------------------------------------------------------
+
+func TestNewValidateSchemaStep_NilValidator_ReturnsError(t *testing.T) {
+	if _, err := newValidateSchemaStep(nil, ""); err == nil {
+		t.Fatal("expected error for nil SchemaValidator")
+	}
+}
+
+func TestValidateSchemaStep_Run_ExtractsAction(t *testing.T) {
+	mv := &mockRecordingValidator{}
+	step, err := newValidateSchemaStep(mv, "/bap/receiver/")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	ctx := makeStepCtxWithURL("http://localhost/bap/receiver/catalog/subscription")
+	_ = step.Run(ctx)
+	if mv.gotURL == nil || mv.gotURL.Path != "catalog/subscription" {
+		t.Errorf("validator received path %q, want %q", mv.gotURL.Path, "catalog/subscription")
+	}
+}
+
+func TestValidateSchemaStep_Run_NoBasePath_UsesRawAction(t *testing.T) {
+	mv := &mockRecordingValidator{}
+	step, _ := newValidateSchemaStep(mv, "")
+	ctx := makeStepCtxWithURL("http://localhost/search")
+	_ = step.Run(ctx)
+	if mv.gotURL == nil || mv.gotURL.Path != "search" {
+		t.Errorf("validator received path %q, want %q", mv.gotURL.Path, "search")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// addRouteStep constructor + stripBasePath wiring tests
+// ---------------------------------------------------------------------------
+
+func TestNewAddRouteStep_NilRouter_ReturnsError(t *testing.T) {
+	if _, err := newAddRouteStep(nil, ""); err == nil {
+		t.Fatal("expected error for nil Router")
+	}
+}
+
+func TestAddRouteStep_Run_ExtractsAction(t *testing.T) {
+	mr := &mockRecordingRouter{}
+	step, err := newAddRouteStep(mr, "/bpp/caller/")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	ctx := makeStepCtxWithURL("http://localhost/bpp/caller/catalog/subscription")
+	if err := step.Run(ctx); err != nil {
+		t.Fatalf("Run() unexpected error: %v", err)
+	}
+	if mr.gotURL == nil || mr.gotURL.Path != "catalog/subscription" {
+		t.Errorf("router received path %q, want %q", mr.gotURL.Path, "catalog/subscription")
+	}
+}
+
+func TestAddRouteStep_Run_NoBasePath_UsesRawAction(t *testing.T) {
+	mr := &mockRecordingRouter{}
+	step, _ := newAddRouteStep(mr, "")
+	ctx := makeStepCtxWithURL("http://localhost/search")
+	if err := step.Run(ctx); err != nil {
+		t.Fatalf("Run() unexpected error: %v", err)
+	}
+	if mr.gotURL == nil || mr.gotURL.Path != "search" {
+		t.Errorf("router received path %q, want %q", mr.gotURL.Path, "search")
 	}
 }

@@ -54,16 +54,16 @@ func setupTestSchema(t *testing.T) string {
 
 func TestValidator_Validate_Success(t *testing.T) {
 	tests := []struct {
-		name    string
-		url     string
-		payload string
-		wantErr bool
+		name           string
+		endpointAction string
+		payload        string
+		wantErr        bool
 	}{
 		{
-			name:    "Valid payload",
-			url:     "http://example.com/endpoint",
-			payload: `{"context": {"domain": "example", "version": "1.0", "action": "endpoint"}}`,
-			wantErr: false,
+			name:           "Valid payload",
+			endpointAction: "endpoint",
+			payload:        `{"context": {"domain": "example", "version": "1.0", "action": "endpoint"}}`,
+			wantErr:        false,
 		},
 	}
 
@@ -79,8 +79,7 @@ func TestValidator_Validate_Success(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			u, _ := url.Parse(tt.url)
-			err := v.Validate(context.Background(), u, []byte(tt.payload))
+			err := v.Validate(context.Background(), &url.URL{Path: tt.endpointAction}, []byte(tt.payload))
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			} else {
@@ -92,28 +91,28 @@ func TestValidator_Validate_Success(t *testing.T) {
 
 func TestValidator_Validate_Failure(t *testing.T) {
 	tests := []struct {
-		name    string
-		url     string
-		payload string
-		wantErr string
+		name           string
+		endpointAction string
+		payload        string
+		wantErr        string
 	}{
 		{
-			name:    "Invalid JSON payload",
-			url:     "http://example.com/endpoint",
-			payload: `{"context": {"domain": "example", "version": "1.0"`,
-			wantErr: "failed to parse JSON payload",
+			name:           "Invalid JSON payload",
+			endpointAction: "endpoint",
+			payload:        `{"context": {"domain": "example", "version": "1.0"`,
+			wantErr:        "failed to parse JSON payload",
 		},
 		{
-			name:    "Schema validation failure",
-			url:     "http://example.com/endpoint",
-			payload: `{"context": {"domain": "example", "version": "1.0"}}`,
-			wantErr: "context: at '/context': missing property 'action'",
+			name:           "Schema validation failure",
+			endpointAction: "endpoint",
+			payload:        `{"context": {"domain": "example", "version": "1.0"}}`,
+			wantErr:        "context: at '/context': missing property 'action'",
 		},
 		{
-			name:    "Schema not found",
-			url:     "http://example.com/unknown_endpoint",
-			payload: `{"context": {"domain": "example", "version": "1.0"}}`,
-			wantErr: "schema not found for domain",
+			name:           "Schema not found",
+			endpointAction: "unknown_endpoint",
+			payload:        `{"context": {"domain": "example", "version": "1.0"}}`,
+			wantErr:        "schema not found for domain",
 		},
 	}
 
@@ -129,8 +128,7 @@ func TestValidator_Validate_Failure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			u, _ := url.Parse(tt.url)
-			err := v.Validate(context.Background(), u, []byte(tt.payload))
+			err := v.Validate(context.Background(), &url.URL{Path: tt.endpointAction}, []byte(tt.payload))
 			if tt.wantErr != "" {
 				if err == nil {
 					t.Errorf("Expected error containing '%s', but got nil", tt.wantErr)

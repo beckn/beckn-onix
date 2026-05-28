@@ -121,4 +121,8 @@ type Config struct {
 	Role             model.Role
 	SubscriberID     string           `yaml:"subscriberId"`
 	HttpClientConfig HttpClientConfig `yaml:"httpClientConfig"`
+	// BasePath is the HTTP path prefix at which this module is mounted (e.g.
+	// "/bap/receiver/"). Set by the module layer from module.Config.Path; not
+	// read from YAML. Steps use it to strip the prefix before calling plugins.
+	BasePath string `yaml:"-"`
 }
