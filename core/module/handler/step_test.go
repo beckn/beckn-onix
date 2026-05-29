@@ -16,28 +16,37 @@ import (
 // Mocks
 // ---------------------------------------------------------------------------
 
-// mockSignValidatorBasic is a simple SignValidator that always returns nil or a preset error.
+// mockSignValidatorBasic is a simple SignValidator that tracks which method was
+// called and returns configurable errors.
 type mockSignValidatorBasic struct {
-	validateErr error
+	validateErr       error
+	validateAckErr    error
+	validateCalled    bool
+	validateAckCalled bool
 }
 
 func (m *mockSignValidatorBasic) Validate(_ context.Context, _ []byte, _ string, _ string) error {
+	m.validateCalled = true
 	return m.validateErr
 }
 func (m *mockSignValidatorBasic) ValidateAck(_ context.Context, _ []byte, _, _, _ string) error {
-	return nil
+	m.validateAckCalled = true
+	return m.validateAckErr
 }
 
 // mockKMBasic is a simple KeyManager that returns a preset public key or error.
 type mockKMBasic struct {
 	publicKey string
 	lookupErr error
+	keyset    *model.Keyset // returned by Keyset(); nil when not set
 }
 
 func (m *mockKMBasic) GenerateKeyset() (*model.Keyset, error)                          { return nil, nil }
 func (m *mockKMBasic) InsertKeyset(_ context.Context, _ string, _ *model.Keyset) error { return nil }
 func (m *mockKMBasic) DeleteKeyset(_ context.Context, _ string) error                  { return nil }
-func (m *mockKMBasic) Keyset(_ context.Context, _ string) (*model.Keyset, error)       { return nil, nil }
+func (m *mockKMBasic) Keyset(_ context.Context, _ string) (*model.Keyset, error) {
+	return m.keyset, nil
+}
 func (m *mockKMBasic) LookupNPKeys(_ context.Context, _, _ string) (string, string, error) {
 	return m.publicKey, "", m.lookupErr
 }
@@ -84,14 +93,15 @@ func (m *mockPayloadStore) GetByMessageID(_ context.Context, messageID, action s
 // Helpers
 // ---------------------------------------------------------------------------
 
-// solicitedCallbackAuthHeader builds a Signature header that declares
-// "request-signature" in the headers attribute — identifying a solicited callback.
-func solicitedCallbackAuthHeader(subscriberID, requestSigValue string) string {
+// solicitedCallbackAuthHeader builds a spec-compliant 6-attribute Signature header
+// that declares "request-signature" in the headers list — identifying a solicited
+// callback. The CN's original signature is in the signing string, not as a header
+// attribute (NFH-004 §4).
+func solicitedCallbackAuthHeader(subscriberID string) string {
 	return `Signature keyId="` + subscriberID + `|key-1|ed25519",algorithm="ed25519",` +
 		`created="1700000000",expires="1700003600",` +
 		`headers="(created) (expires) digest request-signature",` +
-		`signature="callbackSig==",` +
-		`request-signature="` + requestSigValue + `"`
+		`signature="callbackSig=="`
 }
 
 // providerInitiatedAuthHeader builds a Signature header without request-signature.
@@ -173,145 +183,7 @@ func TestAuthHeaderIncludesRequestSig_False_MissingHeadersField(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// extractRequestSignatureValue unit tests
-// ---------------------------------------------------------------------------
-
-func TestExtractRequestSignatureValue_Present(t *testing.T) {
-	header := solicitedCallbackAuthHeader("bpp.example.com", "outboundSig==")
-	got := extractRequestSignatureValue(header)
-	if got != "outboundSig==" {
-		t.Errorf("extractRequestSignatureValue() = %q, want %q", got, "outboundSig==")
-	}
-}
-
-func TestExtractRequestSignatureValue_Absent(t *testing.T) {
-	header := providerInitiatedAuthHeader("bpp.example.com")
-	got := extractRequestSignatureValue(header)
-	if got != "" {
-		t.Errorf("extractRequestSignatureValue() = %q, want empty", got)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// validateRequestSignatureChain tests
-// ---------------------------------------------------------------------------
-
 const onSearchBody = `{"context":{"action":"on_search","messageId":"msg-chain-001","version":"2.0.0"}}`
-
-func TestValidateRequestSignatureChain_NilStore_Skips(t *testing.T) {
-	sv := &mockSignValidatorBasic{}
-	km := &mockKMBasic{publicKey: "pubKey=="}
-	step, _ := newValidateSignStep(sv, km, nil)
-
-	vStep := step.(*validateSignStep)
-	ctx := makeReceiverStepCtx("2.0.0", "msg-chain-001", "bap.example.com",
-		solicitedCallbackAuthHeader("bpp.example.com", "storedSig=="), onSearchBody)
-
-	if err := vStep.validateRequestSignatureChain(ctx); err != nil {
-		t.Fatalf("expected nil when payloadStore is nil, got: %v", err)
-	}
-}
-
-func TestValidateRequestSignatureChain_PreV2Version_Skips(t *testing.T) {
-	store := newMockPayloadStore()
-	sv := &mockSignValidatorBasic{}
-	km := &mockKMBasic{publicKey: "pubKey=="}
-	step, _ := newValidateSignStep(sv, km, store)
-
-	vStep := step.(*validateSignStep)
-	ctx := makeReceiverStepCtx("1.1.0", "msg-chain-002", "bap.example.com",
-		solicitedCallbackAuthHeader("bpp.example.com", "storedSig=="), onSearchBody)
-
-	if err := vStep.validateRequestSignatureChain(ctx); err != nil {
-		t.Fatalf("expected nil for pre-v2 version, got: %v", err)
-	}
-}
-
-func TestValidateRequestSignatureChain_ProviderInitiated_Skips(t *testing.T) {
-	store := newMockPayloadStore()
-	sv := &mockSignValidatorBasic{}
-	km := &mockKMBasic{publicKey: "pubKey=="}
-	step, _ := newValidateSignStep(sv, km, store)
-
-	vStep := step.(*validateSignStep)
-	// headers= without request-signature → provider-initiated
-	ctx := makeReceiverStepCtx("2.0.0", "msg-chain-003", "bap.example.com",
-		providerInitiatedAuthHeader("bpp.example.com"), onSearchBody)
-
-	if err := vStep.validateRequestSignatureChain(ctx); err != nil {
-		t.Fatalf("expected nil for provider-initiated callback, got: %v", err)
-	}
-}
-
-func TestValidateRequestSignatureChain_ValidChain(t *testing.T) {
-	store := newMockPayloadStore()
-	store.storeEntry("msg-chain-004", "search", "originalCallerSig==")
-
-	sv := &mockSignValidatorBasic{}
-	km := &mockKMBasic{publicKey: "pubKey=="}
-	step, _ := newValidateSignStep(sv, km, store)
-
-	vStep := step.(*validateSignStep)
-	// BPP callback Authorization includes request-signature matching what BAP sent.
-	ctx := makeReceiverStepCtx("2.0.0", "msg-chain-004", "bap.example.com",
-		solicitedCallbackAuthHeader("bpp.example.com", "originalCallerSig=="), onSearchBody)
-
-	if err := vStep.validateRequestSignatureChain(ctx); err != nil {
-		t.Fatalf("expected nil for valid chain, got: %v", err)
-	}
-}
-
-func TestValidateRequestSignatureChain_Mismatch_ReturnsError(t *testing.T) {
-	store := newMockPayloadStore()
-	store.storeEntry("msg-chain-005", "search", "originalCallerSig==")
-
-	sv := &mockSignValidatorBasic{}
-	km := &mockKMBasic{publicKey: "pubKey=="}
-	step, _ := newValidateSignStep(sv, km, store)
-
-	vStep := step.(*validateSignStep)
-	// BPP sends a different request-signature value — tampered.
-	ctx := makeReceiverStepCtx("2.0.0", "msg-chain-005", "bap.example.com",
-		solicitedCallbackAuthHeader("bpp.example.com", "tamperedSig=="), onSearchBody)
-
-	if err := vStep.validateRequestSignatureChain(ctx); err == nil {
-		t.Fatal("expected error for request-signature mismatch")
-	}
-}
-
-func TestValidateRequestSignatureChain_NoEntry_ReturnsError(t *testing.T) {
-	store := newMockPayloadStore() // empty — no stored entry
-
-	sv := &mockSignValidatorBasic{}
-	km := &mockKMBasic{publicKey: "pubKey=="}
-	step, _ := newValidateSignStep(sv, km, store)
-
-	vStep := step.(*validateSignStep)
-	ctx := makeReceiverStepCtx("2.0.0", "msg-chain-006", "bap.example.com",
-		solicitedCallbackAuthHeader("bpp.example.com", "anySig=="), onSearchBody)
-
-	if err := vStep.validateRequestSignatureChain(ctx); err == nil {
-		t.Fatal("expected error when no outbound entry found for message ID")
-	}
-}
-
-func TestValidateRequestSignatureChain_StoreGetError_ReturnsError(t *testing.T) {
-	store := newMockPayloadStore()
-	store.getErr = errors.New("redis connection error")
-
-	sv := &mockSignValidatorBasic{}
-	km := &mockKMBasic{publicKey: "pubKey=="}
-	step, _ := newValidateSignStep(sv, km, store)
-
-	vStep := step.(*validateSignStep)
-	ctx := makeReceiverStepCtx("2.0.0", "msg-chain-007", "bap.example.com",
-		solicitedCallbackAuthHeader("bpp.example.com", "anySig=="), onSearchBody)
-
-	if err := vStep.validateRequestSignatureChain(ctx); err == nil {
-		t.Fatal("expected error when payloadStore.GetByMessageID returns error")
-	}
-}
 
 // ---------------------------------------------------------------------------
 // PayloadStore wiring tests via initSteps
@@ -338,6 +210,254 @@ func TestValidateSignStep_InitSteps_WithPayloadStore(t *testing.T) {
 	}
 	if len(h.steps) != 1 {
 		t.Errorf("expected 1 step, got %d", len(h.steps))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// signStep.Run — Sign vs SignAck dispatch
+// ---------------------------------------------------------------------------
+
+// testKeyset returns a minimal Keyset with a dummy private key seed (32 zero
+// bytes, base64-encoded) sufficient to construct but not cryptographically
+// verify real signatures in unit tests.
+func testKeyset() *model.Keyset {
+	return &model.Keyset{
+		UniqueKeyID:   "key-1",
+		SigningPrivate: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+	}
+}
+
+func makeSignStepCtx(action, messageID, subID string) *model.StepContext {
+	body := []byte(`{"context":{"action":"` + action + `","messageId":"` + messageID + `","version":"2.0.0"}}`)
+	req, _ := http.NewRequest(http.MethodPost, "/bpp/caller/"+action, nil)
+	return &model.StepContext{
+		Context:    context.Background(),
+		Request:    req,
+		Body:       body,
+		MessageID:  messageID,
+		SubID:      subID,
+		RespHeader: http.Header{},
+	}
+}
+
+func TestSignStep_Run_SolicitedCallback_UsesSignAck(t *testing.T) {
+	store := newMockPayloadStore()
+	store.storeEntry("msg-sign-run-001", "search", "callerSig==")
+
+	signer := &mockSigner{returnSig: "callbackSig=="}
+	km := &mockKMBasic{keyset: testKeyset()}
+	step, _ := newSignStep(signer, km, store)
+
+	ctx := makeSignStepCtx("on_search", "msg-sign-run-001", "bpp.example.com")
+	if err := step.Run(ctx); err != nil {
+		t.Fatalf("Run() unexpected error: %v", err)
+	}
+	if !signer.signAckCalled {
+		t.Error("expected SignAck to be called for a solicited callback")
+	}
+	if signer.signCalled {
+		t.Error("expected Sign NOT to be called for a solicited callback")
+	}
+	authVal := ctx.Request.Header.Get(model.AuthHeaderSubscriber)
+	if strings.Contains(authVal, `request-signature="`) {
+		t.Errorf("Authorization header must not contain request-signature attribute, got: %s", authVal)
+	}
+	if !strings.Contains(authVal, `headers="(created) (expires) digest request-signature"`) {
+		t.Errorf("Authorization header must declare request-signature in headers list, got: %s", authVal)
+	}
+}
+
+func TestSignStep_Run_NonCallback_UsesSign(t *testing.T) {
+	signer := &mockSigner{returnSig: "requestSig=="}
+	km := &mockKMBasic{keyset: testKeyset()}
+	step, _ := newSignStep(signer, km, nil)
+
+	ctx := makeSignStepCtx("search", "msg-sign-run-002", "bap.example.com")
+	if err := step.Run(ctx); err != nil {
+		t.Fatalf("Run() unexpected error: %v", err)
+	}
+	if signer.signAckCalled {
+		t.Error("expected SignAck NOT to be called for a regular request")
+	}
+	if !signer.signCalled {
+		t.Error("expected Sign to be called for a regular request")
+	}
+}
+
+func TestSignStep_Run_SolicitedCallback_NoStoredEntry_FallsBackToSign(t *testing.T) {
+	// PayloadStore configured but no entry for this messageID — lookupRequestSignature
+	// returns "" so Sign (3-line) is used rather than failing the sign step.
+	store := newMockPayloadStore() // empty
+
+	signer := &mockSigner{returnSignSig: "fallbackSig=="}
+	km := &mockKMBasic{keyset: testKeyset()}
+	step, _ := newSignStep(signer, km, store)
+
+	ctx := makeSignStepCtx("on_search", "msg-sign-run-003", "bpp.example.com")
+	if err := step.Run(ctx); err != nil {
+		t.Fatalf("Run() unexpected error: %v", err)
+	}
+	if signer.signAckCalled {
+		t.Error("expected SignAck NOT to be called when no stored entry exists")
+	}
+	if !signer.signCalled {
+		t.Error("expected Sign to be called when no stored entry exists")
+	}
+}
+
+func TestSignStep_Run_SignAckError_ReturnsError(t *testing.T) {
+	store := newMockPayloadStore()
+	store.storeEntry("msg-sign-run-004", "search", "callerSig==")
+
+	signer := &mockSigner{signAckErr: errors.New("key unavailable")}
+	km := &mockKMBasic{keyset: testKeyset()}
+	step, _ := newSignStep(signer, km, store)
+
+	ctx := makeSignStepCtx("on_search", "msg-sign-run-004", "bpp.example.com")
+	if err := step.Run(ctx); err == nil {
+		t.Fatal("expected error when SignAck fails")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// validateHeaders — 3-line vs 4-line dispatch
+// ---------------------------------------------------------------------------
+
+func makeValidateStepCtx(protocolVersion, messageID, subID, authHeader, bodyJSON string) *model.StepContext {
+	req, _ := http.NewRequest(http.MethodPost, "/bap/receiver/on_search", strings.NewReader(bodyJSON))
+	req.Header.Set(model.AuthHeaderSubscriber, authHeader)
+	return &model.StepContext{
+		Context:         context.Background(),
+		Request:         req,
+		Body:            []byte(bodyJSON),
+		ProtocolVersion: protocolVersion,
+		MessageID:       messageID,
+		SubID:           subID,
+		RespHeader:      http.Header{},
+	}
+}
+
+func TestValidateHeaders_SolicitedCallback_UsesValidateAck(t *testing.T) {
+	store := newMockPayloadStore()
+	store.storeEntry("msg-vh-001", "search", "storedSig==")
+
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, store)
+	vStep := step.(*validateSignStep)
+
+	ctx := makeValidateStepCtx("2.0.0", "msg-vh-001", "bap.example.com",
+		solicitedCallbackAuthHeader("bpp.example.com"),
+		`{"context":{"action":"on_search","messageId":"msg-vh-001","version":"2.0.0"}}`)
+
+	if err := vStep.validateHeaders(ctx); err != nil {
+		t.Fatalf("validateHeaders() unexpected error: %v", err)
+	}
+	if !sv.validateAckCalled {
+		t.Error("expected ValidateAck to be called for a solicited callback")
+	}
+	if sv.validateCalled {
+		t.Error("expected Validate NOT to be called for a solicited callback")
+	}
+}
+
+func TestValidateHeaders_ProviderInitiated_UsesValidate(t *testing.T) {
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, nil)
+	vStep := step.(*validateSignStep)
+
+	ctx := makeValidateStepCtx("2.0.0", "msg-vh-002", "bap.example.com",
+		providerInitiatedAuthHeader("bpp.example.com"),
+		`{"context":{"action":"on_search","messageId":"msg-vh-002","version":"2.0.0"}}`)
+
+	if err := vStep.validateHeaders(ctx); err != nil {
+		t.Fatalf("validateHeaders() unexpected error: %v", err)
+	}
+	if sv.validateAckCalled {
+		t.Error("expected ValidateAck NOT to be called for a provider-initiated callback")
+	}
+	if !sv.validateCalled {
+		t.Error("expected Validate to be called for a provider-initiated callback")
+	}
+}
+
+func TestValidateHeaders_SolicitedCallback_NilStore_FallsBackToValidate(t *testing.T) {
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	// nil payloadStore — degrade to 3-line verification
+	step, _ := newValidateSignStep(sv, km, nil)
+	vStep := step.(*validateSignStep)
+
+	ctx := makeValidateStepCtx("2.0.0", "msg-vh-003", "bap.example.com",
+		solicitedCallbackAuthHeader("bpp.example.com"),
+		`{"context":{"action":"on_search","messageId":"msg-vh-003","version":"2.0.0"}}`)
+
+	if err := vStep.validateHeaders(ctx); err != nil {
+		t.Fatalf("validateHeaders() unexpected error: %v", err)
+	}
+	if sv.validateAckCalled {
+		t.Error("expected ValidateAck NOT to be called when payloadStore is nil")
+	}
+	if !sv.validateCalled {
+		t.Error("expected Validate to be called when payloadStore is nil")
+	}
+}
+
+func TestValidateHeaders_SolicitedCallback_PreV2_FallsBackToValidate(t *testing.T) {
+	store := newMockPayloadStore()
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, store)
+	vStep := step.(*validateSignStep)
+
+	ctx := makeValidateStepCtx("1.1.0", "msg-vh-004", "bap.example.com",
+		solicitedCallbackAuthHeader("bpp.example.com"),
+		`{"context":{"action":"on_search","messageId":"msg-vh-004","version":"1.1.0"}}`)
+
+	if err := vStep.validateHeaders(ctx); err != nil {
+		t.Fatalf("validateHeaders() unexpected error: %v", err)
+	}
+	if sv.validateAckCalled {
+		t.Error("expected ValidateAck NOT to be called for pre-v2 version")
+	}
+	if !sv.validateCalled {
+		t.Error("expected Validate to be called for pre-v2 version")
+	}
+}
+
+func TestValidateHeaders_SolicitedCallback_NoEntry_ReturnsError(t *testing.T) {
+	store := newMockPayloadStore() // empty
+
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, store)
+	vStep := step.(*validateSignStep)
+
+	ctx := makeValidateStepCtx("2.0.0", "msg-vh-005", "bap.example.com",
+		solicitedCallbackAuthHeader("bpp.example.com"),
+		`{"context":{"action":"on_search","messageId":"msg-vh-005","version":"2.0.0"}}`)
+
+	if err := vStep.validateHeaders(ctx); err == nil {
+		t.Fatal("expected error when no stored entry found for message ID")
+	}
+}
+
+func TestValidateHeaders_SolicitedCallback_StoreError_ReturnsError(t *testing.T) {
+	store := newMockPayloadStore()
+	store.getErr = errors.New("redis down")
+
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, store)
+	vStep := step.(*validateSignStep)
+
+	ctx := makeValidateStepCtx("2.0.0", "msg-vh-006", "bap.example.com",
+		solicitedCallbackAuthHeader("bpp.example.com"),
+		`{"context":{"action":"on_search","messageId":"msg-vh-006","version":"2.0.0"}}`)
+
+	if err := vStep.validateHeaders(ctx); err == nil {
+		t.Fatal("expected error when payloadStore.GetByMessageID returns error")
 	}
 }
 
@@ -388,8 +508,10 @@ func TestGenerateAuthHeader_WithRequestSig(t *testing.T) {
 	if !strings.Contains(h, `headers="(created) (expires) digest request-signature"`) {
 		t.Errorf("expected extended headers field, got: %s", h)
 	}
-	if !strings.Contains(h, `request-signature="originalSig=="`) {
-		t.Errorf("missing request-signature value, got: %s", h)
+	// request-signature must be in the headers list (signing string declaration)
+	// but must NOT appear as a separate header attribute (NFH-004 §4).
+	if strings.Contains(h, `request-signature="`) {
+		t.Errorf("request-signature must not appear as a header attribute, got: %s", h)
 	}
 	if !strings.Contains(h, `signature="mySig=="`) {
 		t.Errorf("missing signature value, got: %s", h)
