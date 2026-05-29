@@ -59,14 +59,11 @@ Both teams share a single configuration contract: the **network policy config fi
          │     │    → skip evaluation (allow)          │    │
          │     └──────────────────────────────────────┘    │
          │           │                                      │
-         │  ③ Check action filter (if actions: set)        │
-         │     not in list? → skip evaluation (allow)      │
-         │           │                                      │
-         │  ④ Evaluate OPA query                           │
+         │  ③ Evaluate OPA query                           │
          │     input        = full Beckn message body       │
          │     data.config  = adapter plugin config keys    │
          │           │                                      │
-         │  ⑤ Interpret result                             │
+         │  ④ Interpret result                             │
          │     {"valid": true,  "violations": []}  → allow │
          │     {"valid": false, "violations": […]} → 400   │
          │     empty / undefined result            → 400   │
@@ -97,7 +94,7 @@ If the OPA query returns an undefined or empty result, the plugin treats it as a
 
 `opapolicychecker` is a module-level plugin compiled as a `.so` and loaded by the plugin manager. It runs as one step in a module's `steps` list alongside the schema validator, signer, and router. The plugin ID (`opapolicychecker`, used in `id:`) and the step name (`checkPolicy`, used in `steps:` and as the YAML config key) are distinct — both must appear in the module config.
 
-> **Migrating from an older config format.** Previous versions accepted top-level keys such as `type`, `location`, `query`, `actions`, and `refreshIntervalSeconds` directly in the plugin config. These keys are no longer used as plugin parameters — unrecognised keys are forwarded to Rego as `data.config.<key>` rather than silently dropped, so leftover keys from the old format will appear as Rego data values instead of configuring the plugin.
+> **Migrating from an older config format.** Previous versions accepted top-level keys such as `type`, `location`, `query`, and `refreshIntervalSeconds` directly in the plugin config. These keys are no longer used as plugin parameters — unrecognised keys are forwarded to Rego as `data.config.<key>` rather than silently dropped, so leftover keys from the old format will appear as Rego data values instead of configuring the plugin.
 
 ```yaml
 manifestLoader:
@@ -176,7 +173,6 @@ networkPolicies:
 | `type` | string | Yes | — | `file`, `bundle`, `dir`, or `manifest` |
 | `location` | string | Yes (except `manifest`) | — | Local path or remote URL for the policy source |
 | `query` | string | Yes (except `manifest`) | — | OPA query path that returns the policy result |
-| `actions` | string | No | — | Comma-separated list of actions; if set, skip evaluation for actions not in this list |
 | `enabled` | bool | No | `true` | Set to `false` to skip this network while keeping it in config |
 | `fetchTimeoutSeconds` | string | No | `"30"` | Timeout for fetching remote policy sources |
 | `verification.enabled` | bool | No | `false` | Enable signature verification for `file` or `bundle` |
@@ -324,18 +320,6 @@ allowed_domains := {"ONDC:RET10", "ONDC:RET11", "ONDC:RET12"}
 violations contains "domain not allowed" if {
     not allowed_domains[input.context.domain]
 }
-```
-
-### Limit evaluation to specific actions (config-level)
-
-If your policy only makes sense for `confirm` and `init`, set `actions` in the network policy config rather than adding action guards to every rule:
-
-```yaml
-my.network/production:
-  type: file
-  location: ./policies/confirm-init.rego
-  query: "data.policy.result"
-  actions: confirm,init
 ```
 
 ### Skip a specific network without removing it from config
@@ -930,9 +914,9 @@ query: "data.policy.result"     # ✗ wrong if package is mypolicy
 
 **Symptom:** The policy rejects `search` requests that should not be affected.
 
-**Cause:** The `actions:` filter is not set, so the policy evaluates for every action.
+**Cause:** The policy evaluates for every action. Use explicit action guards in the Rego rules to limit which actions a rule fires on.
 
-**Fix:** Either set `actions:` in the network policy config to limit evaluation, or add explicit action guards in the Rego rules:
+**Fix:** Add action guards directly in the Rego rules:
 
 ```rego
 violations contains "confirm: missing provider" if {

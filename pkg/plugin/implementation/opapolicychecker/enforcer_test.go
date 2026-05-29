@@ -167,26 +167,6 @@ func TestParsePolicyConfig_RuntimeConfigForwarding(t *testing.T) {
 	}
 }
 
-func TestParsePolicyConfig_CustomActions(t *testing.T) {
-	cfg, err := parsePolicyConfig(map[string]string{
-		"type":     "dir",
-		"location": "/tmp",
-		"query":    "data.policy.violations",
-		"actions":  "confirm, select, init",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(cfg.Actions) != 3 {
-		t.Fatalf("expected 3 actions, got %d: %v", len(cfg.Actions), cfg.Actions)
-	}
-	expected := []string{"confirm", "select", "init"}
-	for i, want := range expected {
-		if cfg.Actions[i] != want {
-			t.Errorf("action[%d] = %q, want %q", i, cfg.Actions[i], want)
-		}
-	}
-}
 
 func TestParsePolicyConfig_PolicyPaths(t *testing.T) {
 	cfg, err := parsePolicyConfig(map[string]string{
@@ -207,8 +187,7 @@ func TestParsePolicyConfig_PolicyPaths(t *testing.T) {
 
 func TestParsePolicyConfig_ManifestType(t *testing.T) {
 	cfg, err := parsePolicyConfig(map[string]string{
-		"type":    "manifest",
-		"actions": "confirm",
+		"type": "manifest",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -651,7 +630,7 @@ violations contains "blocked" if { input.context.action == "confirm"; input.bloc
 `
 	dir := writePolicyDir(t, "test.rego", policy)
 
-	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.violations\nactions: confirm\n")
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.violations\n")
 	enforcer, err := New(context.Background(), map[string]string{
 		"networkPolicyConfig": configPath,
 	})
@@ -674,7 +653,7 @@ violations contains "blocked" if { input.context.action == "confirm" }
 `
 	dir := writePolicyDir(t, "test.rego", policy)
 
-	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.violations\nactions: confirm\n")
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.violations\n")
 	enforcer, err := New(context.Background(), map[string]string{
 		"networkPolicyConfig": configPath,
 	})
@@ -691,30 +670,6 @@ violations contains "blocked" if { input.context.action == "confirm" }
 	// Should be a BadReqErr
 	if _, ok := err.(*model.BadReqErr); !ok {
 		t.Errorf("expected *model.BadReqErr, got %T: %v", err, err)
-	}
-}
-
-func TestEnforcer_SkipsNonMatchingAction(t *testing.T) {
-	policy := `
-package policy
-import rego.v1
-violations contains "blocked" if { true }
-`
-	dir := writePolicyDir(t, "test.rego", policy)
-
-	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.violations\nactions: confirm\n")
-	enforcer, err := New(context.Background(), map[string]string{
-		"networkPolicyConfig": configPath,
-	})
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
-
-	// Non-compliant body, but action is "search" — not in configured actions
-	ctx := makeStepCtx("search", `{"context": {"action": "search"}}`)
-	err = enforcer.CheckPolicy(ctx)
-	if err != nil {
-		t.Errorf("expected nil for non-matching action, got: %v", err)
 	}
 }
 
@@ -741,6 +696,29 @@ violations contains "blocked" if { true }
 	}
 }
 
+func TestEnforcer_CompoundActionNotFiltered(t *testing.T) {
+	policy := `
+package policy
+import rego.v1
+violations contains "blocked" if { input.context.action == "catalog/subscription" }
+`
+	dir := writePolicyDir(t, "test.rego", policy)
+
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.violations\n")
+	enforcer, err := New(context.Background(), map[string]string{
+		"networkPolicyConfig": configPath,
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	ctx := makeStepCtx("catalog/subscription", `{"context": {"action": "catalog/subscription"}}`)
+	err = enforcer.CheckPolicy(ctx)
+	if _, ok := err.(*model.BadReqErr); !ok {
+		t.Fatalf("expected BadReqErr for compound action violation, got %T: %v", err, err)
+	}
+}
+
 // --- Enforcer with URL-sourced policy ---
 
 func TestEnforcer_PolicyFromURL(t *testing.T) {
@@ -754,7 +732,7 @@ violations contains "blocked" if { input.context.action == "confirm" }
 	}))
 	defer srv.Close()
 
-	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: file\nlocation: "+srv.URL+"/block_confirm.rego\nquery: data.policy.violations\nactions: confirm\n")
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: file\nlocation: "+srv.URL+"/block_confirm.rego\nquery: data.policy.violations\n")
 	enforcer, err := New(context.Background(), map[string]string{
 		"networkPolicyConfig": configPath,
 	})
@@ -773,13 +751,6 @@ violations contains "blocked" if { input.context.action == "confirm" }
 }
 
 // --- Request Context Parsing Tests ---
-
-func TestExtractActionFromPath_FromURL(t *testing.T) {
-	action := extractActionFromPath("/bpp/caller/confirm")
-	if action != "confirm" {
-		t.Errorf("expected 'confirm', got %q", action)
-	}
-}
 
 func TestParseRequestContext(t *testing.T) {
 	reqCtx := parseRequestContext([]byte(`{"context":{"action":"select","networkId":"retail.network/production","bap_id":"bap.example.com","bppId":"bpp.example.com","message_id":"msg-1","transactionId":"txn-1","timestamp":"2026-04-21T10:00:00Z"}}`))
@@ -1478,7 +1449,7 @@ violations contains "blocked" if {
 	}))
 	defer srv.Close()
 
-	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: bundle\nlocation: "+srv.URL+"/policy-bundle.tar.gz\nquery: data.retail.policy.result\nactions: confirm\n")
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: bundle\nlocation: "+srv.URL+"/policy-bundle.tar.gz\nquery: data.retail.policy.result\n")
 	enforcer, err := New(context.Background(), map[string]string{
 		"networkPolicyConfig": configPath,
 	})
@@ -1616,12 +1587,10 @@ networkPolicies:
     type: dir
     location: `+retailDir+`
     query: data.retail.result
-    actions: confirm
   retail.network/logistics:
     type: dir
     location: `+logisticsDir+`
     query: data.logistics.result
-    actions: confirm
 `)
 
 	enforcer, err := New(context.Background(), map[string]string{
@@ -1661,7 +1630,6 @@ networkPolicies:
     type: dir
     location: `+defaultDir+`
     query: data.policy.result
-    actions: confirm
 `)
 
 	enforcer, err := New(context.Background(), map[string]string{
@@ -1692,12 +1660,10 @@ networkPolicies:
     type: dir
     location: `+defaultDir+`
     query: data.policy.result
-    actions: confirm
   default:
     type: dir
     location: `+defaultDir+`
     query: data.policy.result
-    actions: confirm
 `)
 
 	enforcer, err := New(context.Background(), map[string]string{
@@ -1727,7 +1693,6 @@ networkPolicies:
     type: dir
     location: `+retailDir+`
     query: data.retail.result
-    actions: confirm
 `)
 
 	enforcer, err := New(context.Background(), map[string]string{
@@ -1798,17 +1763,6 @@ violations := []`))
 	}
 }
 
-func TestExtractAction_NonStandardURLFallsBackToBody(t *testing.T) {
-	reqCtx := parseRequestContext([]byte(`{"context": {"action": "confirm"}}`))
-	action := extractActionFromPath("/bpp/caller/confirm/extra")
-	if action == "" {
-		action = reqCtx.Action
-	}
-	if action != "confirm" {
-		t.Fatalf("expected body fallback action 'confirm', got %q", action)
-	}
-}
-
 func TestEnforcer_ManifestBackedFilePolicy(t *testing.T) {
 	policy := []byte(`
 package policy
@@ -1861,7 +1815,6 @@ result := {"valid": false, "violations": ["missing provider"]} if {
 networkPolicies:
   retail.network/production:
     type: manifest
-    actions: confirm
 `)
 	enforcer, err := NewWithManifestLoader(context.Background(), stubManifestLoader{
 		docs: map[string]*model.ManifestDocument{
@@ -1929,7 +1882,6 @@ result := {"valid": false, "violations": ["bundle blocked"]} if {
 networkPolicies:
   retail.network/production:
     type: manifest
-    actions: confirm
 `)
 	enforcer, err := NewWithManifestLoader(context.Background(), stubManifestLoader{
 		docs: map[string]*model.ManifestDocument{
