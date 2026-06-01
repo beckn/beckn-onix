@@ -252,6 +252,9 @@ func (s *validateSignStep) validate(ctx *model.StepContext, value, requestSig st
 	if err != nil {
 		return fmt.Errorf("failed to parse header")
 	}
+	if headerVals.Algorithm != "ed25519" {
+		return fmt.Errorf("unsupported algorithm %q: only ed25519 is permitted", headerVals.Algorithm)
+	}
 	log.Debugf(ctx, "Validating Signature for subscriberID: %v", headerVals.SubscriberID)
 	signingPublicKey, _, err := s.km.LookupNPKeys(ctx, headerVals.SubscriberID, headerVals.UniqueID)
 	if err != nil {
