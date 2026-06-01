@@ -79,6 +79,10 @@ func parseAuthHeader(header string) (int64, int64, string, error) {
 		}
 	}
 
+	if signatureMap["algorithm"] != "ed25519" {
+		return 0, 0, "", model.NewSignValidationErr(fmt.Errorf("unsupported algorithm %q: only ed25519 is permitted", signatureMap["algorithm"]))
+	}
+
 	createdTimestamp, err := strconv.ParseInt(signatureMap["created"], 10, 64)
 	if err != nil {
 		// TODO: Return appropriate error code when Error Code Handling Module is ready

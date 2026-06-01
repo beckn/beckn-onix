@@ -47,7 +47,7 @@ func TestVerifySuccess(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			signature := signTestData(privateKeyBase64, tt.body, tt.createdAt, tt.expiresAt)
-			header := `Signature created="` + strconv.FormatInt(tt.createdAt, 10) +
+			header := `Signature algorithm="ed25519", created="` + strconv.FormatInt(tt.createdAt, 10) +
 				`", expires="` + strconv.FormatInt(tt.expiresAt, 10) +
 				`", signature="` + signature + `"`
 
@@ -90,9 +90,25 @@ func TestVerifyFailure(t *testing.T) {
 			pubKey: publicKeyBase64,
 		},
 		{
-			name: "Invalid Base64 Signature",
+			name: "Unsupported Algorithm",
+			body: []byte("Test Payload"),
+			header: `Signature algorithm="rsa", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
+				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) +
+				`", signature="somesig=="`,
+			pubKey: publicKeyBase64,
+		},
+		{
+			name: "Missing Algorithm",
 			body: []byte("Test Payload"),
 			header: `Signature created="` + strconv.FormatInt(time.Now().Unix(), 10) +
+				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) +
+				`", signature="somesig=="`,
+			pubKey: publicKeyBase64,
+		},
+		{
+			name: "Invalid Base64 Signature",
+			body: []byte("Test Payload"),
+			header: `Signature algorithm="ed25519", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
 				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) +
 				`", signature="!!INVALIDBASE64!!"`,
 			pubKey: publicKeyBase64,
@@ -100,7 +116,7 @@ func TestVerifyFailure(t *testing.T) {
 		{
 			name: "Expired Signature",
 			body: []byte("Test Payload"),
-			header: `Signature created="` + strconv.FormatInt(time.Now().Unix()-7200, 10) +
+			header: `Signature algorithm="ed25519", created="` + strconv.FormatInt(time.Now().Unix()-7200, 10) +
 				`", expires="` + strconv.FormatInt(time.Now().Unix()-3600, 10) +
 				`", signature="` + signTestData(privateKeyBase64, []byte("Test Payload"), time.Now().Unix()-7200, time.Now().Unix()-3600) + `"`,
 			pubKey: publicKeyBase64,
@@ -108,7 +124,7 @@ func TestVerifyFailure(t *testing.T) {
 		{
 			name: "Invalid Public Key",
 			body: []byte("Test Payload"),
-			header: `Signature created="` + strconv.FormatInt(time.Now().Unix(), 10) +
+			header: `Signature algorithm="ed25519", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
 				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) +
 				`", signature="` + signTestData(privateKeyBase64, []byte("Test Payload"), time.Now().Unix(), time.Now().Unix()+3600) + `"`,
 			pubKey: wrongPublicKeyBase64,
@@ -116,14 +132,14 @@ func TestVerifyFailure(t *testing.T) {
 		{
 			name: "Invalid Expires Timestamp",
 			body: []byte("Test Payload"),
-			header: `Signature created="` + strconv.FormatInt(time.Now().Unix(), 10) +
+			header: `Signature algorithm="ed25519", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
 				`", expires="invalid_timestamp"`,
 			pubKey: publicKeyBase64,
 		},
 		{
 			name: "Signature Missing in Headers",
 			body: []byte("Test Payload"),
-			header: `Signature created="` + strconv.FormatInt(time.Now().Unix(), 10) +
+			header: `Signature algorithm="ed25519", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
 				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) + `"`,
 			pubKey: publicKeyBase64,
 		},

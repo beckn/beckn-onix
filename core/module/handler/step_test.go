@@ -461,6 +461,27 @@ func TestValidateHeaders_SolicitedCallback_StoreError_ReturnsError(t *testing.T)
 	}
 }
 
+func TestValidate_NonEd25519Algorithm_ReturnsError(t *testing.T) {
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, nil)
+	vStep := step.(*validateSignStep)
+
+	badAlgHeader := `Signature keyId="bpp.example.com|key-1|rsa",algorithm="rsa",` +
+		`created="1700000000",expires="1700003600",signature="sig=="`
+
+	ctx := makeValidateStepCtx("2.0.0", "msg-alg-001", "bap.example.com",
+		badAlgHeader,
+		`{"context":{"action":"on_search","messageId":"msg-alg-001","version":"2.0.0"}}`)
+
+	if err := vStep.validate(ctx, badAlgHeader, ""); err == nil {
+		t.Fatal("expected error for non-ed25519 algorithm")
+	}
+	if sv.validateCalled || sv.validateAckCalled {
+		t.Error("signature validator must not be called when algorithm is rejected")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // signStep — constructor and generateAuthHeader tests
 // ---------------------------------------------------------------------------
