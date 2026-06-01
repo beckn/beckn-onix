@@ -740,10 +740,10 @@ func parseRequestContext(body []byte) parsedRequestContext {
 func formatRequestLogContext(ctx parsedRequestContext) string {
 	parts := make([]string, 0, 6)
 	if ctx.BAPID != "" {
-		parts = append(parts, fmt.Sprintf("bap_id=%q", ctx.BAPID))
+		parts = append(parts, fmt.Sprintf("sender_id=%q", ctx.BAPID))
 	}
 	if ctx.BPPID != "" {
-		parts = append(parts, fmt.Sprintf("bpp_id=%q", ctx.BPPID))
+		parts = append(parts, fmt.Sprintf("receiver_id=%q", ctx.BPPID))
 	}
 	if ctx.MessageID != "" {
 		parts = append(parts, fmt.Sprintf("message_id=%q", ctx.MessageID))

@@ -319,8 +319,8 @@ func (r *Router) routeBodyless(endpoint string) (*model.Route, error) {
 		if !ok {
 			continue
 		}
-		if route.TargetType == targetTypeBPP || route.TargetType == targetTypeBAP ||
-			route.TargetType == targetTypeReceiver || route.TargetType == targetTypeSender {
+		switch route.TargetType {
+		case targetTypeBPP, targetTypeBAP, targetTypeReceiver, targetTypeSender:
 			return nil, fmt.Errorf("bodyless endpoint '%s' (version %s) is configured with target type '%s': dynamic BAP/BPP URI routing is not supported for bodyless requests", endpoint, version, route.TargetType)
 		}
 		return route, nil
@@ -329,12 +329,27 @@ func (r *Router) routeBodyless(endpoint string) (*model.Route, error) {
 	return nil, fmt.Errorf("endpoint '%s' is not supported in v2 routing config", endpoint)
 }
 
+// canonicalRoleName returns a stable, human-readable role label for use in error
+// messages regardless of which targetType alias ("bpp"/"receiver", "bap"/"sender")
+// was used in the routing config.
+func canonicalRoleName(targetType string) string {
+	switch targetType {
+	case targetTypeBPP, targetTypeReceiver:
+		return "BPP"
+	case targetTypeBAP, targetTypeSender:
+		return "BAP"
+	default:
+		return strings.ToUpper(targetType)
+	}
+}
+
 // handleProtocolMapping handles both BPP and BAP routing with proper URL construction
 func handleProtocolMapping(route *model.Route, npURI, endpoint string) (*model.Route, error) {
 	target := strings.TrimSpace(npURI)
+	role := canonicalRoleName(route.TargetType)
 	if len(target) == 0 {
 		if route.URL == nil {
-			return nil, fmt.Errorf("could not determine destination for endpoint '%s': neither request contained a %s URI nor was a default URL configured in routing rules", endpoint, strings.ToUpper(route.TargetType))
+			return nil, fmt.Errorf("could not determine destination for endpoint '%s': neither request contained a %s URI nor was a default URL configured in routing rules", endpoint, role)
 		}
 		return &model.Route{
 			TargetType: targetTypeURL,
@@ -343,7 +358,7 @@ func handleProtocolMapping(route *model.Route, npURI, endpoint string) (*model.R
 	}
 	targetURL, err := url.Parse(target)
 	if err != nil {
-		return nil, fmt.Errorf("invalid %s URI - %s in request body for %s: %w", strings.ToUpper(route.TargetType), target, endpoint, err)
+		return nil, fmt.Errorf("invalid %s URI - %s in request body for %s: %w", role, target, endpoint, err)
 	}
 	targetURL.Path = joinPath(targetURL, endpoint)
 	return &model.Route{

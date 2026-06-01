@@ -978,6 +978,18 @@ func TestRouteBodyless(t *testing.T) {
 			wantErr:        "dynamic BAP/BPP URI routing is not supported for bodyless requests",
 		},
 		{
+			name:           "spec v2: bodyless to receiver target type returns error",
+			configFile:     "v2_catalog_receiver.yaml",
+			endpointAction: "catalog/subscription",
+			wantErr:        "dynamic BAP/BPP URI routing is not supported for bodyless requests",
+		},
+		{
+			name:           "spec v2: bodyless to sender target type returns error",
+			configFile:     "v2_catalog_sender.yaml",
+			endpointAction: "catalog/subscription",
+			wantErr:        "dynamic BAP/BPP URI routing is not supported for bodyless requests",
+		},
+		{
 			name:           "bodyless request with no v2 rules returns error",
 			configFile:     "bpp_receiver.yaml",
 			endpointAction: "catalog/subscription",

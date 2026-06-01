@@ -334,6 +334,28 @@ func TestCamelCaseSubscriberID(t *testing.T) {
 			wantSubID:  "bap-camel.example.com",
 			wantCaller: "bpp-camel.example.com",
 		},
+		{
+			name: "BPP role — camelCase bppId takes precedence over receiverId (subID path)",
+			role: "bpp",
+			contextBody: map[string]interface{}{
+				"bppId":      "bpp-camel.example.com",
+				"receiverId": "receiver.example.com",
+				"bapId":      "bap-camel.example.com",
+			},
+			wantSubID:  "bpp-camel.example.com",
+			wantCaller: "bap-camel.example.com",
+		},
+		{
+			name: "BPP role — camelCase bapId takes precedence over senderId (callerID path)",
+			role: "bpp",
+			contextBody: map[string]interface{}{
+				"bapId":      "bap-camel.example.com",
+				"senderId":   "sender.example.com",
+				"receiverId": "receiver.example.com",
+			},
+			wantSubID:  "receiver.example.com",
+			wantCaller: "bap-camel.example.com",
+		},
 	}
 
 	for _, tt := range tests {
