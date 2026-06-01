@@ -1,0 +1,17 @@
+routingRules:
+  - domain: ONDC:TRV10
+    version: 1.1.0
+    targetType: receiver
+    target:
+      url: https://gateway.example.com
+    endpoints:
+      - search
+  - domain: ONDC:TRV10
+    version: 1.1.0
+    targetType: receiver
+    endpoints:
+      - select
+      - init
+      - confirm
+      - status
+      - cancel

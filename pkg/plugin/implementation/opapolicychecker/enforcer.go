@@ -717,20 +717,19 @@ func parseRequestContext(body []byte) parsedRequestContext {
 		return parsedRequestContext{}
 	}
 
-	get := func(snakeKey, camelKey string) string {
-		if v, ok := payload.Context[snakeKey].(string); ok && v != "" {
-			return v
-		}
-		if v, ok := payload.Context[camelKey].(string); ok && v != "" {
-			return v
+	get := func(keys ...string) string {
+		for _, key := range keys {
+			if v, ok := payload.Context[key].(string); ok && v != "" {
+				return v
+			}
 		}
 		return ""
 	}
 
 	return parsedRequestContext{
 		NetworkID:     get("network_id", "networkId"),
-		BAPID:         get("bap_id", "bapId"),
-		BPPID:         get("bpp_id", "bppId"),
+		BAPID:         get("bap_id", "bapId", "senderId"),
+		BPPID:         get("bpp_id", "bppId", "receiverId"),
 		MessageID:     get("message_id", "messageId"),
 		TransactionID: get("transaction_id", "transactionId"),
 		Action:        get("action", "action"), // "action" has no camelCase variant
@@ -741,10 +740,10 @@ func parseRequestContext(body []byte) parsedRequestContext {
 func formatRequestLogContext(ctx parsedRequestContext) string {
 	parts := make([]string, 0, 6)
 	if ctx.BAPID != "" {
-		parts = append(parts, fmt.Sprintf("bap_id=%q", ctx.BAPID))
+		parts = append(parts, fmt.Sprintf("sender_id=%q", ctx.BAPID))
 	}
 	if ctx.BPPID != "" {
-		parts = append(parts, fmt.Sprintf("bpp_id=%q", ctx.BPPID))
+		parts = append(parts, fmt.Sprintf("receiver_id=%q", ctx.BPPID))
 	}
 	if ctx.MessageID != "" {
 		parts = append(parts, fmt.Sprintf("message_id=%q", ctx.MessageID))

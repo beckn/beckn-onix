@@ -482,6 +482,32 @@ func TestRouteSuccess(t *testing.T) {
 			endpointAction: "on_select",
 			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bapUri": "https://bap1.example.com"}}`,
 		},
+		// Beckn spec v2: receiverUri / senderUri context fields
+		{
+			name:           "spec v2: receiverUri in context is resolved for bpp routing",
+			configFile:     "bap_caller.yaml",
+			endpointAction: "select",
+			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "receiverUri": "https://receiver.example.com"}}`,
+		},
+		{
+			name:           "spec v2: senderUri in context is resolved for bap routing",
+			configFile:     "bpp_caller.yaml",
+			endpointAction: "on_select",
+			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "senderUri": "https://sender.example.com"}}`,
+		},
+		// Beckn spec v2: targetType "receiver" and "sender" values in routing config
+		{
+			name:           "spec v2: targetType receiver routes to receiverUri",
+			configFile:     "bap_caller_v2names.yaml",
+			endpointAction: "select",
+			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "receiverUri": "https://receiver.example.com"}}`,
+		},
+		{
+			name:           "spec v2: targetType sender routes to senderUri",
+			configFile:     "bpp_caller_v2names.yaml",
+			endpointAction: "on_select",
+			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "senderUri": "https://sender.example.com"}}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -765,58 +791,72 @@ func TestV2ConflictingRules(t *testing.T) {
 	}
 }
 
-// TestGetContextString tests the dual-key lookup helper used to support both
-// snake_case (legacy) and camelCase (new beckn spec) context attribute names.
+// TestGetContextString tests the variadic key lookup helper used to support
+// snake_case (legacy), camelCase (Beckn spec v1), and the new Beckn spec v2
+// names (receiverUri / senderUri) transparently.
 func TestGetContextString(t *testing.T) {
 	tests := []struct {
-		name     string
-		ctx      map[string]interface{}
-		snakeKey string
-		camelKey string
-		want     string
+		name string
+		ctx  map[string]interface{}
+		keys []string
+		want string
 	}{
 		{
-			name:     "snake_case key present",
-			ctx:      map[string]interface{}{"bpp_uri": "https://bpp.example.com"},
-			snakeKey: "bpp_uri",
-			camelKey: "bppUri",
-			want:     "https://bpp.example.com",
+			name: "snake_case key present",
+			ctx:  map[string]interface{}{"bpp_uri": "https://bpp.example.com"},
+			keys: []string{"bpp_uri", "bppUri", "receiverUri"},
+			want: "https://bpp.example.com",
 		},
 		{
-			name:     "camelCase key present",
-			ctx:      map[string]interface{}{"bppUri": "https://bpp.example.com"},
-			snakeKey: "bpp_uri",
-			camelKey: "bppUri",
-			want:     "https://bpp.example.com",
+			name: "camelCase key present",
+			ctx:  map[string]interface{}{"bppUri": "https://bpp.example.com"},
+			keys: []string{"bpp_uri", "bppUri", "receiverUri"},
+			want: "https://bpp.example.com",
 		},
 		{
-			name:     "snake_case takes precedence when both present",
-			ctx:      map[string]interface{}{"bpp_uri": "https://snake.example.com", "bppUri": "https://camel.example.com"},
-			snakeKey: "bpp_uri",
-			camelKey: "bppUri",
-			want:     "https://snake.example.com",
+			name: "snake_case takes precedence when both present",
+			ctx:  map[string]interface{}{"bpp_uri": "https://snake.example.com", "bppUri": "https://camel.example.com"},
+			keys: []string{"bpp_uri", "bppUri", "receiverUri"},
+			want: "https://snake.example.com",
 		},
 		{
-			name:     "neither key present returns empty string",
-			ctx:      map[string]interface{}{"domain": "ONDC:TRV10"},
-			snakeKey: "bpp_uri",
-			camelKey: "bppUri",
-			want:     "",
+			name: "neither key present returns empty string",
+			ctx:  map[string]interface{}{"domain": "ONDC:TRV10"},
+			keys: []string{"bpp_uri", "bppUri", "receiverUri"},
+			want: "",
 		},
 		{
-			name:     "empty snake_case value falls through to camelCase",
-			ctx:      map[string]interface{}{"bpp_uri": "", "bppUri": "https://bpp.example.com"},
-			snakeKey: "bpp_uri",
-			camelKey: "bppUri",
-			want:     "https://bpp.example.com",
+			name: "empty snake_case value falls through to camelCase",
+			ctx:  map[string]interface{}{"bpp_uri": "", "bppUri": "https://bpp.example.com"},
+			keys: []string{"bpp_uri", "bppUri", "receiverUri"},
+			want: "https://bpp.example.com",
+		},
+		// Beckn spec v2: receiverUri / senderUri
+		{
+			name: "spec v2: receiverUri resolved when legacy keys absent",
+			ctx:  map[string]interface{}{"receiverUri": "https://receiver.example.com"},
+			keys: []string{"bpp_uri", "bppUri", "receiverUri"},
+			want: "https://receiver.example.com",
+		},
+		{
+			name: "spec v2: senderUri resolved when legacy keys absent",
+			ctx:  map[string]interface{}{"senderUri": "https://sender.example.com"},
+			keys: []string{"bap_uri", "bapUri", "senderUri"},
+			want: "https://sender.example.com",
+		},
+		{
+			name: "spec v2: camelCase bppUri takes precedence over receiverUri",
+			ctx:  map[string]interface{}{"bppUri": "https://camel.example.com", "receiverUri": "https://receiver.example.com"},
+			keys: []string{"bpp_uri", "bppUri", "receiverUri"},
+			want: "https://camel.example.com",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := getContextString(tt.ctx, tt.snakeKey, tt.camelKey)
+			got := getContextString(tt.ctx, tt.keys...)
 			if got != tt.want {
-				t.Errorf("getContextString(%v, %q, %q) = %q, want %q", tt.ctx, tt.snakeKey, tt.camelKey, got, tt.want)
+				t.Errorf("getContextString(%v, %v) = %q, want %q", tt.ctx, tt.keys, got, tt.want)
 			}
 		})
 	}
@@ -934,6 +974,18 @@ func TestRouteBodyless(t *testing.T) {
 		{
 			name:           "bodyless to BPP target type returns error",
 			configFile:     "v2_catalog_bpp.yaml",
+			endpointAction: "catalog/subscription",
+			wantErr:        "dynamic BAP/BPP URI routing is not supported for bodyless requests",
+		},
+		{
+			name:           "spec v2: bodyless to receiver target type returns error",
+			configFile:     "v2_catalog_receiver.yaml",
+			endpointAction: "catalog/subscription",
+			wantErr:        "dynamic BAP/BPP URI routing is not supported for bodyless requests",
+		},
+		{
+			name:           "spec v2: bodyless to sender target type returns error",
+			configFile:     "v2_catalog_sender.yaml",
 			endpointAction: "catalog/subscription",
 			wantErr:        "dynamic BAP/BPP URI routing is not supported for bodyless requests",
 		},

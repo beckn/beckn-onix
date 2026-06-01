@@ -1,0 +1,5 @@
+routingRules:
+  - version: 2.0.0
+    targetType: sender
+    endpoints:
+      - catalog/subscription

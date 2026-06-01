@@ -1,0 +1,13 @@
+routingRules:
+  - domain: ONDC:TRV10
+    version: 1.1.0
+    targetType: sender
+    endpoints:
+      - on_search
+      - on_select
+      - on_init
+      - on_confirm
+      - on_status
+      - on_update
+      - on_cancel
+
