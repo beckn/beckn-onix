@@ -786,6 +786,26 @@ func TestParseRequestContext_NetworkIDVariants(t *testing.T) {
 	}
 }
 
+func TestParseRequestContext_SenderReceiverIDs(t *testing.T) {
+	// Spec v2: senderId maps to BAPID, receiverId maps to BPPID
+	reqCtx := parseRequestContext([]byte(`{"context":{"action":"select","senderId":"sender.example.com","receiverId":"receiver.example.com","message_id":"msg-2","transactionId":"txn-2","timestamp":"2026-06-01T10:00:00Z"}}`))
+	if reqCtx.BAPID != "sender.example.com" {
+		t.Fatalf("expected BAPID sender.example.com from senderId, got %q", reqCtx.BAPID)
+	}
+	if reqCtx.BPPID != "receiver.example.com" {
+		t.Fatalf("expected BPPID receiver.example.com from receiverId, got %q", reqCtx.BPPID)
+	}
+
+	// Legacy bap_id takes precedence over senderId when both present
+	reqCtxPrecedence := parseRequestContext([]byte(`{"context":{"bap_id":"legacy-bap.example.com","senderId":"sender.example.com","bpp_id":"legacy-bpp.example.com","receiverId":"receiver.example.com"}}`))
+	if reqCtxPrecedence.BAPID != "legacy-bap.example.com" {
+		t.Fatalf("expected bap_id to take precedence over senderId, got %q", reqCtxPrecedence.BAPID)
+	}
+	if reqCtxPrecedence.BPPID != "legacy-bpp.example.com" {
+		t.Fatalf("expected bpp_id to take precedence over receiverId, got %q", reqCtxPrecedence.BPPID)
+	}
+}
+
 // --- Config Tests: Bundle Type ---
 
 func TestParsePolicyConfig_BundleType(t *testing.T) {

@@ -717,20 +717,19 @@ func parseRequestContext(body []byte) parsedRequestContext {
 		return parsedRequestContext{}
 	}
 
-	get := func(snakeKey, camelKey string) string {
-		if v, ok := payload.Context[snakeKey].(string); ok && v != "" {
-			return v
-		}
-		if v, ok := payload.Context[camelKey].(string); ok && v != "" {
-			return v
+	get := func(keys ...string) string {
+		for _, key := range keys {
+			if v, ok := payload.Context[key].(string); ok && v != "" {
+				return v
+			}
 		}
 		return ""
 	}
 
 	return parsedRequestContext{
 		NetworkID:     get("network_id", "networkId"),
-		BAPID:         get("bap_id", "bapId"),
-		BPPID:         get("bpp_id", "bppId"),
+		BAPID:         get("bap_id", "bapId", "senderId"),
+		BPPID:         get("bpp_id", "bppId", "receiverId"),
 		MessageID:     get("message_id", "messageId"),
 		TransactionID: get("transaction_id", "transactionId"),
 		Action:        get("action", "action"), // "action" has no camelCase variant

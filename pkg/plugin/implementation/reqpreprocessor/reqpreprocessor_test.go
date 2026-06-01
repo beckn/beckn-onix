@@ -260,8 +260,8 @@ func TestSnakeToCamel(t *testing.T) {
 	}
 }
 
-// TestCamelCaseSubscriberID tests that bapId / bppId are resolved when the payload
-// uses camelCase context attribute names (new beckn spec).
+// TestCamelCaseSubscriberID tests that bapId / bppId / senderId / receiverId are
+// resolved when the payload uses camelCase context attribute names.
 func TestCamelCaseSubscriberID(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -301,6 +301,38 @@ func TestCamelCaseSubscriberID(t *testing.T) {
 			},
 			wantSubID:  "bap-snake.example.com",
 			wantCaller: "bpp-snake.example.com",
+		},
+		// Beckn spec v2: senderId / receiverId
+		{
+			name: "BAP role — senderId resolved as subscriber (spec v2)",
+			role: "bap",
+			contextBody: map[string]interface{}{
+				"senderId":   "sender.example.com",
+				"receiverId": "receiver.example.com",
+			},
+			wantSubID:  "sender.example.com",
+			wantCaller: "receiver.example.com",
+		},
+		{
+			name: "BPP role — receiverId resolved as subscriber (spec v2)",
+			role: "bpp",
+			contextBody: map[string]interface{}{
+				"senderId":   "sender.example.com",
+				"receiverId": "receiver.example.com",
+			},
+			wantSubID:  "receiver.example.com",
+			wantCaller: "sender.example.com",
+		},
+		{
+			name: "camelCase bapId takes precedence over senderId",
+			role: "bap",
+			contextBody: map[string]interface{}{
+				"bapId":    "bap-camel.example.com",
+				"senderId": "sender.example.com",
+				"bppId":    "bpp-camel.example.com",
+			},
+			wantSubID:  "bap-camel.example.com",
+			wantCaller: "bpp-camel.example.com",
 		},
 	}
 

@@ -33,24 +33,28 @@ type Router struct {
 type routingRule struct {
 	Domain     string   `yaml:"domain"`
 	Version    string   `yaml:"version"`
-	TargetType string   `yaml:"targetType"` // "url", "publisher", "bpp", or "bap"
+	TargetType string   `yaml:"targetType"` // "url", "publisher", "bpp"/"receiver", or "bap"/"sender"
 	Target     target   `yaml:"target,omitempty"`
 	Endpoints  []string `yaml:"endpoints"`
 }
 
 // Target contains destination-specific details.
 type target struct {
-	URL         string `yaml:"url,omitempty"`         // URL for "url" or gateway endpoint for "bpp"/"bap"
-	PublisherID string `yaml:"publisherId,omitempty"` // For "msgq" type
-	ExcludeAction bool `yaml:"excludeAction,omitempty"` // For "url" type to exclude appending action to URL path
+	URL           string `yaml:"url,omitempty"`           // URL for "url" or gateway endpoint for "bpp"/"bap"
+	PublisherID   string `yaml:"publisherId,omitempty"`   // For "msgq" type
+	ExcludeAction bool   `yaml:"excludeAction,omitempty"` // For "url" type to exclude appending action to URL path
 }
 
 // TargetType defines possible target destinations.
+// The legacy values "bpp" and "bap" are retained for backward compatibility;
+// new configs should use "receiver" and "sender" respectively.
 const (
 	targetTypeURL       = "url"       // Route to a specific URL
 	targetTypePublisher = "publisher" // Route to a publisher
-	targetTypeBPP       = "bpp"       // Route to a BPP endpoint
-	targetTypeBAP       = "bap"       // Route to a BAP endpoint
+	targetTypeBPP       = "bpp"       // Route to a BPP endpoint (legacy; prefer "receiver")
+	targetTypeBAP       = "bap"       // Route to a BAP endpoint (legacy; prefer "sender")
+	targetTypeReceiver  = "receiver"  // Route to receiver (BPP) endpoint — Beckn spec v2 name
+	targetTypeSender    = "sender"    // Route to sender (BAP) endpoint — Beckn spec v2 name
 )
 
 // New initializes a new Router instance with the provided configuration.
@@ -132,7 +136,7 @@ func (r *Router) loadRules(configPath string) error {
 					TargetType: rule.TargetType,
 					URL:        parsedURL,
 				}
-			case targetTypeBPP, targetTypeBAP:
+			case targetTypeBPP, targetTypeBAP, targetTypeReceiver, targetTypeSender:
 				var parsedURL *url.URL
 				if rule.Target.URL != "" {
 					parsedURL, err = url.Parse(rule.Target.URL)
@@ -185,7 +189,7 @@ func validateRules(rules []routingRule) error {
 			if rule.Target.PublisherID == "" {
 				return fmt.Errorf("invalid rule: publisherID is required for targetType 'publisher'")
 			}
-		case targetTypeBPP, targetTypeBAP:
+		case targetTypeBPP, targetTypeBAP, targetTypeReceiver, targetTypeSender:
 			if rule.Target.URL != "" {
 				if _, err := url.Parse(rule.Target.URL); err != nil {
 					return fmt.Errorf("invalid URL - %s defined in routing config for target type %s: %w", rule.Target.URL, rule.TargetType, err)
@@ -199,15 +203,15 @@ func validateRules(rules []routingRule) error {
 	return nil
 }
 
-// getContextString returns the value for a context field, checking the snake_case
-// key first and falling back to the camelCase key. This supports both the legacy
-// beckn spec (snake_case) and the new camelCase convention transparently.
-func getContextString(ctx map[string]interface{}, snakeKey, camelKey string) string {
-	if v, ok := ctx[snakeKey].(string); ok && v != "" {
-		return v
-	}
-	if v, ok := ctx[camelKey].(string); ok && v != "" {
-		return v
+// getContextString returns the value for a context field, checking each key in
+// order and returning the first non-empty string found. Supports snake_case
+// (legacy), camelCase (Beckn spec v1 preferred), and the new Beckn spec v2
+// camelCase names (e.g. senderUri, receiverUri) transparently.
+func getContextString(ctx map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if v, ok := ctx[key].(string); ok && v != "" {
+			return v
+		}
 	}
 	return ""
 }
@@ -234,8 +238,9 @@ func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*mode
 		return nil, fmt.Errorf("error parsing request body: %w", err)
 	}
 
-	// Parse context as a map solely to resolve URI fields that have both
-	// snake_case (bpp_uri, bap_uri) and camelCase (bppUri, bapUri) variants.
+	// Parse context as a map solely to resolve URI fields. Checks legacy
+	// snake_case (bpp_uri, bap_uri), then camelCase (bppUri, bapUri), then
+	// the new Beckn spec v2 names (receiverUri, senderUri).
 	var uriBody struct {
 		Context map[string]interface{} `json:"context"`
 	}
@@ -245,8 +250,8 @@ func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*mode
 	if uriBody.Context == nil {
 		return nil, fmt.Errorf("context field not found or invalid in request body")
 	}
-	bppURI := getContextString(uriBody.Context, "bpp_uri", "bppUri")
-	bapURI := getContextString(uriBody.Context, "bap_uri", "bapUri")
+	bppURI := getContextString(uriBody.Context, "bpp_uri", "bppUri", "receiverUri")
+	bapURI := getContextString(uriBody.Context, "bap_uri", "bapUri", "senderUri")
 
 	// For v2.x.x, ignore domain and use wildcard; for v1.x.x, use actual domain
 	domain := requestBody.Context.Domain
@@ -279,11 +284,12 @@ func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*mode
 		return nil, fmt.Errorf("endpoint '%s' is not supported for domain %s and version %s in routing config",
 			endpoint, requestBody.Context.Domain, requestBody.Context.Version)
 	}
-	// Handle BPP/BAP routing with request URIs
+	// Handle BPP/BAP routing with request URIs.
+	// Both legacy ("bpp"/"bap") and new spec v2 ("receiver"/"sender") values are accepted.
 	switch route.TargetType {
-	case targetTypeBPP:
+	case targetTypeBPP, targetTypeReceiver:
 		return handleProtocolMapping(route, bppURI, endpoint)
-	case targetTypeBAP:
+	case targetTypeBAP, targetTypeSender:
 		return handleProtocolMapping(route, bapURI, endpoint)
 	}
 	return route, nil
@@ -300,7 +306,7 @@ func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*mode
 //     catalog GET/DELETE requests through a message queue; this is allowed
 //     rather than rejected to avoid unnecessary constraint, but operators
 //     should not configure publisher targets for bodyless endpoints.
-//   - bpp / bap: rejected — the target URI is read from the request body,
+//   - bpp / bap / receiver / sender: rejected — the target URI is read from the request body,
 //     which is absent for bodyless requests.
 func (r *Router) routeBodyless(endpoint string) (*model.Route, error) {
 	v2Rules, ok := r.rules["*"]
@@ -313,7 +319,8 @@ func (r *Router) routeBodyless(endpoint string) (*model.Route, error) {
 		if !ok {
 			continue
 		}
-		if route.TargetType == targetTypeBPP || route.TargetType == targetTypeBAP {
+		if route.TargetType == targetTypeBPP || route.TargetType == targetTypeBAP ||
+			route.TargetType == targetTypeReceiver || route.TargetType == targetTypeSender {
 			return nil, fmt.Errorf("bodyless endpoint '%s' (version %s) is configured with target type '%s': dynamic BAP/BPP URI routing is not supported for bodyless requests", endpoint, version, route.TargetType)
 		}
 		return route, nil

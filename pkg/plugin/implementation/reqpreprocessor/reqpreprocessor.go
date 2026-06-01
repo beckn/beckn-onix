@@ -25,7 +25,7 @@ const contextKey = "context"
 
 // firstNonNil returns the first non-nil value from the provided list.
 // Used to resolve context fields that may appear under different key names
-// (e.g. bap_id or bapId) depending on the beckn spec version in use.
+// (e.g. bap_id, bapId, or senderId) depending on the beckn spec version in use.
 func firstNonNil(values ...any) any {
 	for _, v := range values {
 		if v != nil {
@@ -95,22 +95,23 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				return
 			}
 
-			// Resolve subscriber ID — checks snake_case key first, falls back to camelCase.
+			// Resolve subscriber ID — tries legacy snake_case, then camelCase, then
+			// the new Beckn spec v2 names (senderId / receiverId).
 			var subID any
 			switch cfg.Role {
 			case "bap":
-				subID = firstNonNil(reqContext["bap_id"], reqContext["bapId"])
+				subID = firstNonNil(reqContext["bap_id"], reqContext["bapId"], reqContext["senderId"])
 			case "bpp":
-				subID = firstNonNil(reqContext["bpp_id"], reqContext["bppId"])
+				subID = firstNonNil(reqContext["bpp_id"], reqContext["bppId"], reqContext["receiverId"])
 			}
 
-			// Resolve caller ID — same dual-key pattern, opposite role.
+			// Resolve caller ID — same triple-key pattern, opposite role.
 			var callerID any
 			switch cfg.Role {
 			case "bap":
-				callerID = firstNonNil(reqContext["bpp_id"], reqContext["bppId"])
+				callerID = firstNonNil(reqContext["bpp_id"], reqContext["bppId"], reqContext["receiverId"])
 			case "bpp":
-				callerID = firstNonNil(reqContext["bap_id"], reqContext["bapId"])
+				callerID = firstNonNil(reqContext["bap_id"], reqContext["bapId"], reqContext["senderId"])
 			}
 
 			if subID != nil {

@@ -67,6 +67,10 @@ var sampleBecknInput = []byte(`{
 		"bap_uri": "https://buyer-bap.example.com",
 		"bpp_id": "seller-bpp.example.com",
 		"bpp_uri": "https://seller-bpp.example.com",
+		"senderId": "buyer-bap.example.com",
+		"senderUri": "https://buyer-bap.example.com",
+		"receiverId": "seller-bpp.example.com",
+		"receiverUri": "https://seller-bpp.example.com",
 		"transaction_id": "txn-12345",
 		"message_id": "msg-67890",
 		"timestamp": "2026-03-04T10:00:00Z"
