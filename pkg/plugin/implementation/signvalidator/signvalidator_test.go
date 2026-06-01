@@ -98,6 +98,14 @@ func TestVerifyFailure(t *testing.T) {
 			pubKey: publicKeyBase64,
 		},
 		{
+			name: "Missing Algorithm",
+			body: []byte("Test Payload"),
+			header: `Signature created="` + strconv.FormatInt(time.Now().Unix(), 10) +
+				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) +
+				`", signature="somesig=="`,
+			pubKey: publicKeyBase64,
+		},
+		{
 			name: "Invalid Base64 Signature",
 			body: []byte("Test Payload"),
 			header: `Signature algorithm="ed25519", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
