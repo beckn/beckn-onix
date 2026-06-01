@@ -291,23 +291,23 @@ func metadataFromRegistry(meta *model.RegistryMetadata, skipSig bool) (model.Man
 		return model.ManifestMetadata{}, fmt.Errorf("registry metadata cannot be nil")
 	}
 	result := model.ManifestMetadata{
-		ManifestURL:               meta.RawMeta["manifest_url"],
-		ManifestSignatureURL:      meta.RawMeta["manifest_signature_url"],
-		SigningPublicKeyLookupURL: meta.RawMeta["signing_public_key_lookup_url"],
+		ManifestURL:               meta.RawMeta["manifestUrl"],
+		ManifestSignatureURL:      meta.RawMeta["manifestSignatureUrl"],
+		SigningPublicKeyLookupURL: meta.RawMeta["signingPublicKeyLookupUrl"],
 	}
 	return result, validateMetadata(result, skipSig)
 }
 
 func validateMetadata(metadata model.ManifestMetadata, skipSig bool) error {
 	if strings.TrimSpace(metadata.ManifestURL) == "" {
-		return fmt.Errorf("manifest_url missing in metadata")
+		return fmt.Errorf("manifestUrl missing in metadata")
 	}
 	if !skipSig {
 		if strings.TrimSpace(metadata.ManifestSignatureURL) == "" {
-			return fmt.Errorf("manifest_signature_url missing in metadata")
+			return fmt.Errorf("manifestSignatureUrl missing in metadata")
 		}
 		if strings.TrimSpace(metadata.SigningPublicKeyLookupURL) == "" {
-			return fmt.Errorf("signing_public_key_lookup_url missing in metadata")
+			return fmt.Errorf("signingPublicKeyLookupUrl missing in metadata")
 		}
 	}
 	return nil

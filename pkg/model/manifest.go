@@ -42,10 +42,10 @@ const (
 
 // NetworkManifest is the typed YAML schema for a network-manifest document.
 type NetworkManifest struct {
-	ManifestVersion string                    `yaml:"manifest_version"`
-	ManifestType    string                    `yaml:"manifest_type"`
-	NetworkID       string                    `yaml:"network_id"`
-	ReleaseID       any                       `yaml:"release_id"`
+	ManifestVersion string                    `yaml:"manifestVersion"`
+	ManifestType    string                    `yaml:"manifestType"`
+	NetworkID       string                    `yaml:"networkId"`
+	ReleaseID       any                       `yaml:"releaseId"`
 	Publisher       NetworkManifestPublisher  `yaml:"publisher"`
 	Policies        *NetworkManifestPolicies  `yaml:"policies"`
 	Governance      NetworkManifestGovernance `yaml:"governance"`
@@ -69,25 +69,25 @@ type NetworkManifestPolicies struct {
 type NetworkManifestBundle struct {
 	ID                       string `yaml:"id"`
 	URL                      string `yaml:"url"`
-	PolicyQueryPath          string `yaml:"policy_query_path"`
+	PolicyQueryPath          string `yaml:"policyQueryPath"`
 	Signed                   bool   `yaml:"signed"`
-	SigningPublicKeyLookupURL string `yaml:"signing_public_key_lookup_url"`
+	SigningPublicKeyLookupURL string `yaml:"signingPublicKeyLookupUrl"`
 }
 
 // NetworkManifestFile describes a single Rego policy artifact.
 type NetworkManifestFile struct {
 	ID                       string `yaml:"id"`
 	URL                      string `yaml:"url"`
-	PolicyQueryPath          string `yaml:"policy_query_path"`
+	PolicyQueryPath          string `yaml:"policyQueryPath"`
 	Signed                   bool   `yaml:"signed"`
-	SignatureURL             string `yaml:"signature_url"`
-	SigningPublicKeyLookupURL string `yaml:"signing_public_key_lookup_url"`
+	SignatureURL             string `yaml:"signatureUrl"`
+	SigningPublicKeyLookupURL string `yaml:"signingPublicKeyLookupUrl"`
 }
 
 // NetworkManifestGovernance describes validity and signature metadata.
 type NetworkManifestGovernance struct {
-	EffectiveFrom  string `yaml:"effective_from"`
-	EffectiveUntil string `yaml:"effective_until"`
+	EffectiveFrom  string `yaml:"effectiveFrom"`
+	EffectiveUntil string `yaml:"effectiveUntil"`
 	Signed         *bool  `yaml:"signed"`
 }
 
@@ -106,19 +106,19 @@ func (m *NetworkManifest) Validate(expectedNetworkID string, now time.Time) erro
 		return fmt.Errorf("manifest for network %q cannot be nil", expectedNetworkID)
 	}
 	if strings.TrimSpace(m.ManifestVersion) == "" {
-		return fmt.Errorf("manifest for network %q is missing manifest_version", expectedNetworkID)
+		return fmt.Errorf("manifest for network %q is missing manifestVersion", expectedNetworkID)
 	}
 	if m.ManifestType != NetworkManifestType {
-		return fmt.Errorf("manifest for network %q must have manifest_type=\"network-manifest\"", expectedNetworkID)
+		return fmt.Errorf("manifest for network %q must have manifestType=\"network-manifest\"", expectedNetworkID)
 	}
 	if m.NetworkID == "" {
-		return fmt.Errorf("manifest for network %q is missing network_id", expectedNetworkID)
+		return fmt.Errorf("manifest for network %q is missing networkId", expectedNetworkID)
 	}
 	if m.NetworkID != expectedNetworkID {
-		return fmt.Errorf("manifest network_id %q does not match configured network %q", m.NetworkID, expectedNetworkID)
+		return fmt.Errorf("manifest networkId %q does not match configured network %q", m.NetworkID, expectedNetworkID)
 	}
 	if m.ReleaseID == nil || strings.TrimSpace(fmt.Sprintf("%v", m.ReleaseID)) == "" {
-		return fmt.Errorf("manifest for network %q is missing release_id", expectedNetworkID)
+		return fmt.Errorf("manifest for network %q is missing releaseId", expectedNetworkID)
 	}
 	if strings.TrimSpace(m.Publisher.Role) == "" || strings.TrimSpace(m.Publisher.Domain) == "" {
 		return fmt.Errorf("manifest for network %q must include publisher.role and publisher.domain", expectedNetworkID)
@@ -135,7 +135,7 @@ func (m *NetworkManifest) Validate(expectedNetworkID string, now time.Time) erro
 
 	effectiveFrom, err := time.Parse(time.RFC3339, m.Governance.EffectiveFrom)
 	if err != nil {
-		return fmt.Errorf("manifest for network %q has invalid governance.effective_from: %w", expectedNetworkID, err)
+		return fmt.Errorf("manifest for network %q has invalid governance.effectiveFrom: %w", expectedNetworkID, err)
 	}
 	if now.Before(effectiveFrom) {
 		return fmt.Errorf("manifest for network %q is not active until %s", expectedNetworkID, effectiveFrom.Format(time.RFC3339))
@@ -144,10 +144,10 @@ func (m *NetworkManifest) Validate(expectedNetworkID string, now time.Time) erro
 	if m.Governance.EffectiveUntil != "" {
 		effectiveUntil, err := time.Parse(time.RFC3339, m.Governance.EffectiveUntil)
 		if err != nil {
-			return fmt.Errorf("manifest for network %q has invalid governance.effective_until: %w", expectedNetworkID, err)
+			return fmt.Errorf("manifest for network %q has invalid governance.effectiveUntil: %w", expectedNetworkID, err)
 		}
 		if !effectiveUntil.After(effectiveFrom) {
-			return fmt.Errorf("manifest for network %q must have governance.effective_until later than governance.effective_from", expectedNetworkID)
+			return fmt.Errorf("manifest for network %q must have governance.effectiveUntil later than governance.effectiveFrom", expectedNetworkID)
 		}
 		if now.After(effectiveUntil) {
 			return fmt.Errorf("manifest for network %q expired at %s", expectedNetworkID, effectiveUntil.Format(time.RFC3339))
@@ -168,7 +168,7 @@ func (m *NetworkManifest) Validate(expectedNetworkID string, now time.Time) erro
 			return fmt.Errorf("manifest for network %q is missing required policies.bundle fields", expectedNetworkID)
 		}
 		if m.Policies.Bundle.Signed && strings.TrimSpace(m.Policies.Bundle.SigningPublicKeyLookupURL) == "" {
-			return fmt.Errorf("manifest for network %q requires policies.bundle.signing_public_key_lookup_url when policies.bundle.signed=true", expectedNetworkID)
+			return fmt.Errorf("manifest for network %q requires policies.bundle.signingPublicKeyLookupUrl when policies.bundle.signed=true", expectedNetworkID)
 		}
 	case PolicySourceFile:
 		if m.Policies.File == nil {
@@ -184,10 +184,10 @@ func (m *NetworkManifest) Validate(expectedNetworkID string, now time.Time) erro
 		}
 		if m.Policies.File.Signed {
 			if strings.TrimSpace(m.Policies.File.SignatureURL) == "" {
-				return fmt.Errorf("manifest for network %q requires policies.file.signature_url when policies.file.signed=true", expectedNetworkID)
+				return fmt.Errorf("manifest for network %q requires policies.file.signatureUrl when policies.file.signed=true", expectedNetworkID)
 			}
 			if strings.TrimSpace(m.Policies.File.SigningPublicKeyLookupURL) == "" {
-				return fmt.Errorf("manifest for network %q requires policies.file.signing_public_key_lookup_url when policies.file.signed=true", expectedNetworkID)
+				return fmt.Errorf("manifest for network %q requires policies.file.signingPublicKeyLookupUrl when policies.file.signed=true", expectedNetworkID)
 			}
 		}
 	default:

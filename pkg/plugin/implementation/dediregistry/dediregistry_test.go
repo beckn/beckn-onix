@@ -568,9 +568,9 @@ func TestLookupRegistry(t *testing.T) {
 				"data": map[string]interface{}{
 					"registry_name": "mobility-network",
 					"meta": map[string]interface{}{
-						"manifest_url":                  "https://example.org/manifest.yaml",
-						"manifest_signature_url":        "https://example.org/manifest.yaml.sig",
-						"signing_public_key_lookup_url": "https://example.org/keys/manifest",
+						"manifestUrl":                  "https://example.org/manifest.yaml",
+						"manifestSignatureUrl":        "https://example.org/manifest.yaml.sig",
+						"signingPublicKeyLookupUrl": "https://example.org/keys/manifest",
 					},
 				},
 			}
@@ -597,7 +597,7 @@ func TestLookupRegistry(t *testing.T) {
 		if got.RegistryName != "mobility-network" {
 			t.Fatalf("expected RegistryName %q, got %q", "mobility-network", got.RegistryName)
 		}
-		if got.RawMeta["manifest_url"] != "https://example.org/manifest.yaml" {
+		if got.RawMeta["manifestUrl"] != "https://example.org/manifest.yaml" {
 			t.Fatalf("expected manifest_url metadata to be preserved")
 		}
 	})
@@ -632,7 +632,7 @@ func TestLookupRegistry(t *testing.T) {
 			response := map[string]interface{}{
 				"data": map[string]interface{}{
 					"meta": map[string]interface{}{
-						"manifest_url":   "https://example.org/manifest.yaml",
+						"manifestUrl":   "https://example.org/manifest.yaml",
 						"non_string_key": true,
 					},
 				},
