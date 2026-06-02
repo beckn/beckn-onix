@@ -1,5 +1,7 @@
-// Package config provides loading and verification of beckn constants.
-package config
+// Package beckndefaults loads and verifies the beckn-constants file,
+// providing Beckn-defined config values that are injected into plugin
+// configs at adapter startup.
+package beckndefaults
 
 import (
 	"context"
@@ -24,8 +26,8 @@ var shippedConstantsSig []byte
 var becknPublicKeyPEM []byte
 
 const (
-	remoteConstantsURL    = "https://raw.githubusercontent.com/beckn/beckn-onix/main/pkg/config/beckn-constants.yaml"
-	remoteConstantsSigURL = "https://raw.githubusercontent.com/beckn/beckn-onix/main/pkg/config/beckn-constants.yaml.sig"
+	remoteConstantsURL    = "https://raw.githubusercontent.com/beckn/beckn-onix/main/pkg/beckndefaults/beckn-constants.yaml"
+	remoteConstantsSigURL = "https://raw.githubusercontent.com/beckn/beckn-onix/main/pkg/beckndefaults/beckn-constants.yaml.sig"
 	remoteTimeout         = 10 * time.Second
 )
 
