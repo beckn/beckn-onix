@@ -309,36 +309,8 @@ func applyBecknConstants(ctx context.Context, cfg *Config) error {
 }
 
 func mergeModulePlugins(ctx context.Context, plugins *handler.PluginCfg, bc *beckndefaults.BecknConstants, overrides *BecknConstantsOverrides) error {
-	named := []*plugin.Config{
-		plugins.Registry,
-		plugins.SchemaValidator,
-		plugins.SignValidator,
-		plugins.Signer,
-		plugins.Router,
-		plugins.Cache,
-		plugins.Publisher,
-		plugins.KeyManager,
-		plugins.ManifestLoader,
-		plugins.TransportWrapper,
-		plugins.PayloadStore,
-		plugins.PolicyChecker,
-		plugins.PayloadTransformer,
-	}
-	for _, cfg := range named {
-		if cfg == nil {
-			continue
-		}
+	for _, cfg := range plugins.AllPluginConfigs() {
 		if err := mergePlugin(ctx, cfg, bc, overrides); err != nil {
-			return err
-		}
-	}
-	for i := range plugins.Middleware {
-		if err := mergePlugin(ctx, &plugins.Middleware[i], bc, overrides); err != nil {
-			return err
-		}
-	}
-	for i := range plugins.Steps {
-		if err := mergePlugin(ctx, &plugins.Steps[i], bc, overrides); err != nil {
 			return err
 		}
 	}

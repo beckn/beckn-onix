@@ -57,6 +57,42 @@ type PluginCfg struct {
 	Steps            []plugin.Config
 }
 
+// AllPluginConfigs returns pointers to every configured plugin.Config in this
+// PluginCfg, including Middleware and Steps entries. Callers receive a mutable
+// view of each config map, making this the correct hook for any cross-cutting
+// concern that needs to read or inject config values (e.g. beckn constants).
+// Update this method whenever a new plugin slot is added to PluginCfg.
+func (p *PluginCfg) AllPluginConfigs() []*plugin.Config {
+	named := []*plugin.Config{
+		p.SchemaValidator,
+		p.SignValidator,
+		p.Router,
+		p.Registry,
+		p.Publisher,
+		p.Signer,
+		p.Cache,
+		p.TransportWrapper,
+		p.PolicyChecker,
+		p.PayloadTransformer,
+		p.KeyManager,
+		p.PayloadStore,
+		p.ManifestLoader,
+	}
+	var all []*plugin.Config
+	for _, cfg := range named {
+		if cfg != nil {
+			all = append(all, cfg)
+		}
+	}
+	for i := range p.Steps {
+		all = append(all, &p.Steps[i])
+	}
+	for i := range p.Middleware {
+		all = append(all, &p.Middleware[i])
+	}
+	return all
+}
+
 // PluginEntries returns a flat list of all configured plugins in this PluginCfg.
 // Each named slot contributes one entry; Steps and Middleware contribute one
 // entry per item. Update this method whenever a new plugin slot is added to
