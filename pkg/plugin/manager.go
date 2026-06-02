@@ -100,6 +100,9 @@ func (m *Manager) applyConstants(ctx context.Context, cfg *Config) error {
 	if overridable, ok := m.constants.Overridable[pluginID]; ok {
 		effectiveType := resolveEffectiveType(pluginID, cfg.Config, overridable)
 		for key, canonical := range overridable {
+			// location is only governed when type resolves to "url". This is the only
+			// cross-key dependency in the constants file and is schemav2validator-specific:
+			// when an operator points at a local file (type=file), location is their concern.
 			if pluginID == "schemav2validator" && key == "location" && effectiveType != "url" {
 				continue
 			}
