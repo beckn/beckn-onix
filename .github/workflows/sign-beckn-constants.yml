@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - pkg/config/beckn-constants.yaml
+      - pkg/beckndefaults/beckn-constants.yaml
 
 jobs:
   sign:
@@ -27,14 +27,14 @@ jobs:
           echo "$BECKN_SIGNING_KEY" > /tmp/beckn_private.key
           go run ./tools/sign sign \
             --key /tmp/beckn_private.key \
-            --input pkg/config/beckn-constants.yaml \
-            --output pkg/config/beckn-constants.yaml.sig
+            --input pkg/beckndefaults/beckn-constants.yaml \
+            --output pkg/beckndefaults/beckn-constants.yaml.sig
           rm -f /tmp/beckn_private.key
 
       - name: Commit updated signature
         run: |
           git config user.name "beckn-bot"
           git config user.email "bot@becknprotocol.io"
-          git add pkg/config/beckn-constants.yaml.sig
+          git add pkg/beckndefaults/beckn-constants.yaml.sig
           git diff --cached --quiet || git commit -m "chore: re-sign beckn-constants.yaml [skip ci]"
           git push

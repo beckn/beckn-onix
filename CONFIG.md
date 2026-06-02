@@ -64,7 +64,7 @@ config/
 
 ## Beckn Constants
 
-ONIX ships with a signed `pkg/config/beckn-constants.yaml` file that carries values defined by the Beckn ecosystem. These are loaded, signature-verified, and injected automatically into the relevant plugin configs at startup. Operators do not need to — and should not — set these values in their adapter config files.
+ONIX ships with a signed `pkg/beckndefaults/beckn-constants.yaml` file that carries values defined by the Beckn ecosystem. These are loaded, signature-verified, and injected automatically into the relevant plugin configs at startup. Operators do not need to — and should not — set these values in their adapter config files.
 
 **Locked constants** (cannot be overridden):
 

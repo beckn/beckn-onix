@@ -300,15 +300,15 @@ func applyBecknConstants(ctx context.Context, cfg *Config) error {
 	}
 
 	for i := range cfg.Modules {
-		modName := cfg.Modules[i].Name
-		if err := mergeModulePlugins(ctx, modName, &cfg.Modules[i].Handler.Plugins, bc, overrides); err != nil {
-			return fmt.Errorf("module %q: %w", modName, err)
+		name := cfg.Modules[i].Name
+		if err := mergeModulePlugins(ctx, &cfg.Modules[i].Handler.Plugins, bc, overrides); err != nil {
+			return fmt.Errorf("module %q: %w", name, err)
 		}
 	}
 	return nil
 }
 
-func mergeModulePlugins(ctx context.Context, modName string, plugins *handler.PluginCfg, bc *beckndefaults.BecknConstants, overrides *BecknConstantsOverrides) error {
+func mergeModulePlugins(ctx context.Context, plugins *handler.PluginCfg, bc *beckndefaults.BecknConstants, overrides *BecknConstantsOverrides) error {
 	named := []*plugin.Config{
 		plugins.Registry,
 		plugins.SchemaValidator,

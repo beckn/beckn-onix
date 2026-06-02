@@ -29,11 +29,12 @@ const (
 	remoteConstantsURL    = "https://raw.githubusercontent.com/beckn/beckn-onix/main/pkg/beckndefaults/beckn-constants.yaml"
 	remoteConstantsSigURL = "https://raw.githubusercontent.com/beckn/beckn-onix/main/pkg/beckndefaults/beckn-constants.yaml.sig"
 	remoteTimeout         = 10 * time.Second
+	maxConstantsFileBytes = 64 << 10 // 64 KiB — well above any realistic constants file
 )
 
 // BecknConstants is the parsed representation of beckn-constants.yaml.
 type BecknConstants struct {
-	Version     string                       `yaml:"beckn_constants_version"`
+	Version     string                       `yaml:"becknConstantsVersion"`
 	Locked      map[string]map[string]string `yaml:"locked"`
 	Overridable map[string]map[string]string `yaml:"overridable"`
 }
@@ -90,7 +91,14 @@ func fetchRemote(ctx context.Context) ([]byte, []byte, error) {
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("HTTP %d fetching %s", resp.StatusCode, url)
 		}
-		return io.ReadAll(resp.Body)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxConstantsFileBytes+1))
+		if err != nil {
+			return nil, err
+		}
+		if len(body) > maxConstantsFileBytes {
+			return nil, fmt.Errorf("response from %s exceeds maximum allowed size of %d bytes", url, maxConstantsFileBytes)
+		}
+		return body, nil
 	}
 
 	constants, err := fetch(remoteConstantsURL)

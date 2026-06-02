@@ -1,4 +1,4 @@
-beckn_constants_version: "v1"
+becknConstantsVersion: "v1"
 
 # locked: values that cannot be overridden by operator config under any circumstances.
 locked:
