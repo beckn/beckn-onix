@@ -758,26 +758,21 @@ schemaValidator:
     extendedSchema_allowedDomains: "beckn.org,example.com"
 ```
 
-**Or for local files** (requires a `becknConstantsOverrides` declaration):
+**Or for local files** (set `type` and `location` directly; a WARN is logged at startup):
 
 ```yaml
 schemaValidator:
   id: schemav2validator
   config:
+    type: "file"
+    location: ./validation-scripts/l2-config/mobility_1.1.0_openapi_3.1.yaml
     cacheTTL: "3600"
     extendedSchema_enabled: "false"
-
-becknConstantsOverrides:
-  reason: "Air-gapped deployment — schema loaded from internal mirror"
-  plugins:
-    schemav2validator:
-      type: "file"
-      location: ./validation-scripts/l2-config/mobility_1.1.0_openapi_3.1.yaml
 ```
 
 **Parameters**:
-- `type`: **Injected automatically** from beckn constants (default: `"url"`). Override via `becknConstantsOverrides` to use `"file"` for local specs.
-- `location`: **Injected automatically** from beckn constants when `type` is `"url"`. Set freely when `type` is overridden to `"file"`.
+- `type`: **Injected automatically** from beckn constants (default: `"url"`). Set to `"file"` for local specs; ONIX will log a WARN at startup.
+- `location`: **Injected automatically** from beckn constants when `type` is `"url"`. Set freely when `type` is `"file"`.
 - `cacheTTL`: Cache TTL in seconds before reloading spec (default: `"3600"`)
 - `extendedSchema_enabled`: Enable extended schema validation for `@context` objects (default: `"false"`)
 - `extendedSchema_cacheTTL`: Domain schema cache TTL in seconds (default: `"86400"`)

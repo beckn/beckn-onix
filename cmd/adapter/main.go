@@ -81,8 +81,6 @@ func initConfig(ctx context.Context, path string) (*Config, error) {
 		return nil, fmt.Errorf("could not decode config: %w", err)
 	}
 	log.Debugf(ctx, "Read config: %#v", cfg)
-
-	// Inject and enforce beckn constants before validation.
 	// Validate the configuration.
 	if err := validateConfig(&cfg); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
@@ -268,4 +266,3 @@ func addParentIdCtx(ctx context.Context, config *Config) context.Context {
 	}
 	return ctx
 }
-
