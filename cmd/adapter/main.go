@@ -16,7 +16,6 @@ import (
 
 	"github.com/beckn-one/beckn-onix/core/module"
 	"github.com/beckn-one/beckn-onix/core/module/handler"
-	"github.com/beckn-one/beckn-onix/pkg/beckndefaults"
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
@@ -30,26 +29,12 @@ type ApplicationPlugins struct {
 
 // Config struct holds all configurations.
 type Config struct {
-	AppName                 string                   `yaml:"appName"`
-	Log                     log.Config               `yaml:"log"`
-	Plugins                 ApplicationPlugins       `yaml:"plugins,omitempty"`
-	PluginManager           *plugin.ManagerConfig    `yaml:"pluginManager"`
-	Modules                 []module.Config          `yaml:"modules"`
-	HTTP                    httpConfig               `yaml:"http"`
-	BecknConstants          *BecknConstantsConfig    `yaml:"becknConstants,omitempty"`
-	BecknConstantsOverrides *BecknConstantsOverrides `yaml:"becknConstantsOverrides,omitempty"`
-}
-
-// BecknConstantsConfig controls behaviour of the beckn constants loader.
-type BecknConstantsConfig struct {
-	DisableRemoteRefresh bool `yaml:"disableRemoteRefresh"`
-}
-
-// BecknConstantsOverrides allows an operator to intentionally deviate from
-// overridable beckn constants. A non-empty Reason is required.
-type BecknConstantsOverrides struct {
-	Reason  string                       `yaml:"reason"`
-	Plugins map[string]map[string]string `yaml:"plugins,omitempty"`
+	AppName       string                `yaml:"appName"`
+	Log           log.Config            `yaml:"log"`
+	Plugins       ApplicationPlugins    `yaml:"plugins,omitempty"`
+	PluginManager *plugin.ManagerConfig `yaml:"pluginManager"`
+	Modules       []module.Config       `yaml:"modules"`
+	HTTP          httpConfig            `yaml:"http"`
 }
 
 type httpConfig struct {
@@ -98,10 +83,6 @@ func initConfig(ctx context.Context, path string) (*Config, error) {
 	log.Debugf(ctx, "Read config: %#v", cfg)
 
 	// Inject and enforce beckn constants before validation.
-	if err := applyBecknConstants(ctx, &cfg); err != nil {
-		return nil, fmt.Errorf("beckn constants: %w", err)
-	}
-
 	// Validate the configuration.
 	if err := validateConfig(&cfg); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
@@ -199,6 +180,11 @@ func run(ctx context.Context, configPath string) error {
 		return fmt.Errorf("failed to initialize server: %w", err)
 	}
 
+	// Register beckn_constants_info gauge now that all plugins are initialised.
+	if err := mgr.RegisterBecknConstantsGauge(ctx); err != nil {
+		log.Warnf(ctx, "Failed to register beckn constants gauge: %v", err)
+	}
+
 	// Configure HTTP server.
 	httpServer := &http.Server{
 		Addr:         net.JoinHostPort("", cfg.HTTP.Port),
@@ -283,112 +269,3 @@ func addParentIdCtx(ctx context.Context, config *Config) context.Context {
 	return ctx
 }
 
-// applyBecknConstants loads the verified beckn constants and merges them into
-// every plugin config in cfg. Locked keys that are contradicted by operator
-// config cause a startup failure. Overridable keys that differ from the
-// canonical value require an explicit becknConstantsOverrides declaration.
-func applyBecknConstants(ctx context.Context, cfg *Config) error {
-	disableRefresh := cfg.BecknConstants != nil && cfg.BecknConstants.DisableRemoteRefresh
-	bc, err := beckndefaults.Load(ctx, disableRefresh)
-	if err != nil {
-		return err
-	}
-
-	overrides := cfg.BecknConstantsOverrides
-	if overrides != nil && strings.TrimSpace(overrides.Reason) == "" {
-		return fmt.Errorf("becknConstantsOverrides.reason must not be empty when overrides are declared")
-	}
-
-	for i := range cfg.Modules {
-		name := cfg.Modules[i].Name
-		if err := mergeModulePlugins(ctx, &cfg.Modules[i].Handler.Plugins, bc, overrides); err != nil {
-			return fmt.Errorf("module %q: %w", name, err)
-		}
-	}
-	return nil
-}
-
-func mergeModulePlugins(ctx context.Context, plugins *handler.PluginCfg, bc *beckndefaults.BecknConstants, overrides *BecknConstantsOverrides) error {
-	for _, cfg := range plugins.AllPluginConfigs() {
-		if err := mergePlugin(ctx, cfg, bc, overrides); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func mergePlugin(ctx context.Context, cfg *plugin.Config, bc *beckndefaults.BecknConstants, overrides *BecknConstantsOverrides) error {
-	if cfg == nil || cfg.ID == "" {
-		return nil
-	}
-	if cfg.Config == nil {
-		cfg.Config = make(map[string]string)
-	}
-
-	pluginID := cfg.ID
-
-	// Locked keys: no override permitted, ever.
-	if locked, ok := bc.Locked[pluginID]; ok {
-		for key, canonical := range locked {
-			if userVal, exists := cfg.Config[key]; exists && userVal != canonical {
-				return fmt.Errorf("plugin %q: key %q is a locked beckn constant (value: %q) and cannot be overridden; remove it from your config",
-					pluginID, key, canonical)
-			}
-			cfg.Config[key] = canonical
-		}
-	}
-
-	// Overridable keys: inject if absent, require explicit declaration if different.
-	if overridable, ok := bc.Overridable[pluginID]; ok {
-		pluginOverrides := resolvePluginOverrides(overrides, pluginID)
-
-		for key, canonical := range overridable {
-			// schemav2validator.location is only governed when effective type is "url".
-			if pluginID == "schemav2validator" && key == "location" {
-				if resolveEffectiveType(cfg.Config, overridable, pluginOverrides) != "url" {
-					continue
-				}
-			}
-
-			if overrideVal, declared := pluginOverrides[key]; declared {
-				cfg.Config[key] = overrideVal
-				log.Warnf(ctx, "BecknConstants: constant overridden plugin=%q key=%q canonical=%q override=%q reason=%q",
-					pluginID, key, canonical, overrideVal, overrides.Reason)
-			} else if userVal, exists := cfg.Config[key]; exists && userVal != canonical {
-				return fmt.Errorf("plugin %q: key %q differs from beckn canonical value %q; "+
-					"add a becknConstantsOverrides block with a reason to declare this intentional",
-					pluginID, key, canonical)
-			} else {
-				cfg.Config[key] = canonical
-			}
-		}
-	}
-
-	return nil
-}
-
-// resolveEffectiveType returns the active value of schemav2validator.type,
-// giving priority to declared overrides, then user config, then the overridable default.
-func resolveEffectiveType(userConfig, overridable, pluginOverrides map[string]string) string {
-	if t, ok := pluginOverrides["type"]; ok {
-		return t
-	}
-	if t, ok := userConfig["type"]; ok {
-		return t
-	}
-	if t, ok := overridable["type"]; ok {
-		return t
-	}
-	return "url"
-}
-
-// resolvePluginOverrides returns the per-plugin override map, or an empty map if none declared.
-func resolvePluginOverrides(overrides *BecknConstantsOverrides, pluginID string) map[string]string {
-	if overrides == nil || overrides.Plugins == nil {
-		return map[string]string{}
-	}
-	if m, ok := overrides.Plugins[pluginID]; ok {
-		return m
-	}
-	return map[string]string{}
-}

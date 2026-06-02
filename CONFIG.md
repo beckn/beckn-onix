@@ -64,67 +64,39 @@ config/
 
 ## Beckn Constants
 
-ONIX ships with a signed `pkg/beckndefaults/beckn-constants.yaml` file that carries values defined by the Beckn ecosystem. These are loaded, signature-verified, and injected automatically into the relevant plugin configs at startup. Operators do not need to — and should not — set these values in their adapter config files.
+ONIX ships with a signed `pkg/beckndefaults/beckn-constants.yaml` file carrying values defined by the Beckn ecosystem. The plugin manager loads, signature-verifies, and injects these automatically at plugin creation time. Operators do not need to — and should not — set these values in their adapter config files.
 
-**Locked constants** (cannot be overridden):
+**Locked constants** — startup fails if user config contradicts:
 
 | Plugin | Key |
 |---|---|
 | `dediregistry` | `url` |
 
-**Overridable constants** (injected by default; may be overridden with an explicit declaration):
+**Overridable constants** — injected automatically; if user sets a different value it is accepted and logged at WARN:
 
-| Plugin | Key | Default value |
+| Plugin | Key | Default |
 |---|---|---|
 | `schemav2validator` | `type` | `url` |
 | `schemav2validator` | `location` | Beckn Protocol v2.0.0-lts spec URL |
 
-When `schemav2validator.type` is overridden to `file`, the `location` key is no longer governed by the constants file and may be set freely to a local file path.
+When `schemav2validator.type` is set to `file`, `location` is no longer governed and may point freely to a local file path.
 
-### `becknConstants`
+### `pluginManager.becknConstants`
 
-**Type**: `object`
-**Required**: No
+**Type**: `object`  **Required**: No
 
-Optional configuration for the beckn constants loader.
+Controls the constants loader inside the plugin manager.
 
 ```yaml
-becknConstants:
-  disableRemoteRefresh: true
+pluginManager:
+  root: ./plugins
+  becknConstants:
+    disableRemoteRefresh: true
 ```
 
 #### `disableRemoteRefresh`
-**Type**: `boolean`
-**Default**: `false`
-**Description**: Set to `true` to skip the remote refresh attempt and use only the shipped baseline constants file. Use this for air-gapped deployments that cannot reach GitHub.
-
----
-
-### `becknConstantsOverrides`
-
-**Type**: `object`
-**Required**: No
-
-Declares intentional deviations from overridable beckn constants. A non-empty `reason` is mandatory — startup fails without it. Every active override is logged at WARN level.
-
-```yaml
-becknConstantsOverrides:
-  reason: "Air-gapped deployment — schema loaded from internal mirror"
-  plugins:
-    schemav2validator:
-      type: "file"
-      location: "/app/schemas/beckn.yaml"
-```
-
-#### `reason`
-**Type**: `string`
-**Required**: Yes (when this block is present)
-**Description**: Human-readable explanation for why the override is necessary. Appears in startup logs for audit purposes.
-
-#### `plugins`
-**Type**: `map[pluginID → map[key → value]]`
-**Required**: No
-**Description**: Per-plugin key overrides. Only keys listed under `overridable` in `beckn-constants.yaml` may appear here. Attempting to override a `locked` key causes a startup failure regardless of this block.
+**Type**: `boolean`  **Default**: `false`  
+**Description**: Skip the remote refresh and use only the shipped baseline file. Use for air-gapped deployments.
 
 ---
 
@@ -418,6 +390,9 @@ Metrics are organized by module for better maintainability and encapsulation:
 
 #### Plugin Metrics (from `telemetry` package)
 - `onix_plugin_execution_duration_seconds`, `onix_plugin_errors_total`
+
+#### Beckn Constants Info (from `telemetry` package)
+- `beckn_constants_info` – Observable gauge (value always `1`) emitted once at startup, **only for plugins running with a non-canonical beckn constant value**. Each deviation becomes its own time series. Labels: `plugin_id`, `key`, `canonical`, `actual`. Nodes running all canonical values emit no series for this gauge — their absence is the signal. Enables Network Facilitator Organisations to identify nodes deviating from Beckn-defined defaults.
 
 #### Node Plugin Info (from `telemetry` package)
 - `onix_plugin_info` – Observable gauge (value always `1`) emitted once per loaded plugin per module at startup. Each loaded plugin becomes its own time series. Labels: `module`, `plugin_type`, `plugin_id`, and `subscriber_id` (only present when `subscriberId` is set in the handler config — omitted otherwise). Covers all plugin slots (`schema_validator`, `sign_validator`, `router`, `registry`, `publisher`, `signer`, `cache`, `transport_wrapper`, `policy_checker`, `key_manager`) and one series per `step` and `middleware` entry. Absent/unconfigured slots emit no series. Enables Network Orchestrators to verify plugin composition across ONIX nodes, including detection of custom or non-standard plugins. **Note:** the `subscriber_id` column in Grafana will be blank unless `subscriberId` is configured in each module's handler config.

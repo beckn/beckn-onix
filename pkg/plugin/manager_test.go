@@ -12,8 +12,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/beckn-one/beckn-onix/pkg/beckndefaults"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/telemetry"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type mockPlugin struct {
@@ -2492,4 +2496,130 @@ func TestMiddlewareFailure(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- Beckn constants: helpers ---
+
+func makeManager(locked, overridable map[string]map[string]string) *Manager {
+	return &Manager{
+		constants: &beckndefaults.BecknConstants{
+			Version:     "v1",
+			Locked:      locked,
+			Overridable: overridable,
+		},
+		overridesByKey: make(map[string]telemetry.ConstantsOverride),
+	}
+}
+
+func cfg(id string, kv map[string]string) *Config {
+	return &Config{ID: id, Config: kv}
+}
+
+// --- locked keys ---
+
+func TestApplyConstants_LockedKey_InjectedWhenAbsent(t *testing.T) {
+	m := makeManager(map[string]map[string]string{"dediregistry": {"url": "https://locked.example.com"}}, nil)
+	c := cfg("dediregistry", map[string]string{})
+	require.NoError(t, m.applyConstants(context.Background(), c))
+	assert.Equal(t, "https://locked.example.com", c.Config["url"])
+}
+
+func TestApplyConstants_LockedKey_SameValue_NoError(t *testing.T) {
+	m := makeManager(map[string]map[string]string{"dediregistry": {"url": "https://locked.example.com"}}, nil)
+	c := cfg("dediregistry", map[string]string{"url": "https://locked.example.com"})
+	require.NoError(t, m.applyConstants(context.Background(), c))
+}
+
+func TestApplyConstants_LockedKey_ConflictingValue_Fails(t *testing.T) {
+	m := makeManager(map[string]map[string]string{"dediregistry": {"url": "https://locked.example.com"}}, nil)
+	c := cfg("dediregistry", map[string]string{"url": "https://other.example.com"})
+	err := m.applyConstants(context.Background(), c)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "locked beckn constant")
+}
+
+// --- overridable keys ---
+
+func TestApplyConstants_OverridableKey_InjectedWhenAbsent(t *testing.T) {
+	m := makeManager(nil, map[string]map[string]string{
+		"schemav2validator": {"type": "url", "location": "https://spec.example.com"},
+	})
+	c := cfg("schemav2validator", map[string]string{})
+	require.NoError(t, m.applyConstants(context.Background(), c))
+	assert.Equal(t, "url", c.Config["type"])
+	assert.Equal(t, "https://spec.example.com", c.Config["location"])
+}
+
+func TestApplyConstants_OverridableKey_UserValueAcceptedWithWarn(t *testing.T) {
+	m := makeManager(nil, map[string]map[string]string{
+		"schemav2validator": {"type": "url", "location": "https://spec.example.com"},
+	})
+	c := cfg("schemav2validator", map[string]string{"type": "url", "location": "https://mirror.example.com"})
+	require.NoError(t, m.applyConstants(context.Background(), c))
+	assert.Equal(t, "https://mirror.example.com", c.Config["location"])
+	assert.Len(t, m.overridesByKey, 1)
+	assert.Equal(t, "https://mirror.example.com", m.overridesByKey["schemav2validator:location"].Actual)
+}
+
+// --- location conditional on type ---
+
+func TestApplyConstants_Location_NotInjected_WhenTypeIsFile(t *testing.T) {
+	m := makeManager(nil, map[string]map[string]string{
+		"schemav2validator": {"type": "url", "location": "https://spec.example.com"},
+	})
+	c := cfg("schemav2validator", map[string]string{"type": "file"})
+	require.NoError(t, m.applyConstants(context.Background(), c))
+	assert.Equal(t, "file", c.Config["type"])
+	assert.Empty(t, c.Config["location"], "location must not be injected when type is file")
+}
+
+func TestApplyConstants_Location_NotGoverned_WhenUserSetTypeFile(t *testing.T) {
+	m := makeManager(nil, map[string]map[string]string{
+		"schemav2validator": {"type": "url", "location": "https://spec.example.com"},
+	})
+	c := cfg("schemav2validator", map[string]string{"type": "file", "location": "/app/schema.yaml"})
+	require.NoError(t, m.applyConstants(context.Background(), c))
+	assert.Equal(t, "/app/schema.yaml", c.Config["location"])
+	assert.NotContains(t, m.overridesByKey, "schemav2validator:location",
+		"location must not be recorded as an override when type is file")
+}
+
+// --- unknown plugin ---
+
+func TestApplyConstants_UnknownPlugin_NoChange(t *testing.T) {
+	m := makeManager(map[string]map[string]string{"dediregistry": {"url": "https://x.com"}}, nil)
+	c := cfg("cache", map[string]string{"addr": "redis:6379"})
+	require.NoError(t, m.applyConstants(context.Background(), c))
+	assert.Equal(t, map[string]string{"addr": "redis:6379"}, c.Config)
+}
+
+// --- nil constants ---
+
+func TestApplyConstants_NilConstants_NoOp(t *testing.T) {
+	m := &Manager{overridesByKey: map[string]telemetry.ConstantsOverride{}}
+	c := cfg("schemav2validator", map[string]string{})
+	require.NoError(t, m.applyConstants(context.Background(), c))
+	assert.Empty(t, c.Config)
+}
+
+// --- resolveEffectiveType ---
+
+func TestResolveEffectiveType_UserConfigWins(t *testing.T) {
+	assert.Equal(t, "file", resolveEffectiveType("schemav2validator",
+		map[string]string{"type": "file"}, map[string]string{"type": "url"}))
+}
+
+func TestResolveEffectiveType_OverridableDefault(t *testing.T) {
+	assert.Equal(t, "url", resolveEffectiveType("schemav2validator",
+		map[string]string{}, map[string]string{"type": "url"}))
+}
+
+func TestResolveEffectiveType_FallbackToURL(t *testing.T) {
+	assert.Equal(t, "url", resolveEffectiveType("schemav2validator",
+		map[string]string{}, map[string]string{}))
+}
+
+func TestResolveEffectiveType_NonSchemaPlugin_Empty(t *testing.T) {
+	assert.Equal(t, "", resolveEffectiveType("dediregistry",
+		map[string]string{"type": "url"}, map[string]string{}))
 }
