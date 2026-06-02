@@ -62,6 +62,72 @@ config/
 
 ---
 
+## Beckn Constants
+
+ONIX ships with a signed `pkg/config/beckn-constants.yaml` file that carries values defined by the Beckn ecosystem. These are loaded, signature-verified, and injected automatically into the relevant plugin configs at startup. Operators do not need to — and should not — set these values in their adapter config files.
+
+**Locked constants** (cannot be overridden):
+
+| Plugin | Key |
+|---|---|
+| `dediregistry` | `url` |
+
+**Overridable constants** (injected by default; may be overridden with an explicit declaration):
+
+| Plugin | Key | Default value |
+|---|---|---|
+| `schemav2validator` | `type` | `url` |
+| `schemav2validator` | `location` | Beckn Protocol v2.0.0-lts spec URL |
+
+When `schemav2validator.type` is overridden to `file`, the `location` key is no longer governed by the constants file and may be set freely to a local file path.
+
+### `becknConstants`
+
+**Type**: `object`
+**Required**: No
+
+Optional configuration for the beckn constants loader.
+
+```yaml
+becknConstants:
+  disableRemoteRefresh: true
+```
+
+#### `disableRemoteRefresh`
+**Type**: `boolean`
+**Default**: `false`
+**Description**: Set to `true` to skip the remote refresh attempt and use only the shipped baseline constants file. Use this for air-gapped deployments that cannot reach GitHub.
+
+---
+
+### `becknConstantsOverrides`
+
+**Type**: `object`
+**Required**: No
+
+Declares intentional deviations from overridable beckn constants. A non-empty `reason` is mandatory — startup fails without it. Every active override is logged at WARN level.
+
+```yaml
+becknConstantsOverrides:
+  reason: "Air-gapped deployment — schema loaded from internal mirror"
+  plugins:
+    schemav2validator:
+      type: "file"
+      location: "/app/schemas/beckn.yaml"
+```
+
+#### `reason`
+**Type**: `string`
+**Required**: Yes (when this block is present)
+**Description**: Human-readable explanation for why the override is necessary. Appears in startup logs for audit purposes.
+
+#### `plugins`
+**Type**: `map[pluginID → map[key → value]]`
+**Required**: No
+**Description**: Per-plugin key overrides. Only keys listed under `overridable` in `beckn-constants.yaml` may appear here. Attempting to override a `locked` key causes a startup failure regardless of this block.
+
+---
+
 ## Configuration File Structure
 
 ### Main Configuration File (adapter.yaml)
@@ -709,8 +775,6 @@ schemaValidator:
 schemaValidator:
   id: schemav2validator
   config:
-    type: url
-    location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/tags/core-v2.0.0-lts/api/v2.0.0/beckn.yaml
     cacheTTL: "3600"
     extendedSchema_enabled: "true"
     extendedSchema_cacheTTL: "86400"
@@ -719,21 +783,26 @@ schemaValidator:
     extendedSchema_allowedDomains: "beckn.org,example.com"
 ```
 
-**Or for local files:**
+**Or for local files** (requires a `becknConstantsOverrides` declaration):
 
 ```yaml
 schemaValidator:
   id: schemav2validator
   config:
-    type: file
-    location: ./validation-scripts/l2-config/mobility_1.1.0_openapi_3.1.yaml
     cacheTTL: "3600"
     extendedSchema_enabled: "false"
+
+becknConstantsOverrides:
+  reason: "Air-gapped deployment — schema loaded from internal mirror"
+  plugins:
+    schemav2validator:
+      type: "file"
+      location: ./validation-scripts/l2-config/mobility_1.1.0_openapi_3.1.yaml
 ```
 
 **Parameters**:
-- `type`: Source type - `"url"` for remote specs, `"file"` for local files
-- `location`: URL or file path to OpenAPI 3.1 specification
+- `type`: **Injected automatically** from beckn constants (default: `"url"`). Override via `becknConstantsOverrides` to use `"file"` for local specs.
+- `location`: **Injected automatically** from beckn constants when `type` is `"url"`. Set freely when `type` is overridden to `"file"`.
 - `cacheTTL`: Cache TTL in seconds before reloading spec (default: `"3600"`)
 - `extendedSchema_enabled`: Enable extended schema validation for `@context` objects (default: `"false"`)
 - `extendedSchema_cacheTTL`: Domain schema cache TTL in seconds (default: `"86400"`)

@@ -1,13 +1,11 @@
-appName: "onix-local"
+appName: "onix-generic-bap"
 log:
   level: debug
   destinations:
     - type: stdout
   contextKeys:
-    - transaction_id
-    - message_id
-    - subscriber_id
-    - module_id
+    - transactionId
+    - messageId
 http:
   port: 8081
   timeout:
@@ -22,10 +20,10 @@ plugins:
   otelsetup:
     id: otelsetup
     config:
-      serviceName: "beckn-one-bap"
+      serviceName: "onix-bap"
       serviceVersion: "1.0.0"
       environment: "development"
-      domain: "ev_charging"
+      domain: "generic"
       otlpEndpoint: "otel-collector-bap:4317"
       enableMetrics: "true"
       networkMetricsGranularity: "2min"
@@ -33,15 +31,19 @@ plugins:
       enableTracing: "true"
       enableLogs: "true"
       timeInterval: "5"
-      auditFieldsConfig: "/app/config/audit-fields.yaml" # this can be git url
-      cacheTTL: "3600"
+      auditFieldsConfig: "/app/config/audit-fields.yaml"
 
 modules:
+  # ─────────────────────────────────────────────────────────────────
+  # BAP Receiver  — accepts on_* callbacks from BPPs
+  # Listens at:  http://localhost:8081/bap/receiver/
+  # ─────────────────────────────────────────────────────────────────
   - name: bapTxnReceiver
     path: /bap/receiver/
     handler:
       type: std
       role: bap
+      subscriberId: bap.example.com
       httpClientConfig:
         maxIdleConns: 1000
         maxIdleConnsPerHost: 200
@@ -51,6 +53,8 @@ modules:
         registry:
           id: dediregistry
           config:
+            # registryName is a constant for all NFH/Beckn networks
+            registryName: subscribers.beckn.one
             timeout: 10
             retry_max: 3
             retry_wait_min: 100ms
@@ -58,7 +62,9 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            subscriberId: bap.example.com
+            # Testnet sandbox subscriber registered on beckn.one/testnet
+            # Replace with your own registered subscriber ID and keys for production
+            networkParticipant: bap.example.com
             keyId: 76EU7LZ7gfqj13dWDKR1Uitnim11mCoxWBPdzLxUpAMBPVdANKgyFM
             signingPrivateKey: TTQMAEy0xJcoRXRNofZAwZq1c3VH6j98UUaHP7budQQ=
             signingPublicKey: g/3swjI93IhZ0SScrVZapeLjU+W0AeiSid3LViYZJFo=
@@ -68,15 +74,6 @@ modules:
           id: cache
           config:
             addr: redis:6379
-        payloadStore:
-          id: payloadstore
-          config:
-            ttl: "24h"
-            indexTTL: "25h"
-            maxBodyBytes: "1048576"
-            storeBody: "true"
-            storeSignature: "true"
-            compress: "true"
         schemaValidator:
           id: schemav2validator
           config:
@@ -85,38 +82,34 @@ modules:
             extendedSchema_cacheTTL: "86400"
             extendedSchema_maxCacheSize: "100"
             extendedSchema_downloadTimeout: "30"
-            extendedSchema_allowedDomains: "beckn.org,example.com,raw.githubusercontent.com"
+            extendedSchema_allowedDomains: "raw.githubusercontent.com,schema.beckn.io"
         signValidator:
           id: signvalidator
-        signer:
-          id: signer
         router:
           id: router
           config:
-            routingConfig: ./config/local-beckn-one-routing-BAPReceiver.yaml
-        checkPolicy:
-          id: opapolicychecker
-          config:
-            networkPolicyConfig: ./config/opa-network-policies.yaml
-            refreshInterval: "5m"
+            routingConfig: ./config/generic-routing-BAPReceiver.yaml
         middleware:
           - id: reqpreprocessor
             config:
-              contextKeys: transaction_id,message_id
+              contextKeys: transactionId,messageId
               role: bap
       steps:
         - validateSign
-        - checkPolicy
-        - validateSchema
         - addRoute
-        - storePayload
-        - signAck
-  
+        - validateSchema
+
+  # ─────────────────────────────────────────────────────────────────
+  # BAP Caller  — forwards outbound BAP requests to BPPs / CDS
+  # Listens at:  http://localhost:8081/bap/caller/
+  # Postman bap_adapter_url = http://localhost:8081/bap/caller
+  # ─────────────────────────────────────────────────────────────────
   - name: bapTxnCaller
     path: /bap/caller/
     handler:
       type: std
       role: bap
+      subscriberId: bap.example.com
       httpClientConfig:
         maxIdleConns: 1000
         maxIdleConnsPerHost: 200
@@ -126,6 +119,8 @@ modules:
         registry:
           id: dediregistry
           config:
+            # registryName is a constant for all NFH/Beckn networks
+            registryName: subscribers.beckn.one
             timeout: 10
             retry_max: 3
             retry_wait_min: 100ms
@@ -133,7 +128,7 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            subscriberId: bap.example.com
+            networkParticipant: bap.example.com
             keyId: 76EU7LZ7gfqj13dWDKR1Uitnim11mCoxWBPdzLxUpAMBPVdANKgyFM
             signingPrivateKey: TTQMAEy0xJcoRXRNofZAwZq1c3VH6j98UUaHP7budQQ=
             signingPublicKey: g/3swjI93IhZ0SScrVZapeLjU+W0AeiSid3LViYZJFo=
@@ -143,15 +138,6 @@ modules:
           id: cache
           config:
             addr: redis:6379
-        payloadStore:
-          id: payloadstore
-          config:
-            ttl: "24h"
-            indexTTL: "25h"
-            maxBodyBytes: "1048576"
-            storeBody: "true"
-            storeSignature: "true"
-            compress: "true"
         schemaValidator:
           id: schemav2validator
           config:
@@ -160,28 +146,19 @@ modules:
             extendedSchema_cacheTTL: "86400"
             extendedSchema_maxCacheSize: "100"
             extendedSchema_downloadTimeout: "30"
-            extendedSchema_allowedDomains: "beckn.org,example.com,raw.githubusercontent.com"
+            extendedSchema_allowedDomains: "raw.githubusercontent.com,schema.beckn.io"
         router:
           id: router
           config:
-            routingConfig: ./config/local-beckn-one-routing-BAPCaller.yaml
+            routingConfig: ./config/generic-routing-BAPCaller.yaml
         signer:
           id: signer
         middleware:
           - id: reqpreprocessor
             config:
-              contextKeys: transaction_id,message_id
+              contextKeys: transactionId,messageId
               role: bap
-        checkPolicy:
-          id: opapolicychecker
-          config:
-            networkPolicyConfig: ./config/opa-network-policies.yaml
-            refreshInterval: "5m"
       steps:
-        - checkPolicy
         - addRoute
         - sign
         - validateSchema
-        - storePayload
-        - validateAckSign
-  

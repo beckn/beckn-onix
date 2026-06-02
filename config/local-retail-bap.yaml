@@ -9,37 +9,38 @@ log:
     - subscriber_id
     - module_id
 http:
-  port: 8082
+  port: 8081
   timeout:
     read: 30
     write: 30
     idle: 30
 pluginManager:
   root: ./plugins
-# OpenTelemetry (OTLP) - metrics and traces sent to OTEL collector, then to Loki/backend
+
+# OpenTelemetry (OTLP) - metrics and traces sent to OTEL collector
 plugins:
   otelsetup:
     id: otelsetup
     config:
-      serviceName: "beckn-one-bpp"
+      serviceName: "beckn-one-bap"
       serviceVersion: "1.0.0"
       environment: "development"
       domain: "ev_charging"
-      otlpEndpoint: "otel-collector-bpp:4317"
+      otlpEndpoint: "otel-collector-bap:4317"
       enableMetrics: "true"
       networkMetricsGranularity: "2min"
       networkMetricsFrequency: "4min"
       enableTracing: "true"
       enableLogs: "true"
       timeInterval: "5"
-      auditFieldsConfig: "/app/config/audit-fields.yaml" # this can be git url
-      cacheTTL: "3600"
+      auditFieldsConfig: "/app/config/audit-fields.yaml"
+
 modules:
-  - name: bppTxnReceiver
-    path: /bpp/receiver/
+  - name: bapTxnReceiver
+    path: /bap/receiver/
     handler:
       type: std
-      role: bpp
+      role: bap
       httpClientConfig:
         maxIdleConns: 1000
         maxIdleConnsPerHost: 200
@@ -49,6 +50,7 @@ modules:
         registry:
           id: dediregistry
           config:
+            registryName: subscribers.beckn.one # This is the wildcard string used to lookup across registries in Beckn One. Do not change this.
             timeout: 10
             retry_max: 3
             retry_wait_min: 100ms
@@ -56,65 +58,46 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            subscriberId: bpp.example.com
-            keyId: 76EU7ofwRCF1aobQkShARrf1PAUsNpHqWUJoynPu9w45YFKmzqaPmy
-            signingPrivateKey: 393fVJJsfqssJCRAjedKR2cKAjSLrjU3t+bICQ5KzYM=
-            signingPublicKey: CqVy97DW45bcZPPrWIYGe2ldl9C93NFeVciiAEYsvR0=
-            encrPrivateKey: 393fVJJsfqssJCRAjedKR2cKAjSLrjU3t+bICQ5KzYM=
-            encrPublicKey: CqVy97DW45bcZPPrWIYGe2ldl9C93NFeVciiAEYsvR0=
+            networkParticipant: sandbox.food-finder.com
+            keyId: 76EU7VwahYv4XztXJzji9ssiSV74eWXWBcCKGn7jAdm5VGLCdYAJ8j
+            signingPrivateKey: rrNtVgyASCGlo+ebsJaA37D5CZYZVfT0JA5/vlkTeV0=
+            signingPublicKey: oFIk7KqCqvqRYkLMjQqiaKM5oOozkYT64bfLuc8p/SU=
+            encrPrivateKey: rrNtVgyASCGlo+ebsJaA37D5CZYZVfT0JA5/vlkTeV0=
+            encrPublicKey: oFIk7KqCqvqRYkLMjQqiaKM5oOozkYT64bfLuc8p/SU=
         cache:
           id: cache
           config:
             addr: redis:6379
-        payloadStore:
-          id: payloadstore
-          config:
-            ttl: "24h"
-            indexTTL: "25h"
-            maxBodyBytes: "1048576"
-            storeBody: "true"
-            storeSignature: "true"
-            compress: "true"
         schemaValidator:
           id: schemav2validator
           config:
             cacheTTL: "3600"
-            extendedSchema_enabled: "true"
+            extendedSchema_enabled: "false"
             extendedSchema_cacheTTL: "86400"
             extendedSchema_maxCacheSize: "100"
             extendedSchema_downloadTimeout: "30"
-            extendedSchema_allowedDomains: "beckn.org,example.com,  raw.githubusercontent.com"
+            extendedSchema_allowedDomains: "beckn.org,example.com,raw.githubusercontent.com"
         signValidator:
           id: signvalidator
-        signer:
-          id: signer
         router:
           id: router
           config:
-            routingConfig: ./config/local-beckn-one-routing-BPPReceiver.yaml
-        checkPolicy:
-          id: opapolicychecker
-          config:
-            networkPolicyConfig: ./config/opa-network-policies.yaml
-            refreshInterval: "5m"
+            routingConfig: ./config/local-beckn-one-routing-BAPReceiver.yaml
         middleware:
           - id: reqpreprocessor
             config:
               contextKeys: transaction_id,message_id
-              role: bpp
+              role: bap
       steps:
         - validateSign
-        - checkPolicy
-        - validateSchema
         - addRoute
-        - storePayload
-        - signAck
+        - validateSchema
   
-  - name: bppTxnCaller
-    path: /bpp/caller/
+  - name: bapTxnCaller
+    path: /bap/caller/
     handler:
       type: std
-      role: bpp
+      role: bap
       httpClientConfig:
         maxIdleConns: 1000
         maxIdleConnsPerHost: 200
@@ -124,6 +107,7 @@ modules:
         registry:
           id: dediregistry
           config:
+            registryName: subscribers.beckn.one # This is the wildcard string used to lookup across registries in Beckn One. Do not change this.
             timeout: 10
             retry_max: 3
             retry_wait_min: 100ms
@@ -131,30 +115,21 @@ modules:
         keyManager:
           id: simplekeymanager
           config:
-            subscriberId: bpp.example.com
-            keyId: 76EU7ofwRCF1aobQkShARrf1PAUsNpHqWUJoynPu9w45YFKmzqaPmy
-            signingPrivateKey: 393fVJJsfqssJCRAjedKR2cKAjSLrjU3t+bICQ5KzYM=
-            signingPublicKey: CqVy97DW45bcZPPrWIYGe2ldl9C93NFeVciiAEYsvR0=
-            encrPrivateKey: 393fVJJsfqssJCRAjedKR2cKAjSLrjU3t+bICQ5KzYM=
-            encrPublicKey: CqVy97DW45bcZPPrWIYGe2ldl9C93NFeVciiAEYsvR0=
+            networkParticipant: sandbox.food-finder.com
+            keyId: 76EU7VwahYv4XztXJzji9ssiSV74eWXWBcCKGn7jAdm5VGLCdYAJ8j
+            signingPrivateKey: rrNtVgyASCGlo+ebsJaA37D5CZYZVfT0JA5/vlkTeV0=
+            signingPublicKey: oFIk7KqCqvqRYkLMjQqiaKM5oOozkYT64bfLuc8p/SU=
+            encrPrivateKey: rrNtVgyASCGlo+ebsJaA37D5CZYZVfT0JA5/vlkTeV0=
+            encrPublicKey: oFIk7KqCqvqRYkLMjQqiaKM5oOozkYT64bfLuc8p/SU=
         cache:
           id: cache
           config:
             addr: redis:6379
-        payloadStore:
-          id: payloadstore
-          config:
-            ttl: "24h"
-            indexTTL: "25h"
-            maxBodyBytes: "1048576"
-            storeBody: "true"
-            storeSignature: "true"
-            compress: "true"
         schemaValidator:
           id: schemav2validator
           config:
             cacheTTL: "3600"
-            extendedSchema_enabled: "true"
+            extendedSchema_enabled: "false"
             extendedSchema_cacheTTL: "86400"
             extendedSchema_maxCacheSize: "100"
             extendedSchema_downloadTimeout: "30"
@@ -162,23 +137,16 @@ modules:
         router:
           id: router
           config:
-            routingConfig: ./config/local-beckn-one-routing-BPPCaller.yaml
+            routingConfig: ./config/local-beckn-one-routing-BAPCaller.yaml
         signer:
           id: signer
         middleware:
           - id: reqpreprocessor
             config:
               contextKeys: transaction_id,message_id
-              role: bpp
-        checkPolicy:
-          id: opapolicychecker
-          config:
-            networkPolicyConfig: ./config/opa-network-policies.yaml
-            refreshInterval: "5m"
+              role: bap
       steps:
-        - checkPolicy
         - addRoute
         - sign
         - validateSchema
-        - storePayload
-        - validateAckSign
+  

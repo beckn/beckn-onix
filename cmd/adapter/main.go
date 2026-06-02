@@ -29,12 +29,26 @@ type ApplicationPlugins struct {
 
 // Config struct holds all configurations.
 type Config struct {
-	AppName       string                `yaml:"appName"`
-	Log           log.Config            `yaml:"log"`
-	Plugins       ApplicationPlugins    `yaml:"plugins,omitempty"`
-	PluginManager *plugin.ManagerConfig `yaml:"pluginManager"`
-	Modules       []module.Config       `yaml:"modules"`
-	HTTP          httpConfig            `yaml:"http"`
+	AppName                 string                   `yaml:"appName"`
+	Log                     log.Config               `yaml:"log"`
+	Plugins                 ApplicationPlugins       `yaml:"plugins,omitempty"`
+	PluginManager           *plugin.ManagerConfig    `yaml:"pluginManager"`
+	Modules                 []module.Config          `yaml:"modules"`
+	HTTP                    httpConfig               `yaml:"http"`
+	BecknConstants          *BecknConstantsConfig    `yaml:"becknConstants,omitempty"`
+	BecknConstantsOverrides *BecknConstantsOverrides `yaml:"becknConstantsOverrides,omitempty"`
+}
+
+// BecknConstantsConfig controls behaviour of the beckn constants loader.
+type BecknConstantsConfig struct {
+	DisableRemoteRefresh bool `yaml:"disableRemoteRefresh"`
+}
+
+// BecknConstantsOverrides allows an operator to intentionally deviate from
+// overridable beckn constants. A non-empty Reason is required.
+type BecknConstantsOverrides struct {
+	Reason  string                       `yaml:"reason"`
+	Plugins map[string]map[string]string `yaml:"plugins,omitempty"`
 }
 
 type httpConfig struct {
@@ -81,6 +95,12 @@ func initConfig(ctx context.Context, path string) (*Config, error) {
 		return nil, fmt.Errorf("could not decode config: %w", err)
 	}
 	log.Debugf(ctx, "Read config: %#v", cfg)
+
+	// Inject and enforce beckn constants before validation.
+	if err := applyBecknConstants(ctx, &cfg); err != nil {
+		return nil, fmt.Errorf("beckn constants: %w", err)
+	}
+
 	// Validate the configuration.
 	if err := validateConfig(&cfg); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
