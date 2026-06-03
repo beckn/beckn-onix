@@ -254,6 +254,8 @@ func (c *DeDiRegistryClient) LookupRegistry(ctx context.Context, namespaceIdenti
 // If the registry response contains no meta field the method returns a valid SubscriberMetadata
 // with an empty RawMeta map — the participant has not yet published a node manifest, which is
 // not an error condition.
+// Note: no AllowedNetworkIDs check is performed here. Node manifests are subscriber-scoped
+// capability declarations, not network-membership records — network affiliation is irrelevant.
 func (c *DeDiRegistryClient) LookupSubscriberMeta(ctx context.Context, subscriberID string) (*model.SubscriberMetadata, error) {
 	parts := strings.Split(subscriberID, "/")
 	if len(parts) != 3 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {

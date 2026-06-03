@@ -746,6 +746,18 @@ func TestGetBySubscriberIDResolvesMetadata(t *testing.T) {
 	if _, ok := cache.store[subscriberCacheKey(subscriberID)]; !ok {
 		t.Fatal("expected subscriber-specific cache key to be populated")
 	}
+
+	// Second call must be served from cache — no additional registry or HTTP calls.
+	doc2, err := loader.GetBySubscriberID(context.Background(), subscriberID)
+	if err != nil {
+		t.Fatalf("second GetBySubscriberID() error = %v", err)
+	}
+	if registry.subscriberCalls != 1 {
+		t.Fatalf("expected second call to use cache, got %d registry calls", registry.subscriberCalls)
+	}
+	if doc2.SubscriberID != subscriberID {
+		t.Fatalf("expected subscriberID on cached document, got %q", doc2.SubscriberID)
+	}
 }
 
 func TestGetBySubscriberIDRegistryError(t *testing.T) {
@@ -854,14 +866,16 @@ func TestGetBySubscriberID_ForceRefreshOnStartBypassesOnce(t *testing.T) {
 	}
 }
 
-func TestGetBySubscriberIDEmptySubscriberID(t *testing.T) {
+func TestGetBySubscriberIDInvalidFormat(t *testing.T) {
 	loader, _, err := New(context.Background(), &mockCache{store: map[string]string{}}, &mockRegistry{}, &Config{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	_, err = loader.GetBySubscriberID(context.Background(), "")
-	if err == nil || !strings.Contains(err.Error(), "subscriberID cannot be empty") {
-		t.Fatalf("expected empty subscriberID error, got %v", err)
+	for _, bad := range []string{"", "only-one-part", "two/parts"} {
+		_, err = loader.GetBySubscriberID(context.Background(), bad)
+		if err == nil || !strings.Contains(err.Error(), "namespace/registry/recordId format") {
+			t.Fatalf("subscriberID=%q: expected format validation error, got %v", bad, err)
+		}
 	}
 }
 

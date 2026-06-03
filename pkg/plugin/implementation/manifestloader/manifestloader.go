@@ -139,8 +139,9 @@ func (l *Loader) GetByMetadata(ctx context.Context, metadata model.ManifestMetad
 }
 
 func (l *Loader) GetBySubscriberID(ctx context.Context, subscriberID string) (*model.ManifestDocument, error) {
-	if strings.TrimSpace(subscriberID) == "" {
-		return nil, fmt.Errorf("subscriberID cannot be empty")
+	if parts := strings.Split(subscriberID, "/"); len(parts) != 3 ||
+		strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+		return nil, fmt.Errorf("subscriberID %q must be in namespace/registry/recordId format", subscriberID)
 	}
 
 	subscriberKey := subscriberCacheKey(subscriberID)
@@ -162,7 +163,7 @@ func (l *Loader) GetBySubscriberID(ctx context.Context, subscriberID string) (*m
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(meta.RawMeta["manifestUrl"]) == "" {
+	if len(meta.RawMeta) == 0 || strings.TrimSpace(meta.RawMeta["manifestUrl"]) == "" {
 		log.Infof(ctx, "ManifestLoader: subscriberID=%q has no manifestUrl in registry metadata — no node manifest published", subscriberID)
 		return nil, ErrNoManifestPublished
 	}
