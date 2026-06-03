@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
@@ -249,9 +250,43 @@ func (c *DeDiRegistryClient) LookupRegistry(ctx context.Context, namespaceIdenti
 
 // LookupSubscriberMeta fetches manifest-related metadata for a specific subscriber record.
 // The subscriberID must be a fully-qualified three-part DeDi reference (namespace/registry/recordId).
-// NOTE: This is a stub. The real implementation will be added in a follow-up branch.
+// If the registry response contains no meta field the method returns a valid SubscriberMetadata
+// with an empty RawMeta map — the participant has not yet published a node manifest, which is
+// not an error condition.
 func (c *DeDiRegistryClient) LookupSubscriberMeta(ctx context.Context, subscriberID string) (*model.SubscriberMetadata, error) {
-	return nil, fmt.Errorf("LookupSubscriberMeta: not implemented")
+	if subscriberID == "" {
+		return nil, fmt.Errorf("subscriberID is required for DeDi subscriber meta lookup")
+	}
+	parts := strings.Split(subscriberID, "/")
+	if len(parts) != 3 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+		return nil, fmt.Errorf("subscriberID %q must be in namespace/registry/recordId format", subscriberID)
+	}
+
+	lookupURL := fmt.Sprintf("%s/lookup/%s/%s/%s", c.config.URL, parts[0], parts[1], parts[2])
+
+	data, err := c.fetchDeDiData(ctx, lookupURL, "subscriber meta lookup")
+	if err != nil {
+		return nil, err
+	}
+
+	rawMeta := make(map[string]string)
+	if rawMetaValue, ok := data["meta"]; ok && rawMetaValue != nil {
+		if rawMetaMap, ok := rawMetaValue.(map[string]any); ok {
+			for key, value := range rawMetaMap {
+				strValue, ok := value.(string)
+				if !ok {
+					log.Warnf(ctx, "Ignoring non-string subscriber metadata value for key %q: got %T", key, value)
+					continue
+				}
+				rawMeta[key] = strValue
+			}
+		}
+	}
+
+	return &model.SubscriberMetadata{
+		SubscriberID: subscriberID,
+		RawMeta:      rawMeta,
+	}, nil
 }
 
 // parseTime converts string timestamp to time.Time

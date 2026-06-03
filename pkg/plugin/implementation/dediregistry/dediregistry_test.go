@@ -679,3 +679,133 @@ func TestLookupRegistry(t *testing.T) {
 		}
 	})
 }
+
+func TestLookupSubscriberMeta(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("success with fully populated meta", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/dedi/lookup/nfh.global/subscribers.beckn.one/bpp.energy-provider.com" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"meta": map[string]any{
+						"manifestUrl":               "https://example.org/node-manifest.yaml",
+						"manifestSignatureUrl":      "https://example.org/node-manifest.yaml.sig",
+						"signingPublicKeyLookupUrl": "https://example.org/pubkey",
+					},
+				},
+			})
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		subscriberID := "nfh.global/subscribers.beckn.one/bpp.energy-provider.com"
+		got, err := client.LookupSubscriberMeta(ctx, subscriberID)
+		if err != nil {
+			t.Fatalf("LookupSubscriberMeta() error = %v", err)
+		}
+		if got.SubscriberID != subscriberID {
+			t.Errorf("expected SubscriberID=%q, got %q", subscriberID, got.SubscriberID)
+		}
+		wantMeta := map[string]string{
+			"manifestUrl":               "https://example.org/node-manifest.yaml",
+			"manifestSignatureUrl":      "https://example.org/node-manifest.yaml.sig",
+			"signingPublicKeyLookupUrl": "https://example.org/pubkey",
+		}
+		if !reflect.DeepEqual(got.RawMeta, wantMeta) {
+			t.Errorf("RawMeta mismatch: got %v, want %v", got.RawMeta, wantMeta)
+		}
+	})
+
+	t.Run("meta absent from response returns empty RawMeta without error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"details": map[string]any{"subscriber_id": "nfh.global/subscribers.beckn.one/bpp.energy-provider.com"},
+				},
+			})
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		got, err := client.LookupSubscriberMeta(ctx, "nfh.global/subscribers.beckn.one/bpp.energy-provider.com")
+		if err != nil {
+			t.Fatalf("expected no error when meta absent, got %v", err)
+		}
+		if len(got.RawMeta) != 0 {
+			t.Errorf("expected empty RawMeta when meta absent, got %v", got.RawMeta)
+		}
+	})
+
+	t.Run("invalid subscriberID fewer than three parts", func(t *testing.T) {
+		httpCalls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			httpCalls++
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		if _, err := client.LookupSubscriberMeta(ctx, "nfh.global/subscribers.beckn.one"); err == nil {
+			t.Error("expected validation error for two-part subscriberID, got nil")
+		}
+		if httpCalls != 0 {
+			t.Errorf("expected no HTTP calls for invalid subscriberID, got %d", httpCalls)
+		}
+	})
+
+	t.Run("non-200 response returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte("record not found"))
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		if _, err := client.LookupSubscriberMeta(ctx, "nfh.global/subscribers.beckn.one/bpp.energy-provider.com"); err == nil {
+			t.Error("expected error for non-200 response, got nil")
+		}
+	})
+
+	t.Run("malformed response body returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte("not valid json{{"))
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		if _, err := client.LookupSubscriberMeta(ctx, "nfh.global/subscribers.beckn.one/bpp.energy-provider.com"); err == nil {
+			t.Error("expected error for malformed response body, got nil")
+		}
+	})
+}
