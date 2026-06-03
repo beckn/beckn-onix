@@ -776,8 +776,81 @@ func TestGetBySubscriberIDSubscriberHasNotPublishedNodeManifest(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 	_, err = loader.GetBySubscriberID(context.Background(), "nfh.global/subscribers.beckn.one/bpp.energy-provider.com")
-	if err == nil || !strings.Contains(err.Error(), "manifestUrl") {
-		t.Fatalf("expected missing manifestUrl error, got %v", err)
+	if !errors.Is(err, ErrNoManifestPublished) {
+		t.Fatalf("expected ErrNoManifestPublished, got %v", err)
+	}
+}
+
+func TestGetBySubscriberID_ForceRefreshOnStartBypassesOnce(t *testing.T) {
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	manifest := []byte("node manifest content")
+	signature := ed25519.Sign(privateKey, manifest)
+	requests := 0
+
+	originalHTTPClientFunc := httpClientFunc
+	httpClientFunc = func(timeout time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests++
+			switch req.URL.String() {
+			case "https://example.org/node-manifest":
+				return response(200, string(manifest), "application/yaml"), nil
+			case "https://example.org/node-manifest.sig":
+				return response(200, base64.StdEncoding.EncodeToString(signature), "text/plain"), nil
+			case "https://example.org/pubkey":
+				return response(200, base64.StdEncoding.EncodeToString(publicKey), "text/plain"), nil
+			default:
+				return response(404, "not found", "text/plain"), nil
+			}
+		})}
+	}
+	defer func() { httpClientFunc = originalHTTPClientFunc }()
+
+	subscriberID := "nfh.global/subscribers.beckn.one/bpp.energy-provider.com"
+	subscriberMeta := &model.SubscriberMetadata{
+		SubscriberID: subscriberID,
+		RawMeta: map[string]string{
+			"manifestUrl":               "https://example.org/node-manifest",
+			"manifestSignatureUrl":      "https://example.org/node-manifest.sig",
+			"signingPublicKeyLookupUrl": "https://example.org/pubkey",
+		},
+	}
+	cache := &mockCache{store: map[string]string{
+		subscriberCacheKey(subscriberID): `{"subscriber_id":"` + subscriberID + `","content":"c3RhbGU=","verified":true}`,
+	}}
+	registry := &mockRegistry{subscriberMeta: subscriberMeta}
+	loader, _, err := New(context.Background(), cache, registry, &Config{ForceRefreshOnStart: true})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// First call must bypass cache and fetch fresh.
+	doc, err := loader.GetBySubscriberID(context.Background(), subscriberID)
+	if err != nil {
+		t.Fatalf("first GetBySubscriberID() error = %v", err)
+	}
+	if string(doc.Content) != string(manifest) {
+		t.Fatalf("expected fresh manifest content on startup refresh, got %q", string(doc.Content))
+	}
+	if requests != 3 {
+		t.Fatalf("expected 3 remote fetches on first startup refresh, got %d", requests)
+	}
+	if registry.subscriberCalls != 1 {
+		t.Fatalf("expected one registry lookup on first startup refresh, got %d", registry.subscriberCalls)
+	}
+
+	// Second call must use the cache written by the first.
+	doc, err = loader.GetBySubscriberID(context.Background(), subscriberID)
+	if err != nil {
+		t.Fatalf("second GetBySubscriberID() error = %v", err)
+	}
+	if string(doc.Content) != string(manifest) {
+		t.Fatalf("expected cached fresh manifest on second lookup, got %q", string(doc.Content))
+	}
+	if requests != 3 {
+		t.Fatalf("expected second lookup to use cache after initial refresh, got %d remote fetches", requests)
+	}
+	if registry.subscriberCalls != 1 {
+		t.Fatalf("expected second lookup to use subscriber cache and avoid registry lookup, got %d", registry.subscriberCalls)
 	}
 }
 

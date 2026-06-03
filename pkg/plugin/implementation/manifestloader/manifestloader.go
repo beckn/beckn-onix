@@ -39,8 +39,12 @@ type Loader struct {
 }
 
 var (
-	ErrNilCache    = errors.New("cache implementation cannot be nil")
-	ErrNilRegistry = errors.New("registry metadata lookup cannot be nil")
+	ErrNilCache            = errors.New("cache implementation cannot be nil")
+	ErrNilRegistry         = errors.New("registry metadata lookup cannot be nil")
+	// ErrNoManifestPublished is returned by GetBySubscriberID when the registry returns
+	// metadata for the subscriber but carries no manifestUrl — the participant has not yet
+	// published a node manifest. Callers should treat this as a graceful absence, not a fault.
+	ErrNoManifestPublished = errors.New("subscriber has not published a node manifest")
 )
 
 const (
@@ -157,6 +161,10 @@ func (l *Loader) GetBySubscriberID(ctx context.Context, subscriberID string) (*m
 	meta, err := l.registry.LookupSubscriberMeta(ctx, subscriberID)
 	if err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(meta.RawMeta["manifestUrl"]) == "" {
+		log.Infof(ctx, "ManifestLoader: subscriberID=%q has no manifestUrl in registry metadata — no node manifest published", subscriberID)
+		return nil, ErrNoManifestPublished
 	}
 	manifestMetadata, err := metadataFromSubscriberMeta(meta, l.config.SkipSignatureVerification)
 	if err != nil {
