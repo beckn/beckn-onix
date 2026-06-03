@@ -248,7 +248,7 @@ type mockKeyManagerProvider struct {
 	errFunc    func() error
 }
 
-func (m *mockKeyManagerProvider) New(ctx context.Context, cache definition.Cache, lookup definition.RegistryLookup, config map[string]string) (definition.KeyManager, func() error, error) {
+func (m *mockKeyManagerProvider) New(ctx context.Context, lookup definition.RegistryLookup, config map[string]string) (definition.KeyManager, func() error, error) {
 	if m.err != nil {
 		return nil, nil, m.err
 	}

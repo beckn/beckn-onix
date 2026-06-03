@@ -6,7 +6,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -29,7 +28,6 @@ type Config struct {
 type KeyMgr struct {
 	VaultClient *vault.Client
 	Registry    definition.RegistryLookup
-	Cache       definition.Cache
 	KvVersion   string
 	SecretPath  string
 }
@@ -49,9 +47,6 @@ var (
 
 	// ErrSubscriberNotFound indicates that no subscriber was found with the provided credentials.
 	ErrSubscriberNotFound = errors.New("no subscriber found with given credentials")
-
-	// ErrNilCache indicates that the cache implementation is nil.
-	ErrNilCache = errors.New("cache implementation cannot be nil")
 
 	// ErrNilRegistryLookup indicates that the registry lookup implementation is nil.
 	ErrNilRegistryLookup = errors.New("registry lookup implementation cannot be nil")
@@ -77,17 +72,12 @@ func ValidateCfg(cfg *Config) error {
 var getVaultClient = GetVaultClient
 
 // New creates a new KeyMgr instance with the provided configuration, cache, and registry lookup.
-func New(ctx context.Context, cache definition.Cache, registryLookup definition.RegistryLookup, cfg *Config) (*KeyMgr, func() error, error) {
+func New(ctx context.Context, registryLookup definition.RegistryLookup, cfg *Config) (*KeyMgr, func() error, error) {
 	log.Info(ctx, "Initializing KeyManager plugin")
 	// Validate configuration.
 	if err := ValidateCfg(cfg); err != nil {
 		log.Error(ctx, err, "Invalid configuration for KeyManager")
 		return nil, nil, err
-	}
-	// Check if cache implementation is provided.
-	if cache == nil {
-		log.Error(ctx, ErrNilCache, "Cache is nil in KeyManager initialization")
-		return nil, nil, ErrNilCache
 	}
 
 	// Check if registry lookup implementation is provided.
@@ -110,7 +100,6 @@ func New(ctx context.Context, cache definition.Cache, registryLookup definition.
 	km := &KeyMgr{
 		VaultClient: vaultClient,
 		Registry:    registryLookup,
-		Cache:       cache,
 		KvVersion:   cfg.KVVersion,
 	}
 
@@ -118,7 +107,6 @@ func New(ctx context.Context, cache definition.Cache, registryLookup definition.
 	cleanup := func() error {
 		log.Info(ctx, "Cleaning up KeyManager resources")
 		km.VaultClient = nil
-		km.Cache = nil
 		km.Registry = nil
 		return nil
 	}
@@ -288,14 +276,6 @@ func (km *KeyMgr) Keyset(ctx context.Context, keyID string) (*model.Keyset, erro
 
 // LookupNPKeys retrieves the signing and encryption public keys for the given subscriber ID and unique key ID.
 func (km *KeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueKeyID string) (string, string, error) {
-	cacheKey := fmt.Sprintf("%s_%s", subscriberID, uniqueKeyID)
-	cachedData, err := km.Cache.Get(ctx, cacheKey)
-	if err == nil {
-		var keys model.Keyset
-		if err := json.Unmarshal([]byte(cachedData), &keys); err == nil {
-			return keys.SigningPublic, keys.EncrPublic, nil
-		}
-	}
 	subscribers, err := km.Registry.Lookup(ctx, &model.Subscription{
 		Subscriber: model.Subscriber{
 			SubscriberID: subscriberID,

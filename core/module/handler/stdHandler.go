@@ -490,7 +490,9 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.cache, err = loadPlugin(ctx, "Cache", cfg.Cache, mgr.Cache); err != nil {
 		return err
 	}
-	if h.registry, err = loadPlugin(ctx, "Registry", cfg.Registry, mgr.Registry); err != nil {
+	if h.registry, err = loadPlugin(ctx, "Registry", cfg.Registry, func(ctx context.Context, cfg *plugin.Config) (definition.RegistryLookup, error) {
+		return mgr.Registry(ctx, h.cache, cfg)
+	}); err != nil {
 		return err
 	}
 	if h.km, err = loadKeyManager(ctx, mgr, h.cache, h.registry, cfg.KeyManager); err != nil {

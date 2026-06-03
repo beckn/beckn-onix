@@ -59,7 +59,6 @@ func (m *mockCache) Delete(ctx context.Context, key string) error {
 func TestNewSuccess(t *testing.T) {
 	// Setup dummy implementations and variables
 	ctx := context.Background()
-	cache := &mockCache{}
 	registry := &mockRegistry{}
 	cfg := map[string]string{
 		"vaultAddr": "http://dummy-vault",
@@ -72,14 +71,14 @@ func TestNewSuccess(t *testing.T) {
 		return nil
 	}
 
-	newKeyManagerFunc = func(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, cfg *keymanager.Config) (*keymanager.KeyMgr, func() error, error) {
+	newKeyManagerFunc = func(ctx context.Context, registry definition.RegistryLookup, cfg *keymanager.Config) (*keymanager.KeyMgr, func() error, error) {
 		// return a mock struct pointer of *keymanager.KeyMgr or a stub instance
 		return &keymanager.KeyMgr{}, fakeCleanup, nil
 	}
 
 	// Create provider and call New
 	provider := &keyManagerProvider{}
-	km, cleanup, err := provider.New(ctx, cache, registry, cfg)
+	km, cleanup, err := provider.New(ctx, registry, cfg)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -102,19 +101,18 @@ func TestNewSuccess(t *testing.T) {
 func TestNewFailure(t *testing.T) {
 	// Setup dummy variables
 	ctx := context.Background()
-	cache := &mockCache{}
 	registry := &mockRegistry{}
 	cfg := map[string]string{
 		"vaultAddr": "http://dummy-vault",
 		"kvVersion": "2",
 	}
 
-	newKeyManagerFunc = func(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, cfg *keymanager.Config) (*keymanager.KeyMgr, func() error, error) {
+	newKeyManagerFunc = func(ctx context.Context, registry definition.RegistryLookup, cfg *keymanager.Config) (*keymanager.KeyMgr, func() error, error) {
 		return nil, nil, fmt.Errorf("some error")
 	}
 
 	provider := &keyManagerProvider{}
-	km, cleanup, err := provider.New(ctx, cache, registry, cfg)
+	km, cleanup, err := provider.New(ctx, registry, cfg)
 	if err == nil {
 		t.Fatal("Expected error, got nil")
 	}

@@ -6,7 +6,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -34,7 +33,6 @@ type Config struct {
 // SimpleKeyMgr provides methods for managing cryptographic keys using configuration.
 type SimpleKeyMgr struct {
 	Registry definition.RegistryLookup
-	Cache    definition.Cache
 	keysets  map[string]*model.Keyset // In-memory storage for keysets
 }
 
@@ -53,9 +51,6 @@ var (
 
 	// ErrSubscriberNotFound indicates that no subscriber was found with the provided credentials.
 	ErrSubscriberNotFound = errors.New("no subscriber found with given credentials")
-
-	// ErrNilCache indicates that the cache implementation is nil.
-	ErrNilCache = errors.New("cache implementation cannot be nil")
 
 	// ErrNilRegistryLookup indicates that the registry lookup implementation is nil.
 	ErrNilRegistryLookup = errors.New("registry lookup implementation cannot be nil")
@@ -108,20 +103,14 @@ var (
 	uuidGenFunc       = uuid.NewRandom
 )
 
-// New creates a new SimpleKeyMgr instance with the provided configuration, cache, and registry lookup.
-func New(ctx context.Context, cache definition.Cache, registryLookup definition.RegistryLookup, cfg *Config) (*SimpleKeyMgr, func() error, error) {
+// New creates a new SimpleKeyMgr instance with the provided registry lookup and configuration.
+func New(ctx context.Context, registryLookup definition.RegistryLookup, cfg *Config) (*SimpleKeyMgr, func() error, error) {
 	log.Info(ctx, "Initializing SimpleKeyManager plugin")
 
 	// Validate configuration.
 	if err := ValidateCfg(cfg); err != nil {
 		log.Error(ctx, err, "Invalid configuration for SimpleKeyManager")
 		return nil, nil, err
-	}
-
-	// Check if cache implementation is provided.
-	if cache == nil {
-		log.Error(ctx, ErrNilCache, "Cache is nil in SimpleKeyManager initialization")
-		return nil, nil, ErrNilCache
 	}
 
 	// Check if registry lookup implementation is provided.
@@ -135,7 +124,6 @@ func New(ctx context.Context, cache definition.Cache, registryLookup definition.
 	// Create SimpleKeyManager instance.
 	skm := &SimpleKeyMgr{
 		Registry: registryLookup,
-		Cache:    cache,
 		keysets:  make(map[string]*model.Keyset),
 	}
 
@@ -148,7 +136,6 @@ func New(ctx context.Context, cache definition.Cache, registryLookup definition.
 	// Cleanup function to release SimpleKeyManager resources.
 	cleanup := func() error {
 		log.Info(ctx, "Cleaning up SimpleKeyManager resources")
-		skm.Cache = nil
 		skm.Registry = nil
 		skm.keysets = nil
 		return nil
@@ -249,24 +236,7 @@ func (skm *SimpleKeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueK
 	}
 
 	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
-	cacheKey := fmt.Sprintf("%s_%s", subscriberID, uniqueKeyID)
-	var cachedData string
 
-	{
-		spanCtx, span := tracer.Start(ctx, "redis lookup")
-		defer span.End()
-		var err error
-		cachedData, err = skm.Cache.Get(spanCtx, cacheKey)
-		if err == nil {
-			var keys model.Keyset
-			if err := json.Unmarshal([]byte(cachedData), &keys); err == nil {
-				log.Debugf(ctx, "Found cached keys for subscriber: %s, uniqueKeyID: %s", subscriberID, uniqueKeyID)
-				return keys.SigningPublic, keys.EncrPublic, nil
-			}
-		}
-	}
-
-	log.Debugf(ctx, "Cache miss, looking up registry for subscriber: %s, uniqueKeyID: %s", subscriberID, uniqueKeyID)
 	var subscribers []model.Subscription
 	{
 		spanCtx, span := tracer.Start(ctx, "registry lookup")

@@ -14,8 +14,8 @@ type simpleKeyManagerProvider struct{}
 // newSimpleKeyManagerFunc is a function type that creates a new SimpleKeyManager instance.
 var newSimpleKeyManagerFunc = simplekeymanager.New
 
-// New creates and initializes a new SimpleKeyManager instance using the provided cache, registry lookup, and configuration.
-func (k *simpleKeyManagerProvider) New(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, cfg map[string]string) (definition.KeyManager, func() error, error) {
+// New creates and initializes a new SimpleKeyManager instance using the provided registry lookup and configuration.
+func (k *simpleKeyManagerProvider) New(ctx context.Context, registry definition.RegistryLookup, cfg map[string]string) (definition.KeyManager, func() error, error) {
 	subscriberID := cfg["subscriberId"]
 	if subscriberID == "" {
 		if np := cfg["networkParticipant"]; np != "" {
@@ -40,7 +40,7 @@ func (k *simpleKeyManagerProvider) New(ctx context.Context, cache definition.Cac
 		config.EncrPrivateKey != "",
 		config.EncrPublicKey != "")
 
-	km, cleanup, err := newSimpleKeyManagerFunc(ctx, cache, registry, config)
+	km, cleanup, err := newSimpleKeyManagerFunc(ctx, registry, config)
 	if err != nil {
 		log.Error(ctx, err, "Failed to initialize SimpleKeyManager")
 		return nil, nil, err

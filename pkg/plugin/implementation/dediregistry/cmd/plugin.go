@@ -15,12 +15,22 @@ import (
 
 // dediRegistryProvider implements the RegistryLookupProvider interface for the DeDi registry plugin.
 type dediRegistryProvider struct {
-	newFunc func(ctx context.Context, cfg *dediregistry.Config) (*dediregistry.DeDiRegistryClient, func() error, error)
+	newFunc func(ctx context.Context, cache definition.Cache, cfg *dediregistry.Config) (*dediregistry.DeDiRegistryClient, func() error, error)
 }
 
 func (d dediRegistryProvider) parseConfig(config map[string]string) (*dediregistry.Config, error) {
 	dediConfig := &dediregistry.Config{
 		URL: config["url"],
+	}
+
+	// Parse cacheTTL if provided.
+	if cacheTTLStr, exists := config["cacheTTL"]; exists && cacheTTLStr != "" {
+		cacheTTL, err := time.ParseDuration(cacheTTLStr)
+		if err != nil {
+			log.Warnf(context.Background(), "Invalid cacheTTL value '%s', using default", cacheTTLStr)
+		} else {
+			dediConfig.CacheTTL = cacheTTL
+		}
 	}
 
 	// Parse timeout if provided.
@@ -80,7 +90,7 @@ func (d dediRegistryProvider) parseConfig(config map[string]string) (*dediregist
 }
 
 // New creates a new DeDi registry plugin instance.
-func (d dediRegistryProvider) New(ctx context.Context, config map[string]string) (definition.RegistryLookup, func() error, error) {
+func (d dediRegistryProvider) New(ctx context.Context, cache definition.Cache, config map[string]string) (definition.RegistryLookup, func() error, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("context cannot be nil")
 	}
@@ -99,7 +109,7 @@ func (d dediRegistryProvider) New(ctx context.Context, config map[string]string)
 
 	log.Debugf(ctx, "DeDi Registry config mapped: %+v", dediConfig)
 
-	dediClient, closer, err := d.newFunc(ctx, dediConfig)
+	dediClient, closer, err := d.newFunc(ctx, cache, dediConfig)
 	if err != nil {
 		log.Errorf(ctx, err, "Failed to create DeDi registry instance")
 		return nil, nil, err

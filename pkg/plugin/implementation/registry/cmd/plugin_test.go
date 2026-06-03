@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/registry"
 )
 
@@ -132,7 +133,7 @@ func TestRegistryProvider_New(t *testing.T) {
 	})
 
 	t.Run("should return error if context is nil", func(t *testing.T) {
-		_, _, err := provider.New(nil, map[string]string{})
+		_, _, err := provider.New(nil, nil, map[string]string{})
 		if err == nil {
 			t.Fatal("expected an error for nil context but got none")
 		}
@@ -143,7 +144,7 @@ func TestRegistryProvider_New(t *testing.T) {
 
 	t.Run("should return error if config parsing fails", func(t *testing.T) {
 		config := map[string]string{"retry_max": "invalid"}
-		_, _, err := provider.New(context.Background(), config)
+		_, _, err := provider.New(context.Background(), nil, config)
 		if err == nil {
 			t.Fatal("expected an error for bad config but got none")
 		}
@@ -152,12 +153,12 @@ func TestRegistryProvider_New(t *testing.T) {
 	t.Run("should return error if registry.New fails", func(t *testing.T) {
 		// Mock the newRegistryFunc to return an error
 		expectedErr := errors.New("registry creation failed")
-		newRegistryFunc = func(ctx context.Context, cfg *registry.Config) (*registry.RegistryClient, func() error, error) {
+		newRegistryFunc = func(ctx context.Context, cache definition.Cache, cfg *registry.Config) (*registry.RegistryClient, func() error, error) {
 			return nil, nil, expectedErr
 		}
 
 		config := map[string]string{"url": "http://test.com"}
-		_, _, err := provider.New(context.Background(), config)
+		_, _, err := provider.New(context.Background(), nil, config)
 		if err == nil {
 			t.Fatal("expected an error from registry.New but got none")
 		}
@@ -169,13 +170,13 @@ func TestRegistryProvider_New(t *testing.T) {
 	t.Run("should succeed and return a valid instance", func(t *testing.T) {
 		// Mock the newRegistryFunc for a successful case
 		mockCloser := func() error { fmt.Println("closed"); return nil }
-		newRegistryFunc = func(ctx context.Context, cfg *registry.Config) (*registry.RegistryClient, func() error, error) {
-			// Return a non-nil client of th correct concrete type
+		newRegistryFunc = func(ctx context.Context, cache definition.Cache, cfg *registry.Config) (*registry.RegistryClient, func() error, error) {
+			// Return a non-nil client of the correct concrete type
 			return new(registry.RegistryClient), mockCloser, nil
 		}
 
 		config := map[string]string{"url": "http://test.com"}
-		instance, closer, err := provider.New(context.Background(), config)
+		instance, closer, err := provider.New(context.Background(), nil, config)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}

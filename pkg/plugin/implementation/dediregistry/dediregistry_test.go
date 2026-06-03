@@ -58,7 +58,7 @@ func TestNew(t *testing.T) {
 		Timeout: 30,
 	}
 
-	client, closer, err := New(ctx, validConfig)
+	client, closer, err := New(ctx, nil, validConfig)
 	if err != nil {
 		t.Errorf("New() error = %v", err)
 		return
@@ -84,7 +84,7 @@ func TestNew(t *testing.T) {
 			RetryWaitMin: 100 * time.Millisecond,
 			RetryWaitMax: 1 * time.Second,
 		}
-		client, _, err := New(ctx, cfg)
+		client, _, err := New(ctx, nil, cfg)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
@@ -172,7 +172,7 @@ func TestLookup(t *testing.T) {
 			Timeout:      30,
 		}
 
-		client, closer, err := New(ctx, config)
+		client, closer, err := New(ctx, nil, config)
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -233,7 +233,7 @@ func TestLookup(t *testing.T) {
 			AllowedNetworkIDs: []string{"commerce-network.org/prod"},
 		}
 
-		client, closer, err := New(ctx, config)
+		client, closer, err := New(ctx, nil, config)
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -276,7 +276,7 @@ func TestLookup(t *testing.T) {
 			AllowedNetworkIDs: []string{"commerce-network/subscriber-references"},
 		}
 
-		client, closer, err := New(ctx, config)
+		client, closer, err := New(ctx, nil, config)
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -323,7 +323,7 @@ func TestLookup(t *testing.T) {
 			AllowedNetworkIDs: []string{"commerce-network.org/prod"},
 		}
 
-		client, closer, err := New(ctx, config)
+		client, closer, err := New(ctx, nil, config)
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -347,7 +347,7 @@ func TestLookup(t *testing.T) {
 			URL:          "https://test.com/dedi",
 		}
 
-		client, closer, err := New(ctx, config)
+		client, closer, err := New(ctx, nil, config)
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -374,7 +374,7 @@ func TestLookup(t *testing.T) {
 			URL:          "https://test.com/dedi",
 		}
 
-		client, closer, err := New(ctx, config)
+		client, closer, err := New(ctx, nil, config)
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -407,7 +407,7 @@ func TestLookup(t *testing.T) {
 			URL:          server.URL + "/dedi",
 		}
 
-		client, closer, err := New(ctx, config)
+		client, closer, err := New(ctx, nil, config)
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -444,7 +444,7 @@ func TestLookup(t *testing.T) {
 			URL:          server.URL + "/dedi",
 		}
 
-		client, closer, err := New(ctx, config)
+		client, closer, err := New(ctx, nil, config)
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -474,7 +474,7 @@ func TestLookup(t *testing.T) {
 			URL:          server.URL + "/dedi",
 		}
 
-		client, closer, err := New(ctx, config)
+		client, closer, err := New(ctx, nil, config)
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -507,7 +507,7 @@ func TestLookup(t *testing.T) {
 			URL:          server.URL + "/dedi",
 		}
 
-		client, closer, err := New(ctx, config)
+		client, closer, err := New(ctx, nil, config)
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -532,7 +532,7 @@ func TestLookup(t *testing.T) {
 			Timeout:      1,
 		}
 
-		client, closer, err := New(ctx, config)
+		client, closer, err := New(ctx, nil, config)
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -579,7 +579,7 @@ func TestLookupRegistry(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, closer, err := New(ctx, &Config{
+		client, closer, err := New(ctx, nil, &Config{
 			URL:          server.URL + "/dedi",
 		})
 		if err != nil {
@@ -614,7 +614,7 @@ func TestLookupRegistry(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, closer, err := New(ctx, &Config{
+		client, closer, err := New(ctx, nil, &Config{
 			URL:          server.URL,
 		})
 		if err != nil {
@@ -642,7 +642,7 @@ func TestLookupRegistry(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, closer, err := New(ctx, &Config{
+		client, closer, err := New(ctx, nil, &Config{
 			URL:          server.URL,
 		})
 		if err != nil {
@@ -666,7 +666,7 @@ func TestLookupRegistry(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, closer, err := New(ctx, &Config{
+		client, closer, err := New(ctx, nil, &Config{
 			URL:          server.URL + "/dedi",
 		})
 		if err != nil {
