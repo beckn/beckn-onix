@@ -83,7 +83,7 @@ func writeDefaultOnlyNetworkPolicyConfig(t *testing.T, entry string) string {
 }
 
 func validManifestGovernanceYAML() string {
-	return fmt.Sprintf("governance:\n  effective_from: %q\n  effective_until: %q\n  signed: true\n",
+	return fmt.Sprintf("governance:\n  effectiveFrom: %q\n  effectiveUntil: %q\n  signed: true\n",
 		time.Now().UTC().Add(-1*time.Hour).Format(time.RFC3339),
 		time.Now().UTC().Add(1*time.Hour).Format(time.RFC3339),
 	)
@@ -1811,10 +1811,10 @@ result := {"valid": false, "violations": ["missing provider"]} if {
 	defer server.Close()
 
 	manifest := strings.Join([]string{
-		`manifest_version: "1.0"`,
-		`manifest_type: "network-manifest"`,
-		`network_id: "retail.network/production"`,
-		`release_id: "2026.04"`,
+		`manifestVersion: "1.0"`,
+		`manifestType: "network-manifest"`,
+		`networkId: "retail.network/production"`,
+		`releaseId: "2026.04"`,
 		`publisher:`,
 		`  role: "NFO"`,
 		`  domain: "example.org"`,
@@ -1824,10 +1824,10 @@ result := {"valid": false, "violations": ["missing provider"]} if {
 		`  file:`,
 		`    id: "network-policy-file"`,
 		`    url: "` + server.URL + `/policy.rego"`,
-		`    policy_query_path: "data.policy.result"`,
+		`    policyQueryPath: "data.policy.result"`,
 		`    signed: true`,
-		`    signature_url: "` + server.URL + `/policy.rego.sig"`,
-		`    signing_public_key_lookup_url: "` + server.URL + `/public.pem"`,
+		`    signatureUrl: "`+ server.URL + `/policy.rego.sig"`,
+		`    signingPublicKeyLookupUrl: "`+ server.URL + `/public.pem"`,
 		strings.TrimSuffix(validManifestGovernanceYAML(), "\n"),
 	}, "\n") + "\n"
 
@@ -1880,10 +1880,10 @@ result := {"valid": false, "violations": ["bundle blocked"]} if {
 	defer server.Close()
 
 	manifest := strings.Join([]string{
-		`manifest_version: "1.0"`,
-		`manifest_type: "network-manifest"`,
-		`network_id: "retail.network/production"`,
-		`release_id: "2026.04"`,
+		`manifestVersion: "1.0"`,
+		`manifestType: "network-manifest"`,
+		`networkId: "retail.network/production"`,
+		`releaseId: "2026.04"`,
 		`publisher:`,
 		`  role: "NFO"`,
 		`  domain: "example.org"`,
@@ -1893,7 +1893,7 @@ result := {"valid": false, "violations": ["bundle blocked"]} if {
 		`  bundle:`,
 		`    id: "network-policy-bundle"`,
 		`    url: "` + server.URL + `/policy-bundle.tar.gz"`,
-		`    policy_query_path: "data.retail.policy.result"`,
+		`    policyQueryPath: "data.retail.policy.result"`,
 		`    signed: false`,
 		strings.TrimSuffix(validManifestGovernanceYAML(), "\n"),
 	}, "\n") + "\n"
@@ -1936,10 +1936,10 @@ networkPolicies:
 
 func TestEnforcer_ManifestPolicyMissingPoliciesSection(t *testing.T) {
 	manifest := strings.Join([]string{
-		`manifest_version: "1.0"`,
-		`manifest_type: "network-manifest"`,
-		`network_id: "retail.network/production"`,
-		`release_id: "2026.04"`,
+		`manifestVersion: "1.0"`,
+		`manifestType: "network-manifest"`,
+		`networkId: "retail.network/production"`,
+		`releaseId: "2026.04"`,
 		`publisher:`,
 		`  role: "NFO"`,
 		`  domain: "example.org"`,
@@ -1964,10 +1964,10 @@ networkPolicies:
 
 func TestEnforcer_ManifestPolicyUnsupportedSource(t *testing.T) {
 	manifest := strings.Join([]string{
-		`manifest_version: "1.0"`,
-		`manifest_type: "network-manifest"`,
-		`network_id: "retail.network/production"`,
-		`release_id: "2026.04"`,
+		`manifestVersion: "1.0"`,
+		`manifestType: "network-manifest"`,
+		`networkId: "retail.network/production"`,
+		`releaseId: "2026.04"`,
 		`publisher:`,
 		`  role: "NFO"`,
 		`  domain: "example.org"`,
@@ -1995,10 +1995,10 @@ networkPolicies:
 
 func TestEnforcer_ManifestPolicyNetworkMismatch(t *testing.T) {
 	manifest := strings.Join([]string{
-		`manifest_version: "1.0"`,
-		`manifest_type: "network-manifest"`,
-		`network_id: "retail.network/sandbox"`,
-		`release_id: "2026.04"`,
+		`manifestVersion: "1.0"`,
+		`manifestType: "network-manifest"`,
+		`networkId: "retail.network/sandbox"`,
+		`releaseId: "2026.04"`,
 		`publisher:`,
 		`  role: "NFO"`,
 		`  domain: "example.org"`,
@@ -2008,7 +2008,7 @@ func TestEnforcer_ManifestPolicyNetworkMismatch(t *testing.T) {
 		`  file:`,
 		`    id: "network-policy-file"`,
 		`    url: "https://example.org/policy.rego"`,
-		`    policy_query_path: "data.policy.result"`,
+		`    policyQueryPath: "data.policy.result"`,
 		`    signed: false`,
 		strings.TrimSuffix(validManifestGovernanceYAML(), "\n"),
 	}, "\n") + "\n"
@@ -2031,10 +2031,10 @@ networkPolicies:
 
 func TestEnforcer_ManifestPolicyExpired(t *testing.T) {
 	manifest := strings.Join([]string{
-		`manifest_version: "1.0"`,
-		`manifest_type: "network-manifest"`,
-		`network_id: "retail.network/production"`,
-		`release_id: "2026.04"`,
+		`manifestVersion: "1.0"`,
+		`manifestType: "network-manifest"`,
+		`networkId: "retail.network/production"`,
+		`releaseId: "2026.04"`,
 		`publisher:`,
 		`  role: "NFO"`,
 		`  domain: "example.org"`,
@@ -2044,9 +2044,9 @@ func TestEnforcer_ManifestPolicyExpired(t *testing.T) {
 		`  file:`,
 		`    id: "network-policy-file"`,
 		`    url: "https://example.org/policy.rego"`,
-		`    policy_query_path: "data.policy.result"`,
+		`    policyQueryPath: "data.policy.result"`,
 		`    signed: false`,
-		fmt.Sprintf("governance:\n  effective_from: %q\n  effective_until: %q\n  signed: true\n",
+		fmt.Sprintf("governance:\n  effectiveFrom: %q\n  effectiveUntil: %q\n  signed: true\n",
 			time.Now().UTC().Add(-2*time.Hour).Format(time.RFC3339),
 			time.Now().UTC().Add(-1*time.Hour).Format(time.RFC3339),
 		),

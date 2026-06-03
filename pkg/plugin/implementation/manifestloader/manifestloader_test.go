@@ -195,9 +195,9 @@ func TestGetByNetworkIDResolvesMetadata(t *testing.T) {
 			NamespaceIdentifier: "nfo.example.org",
 			RegistryName:        "network",
 			RawMeta: map[string]string{
-				"manifest_url":                  "https://example.org/manifest",
-				"manifest_signature_url":        "https://example.org/manifest.sig",
-				"signing_public_key_lookup_url": "https://example.org/pubkey",
+				"manifestUrl":                  "https://example.org/manifest",
+				"manifestSignatureUrl":        "https://example.org/manifest.sig",
+				"signingPublicKeyLookupUrl": "https://example.org/pubkey",
 			},
 		},
 	}
@@ -292,9 +292,9 @@ func TestGetByNetworkID_CacheWriteErrorStillReturnsManifest(t *testing.T) {
 			NamespaceIdentifier: "nfo.example.org",
 			RegistryName:        "network",
 			RawMeta: map[string]string{
-				"manifest_url":                  "https://example.org/manifest",
-				"manifest_signature_url":        "https://example.org/manifest.sig",
-				"signing_public_key_lookup_url": "https://example.org/pubkey",
+				"manifestUrl":                  "https://example.org/manifest",
+				"manifestSignatureUrl":        "https://example.org/manifest.sig",
+				"signingPublicKeyLookupUrl": "https://example.org/pubkey",
 			},
 		},
 	}
@@ -473,9 +473,9 @@ func TestGetByNetworkID_DisableCacheBypassesAndDoesNotStore(t *testing.T) {
 			NamespaceIdentifier: "nfo.example.org",
 			RegistryName:        "network",
 			RawMeta: map[string]string{
-				"manifest_url":                  "https://example.org/manifest",
-				"manifest_signature_url":        "https://example.org/manifest.sig",
-				"signing_public_key_lookup_url": "https://example.org/pubkey",
+				"manifestUrl":                  "https://example.org/manifest",
+				"manifestSignatureUrl":        "https://example.org/manifest.sig",
+				"signingPublicKeyLookupUrl": "https://example.org/pubkey",
 			},
 		},
 	}
@@ -537,9 +537,9 @@ func TestGetByNetworkID_ForceRefreshOnStartBypassesOnce(t *testing.T) {
 			NamespaceIdentifier: "nfo.example.org",
 			RegistryName:        "network",
 			RawMeta: map[string]string{
-				"manifest_url":                  metadata.ManifestURL,
-				"manifest_signature_url":        metadata.ManifestSignatureURL,
-				"signing_public_key_lookup_url": metadata.SigningPublicKeyLookupURL,
+				"manifestUrl":                  metadata.ManifestURL,
+				"manifestSignatureUrl":        metadata.ManifestSignatureURL,
+				"signingPublicKeyLookupUrl": metadata.SigningPublicKeyLookupURL,
 			},
 		},
 	}
@@ -640,7 +640,7 @@ func TestGetByNetworkID_SkipSignatureVerification(t *testing.T) {
 			NamespaceIdentifier: "nfo.example.org",
 			RegistryName:        "network",
 			RawMeta: map[string]string{
-				"manifest_url": "https://example.org/manifest",
+				"manifestUrl": "https://example.org/manifest",
 			},
 		},
 	}

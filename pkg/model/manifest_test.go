@@ -54,7 +54,7 @@ func TestValidateNetworkManifest(t *testing.T) {
 			mutate: func(manifest *NetworkManifest) {
 				manifest.ManifestType = "other"
 			},
-			wantErrSub: `must have manifest_type="network-manifest"`,
+			wantErrSub: `must have manifestType="network-manifest"`,
 		},
 		{
 			name: "missing policies section",
@@ -75,7 +75,7 @@ func TestValidateNetworkManifest(t *testing.T) {
 			mutate: func(manifest *NetworkManifest) {
 				manifest.Governance.EffectiveUntil = "not-a-timestamp"
 			},
-			wantErrSub: "invalid governance.effective_until",
+			wantErrSub: "invalid governance.effectiveUntil",
 		},
 		{
 			name: "expired manifest",
@@ -97,7 +97,7 @@ func TestValidateNetworkManifest(t *testing.T) {
 			mutate: func(manifest *NetworkManifest) {
 				manifest.Policies.File.SignatureURL = ""
 			},
-			wantErrSub: "requires policies.file.signature_url",
+			wantErrSub: "requires policies.file.signatureUrl",
 		},
 		{
 			name: "signed bundle missing public key lookup",
@@ -111,7 +111,7 @@ func TestValidateNetworkManifest(t *testing.T) {
 					Signed:          true,
 				}
 			},
-			wantErrSub: "requires policies.bundle.signing_public_key_lookup_url",
+			wantErrSub: "requires policies.bundle.signingPublicKeyLookupUrl",
 		},
 	}
 

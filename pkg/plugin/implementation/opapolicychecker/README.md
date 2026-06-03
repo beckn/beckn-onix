@@ -537,7 +537,7 @@ The patterns above are about how the engine sees your policy. The practices belo
 ### Maintainability
 
 - Ship `*_test.rego` next to every policy file. Run `opa test . -v` in CI for the bundle.
-- Version policies explicitly. Use `release_id` in the network manifest and bump it on every change so participants can see which policy version they are enforcing.
+- Version policies explicitly. Use `releaseId` in the network manifest and bump it on every change so participants can see which policy version they are enforcing.
 - Sign every bundle. Unsigned policies are not safe to fetch from any URL the adapter does not control — see [Signature Verification](#signature-verification).
 - Document the input contract at the top of the policy file. List the Beckn fields the policy relies on; that doc is what changes when the underlying message schema changes.
 - Keep policy artifacts at immutable URLs whenever possible. Mutable URLs work (the plugin will pick up changes on hot reload), but they are harder to audit.
@@ -547,7 +547,7 @@ The patterns above are about how the engine sees your policy. The practices belo
 
 ## Publishing Policies as a Network Facilitator
 
-A Network Facilitator Organization (NFO) publishes policies that every participant on a given `network_id` then enforces locally via this plugin. The end-to-end flow is owned by NFH Fabric documentation; this section covers the build / sign / publish steps and points at the authoritative source for the rest.
+A Network Facilitator Organization (NFO) publishes policies that every participant on a given `networkId` then enforces locally via this plugin. The end-to-end flow is owned by NFH Fabric documentation; this section covers the build / sign / publish steps and points at the authoritative source for the rest.
 
 **Authoritative reference:** [Configuring Network Policies — docs.nfh.global](https://docs.nfh.global/beckn/creating-an-open-network/configuring-network-policies)
 
@@ -561,7 +561,7 @@ A Network Facilitator Organization (NFO) publishes policies that every participa
 6. Publish the verifying public key in DeDi.
 7. Reference the bundle, signature, and key in a network manifest published by the NFO.
 8. Publish the manifest URL, manifest signature URL, and key lookup URL as metadata on the NFO's network registry in DeDi.
-9. Participants configure `type: manifest` keyed by `network_id` — the plugin resolves the manifest, verifies the signature chain, and loads the bundle.
+9. Participants configure `type: manifest` keyed by `networkId` — the plugin resolves the manifest, verifies the signature chain, and loads the bundle.
 
 The plugin sits at step 9. Everything above it is NFO operational work; the plugin assumes it has been done correctly and treats anything missing or unverifiable as a hard failure.
 
@@ -622,19 +622,19 @@ In your DeDi namespace, create a public key registry with the Public Key schema.
 - `keyFormat`: `base64`
 - `publicKey`: the Base64-encoded contents of `public.pem` excluding the `-----BEGIN PUBLIC KEY-----` and `-----END PUBLIC KEY-----` lines
 
-Once the record is live, copy its lookup URL. That URL goes into the bundle's `signing_public_key_lookup_url` on the network manifest, and (mirrored) into `verification.publicKeyLookupUrl` if a participant configures `type: file` or `type: bundle` directly. With `type: manifest`, the plugin reads it from the manifest automatically.
+Once the record is live, copy its lookup URL. That URL goes into the bundle's `signingPublicKeyLookupUrl` on the network manifest, and (mirrored) into `verification.publicKeyLookupUrl` if a participant configures `type: file` or `type: bundle` directly. With `type: manifest`, the plugin reads it from the manifest automatically.
 
 ### Publishing the bundle and referencing it from a manifest
 
-Host the bundle at a stable URL — GitHub releases, object storage, or a CDN. Immutable per-release URLs are recommended (`/releases/v1.2.0/retail.tar.gz`); mutable latest URLs also work, in which case bump `release_id` in the manifest on every change.
+Host the bundle at a stable URL — GitHub releases, object storage, or a CDN. Immutable per-release URLs are recommended (`/releases/v1.2.0/retail.tar.gz`); mutable latest URLs also work, in which case bump `releaseId` in the manifest on every change.
 
 A minimal manifest:
 
 ```yaml
-manifest_version: "1.0"
-manifest_type: "network-manifest"
-network_id: "nfo.com/production"
-release_id: "2026.05"
+manifestVersion: "1.0"
+manifestType: "network-manifest"
+networkId: "nfo.com/production"
+releaseId: "2026.05"
 
 publisher:
   role: "NFO"
@@ -646,13 +646,13 @@ policies:
   bundle:
     id: "retail-policy-bundle"
     url: "https://nfo.example.org/policies/retail-bundle.tar.gz"
-    policy_query_path: "data.retail.result"
+    policyQueryPath: "data.retail.result"
     signed: true
-    signing_public_key_lookup_url: "https://api.dedi.global/dedi/lookup/example-nfo.com/public_key/retail-key"
+    signingPublicKeyLookupUrl: "https://api.dedi.global/dedi/lookup/example-nfo.com/public_key/retail-key"
 
 governance:
-  effective_from: "2026-05-15T00:00:00Z"
-  effective_until: "2027-05-15T00:00:00Z"
+  effectiveFrom: "2026-05-15T00:00:00Z"
+  effectiveUntil: "2027-05-15T00:00:00Z"
   signed: true
 ```
 
@@ -684,8 +684,8 @@ Participants can also stand the plugin up directly against a local bundle to smo
 
 Two supported flows:
 
-- **New version.** Build a new bundle at a new immutable URL. Update the manifest. Bump `release_id`. This is the recommended default.
-- **In-place at the same URL.** Update the bundle at the existing URL. Bump `release_id` in the manifest so participants see the change. The plugin's hot reload (`refreshInterval`) will pick up the new bundle without an adapter restart, subject to manifest cache TTL.
+- **New version.** Build a new bundle at a new immutable URL. Update the manifest. Bump `releaseId`. This is the recommended default.
+- **In-place at the same URL.** Update the bundle at the existing URL. Bump `releaseId` in the manifest so participants see the change. The plugin's hot reload (`refreshInterval`) will pick up the new bundle without an adapter restart, subject to manifest cache TTL.
 
 For the in-place flow, ensure `manifestloader.cacheTTL` is short enough relative to the policy refresh cadence you want to support, or use `disableCache` while debugging.
 
@@ -732,17 +732,17 @@ All fields below are validated by the adapter at startup and on every hot-reload
 
 | Field | Required value / constraint |
 |---|---|
-| `manifest_version` | Non-empty string |
-| `manifest_type` | `"network-manifest"` |
-| `network_id` | Must match the network policy config key exactly |
-| `release_id` | Non-empty (any scalar) |
+| `manifestVersion` | Non-empty string |
+| `manifestType` | `"network-manifest"` |
+| `networkId` | Must match the network policy config key exactly |
+| `releaseId` | Non-empty (any scalar) |
 | `publisher.role` | Non-empty string |
 | `publisher.domain` | Non-empty string |
 | `policies.type` | `"rego"` |
 | `policies.source` | `"file"` or `"bundle"` |
 | `governance.signed` | Must be present (boolean) |
-| `governance.effective_from` | ISO 8601 timestamp; must be in the past |
-| `governance.effective_until` | Optional; if present, must be after `effective_from` and not expired |
+| `governance.effectiveFrom` | ISO 8601 timestamp; must be in the past |
+| `governance.effectiveUntil` | Optional; if present, must be after `effectiveFrom` and not expired |
 
 **When `policies.source: bundle`**
 
@@ -750,9 +750,9 @@ All fields below are validated by the adapter at startup and on every hot-reload
 |---|---|
 | `policies.bundle.id` | Non-empty string |
 | `policies.bundle.url` | URL to the `.tar.gz` bundle |
-| `policies.bundle.policy_query_path` | OPA query path (e.g. `data.policy.result`) |
+| `policies.bundle.policyQueryPath` | OPA query path (e.g. `data.policy.result`) |
 | `policies.bundle.signed` | Boolean; when `true`, the field below is also required |
-| `policies.bundle.signing_public_key_lookup_url` | Required when `policies.bundle.signed: true` |
+| `policies.bundle.signingPublicKeyLookupUrl` | Required when `policies.bundle.signed: true` |
 
 `policies.file` must **not** be present when `policies.source: bundle`.
 
@@ -762,10 +762,10 @@ All fields below are validated by the adapter at startup and on every hot-reload
 |---|---|
 | `policies.file.id` | Non-empty string |
 | `policies.file.url` | URL to the `.rego` file |
-| `policies.file.policy_query_path` | OPA query path (e.g. `data.policy.result`) |
+| `policies.file.policyQueryPath` | OPA query path (e.g. `data.policy.result`) |
 | `policies.file.signed` | Boolean; when `true`, the two fields below are also required |
-| `policies.file.signature_url` | Required when `policies.file.signed: true` |
-| `policies.file.signing_public_key_lookup_url` | Required when `policies.file.signed: true` |
+| `policies.file.signatureUrl` | Required when `policies.file.signed: true` |
+| `policies.file.signingPublicKeyLookupUrl` | Required when `policies.file.signed: true` |
 
 `policies.bundle` must **not** be present when `policies.source: file`.
 

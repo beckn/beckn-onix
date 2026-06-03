@@ -36,7 +36,7 @@ Supported config keys:
 
 ## Verification payloads
 
-- `manifest_signature_url` may return raw detached signature bytes, base64-encoded signature text, or JSON with a top-level `signature` field.
+- `manifestSignatureUrl` may return raw detached signature bytes, base64-encoded signature text, or JSON with a top-level `signature` field.
 - Signing public key lookup JSON is read only from supported fields: `data.details.publicKey`, `data.details.signing_public_key`, `data.details.public_key`, or legacy top-level `publicKey`, `signing_public_key`, and `public_key`.
 - Public key fields in arbitrary nested JSON locations are ignored.
 
