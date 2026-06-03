@@ -169,6 +169,8 @@ func (l *Loader) GetBySubscriberID(ctx context.Context, subscriberID string) (*m
 	doc.SubscriberID = subscriberID
 	// Store under the subscriber key so future GetBySubscriberID calls can short-circuit
 	// the registry metadata lookup, mirroring the pattern used by GetByNetworkID.
+	// store() only returns an error on a Marshal failure (a code bug in ManifestDocument),
+	// never on a Redis write failure — those are logged and swallowed inside store().
 	if err := l.store(ctx, subscriberKey, doc); err != nil {
 		return nil, err
 	}

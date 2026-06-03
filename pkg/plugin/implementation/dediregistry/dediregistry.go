@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -254,15 +255,13 @@ func (c *DeDiRegistryClient) LookupRegistry(ctx context.Context, namespaceIdenti
 // with an empty RawMeta map — the participant has not yet published a node manifest, which is
 // not an error condition.
 func (c *DeDiRegistryClient) LookupSubscriberMeta(ctx context.Context, subscriberID string) (*model.SubscriberMetadata, error) {
-	if subscriberID == "" {
-		return nil, fmt.Errorf("subscriberID is required for DeDi subscriber meta lookup")
-	}
 	parts := strings.Split(subscriberID, "/")
 	if len(parts) != 3 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
 		return nil, fmt.Errorf("subscriberID %q must be in namespace/registry/recordId format", subscriberID)
 	}
 
-	lookupURL := fmt.Sprintf("%s/lookup/%s/%s/%s", c.config.URL, parts[0], parts[1], parts[2])
+	lookupURL := fmt.Sprintf("%s/lookup/%s/%s/%s", c.config.URL,
+		url.PathEscape(parts[0]), url.PathEscape(parts[1]), url.PathEscape(parts[2]))
 
 	data, err := c.fetchDeDiData(ctx, lookupURL, "subscriber meta lookup")
 	if err != nil {

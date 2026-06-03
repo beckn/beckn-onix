@@ -763,7 +763,7 @@ func TestGetBySubscriberIDRegistryError(t *testing.T) {
 	}
 }
 
-func TestGetBySubscriberIDMissingManifestURLInMeta(t *testing.T) {
+func TestGetBySubscriberIDSubscriberHasNotPublishedNodeManifest(t *testing.T) {
 	cache := &mockCache{store: map[string]string{}}
 	registry := &mockRegistry{
 		subscriberMeta: &model.SubscriberMetadata{

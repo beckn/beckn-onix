@@ -752,6 +752,29 @@ func TestLookupSubscriberMeta(t *testing.T) {
 		}
 	})
 
+	t.Run("meta null in response returns empty RawMeta without error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			// Explicit JSON null for the meta field — distinct from the key being absent.
+			w.Write([]byte(`{"data":{"meta":null}}`))
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		got, err := client.LookupSubscriberMeta(ctx, "nfh.global/subscribers.beckn.one/bpp.energy-provider.com")
+		if err != nil {
+			t.Fatalf("expected no error when meta is null, got %v", err)
+		}
+		if len(got.RawMeta) != 0 {
+			t.Errorf("expected empty RawMeta when meta is null, got %v", got.RawMeta)
+		}
+	})
+
 	t.Run("invalid subscriberID fewer than three parts", func(t *testing.T) {
 		httpCalls := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
