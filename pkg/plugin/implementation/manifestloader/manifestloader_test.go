@@ -45,14 +45,22 @@ func (m *mockCache) Delete(ctx context.Context, key string) error { delete(m.sto
 func (m *mockCache) Clear(ctx context.Context) error              { m.store = map[string]string{}; return nil }
 
 type mockRegistry struct {
-	meta  *model.RegistryMetadata
-	err   error
-	calls int
+	meta           *model.RegistryMetadata
+	err            error
+	calls          int
+	subscriberMeta *model.SubscriberMetadata
+	subscriberErr  error
+	subscriberCalls int
 }
 
 func (m *mockRegistry) LookupRegistry(ctx context.Context, namespaceIdentifier, registryName string) (*model.RegistryMetadata, error) {
 	m.calls++
 	return m.meta, m.err
+}
+
+func (m *mockRegistry) LookupSubscriberMeta(ctx context.Context, subscriberID string) (*model.SubscriberMetadata, error) {
+	m.subscriberCalls++
+	return m.subscriberMeta, m.subscriberErr
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -654,6 +662,167 @@ func TestGetByNetworkID_SkipSignatureVerification(t *testing.T) {
 	doc, err := loader.GetByNetworkID(context.Background(), "nfo.example.org/network")
 	if err != nil {
 		t.Fatalf("GetByNetworkID() error = %v", err)
+	}
+	if doc.Verified {
+		t.Fatal("expected Verified=false when signature verification is skipped")
+	}
+	if string(doc.Content) != string(manifest) {
+		t.Fatalf("unexpected manifest content: %q", string(doc.Content))
+	}
+	if requests != 1 {
+		t.Fatalf("expected exactly 1 HTTP fetch (manifest only), got %d", requests)
+	}
+}
+
+func TestGetBySubscriberIDUsesCacheFirst(t *testing.T) {
+	cache := &mockCache{store: map[string]string{
+		subscriberCacheKey("nfh.global/subscribers.beckn.one/bpp.energy-provider.com"): `{"subscriber_id":"nfh.global/subscribers.beckn.one/bpp.energy-provider.com","content":"bWFuaWZlc3Q=","verified":true}`,
+	}}
+	registry := &mockRegistry{}
+	loader, _, err := New(context.Background(), cache, registry, &Config{})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	doc, err := loader.GetBySubscriberID(context.Background(), "nfh.global/subscribers.beckn.one/bpp.energy-provider.com")
+	if err != nil {
+		t.Fatalf("GetBySubscriberID() error = %v", err)
+	}
+	if registry.subscriberCalls != 0 {
+		t.Fatalf("expected no registry lookups on cache hit, got %d", registry.subscriberCalls)
+	}
+	if doc.SubscriberID != "nfh.global/subscribers.beckn.one/bpp.energy-provider.com" {
+		t.Fatalf("expected subscriberID to round-trip from cache")
+	}
+}
+
+func TestGetBySubscriberIDResolvesMetadata(t *testing.T) {
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	manifest := []byte("node manifest content")
+	signature := ed25519.Sign(privateKey, manifest)
+
+	originalHTTPClientFunc := httpClientFunc
+	httpClientFunc = func(timeout time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.String() {
+			case "https://example.org/node-manifest":
+				return response(200, string(manifest), "application/yaml"), nil
+			case "https://example.org/node-manifest.sig":
+				return response(200, base64.StdEncoding.EncodeToString(signature), "text/plain"), nil
+			case "https://example.org/pubkey":
+				return response(200, base64.StdEncoding.EncodeToString(publicKey), "text/plain"), nil
+			default:
+				return response(404, "not found", "text/plain"), nil
+			}
+		})}
+	}
+	defer func() { httpClientFunc = originalHTTPClientFunc }()
+
+	subscriberID := "nfh.global/subscribers.beckn.one/bpp.energy-provider.com"
+	cache := &mockCache{store: map[string]string{}}
+	registry := &mockRegistry{
+		subscriberMeta: &model.SubscriberMetadata{
+			SubscriberID: subscriberID,
+			RawMeta: map[string]string{
+				"manifestUrl":               "https://example.org/node-manifest",
+				"manifestSignatureUrl":      "https://example.org/node-manifest.sig",
+				"signingPublicKeyLookupUrl": "https://example.org/pubkey",
+			},
+		},
+	}
+	loader, _, err := New(context.Background(), cache, registry, &Config{})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	doc, err := loader.GetBySubscriberID(context.Background(), subscriberID)
+	if err != nil {
+		t.Fatalf("GetBySubscriberID() error = %v", err)
+	}
+	if registry.subscriberCalls != 1 {
+		t.Fatalf("expected one subscriber meta lookup, got %d", registry.subscriberCalls)
+	}
+	if doc.SubscriberID != subscriberID {
+		t.Fatalf("expected subscriberID to be set on returned document, got %q", doc.SubscriberID)
+	}
+	if _, ok := cache.store[subscriberCacheKey(subscriberID)]; !ok {
+		t.Fatal("expected subscriber-specific cache key to be populated")
+	}
+}
+
+func TestGetBySubscriberIDRegistryError(t *testing.T) {
+	cache := &mockCache{store: map[string]string{}}
+	registry := &mockRegistry{
+		subscriberErr: errors.New("registry unavailable"),
+	}
+	loader, _, err := New(context.Background(), cache, registry, &Config{})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	_, err = loader.GetBySubscriberID(context.Background(), "nfh.global/subscribers.beckn.one/bpp.energy-provider.com")
+	if err == nil || !strings.Contains(err.Error(), "registry unavailable") {
+		t.Fatalf("expected registry error to propagate, got %v", err)
+	}
+}
+
+func TestGetBySubscriberIDMissingManifestURLInMeta(t *testing.T) {
+	cache := &mockCache{store: map[string]string{}}
+	registry := &mockRegistry{
+		subscriberMeta: &model.SubscriberMetadata{
+			SubscriberID: "nfh.global/subscribers.beckn.one/bpp.energy-provider.com",
+			RawMeta:      map[string]string{},
+		},
+	}
+	loader, _, err := New(context.Background(), cache, registry, &Config{})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	_, err = loader.GetBySubscriberID(context.Background(), "nfh.global/subscribers.beckn.one/bpp.energy-provider.com")
+	if err == nil || !strings.Contains(err.Error(), "manifestUrl") {
+		t.Fatalf("expected missing manifestUrl error, got %v", err)
+	}
+}
+
+func TestGetBySubscriberIDEmptySubscriberID(t *testing.T) {
+	loader, _, err := New(context.Background(), &mockCache{store: map[string]string{}}, &mockRegistry{}, &Config{})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	_, err = loader.GetBySubscriberID(context.Background(), "")
+	if err == nil || !strings.Contains(err.Error(), "subscriberID cannot be empty") {
+		t.Fatalf("expected empty subscriberID error, got %v", err)
+	}
+}
+
+func TestGetBySubscriberID_SkipSignatureVerification(t *testing.T) {
+	manifest := []byte("node manifest: unsigned")
+	requests := 0
+
+	originalHTTPClientFunc := httpClientFunc
+	httpClientFunc = func(timeout time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests++
+			if req.URL.String() == "https://example.org/node-manifest" {
+				return response(200, string(manifest), "application/yaml"), nil
+			}
+			return response(404, "not found", "text/plain"), nil
+		})}
+	}
+	defer func() { httpClientFunc = originalHTTPClientFunc }()
+
+	subscriberID := "nfh.global/subscribers.beckn.one/bpp.energy-provider.com"
+	cache := &mockCache{store: map[string]string{}}
+	registry := &mockRegistry{
+		subscriberMeta: &model.SubscriberMetadata{
+			SubscriberID: subscriberID,
+			RawMeta:      map[string]string{"manifestUrl": "https://example.org/node-manifest"},
+		},
+	}
+	loader, _, err := New(context.Background(), cache, registry, &Config{SkipSignatureVerification: true})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	doc, err := loader.GetBySubscriberID(context.Background(), subscriberID)
+	if err != nil {
+		t.Fatalf("GetBySubscriberID() error = %v", err)
 	}
 	if doc.Verified {
 		t.Fatal("expected Verified=false when signature verification is skipped")

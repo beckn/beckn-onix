@@ -39,6 +39,12 @@ type RegistryMetadata struct {
 	RawMeta             map[string]string
 }
 
+// SubscriberMetadata represents metadata associated with a specific registry subscriber record.
+type SubscriberMetadata struct {
+	SubscriberID string
+	RawMeta      map[string]string
+}
+
 // Authorization-related constants for headers.
 const (
 	AuthHeaderSubscriber          string = "Authorization"

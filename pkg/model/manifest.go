@@ -20,6 +20,7 @@ type ManifestMetadata struct {
 // ManifestDocument is the cached and returned verified manifest payload.
 type ManifestDocument struct {
 	NetworkID    string    `json:"network_id,omitempty"`
+	SubscriberID string    `json:"subscriber_id,omitempty"`
 	ContentType  string    `json:"content_type,omitempty"`
 	Content      []byte    `json:"content"`
 	Digest       string    `json:"digest"`

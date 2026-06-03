@@ -247,6 +247,13 @@ func (c *DeDiRegistryClient) LookupRegistry(ctx context.Context, namespaceIdenti
 	}, nil
 }
 
+// LookupSubscriberMeta fetches manifest-related metadata for a specific subscriber record.
+// The subscriberID must be a fully-qualified three-part DeDi reference (namespace/registry/recordId).
+// NOTE: This is a stub. The real implementation will be added in a follow-up branch.
+func (c *DeDiRegistryClient) LookupSubscriberMeta(ctx context.Context, subscriberID string) (*model.SubscriberMetadata, error) {
+	return nil, fmt.Errorf("LookupSubscriberMeta: not implemented")
+}
+
 // parseTime converts string timestamp to time.Time
 func parseTime(timeStr string) time.Time {
 	if timeStr == "" {

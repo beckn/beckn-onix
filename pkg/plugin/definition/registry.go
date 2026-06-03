@@ -11,9 +11,13 @@ type RegistryLookup interface {
 	Lookup(ctx context.Context, req *model.Subscription) ([]model.Subscription, error)
 }
 
-// RegistryMetadataLookup fetches registry-level metadata without addressing a specific record.
+// RegistryMetadataLookup fetches registry-level metadata without addressing a specific record,
+// and can also look up subscriber-scoped metadata by subscriber ID.
 type RegistryMetadataLookup interface {
 	LookupRegistry(ctx context.Context, namespaceIdentifier, registryName string) (*model.RegistryMetadata, error)
+	// LookupSubscriberMeta fetches manifest-related metadata for a specific subscriber record.
+	// The subscriberID is the fully-qualified three-part DeDi reference (namespace/registry/recordId).
+	LookupSubscriberMeta(ctx context.Context, subscriberID string) (*model.SubscriberMetadata, error)
 }
 
 // RegistryLookupProvider initializes a new registry lookup instance.
