@@ -137,7 +137,6 @@ The **Beckn Protocol** is an open protocol that enables location-aware, local co
 - **ManifestLoader**: Fetches a network manifest published by a Network Facilitator Organization (NFO), verifies its detached signature, and caches the verified document for downstream consumers such as `opapolicychecker`. See [plugin docs](pkg/plugin/implementation/manifestloader/README.md).
 - **PayloadStore**: Records every inbound request payload indexed by `message_id` and `transaction_id` with TTL-based expiration via the cache backend. Enables stateful use cases (duplicate detection, transaction history) without requiring other plugins to manage storage. See [plugin docs](pkg/plugin/implementation/payloadstore/README.md).
 
-
 ## Key Aspects
 
 ### 📊 Observability
@@ -164,7 +163,7 @@ go install golang.org/x/perf/cmd/benchstat@latest
 bash benchmarks/run_benchmarks.sh
 ```
 
-Results land in `benchmarks/results/<timestamp>/`. The latest committed report is at [benchmarks/reports/REPORT_ONIX_v150.md](benchmarks/reports/REPORT_ONIX_v150.md). See [benchmarks/README.md](benchmarks/README.md) for full methodology and interpretation guidance.
+Results land in `benchmarks/results/<timestamp>/`. The latest committed report is at [benchmarks/results/BENCHMARK_REPORT.md](benchmarks/results/BENCHMARK_REPORT.md). See [benchmarks/README.md](benchmarks/README.md) for full methodology and interpretation guidance.
 
 ---
 
