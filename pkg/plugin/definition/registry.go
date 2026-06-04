@@ -7,8 +7,13 @@ import (
 )
 
 type RegistryLookup interface {
-	// looks up Registry entry to obtain public keys to validate signature of the incoming message
+	// Lookup looks up a registry entry to obtain public keys to validate the signature of the incoming message.
 	Lookup(ctx context.Context, req *model.Subscription) ([]model.Subscription, error)
+
+	// LookupNode looks up a subscriber record by its fully-qualified NodeID.
+	// nodeID must be in namespace/registry/recordId format (exactly 3 non-empty parts separated by "/").
+	// Returns the subscriber's Subscription including URL, type, and domain.
+	LookupNode(ctx context.Context, nodeID string) (*model.Subscription, error)
 }
 
 // RegistryMetadataLookup fetches registry-level metadata without addressing a specific record.

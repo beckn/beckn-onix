@@ -12,7 +12,9 @@ import (
 type RouterProvider struct{}
 
 // New initializes a new Router instance.
-func (rp RouterProvider) New(ctx context.Context, config map[string]string) (definition.Router, func() error, error) {
+// registry is an optional dependency; when provided it is used to resolve
+// subscriber URLs via NodeID lookup when no URI is present in the payload context.
+func (rp RouterProvider) New(ctx context.Context, registry definition.RegistryLookup, config map[string]string) (definition.Router, func() error, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("context cannot be nil")
 	}
@@ -22,7 +24,7 @@ func (rp RouterProvider) New(ctx context.Context, config map[string]string) (def
 	if !ok {
 		return nil, nil, errors.New("routingConfig is required in the configuration")
 	}
-	return router.New(ctx, &router.Config{
+	return router.New(ctx, registry, &router.Config{
 		RoutingConfig: routingConfig,
 	})
 }

@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"embed"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
 //go:embed testData/*
@@ -33,13 +35,18 @@ func setupTestConfig(t *testing.T, yamlFileName string) string {
 	return rulesPath
 }
 
-// setupRouter is a helper function to create router instance.
+// setupRouter is a helper function to create router instance without a registry plugin.
 func setupRouter(t *testing.T, configFile string) (*Router, func() error, string) {
+	return setupRouterWithRegistry(t, configFile, nil)
+}
+
+// setupRouterWithRegistry is a helper function to create router instance with an optional registry plugin.
+func setupRouterWithRegistry(t *testing.T, configFile string, registry definition.RegistryLookup) (*Router, func() error, string) {
 	rulesFilePath := setupTestConfig(t, configFile)
 	config := &Config{
 		RoutingConfig: rulesFilePath,
 	}
-	router, _, err := New(context.Background(), config)
+	router, _, err := New(context.Background(), registry, config)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
@@ -58,7 +65,7 @@ func TestNew(t *testing.T) {
 		RoutingConfig: rulesFilePath,
 	}
 
-	router, _, err := New(ctx, config)
+	router, _, err := New(ctx, nil, config)
 	if err != nil {
 		t.Errorf("New(%v) = %v, want nil error", config, err)
 		return
@@ -96,7 +103,7 @@ func TestNewErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router, _, err := New(ctx, tt.config)
+			router, _, err := New(ctx, nil, tt.config)
 
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Errorf("New(%v) = %v, want error containing %q", tt.config, err, tt.wantErr)
@@ -940,6 +947,135 @@ func TestRouteCompoundEndpointSuccess(t *testing.T) {
 			_, err := router.Route(ctx, &url.URL{Path: tt.endpointAction}, []byte(tt.body))
 			if err != nil {
 				t.Errorf("Route() = %v, want nil error", err)
+			}
+		})
+	}
+}
+
+// mockRegistry is a test double for definition.RegistryLookup.
+type mockRegistry struct {
+	lookupNodeFn func(ctx context.Context, nodeID string) (*model.Subscription, error)
+}
+
+func (m *mockRegistry) Lookup(_ context.Context, _ *model.Subscription) ([]model.Subscription, error) {
+	return nil, fmt.Errorf("Lookup not implemented in mock")
+}
+
+func (m *mockRegistry) LookupNode(ctx context.Context, nodeID string) (*model.Subscription, error) {
+	return m.lookupNodeFn(ctx, nodeID)
+}
+
+// Ensure mockRegistry satisfies the interface at compile time.
+var _ definition.RegistryLookup = (*mockRegistry)(nil)
+
+// TestRouteNodeIDFallback tests URL resolution via NodeID registry lookup.
+func TestRouteNodeIDFallback(t *testing.T) {
+	ctx := context.Background()
+
+	successRegistry := &mockRegistry{
+		lookupNodeFn: func(_ context.Context, nodeID string) (*model.Subscription, error) {
+			return &model.Subscription{
+				Subscriber: model.Subscriber{
+					SubscriberID: nodeID,
+					URL:          "https://resolved.example.com",
+				},
+			}, nil
+		},
+	}
+
+	tests := []struct {
+		name           string
+		configFile     string
+		endpointAction string
+		body           string
+		registry       definition.RegistryLookup
+		wantErr        string
+	}{
+		{
+			name:           "bpp_id resolves BPP URL when bppUri absent",
+			configFile:     "bap_caller.yaml",
+			endpointAction: "select",
+			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_id": "nfo.example.org/retail-net/abc123"}}`,
+			registry:       successRegistry,
+		},
+		{
+			name:           "bap_id resolves BAP URL when bapUri absent",
+			configFile:     "bpp_caller.yaml",
+			endpointAction: "on_select",
+			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bap_id": "nfo.example.org/retail-net/bap456"}}`,
+			registry:       successRegistry,
+		},
+		{
+			name:           "bppId (camelCase) resolves BPP URL",
+			configFile:     "bap_caller.yaml",
+			endpointAction: "select",
+			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bppId": "nfo.example.org/retail-net/abc123"}}`,
+			registry:       successRegistry,
+		},
+		{
+			name:           "nodeID present but no registry configured returns error",
+			configFile:     "bap_caller.yaml",
+			endpointAction: "select",
+			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_id": "nfo.example.org/retail-net/abc123"}}`,
+			registry:       nil,
+			wantErr:        "no registry plugin is configured",
+		},
+		{
+			name:           "invalid nodeID format (2 parts) returns error",
+			configFile:     "bap_caller.yaml",
+			endpointAction: "select",
+			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_id": "nfo.example.org/retail-net"}}`,
+			registry:       successRegistry,
+			wantErr:        "namespace/registry/recordId format",
+		},
+		{
+			name:           "invalid nodeID format (1 part) returns error",
+			configFile:     "bap_caller.yaml",
+			endpointAction: "select",
+			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_id": "plainid"}}`,
+			registry:       successRegistry,
+			wantErr:        "namespace/registry/recordId format",
+		},
+		{
+			name:           "registry lookup failure returns error",
+			configFile:     "bap_caller.yaml",
+			endpointAction: "select",
+			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_id": "nfo.example.org/retail-net/abc123"}}`,
+			registry: &mockRegistry{
+				lookupNodeFn: func(_ context.Context, _ string) (*model.Subscription, error) {
+					return nil, fmt.Errorf("registry unavailable")
+				},
+			},
+			wantErr: "registry lookup failed",
+		},
+		{
+			name:           "registry returns empty URL returns error",
+			configFile:     "bap_caller.yaml",
+			endpointAction: "select",
+			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_id": "nfo.example.org/retail-net/abc123"}}`,
+			registry: &mockRegistry{
+				lookupNodeFn: func(_ context.Context, _ string) (*model.Subscription, error) {
+					return &model.Subscription{Subscriber: model.Subscriber{SubscriberID: "abc123"}}, nil
+				},
+			},
+			wantErr: "has no URL configured",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router, _, rulesFilePath := setupRouterWithRegistry(t, tt.configFile, tt.registry)
+			defer os.RemoveAll(filepath.Dir(rulesFilePath))
+
+			_, err := router.Route(ctx, &url.URL{Path: tt.endpointAction}, []byte(tt.body))
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("Route() = %v, want nil error", err)
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("Route() = %v, want error containing %q", err, tt.wantErr)
+				}
 			}
 		})
 	}

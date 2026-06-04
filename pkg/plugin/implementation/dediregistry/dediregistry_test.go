@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -547,6 +548,189 @@ func TestLookup(t *testing.T) {
 		_, err = client.Lookup(ctx, req)
 		if err == nil {
 			t.Error("Expected network error, got nil")
+		}
+	})
+}
+
+func TestLookupNode(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("successful node lookup returns subscription with URL", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != "GET" {
+				t.Errorf("Expected GET request, got %s", r.Method)
+			}
+			if r.URL.Path != "/dedi/lookup/nfo.example.org/retail-net/abc123" {
+				t.Errorf("Unexpected path: %s", r.URL.Path)
+			}
+			response := map[string]interface{}{
+				"message": "Record retrieved from registry cache",
+				"data": map[string]interface{}{
+					"details": map[string]interface{}{
+						"url":                "https://bpp.example.com/beckn",
+						"type":               "BPP",
+						"domain":             "retail",
+						"subscriber_id":      "nfo.example.org/retail-net/abc123",
+						"signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
+					},
+					"network_memberships": []string{"commerce-network.org/prod"},
+					"created_at":          "2025-10-27T11:45:27.963Z",
+					"updated_at":          "2025-10-27T11:46:23.563Z",
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		sub, err := client.LookupNode(ctx, "nfo.example.org/retail-net/abc123")
+		if err != nil {
+			t.Fatalf("LookupNode() error = %v", err)
+		}
+		if sub.URL != "https://bpp.example.com/beckn" {
+			t.Errorf("expected URL %q, got %q", "https://bpp.example.com/beckn", sub.URL)
+		}
+		if sub.Type != "BPP" {
+			t.Errorf("expected Type %q, got %q", "BPP", sub.Type)
+		}
+		if sub.Domain != "retail" {
+			t.Errorf("expected Domain %q, got %q", "retail", sub.Domain)
+		}
+	})
+
+	t.Run("invalid nodeID format - only 1 part", func(t *testing.T) {
+		client, closer, err := New(ctx, &Config{URL: "https://test.example.com"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		_, err = client.LookupNode(ctx, "plainid")
+		if err == nil {
+			t.Fatal("expected error for invalid nodeID format, got nil")
+		}
+		if !strings.Contains(err.Error(), "namespace/registry/recordId format") {
+			t.Errorf("expected format error, got: %v", err)
+		}
+	})
+
+	t.Run("invalid nodeID format - only 2 parts", func(t *testing.T) {
+		client, closer, err := New(ctx, &Config{URL: "https://test.example.com"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		_, err = client.LookupNode(ctx, "nfo.example.org/retail-net")
+		if err == nil {
+			t.Fatal("expected error for 2-part nodeID, got nil")
+		}
+		if !strings.Contains(err.Error(), "namespace/registry/recordId format") {
+			t.Errorf("expected format error, got: %v", err)
+		}
+	})
+
+	t.Run("invalid nodeID format - empty part", func(t *testing.T) {
+		client, closer, err := New(ctx, &Config{URL: "https://test.example.com"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		_, err = client.LookupNode(ctx, "nfo.example.org//abc123")
+		if err == nil {
+			t.Fatal("expected error for empty part in nodeID, got nil")
+		}
+		if !strings.Contains(err.Error(), "namespace/registry/recordId format") {
+			t.Errorf("expected format error, got: %v", err)
+		}
+	})
+
+	t.Run("http error response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte("not found"))
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		_, err = client.LookupNode(ctx, "nfo.example.org/retail-net/abc123")
+		if err == nil {
+			t.Fatal("expected error for 404 response, got nil")
+		}
+	})
+
+	t.Run("missing details field in response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := map[string]interface{}{
+				"data": map[string]interface{}{
+					"record_id": "abc123",
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		_, err = client.LookupNode(ctx, "nfo.example.org/retail-net/abc123")
+		if err == nil {
+			t.Fatal("expected error for missing details field, got nil")
+		}
+		if !strings.Contains(err.Error(), "missing details field") {
+			t.Errorf("expected missing details error, got: %v", err)
+		}
+	})
+
+	t.Run("network membership mismatch returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := map[string]interface{}{
+				"data": map[string]interface{}{
+					"details": map[string]interface{}{
+						"url":                "https://bpp.example.com",
+						"type":               "BPP",
+						"subscriber_id":      "abc123",
+						"signing_public_key": "key",
+					},
+					"network_memberships": []string{"other-network.org/prod"},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, &Config{
+			URL:               server.URL + "/dedi",
+			AllowedNetworkIDs: []string{"commerce-network.org/prod"},
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		_, err = client.LookupNode(ctx, "nfo.example.org/retail-net/abc123")
+		if err == nil {
+			t.Fatal("expected error for network membership mismatch, got nil")
+		}
+		if !strings.Contains(err.Error(), "does not belong to any configured networks") {
+			t.Errorf("expected network membership error, got: %v", err)
 		}
 	})
 }

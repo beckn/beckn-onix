@@ -9,7 +9,9 @@ import (
 	"path"
 	"strings"
 
+	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 
 	"gopkg.in/yaml.v3"
 )
@@ -26,7 +28,8 @@ type routingConfig struct {
 
 // Router implements Router interface.
 type Router struct {
-	rules map[string]map[string]map[string]*model.Route // domain -> version -> endpoint -> route
+	rules    map[string]map[string]map[string]*model.Route // domain -> version -> endpoint -> route
+	registry definition.RegistryLookup                    // optional; used for NodeID-based URL resolution
 }
 
 // RoutingRule represents a single routing rule.
@@ -59,14 +62,17 @@ const (
 
 // New initializes a new Router instance with the provided configuration.
 // It loads and validates the routing rules from the specified YAML file.
+// registry is optional; when provided it is used to resolve subscriber URLs via NodeID lookup
+// when no URI is present in the payload context.
 // Returns an error if the configuration is invalid or the rules cannot be loaded.
-func New(ctx context.Context, config *Config) (*Router, func() error, error) {
+func New(ctx context.Context, registry definition.RegistryLookup, config *Config) (*Router, func() error, error) {
 	// Check if config is nil
 	if config == nil {
 		return nil, nil, fmt.Errorf("config cannot be nil")
 	}
 	router := &Router{
-		rules: make(map[string]map[string]map[string]*model.Route),
+		rules:    make(map[string]map[string]map[string]*model.Route),
+		registry: registry,
 	}
 
 	// Load rules at bootup
@@ -252,6 +258,8 @@ func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*mode
 	}
 	bppURI := getContextString(uriBody.Context, "bpp_uri", "bppUri", "receiverUri")
 	bapURI := getContextString(uriBody.Context, "bap_uri", "bapUri", "senderUri")
+	bppNodeID := getContextString(uriBody.Context, "bpp_id", "bppId", "receiverId")
+	bapNodeID := getContextString(uriBody.Context, "bap_id", "bapId", "senderId")
 
 	// For v2.x.x, ignore domain and use wildcard; for v1.x.x, use actual domain
 	domain := requestBody.Context.Domain
@@ -288,9 +296,9 @@ func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*mode
 	// Both legacy ("bpp"/"bap") and new spec v2 ("receiver"/"sender") values are accepted.
 	switch route.TargetType {
 	case targetTypeBPP, targetTypeReceiver:
-		return handleProtocolMapping(route, bppURI, endpoint)
+		return handleProtocolMapping(ctx, route, bppURI, bppNodeID, endpoint, r.registry)
 	case targetTypeBAP, targetTypeSender:
-		return handleProtocolMapping(route, bapURI, endpoint)
+		return handleProtocolMapping(ctx, route, bapURI, bapNodeID, endpoint, r.registry)
 	}
 	return route, nil
 }
@@ -343,28 +351,61 @@ func canonicalRoleName(targetType string) string {
 	}
 }
 
-// handleProtocolMapping handles both BPP and BAP routing with proper URL construction
-func handleProtocolMapping(route *model.Route, npURI, endpoint string) (*model.Route, error) {
-	target := strings.TrimSpace(npURI)
+// handleProtocolMapping handles both BPP and BAP routing with proper URL construction.
+// Resolution order:
+//  1. URI from payload context (npURI) — existing behaviour.
+//  2. NodeID-based registry lookup (nodeID) — when URI is absent and a NodeID in
+//     namespace/registry/recordId format is present; requires a registry plugin.
+//  3. Default URL configured in routing rules (route.URL).
+//  4. Error — none of the above resolved a destination.
+func handleProtocolMapping(ctx context.Context, route *model.Route, npURI, nodeID, endpoint string, registry definition.RegistryLookup) (*model.Route, error) {
 	role := canonicalRoleName(route.TargetType)
-	if len(target) == 0 {
-		if route.URL == nil {
-			return nil, fmt.Errorf("could not determine destination for endpoint '%s': neither request contained a %s URI nor was a default URL configured in routing rules", endpoint, role)
+
+	// 1. URI present in payload — use it directly.
+	if target := strings.TrimSpace(npURI); target != "" {
+		targetURL, err := url.Parse(target)
+		if err != nil {
+			return nil, fmt.Errorf("invalid %s URI - %s in request body for %s: %w", role, target, endpoint, err)
 		}
-		return &model.Route{
-			TargetType: targetTypeURL,
-			URL:        route.URL,
-		}, nil
+		targetURL.Path = joinPath(targetURL, endpoint)
+		return &model.Route{TargetType: targetTypeURL, URL: targetURL}, nil
 	}
-	targetURL, err := url.Parse(target)
-	if err != nil {
-		return nil, fmt.Errorf("invalid %s URI - %s in request body for %s: %w", role, target, endpoint, err)
+
+	// 2. NodeID present — resolve URL via registry lookup.
+	if nodeID = strings.TrimSpace(nodeID); nodeID != "" {
+		// Validate 3-part format before making any network call.
+		parts := strings.Split(nodeID, "/")
+		if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+			log.Errorf(ctx, nil, "Router: %s nodeID '%s' for endpoint '%s' is not in namespace/registry/recordId format", role, nodeID, endpoint)
+			return nil, fmt.Errorf("could not resolve %s destination for endpoint '%s': nodeID '%s' is not in namespace/registry/recordId format", role, endpoint, nodeID)
+		}
+		if registry == nil {
+			log.Errorf(ctx, nil, "Router: %s nodeID '%s' present for endpoint '%s' but no registry plugin is configured", role, nodeID, endpoint)
+			return nil, fmt.Errorf("could not resolve %s destination for endpoint '%s': nodeID '%s' present but no registry plugin is configured", role, endpoint, nodeID)
+		}
+		subscription, err := registry.LookupNode(ctx, nodeID)
+		if err != nil {
+			log.Errorf(ctx, err, "Router: registry lookup failed for %s nodeID '%s' on endpoint '%s'", role, nodeID, endpoint)
+			return nil, fmt.Errorf("registry lookup failed for %s nodeID '%s' on endpoint '%s': %w", role, nodeID, endpoint, err)
+		}
+		if subscription.URL == "" {
+			log.Errorf(ctx, nil, "Router: registry entry for %s nodeID '%s' has no URL", role, nodeID)
+			return nil, fmt.Errorf("registry entry for %s nodeID '%s' has no URL configured", role, nodeID)
+		}
+		resolvedURL, err := url.Parse(subscription.URL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid URL '%s' returned from registry for %s nodeID '%s': %w", subscription.URL, role, nodeID, err)
+		}
+		resolvedURL.Path = joinPath(resolvedURL, endpoint)
+		log.Debugf(ctx, "Router: resolved %s URL '%s' via registry NodeID '%s' for endpoint '%s'", role, subscription.URL, nodeID, endpoint)
+		return &model.Route{TargetType: targetTypeURL, URL: resolvedURL}, nil
 	}
-	targetURL.Path = joinPath(targetURL, endpoint)
-	return &model.Route{
-		TargetType: targetTypeURL,
-		URL:        targetURL,
-	}, nil
+
+	// 3. Fall back to default URL from routing config.
+	if route.URL == nil {
+		return nil, fmt.Errorf("could not determine destination for endpoint '%s': neither request contained a %s URI nor was a default URL configured in routing rules", endpoint, role)
+	}
+	return &model.Route{TargetType: targetTypeURL, URL: route.URL}, nil
 }
 
 func joinPath(u *url.URL, endpoint string) string {

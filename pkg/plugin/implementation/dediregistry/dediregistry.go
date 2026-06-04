@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
@@ -245,6 +247,64 @@ func (c *DeDiRegistryClient) LookupRegistry(ctx context.Context, namespaceIdenti
 		RegistryName:        registryName,
 		RawMeta:             meta,
 	}, nil
+}
+
+// LookupNode looks up a subscriber record by its fully-qualified NodeID.
+// nodeID must be in namespace/registry/recordId format (exactly 3 non-empty parts separated by "/").
+// Returns the subscriber's Subscription including URL, type, and domain.
+func (c *DeDiRegistryClient) LookupNode(ctx context.Context, nodeID string) (*model.Subscription, error) {
+	parts := strings.Split(nodeID, "/")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return nil, fmt.Errorf("nodeID %q must be in namespace/registry/recordId format with 3 non-empty parts", nodeID)
+	}
+
+	lookupURL := fmt.Sprintf("%s/lookup/%s/%s/%s", c.config.URL,
+		url.PathEscape(parts[0]), url.PathEscape(parts[1]), url.PathEscape(parts[2]))
+
+	data, err := c.fetchDeDiData(ctx, lookupURL, "node lookup")
+	if err != nil {
+		return nil, err
+	}
+
+	details, ok := data["details"].(map[string]any)
+	if !ok {
+		log.Errorf(ctx, nil, "Invalid DeDi response format: missing or invalid details field")
+		return nil, fmt.Errorf("invalid response format: missing details field")
+	}
+
+	detailsURL, _ := details["url"].(string)
+	detailsType, _ := details["type"].(string)
+	detailsDomain, _ := details["domain"].(string)
+	detailsSubscriberID, _ := details["subscriber_id"].(string)
+
+	// Validate network memberships if configured.
+	networkMemberships := extractStringSlice(ctx, "network_memberships", data["network_memberships"])
+	if len(c.config.AllowedNetworkIDs) > 0 {
+		if len(networkMemberships) == 0 || !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
+			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", detailsSubscriberID)
+		}
+	}
+
+	signingPublicKey, _ := details["signing_public_key"].(string)
+	encrPublicKey, _ := details["encr_public_key"].(string)
+	createdAt, _ := data["created_at"].(string)
+	updatedAt, _ := data["updated_at"].(string)
+
+	subscription := &model.Subscription{
+		Subscriber: model.Subscriber{
+			SubscriberID: detailsSubscriberID,
+			URL:          detailsURL,
+			Domain:       detailsDomain,
+			Type:         detailsType,
+		},
+		SigningPublicKey: signingPublicKey,
+		EncrPublicKey:   encrPublicKey,
+		Created:         parseTime(createdAt),
+		Updated:         parseTime(updatedAt),
+	}
+
+	log.Debugf(ctx, "DeDi node lookup successful for nodeID: %s, subscriber: %s, url: %s", nodeID, detailsSubscriberID, detailsURL)
+	return subscription, nil
 }
 
 // parseTime converts string timestamp to time.Time
