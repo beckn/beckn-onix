@@ -154,3 +154,9 @@ func (c *RegistryClient) Lookup(ctx context.Context, subscription *model.Subscri
 	log.Debugf(ctx, "Lookup request successful, found %d subscriptions", len(results))
 	return results, nil
 }
+
+// LookupNode is not supported by the standard Beckn registry.
+// Use the dediregistry plugin for NodeID-based (namespace/registry/recordName) lookups.
+func (c *RegistryClient) LookupNode(_ context.Context, nodeID string) (*model.Subscription, error) {
+	return nil, fmt.Errorf("LookupNode is not supported by the standard registry (nodeID: %s); configure dediregistry for NodeID-based lookups", nodeID)
+}

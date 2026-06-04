@@ -287,6 +287,8 @@ func (km *KeyMgr) Keyset(ctx context.Context, keyID string) (*model.Keyset, erro
 }
 
 // LookupNPKeys retrieves the signing and encryption public keys for the given subscriber ID and unique key ID.
+// When subscriberID is in namespace/registry/recordName format (3-part NodeID), it uses LookupNode
+// to resolve the record directly via the DeDi registry path. Otherwise it falls back to the standard Lookup.
 func (km *KeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueKeyID string) (string, string, error) {
 	cacheKey := fmt.Sprintf("%s_%s", subscriberID, uniqueKeyID)
 	cachedData, err := km.Cache.Get(ctx, cacheKey)
@@ -296,19 +298,33 @@ func (km *KeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueKeyID st
 			return keys.SigningPublic, keys.EncrPublic, nil
 		}
 	}
-	subscribers, err := km.Registry.Lookup(ctx, &model.Subscription{
-		Subscriber: model.Subscriber{
-			SubscriberID: subscriberID,
-		},
-		KeyID: uniqueKeyID,
-	})
-	if err != nil {
-		return "", "", fmt.Errorf("failed to lookup registry: %w", err)
+
+	var signingKey, encrKey string
+	if parts := strings.Split(subscriberID, "/"); len(parts) == 3 && parts[0] != "" && parts[1] != "" && parts[2] != "" {
+		// 3-part NodeID — resolve directly via DeDi node lookup.
+		subscription, err := km.Registry.LookupNode(ctx, subscriberID)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to lookup registry node: %w", err)
+		}
+		signingKey = subscription.SigningPublicKey
+		encrKey = subscription.EncrPublicKey
+	} else {
+		subscribers, err := km.Registry.Lookup(ctx, &model.Subscription{
+			Subscriber: model.Subscriber{
+				SubscriberID: subscriberID,
+			},
+			KeyID: uniqueKeyID,
+		})
+		if err != nil {
+			return "", "", fmt.Errorf("failed to lookup registry: %w", err)
+		}
+		if len(subscribers) == 0 {
+			return "", "", ErrSubscriberNotFound
+		}
+		signingKey = subscribers[0].SigningPublicKey
+		encrKey = subscribers[0].EncrPublicKey
 	}
-	if len(subscribers) == 0 {
-		return "", "", ErrSubscriberNotFound
-	}
-	return subscribers[0].SigningPublicKey, subscribers[0].EncrPublicKey, nil
+	return signingKey, encrKey, nil
 }
 
 // validateParams checks that subscriberID and uniqueKeyID are not empty.

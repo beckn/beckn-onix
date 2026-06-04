@@ -16,7 +16,7 @@ type PluginManager interface {
 	Middleware(ctx context.Context, cfg *plugin.Config) (func(http.Handler) http.Handler, error)
 	SignValidator(ctx context.Context, cfg *plugin.Config) (definition.SignValidator, error)
 	Validator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)
-	Router(ctx context.Context, registry definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.Router, error)
+	Router(ctx context.Context, registry definition.RegistryLookup, cfg *plugin.Config) (definition.Router, error)
 	Publisher(ctx context.Context, cfg *plugin.Config) (definition.Publisher, error)
 	Signer(ctx context.Context, cfg *plugin.Config) (definition.Signer, error)
 	Step(ctx context.Context, cfg *plugin.Config) (definition.Step, error)

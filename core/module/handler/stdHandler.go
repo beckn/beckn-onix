@@ -412,24 +412,14 @@ func loadKeyManager(ctx context.Context, mgr PluginManager, cache definition.Cac
 	return km, nil
 }
 
-// loadRouter initialises the Router plugin, optionally wiring a RegistryMetadataLookup
-// for NodeID-based URL resolution. If the configured registry plugin does not implement
-// RegistryMetadataLookup (e.g. standard registry), the router starts without it and falls
-// back to URI-from-payload and default-URL routing only.
+// loadRouter initialises the Router plugin, optionally wiring a RegistryLookup
+// for NodeID-based URL resolution fallback.
 func loadRouter(ctx context.Context, mgr PluginManager, registry definition.RegistryLookup, cfg *plugin.Config) (definition.Router, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping Router plugin: not configured")
 		return nil, nil
 	}
-	var metadataLookup definition.RegistryMetadataLookup
-	if registry != nil {
-		if ml, ok := registry.(definition.RegistryMetadataLookup); ok {
-			metadataLookup = ml
-		} else {
-			log.Debug(ctx, "Router: registry plugin does not implement RegistryMetadataLookup; NodeID-based URL resolution will not be available")
-		}
-	}
-	r, err := mgr.Router(ctx, metadataLookup, cfg)
+	r, err := mgr.Router(ctx, registry, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load Router plugin (%s): %w", cfg.ID, err)
 	}

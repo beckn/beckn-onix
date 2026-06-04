@@ -25,6 +25,10 @@ type mockRegistry struct {
 	LookupFunc func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error)
 }
 
+func (m *mockRegistry) LookupNode(_ context.Context, nodeID string) (*model.Subscription, error) {
+	return nil, fmt.Errorf("LookupNode not implemented in mockRegistry (nodeID: %s)", nodeID)
+}
+
 func (m *mockRegistry) Lookup(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
 	if m.LookupFunc != nil {
 		return m.LookupFunc(ctx, sub)
@@ -353,6 +357,10 @@ func TestGetVaultClient_Success(t *testing.T) {
 }
 
 type mockRegistryLookup struct{}
+
+func (m *mockRegistryLookup) LookupNode(_ context.Context, nodeID string) (*model.Subscription, error) {
+	return nil, fmt.Errorf("LookupNode not implemented in mockRegistryLookup (nodeID: %s)", nodeID)
+}
 
 func (m *mockRegistryLookup) Lookup(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
 	return []model.Subscription{

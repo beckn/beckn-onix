@@ -141,7 +141,7 @@ type mockRouterProvider struct {
 	errFunc func() error
 }
 
-func (m *mockRouterProvider) New(ctx context.Context, _ definition.RegistryMetadataLookup, config map[string]string) (definition.Router, func() error, error) {
+func (m *mockRouterProvider) New(ctx context.Context, _ definition.RegistryLookup, config map[string]string) (definition.Router, func() error, error) {
 	if m.err != nil {
 		return nil, nil, m.err
 	}

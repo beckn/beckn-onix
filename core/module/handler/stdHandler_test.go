@@ -125,7 +125,7 @@ func (noopPluginManager) SignValidator(context.Context, *plugin.Config) (definit
 func (noopPluginManager) Validator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
-func (noopPluginManager) Router(context.Context, definition.RegistryMetadataLookup, *plugin.Config) (definition.Router, error) {
+func (noopPluginManager) Router(context.Context, definition.RegistryLookup, *plugin.Config) (definition.Router, error) {
 	return nil, nil
 }
 func (noopPluginManager) Publisher(context.Context, *plugin.Config) (definition.Publisher, error) {
@@ -166,6 +166,10 @@ type registryWithoutMetadata struct{}
 
 func (registryWithoutMetadata) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
 	return nil, errors.New("not implemented")
+}
+
+func (registryWithoutMetadata) LookupNode(_ context.Context, nodeID string) (*model.Subscription, error) {
+	return nil, fmt.Errorf("LookupNode not supported (nodeID: %s)", nodeID)
 }
 
 type stubCache struct{}

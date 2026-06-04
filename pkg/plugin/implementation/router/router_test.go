@@ -41,7 +41,7 @@ func setupRouter(t *testing.T, configFile string) (*Router, func() error, string
 }
 
 // setupRouterWithRegistry is a helper function to create router instance with an optional registry plugin.
-func setupRouterWithRegistry(t *testing.T, configFile string, registry definition.RegistryMetadataLookup) (*Router, func() error, string) {
+func setupRouterWithRegistry(t *testing.T, configFile string, registry definition.RegistryLookup) (*Router, func() error, string) {
 	rulesFilePath := setupTestConfig(t, configFile)
 	config := &Config{
 		RoutingConfig: rulesFilePath,
@@ -952,13 +952,13 @@ func TestRouteCompoundEndpointSuccess(t *testing.T) {
 	}
 }
 
-// mockRegistry is a test double for definition.RegistryMetadataLookup.
+// mockRegistry is a test double for definition.RegistryLookup.
 type mockRegistry struct {
 	lookupNodeFn func(ctx context.Context, nodeID string) (*model.Subscription, error)
 }
 
-func (m *mockRegistry) LookupRegistry(_ context.Context, _, _ string) (*model.RegistryMetadata, error) {
-	return nil, fmt.Errorf("LookupRegistry not implemented in mock")
+func (m *mockRegistry) Lookup(_ context.Context, _ *model.Subscription) ([]model.Subscription, error) {
+	return nil, fmt.Errorf("Lookup not implemented in mock")
 }
 
 func (m *mockRegistry) LookupNode(ctx context.Context, nodeID string) (*model.Subscription, error) {
@@ -966,7 +966,7 @@ func (m *mockRegistry) LookupNode(ctx context.Context, nodeID string) (*model.Su
 }
 
 // Ensure mockRegistry satisfies the interface at compile time.
-var _ definition.RegistryMetadataLookup = (*mockRegistry)(nil)
+var _ definition.RegistryLookup = (*mockRegistry)(nil)
 
 // TestRouteNodeIDFallback tests URL resolution via NodeID registry lookup.
 func TestRouteNodeIDFallback(t *testing.T) {
@@ -988,7 +988,7 @@ func TestRouteNodeIDFallback(t *testing.T) {
 		configFile     string
 		endpointAction string
 		body           string
-		registry       definition.RegistryMetadataLookup
+		registry       definition.RegistryLookup
 		wantErr        string
 	}{
 		{

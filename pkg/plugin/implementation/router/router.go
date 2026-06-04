@@ -29,7 +29,7 @@ type routingConfig struct {
 // Router implements Router interface.
 type Router struct {
 	rules    map[string]map[string]map[string]*model.Route // domain -> version -> endpoint -> route
-	registry definition.RegistryMetadataLookup             // optional; used for NodeID-based URL resolution
+	registry definition.RegistryLookup             // optional; used for NodeID-based URL resolution
 }
 
 // RoutingRule represents a single routing rule.
@@ -65,7 +65,7 @@ const (
 // registry is optional; when provided it is used to resolve subscriber URLs via NodeID lookup
 // when no URI is present in the payload context.
 // Returns an error if the configuration is invalid or the rules cannot be loaded.
-func New(ctx context.Context, registry definition.RegistryMetadataLookup, config *Config) (*Router, func() error, error) {
+func New(ctx context.Context, registry definition.RegistryLookup, config *Config) (*Router, func() error, error) {
 	// Check if config is nil
 	if config == nil {
 		return nil, nil, fmt.Errorf("config cannot be nil")
@@ -358,7 +358,7 @@ func canonicalRoleName(targetType string) string {
 //     namespace/registry/recordName format is present; requires a registry plugin.
 //  3. Default URL configured in routing rules (route.URL).
 //  4. Error — none of the above resolved a destination.
-func handleProtocolMapping(ctx context.Context, route *model.Route, npURI, nodeID, endpoint string, registry definition.RegistryMetadataLookup) (*model.Route, error) {
+func handleProtocolMapping(ctx context.Context, route *model.Route, npURI, nodeID, endpoint string, registry definition.RegistryLookup) (*model.Route, error) {
 	role := canonicalRoleName(route.TargetType)
 
 	// 1. URI present in payload — use it directly.

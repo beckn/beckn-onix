@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -56,9 +55,6 @@ func (m *mockRegistry) LookupRegistry(ctx context.Context, namespaceIdentifier, 
 	return m.meta, m.err
 }
 
-func (m *mockRegistry) LookupNode(_ context.Context, _ string) (*model.Subscription, error) {
-	return nil, fmt.Errorf("LookupNode not implemented in mockRegistry")
-}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
