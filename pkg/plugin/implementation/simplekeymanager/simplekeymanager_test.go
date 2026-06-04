@@ -48,6 +48,26 @@ func (m *mockRegistry) Lookup(ctx context.Context, sub *model.Subscription) ([]m
 	}, nil
 }
 
+// flexMockRegistry allows per-test control of both Lookup and LookupNode.
+type flexMockRegistry struct {
+	lookupFn     func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error)
+	lookupNodeFn func(ctx context.Context, nodeID string) (*model.Subscription, error)
+}
+
+func (m *flexMockRegistry) Lookup(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
+	if m.lookupFn != nil {
+		return m.lookupFn(ctx, sub)
+	}
+	return nil, fmt.Errorf("Lookup not configured")
+}
+
+func (m *flexMockRegistry) LookupNode(ctx context.Context, nodeID string) (*model.Subscription, error) {
+	if m.lookupNodeFn != nil {
+		return m.lookupNodeFn(ctx, nodeID)
+	}
+	return nil, fmt.Errorf("LookupNode not configured")
+}
+
 func TestValidateCfg(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -363,6 +383,74 @@ func TestLookupNPKeys(t *testing.T) {
 	if err == nil {
 		t.Error("LookupNPKeys() should fail with empty uniqueKeyID")
 	}
+}
+
+func TestLookupNPKeysNodeID(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("3-part NodeID uses LookupNode not Lookup", func(t *testing.T) {
+		lookupNodeCalled := false
+		lookupCalled := false
+
+		reg := &flexMockRegistry{
+			lookupNodeFn: func(_ context.Context, nodeID string) (*model.Subscription, error) {
+				lookupNodeCalled = true
+				return &model.Subscription{
+					Subscriber:      model.Subscriber{SubscriberID: nodeID},
+					SigningPublicKey: "node-signing-key",
+					EncrPublicKey:   "node-encr-key",
+				}, nil
+			},
+			lookupFn: func(_ context.Context, _ *model.Subscription) ([]model.Subscription, error) {
+				lookupCalled = true
+				return nil, fmt.Errorf("Lookup should not be called for NodeID")
+			},
+		}
+		skm := &SimpleKeyMgr{Cache: &mockCache{}, Registry: reg}
+
+		signing, encr, err := skm.LookupNPKeys(ctx, "beckn.one/example-NPs/example-bpp", "any-key")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !lookupNodeCalled {
+			t.Error("expected LookupNode to be called for 3-part NodeID")
+		}
+		if lookupCalled {
+			t.Error("Lookup should not be called for 3-part NodeID")
+		}
+		if signing != "node-signing-key" {
+			t.Errorf("SigningPublicKey = %q, want %q", signing, "node-signing-key")
+		}
+		if encr != "node-encr-key" {
+			t.Errorf("EncrPublicKey = %q, want %q", encr, "node-encr-key")
+		}
+	})
+
+	t.Run("plain subscriber ID uses Lookup not LookupNode", func(t *testing.T) {
+		lookupNodeCalled := false
+
+		reg := &flexMockRegistry{
+			lookupFn: func(_ context.Context, sub *model.Subscription) ([]model.Subscription, error) {
+				return []model.Subscription{{SigningPublicKey: "plain-signing-key", EncrPublicKey: "plain-encr-key"}}, nil
+			},
+			lookupNodeFn: func(_ context.Context, _ string) (*model.Subscription, error) {
+				lookupNodeCalled = true
+				return nil, fmt.Errorf("LookupNode should not be called for plain ID")
+			},
+		}
+		skm := &SimpleKeyMgr{Cache: &mockCache{}, Registry: reg}
+
+		signing, _, err := skm.LookupNPKeys(ctx, "plain-subscriber-id", "key-id")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if lookupNodeCalled {
+			t.Error("LookupNode should not be called for plain subscriber ID")
+		}
+		if signing != "plain-signing-key" {
+			t.Errorf("SigningPublicKey = %q, want %q", signing, "plain-signing-key")
+		}
+	})
 }
 
 func TestParseKey(t *testing.T) {

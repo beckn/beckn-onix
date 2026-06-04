@@ -1069,6 +1069,107 @@ func TestLookupNPKeysSuccess(t *testing.T) {
 	}
 }
 
+func TestLookupNPKeysNodeID(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("3-part NodeID uses LookupNode instead of Lookup", func(t *testing.T) {
+		lookupNodeCalled := false
+		lookupCalled := false
+
+		km := &KeyMgr{
+			Cache: &mockCache{
+				GetFunc: func(_ context.Context, _ string) (string, error) {
+					return "", fmt.Errorf("cache miss")
+				},
+			},
+			Registry: &mockRegistry{
+				LookupFunc: func(_ context.Context, _ *model.Subscription) ([]model.Subscription, error) {
+					lookupCalled = true
+					return nil, fmt.Errorf("Lookup should not be called for NodeID")
+				},
+			},
+		}
+		// Override LookupNode on the mock for this test via a wrapper.
+		nodeRegistry := &nodeIDMockRegistry{
+			lookupNodeFn: func(_ context.Context, nodeID string) (*model.Subscription, error) {
+				lookupNodeCalled = true
+				return &model.Subscription{
+					Subscriber:      model.Subscriber{SubscriberID: nodeID},
+					SigningPublicKey: "node-signing-key",
+					EncrPublicKey:   "node-encr-key",
+				}, nil
+			},
+		}
+		km.Registry = nodeRegistry
+
+		signing, encr, err := km.LookupNPKeys(ctx, "beckn.one/example-NPs/example-bpp", "any-key-id")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !lookupNodeCalled {
+			t.Error("expected LookupNode to be called for 3-part NodeID")
+		}
+		if lookupCalled {
+			t.Error("Lookup should not be called for 3-part NodeID")
+		}
+		if signing != "node-signing-key" {
+			t.Errorf("SigningPublicKey = %q, want %q", signing, "node-signing-key")
+		}
+		if encr != "node-encr-key" {
+			t.Errorf("EncrPublicKey = %q, want %q", encr, "node-encr-key")
+		}
+	})
+
+	t.Run("plain subscriber ID still uses Lookup", func(t *testing.T) {
+		lookupNodeCalled := false
+
+		nodeRegistry := &nodeIDMockRegistry{
+			lookupNodeFn: func(_ context.Context, _ string) (*model.Subscription, error) {
+				lookupNodeCalled = true
+				return nil, fmt.Errorf("LookupNode should not be called for plain ID")
+			},
+			lookupFn: func(_ context.Context, sub *model.Subscription) ([]model.Subscription, error) {
+				return []model.Subscription{{SigningPublicKey: "plain-signing-key", EncrPublicKey: "plain-encr-key"}}, nil
+			},
+		}
+		km := &KeyMgr{
+			Cache:    &mockCache{GetFunc: func(_ context.Context, _ string) (string, error) { return "", fmt.Errorf("miss") }},
+			Registry: nodeRegistry,
+		}
+
+		signing, _, err := km.LookupNPKeys(ctx, "plain-subscriber-id", "key-id")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if lookupNodeCalled {
+			t.Error("LookupNode should not be called for plain subscriber ID")
+		}
+		if signing != "plain-signing-key" {
+			t.Errorf("SigningPublicKey = %q, want %q", signing, "plain-signing-key")
+		}
+	})
+}
+
+// nodeIDMockRegistry is a flexible mock supporting both Lookup and LookupNode control.
+type nodeIDMockRegistry struct {
+	lookupNodeFn func(ctx context.Context, nodeID string) (*model.Subscription, error)
+	lookupFn     func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error)
+}
+
+func (m *nodeIDMockRegistry) LookupNode(ctx context.Context, nodeID string) (*model.Subscription, error) {
+	if m.lookupNodeFn != nil {
+		return m.lookupNodeFn(ctx, nodeID)
+	}
+	return nil, fmt.Errorf("LookupNode not configured")
+}
+
+func (m *nodeIDMockRegistry) Lookup(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
+	if m.lookupFn != nil {
+		return m.lookupFn(ctx, sub)
+	}
+	return nil, fmt.Errorf("Lookup not configured")
+}
+
 func TestLookupNPKeysFailure(t *testing.T) {
 	tests := []struct {
 		name               string
