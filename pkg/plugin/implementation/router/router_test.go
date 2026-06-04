@@ -1026,7 +1026,7 @@ func TestRouteNodeIDFallback(t *testing.T) {
 			endpointAction: "select",
 			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_id": "nfo.example.org/retail-net"}}`,
 			registry:       successRegistry,
-			wantErr:        "namespace/registry/recordId format",
+			wantErr:        "namespace/registry/recordName format",
 		},
 		{
 			name:           "invalid nodeID format (1 part) returns error",
@@ -1034,7 +1034,7 @@ func TestRouteNodeIDFallback(t *testing.T) {
 			endpointAction: "select",
 			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_id": "plainid"}}`,
 			registry:       successRegistry,
-			wantErr:        "namespace/registry/recordId format",
+			wantErr:        "namespace/registry/recordName format",
 		},
 		{
 			name:           "registry lookup failure returns error",

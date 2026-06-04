@@ -11,7 +11,7 @@ type RegistryLookup interface {
 	Lookup(ctx context.Context, req *model.Subscription) ([]model.Subscription, error)
 
 	// LookupNode looks up a subscriber record by its fully-qualified NodeID.
-	// nodeID must be in namespace/registry/recordId format (exactly 3 non-empty parts separated by "/").
+	// nodeID must be in namespace/registry/recordName format (exactly 3 non-empty parts separated by "/").
 	// Returns the subscriber's Subscription including URL, type, and domain.
 	LookupNode(ctx context.Context, nodeID string) (*model.Subscription, error)
 }

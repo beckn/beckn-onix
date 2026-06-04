@@ -615,7 +615,7 @@ func TestLookupNode(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for invalid nodeID format, got nil")
 		}
-		if !strings.Contains(err.Error(), "namespace/registry/recordId format") {
+		if !strings.Contains(err.Error(), "namespace/registry/recordName format") {
 			t.Errorf("expected format error, got: %v", err)
 		}
 	})
@@ -631,7 +631,7 @@ func TestLookupNode(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for 2-part nodeID, got nil")
 		}
-		if !strings.Contains(err.Error(), "namespace/registry/recordId format") {
+		if !strings.Contains(err.Error(), "namespace/registry/recordName format") {
 			t.Errorf("expected format error, got: %v", err)
 		}
 	})
@@ -647,7 +647,7 @@ func TestLookupNode(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for empty part in nodeID, got nil")
 		}
-		if !strings.Contains(err.Error(), "namespace/registry/recordId format") {
+		if !strings.Contains(err.Error(), "namespace/registry/recordName format") {
 			t.Errorf("expected format error, got: %v", err)
 		}
 	})

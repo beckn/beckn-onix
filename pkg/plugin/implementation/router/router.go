@@ -355,7 +355,7 @@ func canonicalRoleName(targetType string) string {
 // Resolution order:
 //  1. URI from payload context (npURI) — existing behaviour.
 //  2. NodeID-based registry lookup (nodeID) — when URI is absent and a NodeID in
-//     namespace/registry/recordId format is present; requires a registry plugin.
+//     namespace/registry/recordName format is present; requires a registry plugin.
 //  3. Default URL configured in routing rules (route.URL).
 //  4. Error — none of the above resolved a destination.
 func handleProtocolMapping(ctx context.Context, route *model.Route, npURI, nodeID, endpoint string, registry definition.RegistryLookup) (*model.Route, error) {
@@ -376,8 +376,8 @@ func handleProtocolMapping(ctx context.Context, route *model.Route, npURI, nodeI
 		// Validate 3-part format before making any network call.
 		parts := strings.Split(nodeID, "/")
 		if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
-			log.Errorf(ctx, nil, "Router: %s nodeID '%s' for endpoint '%s' is not in namespace/registry/recordId format", role, nodeID, endpoint)
-			return nil, fmt.Errorf("could not resolve %s destination for endpoint '%s': nodeID '%s' is not in namespace/registry/recordId format", role, endpoint, nodeID)
+			log.Errorf(ctx, nil, "Router: %s nodeID '%s' for endpoint '%s' is not in namespace/registry/recordName format", role, nodeID, endpoint)
+			return nil, fmt.Errorf("could not resolve %s destination for endpoint '%s': nodeID '%s' is not in namespace/registry/recordName format", role, endpoint, nodeID)
 		}
 		if registry == nil {
 			log.Errorf(ctx, nil, "Router: %s nodeID '%s' present for endpoint '%s' but no registry plugin is configured", role, nodeID, endpoint)

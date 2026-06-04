@@ -131,9 +131,56 @@ func (c *DeDiRegistryClient) fetchDeDiData(ctx context.Context, url, operation s
 	return data, nil
 }
 
+// parseSubscriptionFromData extracts a Subscription from a DeDi response data map.
+// It is shared by Lookup and LookupNode to avoid duplicating response-parsing logic.
+// When requireSigningKey is true, the function returns an error if signing_public_key
+// is absent — this is required for signature validation flows (Lookup) but not for
+// URL resolution flows (LookupNode).
+func (c *DeDiRegistryClient) parseSubscriptionFromData(ctx context.Context, data map[string]any, requireSigningKey bool) (*model.Subscription, error) {
+	details, ok := data["details"].(map[string]any)
+	if !ok {
+		log.Errorf(ctx, nil, "Invalid DeDi response format: missing or invalid details field")
+		return nil, fmt.Errorf("invalid response format: missing details field")
+	}
+
+	signingPublicKey, _ := details["signing_public_key"].(string)
+	if requireSigningKey && signingPublicKey == "" {
+		return nil, fmt.Errorf("invalid or missing signing_public_key in response")
+	}
+
+	detailsURL, _ := details["url"].(string)
+	detailsType, _ := details["type"].(string)
+	detailsDomain, _ := details["domain"].(string)
+	detailsSubscriberID, _ := details["subscriber_id"].(string)
+
+	// Validate network memberships if configured.
+	networkMemberships := extractStringSlice(ctx, "network_memberships", data["network_memberships"])
+	if len(c.config.AllowedNetworkIDs) > 0 {
+		if len(networkMemberships) == 0 || !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
+			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", detailsSubscriberID)
+		}
+	}
+
+	encrPublicKey, _ := details["encr_public_key"].(string)
+	createdAt, _ := data["created_at"].(string)
+	updatedAt, _ := data["updated_at"].(string)
+
+	return &model.Subscription{
+		Subscriber: model.Subscriber{
+			SubscriberID: detailsSubscriberID,
+			URL:          detailsURL,
+			Domain:       detailsDomain,
+			Type:         detailsType,
+		},
+		SigningPublicKey: signingPublicKey,
+		EncrPublicKey:   encrPublicKey,
+		Created:         parseTime(createdAt),
+		Updated:         parseTime(updatedAt),
+	}, nil
+}
+
 // Lookup implements RegistryLookup interface - calls the DeDi wrapper lookup endpoint and returns Subscription.
 func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription) ([]model.Subscription, error) {
-	// Extract subscriber ID and key ID from request (both come from Authorization header parsing)
 	subscriberID := req.SubscriberID
 	keyID := req.KeyID
 	log.Infof(ctx, "DeDi Registry: Looking up subscriber ID: %s, key ID: %s", subscriberID, keyID)
@@ -153,56 +200,14 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 
 	log.Debugf(ctx, "DeDi lookup request successful, parsing response")
 
-	details, ok := data["details"].(map[string]any)
-	if !ok {
-		log.Errorf(ctx, nil, "Invalid DeDi response format: missing or invalid details field")
-		return nil, fmt.Errorf("invalid response format: missing details field")
+	subscription, err := c.parseSubscriptionFromData(ctx, data, true)
+	if err != nil {
+		return nil, err
 	}
+	subscription.KeyID = keyID
 
-	// Extract required fields from details
-	signingPublicKey, ok := details["signing_public_key"].(string)
-	if !ok || signingPublicKey == "" {
-		return nil, fmt.Errorf("invalid or missing signing_public_key in response")
-	}
-
-	// Extract fields from details
-	detailsURL, _ := details["url"].(string)
-	detailsType, _ := details["type"].(string)
-	detailsDomain, _ := details["domain"].(string)
-	detailsSubscriberID, _ := details["subscriber_id"].(string)
-
-	// Validate network memberships if configured.
-	networkMemberships := extractStringSlice(ctx, "network_memberships", data["network_memberships"])
-	if len(c.config.AllowedNetworkIDs) > 0 {
-		if len(networkMemberships) == 0 || !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
-			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", detailsSubscriberID)
-		}
-	}
-
-	// Extract encr_public_key if available (optional field)
-	encrPublicKey, _ := details["encr_public_key"].(string)
-
-	// Extract fields from data level
-	createdAt, _ := data["created_at"].(string)
-	updatedAt, _ := data["updated_at"].(string)
-
-	// Convert to Subscription format
-	subscription := model.Subscription{
-		Subscriber: model.Subscriber{
-			SubscriberID: detailsSubscriberID,
-			URL:          detailsURL,
-			Domain:       detailsDomain,
-			Type:         detailsType,
-		},
-		KeyID:            keyID, // Use original keyID from request
-		SigningPublicKey: signingPublicKey,
-		EncrPublicKey:    encrPublicKey, // May be empty if not provided
-		Created:          parseTime(createdAt),
-		Updated:          parseTime(updatedAt),
-	}
-
-	log.Debugf(ctx, "DeDi lookup successful, found subscription for subscriber: %s", detailsSubscriberID)
-	return []model.Subscription{subscription}, nil
+	log.Debugf(ctx, "DeDi lookup successful, found subscription for subscriber: %s", subscription.SubscriberID)
+	return []model.Subscription{*subscription}, nil
 }
 
 // LookupRegistry fetches registry-level metadata for the given DeDi registry path.
@@ -250,12 +255,12 @@ func (c *DeDiRegistryClient) LookupRegistry(ctx context.Context, namespaceIdenti
 }
 
 // LookupNode looks up a subscriber record by its fully-qualified NodeID.
-// nodeID must be in namespace/registry/recordId format (exactly 3 non-empty parts separated by "/").
+// nodeID must be in namespace/registry/recordName format (exactly 3 non-empty parts separated by "/").
 // Returns the subscriber's Subscription including URL, type, and domain.
 func (c *DeDiRegistryClient) LookupNode(ctx context.Context, nodeID string) (*model.Subscription, error) {
 	parts := strings.Split(nodeID, "/")
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
-		return nil, fmt.Errorf("nodeID %q must be in namespace/registry/recordId format with 3 non-empty parts", nodeID)
+		return nil, fmt.Errorf("nodeID %q must be in namespace/registry/recordName format with 3 non-empty parts", nodeID)
 	}
 
 	lookupURL := fmt.Sprintf("%s/lookup/%s/%s/%s", c.config.URL,
@@ -266,44 +271,12 @@ func (c *DeDiRegistryClient) LookupNode(ctx context.Context, nodeID string) (*mo
 		return nil, err
 	}
 
-	details, ok := data["details"].(map[string]any)
-	if !ok {
-		log.Errorf(ctx, nil, "Invalid DeDi response format: missing or invalid details field")
-		return nil, fmt.Errorf("invalid response format: missing details field")
+	subscription, err := c.parseSubscriptionFromData(ctx, data, false)
+	if err != nil {
+		return nil, err
 	}
 
-	detailsURL, _ := details["url"].(string)
-	detailsType, _ := details["type"].(string)
-	detailsDomain, _ := details["domain"].(string)
-	detailsSubscriberID, _ := details["subscriber_id"].(string)
-
-	// Validate network memberships if configured.
-	networkMemberships := extractStringSlice(ctx, "network_memberships", data["network_memberships"])
-	if len(c.config.AllowedNetworkIDs) > 0 {
-		if len(networkMemberships) == 0 || !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
-			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", detailsSubscriberID)
-		}
-	}
-
-	signingPublicKey, _ := details["signing_public_key"].(string)
-	encrPublicKey, _ := details["encr_public_key"].(string)
-	createdAt, _ := data["created_at"].(string)
-	updatedAt, _ := data["updated_at"].(string)
-
-	subscription := &model.Subscription{
-		Subscriber: model.Subscriber{
-			SubscriberID: detailsSubscriberID,
-			URL:          detailsURL,
-			Domain:       detailsDomain,
-			Type:         detailsType,
-		},
-		SigningPublicKey: signingPublicKey,
-		EncrPublicKey:   encrPublicKey,
-		Created:         parseTime(createdAt),
-		Updated:         parseTime(updatedAt),
-	}
-
-	log.Debugf(ctx, "DeDi node lookup successful for nodeID: %s, subscriber: %s, url: %s", nodeID, detailsSubscriberID, detailsURL)
+	log.Debugf(ctx, "DeDi node lookup successful for nodeID: %s, subscriber: %s, url: %s", nodeID, subscription.SubscriberID, subscription.URL)
 	return subscription, nil
 }
 
