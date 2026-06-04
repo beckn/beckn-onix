@@ -412,6 +412,31 @@ func loadKeyManager(ctx context.Context, mgr PluginManager, cache definition.Cac
 	return km, nil
 }
 
+// loadRouter initialises the Router plugin, optionally wiring a RegistryMetadataLookup
+// for NodeID-based URL resolution. If the configured registry plugin does not implement
+// RegistryMetadataLookup (e.g. standard registry), the router starts without it and falls
+// back to URI-from-payload and default-URL routing only.
+func loadRouter(ctx context.Context, mgr PluginManager, registry definition.RegistryLookup, cfg *plugin.Config) (definition.Router, error) {
+	if cfg == nil {
+		log.Debug(ctx, "Skipping Router plugin: not configured")
+		return nil, nil
+	}
+	var metadataLookup definition.RegistryMetadataLookup
+	if registry != nil {
+		if ml, ok := registry.(definition.RegistryMetadataLookup); ok {
+			metadataLookup = ml
+		} else {
+			log.Debug(ctx, "Router: registry plugin does not implement RegistryMetadataLookup; NodeID-based URL resolution will not be available")
+		}
+	}
+	r, err := mgr.Router(ctx, metadataLookup, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load Router plugin (%s): %w", cfg.ID, err)
+	}
+	log.Debugf(ctx, "Loaded Router plugin: %s", cfg.ID)
+	return r, nil
+}
+
 func loadManifestLoader(ctx context.Context, mgr PluginManager, cache definition.Cache, registry definition.RegistryLookup, cfg *plugin.Config) (definition.ManifestLoader, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping ManifestLoader plugin: not configured")
@@ -508,7 +533,7 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.schemaValidator, err = loadPlugin(ctx, "SchemaValidator", cfg.SchemaValidator, mgr.SchemaValidator); err != nil {
 		return err
 	}
-	if h.router, err = loadPlugin(ctx, "Router", cfg.Router, mgr.Router); err != nil {
+	if h.router, err = loadRouter(ctx, mgr, h.registry, cfg.Router); err != nil {
 		return err
 	}
 	if h.publisher, err = loadPlugin(ctx, "Publisher", cfg.Publisher, mgr.Publisher); err != nil {

@@ -125,7 +125,7 @@ func (noopPluginManager) SignValidator(context.Context, *plugin.Config) (definit
 func (noopPluginManager) Validator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
-func (noopPluginManager) Router(context.Context, *plugin.Config) (definition.Router, error) {
+func (noopPluginManager) Router(context.Context, definition.RegistryMetadataLookup, *plugin.Config) (definition.Router, error) {
 	return nil, nil
 }
 func (noopPluginManager) Publisher(context.Context, *plugin.Config) (definition.Publisher, error) {

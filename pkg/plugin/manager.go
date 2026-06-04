@@ -169,12 +169,12 @@ func (m *Manager) SchemaValidator(ctx context.Context, cfg *Config) (definition.
 
 // Router returns a Router instance based on the provided configuration.
 // It registers a cleanup function for resource management.
-func (m *Manager) Router(ctx context.Context, cfg *Config) (definition.Router, error) {
+func (m *Manager) Router(ctx context.Context, registry definition.RegistryMetadataLookup, cfg *Config) (definition.Router, error) {
 	rp, err := provider[definition.RouterProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	router, closer, err := rp.New(ctx, cfg.Config)
+	router, closer, err := rp.New(ctx, registry, cfg.Config)
 	if err != nil {
 		return nil, err
 	}

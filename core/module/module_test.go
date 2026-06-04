@@ -37,7 +37,7 @@ func (m *mockPluginManager) Validator(ctx context.Context, cfg *plugin.Config) (
 }
 
 // Router returns a mock router implementation.
-func (m *mockPluginManager) Router(ctx context.Context, cfg *plugin.Config) (definition.Router, error) {
+func (m *mockPluginManager) Router(ctx context.Context, _ definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.Router, error) {
 	return nil, nil
 }
 

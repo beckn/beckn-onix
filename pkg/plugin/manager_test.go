@@ -141,7 +141,7 @@ type mockRouterProvider struct {
 	errFunc func() error
 }
 
-func (m *mockRouterProvider) New(ctx context.Context, config map[string]string) (definition.Router, func() error, error) {
+func (m *mockRouterProvider) New(ctx context.Context, _ definition.RegistryMetadataLookup, config map[string]string) (definition.Router, func() error, error) {
 	if m.err != nil {
 		return nil, nil, m.err
 	}
@@ -654,7 +654,7 @@ func TestRouterSuccess(t *testing.T) {
 		}
 
 		// Call Router.
-		router, err := m.Router(context.Background(), cfg)
+		router, err := m.Router(context.Background(), nil, cfg)
 
 		// Check success case.
 		if err != nil {
@@ -721,7 +721,7 @@ func TestRouterFailure(t *testing.T) {
 			}
 
 			// Call Router.
-			router, err := m.Router(context.Background(), tt.cfg)
+			router, err := m.Router(context.Background(), nil, tt.cfg)
 
 			// Check error.
 			if err == nil {

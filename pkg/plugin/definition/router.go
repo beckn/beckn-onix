@@ -8,8 +8,9 @@ import (
 )
 
 // RouterProvider initializes the a new Router instance with the given config.
+// registry is optional; when provided it enables NodeID-based URL resolution fallback.
 type RouterProvider interface {
-	New(ctx context.Context, config map[string]string) (Router, func() error, error)
+	New(ctx context.Context, registry RegistryMetadataLookup, config map[string]string) (Router, func() error, error)
 }
 
 // Router defines the interface for routing requests.
