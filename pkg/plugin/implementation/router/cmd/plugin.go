@@ -14,7 +14,7 @@ type RouterProvider struct{}
 // New initializes a new Router instance.
 // registry is an optional dependency; when provided it is used to resolve
 // subscriber URLs via NodeID lookup when no URI is present in the payload context.
-func (rp RouterProvider) New(ctx context.Context, registry definition.RegistryLookup, config map[string]string) (definition.Router, func() error, error) {
+func (rp RouterProvider) New(ctx context.Context, registry definition.RegistryMetadataLookup, config map[string]string) (definition.Router, func() error, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("context cannot be nil")
 	}
