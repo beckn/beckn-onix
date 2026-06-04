@@ -423,11 +423,11 @@ func loadManifestLoader(ctx context.Context, mgr PluginManager, cache definition
 	if registry == nil {
 		return nil, fmt.Errorf("failed to load ManifestLoader plugin (%s): Registry plugin not configured", cfg.ID)
 	}
-	metadataLookup, ok := registry.(definition.RegistryMetadataLookup)
+	metaRegistry, ok := registry.(definition.RegistryMetadataLookup)
 	if !ok {
 		return nil, fmt.Errorf("failed to load ManifestLoader plugin (%s): Registry plugin does not implement RegistryMetadataLookup", cfg.ID)
 	}
-	loader, err := mgr.ManifestLoader(ctx, cache, metadataLookup, cfg)
+	loader, err := mgr.ManifestLoader(ctx, cache, registry, metaRegistry, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load ManifestLoader plugin (%s): %w", cfg.ID, err)
 	}

@@ -3,6 +3,7 @@ package simplekeymanager
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"testing"
 	"time"
 
@@ -29,6 +30,10 @@ func (m *mockCache) Delete(ctx context.Context, key string) error {
 }
 
 type mockRegistry struct{}
+
+func (m *mockRegistry) LookupNode(_ context.Context, nodeID string) (*model.SubscriberRecord, error) {
+	return nil, fmt.Errorf("LookupNode not supported by standard registry (nodeID: %s)", nodeID)
+}
 
 func (m *mockRegistry) Lookup(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
 	return []model.Subscription{

@@ -31,7 +31,8 @@ type Config struct {
 // Loader fetches, verifies, caches, and returns manifests.
 type Loader struct {
 	cache         definition.Cache
-	registry      definition.RegistryMetadataLookup
+	registry      definition.RegistryLookup
+	metaRegistry  definition.RegistryMetadataLookup
 	config        *Config
 	client        *http.Client
 	refreshMu     sync.Mutex
@@ -57,12 +58,15 @@ var httpClientFunc = func(timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout}
 }
 
-func New(ctx context.Context, cache definition.Cache, registry definition.RegistryMetadataLookup, cfg *Config) (*Loader, func() error, error) {
+func New(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, metaRegistry definition.RegistryMetadataLookup, cfg *Config) (*Loader, func() error, error) {
 	if cache == nil {
 		return nil, nil, ErrNilCache
 	}
 	if registry == nil {
 		return nil, nil, ErrNilRegistry
+	}
+	if metaRegistry == nil {
+		return nil, nil, fmt.Errorf("registry metadata lookup cannot be nil")
 	}
 	if cfg == nil {
 		cfg = &Config{}
@@ -82,6 +86,7 @@ func New(ctx context.Context, cache definition.Cache, registry definition.Regist
 	loader := &Loader{
 		cache:         cache,
 		registry:      registry,
+		metaRegistry:  metaRegistry,
 		config:        cfg,
 		client:        httpClientFunc(cfg.FetchTimeout),
 		refreshedKeys: make(map[string]bool),
@@ -113,7 +118,7 @@ func (l *Loader) GetByNetworkID(ctx context.Context, networkID string) (*model.M
 	if err != nil {
 		return nil, err
 	}
-	meta, err := l.registry.LookupRegistry(ctx, namespaceIdentifier, registryName)
+	meta, err := l.metaRegistry.LookupRegistry(ctx, namespaceIdentifier, registryName)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +146,7 @@ func (l *Loader) GetByMetadata(ctx context.Context, metadata model.ManifestMetad
 func (l *Loader) GetBySubscriberID(ctx context.Context, subscriberID string) (*model.ManifestDocument, error) {
 	if parts := strings.Split(subscriberID, "/"); len(parts) != 3 ||
 		strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
-		return nil, fmt.Errorf("subscriberID %q must be in namespace/registry/recordId format", subscriberID)
+		return nil, fmt.Errorf("subscriberID %q must be in namespace/registry/recordName format", subscriberID)
 	}
 
 	subscriberKey := subscriberCacheKey(subscriberID)
@@ -159,15 +164,15 @@ func (l *Loader) GetBySubscriberID(ctx context.Context, subscriberID string) (*m
 		log.Infof(ctx, "ManifestLoader: bypassing cache for subscriberID=%q", subscriberID)
 	}
 
-	meta, err := l.registry.LookupSubscriberMeta(ctx, subscriberID)
+	record, err := l.registry.LookupNode(ctx, subscriberID)
 	if err != nil {
 		return nil, err
 	}
-	if len(meta.RawMeta) == 0 || strings.TrimSpace(meta.RawMeta["manifestUrl"]) == "" {
+	if len(record.Meta) == 0 || strings.TrimSpace(record.Meta["manifestUrl"]) == "" {
 		log.Infof(ctx, "ManifestLoader: subscriberID=%q has no manifestUrl in registry metadata — no node manifest published", subscriberID)
 		return nil, ErrNoManifestPublished
 	}
-	manifestMetadata, err := metadataFromSubscriberMeta(meta, l.config.SkipSignatureVerification)
+	manifestMetadata, err := metadataFromNodeMeta(record.Meta, l.config.SkipSignatureVerification)
 	if err != nil {
 		return nil, err
 	}
@@ -342,14 +347,11 @@ func splitNetworkID(networkID string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-func metadataFromSubscriberMeta(meta *model.SubscriberMetadata, skipSig bool) (model.ManifestMetadata, error) {
-	if meta == nil {
-		return model.ManifestMetadata{}, fmt.Errorf("subscriber metadata cannot be nil")
-	}
+func metadataFromNodeMeta(meta map[string]string, skipSig bool) (model.ManifestMetadata, error) {
 	result := model.ManifestMetadata{
-		ManifestURL:               meta.RawMeta["manifestUrl"],
-		ManifestSignatureURL:      meta.RawMeta["manifestSignatureUrl"],
-		SigningPublicKeyLookupURL: meta.RawMeta["signingPublicKeyLookupUrl"],
+		ManifestURL:               meta["manifestUrl"],
+		ManifestSignatureURL:      meta["manifestSignatureUrl"],
+		SigningPublicKeyLookupURL: meta["signingPublicKeyLookupUrl"],
 	}
 	return result, validateMetadata(result, skipSig)
 }

@@ -24,7 +24,7 @@ type PluginManager interface {
 	Cache(ctx context.Context, cfg *plugin.Config) (definition.Cache, error)
 	Registry(ctx context.Context, cfg *plugin.Config) (definition.RegistryLookup, error)
 	KeyManager(ctx context.Context, cache definition.Cache, rLookup definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error)
-	ManifestLoader(ctx context.Context, cache definition.Cache, lookup definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.ManifestLoader, error)
+	ManifestLoader(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, metaRegistry definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.ManifestLoader, error)
 	TransportWrapper(ctx context.Context, cfg *plugin.Config) (definition.TransportWrapper, error)
 	SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)
 	PayloadStore(ctx context.Context, cache definition.Cache, namespace string, cfg *plugin.Config) (definition.PayloadStore, error)

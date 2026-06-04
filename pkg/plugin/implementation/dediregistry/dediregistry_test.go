@@ -680,10 +680,11 @@ func TestLookupRegistry(t *testing.T) {
 	})
 }
 
-func TestLookupSubscriberMeta(t *testing.T) {
+func TestLookupNode(t *testing.T) {
 	ctx := context.Background()
+	const nodeID = "nfh.global/subscribers.beckn.one/bpp.energy-provider.com"
 
-	t.Run("success with fully populated meta", func(t *testing.T) {
+	t.Run("success — returns both details and meta", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/dedi/lookup/nfh.global/subscribers.beckn.one/bpp.energy-provider.com" {
 				w.WriteHeader(http.StatusNotFound)
@@ -692,6 +693,12 @@ func TestLookupSubscriberMeta(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]any{
+					"details": map[string]any{
+						"url":           "https://bpp.energy-provider.com/beckn",
+						"type":          "BPP",
+						"domain":        "energy",
+						"subscriber_id": nodeID,
+					},
 					"meta": map[string]any{
 						"manifestUrl":               "https://example.org/node-manifest.yaml",
 						"manifestSignatureUrl":      "https://example.org/node-manifest.yaml.sig",
@@ -708,30 +715,34 @@ func TestLookupSubscriberMeta(t *testing.T) {
 		}
 		defer closer()
 
-		subscriberID := "nfh.global/subscribers.beckn.one/bpp.energy-provider.com"
-		got, err := client.LookupSubscriberMeta(ctx, subscriberID)
+		got, err := client.LookupNode(ctx, nodeID)
 		if err != nil {
-			t.Fatalf("LookupSubscriberMeta() error = %v", err)
+			t.Fatalf("LookupNode() error = %v", err)
 		}
-		if got.SubscriberID != subscriberID {
-			t.Errorf("expected SubscriberID=%q, got %q", subscriberID, got.SubscriberID)
+		if got.URL != "https://bpp.energy-provider.com/beckn" {
+			t.Errorf("expected URL %q, got %q", "https://bpp.energy-provider.com/beckn", got.URL)
+		}
+		if got.Type != "BPP" {
+			t.Errorf("expected Type %q, got %q", "BPP", got.Type)
 		}
 		wantMeta := map[string]string{
 			"manifestUrl":               "https://example.org/node-manifest.yaml",
 			"manifestSignatureUrl":      "https://example.org/node-manifest.yaml.sig",
 			"signingPublicKeyLookupUrl": "https://example.org/pubkey",
 		}
-		if !reflect.DeepEqual(got.RawMeta, wantMeta) {
-			t.Errorf("RawMeta mismatch: got %v, want %v", got.RawMeta, wantMeta)
+		if !reflect.DeepEqual(got.Meta, wantMeta) {
+			t.Errorf("Meta mismatch: got %v, want %v", got.Meta, wantMeta)
 		}
 	})
 
-	t.Run("meta absent from response returns empty RawMeta without error", func(t *testing.T) {
+	t.Run("meta absent returns empty Meta without error", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]any{
-					"details": map[string]any{"subscriber_id": "nfh.global/subscribers.beckn.one/bpp.energy-provider.com"},
+					"details": map[string]any{
+						"url": "https://bpp.energy-provider.com/beckn", "subscriber_id": nodeID,
+					},
 				},
 			})
 		}))
@@ -743,20 +754,19 @@ func TestLookupSubscriberMeta(t *testing.T) {
 		}
 		defer closer()
 
-		got, err := client.LookupSubscriberMeta(ctx, "nfh.global/subscribers.beckn.one/bpp.energy-provider.com")
+		got, err := client.LookupNode(ctx, nodeID)
 		if err != nil {
 			t.Fatalf("expected no error when meta absent, got %v", err)
 		}
-		if len(got.RawMeta) != 0 {
-			t.Errorf("expected empty RawMeta when meta absent, got %v", got.RawMeta)
+		if len(got.Meta) != 0 {
+			t.Errorf("expected empty Meta when meta absent, got %v", got.Meta)
 		}
 	})
 
-	t.Run("meta null in response returns empty RawMeta without error", func(t *testing.T) {
+	t.Run("meta null returns empty Meta without error", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			// Explicit JSON null for the meta field — distinct from the key being absent.
-			w.Write([]byte(`{"data":{"meta":null}}`))
+			w.Write([]byte(`{"data":{"details":{"url":"https://bpp.example.com","subscriber_id":"x"},"meta":null}}`))
 		}))
 		defer server.Close()
 
@@ -766,20 +776,18 @@ func TestLookupSubscriberMeta(t *testing.T) {
 		}
 		defer closer()
 
-		got, err := client.LookupSubscriberMeta(ctx, "nfh.global/subscribers.beckn.one/bpp.energy-provider.com")
+		got, err := client.LookupNode(ctx, nodeID)
 		if err != nil {
 			t.Fatalf("expected no error when meta is null, got %v", err)
 		}
-		if len(got.RawMeta) != 0 {
-			t.Errorf("expected empty RawMeta when meta is null, got %v", got.RawMeta)
+		if len(got.Meta) != 0 {
+			t.Errorf("expected empty Meta when meta is null, got %v", got.Meta)
 		}
 	})
 
-	t.Run("invalid subscriberID fewer than three parts", func(t *testing.T) {
+	t.Run("invalid nodeID fewer than three parts returns error without HTTP call", func(t *testing.T) {
 		httpCalls := 0
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			httpCalls++
-		}))
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { httpCalls++ }))
 		defer server.Close()
 
 		client, closer, err := New(ctx, &Config{URL: server.URL + "/dedi"})
@@ -788,11 +796,11 @@ func TestLookupSubscriberMeta(t *testing.T) {
 		}
 		defer closer()
 
-		if _, err := client.LookupSubscriberMeta(ctx, "nfh.global/subscribers.beckn.one"); err == nil {
-			t.Error("expected validation error for two-part subscriberID, got nil")
+		if _, err := client.LookupNode(ctx, "nfh.global/subscribers.beckn.one"); err == nil {
+			t.Error("expected validation error for two-part nodeID, got nil")
 		}
 		if httpCalls != 0 {
-			t.Errorf("expected no HTTP calls for invalid subscriberID, got %d", httpCalls)
+			t.Errorf("expected no HTTP calls for invalid nodeID, got %d", httpCalls)
 		}
 	})
 
@@ -809,7 +817,7 @@ func TestLookupSubscriberMeta(t *testing.T) {
 		}
 		defer closer()
 
-		if _, err := client.LookupSubscriberMeta(ctx, "nfh.global/subscribers.beckn.one/bpp.energy-provider.com"); err == nil {
+		if _, err := client.LookupNode(ctx, nodeID); err == nil {
 			t.Error("expected error for non-200 response, got nil")
 		}
 	})
@@ -827,7 +835,7 @@ func TestLookupSubscriberMeta(t *testing.T) {
 		}
 		defer closer()
 
-		if _, err := client.LookupSubscriberMeta(ctx, "nfh.global/subscribers.beckn.one/bpp.energy-provider.com"); err == nil {
+		if _, err := client.LookupNode(ctx, nodeID); err == nil {
 			t.Error("expected error for malformed response body, got nil")
 		}
 	})
