@@ -163,7 +163,7 @@ go install golang.org/x/perf/cmd/benchstat@latest
 bash benchmarks/run_benchmarks.sh
 ```
 
-Results land in `benchmarks/results/<timestamp>/`. The latest committed report is at [benchmarks/results/BENCHMARK_REPORT.md](benchmarks/results/BENCHMARK_REPORT.md). See [benchmarks/README.md](benchmarks/README.md) for full methodology and interpretation guidance.
+Results land in `benchmarks/results/<timestamp>/`. The latest committed report is at [benchmarks/results/BENCHMARK_REPORT.md](benchmarks/reports/REPORT_ONIX_v150.md). See [benchmarks/README.md](benchmarks/README.md) for full methodology and interpretation guidance.
 
 ---
 
