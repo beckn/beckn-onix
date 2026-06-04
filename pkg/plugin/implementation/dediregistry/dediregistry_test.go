@@ -3,6 +3,7 @@ package dediregistry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -11,6 +12,29 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 )
+
+type mockCache struct {
+	getFunc func(ctx context.Context, key string) (string, error)
+	setKey  string
+	setVal  string
+	setTTL  time.Duration
+	setErr  error
+}
+
+func (m *mockCache) Get(ctx context.Context, key string) (string, error) {
+	if m.getFunc != nil {
+		return m.getFunc(ctx, key)
+	}
+	return "", errors.New("cache miss")
+}
+func (m *mockCache) Set(ctx context.Context, key, value string, ttl time.Duration) error {
+	m.setKey = key
+	m.setVal = value
+	m.setTTL = ttl
+	return m.setErr
+}
+func (m *mockCache) Delete(ctx context.Context, key string) error { return nil }
+func (m *mockCache) Clear(ctx context.Context) error              { return nil }
 
 func TestValidate(t *testing.T) {
 	tests := []struct {
@@ -676,6 +700,149 @@ func TestLookupRegistry(t *testing.T) {
 
 		if _, err := client.LookupRegistry(ctx, "nfo.example.org", "mobility-network"); err == nil {
 			t.Error("expected error for 404 response, got nil")
+		}
+	})
+}
+
+func dediLookupResponse(ttl float64) map[string]interface{} {
+	resp := map[string]interface{}{
+		"message": "ok",
+		"data": map[string]interface{}{
+			"details": map[string]interface{}{
+				"url":                "http://sub.example.com",
+				"type":               "BAP",
+				"domain":             "retail",
+				"subscriber_id":      "sub.example.com",
+				"signing_public_key": "test-signing-key",
+				"encr_public_key":    "test-encr-key",
+			},
+			"network_memberships": []string{"commerce.org/prod"},
+			"created_at":          "2025-01-01T00:00:00Z",
+			"updated_at":          "2025-01-01T00:00:00Z",
+		},
+	}
+	if ttl > 0 {
+		resp["data"].(map[string]interface{})["ttl"] = ttl
+	}
+	return resp
+}
+
+func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
+	ctx := context.Background()
+	sub := &model.Subscription{
+		Subscriber: model.Subscriber{SubscriberID: "sub.example.com"},
+		KeyID:      "key-1",
+	}
+	expectedCacheKey := "lookup_sub.example.com_key-1"
+
+	t.Run("cache hit skips HTTP call", func(t *testing.T) {
+		cached := []model.Subscription{{SigningPublicKey: "cached-key"}}
+		cachedJSON, _ := json.Marshal(cached)
+
+		httpCalled := false
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			httpCalled = true
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		cache := &mockCache{
+			getFunc: func(ctx context.Context, key string) (string, error) {
+				return string(cachedJSON), nil
+			},
+		}
+		client, closer, err := New(ctx, cache, &Config{URL: server.URL})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		results, err := client.Lookup(ctx, sub)
+		if err != nil {
+			t.Fatalf("Lookup() unexpected error: %v", err)
+		}
+		if httpCalled {
+			t.Error("expected HTTP call to be skipped on cache hit")
+		}
+		if len(results) != 1 || results[0].SigningPublicKey != "cached-key" {
+			t.Errorf("expected cached result, got %+v", results)
+		}
+	})
+
+	t.Run("cache miss writes to cache using ttl from response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(dediLookupResponse(600))
+		}))
+		defer server.Close()
+
+		cache := &mockCache{}
+		client, closer, err := New(ctx, cache, &Config{URL: server.URL})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		results, err := client.Lookup(ctx, sub)
+		if err != nil {
+			t.Fatalf("Lookup() unexpected error: %v", err)
+		}
+		if len(results) != 1 || results[0].SigningPublicKey != "test-signing-key" {
+			t.Errorf("unexpected result: %+v", results)
+		}
+		if cache.setKey != expectedCacheKey {
+			t.Errorf("expected cache key %q, got %q", expectedCacheKey, cache.setKey)
+		}
+		if cache.setTTL != 600*time.Second {
+			t.Errorf("expected TTL 600s from response, got %v", cache.setTTL)
+		}
+	})
+
+	t.Run("nil cache — no cache operations", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(dediLookupResponse(600))
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, nil, &Config{URL: server.URL})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		results, err := client.Lookup(ctx, sub)
+		if err != nil {
+			t.Fatalf("Lookup() unexpected error: %v", err)
+		}
+		if len(results) != 1 || results[0].SigningPublicKey != "test-signing-key" {
+			t.Errorf("unexpected result: %+v", results)
+		}
+	})
+
+	t.Run("cache set error does not fail lookup", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(dediLookupResponse(600))
+		}))
+		defer server.Close()
+
+		cache := &mockCache{setErr: errors.New("redis down")}
+		client, closer, err := New(ctx, cache, &Config{URL: server.URL})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		results, err := client.Lookup(ctx, sub)
+		if err != nil {
+			t.Fatalf("Lookup() must not fail when cache.Set errors, got: %v", err)
+		}
+		if len(results) != 1 || results[0].SigningPublicKey != "test-signing-key" {
+			t.Errorf("unexpected result: %+v", results)
 		}
 	})
 }

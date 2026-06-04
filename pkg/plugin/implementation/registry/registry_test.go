@@ -313,6 +313,91 @@ func TestRegistryClient_Lookup_Cache(t *testing.T) {
 		}
 	})
 
+	t.Run("corrupt cache value falls through to HTTP", func(t *testing.T) {
+		resp := []model.Subscription{{SigningPublicKey: "fresh-key"}}
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(resp)
+		}))
+		defer server.Close()
+
+		cache := &mockCache{
+			getFunc: func(ctx context.Context, key string) (string, error) {
+				return "this is not valid json{{{{", nil
+			},
+		}
+		client, closer, err := New(context.Background(), cache, &Config{URL: server.URL})
+		if err != nil {
+			t.Fatalf("failed to create client: %v", err)
+		}
+		defer closer()
+
+		results, err := client.Lookup(context.Background(), sub)
+		if err != nil {
+			t.Fatalf("Lookup() unexpected error: %v", err)
+		}
+		if len(results) != 1 || results[0].SigningPublicKey != "fresh-key" {
+			t.Errorf("expected HTTP result after corrupt cache, got %+v", results)
+		}
+	})
+
+	t.Run("cache set error does not fail lookup", func(t *testing.T) {
+		resp := []model.Subscription{{SigningPublicKey: "registry-key"}}
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(resp)
+		}))
+		defer server.Close()
+
+		cache := &mockCache{setErr: errors.New("redis down")}
+		client, closer, err := New(context.Background(), cache, &Config{URL: server.URL})
+		if err != nil {
+			t.Fatalf("failed to create client: %v", err)
+		}
+		defer closer()
+
+		results, err := client.Lookup(context.Background(), sub)
+		if err != nil {
+			t.Fatalf("Lookup() must not fail when cache.Set errors, got: %v", err)
+		}
+		if len(results) != 1 || results[0].SigningPublicKey != "registry-key" {
+			t.Errorf("unexpected result: %+v", results)
+		}
+	})
+
+	t.Run("zero ValidUntil uses default cache TTL", func(t *testing.T) {
+		resp := []model.Subscription{{
+			SigningPublicKey: "registry-key",
+			// ValidUntil is zero — no expiry in the response
+		}}
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(resp)
+		}))
+		defer server.Close()
+
+		cache := &mockCache{}
+		client, closer, err := New(context.Background(), cache, &Config{URL: server.URL})
+		if err != nil {
+			t.Fatalf("failed to create client: %v", err)
+		}
+		defer closer()
+
+		_, err = client.Lookup(context.Background(), sub)
+		if err != nil {
+			t.Fatalf("Lookup() unexpected error: %v", err)
+		}
+		if cache.setTTL != defaultCacheTTL {
+			t.Errorf("expected default TTL %v, got %v", defaultCacheTTL, cache.setTTL)
+		}
+	})
+
 	t.Run("nil cache behaves as before — no cache operations", func(t *testing.T) {
 		resp := []model.Subscription{{SigningPublicKey: "direct-key"}}
 
