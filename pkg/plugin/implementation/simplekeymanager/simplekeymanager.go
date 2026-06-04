@@ -267,28 +267,41 @@ func (skm *SimpleKeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueK
 	}
 
 	log.Debugf(ctx, "Cache miss, looking up registry for subscriber: %s, uniqueKeyID: %s", subscriberID, uniqueKeyID)
-	var subscribers []model.Subscription
+
+	var signingKey, encrKey string
 	{
 		spanCtx, span := tracer.Start(ctx, "registry lookup")
 		defer span.End()
-		var err error
 
-		subscribers, err = skm.Registry.Lookup(spanCtx, &model.Subscription{
-			Subscriber: model.Subscriber{
-				SubscriberID: subscriberID,
-			},
-			KeyID: uniqueKeyID,
-		})
-		if err != nil {
-			return "", "", fmt.Errorf("failed to lookup registry: %w", err)
-		}
-		if len(subscribers) == 0 {
-			return "", "", ErrSubscriberNotFound
+		parts := strings.Split(subscriberID, "/")
+		if len(parts) == 3 && parts[0] != "" && parts[1] != "" && parts[2] != "" {
+			// 3-part NodeID — resolve directly via DeDi node lookup.
+			subscription, err := skm.Registry.LookupNode(spanCtx, subscriberID)
+			if err != nil {
+				return "", "", fmt.Errorf("failed to lookup registry node: %w", err)
+			}
+			signingKey = subscription.SigningPublicKey
+			encrKey = subscription.EncrPublicKey
+		} else {
+			subscribers, err := skm.Registry.Lookup(spanCtx, &model.Subscription{
+				Subscriber: model.Subscriber{
+					SubscriberID: subscriberID,
+				},
+				KeyID: uniqueKeyID,
+			})
+			if err != nil {
+				return "", "", fmt.Errorf("failed to lookup registry: %w", err)
+			}
+			if len(subscribers) == 0 {
+				return "", "", ErrSubscriberNotFound
+			}
+			signingKey = subscribers[0].SigningPublicKey
+			encrKey = subscribers[0].EncrPublicKey
 		}
 	}
 
 	log.Debugf(ctx, "Successfully looked up keys for subscriber: %s, uniqueKeyID: %s", subscriberID, uniqueKeyID)
-	return subscribers[0].SigningPublicKey, subscribers[0].EncrPublicKey, nil
+	return signingKey, encrKey, nil
 }
 
 // loadKeysFromConfig loads keys from configuration if they exist
