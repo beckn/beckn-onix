@@ -30,11 +30,11 @@ type Config struct {
 
 // Loader fetches, verifies, caches, and returns manifests.
 type Loader struct {
-	cache        definition.Cache
-	registry definition.RegistryMetadataLookup
-	config       *Config
-	client       *http.Client
-	refreshMu    sync.Mutex
+	cache         definition.Cache
+	registry      definition.RegistryMetadataLookup
+	config        *Config
+	client        *http.Client
+	refreshMu     sync.Mutex
 	refreshedKeys map[string]bool
 }
 
@@ -81,7 +81,7 @@ func New(ctx context.Context, cache definition.Cache, registry definition.Regist
 
 	loader := &Loader{
 		cache:         cache,
-		registry:  registry,
+		registry:      registry,
 		config:        cfg,
 		client:        httpClientFunc(cfg.FetchTimeout),
 		refreshedKeys: make(map[string]bool),
