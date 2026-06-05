@@ -1,0 +1,23 @@
+# BPP Receiver Routing — inbound action requests from BAPs to the BPP sandbox
+#
+# All action requests are forwarded to the sandbox-bpp webhook container.
+# The sandbox container processes the request and generates the on_* callback.
+
+routingRules:
+  - networkId: "beckn.one/testnet"
+    version: "2.0.0"
+    targetType: "url"
+    target:
+      url: "http://sandbox-bpp:3002/api/webhook"
+    endpoints:
+      - discover
+      - select
+      - init
+      - confirm
+      - status
+      - track
+      - update
+      - cancel
+      - rate
+      - support
+      - on_publish

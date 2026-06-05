@@ -39,7 +39,7 @@ type RegistryMetadata struct {
 	RawMeta             map[string]string
 }
 
-// SubscriberRecord is returned by RegistryLookup.LookupNode. It carries both the
+// SubscriberRecord is returned by RegistryMetadataLookup.LookupNode. It carries both the
 // subscriber's identity/endpoint data (from the registry details block) and any
 // node-level manifest metadata (from the registry meta block) in a single response,
 // since both come from the same DeDi endpoint call.

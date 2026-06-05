@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -35,9 +34,6 @@ func (m *mockRegistry) Lookup(ctx context.Context, sub *model.Subscription) ([]m
 	return nil, nil
 }
 
-func (m *mockRegistry) LookupNode(_ context.Context, nodeID string) (*model.SubscriberRecord, error) {
-	return nil, fmt.Errorf("LookupNode not supported in test mock (nodeID: %s)", nodeID)
-}
 
 func TestSimpleKeyManagerProvider_New(t *testing.T) {
 	provider := &simpleKeyManagerProvider{}

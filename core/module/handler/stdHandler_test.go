@@ -149,7 +149,7 @@ func (noopPluginManager) Registry(context.Context, *plugin.Config) (definition.R
 func (noopPluginManager) KeyManager(context.Context, definition.Cache, definition.RegistryLookup, *plugin.Config) (definition.KeyManager, error) {
 	return nil, nil
 }
-func (noopPluginManager) ManifestLoader(context.Context, definition.Cache, definition.RegistryLookup, definition.RegistryMetadataLookup, *plugin.Config) (definition.ManifestLoader, error) {
+func (noopPluginManager) ManifestLoader(context.Context, definition.Cache, definition.RegistryMetadataLookup, *plugin.Config) (definition.ManifestLoader, error) {
 	return nil, nil
 }
 func (noopPluginManager) TransportWrapper(context.Context, *plugin.Config) (definition.TransportWrapper, error) {
@@ -166,10 +166,6 @@ type registryWithoutMetadata struct{}
 
 func (registryWithoutMetadata) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
 	return nil, errors.New("not implemented")
-}
-
-func (registryWithoutMetadata) LookupNode(_ context.Context, nodeID string) (*model.SubscriberRecord, error) {
-	return nil, fmt.Errorf("LookupNode not supported (nodeID: %s)", nodeID)
 }
 
 type stubCache struct{}

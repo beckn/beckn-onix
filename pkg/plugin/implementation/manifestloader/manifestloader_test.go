@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -52,10 +51,6 @@ type mockRegistry struct {
 	nodeRecord  *model.SubscriberRecord
 	nodeErr     error
 	nodeCalls   int
-}
-
-func (m *mockRegistry) Lookup(_ context.Context, _ *model.Subscription) ([]model.Subscription, error) {
-	return nil, fmt.Errorf("Lookup not implemented in mockRegistry")
 }
 
 func (m *mockRegistry) LookupNode(_ context.Context, _ string) (*model.SubscriberRecord, error) {
@@ -107,7 +102,7 @@ func TestGetByMetadata(t *testing.T) {
 
 	cache := &mockCache{store: map[string]string{}}
 	registry := &mockRegistry{}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{CacheTTL: time.Hour, FetchTimeout: time.Second})
+	loader, _, err := New(context.Background(), cache, registry, &Config{CacheTTL: time.Hour, FetchTimeout: time.Second})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -136,7 +131,7 @@ func TestGetByNetworkIDUsesCacheFirst(t *testing.T) {
 		networkCacheKey("nfo.example.org/network"): `{"network_id":"nfo.example.org/network","content":"bWFuaWZlc3Q=","verified":true}`,
 	}}
 	registry := &mockRegistry{}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{})
+	loader, _, err := New(context.Background(), cache, registry, &Config{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -157,7 +152,7 @@ func TestGetByNetworkIDRejectsUnverifiedCacheEntry(t *testing.T) {
 		networkCacheKey("nfo.example.org/network"): `{"network_id":"nfo.example.org/network","content":"bWFuaWZlc3Q=","verified":false}`,
 	}}
 	registry := &mockRegistry{err: errors.New("should not resolve registry from poisoned cache in this test")}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{})
+	loader, _, err := New(context.Background(), cache, registry, &Config{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -167,7 +162,7 @@ func TestGetByNetworkIDRejectsUnverifiedCacheEntry(t *testing.T) {
 }
 
 func TestLoadFromCacheOnCacheMissReturnsNilNil(t *testing.T) {
-	loader, _, err := New(context.Background(), &mockCache{store: map[string]string{}}, &mockRegistry{}, &mockRegistry{}, &Config{})
+	loader, _, err := New(context.Background(), &mockCache{store: map[string]string{}}, &mockRegistry{}, &Config{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -214,7 +209,7 @@ func TestGetByNetworkIDResolvesMetadata(t *testing.T) {
 			},
 		},
 	}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{})
+	loader, _, err := New(context.Background(), cache, registry, &Config{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -256,7 +251,7 @@ func TestGetByMetadata_CacheWriteErrorStillReturnsManifest(t *testing.T) {
 	defer func() { httpClientFunc = originalHTTPClientFunc }()
 
 	cache := &mockCache{store: map[string]string{}, setErr: errors.New("redis: connection refused")}
-	loader, _, err := New(context.Background(), cache, &mockRegistry{}, &mockRegistry{}, &Config{CacheTTL: time.Hour, FetchTimeout: time.Second})
+	loader, _, err := New(context.Background(), cache, &mockRegistry{}, &Config{CacheTTL: time.Hour, FetchTimeout: time.Second})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -311,7 +306,7 @@ func TestGetByNetworkID_CacheWriteErrorStillReturnsManifest(t *testing.T) {
 			},
 		},
 	}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{})
+	loader, _, err := New(context.Background(), cache, registry, &Config{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -360,7 +355,7 @@ func TestGetByMetadata_DisableCacheBypassesAndDoesNotStore(t *testing.T) {
 	cache := &mockCache{store: map[string]string{
 		metadataCacheKey(staleMetadata): `{"content":"c3RhbGU=","verified":true}`,
 	}}
-	loader, _, err := New(context.Background(), cache, &mockRegistry{}, &mockRegistry{}, &Config{
+	loader, _, err := New(context.Background(), cache, &mockRegistry{}, &Config{
 		DisableCache: true,
 	})
 	if err != nil {
@@ -418,7 +413,7 @@ func TestGetByMetadata_ForceRefreshOnStartBypassesOnce(t *testing.T) {
 	cache := &mockCache{store: map[string]string{
 		metadataCacheKey(metadata): `{"content":"c3RhbGU=","verified":true}`,
 	}}
-	loader, _, err := New(context.Background(), cache, &mockRegistry{}, &mockRegistry{}, &Config{
+	loader, _, err := New(context.Background(), cache, &mockRegistry{}, &Config{
 		ForceRefreshOnStart: true,
 	})
 	if err != nil {
@@ -492,7 +487,7 @@ func TestGetByNetworkID_DisableCacheBypassesAndDoesNotStore(t *testing.T) {
 			},
 		},
 	}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{DisableCache: true})
+	loader, _, err := New(context.Background(), cache, registry, &Config{DisableCache: true})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -556,7 +551,7 @@ func TestGetByNetworkID_ForceRefreshOnStartBypassesOnce(t *testing.T) {
 			},
 		},
 	}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{ForceRefreshOnStart: true})
+	loader, _, err := New(context.Background(), cache, registry, &Config{ForceRefreshOnStart: true})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -607,7 +602,7 @@ func TestGetByMetadata_SkipSignatureVerification(t *testing.T) {
 	defer func() { httpClientFunc = originalHTTPClientFunc }()
 
 	cache := &mockCache{store: map[string]string{}}
-	loader, _, err := New(context.Background(), cache, &mockRegistry{}, &mockRegistry{}, &Config{
+	loader, _, err := New(context.Background(), cache, &mockRegistry{}, &Config{
 		SkipSignatureVerification: true,
 	})
 	if err != nil {
@@ -657,7 +652,7 @@ func TestGetByNetworkID_SkipSignatureVerification(t *testing.T) {
 			},
 		},
 	}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{
+	loader, _, err := New(context.Background(), cache, registry, &Config{
 		SkipSignatureVerification: true,
 	})
 	if err != nil {
@@ -684,7 +679,7 @@ func TestGetBySubscriberIDUsesCacheFirst(t *testing.T) {
 		subscriberCacheKey("nfh.global/subscribers.beckn.one/bpp.energy-provider.com"): `{"subscriber_id":"nfh.global/subscribers.beckn.one/bpp.energy-provider.com","content":"bWFuaWZlc3Q=","verified":true}`,
 	}}
 	registry := &mockRegistry{}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{})
+	loader, _, err := New(context.Background(), cache, registry, &Config{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -734,7 +729,7 @@ func TestGetBySubscriberIDResolvesMetadata(t *testing.T) {
 			},
 		},
 	}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{})
+	loader, _, err := New(context.Background(), cache, registry, &Config{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -770,7 +765,7 @@ func TestGetBySubscriberIDRegistryError(t *testing.T) {
 	registry := &mockRegistry{
 		nodeErr: errors.New("registry unavailable"),
 	}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{})
+	loader, _, err := New(context.Background(), cache, registry, &Config{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -787,7 +782,7 @@ func TestGetBySubscriberIDSubscriberHasNotPublishedNodeManifest(t *testing.T) {
 			Meta: map[string]string{},
 		},
 	}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{})
+	loader, _, err := New(context.Background(), cache, registry, &Config{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -833,7 +828,7 @@ func TestGetBySubscriberID_ForceRefreshOnStartBypassesOnce(t *testing.T) {
 		subscriberCacheKey(subscriberID): `{"subscriber_id":"` + subscriberID + `","content":"c3RhbGU=","verified":true}`,
 	}}
 	registry := &mockRegistry{nodeRecord: nodeRecord}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{ForceRefreshOnStart: true})
+	loader, _, err := New(context.Background(), cache, registry, &Config{ForceRefreshOnStart: true})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -870,7 +865,7 @@ func TestGetBySubscriberID_ForceRefreshOnStartBypassesOnce(t *testing.T) {
 }
 
 func TestGetBySubscriberIDInvalidFormat(t *testing.T) {
-	loader, _, err := New(context.Background(), &mockCache{store: map[string]string{}}, &mockRegistry{}, &mockRegistry{}, &Config{})
+	loader, _, err := New(context.Background(), &mockCache{store: map[string]string{}}, &mockRegistry{}, &Config{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -905,7 +900,7 @@ func TestGetBySubscriberID_SkipSignatureVerification(t *testing.T) {
 			Meta: map[string]string{"manifestUrl": "https://example.org/node-manifest"},
 		},
 	}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{SkipSignatureVerification: true})
+	loader, _, err := New(context.Background(), cache, registry, &Config{SkipSignatureVerification: true})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -961,7 +956,7 @@ func TestGetBySubscriberID_DisableCacheBypassesAndDoesNotStore(t *testing.T) {
 		subscriberCacheKey(subscriberID): `{"subscriber_id":"` + subscriberID + `","content":"c3RhbGU=","verified":true}`,
 	}}
 	registry := &mockRegistry{nodeRecord: &staleRecord}
-	loader, _, err := New(context.Background(), cache, registry, registry, &Config{DisableCache: true})
+	loader, _, err := New(context.Background(), cache, registry, &Config{DisableCache: true})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -986,7 +981,7 @@ func TestGetBySubscriberID_DisableCacheBypassesAndDoesNotStore(t *testing.T) {
 }
 
 func TestFetchURL_RejectsOversizedResponse(t *testing.T) {
-	loader, _, err := New(context.Background(), &mockCache{store: map[string]string{}}, &mockRegistry{}, &mockRegistry{}, &Config{})
+	loader, _, err := New(context.Background(), &mockCache{store: map[string]string{}}, &mockRegistry{}, &Config{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}

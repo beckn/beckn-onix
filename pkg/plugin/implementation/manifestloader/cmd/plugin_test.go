@@ -17,22 +17,18 @@ func (stubCache) Clear(context.Context) error                              { ret
 
 type stubRegistry struct{}
 
-func (stubRegistry) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
-	return nil, nil
+func (stubRegistry) LookupRegistry(ctx context.Context, namespaceIdentifier, registryName string) (*model.RegistryMetadata, error) {
+	return &model.RegistryMetadata{}, nil
 }
 
 func (stubRegistry) LookupNode(context.Context, string) (*model.SubscriberRecord, error) {
 	return nil, nil
 }
 
-func (stubRegistry) LookupRegistry(ctx context.Context, namespaceIdentifier, registryName string) (*model.RegistryMetadata, error) {
-	return &model.RegistryMetadata{}, nil
-}
-
 func TestManifestLoaderProvider_New(t *testing.T) {
 	ctx := context.Background()
 	provider := manifestLoaderProvider{}
-	loader, closer, err := provider.New(ctx, stubCache{}, stubRegistry{}, stubRegistry{}, map[string]string{
+	loader, closer, err := provider.New(ctx, stubCache{}, stubRegistry{}, map[string]string{
 		"cacheTTL":              "2h",
 		"fetchTimeoutSeconds":   "10",
 		"disableCache":          "true",

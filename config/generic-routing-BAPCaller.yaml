@@ -1,0 +1,30 @@
+# BAP Caller Routing — outbound requests from BAP to BPPs / CDS
+#
+# networkId "beckn.one/testnet" maps to the v2.0.0 context.networkId field.
+# The adapter router resolves targetType "bpp" via DeDi registry lookup (bppId).
+# The CDS URL below handles discover and catalog/publish; update it for your network.
+
+routingRules:
+  # Transaction & fulfillment actions: routed to the BPP via registry lookup
+  - domain: "beckn.one/testnet"
+    version: "2.0.0"
+    targetType: "bpp"
+    endpoints:
+      - select
+      - init
+      - confirm
+      - status
+      - track
+      - update
+      - cancel
+      - rate
+      - support
+
+  # Discovery: routed to Discover Service
+  - domain: "beckn.one/testnet"
+    version: "2.0.0"
+    targetType: "url"
+    target:
+      url: "https://34.14.221.66.sslip.io/beckn"   # Replace with your Discover service endpoint
+    endpoints:
+      - discover

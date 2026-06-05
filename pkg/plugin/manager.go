@@ -448,12 +448,12 @@ func (m *Manager) PayloadStore(ctx context.Context, cache definition.Cache, name
 }
 
 // ManifestLoader returns a ManifestLoader instance based on the provided configuration.
-func (m *Manager) ManifestLoader(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, metaRegistry definition.RegistryMetadataLookup, cfg *Config) (definition.ManifestLoader, error) {
+func (m *Manager) ManifestLoader(ctx context.Context, cache definition.Cache, metaRegistry definition.RegistryMetadataLookup, cfg *Config) (definition.ManifestLoader, error) {
 	mlp, err := provider[definition.ManifestLoaderProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	loader, closer, err := mlp.New(ctx, cache, registry, metaRegistry, cfg.Config)
+	loader, closer, err := mlp.New(ctx, cache, metaRegistry, cfg.Config)
 	if err != nil {
 		return nil, err
 	}

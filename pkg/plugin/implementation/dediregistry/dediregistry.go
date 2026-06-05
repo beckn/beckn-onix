@@ -152,13 +152,6 @@ func (c *DeDiRegistryClient) parseSubscriptionFromData(ctx context.Context, data
 	detailsDomain, _ := details["domain"].(string)
 	detailsSubscriberID, _ := details["subscriber_id"].(string)
 
-	networkMemberships := extractStringSlice(ctx, "network_memberships", data["network_memberships"])
-	if len(c.config.AllowedNetworkIDs) > 0 {
-		if len(networkMemberships) == 0 || !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
-			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", detailsSubscriberID)
-		}
-	}
-
 	encrPublicKey, _ := details["encr_public_key"].(string)
 	createdAt, _ := data["created_at"].(string)
 	updatedAt, _ := data["updated_at"].(string)
@@ -226,8 +219,18 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 	if err != nil {
 		return nil, err
 	}
-	subscription.KeyID = keyID
 
+	// AllowedNetworkIDs is a trust boundary specific to Lookup: it ensures signing keys are only
+	// accepted from subscribers that belong to networks this adapter is configured to trust.
+	// LookupNode intentionally skips this check — node record reads are not trust decisions.
+	if len(c.config.AllowedNetworkIDs) > 0 {
+		networkMemberships := extractStringSlice(ctx, "network_memberships", data["network_memberships"])
+		if !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
+			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", subscription.SubscriberID)
+		}
+	}
+
+	subscription.KeyID = keyID
 	log.Debugf(ctx, "DeDi lookup successful, found subscription for subscriber: %s", subscription.SubscriberID)
 	return []model.Subscription{*subscription}, nil
 }
@@ -280,9 +283,8 @@ func (c *DeDiRegistryClient) LookupRegistry(ctx context.Context, namespaceIdenti
 // nodeID must be in namespace/registry/recordName format (exactly 3 non-empty parts separated by "/").
 // Returns a SubscriberRecord with both subscriber details (URL, keys) and node manifest metadata
 // from the same DeDi response. Meta is empty (not an error) when the participant has not yet
-// published a node manifest.
-// Note: no AllowedNetworkIDs check is performed here — node manifest lookup is subscriber-scoped,
-// not network-membership scoped.
+// published a node manifest. AllowedNetworkIDs is not applied — node record reads are not trust
+// decisions and should not be gated by network membership.
 func (c *DeDiRegistryClient) LookupNode(ctx context.Context, nodeID string) (*model.SubscriberRecord, error) {
 	parts := strings.Split(nodeID, "/")
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {

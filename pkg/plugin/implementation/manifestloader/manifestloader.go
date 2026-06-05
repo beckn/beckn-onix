@@ -30,18 +30,16 @@ type Config struct {
 
 // Loader fetches, verifies, caches, and returns manifests.
 type Loader struct {
-	cache         definition.Cache
-	registry      definition.RegistryLookup
-	metaRegistry  definition.RegistryMetadataLookup
-	config        *Config
-	client        *http.Client
-	refreshMu     sync.Mutex
+	cache        definition.Cache
+	metaRegistry definition.RegistryMetadataLookup
+	config       *Config
+	client       *http.Client
+	refreshMu    sync.Mutex
 	refreshedKeys map[string]bool
 }
 
 var (
 	ErrNilCache        = errors.New("cache implementation cannot be nil")
-	ErrNilRegistry     = errors.New("registry lookup cannot be nil")
 	ErrNilMetaRegistry = errors.New("registry metadata lookup cannot be nil")
 	// ErrNoManifestPublished is returned by GetBySubscriberID when the registry returns
 	// metadata for the subscriber but carries no manifestUrl — the participant has not yet
@@ -59,12 +57,9 @@ var httpClientFunc = func(timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout}
 }
 
-func New(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, metaRegistry definition.RegistryMetadataLookup, cfg *Config) (*Loader, func() error, error) {
+func New(ctx context.Context, cache definition.Cache, metaRegistry definition.RegistryMetadataLookup, cfg *Config) (*Loader, func() error, error) {
 	if cache == nil {
 		return nil, nil, ErrNilCache
-	}
-	if registry == nil {
-		return nil, nil, ErrNilRegistry
 	}
 	if metaRegistry == nil {
 		return nil, nil, ErrNilMetaRegistry
@@ -86,7 +81,6 @@ func New(ctx context.Context, cache definition.Cache, registry definition.Regist
 
 	loader := &Loader{
 		cache:         cache,
-		registry:      registry,
 		metaRegistry:  metaRegistry,
 		config:        cfg,
 		client:        httpClientFunc(cfg.FetchTimeout),
@@ -165,7 +159,7 @@ func (l *Loader) GetBySubscriberID(ctx context.Context, subscriberID string) (*m
 		log.Infof(ctx, "ManifestLoader: bypassing cache for subscriberID=%q", subscriberID)
 	}
 
-	record, err := l.registry.LookupNode(ctx, subscriberID)
+	record, err := l.metaRegistry.LookupNode(ctx, subscriberID)
 	if err != nil {
 		return nil, err
 	}

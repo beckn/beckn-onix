@@ -16,8 +16,8 @@ type ManifestLoader interface {
 }
 
 // ManifestLoaderProvider initializes a manifest loader instance with its dependencies.
-// registry is used for subscriber-level node lookups (LookupNode).
-// metaRegistry is used for network-level manifest lookups (LookupRegistry).
+// metaRegistry provides all DeDi path-based lookups the loader needs:
+// LookupRegistry for network manifest discovery and LookupNode for subscriber manifest discovery.
 type ManifestLoaderProvider interface {
-	New(context.Context, Cache, RegistryLookup, RegistryMetadataLookup, map[string]string) (ManifestLoader, func() error, error)
+	New(context.Context, Cache, RegistryMetadataLookup, map[string]string) (ManifestLoader, func() error, error)
 }
