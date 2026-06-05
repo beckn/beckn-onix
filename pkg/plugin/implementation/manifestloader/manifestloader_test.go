@@ -924,6 +924,67 @@ func TestGetBySubscriberID_SkipSignatureVerification(t *testing.T) {
 	}
 }
 
+func TestGetBySubscriberID_DisableCacheBypassesAndDoesNotStore(t *testing.T) {
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	manifest := []byte("fresh node manifest")
+	signature := ed25519.Sign(privateKey, manifest)
+	requests := 0
+
+	originalHTTPClientFunc := httpClientFunc
+	httpClientFunc = func(timeout time.Duration) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests++
+			switch req.URL.String() {
+			case "https://example.org/node-manifest":
+				return response(200, string(manifest), "application/yaml"), nil
+			case "https://example.org/node-manifest.sig":
+				return response(200, base64.StdEncoding.EncodeToString(signature), "text/plain"), nil
+			case "https://example.org/pubkey":
+				return response(200, base64.StdEncoding.EncodeToString(publicKey), "text/plain"), nil
+			default:
+				return response(404, "not found", "text/plain"), nil
+			}
+		})}
+	}
+	defer func() { httpClientFunc = originalHTTPClientFunc }()
+
+	subscriberID := "nfh.global/subscribers.beckn.one/bpp.energy-provider.com"
+	staleRecord := model.SubscriberRecord{
+		Meta: map[string]string{
+			"manifestUrl":               "https://example.org/node-manifest",
+			"manifestSignatureUrl":      "https://example.org/node-manifest.sig",
+			"signingPublicKeyLookupUrl": "https://example.org/pubkey",
+		},
+	}
+	// Pre-populate cache with a stale entry — DisableCache must bypass it.
+	cache := &mockCache{store: map[string]string{
+		subscriberCacheKey(subscriberID): `{"subscriber_id":"` + subscriberID + `","content":"c3RhbGU=","verified":true}`,
+	}}
+	registry := &mockRegistry{nodeRecord: &staleRecord}
+	loader, _, err := New(context.Background(), cache, registry, registry, &Config{DisableCache: true})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	doc, err := loader.GetBySubscriberID(context.Background(), subscriberID)
+	if err != nil {
+		t.Fatalf("GetBySubscriberID() error = %v", err)
+	}
+	if string(doc.Content) != string(manifest) {
+		t.Fatalf("expected fresh manifest content, got %q", string(doc.Content))
+	}
+	if requests != 3 {
+		t.Fatalf("expected 3 remote fetches when cache disabled, got %d", requests)
+	}
+	if registry.nodeCalls != 1 {
+		t.Fatalf("expected one registry lookup when bypassing cache, got %d", registry.nodeCalls)
+	}
+	// Cache store must not have grown — DisableCache suppresses writes.
+	if len(cache.store) != 1 {
+		t.Errorf("expected no new cache writes when cache disabled, store had %d keys", len(cache.store))
+	}
+}
+
 func TestFetchURL_RejectsOversizedResponse(t *testing.T) {
 	loader, _, err := New(context.Background(), &mockCache{store: map[string]string{}}, &mockRegistry{}, &mockRegistry{}, &Config{})
 	if err != nil {

@@ -40,8 +40,9 @@ type Loader struct {
 }
 
 var (
-	ErrNilCache            = errors.New("cache implementation cannot be nil")
-	ErrNilRegistry         = errors.New("registry metadata lookup cannot be nil")
+	ErrNilCache        = errors.New("cache implementation cannot be nil")
+	ErrNilRegistry     = errors.New("registry lookup cannot be nil")
+	ErrNilMetaRegistry = errors.New("registry metadata lookup cannot be nil")
 	// ErrNoManifestPublished is returned by GetBySubscriberID when the registry returns
 	// metadata for the subscriber but carries no manifestUrl — the participant has not yet
 	// published a node manifest. Callers should treat this as a graceful absence, not a fault.
@@ -66,7 +67,7 @@ func New(ctx context.Context, cache definition.Cache, registry definition.Regist
 		return nil, nil, ErrNilRegistry
 	}
 	if metaRegistry == nil {
-		return nil, nil, fmt.Errorf("registry metadata lookup cannot be nil")
+		return nil, nil, ErrNilMetaRegistry
 	}
 	if cfg == nil {
 		cfg = &Config{}
