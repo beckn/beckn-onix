@@ -29,7 +29,10 @@ jobs:
             --key /tmp/beckn_private.key \
             --input pkg/beckndefaults/beckn-constants.yaml \
             --output pkg/beckndefaults/beckn-constants.yaml.sig
-          rm -f /tmp/beckn_private.key
+
+      - name: Cleanup signing key
+        if: always()
+        run: rm -f /tmp/beckn_private.key
 
       - name: Commit updated signature
         run: |

@@ -7,6 +7,8 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -89,9 +91,27 @@ func TestLoadAndVerify_FreshKeypair(t *testing.T) {
 	assert.Equal(t, "v1", bc.Version)
 }
 
-// TestFetchRemote_SizeLimit verifies that a response exceeding the size cap
-// is rejected without panicking.
-func TestFetchRemote_SizeLimit(t *testing.T) {
-	oversized := make([]byte, maxConstantsFileBytes+1)
-	assert.Greater(t, len(oversized), maxConstantsFileBytes)
+// TestFetchFromURLs_SizeLimit verifies that fetchFromURLs rejects a response
+// body that exceeds maxConstantsFileBytes.
+func TestFetchFromURLs_SizeLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(make([]byte, maxConstantsFileBytes+1))
+	}))
+	defer srv.Close()
+
+	_, _, err := fetchFromURLs(context.Background(), srv.URL, srv.URL)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds maximum allowed size")
+}
+
+// TestFetchFromURLs_NonOKStatus verifies that a non-200 response is rejected.
+func TestFetchFromURLs_NonOKStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	_, _, err := fetchFromURLs(context.Background(), srv.URL, srv.URL)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "404")
 }
