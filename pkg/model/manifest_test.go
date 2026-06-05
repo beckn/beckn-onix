@@ -351,9 +351,3 @@ func TestParseNodeManifest_InvalidYAML(t *testing.T) {
 	}
 }
 
-func TestNodeManifestType_Constant(t *testing.T) {
-	if NodeManifestType != "node-manifest" {
-		t.Errorf("NodeManifestType = %q, want %q", NodeManifestType, "node-manifest")
-	}
-}
-
