@@ -39,6 +39,15 @@ type RegistryMetadata struct {
 	RawMeta             map[string]string
 }
 
+// SubscriberRecord is returned by RegistryMetadataLookup.LookupNode. It carries both the
+// subscriber's identity/endpoint data (from the registry details block) and any
+// node-level manifest metadata (from the registry meta block) in a single response,
+// since both come from the same DeDi endpoint call.
+type SubscriberRecord struct {
+	Subscription        // identity, URL, signing/encryption keys — from data["details"]
+	Meta map[string]string // node manifest metadata — from data["meta"]; may be empty
+}
+
 // Authorization-related constants for headers.
 const (
 	AuthHeaderSubscriber          string = "Authorization"

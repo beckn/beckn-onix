@@ -21,6 +21,10 @@ func (stubRegistry) LookupRegistry(ctx context.Context, namespaceIdentifier, reg
 	return &model.RegistryMetadata{}, nil
 }
 
+func (stubRegistry) LookupNode(context.Context, string) (*model.SubscriberRecord, error) {
+	return nil, nil
+}
+
 func TestManifestLoaderProvider_New(t *testing.T) {
 	ctx := context.Background()
 	provider := manifestLoaderProvider{}

@@ -46,6 +46,10 @@ func (s stubManifestLoader) GetByMetadata(ctx context.Context, metadata model.Ma
 	return nil, errors.New("not implemented in test")
 }
 
+func (s stubManifestLoader) GetBySubscriberID(ctx context.Context, subscriberID string) (*model.ManifestDocument, error) {
+	return nil, errors.New("not implemented in test")
+}
+
 // Helper: create a StepContext with the given action path and JSON body.
 func makeStepCtx(action string, body string) *model.StepContext {
 	req, _ := http.NewRequest("POST", "/bpp/caller/"+action, nil)
