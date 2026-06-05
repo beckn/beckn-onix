@@ -225,6 +225,9 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 	// LookupNode intentionally skips this check — node record reads are not trust decisions.
 	if len(c.config.AllowedNetworkIDs) > 0 {
 		networkMemberships := extractStringSlice(ctx, "network_memberships", data["network_memberships"])
+		if len(networkMemberships) == 0 {
+			return nil, fmt.Errorf("registry entry with subscriber_id '%s' has no network_memberships in response; cannot verify against registry.config.allowedNetworkIDs", subscription.SubscriberID)
+		}
 		if !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
 			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", subscription.SubscriberID)
 		}

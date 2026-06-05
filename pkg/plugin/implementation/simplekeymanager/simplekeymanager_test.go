@@ -30,7 +30,6 @@ func (m *mockCache) Delete(ctx context.Context, key string) error {
 
 type mockRegistry struct{}
 
-
 func (m *mockRegistry) Lookup(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
 	return []model.Subscription{
 		{

@@ -721,7 +721,6 @@ func TestGetBySubscriberIDResolvesMetadata(t *testing.T) {
 	cache := &mockCache{store: map[string]string{}}
 	registry := &mockRegistry{
 		nodeRecord: &model.SubscriberRecord{
-			
 			Meta: map[string]string{
 				"manifestUrl":               "https://example.org/node-manifest",
 				"manifestSignatureUrl":      "https://example.org/node-manifest.sig",

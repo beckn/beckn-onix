@@ -34,7 +34,6 @@ func (m *mockRegistry) Lookup(ctx context.Context, sub *model.Subscription) ([]m
 	return nil, nil
 }
 
-
 func TestSimpleKeyManagerProvider_New(t *testing.T) {
 	provider := &simpleKeyManagerProvider{}
 	ctx := context.Background()
