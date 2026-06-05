@@ -138,3 +138,222 @@ func TestValidateNetworkManifest(t *testing.T) {
 		})
 	}
 }
+
+func validNodeManifestForTest(subscriberID string, now time.Time) NodeManifest {
+	return NodeManifest{
+		ManifestVersion: "1.0",
+		ManifestType:    NodeManifestType,
+		SubscriberID:    subscriberID,
+		Schema: NodeManifestSchema{
+			SchemaObjects: []SchemaObject{
+				{
+					ContextURL: "https://schema.beckn.io/Order/2.0/context.jsonld",
+					Type:       "beckn:Order",
+				},
+			},
+		},
+		Governance: NodeManifestGovernance{
+			EffectiveFrom:  now.Add(-1 * time.Hour).Format(time.RFC3339),
+			EffectiveUntil: now.Add(24 * time.Hour).Format(time.RFC3339),
+		},
+	}
+}
+
+func TestValidateNodeManifest(t *testing.T) {
+	const subscriberID = "nfh.global/subscribers.beckn.one/marketplace.example.com"
+	now := time.Now().UTC()
+
+	tests := []struct {
+		name       string
+		mutate     func(*NodeManifest)
+		wantErrSub string
+	}{
+		{
+			name:       "valid manifest passes",
+			mutate:     func(_ *NodeManifest) {},
+			wantErrSub: "",
+		},
+		{
+			name: "missing manifestVersion",
+			mutate: func(m *NodeManifest) {
+				m.ManifestVersion = ""
+			},
+			wantErrSub: "missing manifestVersion",
+		},
+		{
+			name: "wrong manifestType",
+			mutate: func(m *NodeManifest) {
+				m.ManifestType = "network-manifest"
+			},
+			wantErrSub: `must have manifestType="node-manifest"`,
+		},
+		{
+			name: "missing subscriberId",
+			mutate: func(m *NodeManifest) {
+				m.SubscriberID = ""
+			},
+			wantErrSub: "missing subscriberId",
+		},
+		{
+			name: "subscriberId only two parts",
+			mutate: func(m *NodeManifest) {
+				m.SubscriberID = "nfh.global/subscribers.beckn.one"
+			},
+			wantErrSub: "namespace/registry/recordId format",
+		},
+		{
+			name: "subscriberId has empty segment",
+			mutate: func(m *NodeManifest) {
+				m.SubscriberID = "nfh.global//marketplace.example.com"
+			},
+			wantErrSub: "namespace/registry/recordId format",
+		},
+		{
+			name: "subscriberId mismatch",
+			mutate: func(m *NodeManifest) {
+				m.SubscriberID = "nfh.global/subscribers.beckn.one/other.example.com"
+			},
+			wantErrSub: "does not match expected",
+		},
+		{
+			name: "empty schemaObjects",
+			mutate: func(m *NodeManifest) {
+				m.Schema.SchemaObjects = nil
+			},
+			wantErrSub: "at least one schema object",
+		},
+		{
+			name: "schema object missing contextUrl",
+			mutate: func(m *NodeManifest) {
+				m.Schema.SchemaObjects = []SchemaObject{{Type: "beckn:Order"}}
+			},
+			wantErrSub: "missing contextUrl",
+		},
+		{
+			name: "schema object missing type",
+			mutate: func(m *NodeManifest) {
+				m.Schema.SchemaObjects = []SchemaObject{{ContextURL: "https://schema.beckn.io/Order/2.0/context.jsonld"}}
+			},
+			wantErrSub: "missing type",
+		},
+		{
+			name: "invalid effectiveFrom",
+			mutate: func(m *NodeManifest) {
+				m.Governance.EffectiveFrom = "not-a-timestamp"
+			},
+			wantErrSub: "invalid governance.effectiveFrom",
+		},
+		{
+			name: "effectiveFrom in the future",
+			mutate: func(m *NodeManifest) {
+				m.Governance.EffectiveFrom = now.Add(2 * time.Hour).Format(time.RFC3339)
+			},
+			wantErrSub: "is not active until",
+		},
+		{
+			name: "invalid effectiveUntil",
+			mutate: func(m *NodeManifest) {
+				m.Governance.EffectiveUntil = "not-a-timestamp"
+			},
+			wantErrSub: "invalid governance.effectiveUntil",
+		},
+		{
+			name: "effectiveUntil before effectiveFrom",
+			mutate: func(m *NodeManifest) {
+				m.Governance.EffectiveFrom = now.Add(-2 * time.Hour).Format(time.RFC3339)
+				m.Governance.EffectiveUntil = now.Add(-3 * time.Hour).Format(time.RFC3339)
+			},
+			wantErrSub: "effectiveUntil later than governance.effectiveFrom",
+		},
+		{
+			name: "expired manifest",
+			mutate: func(m *NodeManifest) {
+				m.Governance.EffectiveFrom = now.Add(-3 * time.Hour).Format(time.RFC3339)
+				m.Governance.EffectiveUntil = now.Add(-1 * time.Hour).Format(time.RFC3339)
+			},
+			wantErrSub: "expired at",
+		},
+		{
+			name: "no effectiveUntil is valid indefinite",
+			mutate: func(m *NodeManifest) {
+				m.Governance.EffectiveUntil = ""
+			},
+			wantErrSub: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifest := validNodeManifestForTest(subscriberID, now)
+			tt.mutate(&manifest)
+			err := manifest.Validate(subscriberID, now)
+			if tt.wantErrSub == "" {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErrSub) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErrSub, err)
+			}
+		})
+	}
+}
+
+func TestParseNodeManifest(t *testing.T) {
+	yaml := `
+manifestVersion: "1.0"
+manifestType: "node-manifest"
+subscriberId: "nfh.global/subscribers.beckn.one/marketplace.example.com"
+schema:
+  schemaObjects:
+    - contextUrl: "https://schema.beckn.io/Order/2.0/context.jsonld"
+      type: "beckn:Order"
+    - contextUrl: "https://schema.beckn.io/Order/1.0/context.jsonld"
+      type: "beckn:Order"
+governance:
+  effectiveFrom: "2026-01-01T00:00:00Z"
+`
+	m, err := ParseNodeManifest([]byte(yaml))
+	if err != nil {
+		t.Fatalf("ParseNodeManifest() error = %v", err)
+	}
+	if m.ManifestVersion != "1.0" {
+		t.Errorf("expected manifestVersion 1.0, got %q", m.ManifestVersion)
+	}
+	if m.ManifestType != NodeManifestType {
+		t.Errorf("expected manifestType %q, got %q", NodeManifestType, m.ManifestType)
+	}
+	if m.SubscriberID != "nfh.global/subscribers.beckn.one/marketplace.example.com" {
+		t.Errorf("unexpected subscriberId: %q", m.SubscriberID)
+	}
+	if len(m.Schema.SchemaObjects) != 2 {
+		t.Fatalf("expected 2 schema objects, got %d", len(m.Schema.SchemaObjects))
+	}
+	if m.Schema.SchemaObjects[0].ContextURL != "https://schema.beckn.io/Order/2.0/context.jsonld" {
+		t.Errorf("unexpected contextUrl: %q", m.Schema.SchemaObjects[0].ContextURL)
+	}
+	if m.Schema.SchemaObjects[0].Type != "beckn:Order" {
+		t.Errorf("unexpected type: %q", m.Schema.SchemaObjects[0].Type)
+	}
+	if m.Governance.EffectiveFrom != "2026-01-01T00:00:00Z" {
+		t.Errorf("unexpected effectiveFrom: %q", m.Governance.EffectiveFrom)
+	}
+	if m.Governance.EffectiveUntil != "" {
+		t.Errorf("expected empty effectiveUntil, got %q", m.Governance.EffectiveUntil)
+	}
+}
+
+func TestParseNodeManifest_InvalidYAML(t *testing.T) {
+	_, err := ParseNodeManifest([]byte("{{not valid yaml"))
+	if err == nil {
+		t.Fatal("expected error for invalid YAML, got nil")
+	}
+}
+
+func TestNodeManifestType_Constant(t *testing.T) {
+	if NodeManifestType != "node-manifest" {
+		t.Errorf("NodeManifestType = %q, want %q", NodeManifestType, "node-manifest")
+	}
+}
+
