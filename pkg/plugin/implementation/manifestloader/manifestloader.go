@@ -31,7 +31,7 @@ type Config struct {
 // Loader fetches, verifies, caches, and returns manifests.
 type Loader struct {
 	cache        definition.Cache
-	metaRegistry definition.RegistryMetadataLookup
+	registry definition.RegistryMetadataLookup
 	config       *Config
 	client       *http.Client
 	refreshMu    sync.Mutex
@@ -57,11 +57,11 @@ var httpClientFunc = func(timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout}
 }
 
-func New(ctx context.Context, cache definition.Cache, metaRegistry definition.RegistryMetadataLookup, cfg *Config) (*Loader, func() error, error) {
+func New(ctx context.Context, cache definition.Cache, registry definition.RegistryMetadataLookup, cfg *Config) (*Loader, func() error, error) {
 	if cache == nil {
 		return nil, nil, ErrNilCache
 	}
-	if metaRegistry == nil {
+	if registry == nil {
 		return nil, nil, ErrNilMetaRegistry
 	}
 	if cfg == nil {
@@ -81,7 +81,7 @@ func New(ctx context.Context, cache definition.Cache, metaRegistry definition.Re
 
 	loader := &Loader{
 		cache:         cache,
-		metaRegistry:  metaRegistry,
+		registry:  registry,
 		config:        cfg,
 		client:        httpClientFunc(cfg.FetchTimeout),
 		refreshedKeys: make(map[string]bool),
@@ -113,7 +113,7 @@ func (l *Loader) GetByNetworkID(ctx context.Context, networkID string) (*model.M
 	if err != nil {
 		return nil, err
 	}
-	meta, err := l.metaRegistry.LookupRegistry(ctx, namespaceIdentifier, registryName)
+	meta, err := l.registry.LookupRegistry(ctx, namespaceIdentifier, registryName)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +159,7 @@ func (l *Loader) GetBySubscriberID(ctx context.Context, subscriberID string) (*m
 		log.Infof(ctx, "ManifestLoader: bypassing cache for subscriberID=%q", subscriberID)
 	}
 
-	record, err := l.metaRegistry.LookupNode(ctx, subscriberID)
+	record, err := l.registry.LookupNode(ctx, subscriberID)
 	if err != nil {
 		return nil, err
 	}

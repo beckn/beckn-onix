@@ -14,7 +14,7 @@ type manifestLoaderProvider struct{}
 
 var newManifestLoaderFunc = manifestloader.New
 
-func (p manifestLoaderProvider) New(ctx context.Context, cache definition.Cache, metaRegistry definition.RegistryMetadataLookup, cfg map[string]string) (definition.ManifestLoader, func() error, error) {
+func (p manifestLoaderProvider) New(ctx context.Context, cache definition.Cache, registry definition.RegistryMetadataLookup, cfg map[string]string) (definition.ManifestLoader, func() error, error) {
 	config := &manifestloader.Config{}
 	if raw := cfg["cacheTTL"]; raw != "" {
 		d, err := time.ParseDuration(raw)
@@ -52,7 +52,7 @@ func (p manifestLoaderProvider) New(ctx context.Context, cache definition.Cache,
 		config.SkipSignatureVerification = enabled
 	}
 	log.Debugf(ctx, "ManifestLoader config mapped: %+v", config)
-	return newManifestLoaderFunc(ctx, cache, metaRegistry, config)
+	return newManifestLoaderFunc(ctx, cache, registry, config)
 }
 
 var Provider = manifestLoaderProvider{}
