@@ -671,6 +671,17 @@ func TestAuxiliary_BadLocationSkipped(t *testing.T) {
 	}
 }
 
+// TestAuxiliary_RefreshRetainsIndexOnAuxFailure verifies that actions remain
+// available after a TTL refresh attempt.
+//
+// NOTE: this test does NOT exercise the failOnAuxError retain-old-index path.
+// kin-openapi's package-level URIMapCache (DefaultReadFromURI) caches raw bytes
+// keyed by URI for the entire process lifetime. Setting auxHealthy=false makes
+// the httptest server return a 503, but the reload never reaches the server —
+// kin-openapi returns the bytes it cached at startup, so the reload silently
+// succeeds from cache rather than failing. Once #795 is fixed (per-call
+// ReadFromURIFunc bypasses the global cache), this test will properly exercise
+// the retain-old-index path.
 func TestAuxiliary_RefreshRetainsIndexOnAuxFailure(t *testing.T) {
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(testSpec))
@@ -708,12 +719,16 @@ func TestAuxiliary_RefreshRetainsIndexOnAuxFailure(t *testing.T) {
 	}
 
 	// Auxiliary goes down — simulate a transient failure.
+	// Due to the kin-openapi global cache (#795) the reload below will use
+	// cached bytes and succeed rather than fail, so auxHealthy=false has no
+	// observable effect until #795 is fixed.
 	auxHealthy.Store(false)
 
 	// Force a TTL refresh.
 	validator.reloadAllSpecs(context.Background())
 
-	// Previous index must still be served — auxiliary actions must still work.
+	// Actions must still be available after a reload (regardless of whether
+	// the reload succeeded from cache or retained the old index on failure).
 	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"subscribe"},"message":{}}`)); err != nil {
 		t.Errorf("auxiliary action dropped after failed refresh — old index should have been retained: %v", err)
 	}
