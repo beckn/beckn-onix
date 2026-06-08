@@ -52,7 +52,7 @@ Auxiliary specs allow operators to extend schema validation with additional acti
 - Auxiliary specs are loaded after the primary spec; their actions are merged into a single index
 - An auxiliary spec may only **add** new actions — any action already defined in the primary spec causes a hard error at startup
 - If an auxiliary spec fails to load, it is skipped with an error logged; the primary spec remains active
-- The `dir` type loads all top-level `*.yaml`, `*.yml`, and `*.json` files in the specified directory (no recursion); within a single dir, later files win on collision with a warning logged
+- The `dir` type loads all top-level `*.yaml`, `*.yml`, and `*.json` files in the specified directory (no recursion); duplicate action definitions across files within the same dir are a hard error — the entire dir spec is rejected and startup fails
 - All specs (primary and auxiliary) share the same `cacheTTL` refresh cycle
 
 ### Local Schema Directory Layout

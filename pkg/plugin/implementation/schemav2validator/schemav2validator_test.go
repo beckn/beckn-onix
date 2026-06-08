@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 )
 
@@ -441,7 +442,7 @@ func TestValidate_EdgeCases(t *testing.T) {
 	}
 }
 
-// auxSpec mirrors the schemav2validator.AuxSpec type for test use.
+// testSpecAux is an OpenAPI 3.1 spec used as an auxiliary spec in tests; it defines the "subscribe" and "renew" actions.
 const testSpecAux = `openapi: 3.1.0
 info:
   title: Auxiliary API
@@ -574,7 +575,7 @@ func TestAuxiliary_ShadowPrimaryHardRejects(t *testing.T) {
 func TestAuxiliary_DirType(t *testing.T) {
 	dir := t.TempDir()
 
-	if err := os.WriteFile(dir+"/aux1.yaml", []byte(testSpecAux), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "aux1.yaml"), []byte(testSpecAux), 0644); err != nil {
 		t.Fatalf("failed to write aux1.yaml: %v", err)
 	}
 
@@ -599,7 +600,7 @@ paths:
                     action:
                       const: cancel
 `
-	if err := os.WriteFile(dir+"/aux2.yaml", []byte(spec2), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "aux2.yaml"), []byte(spec2), 0644); err != nil {
 		t.Fatalf("failed to write aux2.yaml: %v", err)
 	}
 
@@ -676,10 +677,12 @@ func TestAuxiliary_RefreshRetainsIndexOnAuxFailure(t *testing.T) {
 	}))
 	defer primary.Close()
 
-	// Auxiliary starts healthy.
-	auxHealthy := true
+	// Auxiliary starts healthy. Use atomic.Bool to avoid a data race between
+	// the test goroutine (which sets the flag) and the httptest handler goroutine.
+	var auxHealthy atomic.Bool
+	auxHealthy.Store(true)
 	aux := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if auxHealthy {
+		if auxHealthy.Load() {
 			w.Write([]byte(testSpecAux))
 		} else {
 			http.Error(w, "unavailable", http.StatusServiceUnavailable)
@@ -705,7 +708,7 @@ func TestAuxiliary_RefreshRetainsIndexOnAuxFailure(t *testing.T) {
 	}
 
 	// Auxiliary goes down — simulate a transient failure.
-	auxHealthy = false
+	auxHealthy.Store(false)
 
 	// Force a TTL refresh.
 	validator.reloadAllSpecs(context.Background())
