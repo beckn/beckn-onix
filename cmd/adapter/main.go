@@ -178,6 +178,11 @@ func run(ctx context.Context, configPath string) error {
 		return fmt.Errorf("failed to initialize server: %w", err)
 	}
 
+	// Register beckn_constants_info gauge now that all plugins are initialised.
+	if err := mgr.RegisterBecknConstantsGauge(ctx); err != nil {
+		log.Warnf(ctx, "Failed to register beckn constants gauge: %v", err)
+	}
+
 	// Configure HTTP server.
 	httpServer := &http.Server{
 		Addr:         net.JoinHostPort("", cfg.HTTP.Port),

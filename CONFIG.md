@@ -62,6 +62,44 @@ config/
 
 ---
 
+## Beckn Constants
+
+ONIX ships with a signed `pkg/beckndefaults/beckn-constants.yaml` file carrying values defined by the Beckn ecosystem. The plugin manager loads, signature-verifies, and injects these automatically at plugin creation time. Operators do not need to — and should not — set these values in their adapter config files.
+
+**Locked constants** — startup fails if user config contradicts:
+
+| Plugin | Key |
+|---|---|
+| `dediregistry` | `url` |
+
+**Overridable constants** — injected automatically; if user sets a different value it is accepted and logged at WARN:
+
+| Plugin | Key | Default |
+|---|---|---|
+| `schemav2validator` | `type` | `url` |
+| `schemav2validator` | `location` | Beckn Protocol v2.0.0-lts spec URL |
+
+When `schemav2validator.type` is set to `file`, `location` is no longer governed and may point freely to a local file path.
+
+### `pluginManager.becknConstants`
+
+**Type**: `object`  **Required**: No
+
+Controls the constants loader inside the plugin manager.
+
+```yaml
+pluginManager:
+  root: ./plugins
+  becknConstants:
+    disableRemoteRefresh: true
+```
+
+#### `disableRemoteRefresh`
+**Type**: `boolean`  **Default**: `false`  
+**Description**: Skip the remote refresh and use only the shipped baseline file. Use for air-gapped deployments.
+
+---
+
 ## Configuration File Structure
 
 ### Main Configuration File (adapter.yaml)
@@ -352,6 +390,9 @@ Metrics are organized by module for better maintainability and encapsulation:
 
 #### Plugin Metrics (from `telemetry` package)
 - `onix_plugin_execution_duration_seconds`, `onix_plugin_errors_total`
+
+#### Beckn Constants Info (from `telemetry` package)
+- `beckn_constants_info` – Observable gauge (value always `1`) emitted once at startup, **only for plugins running with a non-canonical beckn constant value**. Each deviation becomes its own time series. Labels: `plugin_id`, `key`, `canonical`, `actual`. Nodes running all canonical values emit no series for this gauge — their absence is the signal. Enables Network Facilitator Organisations to identify nodes deviating from Beckn-defined defaults.
 
 #### Node Plugin Info (from `telemetry` package)
 - `onix_plugin_info` – Observable gauge (value always `1`) emitted once per loaded plugin per module at startup. Each loaded plugin becomes its own time series. Labels: `module`, `plugin_type`, `plugin_id`, and `subscriber_id` (only present when `subscriberId` is set in the handler config — omitted otherwise). Covers all plugin slots (`schema_validator`, `sign_validator`, `router`, `registry`, `publisher`, `signer`, `cache`, `transport_wrapper`, `policy_checker`, `key_manager`) and one series per `step` and `middleware` entry. Absent/unconfigured slots emit no series. Enables Network Orchestrators to verify plugin composition across ONIX nodes, including detection of custom or non-standard plugins. **Note:** the `subscriber_id` column in Grafana will be blank unless `subscriberId` is configured in each module's handler config.
@@ -709,8 +750,6 @@ schemaValidator:
 schemaValidator:
   id: schemav2validator
   config:
-    type: url
-    location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/tags/core-v2.0.0-lts/api/v2.0.0/beckn.yaml
     cacheTTL: "3600"
     extendedSchema_enabled: "true"
     extendedSchema_cacheTTL: "86400"
@@ -719,21 +758,21 @@ schemaValidator:
     extendedSchema_allowedDomains: "beckn.org,example.com"
 ```
 
-**Or for local files:**
+**Or for local files** (set `type` and `location` directly; a WARN is logged at startup):
 
 ```yaml
 schemaValidator:
   id: schemav2validator
   config:
-    type: file
+    type: "file"
     location: ./validation-scripts/l2-config/mobility_1.1.0_openapi_3.1.yaml
     cacheTTL: "3600"
     extendedSchema_enabled: "false"
 ```
 
 **Parameters**:
-- `type`: Source type - `"url"` for remote specs, `"file"` for local files
-- `location`: URL or file path to OpenAPI 3.1 specification
+- `type`: **Injected automatically** from beckn constants (default: `"url"`). Set to `"file"` for local specs; ONIX will log a WARN at startup.
+- `location`: **Injected automatically** from beckn constants when `type` is `"url"`. Set freely when `type` is `"file"`.
 - `cacheTTL`: Cache TTL in seconds before reloading spec (default: `"3600"`)
 - `extendedSchema_enabled`: Enable extended schema validation for `@context` objects (default: `"false"`)
 - `extendedSchema_cacheTTL`: Domain schema cache TTL in seconds (default: `"86400"`)
