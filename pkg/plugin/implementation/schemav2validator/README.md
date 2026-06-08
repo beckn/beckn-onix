@@ -50,7 +50,7 @@ Auxiliary specs allow operators to extend schema validation with additional acti
 
 **Rules:**
 - Auxiliary specs are loaded after the primary spec; their actions are merged into a single index
-- An auxiliary spec may only **add** new actions — any action already defined in the primary spec causes a hard error at startup
+- An auxiliary spec may only **add** new actions — any action already defined in any previously loaded spec (primary or an earlier auxiliary) causes a hard error at startup
 - If an auxiliary spec fails to load, it is skipped with an error logged; the primary spec remains active
 - The `dir` type loads all top-level `*.yaml`, `*.yml`, and `*.json` files in the specified directory (no recursion); duplicate action definitions across files within the same dir are a hard error — the entire dir spec is rejected and startup fails
 - All specs (primary and auxiliary) share the same `cacheTTL` refresh cycle
@@ -76,7 +76,7 @@ A startup warning is logged if no schemas are found, which usually means the dir
 
 **Spec Loading**:
 1. **Load Primary Spec**: Loads the primary spec from `location` (URL, file, or dir) with external `$ref` resolution and builds its action index
-2. **Load Auxiliary Specs**: Each auxiliary spec is loaded independently in order; its action index is merged into the shared map. Hard error if any action collides with the primary — the adapter will not start
+2. **Load Auxiliary Specs**: Each auxiliary spec is loaded independently in order; its action index is merged into the shared map. Hard error if any action collides with any previously loaded spec (primary or earlier auxiliary) — the adapter will not start
 3. **Merged Action Index**: A single flat `action → schema` map is built from all specs for O(1) lookup at runtime
 4. **Start Background Refresh**: Launches goroutine; every `cacheTTL` seconds the entire index is rebuilt from scratch (primary first, then auxiliaries). On failure the previous valid index is retained and an error is logged
 
@@ -238,7 +238,7 @@ schemaValidator:
 | Action not in spec | `"unsupported action: <action>"` |
 | Invalid URL | `"Invalid URL or unreachable: <url>"` |
 | Schema validation fails | Returns detailed field-level errors |
-| Auxiliary action collides with primary | `"auxiliary spec[N] (<location>) defines action \"<action>\" which is already defined in a previously loaded spec — auxiliary specs may only add new actions"` |
+| Auxiliary action collides with primary or another auxiliary | `"auxiliary spec[N] (<location>) defines action \"<action>\" which is already defined in a previously loaded spec — auxiliary specs may only add new actions"` |
 | Within-dir action collision | Error logged; dir spec skipped; startup fails with `"no actions indexed"` if no other spec is available |
 | No specs loaded / all specs failed | `"schemav2validator: no actions indexed after loading all specs — configure at least one valid primary or auxiliary spec"` |
 | `auxiliaryTypes` set without `auxiliaryLocations` | `"auxiliaryTypes is set but auxiliaryLocations is missing"` |
