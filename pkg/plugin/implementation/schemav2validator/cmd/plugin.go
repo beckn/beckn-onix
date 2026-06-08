@@ -43,6 +43,16 @@ func (vp schemav2ValidatorProvider) New(ctx context.Context, config map[string]s
 	auxLocations := config["auxiliary_locations"]
 
 	if auxTypes != "" || auxLocations != "" {
+		// Guard against one key being set without the other before splitting —
+		// strings.Split("", ",") returns [""] (length 1), not [], which would
+		// pass the length check but produce a misleading empty-entry error.
+		if auxTypes == "" {
+			return nil, nil, errors.New("auxiliary_locations is set but auxiliary_types is missing")
+		}
+		if auxLocations == "" {
+			return nil, nil, errors.New("auxiliary_types is set but auxiliary_locations is missing")
+		}
+
 		types := strings.Split(auxTypes, ",")
 		locations := strings.Split(auxLocations, ",")
 

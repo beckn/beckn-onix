@@ -203,13 +203,33 @@ func TestProvider_AuxiliaryConfig(t *testing.T) {
 		{
 			name: "empty auxiliary entry",
 			config: map[string]string{
-				"type":               "url",
-				"location":           primary.URL,
-				"auxiliary_types":    "url,",
+				"type":                "url",
+				"location":            primary.URL,
+				"auxiliary_types":     "url,",
 				"auxiliary_locations": aux.URL + ",",
 			},
 			wantErr: true,
 			errMsg:  "must not be empty",
+		},
+		{
+			name: "auxiliary_types set without auxiliary_locations",
+			config: map[string]string{
+				"type":            "url",
+				"location":        primary.URL,
+				"auxiliary_types": "url",
+			},
+			wantErr: true,
+			errMsg:  "auxiliary_locations is missing",
+		},
+		{
+			name: "auxiliary_locations set without auxiliary_types",
+			config: map[string]string{
+				"type":                "url",
+				"location":            primary.URL,
+				"auxiliary_locations": aux.URL,
+			},
+			wantErr: true,
+			errMsg:  "auxiliary_types is missing",
 		},
 		{
 			name: "no auxiliary keys — primary only",

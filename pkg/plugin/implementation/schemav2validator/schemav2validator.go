@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -27,9 +28,10 @@ type payload struct {
 type schemav2Validator struct {
 	config          *Config
 	specMutex       sync.RWMutex
-	actionSchemas   map[string]*openapi3.SchemaRef // merged across primary + all auxiliary specs
-	bodylessActions map[string]struct{}             // merged across primary + all auxiliary specs
-	schemaCache     *schemaCache                    // cache for extended schemas
+	specsLoaded     bool                            // true once at least one successful loadAllSpecs has completed
+	actionSchemas   map[string]*openapi3.SchemaRef  // merged across primary + all auxiliary specs
+	bodylessActions map[string]struct{}              // merged across primary + all auxiliary specs
+	schemaCache     *schemaCache                     // cache for extended schemas
 }
 
 // cachedSpec holds a cached OpenAPI spec.
@@ -133,10 +135,11 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 		}
 
 		v.specMutex.RLock()
+		specsLoaded := v.specsLoaded
 		bodylessActions := v.bodylessActions
 		v.specMutex.RUnlock()
 
-		if len(bodylessActions) == 0 {
+		if !specsLoaded {
 			return model.NewBadReqErr(fmt.Errorf("no OpenAPI spec loaded"))
 		}
 
@@ -164,10 +167,11 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 	}
 
 	v.specMutex.RLock()
+	specsLoaded := v.specsLoaded
 	actionSchemas := v.actionSchemas
 	v.specMutex.RUnlock()
 
-	if len(actionSchemas) == 0 {
+	if !specsLoaded {
 		return model.NewBadReqErr(fmt.Errorf("no OpenAPI spec loaded"))
 	}
 
@@ -274,6 +278,7 @@ func (v *schemav2Validator) loadAllSpecs(ctx context.Context) error {
 	}
 
 	v.specMutex.Lock()
+	v.specsLoaded = true
 	v.actionSchemas = mergedActionSchemas
 	v.bodylessActions = mergedBodylessActions
 	v.specMutex.Unlock()
@@ -355,16 +360,22 @@ func (v *schemav2Validator) loadSpecFromDir(ctx context.Context, dir string) (*c
 		if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".json") {
 			continue
 		}
-		filePath := dir + "/" + name
+		filePath := filepath.Join(dir, name)
 		spec, err := v.loadSingleSpec(ctx, "file", filePath)
 		if err != nil {
 			log.Errorf(ctx, err, "Skipping file in dir spec: %s", filePath)
 			continue
 		}
 		for action, schema := range spec.actionSchemas {
+			if _, exists := merged.actionSchemas[action]; exists {
+				log.Warnf(ctx, "Dir spec: action %q defined in multiple files — later file %s wins", action, filePath)
+			}
 			merged.actionSchemas[action] = schema
 		}
 		for action := range spec.bodylessActions {
+			if _, exists := merged.bodylessActions[action]; exists {
+				log.Warnf(ctx, "Dir spec: bodyless action %q defined in multiple files — later file %s wins", action, filePath)
+			}
 			merged.bodylessActions[action] = struct{}{}
 		}
 		loaded++
@@ -418,7 +429,7 @@ func (v *schemav2Validator) refreshLoop(ctx context.Context) {
 // the previous valid index is retained and an error is logged.
 func (v *schemav2Validator) reloadAllSpecs(ctx context.Context) {
 	if err := v.loadAllSpecs(ctx); err != nil {
-		log.Errorf(ctx, err, "Failed to reload specs — retaining previous action index")
+		log.Errorf(ctx, err, "Failed to reload specs — serving stale action index until next TTL cycle")
 	} else {
 		log.Debugf(ctx, "Reloaded all specs successfully")
 	}
