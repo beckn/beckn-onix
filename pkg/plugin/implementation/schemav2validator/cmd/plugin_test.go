@@ -178,12 +178,12 @@ func TestProvider_AuxiliaryConfig(t *testing.T) {
 		errMsg  string
 	}{
 		{
-			name: "valid auxiliary config",
+			name: "auxiliary collides with primary",
 			config: map[string]string{
-				"type":               "url",
-				"location":           primary.URL,
-				"auxiliary_types":    "url",
-				"auxiliary_locations": aux.URL,
+				"type":              "url",
+				"location":          primary.URL,
+				"auxiliaryTypes":    "url",
+				"auxiliaryLocations": aux.URL,
 			},
 			// aux and primary serve the same spec — collision on "test" action.
 			wantErr: true,
@@ -194,8 +194,8 @@ func TestProvider_AuxiliaryConfig(t *testing.T) {
 			config: map[string]string{
 				"type":               "url",
 				"location":           primary.URL,
-				"auxiliary_types":    "url,file",
-				"auxiliary_locations": aux.URL,
+				"auxiliaryTypes":     "url,file",
+				"auxiliaryLocations": aux.URL,
 			},
 			wantErr: true,
 			errMsg:  "same number",
@@ -203,33 +203,33 @@ func TestProvider_AuxiliaryConfig(t *testing.T) {
 		{
 			name: "empty auxiliary entry",
 			config: map[string]string{
-				"type":                "url",
-				"location":            primary.URL,
-				"auxiliary_types":     "url,",
-				"auxiliary_locations": aux.URL + ",",
+				"type":               "url",
+				"location":           primary.URL,
+				"auxiliaryTypes":     "url,",
+				"auxiliaryLocations": aux.URL + ",",
 			},
 			wantErr: true,
 			errMsg:  "must not be empty",
 		},
 		{
-			name: "auxiliary_types set without auxiliary_locations",
+			name: "auxiliaryTypes set without auxiliaryLocations",
 			config: map[string]string{
-				"type":            "url",
-				"location":        primary.URL,
-				"auxiliary_types": "url",
+				"type":           "url",
+				"location":       primary.URL,
+				"auxiliaryTypes": "url",
 			},
 			wantErr: true,
-			errMsg:  "auxiliary_locations is missing",
+			errMsg:  "auxiliaryLocations is missing",
 		},
 		{
-			name: "auxiliary_locations set without auxiliary_types",
+			name: "auxiliaryLocations set without auxiliaryTypes",
 			config: map[string]string{
-				"type":                "url",
-				"location":            primary.URL,
-				"auxiliary_locations": aux.URL,
+				"type":               "url",
+				"location":           primary.URL,
+				"auxiliaryLocations": aux.URL,
 			},
 			wantErr: true,
-			errMsg:  "auxiliary_types is missing",
+			errMsg:  "auxiliaryTypes is missing",
 		},
 		{
 			name: "no auxiliary keys — primary only",

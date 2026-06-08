@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -666,6 +667,50 @@ func TestAuxiliary_BadLocationSkipped(t *testing.T) {
 	// Primary actions still available.
 	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"search","domain":"retail"},"message":{}}`)); err != nil {
 		t.Errorf("primary action failed after bad auxiliary skipped: %v", err)
+	}
+}
+
+func TestAuxiliary_DirType_IntraDirCollisionHardRejects(t *testing.T) {
+	dir := t.TempDir()
+
+	// Both files define "subscribe" — within-dir collision must cause New() to fail.
+	// The specific collision error is logged; New() surfaces "no actions indexed"
+	// because the colliding dir spec is skipped (same skip policy as load failures)
+	// and no other spec is configured.
+	for _, name := range []string{"a.yaml", "b.yaml"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(testSpecAux), 0644); err != nil {
+			t.Fatalf("failed to write %s: %v", name, err)
+		}
+	}
+
+	_, _, err := New(context.Background(), &Config{
+		CacheTTL: 3600,
+		Auxiliary: []AuxSpec{
+			{Type: "dir", Location: dir},
+		},
+	})
+	if err == nil {
+		t.Fatal("New() expected error for intra-dir action collision, got nil")
+	}
+	// The adapter refuses to start; the specific collision detail appears in error logs.
+	if !contains(err.Error(), "no actions indexed") {
+		t.Errorf("New() error = %v, want it to mention 'no actions indexed'", err)
+	}
+}
+
+func TestAuxiliary_AllSpecsFail_HardRejects(t *testing.T) {
+	// No primary, no valid auxiliary — adapter must refuse to start.
+	_, _, err := New(context.Background(), &Config{
+		CacheTTL: 3600,
+		Auxiliary: []AuxSpec{
+			{Type: "url", Location: "http://invalid-domain-99999.example.com/spec.yaml"},
+		},
+	})
+	if err == nil {
+		t.Fatal("New() expected error when all specs fail to load, got nil")
+	}
+	if !contains(err.Error(), "no actions indexed") {
+		t.Errorf("New() error = %v, want it to mention 'no actions indexed'", err)
 	}
 }
 

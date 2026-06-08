@@ -35,8 +35,8 @@ schemaValidator:
 | `type` | string | Yes | - | Primary spec source type: `"url"`, `"file"`, or `"dir"` |
 | `location` | string | Yes | - | URL or file path to the primary OpenAPI 3.1 spec |
 | `cacheTTL` | string | No | `"3600"` | Cache TTL in seconds before reloading all specs (primary + auxiliary) |
-| `auxiliary_types` | string | No | - | Comma-separated source types for auxiliary specs (`"url"`, `"file"`, or `"dir"`) |
-| `auxiliary_locations` | string | No | - | Comma-separated locations for auxiliary specs — must have the same number of entries as `auxiliary_types` |
+| `auxiliaryTypes` | string | No | - | Comma-separated source types for auxiliary specs (`"url"`, `"file"`, or `"dir"`) |
+| `auxiliaryLocations` | string | No | - | Comma-separated locations for auxiliary specs — must have the same number of entries as `auxiliaryTypes` |
 | `extendedSchema_enabled` | string | No | `"false"` | Enable extended schema validation for `@context` objects |
 | `extendedSchema_cacheTTL` | string | No | `"86400"` | Domain schema cache TTL in seconds |
 | `extendedSchema_maxCacheSize` | string | No | `"100"` | Maximum number of cached domain schemas |
@@ -46,7 +46,7 @@ schemaValidator:
 
 ### Auxiliary Specs
 
-Auxiliary specs allow operators to extend schema validation with additional action verbs beyond those defined in the primary Beckn spec. Both `auxiliary_types` and `auxiliary_locations` must be set together as matching comma-separated lists.
+Auxiliary specs allow operators to extend schema validation with additional action verbs beyond those defined in the primary Beckn spec. Both `auxiliaryTypes` and `auxiliaryLocations` must be set together as matching comma-separated lists.
 
 **Rules:**
 - Auxiliary specs are loaded after the primary spec; their actions are merged into a single index
@@ -193,8 +193,8 @@ schemaValidator:
     type: url
     location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/tags/core-v2.0.0-lts/api/v2.0.0/beckn.yaml
     cacheTTL: "3600"
-    auxiliary_types: "file,dir"
-    auxiliary_locations: "/etc/onix/schemas/energy-verbs.yaml,/etc/onix/schemas/domain/"
+    auxiliaryTypes: "file,dir"
+    auxiliaryLocations: "/etc/onix/schemas/energy-verbs.yaml,/etc/onix/schemas/domain/"
 ```
 
 ### With Extended Schema Validation
@@ -239,7 +239,9 @@ schemaValidator:
 | Invalid URL | `"Invalid URL or unreachable: <url>"` |
 | Schema validation fails | Returns detailed field-level errors |
 | Auxiliary action collides with primary | `"auxiliary spec[N] (<location>) defines action \"<action>\" which is already defined in a previously loaded spec — auxiliary specs may only add new actions"` |
-| `auxiliary_types` set without `auxiliary_locations` | `"auxiliary_types is set but auxiliary_locations is missing"` |
-| `auxiliary_locations` set without `auxiliary_types` | `"auxiliary_locations is set but auxiliary_types is missing"` |
-| Mismatched auxiliary list lengths | `"auxiliary_types and auxiliary_locations must have the same number of comma-separated entries"` |
+| Within-dir action collision | Error logged; dir spec skipped; startup fails with `"no actions indexed"` if no other spec is available |
+| No specs loaded / all specs failed | `"schemav2validator: no actions indexed after loading all specs — configure at least one valid primary or auxiliary spec"` |
+| `auxiliaryTypes` set without `auxiliaryLocations` | `"auxiliaryTypes is set but auxiliaryLocations is missing"` |
+| `auxiliaryLocations` set without `auxiliaryTypes` | `"auxiliaryLocations is set but auxiliaryTypes is missing"` |
+| Mismatched auxiliary list lengths | `"auxiliaryTypes and auxiliaryLocations must have the same number of comma-separated entries"` |
 

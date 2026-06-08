@@ -779,8 +779,8 @@ schemaValidator:
     type: url
     location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/tags/core-v2.0.0-lts/api/v2.0.0/beckn.yaml
     cacheTTL: "3600"
-    auxiliary_types: "file,dir"
-    auxiliary_locations: "/etc/onix/schemas/energy-verbs.yaml,/etc/onix/schemas/domain/"
+    auxiliaryTypes: "file,dir"
+    auxiliaryLocations: "/etc/onix/schemas/energy-verbs.yaml,/etc/onix/schemas/domain/"
 ```
 
 Auxiliary specs are additive — they may only introduce new action verbs not already present in the primary spec. A collision with the primary spec is a hard error and the adapter will not start. If an auxiliary spec fails to load at startup, it is skipped and an error is logged; the primary spec remains active. The `dir` type loads all top-level `*.yaml`, `*.yml`, and `*.json` files in the specified directory.
@@ -789,8 +789,8 @@ Auxiliary specs are additive — they may only introduce new action verbs not al
 - `type`: **Injected automatically** from beckn constants (default: `"url"`). Set to `"file"` for local specs; ONIX will log a WARN at startup.
 - `location`: **Injected automatically** from beckn constants when `type` is `"url"`. Set freely when `type` is `"file"`.
 - `cacheTTL`: Cache TTL in seconds before reloading all specs (default: `"3600"`)
-- `auxiliary_types`: Comma-separated list of source types for auxiliary specs (`"url"`, `"file"`, or `"dir"`)
-- `auxiliary_locations`: Comma-separated list of locations for auxiliary specs — must have the same number of entries as `auxiliary_types`
+- `auxiliaryTypes`: Comma-separated list of source types for auxiliary specs (`"url"`, `"file"`, or `"dir"`)
+- `auxiliaryLocations`: Comma-separated list of locations for auxiliary specs — must have the same number of entries as `auxiliaryTypes`
 - `extendedSchema_enabled`: Enable extended schema validation for `@context` objects (default: `"false"`)
 - `extendedSchema_cacheTTL`: Domain schema cache TTL in seconds (default: `"86400"`)
 - `extendedSchema_maxCacheSize`: Max cached schemas (default: `"100"`)

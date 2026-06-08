@@ -274,7 +274,7 @@ func (v *schemav2Validator) loadAllSpecs(ctx context.Context) error {
 	}
 
 	if len(mergedActionSchemas) == 0 && len(mergedBodylessActions) == 0 {
-		log.Warnf(ctx, "schemav2validator: no actions indexed — all requests will fail schema validation")
+		return fmt.Errorf("schemav2validator: no actions indexed after loading all specs — configure at least one valid primary or auxiliary spec")
 	}
 
 	v.specMutex.Lock()
@@ -368,13 +368,13 @@ func (v *schemav2Validator) loadSpecFromDir(ctx context.Context, dir string) (*c
 		}
 		for action, schema := range spec.actionSchemas {
 			if _, exists := merged.actionSchemas[action]; exists {
-				log.Warnf(ctx, "Dir spec: action %q defined in multiple files — later file %s wins", action, filePath)
+				return nil, fmt.Errorf("dir spec %q: action %q defined in multiple files — last seen in %s; remove the duplicate", dir, action, filePath)
 			}
 			merged.actionSchemas[action] = schema
 		}
 		for action := range spec.bodylessActions {
 			if _, exists := merged.bodylessActions[action]; exists {
-				log.Warnf(ctx, "Dir spec: bodyless action %q defined in multiple files — later file %s wins", action, filePath)
+				return nil, fmt.Errorf("dir spec %q: bodyless action %q defined in multiple files — last seen in %s; remove the duplicate", dir, action, filePath)
 			}
 			merged.bodylessActions[action] = struct{}{}
 		}
