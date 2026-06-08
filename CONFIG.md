@@ -744,7 +744,7 @@ schemaValidator:
 
 #### 6. Schema2Validator Plugin
 
-**Purpose**: Validate requests against OpenAPI 3.x specifications. Supports core protocol validation and optional extended validation for domain-specific objects with `@context` references.
+**Purpose**: Validate requests against OpenAPI 3.x specifications. Supports core protocol validation, optional auxiliary specs for extended action verbs, and optional extended validation for domain-specific objects with `@context` references.
 
 ```yaml
 schemaValidator:
@@ -770,10 +770,27 @@ schemaValidator:
     extendedSchema_enabled: "false"
 ```
 
+**With auxiliary specs** (to add network-specific or domain-specific action verbs on top of the primary Beckn spec):
+
+```yaml
+schemaValidator:
+  id: schemav2validator
+  config:
+    type: url
+    location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/tags/core-v2.0.0-lts/api/v2.0.0/beckn.yaml
+    cacheTTL: "3600"
+    auxiliaryTypes: "file,dir"
+    auxiliaryLocations: "/etc/onix/schemas/energy-verbs.yaml,/etc/onix/schemas/domain/"
+```
+
+Auxiliary specs are additive — they may only introduce new action verbs not already present in the primary spec. A collision with the primary spec is a hard error and the adapter will not start. If an auxiliary spec fails to load at startup, it is skipped and an error is logged; the primary spec remains active. The `dir` type loads all top-level `*.yaml`, `*.yml`, and `*.json` files in the specified directory.
+
 **Parameters**:
 - `type`: **Injected automatically** from beckn constants (default: `"url"`). Set to `"file"` for local specs; ONIX will log a WARN at startup.
 - `location`: **Injected automatically** from beckn constants when `type` is `"url"`. Set freely when `type` is `"file"`.
-- `cacheTTL`: Cache TTL in seconds before reloading spec (default: `"3600"`)
+- `cacheTTL`: Cache TTL in seconds before reloading all specs (default: `"3600"`)
+- `auxiliaryTypes`: Comma-separated list of source types for auxiliary specs (`"url"`, `"file"`, or `"dir"`)
+- `auxiliaryLocations`: Comma-separated list of locations for auxiliary specs — must have the same number of entries as `auxiliaryTypes`
 - `extendedSchema_enabled`: Enable extended schema validation for `@context` objects (default: `"false"`)
 - `extendedSchema_cacheTTL`: Domain schema cache TTL in seconds (default: `"86400"`)
 - `extendedSchema_maxCacheSize`: Max cached schemas (default: `"100"`)
