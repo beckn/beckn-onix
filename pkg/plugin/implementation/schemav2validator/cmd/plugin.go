@@ -19,20 +19,45 @@ func (vp schemav2ValidatorProvider) New(ctx context.Context, config map[string]s
 		return nil, nil, errors.New("context cannot be nil")
 	}
 
-	typeVal, hasType := config["type"]
-	locVal, hasLoc := config["location"]
+	typeVal := config["type"]
+	locVal := config["location"]
 
-	if !hasType || typeVal == "" {
-		return nil, nil, errors.New("type not configured")
-	}
-	if !hasLoc || locVal == "" {
+	// Primary spec is optional — a non-Beckn deployment may rely solely on auxiliary specs.
+	// Validation that at least something is loaded happens inside schemav2validator.New.
+	if typeVal != "" && locVal == "" {
 		return nil, nil, errors.New("location not configured")
+	}
+	if locVal != "" && typeVal == "" {
+		return nil, nil, errors.New("type not configured")
 	}
 
 	cfg := &schemav2validator.Config{
 		Type:     typeVal,
 		Location: locVal,
 		CacheTTL: 3600,
+	}
+
+	// Parse auxiliary specs from comma-separated auxiliary_types and auxiliary_locations.
+	// Both lists must have the same length.
+	auxTypes := config["auxiliary_types"]
+	auxLocations := config["auxiliary_locations"]
+
+	if auxTypes != "" || auxLocations != "" {
+		types := strings.Split(auxTypes, ",")
+		locations := strings.Split(auxLocations, ",")
+
+		if len(types) != len(locations) {
+			return nil, nil, errors.New("auxiliary_types and auxiliary_locations must have the same number of comma-separated entries")
+		}
+
+		for i := range types {
+			t := strings.TrimSpace(types[i])
+			l := strings.TrimSpace(locations[i])
+			if t == "" || l == "" {
+				return nil, nil, errors.New("auxiliary_types and auxiliary_locations entries must not be empty")
+			}
+			cfg.Auxiliary = append(cfg.Auxiliary, schemav2validator.AuxSpec{Type: t, Location: l})
+		}
 	}
 
 	if ttlStr, ok := config["cacheTTL"]; ok {
