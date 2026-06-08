@@ -32,8 +32,8 @@ schemaValidator:
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `type` | string | Yes | - | Primary spec source type: `"url"`, `"file"`, or `"dir"` |
-| `location` | string | Yes | - | URL or file path to the primary OpenAPI 3.1 spec |
+| `type` | string | No | - | Primary spec source type: `"url"`, `"file"`, or `"dir"`. Optional — omit to run without a primary spec (auxiliary-only mode for non-Beckn deployments). If `location` is set, `type` must also be set. |
+| `location` | string | No | - | URL or file path to the primary OpenAPI 3.1 spec. Optional — omit alongside `type` to use auxiliary-only mode. If `type` is set, `location` must also be set. |
 | `cacheTTL` | string | No | `"3600"` | Cache TTL in seconds before reloading all specs (primary + auxiliary) |
 | `auxiliaryTypes` | string | No | - | Comma-separated source types for auxiliary specs (`"url"`, `"file"`, or `"dir"`) |
 | `auxiliaryLocations` | string | No | - | Comma-separated locations for auxiliary specs — must have the same number of entries as `auxiliaryTypes` |
