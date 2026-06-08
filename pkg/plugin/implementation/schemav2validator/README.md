@@ -32,8 +32,8 @@ schemaValidator:
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `type` | string | No | - | Primary spec source type: `"url"`, `"file"`, or `"dir"`. Optional — omit to run without a primary spec (auxiliary-only mode for non-Beckn deployments). If `location` is set, `type` must also be set. |
-| `location` | string | No | - | URL or file path to the primary OpenAPI 3.1 spec. Optional — omit alongside `type` to use auxiliary-only mode. If `type` is set, `location` must also be set. |
+| `type` | string | No | - | Primary spec source type: `"url"`, `"file"`, or `"dir"`. **In standard Beckn deployments this is injected automatically from the signed beckn-constants file — do not set it manually.** Set to `"file"` (or `"dir"`) only for non-Beckn or offline deployments; ONIX will log a WARN at startup. Omit entirely for auxiliary-only mode. If `location` is set, `type` must also be set. |
+| `location` | string | No | - | URL or file path to the primary OpenAPI 3.1 spec. **In standard Beckn deployments this is injected automatically from the signed beckn-constants file — do not set it manually.** Set freely when `type` is `"file"` or `"dir"`. Omit entirely for auxiliary-only mode. If `type` is set, `location` must also be set. |
 | `cacheTTL` | string | No | `"3600"` | Cache TTL in seconds before reloading all specs (primary + auxiliary) |
 | `auxiliaryTypes` | string | No | - | Comma-separated source types for auxiliary specs (`"url"`, `"file"`, or `"dir"`) |
 | `auxiliaryLocations` | string | No | - | Comma-separated locations for auxiliary specs — must have the same number of entries as `auxiliaryTypes` |
