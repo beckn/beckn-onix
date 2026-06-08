@@ -670,6 +670,57 @@ func TestAuxiliary_BadLocationSkipped(t *testing.T) {
 	}
 }
 
+func TestAuxiliary_RefreshRetainsIndexOnAuxFailure(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testSpec))
+	}))
+	defer primary.Close()
+
+	// Auxiliary starts healthy.
+	auxHealthy := true
+	aux := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auxHealthy {
+			w.Write([]byte(testSpecAux))
+		} else {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		}
+	}))
+	defer aux.Close()
+
+	validator, _, err := New(context.Background(), &Config{
+		Type:     "url",
+		Location: primary.URL,
+		CacheTTL: 3600,
+		Auxiliary: []AuxSpec{
+			{Type: "url", Location: aux.URL},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	// Auxiliary actions should be available after startup.
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"subscribe"},"message":{}}`)); err != nil {
+		t.Fatalf("auxiliary action unavailable at startup: %v", err)
+	}
+
+	// Auxiliary goes down — simulate a transient failure.
+	auxHealthy = false
+
+	// Force a TTL refresh.
+	validator.reloadAllSpecs(context.Background())
+
+	// Previous index must still be served — auxiliary actions must still work.
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"subscribe"},"message":{}}`)); err != nil {
+		t.Errorf("auxiliary action dropped after failed refresh — old index should have been retained: %v", err)
+	}
+
+	// Primary actions must also still work.
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"search","domain":"retail"},"message":{}}`)); err != nil {
+		t.Errorf("primary action dropped after failed refresh: %v", err)
+	}
+}
+
 func TestAuxiliary_DirType_IntraDirCollisionHardRejects(t *testing.T) {
 	dir := t.TempDir()
 

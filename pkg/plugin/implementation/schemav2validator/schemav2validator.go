@@ -216,15 +216,23 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 }
 
 // initialise loads all specs (primary + auxiliary) from the configuration.
+// Auxiliary load failures are skipped at startup — the adapter starts with whatever loaded.
 func (v *schemav2Validator) initialise(ctx context.Context) error {
-	return v.loadAllSpecs(ctx)
+	return v.loadAllSpecs(ctx, false)
 }
 
 // loadAllSpecs loads the primary spec (if configured) and all auxiliary specs,
 // merging their action indexes into the validator-level maps.
-// Auxiliary specs may only add new actions — any collision with the primary
-// is a hard error and the adapter will not start.
-func (v *schemav2Validator) loadAllSpecs(ctx context.Context) error {
+//
+// failOnAuxError controls auxiliary failure handling:
+//   - false (startup): a failed auxiliary is skipped and logged; the adapter starts
+//     with whatever was successfully loaded.
+//   - true (TTL refresh): any auxiliary failure returns an error so the caller
+//     retains the previous valid index intact rather than silently dropping
+//     the actions that were contributed by the failed spec.
+//
+// Auxiliary specs may only add new actions — any collision is always a hard error.
+func (v *schemav2Validator) loadAllSpecs(ctx context.Context, failOnAuxError bool) error {
 	mergedActionSchemas := make(map[string]*openapi3.SchemaRef)
 	mergedBodylessActions := make(map[string]struct{})
 
@@ -253,6 +261,13 @@ func (v *schemav2Validator) loadAllSpecs(ctx context.Context) error {
 	for i, aux := range v.config.Auxiliary {
 		spec, err := v.loadSingleSpec(ctx, aux.Type, aux.Location)
 		if err != nil {
+			if failOnAuxError {
+				// On TTL refresh: propagate the error so reloadAllSpecs retains
+				// the previous valid index rather than committing an index that
+				// is missing this auxiliary's actions.
+				return fmt.Errorf("auxiliary spec[%d] (%s: %s) failed to reload — retaining previous index: %w",
+					i, aux.Type, aux.Location, err)
+			}
 			log.Errorf(ctx, err, "Failed to load auxiliary spec[%d] (%s: %s) — skipping", i, aux.Type, aux.Location)
 			continue
 		}
@@ -425,10 +440,10 @@ func (v *schemav2Validator) refreshLoop(ctx context.Context) {
 }
 
 // reloadAllSpecs rebuilds the merged action index from all specs on TTL expiry.
-// If the reload fails (e.g. a collision introduced by a refreshed auxiliary),
-// the previous valid index is retained and an error is logged.
+// Any failure (primary, auxiliary, or collision) causes the previous valid index
+// to be retained — the new index is only committed when all specs load cleanly.
 func (v *schemav2Validator) reloadAllSpecs(ctx context.Context) {
-	if err := v.loadAllSpecs(ctx); err != nil {
+	if err := v.loadAllSpecs(ctx, true); err != nil {
 		log.Errorf(ctx, err, "Failed to reload specs — serving stale action index until next TTL cycle")
 	} else {
 		log.Debugf(ctx, "Reloaded all specs successfully")
