@@ -40,4 +40,5 @@ jobs:
           git config user.email "bot@becknprotocol.io"
           git add pkg/beckndefaults/beckn-constants.yaml.sig
           git diff --cached --quiet || git commit -m "chore: re-sign beckn-constants.yaml [skip ci]"
+          git pull --rebase origin main
           git push
