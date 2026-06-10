@@ -166,21 +166,22 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 	if c.cache != nil {
 		cacheCtx, cacheSpan := tracer.Start(ctx, "cache lookup")
 		cached, err := c.cache.Get(cacheCtx, cacheKey)
-		cacheSpan.End()
 		if err == nil {
 			var results []model.Subscription
 			if err := json.Unmarshal([]byte(cached), &results); err == nil {
 				log.Debugf(ctx, "DeDi registry lookup cache hit for key: %s", cacheKey)
+				cacheSpan.End()
 				return results, nil
 			}
 		}
+		cacheSpan.End()
 	}
 
 	lookupURL := fmt.Sprintf("%s/lookup/%s/%s/%s", c.config.URL, subscriberID, dediAllRegistriesWildcard, keyID)
 
 	httpCtx, httpSpan := tracer.Start(ctx, "http lookup")
-	defer httpSpan.End()
 	data, err := c.fetchDeDiData(httpCtx, lookupURL, "record lookup")
+	httpSpan.End()
 	if err != nil {
 		return nil, err
 	}

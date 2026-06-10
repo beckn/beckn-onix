@@ -137,14 +137,15 @@ func (c *RegistryClient) Lookup(ctx context.Context, subscription *model.Subscri
 	if c.cache != nil {
 		cacheCtx, cacheSpan := tracer.Start(ctx, "cache lookup")
 		cached, err := c.cache.Get(cacheCtx, cacheKey)
-		cacheSpan.End()
 		if err == nil {
 			var results []model.Subscription
 			if err := json.Unmarshal([]byte(cached), &results); err == nil {
 				log.Debugf(ctx, "Registry lookup cache hit for key: %s", cacheKey)
+				cacheSpan.End()
 				return results, nil
 			}
 		}
+		cacheSpan.End()
 	}
 
 	lookupURL := fmt.Sprintf("%s/lookup", c.config.URL)
@@ -161,26 +162,29 @@ func (c *RegistryClient) Lookup(ctx context.Context, subscription *model.Subscri
 	req.Header.Set("Content-Type", "application/json")
 
 	httpCtx, httpSpan := tracer.Start(ctx, "http lookup")
-	defer httpSpan.End()
 	req = req.WithContext(httpCtx)
 
 	log.Debugf(ctx, "Making lookup request to: %s", lookupURL)
 	resp, err := c.client.Do(req)
 	if err != nil {
+		httpSpan.End()
 		return nil, fmt.Errorf("failed to send lookup request with retry: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		httpSpan.End()
 		log.Errorf(ctx, nil, "Lookup request failed with status: %s, response: %s", resp.Status, string(body))
 		return nil, fmt.Errorf("lookup request failed with status: %s", resp.Status)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		httpSpan.End()
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
+	httpSpan.End()
 
 	var results []model.Subscription
 	if err := json.Unmarshal(body, &results); err != nil {
