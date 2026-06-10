@@ -327,6 +327,11 @@ func freshReadFromURI(_ *openapi3.Loader, u *url.URL) ([]byte, error) {
 // newFreshLoader returns a loader whose ReadFromURIFunc bypasses the global
 // URIMapCache. Use this everywhere instead of openapi3.NewLoader() so that
 // TTL-driven reloads always read the current file or remote content.
+//
+// Note: setting ReadFromURIFunc causes kin-openapi to skip its own
+// IsExternalRefsAllowed guard (the custom function becomes the sole access
+// policy). IsExternalRefsAllowed=true is kept for documentation intent but
+// has no runtime effect once ReadFromURIFunc is non-nil.
 func newFreshLoader() *openapi3.Loader {
 	l := openapi3.NewLoader()
 	l.IsExternalRefsAllowed = true
