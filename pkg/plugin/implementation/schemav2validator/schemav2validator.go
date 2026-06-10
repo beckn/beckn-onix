@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -303,6 +305,35 @@ func (v *schemav2Validator) loadAllSpecs(ctx context.Context, failOnAuxError boo
 	return nil
 }
 
+// freshReadFromURI reads bytes directly from disk or network, bypassing the
+// kin-openapi package-level URIMapCache so TTL reloads always fetch current content.
+func freshReadFromURI(_ *openapi3.Loader, u *url.URL) ([]byte, error) {
+	switch u.Scheme {
+	case "http", "https":
+		resp, err := http.Get(u.String()) //nolint:noctx
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("HTTP %d fetching %s", resp.StatusCode, u)
+		}
+		return io.ReadAll(resp.Body)
+	default: // "file" scheme or bare path
+		return os.ReadFile(u.Path)
+	}
+}
+
+// newFreshLoader returns a loader whose ReadFromURIFunc bypasses the global
+// URIMapCache. Use this everywhere instead of openapi3.NewLoader() so that
+// TTL-driven reloads always read the current file or remote content.
+func newFreshLoader() *openapi3.Loader {
+	l := openapi3.NewLoader()
+	l.IsExternalRefsAllowed = true
+	l.ReadFromURIFunc = freshReadFromURI
+	return l
+}
+
 // loadSingleSpec loads one OpenAPI document from the given type and location.
 // For type "dir", all top-level *.yaml and *.json files are loaded and their
 // action indexes are merged into a single cachedSpec.
@@ -311,8 +342,7 @@ func (v *schemav2Validator) loadSingleSpec(ctx context.Context, specType, locati
 		return v.loadSpecFromDir(ctx, location)
 	}
 
-	loader := openapi3.NewLoader()
-	loader.IsExternalRefsAllowed = true
+	loader := newFreshLoader()
 
 	var doc *openapi3.T
 	var err error

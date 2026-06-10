@@ -315,8 +315,7 @@ func (c *schemaCache) loadSchemaFromPath(ctx context.Context, schemaPath string,
 		return nil, fmt.Errorf("failed to parse schema URL %s: %w", schemaPath, parseErr)
 	}
 
-	loader := openapi3.NewLoader()
-	loader.IsExternalRefsAllowed = true
+	loader := newFreshLoader()
 
 	var doc *openapi3.T
 	var err error
@@ -335,7 +334,7 @@ func (c *schemaCache) loadSchemaFromPath(ctx context.Context, schemaPath string,
 		if ok {
 			log.Debugf(ctx, "Loading from memory: %s -> %s", schemaPath, relPath)
 
-			// $ref lookups: memory first, network fallback.
+			// $ref lookups: memory first, fresh-fetch fallback (bypasses global URIMapCache).
 			loader.ReadFromURIFunc = func(l *openapi3.Loader, refURL *url.URL) ([]byte, error) {
 				refRelPath := extractRelativeSchemaPath(refURL)
 				c.mu.RLock()
@@ -346,7 +345,7 @@ func (c *schemaCache) loadSchemaFromPath(ctx context.Context, schemaPath string,
 					return data, nil
 				}
 				log.Debugf(ctx, "$ref not in memory, fetching from network: %s", refURL.String())
-				return openapi3.DefaultReadFromURI(l, refURL)
+				return freshReadFromURI(l, refURL)
 			}
 
 			doc, err = loader.LoadFromData(schemaBytes)
