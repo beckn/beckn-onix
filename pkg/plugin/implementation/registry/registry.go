@@ -12,7 +12,10 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"github.com/hashicorp/go-retryablehttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const defaultCacheTTL = 5 * time.Minute
@@ -129,9 +132,13 @@ func (c *RegistryClient) Subscribe(ctx context.Context, subscription *model.Subs
 // On a cache hit the network call is skipped entirely.
 func (c *RegistryClient) Lookup(ctx context.Context, subscription *model.Subscription) ([]model.Subscription, error) {
 	cacheKey := fmt.Sprintf("lookup_%s_%s", subscription.SubscriberID, subscription.KeyID)
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
 
 	if c.cache != nil {
-		if cached, err := c.cache.Get(ctx, cacheKey); err == nil {
+		cacheCtx, cacheSpan := tracer.Start(ctx, "cache lookup")
+		cached, err := c.cache.Get(cacheCtx, cacheKey)
+		cacheSpan.End()
+		if err == nil {
 			var results []model.Subscription
 			if err := json.Unmarshal([]byte(cached), &results); err == nil {
 				log.Debugf(ctx, "Registry lookup cache hit for key: %s", cacheKey)
@@ -152,7 +159,10 @@ func (c *RegistryClient) Lookup(ctx context.Context, subscription *model.Subscri
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(ctx)
+
+	httpCtx, httpSpan := tracer.Start(ctx, "http lookup")
+	defer httpSpan.End()
+	req = req.WithContext(httpCtx)
 
 	log.Debugf(ctx, "Making lookup request to: %s", lookupURL)
 	resp, err := c.client.Do(req)

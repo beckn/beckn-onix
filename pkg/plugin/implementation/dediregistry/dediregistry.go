@@ -11,7 +11,10 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"github.com/hashicorp/go-retryablehttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const defaultCacheTTL = 5 * time.Minute
@@ -158,9 +161,13 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 	}
 
 	cacheKey := fmt.Sprintf("lookup_%s_%s", subscriberID, keyID)
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
 
 	if c.cache != nil {
-		if cached, err := c.cache.Get(ctx, cacheKey); err == nil {
+		cacheCtx, cacheSpan := tracer.Start(ctx, "cache lookup")
+		cached, err := c.cache.Get(cacheCtx, cacheKey)
+		cacheSpan.End()
+		if err == nil {
 			var results []model.Subscription
 			if err := json.Unmarshal([]byte(cached), &results); err == nil {
 				log.Debugf(ctx, "DeDi registry lookup cache hit for key: %s", cacheKey)
@@ -171,7 +178,9 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 
 	lookupURL := fmt.Sprintf("%s/lookup/%s/%s/%s", c.config.URL, subscriberID, dediAllRegistriesWildcard, keyID)
 
-	data, err := c.fetchDeDiData(ctx, lookupURL, "record lookup")
+	httpCtx, httpSpan := tracer.Start(ctx, "http lookup")
+	defer httpSpan.End()
+	data, err := c.fetchDeDiData(httpCtx, lookupURL, "record lookup")
 	if err != nil {
 		return nil, err
 	}
