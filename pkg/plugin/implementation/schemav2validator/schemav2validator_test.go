@@ -797,6 +797,23 @@ func TestAuxiliary_AllSpecsFail_HardRejects(t *testing.T) {
 	}
 }
 
+func TestFreshReadFromURI_BodyTooLarge(t *testing.T) {
+	old := maxSpecBodyBytes
+	maxSpecBodyBytes = 10
+	defer func() { maxSpecBodyBytes = old }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("this body is definitely more than ten bytes"))
+	}))
+	defer server.Close()
+
+	u, _ := url.Parse(server.URL)
+	_, err := freshReadFromURI(newFreshLoader(), u)
+	if err == nil {
+		t.Fatal("expected error for oversized response body, got nil")
+	}
+}
+
 func TestTTLRefresh_PicksUpChangedURLSpec(t *testing.T) {
 	var serveV2 atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
