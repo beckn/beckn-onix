@@ -1014,7 +1014,7 @@ func TestLoadSchemaFromPath_TTLExpiry_FetchesFresh(t *testing.T) {
 	assert.Equal(t, "Schema v1", doc1.Info.Title)
 
 	// Wait for the LRU entry to expire, then switch the server to v2.
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 	serveV2.Store(true)
 
 	// Re-load — LRU miss (expired), freshReadFromURI fetches from the server and gets v2.

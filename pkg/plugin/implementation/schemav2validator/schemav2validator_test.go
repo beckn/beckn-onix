@@ -825,6 +825,36 @@ func TestTTLRefresh_PicksUpChangedURLSpec(t *testing.T) {
 	}
 }
 
+func TestTTLRefresh_PicksUpChangedDirSpec(t *testing.T) {
+	dir := t.TempDir()
+	specFile := filepath.Join(dir, "spec.yaml")
+
+	if err := os.WriteFile(specFile, []byte(testSpec), 0644); err != nil {
+		t.Fatalf("failed to write initial spec: %v", err)
+	}
+
+	validator, _, err := New(context.Background(), &Config{Type: "dir", Location: dir, CacheTTL: 3600})
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"search","domain":"retail"},"message":{}}`)); err != nil {
+		t.Fatalf("search action unavailable at startup: %v", err)
+	}
+
+	// Overwrite the existing file in-place — this is the case issue #795 highlighted
+	// as silently ignored before the fix.
+	if err := os.WriteFile(specFile, []byte(testSpecV2), 0644); err != nil {
+		t.Fatalf("failed to overwrite spec file: %v", err)
+	}
+
+	validator.reloadAllSpecs(context.Background())
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"confirm"},"message":{}}`)); err != nil {
+		t.Errorf("confirm action unavailable after TTL refresh — in-place file edit not picked up: %v", err)
+	}
+}
+
 func TestTTLRefresh_PicksUpChangedFileSpec(t *testing.T) {
 	f, err := os.CreateTemp("", "spec-*.yaml")
 	if err != nil {
