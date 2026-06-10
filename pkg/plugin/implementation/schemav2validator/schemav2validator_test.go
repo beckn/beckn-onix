@@ -442,6 +442,32 @@ func TestValidate_EdgeCases(t *testing.T) {
 	}
 }
 
+// testSpecV2 is a replacement spec used in TTL-refresh tests; it exposes only the "confirm" action (distinct from testSpec).
+const testSpecV2 = `openapi: 3.1.0
+info:
+  title: Test API v2
+  version: 2.0.0
+paths:
+  /confirm:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [context, message]
+              properties:
+                context:
+                  type: object
+                  required: [action]
+                  properties:
+                    action:
+                      const: confirm
+                message:
+                  type: object
+`
+
 // testSpecAux is an OpenAPI 3.1 spec used as an auxiliary spec in tests; it defines the "subscribe" and "renew" actions.
 const testSpecAux = `openapi: 3.1.0
 info:
@@ -671,17 +697,9 @@ func TestAuxiliary_BadLocationSkipped(t *testing.T) {
 	}
 }
 
-// TestAuxiliary_RefreshRetainsIndexOnAuxFailure verifies that actions remain
-// available after a TTL refresh attempt.
-//
-// NOTE: this test does NOT exercise the failOnAuxError retain-old-index path.
-// kin-openapi's package-level URIMapCache (DefaultReadFromURI) caches raw bytes
-// keyed by URI for the entire process lifetime. Setting auxHealthy=false makes
-// the httptest server return a 503, but the reload never reaches the server —
-// kin-openapi returns the bytes it cached at startup, so the reload silently
-// succeeds from cache rather than failing. Once #795 is fixed (per-call
-// ReadFromURIFunc bypasses the global cache), this test will properly exercise
-// the retain-old-index path.
+// TestAuxiliary_RefreshRetainsIndexOnAuxFailure verifies that when an auxiliary
+// spec becomes unavailable during a TTL refresh, the old merged index is retained
+// so that all previously-valid actions remain available.
 func TestAuxiliary_RefreshRetainsIndexOnAuxFailure(t *testing.T) {
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(testSpec))
@@ -718,17 +736,13 @@ func TestAuxiliary_RefreshRetainsIndexOnAuxFailure(t *testing.T) {
 		t.Fatalf("auxiliary action unavailable at startup: %v", err)
 	}
 
-	// Auxiliary goes down — simulate a transient failure.
-	// Due to the kin-openapi global cache (#795) the reload below will use
-	// cached bytes and succeed rather than fail, so auxHealthy=false has no
-	// observable effect until #795 is fixed.
+	// Auxiliary goes down — the reload hits the server, gets a 503, and the old index is retained.
 	auxHealthy.Store(false)
 
 	// Force a TTL refresh.
 	validator.reloadAllSpecs(context.Background())
 
-	// Actions must still be available after a reload (regardless of whether
-	// the reload succeeded from cache or retained the old index on failure).
+	// Old index must be retained: both primary and auxiliary actions stay available.
 	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"subscribe"},"message":{}}`)); err != nil {
 		t.Errorf("auxiliary action dropped after failed refresh — old index should have been retained: %v", err)
 	}
@@ -780,6 +794,112 @@ func TestAuxiliary_AllSpecsFail_HardRejects(t *testing.T) {
 	}
 	if !contains(err.Error(), "no actions indexed") {
 		t.Errorf("New() error = %v, want it to mention 'no actions indexed'", err)
+	}
+}
+
+func TestFreshReadFromURI_BodyTooLarge(t *testing.T) {
+	old := maxSpecBodyBytes
+	maxSpecBodyBytes = 10
+	defer func() { maxSpecBodyBytes = old }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("this body is definitely more than ten bytes"))
+	}))
+	defer server.Close()
+
+	u, _ := url.Parse(server.URL)
+	_, err := freshReadFromURI(newFreshLoader(), u)
+	if err == nil {
+		t.Fatal("expected error for oversized response body, got nil")
+	}
+}
+
+func TestTTLRefresh_PicksUpChangedURLSpec(t *testing.T) {
+	var serveV2 atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveV2.Load() {
+			w.Write([]byte(testSpecV2))
+		} else {
+			w.Write([]byte(testSpec))
+		}
+	}))
+	defer server.Close()
+
+	validator, _, err := New(context.Background(), &Config{Type: "url", Location: server.URL, CacheTTL: 3600})
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"search","domain":"retail"},"message":{}}`)); err != nil {
+		t.Fatalf("search action unavailable at startup: %v", err)
+	}
+
+	serveV2.Store(true)
+	validator.reloadAllSpecs(context.Background())
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"confirm"},"message":{}}`)); err != nil {
+		t.Errorf("confirm action unavailable after TTL refresh — v2 spec not picked up: %v", err)
+	}
+}
+
+func TestTTLRefresh_PicksUpChangedDirSpec(t *testing.T) {
+	dir := t.TempDir()
+	specFile := filepath.Join(dir, "spec.yaml")
+
+	if err := os.WriteFile(specFile, []byte(testSpec), 0644); err != nil {
+		t.Fatalf("failed to write initial spec: %v", err)
+	}
+
+	validator, _, err := New(context.Background(), &Config{Type: "dir", Location: dir, CacheTTL: 3600})
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"search","domain":"retail"},"message":{}}`)); err != nil {
+		t.Fatalf("search action unavailable at startup: %v", err)
+	}
+
+	// Overwrite the existing file in-place — this is the case issue #795 highlighted
+	// as silently ignored before the fix.
+	if err := os.WriteFile(specFile, []byte(testSpecV2), 0644); err != nil {
+		t.Fatalf("failed to overwrite spec file: %v", err)
+	}
+
+	validator.reloadAllSpecs(context.Background())
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"confirm"},"message":{}}`)); err != nil {
+		t.Errorf("confirm action unavailable after TTL refresh — in-place file edit not picked up: %v", err)
+	}
+}
+
+func TestTTLRefresh_PicksUpChangedFileSpec(t *testing.T) {
+	f, err := os.CreateTemp("", "spec-*.yaml")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(testSpec); err != nil {
+		t.Fatalf("failed to write v1 spec: %v", err)
+	}
+	f.Close()
+
+	validator, _, err := New(context.Background(), &Config{Type: "file", Location: f.Name(), CacheTTL: 3600})
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"search","domain":"retail"},"message":{}}`)); err != nil {
+		t.Fatalf("search action unavailable at startup: %v", err)
+	}
+
+	if err := os.WriteFile(f.Name(), []byte(testSpecV2), 0644); err != nil {
+		t.Fatalf("failed to overwrite spec file: %v", err)
+	}
+
+	validator.reloadAllSpecs(context.Background())
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"confirm"},"message":{}}`)); err != nil {
+		t.Errorf("confirm action unavailable after TTL refresh — v2 spec not picked up: %v", err)
 	}
 }
 

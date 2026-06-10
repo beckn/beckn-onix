@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -303,6 +305,66 @@ func (v *schemav2Validator) loadAllSpecs(ctx context.Context, failOnAuxError boo
 	return nil
 }
 
+// specHTTPClient is used by freshReadFromURI for all remote spec fetches.
+// The 30 s timeout prevents a hanging server from stalling the reload goroutine
+// indefinitely; caller context deadlines further constrain it when set.
+var specHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+// maxSpecBodyBytes caps how much of a spec response is read into memory.
+// No legitimate OpenAPI spec approaches this limit; it guards against
+// misconfigured proxies and adversarial servers sending arbitrarily large bodies.
+var maxSpecBodyBytes int64 = 32 * 1024 * 1024 // 32 MB
+
+// freshReadFromURI reads bytes directly from disk or network, bypassing the
+// kin-openapi package-level URIMapCache so TTL reloads always fetch current content.
+func freshReadFromURI(loader *openapi3.Loader, u *url.URL) ([]byte, error) {
+	switch u.Scheme {
+	case "http", "https":
+		ctx := context.Background()
+		if loader.Context != nil {
+			ctx = loader.Context
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := specHTTPClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("HTTP %d fetching %s", resp.StatusCode, u)
+		}
+		limited := io.LimitReader(resp.Body, maxSpecBodyBytes+1)
+		data, err := io.ReadAll(limited)
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(data)) > maxSpecBodyBytes {
+			return nil, fmt.Errorf("spec response exceeds %d MB limit", maxSpecBodyBytes/(1024*1024))
+		}
+		return data, nil
+	default: // "file" scheme or bare path
+		return os.ReadFile(u.Path)
+	}
+}
+
+// newFreshLoader returns a loader whose ReadFromURIFunc bypasses the global
+// URIMapCache. Use this everywhere instead of openapi3.NewLoader() so that
+// TTL-driven reloads always read the current file or remote content.
+//
+// Note: setting ReadFromURIFunc causes kin-openapi to skip its own
+// IsExternalRefsAllowed guard (the custom function becomes the sole access
+// policy). IsExternalRefsAllowed=true is kept for documentation intent but
+// has no runtime effect once ReadFromURIFunc is non-nil.
+func newFreshLoader() *openapi3.Loader {
+	l := openapi3.NewLoader()
+	l.IsExternalRefsAllowed = true
+	l.ReadFromURIFunc = freshReadFromURI
+	return l
+}
+
 // loadSingleSpec loads one OpenAPI document from the given type and location.
 // For type "dir", all top-level *.yaml and *.json files are loaded and their
 // action indexes are merged into a single cachedSpec.
@@ -311,8 +373,8 @@ func (v *schemav2Validator) loadSingleSpec(ctx context.Context, specType, locati
 		return v.loadSpecFromDir(ctx, location)
 	}
 
-	loader := openapi3.NewLoader()
-	loader.IsExternalRefsAllowed = true
+	loader := newFreshLoader()
+	loader.Context = ctx
 
 	var doc *openapi3.T
 	var err error
