@@ -67,7 +67,7 @@ func (m *mockPluginManager) Registry(ctx context.Context, cache definition.Cache
 }
 
 // KeyManager returns a mock key manager implementation.
-func (m *mockPluginManager) KeyManager(ctx context.Context, cache definition.Cache, rLookup definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error) {
+func (m *mockPluginManager) KeyManager(ctx context.Context, rLookup definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error) {
 	return nil, nil
 }
 
