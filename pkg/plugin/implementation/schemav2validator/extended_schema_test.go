@@ -2,9 +2,12 @@ package schemav2validator
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -989,4 +992,33 @@ components:
 	// rawSchemas empty, localSchema=true — local miss, falls back to @context file path
 	err = cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, nil, true)
 	assert.NoError(t, err)
+}
+
+func TestLoadSchemaFromPath_TTLExpiry_FetchesFresh(t *testing.T) {
+	var serveV2 atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveV2.Load() {
+			w.Write([]byte("openapi: 3.1.0\ninfo:\n  title: Schema v2\n  version: 2.0.0\n"))
+		} else {
+			w.Write([]byte("openapi: 3.1.0\ninfo:\n  title: Schema v1\n  version: 1.0.0\n"))
+		}
+	}))
+	defer server.Close()
+
+	cache := newSchemaCache(10)
+	ctx := context.Background()
+
+	// Load v1 with a 1ms TTL so the LRU entry expires almost immediately.
+	doc1, err := cache.loadSchemaFromPath(ctx, server.URL, 1*time.Millisecond, 30*time.Second, false)
+	assert.NoError(t, err)
+	assert.Equal(t, "Schema v1", doc1.Info.Title)
+
+	// Wait for the LRU entry to expire, then switch the server to v2.
+	time.Sleep(10 * time.Millisecond)
+	serveV2.Store(true)
+
+	// Re-load — LRU miss (expired), freshReadFromURI fetches from the server and gets v2.
+	doc2, err := cache.loadSchemaFromPath(ctx, server.URL, 1*time.Hour, 30*time.Second, false)
+	assert.NoError(t, err)
+	assert.Equal(t, "Schema v2", doc2.Info.Title, "expected v2 after TTL expiry — global URIMapCache not bypassed")
 }

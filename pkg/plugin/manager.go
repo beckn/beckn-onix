@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/beckndefaults"
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
@@ -24,8 +25,10 @@ type onixPlugin interface {
 
 // Manager is responsible for managing dynamically loaded plugins.
 type Manager struct {
-	plugins map[string]onixPlugin // plugins holds the dynamically loaded plugins.
-	closers []func()              // closers contains functions to release resources when the manager is closed.
+	plugins        map[string]onixPlugin        // plugins holds the dynamically loaded plugins.
+	closers        []func()                     // closers contains functions to release resources when the manager is closed.
+	constants      *beckndefaults.BecknConstants // loaded and verified at init; nil if not configured.
+	overridesByKey map[string]telemetry.ConstantsOverride // keyed by "pluginID:key"; populated lazily at plugin creation time.
 }
 
 func validateMgrCfg(cfg *ManagerConfig) error {
@@ -52,12 +55,95 @@ func NewManager(ctx context.Context, cfg *ManagerConfig) (*Manager, func(), erro
 		return nil, nil, err
 	}
 
+	disableRefresh := cfg.BecknConstants != nil && cfg.BecknConstants.DisableRemoteRefresh
+	constants, err := beckndefaults.Load(ctx, disableRefresh)
+	if err != nil {
+		return nil, nil, fmt.Errorf("beckn constants: %w", err)
+	}
+
 	closers := []func(){}
-	return &Manager{plugins: plugins, closers: closers}, func() {
+	return &Manager{
+		plugins:        plugins,
+		closers:        closers,
+		constants:      constants,
+		overridesByKey: make(map[string]telemetry.ConstantsOverride),
+	}, func() {
 		for _, closer := range closers {
 			closer()
 		}
 	}, nil
+}
+
+// applyConstants enforces beckn constants for the given plugin config.
+// Locked keys: injected; startup fails if user config contradicts.
+// Overridable keys: injected if absent; accepted with WARN if user set a different value.
+// The schemav2validator.location key is only governed when effective type is "url".
+func (m *Manager) applyConstants(ctx context.Context, cfg *Config) error {
+	if m.constants == nil || cfg == nil || cfg.ID == "" {
+		return nil
+	}
+	if cfg.Config == nil {
+		cfg.Config = make(map[string]string)
+	}
+	pluginID := cfg.ID
+
+	if locked, ok := m.constants.Locked[pluginID]; ok {
+		for key, canonical := range locked {
+			if userVal, exists := cfg.Config[key]; exists && userVal != canonical {
+				return fmt.Errorf("plugin %q: key %q is a locked beckn constant (canonical: %q); remove it from your config",
+					pluginID, key, canonical)
+			}
+			cfg.Config[key] = canonical
+		}
+	}
+
+	if overridable, ok := m.constants.Overridable[pluginID]; ok {
+		effectiveType := resolveEffectiveType(pluginID, cfg.Config, overridable)
+		for key, canonical := range overridable {
+			// location is only governed when type resolves to "url". This is the only
+			// cross-key dependency in the constants file and is schemav2validator-specific:
+			// when an operator points at a local file (type=file), location is their concern.
+			if pluginID == "schemav2validator" && key == "location" && effectiveType != "url" {
+				continue
+			}
+			if userVal, exists := cfg.Config[key]; exists && userVal != canonical {
+				log.Warnf(ctx, "BecknConstants: plugin=%q key=%q running non-canonical value (canonical=%q actual=%q)",
+					pluginID, key, canonical, userVal)
+				m.overridesByKey[pluginID+":"+key] = telemetry.ConstantsOverride{
+					PluginID: pluginID, Key: key, Canonical: canonical, Actual: userVal,
+				}
+			} else if !exists {
+				cfg.Config[key] = canonical
+			}
+		}
+	}
+	return nil
+}
+
+// resolveEffectiveType returns the active value of schemav2validator.type,
+// used to decide whether to govern the location key.
+func resolveEffectiveType(pluginID string, userConfig, overridable map[string]string) string {
+	if pluginID != "schemav2validator" {
+		return ""
+	}
+	if t, ok := userConfig["type"]; ok && t != "" {
+		return t
+	}
+	if t, ok := overridable["type"]; ok && t != "" {
+		return t
+	}
+	return "url"
+}
+
+// RegisterBecknConstantsGauge registers the beckn_constants_info observable gauge
+// using all non-canonical constant values detected so far.
+// Call once after all modules are initialised.
+func (m *Manager) RegisterBecknConstantsGauge(ctx context.Context) error {
+	overrides := make([]telemetry.ConstantsOverride, 0, len(m.overridesByKey))
+	for _, o := range m.overridesByKey {
+		overrides = append(overrides, o)
+	}
+	return telemetry.RegisterBecknConstantsInfo(ctx, overrides)
 }
 
 func plugins(ctx context.Context, cfg *ManagerConfig) (map[string]onixPlugin, error) {
@@ -149,6 +235,9 @@ func (m *Manager) Publisher(ctx context.Context, cfg *Config) (definition.Publis
 // SchemaValidator returns a SchemaValidator instance based on the provided configuration.
 // It registers a cleanup function for resource management.
 func (m *Manager) SchemaValidator(ctx context.Context, cfg *Config) (definition.SchemaValidator, error) {
+	if err := m.applyConstants(ctx, cfg); err != nil {
+		return nil, err
+	}
 	vp, err := provider[definition.SchemaValidatorProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
@@ -470,6 +559,9 @@ func (m *Manager) ManifestLoader(ctx context.Context, cache definition.Cache, lo
 // Registry returns a RegistryLookup instance based on the provided configuration.
 // It registers a cleanup function for resource management.
 func (m *Manager) Registry(ctx context.Context, cache definition.Cache, cfg *Config) (definition.RegistryLookup, error) {
+	if err := m.applyConstants(ctx, cfg); err != nil {
+		return nil, err
+	}
 	rp, err := provider[definition.RegistryLookupProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)

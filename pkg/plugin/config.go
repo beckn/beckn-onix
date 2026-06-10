@@ -16,6 +16,12 @@ type Config struct {
 }
 
 type ManagerConfig struct {
-	Root       string `yaml:"root"`
-	RemoteRoot string `yaml:"remoteRoot"`
+	Root           string               `yaml:"root"`
+	RemoteRoot     string               `yaml:"remoteRoot"`
+	BecknConstants *BecknConstantsConfig `yaml:"becknConstants,omitempty"`
+}
+
+// BecknConstantsConfig controls the beckn constants loader inside the manager.
+type BecknConstantsConfig struct {
+	DisableRemoteRefresh bool `yaml:"disableRemoteRefresh"`
 }

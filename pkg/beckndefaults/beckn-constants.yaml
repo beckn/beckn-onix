@@ -1,0 +1,15 @@
+becknConstantsVersion: "v1"
+
+# This file is signed by Beckn. Do not edit manually; changes require re-signing.
+# locked: values that cannot be overridden by operator config under any circumstances.
+locked:
+  dediregistry:
+    url: "https://fabric.nfh.global/registry/dedi"
+
+# overridable: canonical beckn defaults injected automatically.
+# Operators may set different values directly in their plugin config.
+# Deviations are accepted and logged at WARN on startup.
+overridable:
+  schemav2validator:
+    type: "url"
+    location: "https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/tags/core-v2.0.0-lts/api/v2.0.0/beckn.yaml"

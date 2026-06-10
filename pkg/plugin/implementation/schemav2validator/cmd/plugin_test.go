@@ -160,6 +160,120 @@ func TestProvider_New(t *testing.T) {
 	}
 }
 
+func TestProvider_AuxiliaryConfig(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testSpec))
+	}))
+	defer primary.Close()
+
+	aux := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testSpec))
+	}))
+	defer aux.Close()
+
+	tests := []struct {
+		name    string
+		config  map[string]string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "auxiliary collides with primary",
+			config: map[string]string{
+				"type":              "url",
+				"location":          primary.URL,
+				"auxiliaryTypes":    "url",
+				"auxiliaryLocations": aux.URL,
+			},
+			// aux and primary serve the same spec — collision on "test" action.
+			wantErr: true,
+			errMsg:  "already defined",
+		},
+		{
+			name: "mismatched auxiliary list lengths",
+			config: map[string]string{
+				"type":               "url",
+				"location":           primary.URL,
+				"auxiliaryTypes":     "url,file",
+				"auxiliaryLocations": aux.URL,
+			},
+			wantErr: true,
+			errMsg:  "same number",
+		},
+		{
+			name: "empty auxiliary entry",
+			config: map[string]string{
+				"type":               "url",
+				"location":           primary.URL,
+				"auxiliaryTypes":     "url,",
+				"auxiliaryLocations": aux.URL + ",",
+			},
+			wantErr: true,
+			errMsg:  "must not be empty",
+		},
+		{
+			name: "auxiliaryTypes set without auxiliaryLocations",
+			config: map[string]string{
+				"type":           "url",
+				"location":       primary.URL,
+				"auxiliaryTypes": "url",
+			},
+			wantErr: true,
+			errMsg:  "auxiliaryLocations is missing",
+		},
+		{
+			name: "auxiliaryLocations set without auxiliaryTypes",
+			config: map[string]string{
+				"type":               "url",
+				"location":           primary.URL,
+				"auxiliaryLocations": aux.URL,
+			},
+			wantErr: true,
+			errMsg:  "auxiliaryTypes is missing",
+		},
+		{
+			name: "no auxiliary keys — primary only",
+			config: map[string]string{
+				"type":     "url",
+				"location": primary.URL,
+			},
+			wantErr: false,
+		},
+		{
+			name: "type without location",
+			config: map[string]string{
+				"type": "url",
+			},
+			wantErr: true,
+			errMsg:  "location not configured",
+		},
+		{
+			name: "location without type",
+			config: map[string]string{
+				"location": primary.URL,
+			},
+			wantErr: true,
+			errMsg:  "type not configured",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := schemav2ValidatorProvider{}
+			_, _, err := provider.New(context.Background(), tt.config)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && tt.errMsg != "" && err != nil {
+				if !contains(err.Error(), tt.errMsg) {
+					t.Errorf("New() error = %v, want it to contain %q", err, tt.errMsg)
+				}
+			}
+		})
+	}
+}
+
 func TestProvider_ExportedVariable(t *testing.T) {
 	if Provider == (schemav2ValidatorProvider{}) {
 		t.Log("Provider variable is properly exported")
