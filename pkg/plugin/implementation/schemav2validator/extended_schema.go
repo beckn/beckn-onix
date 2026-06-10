@@ -316,6 +316,7 @@ func (c *schemaCache) loadSchemaFromPath(ctx context.Context, schemaPath string,
 	}
 
 	loader := newFreshLoader()
+	loader.Context = ctx
 
 	var doc *openapi3.T
 	var err error
