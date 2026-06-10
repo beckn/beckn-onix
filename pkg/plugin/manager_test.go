@@ -1468,12 +1468,11 @@ func TestKeyManagerSuccess(t *testing.T) {
 				closers: []func(){},
 			}
 
-			// Create mock cache and registry lookup.
-			mockCache := &mockCache{}
+			// Create mock registry lookup.
 			mockRegistry := &mockRegistryLookup{}
 
 			// Call KeyManager.
-			keyManager, err := m.KeyManager(context.Background(), mockCache, mockRegistry, tt.cfg)
+			keyManager, err := m.KeyManager(context.Background(), mockRegistry, tt.cfg)
 
 			// Check success case.
 			if err != nil {
@@ -1541,12 +1540,11 @@ func TestKeyManagerFailure(t *testing.T) {
 				}
 			}
 
-			// Create mock cache and registry lookup.
-			mockCache := &mockCache{}
+			// Create mock registry lookup.
 			mockRegistry := &mockRegistryLookup{}
 
 			// Call KeyManager.
-			keyManager, err := m.KeyManager(context.Background(), mockCache, mockRegistry, tt.cfg)
+			keyManager, err := m.KeyManager(context.Background(), mockRegistry, tt.cfg)
 
 			// Check error.
 			if err == nil {

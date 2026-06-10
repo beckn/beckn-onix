@@ -40,22 +40,6 @@ func (m *mockRegistry) Lookup(ctx context.Context, sub *model.Subscription) ([]m
 	}, nil
 }
 
-type mockCache struct{}
-
-func (m *mockCache) Get(ctx context.Context, key string) (string, error) {
-	return "", nil
-}
-func (m *mockCache) Set(ctx context.Context, key string, value string, ttl time.Duration) error {
-	return nil
-}
-func (m *mockCache) Clear(ctx context.Context) error {
-	return nil
-}
-
-func (m *mockCache) Delete(ctx context.Context, key string) error {
-	return nil
-}
-
 func TestNewSuccess(t *testing.T) {
 	// Setup dummy implementations and variables
 	ctx := context.Background()

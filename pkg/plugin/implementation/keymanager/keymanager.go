@@ -71,7 +71,7 @@ func ValidateCfg(cfg *Config) error {
 // This is exported for testing purposes.
 var getVaultClient = GetVaultClient
 
-// New creates a new KeyMgr instance with the provided configuration, cache, and registry lookup.
+// New creates a new KeyMgr instance with the provided configuration and registry lookup.
 func New(ctx context.Context, registryLookup definition.RegistryLookup, cfg *Config) (*KeyMgr, func() error, error) {
 	log.Info(ctx, "Initializing KeyManager plugin")
 	// Validate configuration.

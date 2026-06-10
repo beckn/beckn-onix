@@ -384,7 +384,7 @@ func (m *Manager) SignValidator(ctx context.Context, cfg *Config) (definition.Si
 
 // KeyManager returns a KeyManager instance based on the provided configuration.
 // It reuses the loaded provider.
-func (m *Manager) KeyManager(ctx context.Context, cache definition.Cache, rClient definition.RegistryLookup, cfg *Config) (definition.KeyManager, error) {
+func (m *Manager) KeyManager(ctx context.Context, rClient definition.RegistryLookup, cfg *Config) (definition.KeyManager, error) {
 
 	kmp, err := provider[definition.KeyManagerProvider](m.plugins, cfg.ID)
 	if err != nil {
@@ -406,7 +406,7 @@ func (m *Manager) KeyManager(ctx context.Context, cache definition.Cache, rClien
 
 // SimpleKeyManager returns a KeyManager instance based on the provided configuration.
 // It reuses the loaded provider.
-func (m *Manager) SimpleKeyManager(ctx context.Context, cache definition.Cache, rClient definition.RegistryLookup, cfg *Config) (definition.KeyManager, error) {
+func (m *Manager) SimpleKeyManager(ctx context.Context, rClient definition.RegistryLookup, cfg *Config) (definition.KeyManager, error) {
 
 	kmp, err := provider[definition.KeyManagerProvider](m.plugins, cfg.ID)
 	if err != nil {

@@ -23,7 +23,7 @@ type PluginManager interface {
 	PolicyChecker(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error)
 	Cache(ctx context.Context, cfg *plugin.Config) (definition.Cache, error)
 	Registry(ctx context.Context, cache definition.Cache, cfg *plugin.Config) (definition.RegistryLookup, error)
-	KeyManager(ctx context.Context, cache definition.Cache, rLookup definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error)
+	KeyManager(ctx context.Context, rLookup definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error)
 	ManifestLoader(ctx context.Context, cache definition.Cache, lookup definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.ManifestLoader, error)
 	TransportWrapper(ctx context.Context, cfg *plugin.Config) (definition.TransportWrapper, error)
 	SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)

@@ -391,19 +391,16 @@ func loadPlugin[T any](ctx context.Context, name string, cfg *plugin.Config, mgr
 	return plugin, nil
 }
 
-// loadKeyManager loads the KeyManager plugin using the provided PluginManager, cache, and registry.
-func loadKeyManager(ctx context.Context, mgr PluginManager, cache definition.Cache, registry definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error) {
+// loadKeyManager loads the KeyManager plugin using the provided PluginManager and registry.
+func loadKeyManager(ctx context.Context, mgr PluginManager, registry definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping KeyManager plugin: not configured")
 		return nil, nil
 	}
-	if cache == nil {
-		return nil, fmt.Errorf("failed to load KeyManager plugin (%s): Cache plugin not configured", cfg.ID)
-	}
 	if registry == nil {
 		return nil, fmt.Errorf("failed to load KeyManager plugin (%s): Registry plugin not configured", cfg.ID)
 	}
-	km, err := mgr.KeyManager(ctx, cache, registry, cfg)
+	km, err := mgr.KeyManager(ctx, registry, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load KeyManager plugin (%s): %w", cfg.ID, err)
 	}
@@ -495,7 +492,7 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	}); err != nil {
 		return err
 	}
-	if h.km, err = loadKeyManager(ctx, mgr, h.cache, h.registry, cfg.KeyManager); err != nil {
+	if h.km, err = loadKeyManager(ctx, mgr, h.registry, cfg.KeyManager); err != nil {
 		return err
 	}
 	if h.manifestLoader, err = loadManifestLoader(ctx, mgr, h.cache, h.registry, cfg.ManifestLoader); err != nil {
