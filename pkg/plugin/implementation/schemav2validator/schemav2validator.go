@@ -305,12 +305,25 @@ func (v *schemav2Validator) loadAllSpecs(ctx context.Context, failOnAuxError boo
 	return nil
 }
 
+// specHTTPClient is used by freshReadFromURI for all remote spec fetches.
+// The 30 s timeout prevents a hanging server from stalling the reload goroutine
+// indefinitely; caller context deadlines further constrain it when set.
+var specHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 // freshReadFromURI reads bytes directly from disk or network, bypassing the
 // kin-openapi package-level URIMapCache so TTL reloads always fetch current content.
-func freshReadFromURI(_ *openapi3.Loader, u *url.URL) ([]byte, error) {
+func freshReadFromURI(loader *openapi3.Loader, u *url.URL) ([]byte, error) {
 	switch u.Scheme {
 	case "http", "https":
-		resp, err := http.Get(u.String()) //nolint:noctx
+		ctx := context.Background()
+		if loader.Context != nil {
+			ctx = loader.Context
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := specHTTPClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
@@ -348,6 +361,7 @@ func (v *schemav2Validator) loadSingleSpec(ctx context.Context, specType, locati
 	}
 
 	loader := newFreshLoader()
+	loader.Context = ctx
 
 	var doc *openapi3.T
 	var err error
