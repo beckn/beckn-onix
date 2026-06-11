@@ -386,18 +386,6 @@ func TestIsAllowedDomain(t *testing.T) {
 		want           bool
 	}{
 		{
-			name:           "empty whitelist - all allowed",
-			schemaURL:      "https://example.com/schema.yaml",
-			allowedDomains: []string{},
-			want:           true,
-		},
-		{
-			name:           "nil whitelist - all allowed",
-			schemaURL:      "https://example.com/schema.yaml",
-			allowedDomains: nil,
-			want:           true,
-		},
-		{
 			name:           "domain in whitelist",
 			schemaURL:      "https://raw.githubusercontent.com/beckn/schema.yaml",
 			allowedDomains: []string{"raw.githubusercontent.com", "schemas.beckn.org"},
@@ -452,22 +440,18 @@ func TestIsAllowedDomain(t *testing.T) {
 			want:           false,
 		},
 		{
-			name:           "file scheme with no host is denied when allowlist set",
+			name:           "no host (file://) does not match even with non-empty allowlist",
 			schemaURL:      "file:///etc/passwd",
 			allowedDomains: []string{"raw.githubusercontent.com"},
 			want:           false,
-		},
-		{
-			name:           "file scheme allowed when no allowlist",
-			schemaURL:      "file:///local/schema.yaml",
-			allowedDomains: []string{},
-			want:           true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isAllowedDomain(tt.schemaURL, tt.allowedDomains)
+			u, err := url.Parse(tt.schemaURL)
+			assert.NoError(t, err)
+			got := isAllowedDomain(u, tt.allowedDomains)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -738,6 +722,11 @@ func TestValidateReferencedObject_NonHttpSchemeRejectedWhenAllowlistSet(t *testi
 			name:    "file scheme local path",
 			context: "file:///etc/passwd",
 		},
+		{
+			// host IS in allowlist — scheme check must fire before domain check
+			name:    "gopher scheme with allowlisted host",
+			context: "gopher://raw.githubusercontent.com/schema.yaml",
+		},
 	}
 
 	for _, tt := range tests {
@@ -757,6 +746,62 @@ func TestValidateReferencedObject_NonHttpSchemeRejectedWhenAllowlistSet(t *testi
 			err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, allowedDomains, false)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "invalid scheme in @context")
+		})
+	}
+}
+
+func TestValidateReferencedObject_EmptyAllowlistSkipsDomainCheck(t *testing.T) {
+	schemaContent := `openapi: 3.1.0
+info:
+  title: Test Schema
+  version: 1.0.0
+components:
+  schemas:
+    TestType:
+      type: object
+      additionalProperties: false
+      x-jsonld:
+        "@context": ./context.jsonld
+        "@type": TestType
+      properties:
+        field1:
+          type: string
+      required:
+        - field1`
+
+	tests := []struct {
+		name          string
+		allowedDomains []string
+	}{
+		{name: "file scheme allowed when no allowlist (nil)", allowedDomains: nil},
+		{name: "file scheme allowed when no allowlist (empty)", allowedDomains: []string{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpFile, err := os.CreateTemp("", "test-schema-*.yaml")
+			assert.NoError(t, err)
+			defer os.Remove(tmpFile.Name())
+			tmpFile.Write([]byte(schemaContent))
+			tmpFile.Close()
+
+			cache := newSchemaCache(10)
+			ctx := context.Background()
+
+			// Use file:// scheme — would be rejected by scheme check if allowlist were set.
+			obj := referencedObject{
+				Path:    "message.test",
+				Context: "file://" + tmpFile.Name(),
+				Type:    "TestType",
+				Data:    map[string]interface{}{"field1": "value1"},
+			}
+
+			err = cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, tt.allowedDomains, false)
+			// No domain or scheme error — allowlist check was skipped entirely.
+			if err != nil {
+				assert.NotContains(t, err.Error(), "domain not allowed")
+				assert.NotContains(t, err.Error(), "invalid scheme in @context")
+			}
 		})
 	}
 }

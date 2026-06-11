@@ -478,15 +478,9 @@ func findSchemaByType(ctx context.Context, doc *openapi3.T, typeName string) (*o
 	return nil, fmt.Errorf("no schema found for @type: %s", typeName)
 }
 
-// isAllowedDomain checks if the URL domain is in the whitelist.
-func isAllowedDomain(schemaURL string, allowedDomains []string) bool {
-	if len(allowedDomains) == 0 {
-		return true // No whitelist = all allowed (local dev mode)
-	}
-	u, err := url.Parse(schemaURL)
-	if err != nil || u.Host == "" {
-		return false // unparseable or no host (file://, bare path) → deny
-	}
+// isAllowedDomain checks if the host of an already-parsed URL is in the allowlist.
+// Callers must guard with len(allowedDomains) > 0 before calling; an empty list returns false.
+func isAllowedDomain(u *url.URL, allowedDomains []string) bool {
 	for _, domain := range allowedDomains {
 		domain = strings.TrimSpace(domain)
 		if domain == "" {
@@ -525,17 +519,17 @@ func (c *schemaCache) validateReferencedObject(
 
 	if doc == nil {
 		if len(allowedDomains) > 0 {
-			// Allowlist is configured → restrict to http/https only.
-			// Rejects file://, gopher://, etc. regardless of fragment content.
+			// Allowlist is configured → restrict to http/https only and check host.
+			// Parsing once covers both the scheme check and the domain check.
 			u, err := url.Parse(obj.Context)
 			if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 				log.Warnf(ctx, "Invalid or disallowed scheme in @context: %s", obj.Context)
 				return fmt.Errorf("invalid scheme in @context: %s", obj.Context)
 			}
-		}
-		if !isAllowedDomain(obj.Context, allowedDomains) {
-			log.Warnf(ctx, "Domain not in whitelist: %s", obj.Context)
-			return fmt.Errorf("domain not allowed: %s", obj.Context)
+			if !isAllowedDomain(u, allowedDomains) {
+				log.Warnf(ctx, "Domain not in whitelist: %s", obj.Context)
+				return fmt.Errorf("domain not allowed: %s", obj.Context)
+			}
 		}
 		schemaPath := transformContextToSchemaURL(obj.Context)
 		log.Debugf(ctx, "Transformed %s -> %s (localSchema=%v)", obj.Context, schemaPath, localSchema)
