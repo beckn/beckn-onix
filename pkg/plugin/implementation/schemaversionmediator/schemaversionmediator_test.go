@@ -275,6 +275,71 @@ func TestCheckCompatibility_EmptyPayload(t *testing.T) {
 	}
 }
 
+// --- loadTranslationPolicy tests ---
+
+func TestLoadTranslationPolicy_Defaults(t *testing.T) {
+	p, err := loadTranslationPolicy(map[string]string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.Action != PolicyActionTranslate {
+		t.Errorf("expected default action=translate, got %q", p.Action)
+	}
+	if p.OnFailure != PolicyActionReject {
+		t.Errorf("expected default onFailure=reject, got %q", p.OnFailure)
+	}
+}
+
+func TestLoadTranslationPolicy_AllValidActions(t *testing.T) {
+	for _, action := range []PolicyAction{PolicyActionReject, PolicyActionTranslate, PolicyActionPassIncompatible} {
+		p, err := loadTranslationPolicy(map[string]string{"action": string(action)})
+		if err != nil {
+			t.Errorf("action=%q: unexpected error: %v", action, err)
+			continue
+		}
+		if p.Action != action {
+			t.Errorf("action=%q: got %q", action, p.Action)
+		}
+	}
+}
+
+func TestLoadTranslationPolicy_ValidOnFailure(t *testing.T) {
+	for _, onFailure := range []PolicyAction{PolicyActionReject, PolicyActionPassIncompatible} {
+		p, err := loadTranslationPolicy(map[string]string{
+			"action":    "translate",
+			"onFailure": string(onFailure),
+		})
+		if err != nil {
+			t.Errorf("onFailure=%q: unexpected error: %v", onFailure, err)
+			continue
+		}
+		if p.OnFailure != onFailure {
+			t.Errorf("onFailure=%q: got %q", onFailure, p.OnFailure)
+		}
+	}
+}
+
+func TestLoadTranslationPolicy_InvalidAction(t *testing.T) {
+	_, err := loadTranslationPolicy(map[string]string{"action": "unknown"})
+	if err == nil {
+		t.Fatal("expected error for unrecognised action, got nil")
+	}
+}
+
+func TestLoadTranslationPolicy_InvalidOnFailure(t *testing.T) {
+	_, err := loadTranslationPolicy(map[string]string{"onFailure": "unknown"})
+	if err == nil {
+		t.Fatal("expected error for unrecognised onFailure, got nil")
+	}
+}
+
+func TestLoadTranslationPolicy_OnFailureTranslateRejected(t *testing.T) {
+	_, err := loadTranslationPolicy(map[string]string{"onFailure": "translate"})
+	if err == nil {
+		t.Fatal("expected error when onFailure=translate, got nil")
+	}
+}
+
 // --- helpers ---
 
 func assertContainsType(t *testing.T, objects []model.SchemaObject, typ string) {
