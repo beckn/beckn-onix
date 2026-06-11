@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/registry"
 )
 
@@ -120,6 +121,49 @@ func TestRegistryProvider_ParseConfig(t *testing.T) {
 	}
 }
 
+// TestRegistryProvider_ParseConfig_CacheTTL verifies that cacheTTL is parsed correctly
+// and that an invalid value warns but does not return an error (warn-and-ignore semantics).
+func TestRegistryProvider_ParseConfig_CacheTTL(t *testing.T) {
+	t.Parallel()
+	provider := registryProvider{}
+
+	t.Run("valid cacheTTL is parsed and set", func(t *testing.T) {
+		cfg, err := provider.parseConfig(map[string]string{
+			"url":      "http://test.com",
+			"cacheTTL": "10m",
+		})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if cfg.CacheTTL != 10*time.Minute {
+			t.Errorf("expected CacheTTL 10m, got %v", cfg.CacheTTL)
+		}
+	})
+
+	t.Run("invalid cacheTTL warns and leaves CacheTTL zero", func(t *testing.T) {
+		cfg, err := provider.parseConfig(map[string]string{
+			"url":      "http://test.com",
+			"cacheTTL": "not-a-duration",
+		})
+		if err != nil {
+			t.Fatalf("expected no error (warn-and-ignore), got %v", err)
+		}
+		if cfg.CacheTTL != 0 {
+			t.Errorf("expected CacheTTL 0 (will use defaultCacheTTL), got %v", cfg.CacheTTL)
+		}
+	})
+
+	t.Run("absent cacheTTL leaves CacheTTL zero", func(t *testing.T) {
+		cfg, err := provider.parseConfig(map[string]string{"url": "http://test.com"})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if cfg.CacheTTL != 0 {
+			t.Errorf("expected CacheTTL 0, got %v", cfg.CacheTTL)
+		}
+	})
+}
+
 // TestRegistryProvider_New tests the plugin's main constructor.
 func TestRegistryProvider_New(t *testing.T) {
 	t.Parallel()
@@ -132,7 +176,7 @@ func TestRegistryProvider_New(t *testing.T) {
 	})
 
 	t.Run("should return error if context is nil", func(t *testing.T) {
-		_, _, err := provider.New(nil, map[string]string{})
+		_, _, err := provider.New(nil, nil, map[string]string{})
 		if err == nil {
 			t.Fatal("expected an error for nil context but got none")
 		}
@@ -143,7 +187,7 @@ func TestRegistryProvider_New(t *testing.T) {
 
 	t.Run("should return error if config parsing fails", func(t *testing.T) {
 		config := map[string]string{"retry_max": "invalid"}
-		_, _, err := provider.New(context.Background(), config)
+		_, _, err := provider.New(context.Background(), nil, config)
 		if err == nil {
 			t.Fatal("expected an error for bad config but got none")
 		}
@@ -152,12 +196,12 @@ func TestRegistryProvider_New(t *testing.T) {
 	t.Run("should return error if registry.New fails", func(t *testing.T) {
 		// Mock the newRegistryFunc to return an error
 		expectedErr := errors.New("registry creation failed")
-		newRegistryFunc = func(ctx context.Context, cfg *registry.Config) (*registry.RegistryClient, func() error, error) {
+		newRegistryFunc = func(ctx context.Context, cache definition.Cache, cfg *registry.Config) (*registry.RegistryClient, func() error, error) {
 			return nil, nil, expectedErr
 		}
 
 		config := map[string]string{"url": "http://test.com"}
-		_, _, err := provider.New(context.Background(), config)
+		_, _, err := provider.New(context.Background(), nil, config)
 		if err == nil {
 			t.Fatal("expected an error from registry.New but got none")
 		}
@@ -169,13 +213,13 @@ func TestRegistryProvider_New(t *testing.T) {
 	t.Run("should succeed and return a valid instance", func(t *testing.T) {
 		// Mock the newRegistryFunc for a successful case
 		mockCloser := func() error { fmt.Println("closed"); return nil }
-		newRegistryFunc = func(ctx context.Context, cfg *registry.Config) (*registry.RegistryClient, func() error, error) {
-			// Return a non-nil client of th correct concrete type
+		newRegistryFunc = func(ctx context.Context, cache definition.Cache, cfg *registry.Config) (*registry.RegistryClient, func() error, error) {
+			// Return a non-nil client of the correct concrete type
 			return new(registry.RegistryClient), mockCloser, nil
 		}
 
 		config := map[string]string{"url": "http://test.com"}
-		instance, closer, err := provider.New(context.Background(), config)
+		instance, closer, err := provider.New(context.Background(), nil, config)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}

@@ -14,14 +14,14 @@ type keyManagerProvider struct{}
 // newKeyManagerFunc is a function type that creates a new KeyManager instance.
 var newKeyManagerFunc = keymanager.New
 
-// New creates and initializes a new KeyManager instance using the provided cache, registry lookup, and configuration.
-func (k *keyManagerProvider) New(ctx context.Context, cache definition.Cache, registry definition.RegistryLookup, cfg map[string]string) (definition.KeyManager, func() error, error) {
+// New creates and initializes a new KeyManager instance using the provided registry lookup and configuration.
+func (k *keyManagerProvider) New(ctx context.Context, registry definition.RegistryLookup, cfg map[string]string) (definition.KeyManager, func() error, error) {
 	config := &keymanager.Config{
 		VaultAddr: cfg["vaultAddr"],
 		KVVersion: cfg["kvVersion"],
 	}
 	log.Debugf(ctx, "Keymanager config mapped: %+v", cfg)
-	km, cleanup, err := newKeyManagerFunc(ctx, cache, registry, config)
+	km, cleanup, err := newKeyManagerFunc(ctx, registry, config)
 	if err != nil {
 		log.Error(ctx, err, "Failed to initialize KeyManager")
 		return nil, nil, err

@@ -17,5 +17,5 @@ type KeyManager interface {
 
 // KeyManagerProvider initializes a new signer instance.
 type KeyManagerProvider interface {
-	New(context.Context, Cache, RegistryLookup, map[string]string) (KeyManager, func() error, error)
+	New(context.Context, RegistryLookup, map[string]string) (KeyManager, func() error, error)
 }

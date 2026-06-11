@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/dediregistry"
 )
 
@@ -147,10 +148,42 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 	}
 }
 
+// TestDediRegistryProvider_ParseConfig_CacheTTL verifies that cacheTTL is parsed correctly
+// and that an invalid value warns but does not return an error (warn-and-ignore semantics).
+func TestDediRegistryProvider_ParseConfig_CacheTTL(t *testing.T) {
+	provider := dediRegistryProvider{}
+
+	t.Run("valid cacheTTL is parsed and set", func(t *testing.T) {
+		cfg, err := provider.parseConfig(map[string]string{
+			"url":      "https://test.com/dedi",
+			"cacheTTL": "15m",
+		})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if cfg.CacheTTL != 15*time.Minute {
+			t.Errorf("expected CacheTTL 15m, got %v", cfg.CacheTTL)
+		}
+	})
+
+	t.Run("invalid cacheTTL warns and leaves CacheTTL zero", func(t *testing.T) {
+		cfg, err := provider.parseConfig(map[string]string{
+			"url":      "https://test.com/dedi",
+			"cacheTTL": "not-a-duration",
+		})
+		if err != nil {
+			t.Fatalf("expected no error (warn-and-ignore), got %v", err)
+		}
+		if cfg.CacheTTL != 0 {
+			t.Errorf("expected CacheTTL 0 (will use defaultCacheTTL), got %v", cfg.CacheTTL)
+		}
+	})
+}
+
 func TestDediRegistryProvider_New_InvalidRetryConfig(t *testing.T) {
 	provider := dediRegistryProvider{}
 
-	_, _, err := provider.New(context.Background(), map[string]string{
+	_, _, err := provider.New(context.Background(), nil, map[string]string{
 		"url":       "https://test.com/dedi",
 		"retry_max": "abc",
 	})
@@ -165,7 +198,7 @@ func TestDediRegistryProvider_New_InvalidRetryConfig(t *testing.T) {
 func TestDediRegistryProvider_New_ForwardsRetryConfig(t *testing.T) {
 	var captured *dediregistry.Config
 	provider := dediRegistryProvider{
-		newFunc: func(ctx context.Context, cfg *dediregistry.Config) (*dediregistry.DeDiRegistryClient, func() error, error) {
+		newFunc: func(ctx context.Context, cache definition.Cache, cfg *dediregistry.Config) (*dediregistry.DeDiRegistryClient, func() error, error) {
 			captured = cfg
 			return new(dediregistry.DeDiRegistryClient), func() error { return nil }, nil
 		},
@@ -179,7 +212,7 @@ func TestDediRegistryProvider_New_ForwardsRetryConfig(t *testing.T) {
 		"retry_wait_max": "2s",
 	}
 
-	_, closer, err := provider.New(context.Background(), config)
+	_, closer, err := provider.New(context.Background(), nil, config)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -212,7 +245,7 @@ func TestDediRegistryProvider_New(t *testing.T) {
 		"timeout": "30",
 	}
 
-	dediRegistry, closer, err := provider.New(ctx, config)
+	dediRegistry, closer, err := provider.New(ctx, nil, config)
 	if err != nil {
 		t.Errorf("New() error = %v", err)
 		return
@@ -252,7 +285,7 @@ func TestDediRegistryProvider_New_InvalidConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _, err := provider.New(ctx, tt.config)
+			_, _, err := provider.New(ctx, nil, tt.config)
 			if err == nil {
 				t.Errorf("New() with %s should return error", tt.name)
 			}
@@ -264,7 +297,7 @@ func TestDediRegistryProvider_New_InvalidTimeout(t *testing.T) {
 	// Invalid timeout is now a hard error, not a warn-and-continue fallback.
 	provider := dediRegistryProvider{newFunc: dediregistry.New}
 
-	_, _, err := provider.New(context.Background(), map[string]string{
+	_, _, err := provider.New(context.Background(), nil, map[string]string{
 		"url":     "https://test.com/dedi",
 		"timeout": "invalid",
 	})
@@ -342,7 +375,7 @@ func TestDediRegistryProvider_New_DeprecatedAllowedParentNamespacesErrorsWithout
 		"allowedParentNamespaces": "commerce-network.org",
 	}
 
-	_, _, err := provider.New(ctx, config)
+	_, _, err := provider.New(ctx, nil, config)
 	if err == nil {
 		t.Fatal("expected New() to error when only allowedParentNamespaces is configured")
 	}
@@ -355,7 +388,7 @@ func TestDediRegistryProvider_New_NilContext(t *testing.T) {
 		"url": "https://test.com/dedi",
 	}
 
-	_, _, err := provider.New(nil, config)
+	_, _, err := provider.New(nil, nil, config)
 	if err == nil {
 		t.Error("New() with nil context should return error")
 	}

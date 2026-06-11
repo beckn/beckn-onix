@@ -4,30 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"testing"
-	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
 // Mock implementations for testing
-type mockCache struct{}
-
-func (m *mockCache) Get(ctx context.Context, key string) (string, error) {
-	return "", nil
-}
-
-func (m *mockCache) Set(ctx context.Context, key string, value string, ttl time.Duration) error {
-	return nil
-}
-
-func (m *mockCache) Clear(ctx context.Context) error {
-	return nil
-}
-
-func (m *mockCache) Delete(ctx context.Context, key string) error {
-	return nil
-}
-
 type mockRegistry struct{}
 
 func (m *mockRegistry) Lookup(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
@@ -94,7 +75,6 @@ func TestValidateCfg(t *testing.T) {
 
 func TestNew(t *testing.T) {
 	ctx := context.Background()
-	cache := &mockCache{}
 	registry := &mockRegistry{}
 
 	tests := []struct {
@@ -115,12 +95,12 @@ func TestNew(t *testing.T) {
 		{
 			name: "valid config with keys",
 			cfg: &Config{
-				SubscriberID: "test-np",
-				KeyID:        "test-key",
-				SigningPrivateKey:  "dGVzdC1zaWduaW5nLXByaXZhdGU=",
-				SigningPublicKey:   "dGVzdC1zaWduaW5nLXB1YmxpYw==",
-				EncrPrivateKey:     "dGVzdC1lbmNyLXByaXZhdGU=",
-				EncrPublicKey:      "dGVzdC1lbmNyLXB1YmxpYw==",
+				SubscriberID:     "test-np",
+				KeyID:            "test-key",
+				SigningPrivateKey: "dGVzdC1zaWduaW5nLXByaXZhdGU=",
+				SigningPublicKey:  "dGVzdC1zaWduaW5nLXB1YmxpYw==",
+				EncrPrivateKey:   "dGVzdC1lbmNyLXByaXZhdGU=",
+				EncrPublicKey:    "dGVzdC1lbmNyLXB1YmxpYw==",
 			},
 			wantErr: false,
 		},
@@ -128,7 +108,7 @@ func TestNew(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			skm, cleanup, err := New(ctx, cache, registry, tt.cfg)
+			skm, cleanup, err := New(ctx, registry, tt.cfg)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
@@ -154,14 +134,8 @@ func TestNewWithNilDependencies(t *testing.T) {
 	ctx := context.Background()
 	cfg := &Config{}
 
-	// Test nil cache
-	_, _, err := New(ctx, nil, &mockRegistry{}, cfg)
-	if err == nil {
-		t.Error("New() should fail with nil cache")
-	}
-
 	// Test nil registry
-	_, _, err = New(ctx, &mockCache{}, nil, cfg)
+	_, _, err := New(ctx, nil, cfg)
 	if err == nil {
 		t.Error("New() should fail with nil registry")
 	}
@@ -329,7 +303,6 @@ func TestDeleteKeyset(t *testing.T) {
 
 func TestLookupNPKeys(t *testing.T) {
 	skm := &SimpleKeyMgr{
-		Cache:    &mockCache{},
 		Registry: &mockRegistry{},
 	}
 	ctx := context.Background()

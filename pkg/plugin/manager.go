@@ -473,13 +473,13 @@ func (m *Manager) SignValidator(ctx context.Context, cfg *Config) (definition.Si
 
 // KeyManager returns a KeyManager instance based on the provided configuration.
 // It reuses the loaded provider.
-func (m *Manager) KeyManager(ctx context.Context, cache definition.Cache, rClient definition.RegistryLookup, cfg *Config) (definition.KeyManager, error) {
+func (m *Manager) KeyManager(ctx context.Context, rClient definition.RegistryLookup, cfg *Config) (definition.KeyManager, error) {
 
 	kmp, err := provider[definition.KeyManagerProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	km, closer, err := kmp.New(ctx, cache, rClient, cfg.Config)
+	km, closer, err := kmp.New(ctx, rClient, cfg.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -493,15 +493,15 @@ func (m *Manager) KeyManager(ctx context.Context, cache definition.Cache, rClien
 	return km, nil
 }
 
-// KeyManager returns a KeyManager instance based on the provided configuration.
+// SimpleKeyManager returns a KeyManager instance based on the provided configuration.
 // It reuses the loaded provider.
-func (m *Manager) SimpleKeyManager(ctx context.Context, cache definition.Cache, rClient definition.RegistryLookup, cfg *Config) (definition.KeyManager, error) {
+func (m *Manager) SimpleKeyManager(ctx context.Context, rClient definition.RegistryLookup, cfg *Config) (definition.KeyManager, error) {
 
 	kmp, err := provider[definition.KeyManagerProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	km, closer, err := kmp.New(ctx, cache, rClient, cfg.Config)
+	km, closer, err := kmp.New(ctx, rClient, cfg.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -558,7 +558,7 @@ func (m *Manager) ManifestLoader(ctx context.Context, cache definition.Cache, lo
 
 // Registry returns a RegistryLookup instance based on the provided configuration.
 // It registers a cleanup function for resource management.
-func (m *Manager) Registry(ctx context.Context, cfg *Config) (definition.RegistryLookup, error) {
+func (m *Manager) Registry(ctx context.Context, cache definition.Cache, cfg *Config) (definition.RegistryLookup, error) {
 	if err := m.applyConstants(ctx, cfg); err != nil {
 		return nil, err
 	}
@@ -566,7 +566,7 @@ func (m *Manager) Registry(ctx context.Context, cfg *Config) (definition.Registr
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	registry, closer, err := rp.New(ctx, cfg.Config)
+	registry, closer, err := rp.New(ctx, cache, cfg.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -582,12 +582,12 @@ func (m *Manager) Registry(ctx context.Context, cfg *Config) (definition.Registr
 
 // DeDiRegistry returns a RegistryLookup instance based on the provided configuration.
 // It reuses the loaded provider.
-func (m *Manager) DeDiRegistry(ctx context.Context, cfg *Config) (definition.RegistryLookup, error) {
+func (m *Manager) DeDiRegistry(ctx context.Context, cache definition.Cache, cfg *Config) (definition.RegistryLookup, error) {
 	rp, err := provider[definition.RegistryLookupProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	registry, closer, err := rp.New(ctx, cfg.Config)
+	registry, closer, err := rp.New(ctx, cache, cfg.Config)
 	if err != nil {
 		return nil, err
 	}

@@ -24,6 +24,16 @@ func (r registryProvider) parseConfig(config map[string]string) (*registry.Confi
 		URL: config["url"],
 	}
 
+	// Parse cacheTTL
+	if cacheTTLStr, exists := config["cacheTTL"]; exists && cacheTTLStr != "" {
+		cacheTTL, err := time.ParseDuration(cacheTTLStr)
+		if err != nil {
+			log.Warnf(context.Background(), "Invalid cacheTTL value '%s', using default", cacheTTLStr)
+		} else {
+			registryConfig.CacheTTL = cacheTTL
+		}
+	}
+
 	// Parse retry_max
 	if retryMaxStr, exists := config["retry_max"]; exists && retryMaxStr != "" {
 		retryMax, err := strconv.Atoi(retryMaxStr)
@@ -55,7 +65,7 @@ func (r registryProvider) parseConfig(config map[string]string) (*registry.Confi
 }
 
 // New creates a new registry plugin instance.
-func (r registryProvider) New(ctx context.Context, config map[string]string) (definition.RegistryLookup, func() error, error) {
+func (r registryProvider) New(ctx context.Context, cache definition.Cache, config map[string]string) (definition.RegistryLookup, func() error, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("context cannot be nil")
 	}
@@ -69,7 +79,7 @@ func (r registryProvider) New(ctx context.Context, config map[string]string) (de
 
 	log.Debugf(ctx, "Registry config mapped: %+v", registryConfig)
 
-	registryClient, closer, err := newRegistryFunc(ctx, registryConfig)
+	registryClient, closer, err := newRegistryFunc(ctx, cache, registryConfig)
 	if err != nil {
 		log.Errorf(ctx, err, "Failed to create registry instance")
 		return nil, nil, err

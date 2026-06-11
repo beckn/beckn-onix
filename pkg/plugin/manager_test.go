@@ -252,7 +252,7 @@ type mockKeyManagerProvider struct {
 	errFunc    func() error
 }
 
-func (m *mockKeyManagerProvider) New(ctx context.Context, cache definition.Cache, lookup definition.RegistryLookup, config map[string]string) (definition.KeyManager, func() error, error) {
+func (m *mockKeyManagerProvider) New(ctx context.Context, lookup definition.RegistryLookup, config map[string]string) (definition.KeyManager, func() error, error) {
 	if m.err != nil {
 		return nil, nil, m.err
 	}
@@ -1472,12 +1472,11 @@ func TestKeyManagerSuccess(t *testing.T) {
 				closers: []func(){},
 			}
 
-			// Create mock cache and registry lookup.
-			mockCache := &mockCache{}
+			// Create mock registry lookup.
 			mockRegistry := &mockRegistryLookup{}
 
 			// Call KeyManager.
-			keyManager, err := m.KeyManager(context.Background(), mockCache, mockRegistry, tt.cfg)
+			keyManager, err := m.KeyManager(context.Background(), mockRegistry, tt.cfg)
 
 			// Check success case.
 			if err != nil {
@@ -1545,12 +1544,11 @@ func TestKeyManagerFailure(t *testing.T) {
 				}
 			}
 
-			// Create mock cache and registry lookup.
-			mockCache := &mockCache{}
+			// Create mock registry lookup.
 			mockRegistry := &mockRegistryLookup{}
 
 			// Call KeyManager.
-			keyManager, err := m.KeyManager(context.Background(), mockCache, mockRegistry, tt.cfg)
+			keyManager, err := m.KeyManager(context.Background(), mockRegistry, tt.cfg)
 
 			// Check error.
 			if err == nil {
