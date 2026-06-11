@@ -1,6 +1,7 @@
 package schemaversionmediator
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
@@ -46,6 +47,31 @@ func TestWalkPayload_NestedObjects(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected 2 schema objects, got %d", len(got))
 	}
+	assertContainsType(t, got, "Order")
+	assertContainsType(t, got, "Item")
+}
+
+// TestWalkPayload_ParentAndChildBothCollected confirms that when a parent node
+// and a nested child node each carry independent "@context"/"@type" declarations,
+// both are collected — they represent distinct schema contracts.
+func TestWalkPayload_ParentAndChildBothCollected(t *testing.T) {
+	payload := []byte(`{
+		"@context": "https://schema.beckn.io/retail/schema/1.1.0/order.jsonld",
+		"@type": "Order",
+		"fulfillment": {
+			"@context": "https://schema.beckn.io/retail/schema/1.1.0/fulfillment.jsonld",
+			"@type": "Fulfillment"
+		}
+	}`)
+	got, err := WalkPayload(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 schema objects (parent + child), got %d", len(got))
+	}
+	assertContainsType(t, got, "Order")
+	assertContainsType(t, got, "Fulfillment")
 }
 
 func TestWalkPayload_ArrayOfObjects(t *testing.T) {
@@ -112,13 +138,29 @@ func schemaObj(contextURL, typ string) model.SchemaObject {
 	return model.SchemaObject{ContextURL: contextURL, Type: typ}
 }
 
+func TestCheckCompatibility_NilManifest(t *testing.T) {
+	extracted := []model.SchemaObject{
+		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"),
+	}
+	needs, err := CheckCompatibility(extracted, nil)
+	if !errors.Is(err, ErrNoManifest) {
+		t.Fatalf("expected ErrNoManifest, got %v", err)
+	}
+	if needs != nil {
+		t.Errorf("expected nil needs when manifest is absent, got %v", needs)
+	}
+}
+
 func TestCheckCompatibility_AllCompatible(t *testing.T) {
 	extracted := []model.SchemaObject{
 		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"),
 	}
 	m := manifest(schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"))
 
-	needs := CheckCompatibility(extracted, m)
+	needs, err := CheckCompatibility(extracted, m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(needs) != 0 {
 		t.Fatalf("expected no translation needed, got %d", len(needs))
 	}
@@ -130,7 +172,10 @@ func TestCheckCompatibility_VersionMismatch(t *testing.T) {
 	}
 	m := manifest(schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"))
 
-	needs := CheckCompatibility(extracted, m)
+	needs, err := CheckCompatibility(extracted, m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(needs) != 1 {
 		t.Fatalf("expected 1 translation needed, got %d", len(needs))
 	}
@@ -151,7 +196,10 @@ func TestCheckCompatibility_UnknownType(t *testing.T) {
 	}
 	m := manifest(schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"))
 
-	needs := CheckCompatibility(extracted, m)
+	needs, err := CheckCompatibility(extracted, m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(needs) != 1 {
 		t.Fatalf("expected 1 translation needed, got %d", len(needs))
 	}
@@ -162,33 +210,35 @@ func TestCheckCompatibility_UnknownType(t *testing.T) {
 
 func TestCheckCompatibility_MixedOutcomes(t *testing.T) {
 	extracted := []model.SchemaObject{
-		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"),   // compatible
-		schemaObj("https://schema.beckn.io/retail/schema/1.0.0/item.jsonld", "Item"),     // version mismatch
-		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/quote.jsonld", "Quote"),   // unknown type
+		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"),  // compatible
+		schemaObj("https://schema.beckn.io/retail/schema/1.0.0/item.jsonld", "Item"),    // version mismatch
+		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/quote.jsonld", "Quote"), // unknown type
 	}
 	m := manifest(
 		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"),
 		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/item.jsonld", "Item"),
 	)
 
-	needs := CheckCompatibility(extracted, m)
+	needs, err := CheckCompatibility(extracted, m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(needs) != 2 {
 		t.Fatalf("expected 2 translation needs, got %d", len(needs))
 	}
 
-	// Item: version mismatch — To must be set
-	itemNeed := needs[0]
-	if itemNeed.From.Type != "Item" {
-		t.Errorf("expected Item mismatch first, got %s", itemNeed.From.Type)
+	// Assert by type rather than by index — order is an implementation detail.
+	itemNeed := findNeedByType(needs, "Item")
+	if itemNeed == nil {
+		t.Fatal("expected TranslationNeeded entry for Item")
 	}
 	if itemNeed.To == nil {
 		t.Error("expected To to be set for Item version mismatch")
 	}
 
-	// Quote: unknown type — To must be nil
-	quoteNeed := needs[1]
-	if quoteNeed.From.Type != "Quote" {
-		t.Errorf("expected Quote unknown type second, got %s", quoteNeed.From.Type)
+	quoteNeed := findNeedByType(needs, "Quote")
+	if quoteNeed == nil {
+		t.Fatal("expected TranslationNeeded entry for Quote")
 	}
 	if quoteNeed.To != nil {
 		t.Error("expected To to be nil for unknown Quote type")
@@ -201,7 +251,10 @@ func TestCheckCompatibility_EmptyManifest(t *testing.T) {
 	}
 	m := manifest() // no schema objects
 
-	needs := CheckCompatibility(extracted, m)
+	needs, err := CheckCompatibility(extracted, m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(needs) != 1 {
 		t.Fatalf("expected 1 translation needed, got %d", len(needs))
 	}
@@ -211,10 +264,34 @@ func TestCheckCompatibility_EmptyManifest(t *testing.T) {
 }
 
 func TestCheckCompatibility_EmptyPayload(t *testing.T) {
-	needs := CheckCompatibility([]model.SchemaObject{}, manifest(
+	needs, err := CheckCompatibility([]model.SchemaObject{}, manifest(
 		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"),
 	))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(needs) != 0 {
 		t.Fatalf("expected no translation needed for empty payload, got %d", len(needs))
 	}
+}
+
+// --- helpers ---
+
+func assertContainsType(t *testing.T, objects []model.SchemaObject, typ string) {
+	t.Helper()
+	for _, o := range objects {
+		if o.Type == typ {
+			return
+		}
+	}
+	t.Errorf("expected schema object with Type=%q not found in %v", typ, objects)
+}
+
+func findNeedByType(needs []TranslationNeeded, typ string) *TranslationNeeded {
+	for i := range needs {
+		if needs[i].From.Type == typ {
+			return &needs[i]
+		}
+	}
+	return nil
 }

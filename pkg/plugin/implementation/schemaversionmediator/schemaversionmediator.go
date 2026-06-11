@@ -5,10 +5,16 @@ package schemaversionmediator
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 )
+
+// ErrNoManifest is returned by CheckCompatibility when the node manifest is nil.
+// The caller should log a warning and skip mediation — translation targets cannot
+// be determined without a manifest, but the absence of one is not a hard failure.
+var ErrNoManifest = errors.New("schemaversionmediator: node manifest unavailable, skipping mediation")
 
 // TranslationNeeded describes a single schema object from the payload that
 // the local node cannot handle as-is and requires translation.
@@ -24,7 +30,9 @@ type TranslationNeeded struct {
 
 // WalkPayload recursively traverses a JSON payload and returns all schema
 // objects declared via JSON-LD "@context" and "@type" fields. The walk is
-// depth-first and collects every qualifying node regardless of nesting level.
+// depth-first and collects every qualifying node regardless of nesting level,
+// including both a parent node and its nested children when both carry
+// "@context"/"@type" declarations — each is an independent schema contract.
 // The payload is not modified.
 func WalkPayload(payload []byte) ([]model.SchemaObject, error) {
 	var root any
@@ -37,6 +45,9 @@ func WalkPayload(payload []byte) ([]model.SchemaObject, error) {
 }
 
 // walkNode is the recursive descent worker for WalkPayload.
+// When a map node carries both "@context" and "@type" it is collected, then
+// the walk continues into its children — a parent and its nested children may
+// each declare independent schema objects and both are valid collection targets.
 func walkNode(node any, results *[]model.SchemaObject) {
 	switch v := node.(type) {
 	case map[string]any:
@@ -48,7 +59,12 @@ func walkNode(node any, results *[]model.SchemaObject) {
 				})
 			}
 		}
-		for _, child := range v {
+		for key, child := range v {
+			// Skip the JSON-LD marker fields themselves — they are strings and
+			// descending into them is a no-op, but skipping makes intent explicit.
+			if key == "@context" || key == "@type" {
+				continue
+			}
 			walkNode(child, results)
 		}
 	case []any:
@@ -73,13 +89,20 @@ func stringField(m map[string]any, key string) (string, bool) {
 // manifest and returns those that require translation. An empty result means
 // the payload is fully compatible and the mediator can short-circuit.
 //
+// Returns ErrNoManifest if manifest is nil — the caller should log a warning
+// and skip mediation rather than treating this as a hard failure.
+//
 // For each extracted SchemaObject:
 //   - Exact match in manifest → compatible, omitted from result.
 //   - Same Type, different ContextURL → TranslationNeeded with To set to the
 //     locally supported SchemaObject (version the node expects).
 //   - Type absent from manifest entirely → TranslationNeeded with To nil;
 //     handling is delegated to the data-loss policy enforcer.
-func CheckCompatibility(extracted []model.SchemaObject, manifest *model.NodeManifest) []TranslationNeeded {
+func CheckCompatibility(extracted []model.SchemaObject, manifest *model.NodeManifest) ([]TranslationNeeded, error) {
+	if manifest == nil {
+		return nil, ErrNoManifest
+	}
+
 	supported := make(map[string]model.SchemaObject, len(manifest.Schema.SchemaObjects))
 	for _, obj := range manifest.Schema.SchemaObjects {
 		supported[obj.Type] = obj
@@ -99,5 +122,5 @@ func CheckCompatibility(extracted []model.SchemaObject, manifest *model.NodeMani
 		}
 		// Exact match: compatible — no entry added.
 	}
-	return needs
+	return needs, nil
 }
