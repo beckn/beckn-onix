@@ -11,6 +11,84 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
+// PolicyAction defines what the mediator does when schema incompatibility is
+// detected or when a translation attempt fails.
+type PolicyAction string
+
+const (
+	// PolicyActionReject rejects the request immediately with a NACK.
+	PolicyActionReject PolicyAction = "reject"
+	// PolicyActionTranslate attempts translation for each incompatible schema
+	// object. On failure the OnFailure policy applies.
+	PolicyActionTranslate PolicyAction = "translate"
+	// PolicyActionPassIncompatible forwards the request as-is with a structured
+	// log signal indicating which schema objects were not translated.
+	PolicyActionPassIncompatible PolicyAction = "pass_incompatible"
+)
+
+// TranslationPolicy governs mediator behaviour when schema incompatibilities
+// are found. It is loaded from the plugin config map and applied by Mediate.
+//
+// Action is evaluated immediately after CheckCompatibility returns incompatible
+// objects — before any translation is attempted. OnFailure is only consulted
+// when Action is PolicyActionTranslate and the translation attempt fails (no
+// artifact found, or execution error).
+type TranslationPolicy struct {
+	Action    PolicyAction
+	OnFailure PolicyAction
+}
+
+// defaultPolicy is the sentinel default when the operator has not configured a policy.
+// translate/reject is the safest default: attempt translation, hard-fail if
+// it cannot be completed, never silently forward an untranslated payload.
+// Declared as a value (not a pointer) to prevent accidental mutation.
+var defaultPolicy = TranslationPolicy{
+	Action:    PolicyActionTranslate,
+	OnFailure: PolicyActionReject,
+}
+
+// loadTranslationPolicy reads the mediator policy from the plugin config map.
+// Config keys: "action" and "onFailure". Both are optional — absent keys fall
+// back to the default policy (translate/reject).
+//
+// Valid values for action:    reject | translate | pass_incompatible
+// Valid values for onFailure: reject | pass_incompatible (only validated when action=translate;
+// ignored otherwise since no translation is ever attempted)
+// Setting onFailure to "translate" is not permitted — it would cause a loop.
+func loadTranslationPolicy(config map[string]string) (*TranslationPolicy, error) {
+	p := &TranslationPolicy{
+		Action:    defaultPolicy.Action,
+		OnFailure: defaultPolicy.OnFailure,
+	}
+
+	if raw, ok := config["action"]; ok {
+		switch PolicyAction(raw) {
+		case PolicyActionReject, PolicyActionTranslate, PolicyActionPassIncompatible:
+			p.Action = PolicyAction(raw)
+		default:
+			return nil, fmt.Errorf("schemaversionmediator: invalid action %q: must be reject, translate, or pass_incompatible", raw)
+		}
+	}
+
+	// onFailure is only meaningful when action=translate. Validate it only in
+	// that case — silently ignoring it for other actions avoids surprising errors
+	// when operators carry over a stale onFailure key alongside action=reject.
+	if p.Action == PolicyActionTranslate {
+		if raw, ok := config["onFailure"]; ok {
+			switch PolicyAction(raw) {
+			case PolicyActionReject, PolicyActionPassIncompatible:
+				p.OnFailure = PolicyAction(raw)
+			case PolicyActionTranslate:
+				return nil, fmt.Errorf("schemaversionmediator: onFailure cannot be %q — would cause a translation loop", raw)
+			default:
+				return nil, fmt.Errorf("schemaversionmediator: invalid onFailure %q: must be reject or pass_incompatible", raw)
+			}
+		}
+	}
+
+	return p, nil
+}
+
 // ErrNoManifest is returned by CheckCompatibility when the node manifest is nil.
 // The caller should log a warning and skip mediation — translation targets cannot
 // be determined without a manifest, but the absence of one is not a hard failure.
