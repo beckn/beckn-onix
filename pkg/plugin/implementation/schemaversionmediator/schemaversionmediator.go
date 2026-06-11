@@ -4,11 +4,21 @@
 package schemaversionmediator
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"path"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
 // PolicyAction defines what the mediator does when schema incompatibility is
@@ -162,6 +172,271 @@ func stringField(m map[string]any, key string) (string, bool) {
 	s, ok := v.(string)
 	return s, ok && s != ""
 }
+
+// --- Translation map manager ---
+
+// ErrArtifactNotFound is returned by fetchArtifact when no translation artifact
+// exists at the derived URL (HTTP 404). Distinct from transient network errors
+// so the mediation loop can apply OnFailure policy for "map doesn't exist yet"
+// vs "registry unreachable".
+var ErrArtifactNotFound = errors.New("schemaversionmediator: translation artifact not found")
+
+const (
+	defaultFetchTimeout    = 30 * time.Second
+	defaultPositiveTTL     = 24 * time.Hour
+	defaultNegativeTTL     = 5 * time.Minute
+	defaultMaxCacheEntries = 500
+	maxArtifactBodySize    = 1 << 20 // 1 MiB
+)
+
+// httpClientFunc is a package-level variable so tests can inject a custom client
+// without modifying the production code path. Matches manifestloader's pattern.
+var httpClientFunc = func(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout}
+}
+
+// TranslationArtifact holds a fetched translation artifact and the Content-Type
+// returned by the server. ContentType determines which Translator implementation
+// the mediation loop dispatches to (e.g. "application/jsonata").
+type TranslationArtifact struct {
+	Content     []byte
+	ContentType string
+}
+
+// artifactCacheEntry is a single cache slot.
+// artifact == nil marks a negative cache entry (404 remembered).
+type artifactCacheEntry struct {
+	artifact  *TranslationArtifact
+	fetchedAt time.Time
+}
+
+// artifactCache is an in-memory store for translation artifacts with positive
+// and negative TTLs and a bounded size. Entries are evicted FIFO when full.
+type artifactCache struct {
+	mu          sync.RWMutex
+	entries     map[string]*artifactCacheEntry
+	keys        []string // insertion order for FIFO eviction
+	positiveTTL time.Duration
+	negativeTTL time.Duration
+	maxEntries  int
+}
+
+func newArtifactCache(positiveTTL, negativeTTL time.Duration, maxEntries int) *artifactCache {
+	return &artifactCache{
+		entries:     make(map[string]*artifactCacheEntry, maxEntries),
+		positiveTTL: positiveTTL,
+		negativeTTL: negativeTTL,
+		maxEntries:  maxEntries,
+	}
+}
+
+// get returns the cached artifact and whether a valid cache entry was found.
+// artifact == nil with found == true means a valid negative cache entry (404).
+func (c *artifactCache) get(key string) (artifact *TranslationArtifact, found bool) {
+	c.mu.RLock()
+	entry, ok := c.entries[key]
+	c.mu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+	ttl := c.positiveTTL
+	if entry.artifact == nil {
+		ttl = c.negativeTTL
+	}
+	if time.Since(entry.fetchedAt) > ttl {
+		return nil, false
+	}
+	return entry.artifact, true
+}
+
+// set stores an artifact (or nil for a negative cache entry) under key.
+// Evicts the oldest entry when the cache is at capacity.
+func (c *artifactCache) set(key string, artifact *TranslationArtifact) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, exists := c.entries[key]; !exists {
+		if len(c.keys) >= c.maxEntries {
+			oldest := c.keys[0]
+			c.keys = c.keys[1:]
+			delete(c.entries, oldest)
+		}
+		c.keys = append(c.keys, key)
+	}
+	c.entries[key] = &artifactCacheEntry{artifact: artifact, fetchedAt: time.Now()}
+}
+
+// mediator is the runtime state for the SchemaVersionMediator plugin.
+// The Mediate method and provider New function are added in the mediation loop branch.
+type mediator struct {
+	policy     TranslationPolicy
+	loader     definition.ManifestLoader
+	httpClient *http.Client
+	cache      *artifactCache
+}
+
+// fetchArtifact returns the translation artifact for the given TranslationNeeded.
+// The artifact URL is derived from the To context URL base and the From version.
+// Results are cached; 404s are negative-cached to avoid repeated network calls.
+// Retries once on transient failures (5xx, network errors); no retry on 404.
+func (m *mediator) fetchArtifact(ctx context.Context, need TranslationNeeded) (*TranslationArtifact, error) {
+	artifactURL, err := deriveArtifactURL(need)
+	if err != nil {
+		return nil, err
+	}
+
+	if artifact, found := m.cache.get(artifactURL); found {
+		if artifact == nil {
+			return nil, ErrArtifactNotFound
+		}
+		return artifact, nil
+	}
+
+	artifact, err := m.doFetch(ctx, artifactURL)
+	if err != nil {
+		if errors.Is(err, ErrArtifactNotFound) {
+			m.cache.set(artifactURL, nil) // negative cache
+		}
+		return nil, err
+	}
+
+	m.cache.set(artifactURL, artifact)
+	return artifact, nil
+}
+
+// doFetch attempts the HTTP fetch with one retry on transient failure.
+func (m *mediator) doFetch(ctx context.Context, artifactURL string) (*TranslationArtifact, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		artifact, err := m.httpFetch(ctx, artifactURL)
+		if err == nil {
+			return artifact, nil
+		}
+		if errors.Is(err, ErrArtifactNotFound) {
+			return nil, err // permanent — no retry
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+// httpFetch performs a single HTTP GET for the artifact URL.
+func (m *mediator) httpFetch(ctx context.Context, artifactURL string) (*TranslationArtifact, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, artifactURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("schemaversionmediator: build request for %q: %w", artifactURL, err)
+	}
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("schemaversionmediator: fetch artifact %q: %w", artifactURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrArtifactNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("schemaversionmediator: artifact %q: unexpected status %d", artifactURL, resp.StatusCode)
+	}
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		return nil, fmt.Errorf("schemaversionmediator: artifact %q: missing Content-Type header", artifactURL)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxArtifactBodySize))
+	if err != nil {
+		return nil, fmt.Errorf("schemaversionmediator: read artifact %q: %w", artifactURL, err)
+	}
+	if len(body) == 0 {
+		return nil, fmt.Errorf("schemaversionmediator: artifact %q: empty response body", artifactURL)
+	}
+	return &TranslationArtifact{Content: body, ContentType: contentType}, nil
+}
+
+// deriveArtifactURL constructs the translation artifact URL from a TranslationNeeded.
+// Convention: {directory of To.ContextURL}/{From.Type}_from_{fromVersion}
+// Example: https://schema.beckn.io/retail/v2.0/Order_from_v1.1
+func deriveArtifactURL(need TranslationNeeded) (string, error) {
+	if need.To == nil {
+		return "", fmt.Errorf("schemaversionmediator: cannot derive artifact URL for unknown schema type %q (To is nil)", need.From.Type)
+	}
+	toURL, err := url.Parse(need.To.ContextURL)
+	if err != nil {
+		return "", fmt.Errorf("schemaversionmediator: invalid To context URL %q: %w", need.To.ContextURL, err)
+	}
+	fromVersion, err := extractVersionSegment(need.From.ContextURL)
+	if err != nil {
+		return "", err
+	}
+	base := toURL.Scheme + "://" + toURL.Host + path.Dir(toURL.Path)
+	return base + "/" + need.From.Type + "_from_" + fromVersion, nil
+}
+
+// extractVersionSegment walks the path segments of a context URL and returns
+// the first version identifier (e.g. "v1.1" from ".../retail/v1.1/Order.jsonld").
+func extractVersionSegment(contextURL string) (string, error) {
+	u, err := url.Parse(contextURL)
+	if err != nil {
+		return "", fmt.Errorf("schemaversionmediator: invalid context URL %q: %w", contextURL, err)
+	}
+	for _, seg := range strings.Split(strings.Trim(u.Path, "/"), "/") {
+		if isVersionSegment(seg) {
+			return seg, nil
+		}
+	}
+	return "", fmt.Errorf("schemaversionmediator: no version segment found in context URL %q", contextURL)
+}
+
+// isVersionSegment returns true for path segments that are version identifiers
+// (e.g. "v1.1", "v2.0", "1.0"). Replicates schemav2validator's convention.
+func isVersionSegment(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	check := s
+	if check[0] == 'v' || check[0] == 'V' {
+		check = check[1:]
+	}
+	if len(check) == 0 {
+		return false
+	}
+	for _, c := range check {
+		if c != '.' && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// loadMapManagerConfig parses map manager config keys from the plugin config map.
+func loadMapManagerConfig(config map[string]string) (fetchTimeout, positiveTTL, negativeTTL time.Duration, maxEntries int, err error) {
+	fetchTimeout = defaultFetchTimeout
+	positiveTTL = defaultPositiveTTL
+	negativeTTL = defaultNegativeTTL
+	maxEntries = defaultMaxCacheEntries
+
+	if v, ok := config["fetchTimeout"]; ok {
+		if fetchTimeout, err = time.ParseDuration(v); err != nil {
+			return 0, 0, 0, 0, fmt.Errorf("schemaversionmediator: invalid fetchTimeout %q: %w", v, err)
+		}
+	}
+	if v, ok := config["artifactCacheTTL"]; ok {
+		if positiveTTL, err = time.ParseDuration(v); err != nil {
+			return 0, 0, 0, 0, fmt.Errorf("schemaversionmediator: invalid artifactCacheTTL %q: %w", v, err)
+		}
+	}
+	if v, ok := config["negativeCacheTTL"]; ok {
+		if negativeTTL, err = time.ParseDuration(v); err != nil {
+			return 0, 0, 0, 0, fmt.Errorf("schemaversionmediator: invalid negativeCacheTTL %q: %w", v, err)
+		}
+	}
+	if v, ok := config["maxCacheEntries"]; ok {
+		if maxEntries, err = strconv.Atoi(v); err != nil || maxEntries <= 0 {
+			return 0, 0, 0, 0, fmt.Errorf("schemaversionmediator: invalid maxCacheEntries %q: must be a positive integer", v)
+		}
+	}
+	return
+}
+
+// --- CheckCompatibility ---
 
 // CheckCompatibility compares extracted schema objects against the local node
 // manifest and returns those that require translation. An empty result means
