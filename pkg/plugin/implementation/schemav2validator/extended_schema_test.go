@@ -415,6 +415,24 @@ func TestIsAllowedDomain(t *testing.T) {
 			allowedDomains: []string{"githubusercontent.com"},
 			want:           true,
 		},
+		{
+			name:           "fragment injection bypass attempt",
+			schemaURL:      "file:///dev/zero#raw.githubusercontent.com",
+			allowedDomains: []string{"raw.githubusercontent.com"},
+			want:           false,
+		},
+		{
+			name:           "file scheme with no host is denied when allowlist set",
+			schemaURL:      "file:///etc/passwd",
+			allowedDomains: []string{"raw.githubusercontent.com"},
+			want:           false,
+		},
+		{
+			name:           "file scheme allowed when no allowlist",
+			schemaURL:      "file:///local/schema.yaml",
+			allowedDomains: []string{},
+			want:           true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -675,6 +693,42 @@ func TestValidateReferencedObject_DomainNotAllowed(t *testing.T) {
 	err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, allowedDomains, false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "domain not allowed")
+}
+
+func TestValidateReferencedObject_NonHttpSchemeRejectedWhenAllowlistSet(t *testing.T) {
+	tests := []struct {
+		name    string
+		context string
+	}{
+		{
+			name:    "file scheme with fragment bypass",
+			context: "file:///dev/zero#raw.githubusercontent.com",
+		},
+		{
+			name:    "file scheme local path",
+			context: "file:///etc/passwd",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := newSchemaCache(10)
+			ctx := context.Background()
+
+			obj := referencedObject{
+				Path:    "message.test",
+				Context: tt.context,
+				Type:    "Dos",
+				Data:    map[string]interface{}{},
+			}
+
+			allowedDomains := []string{"raw.githubusercontent.com"}
+
+			err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, allowedDomains, false)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid scheme in @context")
+		})
+	}
 }
 
 func TestValidateExtendedSchemas_NoObjects(t *testing.T) {
