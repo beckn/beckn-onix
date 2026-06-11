@@ -41,9 +41,8 @@ func (v *validator) Validate(ctx context.Context, body []byte, header string, pu
 		return fmt.Errorf("error decoding signature: %w", err)
 	}
 
-	currentTime := time.Now().Unix()
-	if createdTimestamp > currentTime || currentTime > expiredTimestamp {
-		return model.NewSignValidationErr(fmt.Errorf("signature is expired or not yet valid"))
+	if err := checkTimestampWindow("signature", createdTimestamp, expiredTimestamp); err != nil {
+		return err
 	}
 
 	createdTime := time.Unix(createdTimestamp, 0)
@@ -121,9 +120,8 @@ func (v *validator) ValidateAck(ctx context.Context, ackBody []byte, signatureHe
 		return fmt.Errorf("error decoding signature: %w", err)
 	}
 
-	currentTime := time.Now().Unix()
-	if createdTimestamp > currentTime || currentTime > expiredTimestamp {
-		return model.NewSignValidationErr(fmt.Errorf("AckSignature is expired or not yet valid"))
+	if err := checkTimestampWindow("AckSignature", createdTimestamp, expiredTimestamp); err != nil {
+		return err
 	}
 
 	signingString := hashAck(ackBody, createdTimestamp, expiredTimestamp, outboundAuthSignature)
@@ -137,6 +135,31 @@ func (v *validator) ValidateAck(ctx context.Context, ackBody []byte, signatureHe
 		return model.NewSignValidationErr(fmt.Errorf("AckSignature verification failed"))
 	}
 
+	return nil
+}
+
+// checkTimestampWindow validates that the current server time falls within
+// [created, expires]. prefix ("signature" or "AckSignature") is used in the
+// error message to distinguish the two callers in logs.
+func checkTimestampWindow(prefix string, createdTimestamp, expiredTimestamp int64) error {
+	now := time.Now().UTC()
+	current := now.Unix()
+	if createdTimestamp > current {
+		return model.NewSignValidationErr(fmt.Errorf("%s not yet valid: created=%s, server_time=%s, delta=%ds",
+			prefix,
+			time.Unix(createdTimestamp, 0).UTC().Format(time.RFC3339),
+			now.Format(time.RFC3339),
+			createdTimestamp-current,
+		))
+	}
+	if current > expiredTimestamp {
+		return model.NewSignValidationErr(fmt.Errorf("%s expired: expires=%s, server_time=%s, expired_by=%ds",
+			prefix,
+			time.Unix(expiredTimestamp, 0).UTC().Format(time.RFC3339),
+			now.Format(time.RFC3339),
+			current-expiredTimestamp,
+		))
+	}
 	return nil
 }
 

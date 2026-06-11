@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -72,10 +73,11 @@ func TestVerifyFailure(t *testing.T) {
 	_, wrongPublicKeyBase64 := generateTestKeyPair()
 
 	tests := []struct {
-		name   string
-		body   []byte
-		header string
-		pubKey string
+		name        string
+		body        []byte
+		header      string
+		pubKey      string
+		errContains string
 	}{
 		{
 			name:   "Missing Authorization Header",
@@ -119,7 +121,8 @@ func TestVerifyFailure(t *testing.T) {
 			header: `Signature algorithm="ed25519", created="` + strconv.FormatInt(time.Now().Unix()-7200, 10) +
 				`", expires="` + strconv.FormatInt(time.Now().Unix()-3600, 10) +
 				`", signature="` + signTestData(privateKeyBase64, []byte("Test Payload"), time.Now().Unix()-7200, time.Now().Unix()-3600) + `"`,
-			pubKey: publicKeyBase64,
+			pubKey:      publicKeyBase64,
+			errContains: "expired_by=",
 		},
 		{
 			name: "Invalid Public Key",
@@ -152,6 +155,9 @@ func TestVerifyFailure(t *testing.T) {
 
 			if err == nil {
 				t.Fatal("Expected an error but got none")
+			}
+			if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+				t.Fatalf("Expected error to contain %q, got: %v", tt.errContains, err)
 			}
 			if close != nil {
 				if err := close(); err != nil {
