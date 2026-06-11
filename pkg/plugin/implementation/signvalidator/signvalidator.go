@@ -42,8 +42,19 @@ func (v *validator) Validate(ctx context.Context, body []byte, header string, pu
 	}
 
 	currentTime := time.Now().Unix()
-	if createdTimestamp > currentTime || currentTime > expiredTimestamp {
-		return model.NewSignValidationErr(fmt.Errorf("signature is expired or not yet valid"))
+	if createdTimestamp > currentTime {
+		return model.NewSignValidationErr(fmt.Errorf("signature not yet valid: created=%s, server_time=%s, delta=%ds",
+			time.Unix(createdTimestamp, 0).UTC().Format(time.RFC3339),
+			time.Unix(currentTime, 0).UTC().Format(time.RFC3339),
+			createdTimestamp-currentTime,
+		))
+	}
+	if currentTime > expiredTimestamp {
+		return model.NewSignValidationErr(fmt.Errorf("signature expired: expires=%s, server_time=%s, expired_by=%ds",
+			time.Unix(expiredTimestamp, 0).UTC().Format(time.RFC3339),
+			time.Unix(currentTime, 0).UTC().Format(time.RFC3339),
+			currentTime-expiredTimestamp,
+		))
 	}
 
 	createdTime := time.Unix(createdTimestamp, 0)
@@ -122,8 +133,19 @@ func (v *validator) ValidateAck(ctx context.Context, ackBody []byte, signatureHe
 	}
 
 	currentTime := time.Now().Unix()
-	if createdTimestamp > currentTime || currentTime > expiredTimestamp {
-		return model.NewSignValidationErr(fmt.Errorf("AckSignature is expired or not yet valid"))
+	if createdTimestamp > currentTime {
+		return model.NewSignValidationErr(fmt.Errorf("AckSignature not yet valid: created=%s, server_time=%s, delta=%ds",
+			time.Unix(createdTimestamp, 0).UTC().Format(time.RFC3339),
+			time.Unix(currentTime, 0).UTC().Format(time.RFC3339),
+			createdTimestamp-currentTime,
+		))
+	}
+	if currentTime > expiredTimestamp {
+		return model.NewSignValidationErr(fmt.Errorf("AckSignature expired: expires=%s, server_time=%s, expired_by=%ds",
+			time.Unix(expiredTimestamp, 0).UTC().Format(time.RFC3339),
+			time.Unix(currentTime, 0).UTC().Format(time.RFC3339),
+			currentTime-expiredTimestamp,
+		))
 	}
 
 	signingString := hashAck(ackBody, createdTimestamp, expiredTimestamp, outboundAuthSignature)
