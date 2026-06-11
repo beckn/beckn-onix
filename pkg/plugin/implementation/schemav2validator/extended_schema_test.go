@@ -1123,6 +1123,48 @@ components:
 	assert.NoError(t, err)
 }
 
+func TestValidateReferencedObject_AllowlistedHttpsURLPasses(t *testing.T) {
+	schemaContent := `openapi: 3.1.0
+info:
+  title: Test Schema
+  version: 1.0.0
+components:
+  schemas:
+    TestType:
+      type: object
+      additionalProperties: false
+      x-jsonld:
+        "@context": ./context.jsonld
+        "@type": TestType
+      properties:
+        field1:
+          type: string
+      required:
+        - field1`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(schemaContent))
+	}))
+	defer server.Close()
+
+	// Extract just the host (e.g. "127.0.0.1:PORT") and add it to the allowlist.
+	serverURL, _ := url.Parse(server.URL)
+	allowedDomains := []string{serverURL.Host}
+
+	cache := newSchemaCache(10)
+	ctx := context.Background()
+
+	obj := referencedObject{
+		Path:    "message.test",
+		Context: server.URL + "/schema/context.jsonld",
+		Type:    "TestType",
+		Data:    map[string]interface{}{"field1": "value1"},
+	}
+
+	err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, allowedDomains, false)
+	assert.NoError(t, err, "valid http URL with allowlisted host should pass")
+}
+
 func TestLoadSchemaFromPath_TTLExpiry_FetchesFresh(t *testing.T) {
 	var serveV2 atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
