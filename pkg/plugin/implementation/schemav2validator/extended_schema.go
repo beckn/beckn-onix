@@ -488,7 +488,11 @@ func isAllowedDomain(schemaURL string, allowedDomains []string) bool {
 		return false // unparseable or no host (file://, bare path) → deny
 	}
 	for _, domain := range allowedDomains {
-		if strings.Contains(u.Host, domain) {
+		domain = strings.TrimSpace(domain)
+		if domain == "" {
+			continue
+		}
+		if u.Host == domain || strings.HasSuffix(u.Host, "."+domain) {
 			return true
 		}
 	}

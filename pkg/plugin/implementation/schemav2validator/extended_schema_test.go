@@ -410,9 +410,39 @@ func TestIsAllowedDomain(t *testing.T) {
 			want:           false,
 		},
 		{
-			name:           "partial domain match",
+			name:           "exact domain match",
+			schemaURL:      "https://raw.githubusercontent.com/beckn/schema.yaml",
+			allowedDomains: []string{"raw.githubusercontent.com"},
+			want:           true,
+		},
+		{
+			name:           "legitimate subdomain passes",
 			schemaURL:      "https://raw.githubusercontent.com/beckn/schema.yaml",
 			allowedDomains: []string{"githubusercontent.com"},
+			want:           true,
+		},
+		{
+			name:           "prefix bypass blocked - evil-beckn.io vs beckn.io",
+			schemaURL:      "https://evil-beckn.io/schema.yaml",
+			allowedDomains: []string{"beckn.io"},
+			want:           false,
+		},
+		{
+			name:           "suffix bypass blocked - beckn.io.evil.com vs beckn.io",
+			schemaURL:      "https://beckn.io.evil.com/schema.yaml",
+			allowedDomains: []string{"beckn.io"},
+			want:           false,
+		},
+		{
+			name:           "substring bypass blocked - notraw.githubusercontent.com vs raw.githubusercontent.com",
+			schemaURL:      "https://notraw.githubusercontent.com/schema.yaml",
+			allowedDomains: []string{"raw.githubusercontent.com"},
+			want:           false,
+		},
+		{
+			name:           "allowlist entry with leading/trailing spaces",
+			schemaURL:      "https://raw.githubusercontent.com/beckn/schema.yaml",
+			allowedDomains: []string{"  raw.githubusercontent.com  "},
 			want:           true,
 		},
 		{
