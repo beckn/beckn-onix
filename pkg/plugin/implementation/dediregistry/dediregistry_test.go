@@ -845,4 +845,32 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 			t.Errorf("unexpected result: %+v", results)
 		}
 	})
+
+	t.Run("corrupt cache value falls through to HTTP", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(dediLookupResponse(0))
+		}))
+		defer server.Close()
+
+		cache := &mockCache{
+			getFunc: func(ctx context.Context, key string) (string, error) {
+				return "this is not valid json{{{{", nil
+			},
+		}
+		client, closer, err := New(ctx, cache, &Config{URL: server.URL})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		results, err := client.Lookup(ctx, sub)
+		if err != nil {
+			t.Fatalf("Lookup() unexpected error: %v", err)
+		}
+		if len(results) != 1 || results[0].SigningPublicKey != "test-signing-key" {
+			t.Errorf("expected HTTP result after corrupt cache, got %+v", results)
+		}
+	})
 }

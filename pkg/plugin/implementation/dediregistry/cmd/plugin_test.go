@@ -148,6 +148,38 @@ func TestDediRegistryProvider_ParseConfig_InvalidConfig(t *testing.T) {
 	}
 }
 
+// TestDediRegistryProvider_ParseConfig_CacheTTL verifies that cacheTTL is parsed correctly
+// and that an invalid value warns but does not return an error (warn-and-ignore semantics).
+func TestDediRegistryProvider_ParseConfig_CacheTTL(t *testing.T) {
+	provider := dediRegistryProvider{}
+
+	t.Run("valid cacheTTL is parsed and set", func(t *testing.T) {
+		cfg, err := provider.parseConfig(map[string]string{
+			"url":      "https://test.com/dedi",
+			"cacheTTL": "15m",
+		})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if cfg.CacheTTL != 15*time.Minute {
+			t.Errorf("expected CacheTTL 15m, got %v", cfg.CacheTTL)
+		}
+	})
+
+	t.Run("invalid cacheTTL warns and leaves CacheTTL zero", func(t *testing.T) {
+		cfg, err := provider.parseConfig(map[string]string{
+			"url":      "https://test.com/dedi",
+			"cacheTTL": "not-a-duration",
+		})
+		if err != nil {
+			t.Fatalf("expected no error (warn-and-ignore), got %v", err)
+		}
+		if cfg.CacheTTL != 0 {
+			t.Errorf("expected CacheTTL 0 (will use defaultCacheTTL), got %v", cfg.CacheTTL)
+		}
+	})
+}
+
 func TestDediRegistryProvider_New_InvalidRetryConfig(t *testing.T) {
 	provider := dediRegistryProvider{}
 

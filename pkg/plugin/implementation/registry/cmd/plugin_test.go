@@ -121,6 +121,49 @@ func TestRegistryProvider_ParseConfig(t *testing.T) {
 	}
 }
 
+// TestRegistryProvider_ParseConfig_CacheTTL verifies that cacheTTL is parsed correctly
+// and that an invalid value warns but does not return an error (warn-and-ignore semantics).
+func TestRegistryProvider_ParseConfig_CacheTTL(t *testing.T) {
+	t.Parallel()
+	provider := registryProvider{}
+
+	t.Run("valid cacheTTL is parsed and set", func(t *testing.T) {
+		cfg, err := provider.parseConfig(map[string]string{
+			"url":      "http://test.com",
+			"cacheTTL": "10m",
+		})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if cfg.CacheTTL != 10*time.Minute {
+			t.Errorf("expected CacheTTL 10m, got %v", cfg.CacheTTL)
+		}
+	})
+
+	t.Run("invalid cacheTTL warns and leaves CacheTTL zero", func(t *testing.T) {
+		cfg, err := provider.parseConfig(map[string]string{
+			"url":      "http://test.com",
+			"cacheTTL": "not-a-duration",
+		})
+		if err != nil {
+			t.Fatalf("expected no error (warn-and-ignore), got %v", err)
+		}
+		if cfg.CacheTTL != 0 {
+			t.Errorf("expected CacheTTL 0 (will use defaultCacheTTL), got %v", cfg.CacheTTL)
+		}
+	})
+
+	t.Run("absent cacheTTL leaves CacheTTL zero", func(t *testing.T) {
+		cfg, err := provider.parseConfig(map[string]string{"url": "http://test.com"})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if cfg.CacheTTL != 0 {
+			t.Errorf("expected CacheTTL 0, got %v", cfg.CacheTTL)
+		}
+	})
+}
+
 // TestRegistryProvider_New tests the plugin's main constructor.
 func TestRegistryProvider_New(t *testing.T) {
 	t.Parallel()
