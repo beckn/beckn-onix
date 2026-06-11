@@ -340,6 +340,24 @@ func TestLoadTranslationPolicy_OnFailureTranslateRejected(t *testing.T) {
 	}
 }
 
+func TestLoadTranslationPolicy_OnFailureIgnoredWhenActionNotTranslate(t *testing.T) {
+	// onFailure is meaningless when action=reject or pass_incompatible.
+	// A stale/invalid onFailure key must not produce an error in those cases.
+	for _, action := range []PolicyAction{PolicyActionReject, PolicyActionPassIncompatible} {
+		p, err := loadTranslationPolicy(map[string]string{
+			"action":    string(action),
+			"onFailure": "unknown_value",
+		})
+		if err != nil {
+			t.Errorf("action=%q: expected no error for stale onFailure key, got %v", action, err)
+			continue
+		}
+		if p.Action != action {
+			t.Errorf("action=%q: got %q", action, p.Action)
+		}
+	}
+}
+
 // --- helpers ---
 
 func assertContainsType(t *testing.T, objects []model.SchemaObject, typ string) {

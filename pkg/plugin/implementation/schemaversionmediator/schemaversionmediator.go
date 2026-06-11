@@ -38,10 +38,11 @@ type TranslationPolicy struct {
 	OnFailure PolicyAction
 }
 
-// defaultPolicy is returned when the operator has not configured a policy.
+// defaultPolicy is the sentinel default when the operator has not configured a policy.
 // translate/reject is the safest default: attempt translation, hard-fail if
 // it cannot be completed, never silently forward an untranslated payload.
-var defaultPolicy = &TranslationPolicy{
+// Declared as a value (not a pointer) to prevent accidental mutation.
+var defaultPolicy = TranslationPolicy{
 	Action:    PolicyActionTranslate,
 	OnFailure: PolicyActionReject,
 }
@@ -50,8 +51,9 @@ var defaultPolicy = &TranslationPolicy{
 // Config keys: "action" and "onFailure". Both are optional — absent keys fall
 // back to the default policy (translate/reject).
 //
-// Valid values for action:   reject | translate | pass_incompatible
-// Valid values for onFailure: reject | pass_incompatible
+// Valid values for action:    reject | translate | pass_incompatible
+// Valid values for onFailure: reject | pass_incompatible (only validated when action=translate;
+// ignored otherwise since no translation is ever attempted)
 // Setting onFailure to "translate" is not permitted — it would cause a loop.
 func loadTranslationPolicy(config map[string]string) (*TranslationPolicy, error) {
 	p := &TranslationPolicy{
@@ -68,14 +70,19 @@ func loadTranslationPolicy(config map[string]string) (*TranslationPolicy, error)
 		}
 	}
 
-	if raw, ok := config["onFailure"]; ok {
-		switch PolicyAction(raw) {
-		case PolicyActionReject, PolicyActionPassIncompatible:
-			p.OnFailure = PolicyAction(raw)
-		case PolicyActionTranslate:
-			return nil, fmt.Errorf("schemaversionmediator: onFailure cannot be %q — would cause a translation loop", raw)
-		default:
-			return nil, fmt.Errorf("schemaversionmediator: invalid onFailure %q: must be reject or pass_incompatible", raw)
+	// onFailure is only meaningful when action=translate. Validate it only in
+	// that case — silently ignoring it for other actions avoids surprising errors
+	// when operators carry over a stale onFailure key alongside action=reject.
+	if p.Action == PolicyActionTranslate {
+		if raw, ok := config["onFailure"]; ok {
+			switch PolicyAction(raw) {
+			case PolicyActionReject, PolicyActionPassIncompatible:
+				p.OnFailure = PolicyAction(raw)
+			case PolicyActionTranslate:
+				return nil, fmt.Errorf("schemaversionmediator: onFailure cannot be %q — would cause a translation loop", raw)
+			default:
+				return nil, fmt.Errorf("schemaversionmediator: invalid onFailure %q: must be reject or pass_incompatible", raw)
+			}
 		}
 	}
 
