@@ -377,9 +377,11 @@ func TestIsVersionSegment(t *testing.T) {
 		{"retail", false},
 		{"", false},
 		{"v", false},
-		{"2", false},   // bare number with no dot must not match
-		{"v2", false},  // bare number with v prefix, no dot
-		{"v.", false},  // dot but no digits
+		{"2", false},    // bare number with no dot must not match
+		{"v2", false},   // bare number with v prefix, no dot
+		{"v.", false},   // dot but no digits
+		{"v1.", false},  // trailing dot — digits only before dot
+		{"1.", false},   // trailing dot without v prefix
 		{"vX.Y", false},
 		{"order.jsonld", false},
 	}

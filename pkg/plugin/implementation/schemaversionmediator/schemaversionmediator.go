@@ -246,7 +246,10 @@ func (c *artifactCache) get(key string) (artifact *TranslationArtifact, found bo
 	}
 	if time.Since(entry.fetchedAt) > ttl {
 		c.mu.Lock()
-		delete(c.entries, key)
+		// Re-check under write lock: another goroutine may have refreshed the entry.
+		if e, ok := c.entries[key]; ok && time.Since(e.fetchedAt) > ttl {
+			delete(c.entries, key)
+		}
 		c.mu.Unlock()
 		return nil, false
 	}
@@ -410,8 +413,10 @@ func isVersionSegment(s string) bool {
 	if len(check) == 0 {
 		return false
 	}
+	if check[0] == '.' || check[len(check)-1] == '.' {
+		return false
+	}
 	hasDot := false
-	hasDigit := false
 	for _, c := range check {
 		if c == '.' {
 			hasDot = true
@@ -420,9 +425,8 @@ func isVersionSegment(s string) bool {
 		if c < '0' || c > '9' {
 			return false
 		}
-		hasDigit = true
 	}
-	return hasDot && hasDigit
+	return hasDot
 }
 
 // loadMapManagerConfig parses map manager config keys from the plugin config map.
