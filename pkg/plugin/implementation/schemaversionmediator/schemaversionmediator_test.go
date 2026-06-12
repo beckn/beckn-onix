@@ -1,8 +1,12 @@
 package schemaversionmediator
 
 import (
+	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 )
@@ -355,6 +359,416 @@ func TestLoadTranslationPolicy_OnFailureIgnoredWhenActionNotTranslate(t *testing
 		if p.Action != action {
 			t.Errorf("action=%q: got %q", action, p.Action)
 		}
+	}
+}
+
+// --- isVersionSegment tests ---
+
+func TestIsVersionSegment(t *testing.T) {
+	cases := []struct {
+		input string
+		want  bool
+	}{
+		{"v1.1", true},
+		{"v2.0", true},
+		{"V1.0", true},
+		{"1.0", true},
+		{"1.0.0", true},
+		{"retail", false},
+		{"", false},
+		{"v", false},
+		{"2", false},    // bare number with no dot must not match
+		{"v2", false},   // bare number with v prefix, no dot
+		{"v.", false},   // dot but no digits
+		{"v1.", false},  // trailing dot — digits only before dot
+		{"1.", false},   // trailing dot without v prefix
+		{"vX.Y", false},
+		{"order.jsonld", false},
+	}
+	for _, c := range cases {
+		if got := isVersionSegment(c.input); got != c.want {
+			t.Errorf("isVersionSegment(%q) = %v, want %v", c.input, got, c.want)
+		}
+	}
+}
+
+// --- extractVersionSegment tests ---
+
+func TestExtractVersionSegment_Valid(t *testing.T) {
+	got, err := extractVersionSegment("https://schema.beckn.io/retail/v1.1/Order.jsonld")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "v1.1" {
+		t.Errorf("expected v1.1, got %q", got)
+	}
+}
+
+func TestExtractVersionSegment_NoVersion(t *testing.T) {
+	_, err := extractVersionSegment("https://schema.beckn.io/retail/Order.jsonld")
+	if err == nil {
+		t.Fatal("expected error for URL with no version segment")
+	}
+}
+
+func TestExtractVersionSegment_InvalidURL(t *testing.T) {
+	_, err := extractVersionSegment("://bad url")
+	if err == nil {
+		t.Fatal("expected error for invalid URL")
+	}
+}
+
+// --- deriveArtifactURL tests ---
+
+func TestDeriveArtifactURL_Valid(t *testing.T) {
+	need := TranslationNeeded{
+		From: model.SchemaObject{ContextURL: "https://schema.beckn.io/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:   &model.SchemaObject{ContextURL: "https://schema.beckn.io/retail/v2.0/Order.jsonld", Type: "Order"},
+	}
+	got, err := deriveArtifactURL(need)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "https://schema.beckn.io/retail/v2.0/Order_from_v1.1"
+	if got != want {
+		t.Errorf("expected %q, got %q", want, got)
+	}
+}
+
+func TestDeriveArtifactURL_NilTo(t *testing.T) {
+	need := TranslationNeeded{
+		From: model.SchemaObject{ContextURL: "https://schema.beckn.io/retail/v1.1/Order.jsonld", Type: "Order"},
+	}
+	_, err := deriveArtifactURL(need)
+	if err == nil {
+		t.Fatal("expected error when To is nil")
+	}
+}
+
+func TestDeriveArtifactURL_NoVersionInFrom(t *testing.T) {
+	need := TranslationNeeded{
+		From: model.SchemaObject{ContextURL: "https://schema.beckn.io/retail/Order.jsonld", Type: "Order"},
+		To:   &model.SchemaObject{ContextURL: "https://schema.beckn.io/retail/v2.0/Order.jsonld", Type: "Order"},
+	}
+	_, err := deriveArtifactURL(need)
+	if err == nil {
+		t.Fatal("expected error when From URL has no version segment")
+	}
+}
+
+// --- artifactCache tests ---
+
+func TestArtifactCache_Miss(t *testing.T) {
+	c := newArtifactCache(time.Hour, time.Minute, 10)
+	_, found := c.get("missing")
+	if found {
+		t.Error("expected cache miss")
+	}
+}
+
+func TestArtifactCache_PositiveHit(t *testing.T) {
+	c := newArtifactCache(time.Hour, time.Minute, 10)
+	artifact := &TranslationArtifact{Content: []byte("expr"), ContentType: "application/jsonata"}
+	c.set("key", artifact)
+	got, found := c.get("key")
+	if !found {
+		t.Fatal("expected cache hit")
+	}
+	if got != artifact {
+		t.Error("unexpected artifact returned")
+	}
+}
+
+func TestArtifactCache_NegativeHit(t *testing.T) {
+	c := newArtifactCache(time.Hour, time.Minute, 10)
+	c.set("key", nil)
+	got, found := c.get("key")
+	if !found {
+		t.Fatal("expected negative cache hit")
+	}
+	if got != nil {
+		t.Error("expected nil artifact for negative entry")
+	}
+}
+
+func TestArtifactCache_PositiveExpiry(t *testing.T) {
+	c := newArtifactCache(time.Millisecond, time.Minute, 10)
+	c.set("key", &TranslationArtifact{Content: []byte("x"), ContentType: "application/jsonata"})
+	time.Sleep(5 * time.Millisecond)
+	_, found := c.get("key")
+	if found {
+		t.Error("expected expired positive entry to be a miss")
+	}
+}
+
+func TestArtifactCache_NegativeExpiry(t *testing.T) {
+	c := newArtifactCache(time.Hour, time.Millisecond, 10)
+	c.set("key", nil)
+	time.Sleep(5 * time.Millisecond)
+	_, found := c.get("key")
+	if found {
+		t.Error("expected expired negative entry to be a miss")
+	}
+}
+
+func TestArtifactCache_Eviction(t *testing.T) {
+	c := newArtifactCache(time.Hour, time.Minute, 2)
+	a := &TranslationArtifact{Content: []byte("a"), ContentType: "application/jsonata"}
+	c.set("first", a)
+	c.set("second", a)
+	c.set("third", a) // should evict "first"
+	_, found := c.get("first")
+	if found {
+		t.Error("expected first entry to be evicted")
+	}
+	if _, found := c.get("third"); !found {
+		t.Error("expected third entry to be present")
+	}
+}
+
+// --- fetchArtifact tests ---
+
+func TestFetchArtifact_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/jsonata")
+		w.Write([]byte(`$.orderId`))
+	}))
+	defer srv.Close()
+
+	m := &mediator{
+		httpClient: srv.Client(),
+		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+	}
+
+	need := TranslationNeeded{
+		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+	}
+
+	got, err := m.fetchArtifact(context.Background(), need)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ContentType != "application/jsonata" {
+		t.Errorf("unexpected ContentType: %s", got.ContentType)
+	}
+	if string(got.Content) != `$.orderId` {
+		t.Errorf("unexpected Content: %s", got.Content)
+	}
+}
+
+func TestFetchArtifact_MissingContentType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Suppress Go's content-type sniffing by setting it explicitly to "".
+		w.Header()["Content-Type"] = []string{""}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`$.orderId`))
+	}))
+	defer srv.Close()
+
+	m := &mediator{
+		httpClient: srv.Client(),
+		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+	}
+	need := TranslationNeeded{
+		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+	}
+
+	_, err := m.fetchArtifact(context.Background(), need)
+	if err == nil {
+		t.Fatal("expected error when Content-Type header is absent")
+	}
+}
+
+func TestFetchArtifact_CacheHit(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/jsonata")
+		w.Write([]byte(`$.id`))
+	}))
+	defer srv.Close()
+
+	m := &mediator{
+		httpClient: srv.Client(),
+		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+	}
+	need := TranslationNeeded{
+		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+	}
+
+	m.fetchArtifact(context.Background(), need)
+	m.fetchArtifact(context.Background(), need)
+
+	if calls != 1 {
+		t.Errorf("expected 1 HTTP call due to caching, got %d", calls)
+	}
+}
+
+func TestFetchArtifact_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	m := &mediator{
+		httpClient: srv.Client(),
+		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+	}
+	need := TranslationNeeded{
+		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+	}
+
+	_, err := m.fetchArtifact(context.Background(), need)
+	if !errors.Is(err, ErrArtifactNotFound) {
+		t.Fatalf("expected ErrArtifactNotFound, got %v", err)
+	}
+}
+
+func TestFetchArtifact_NegativeCached(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	m := &mediator{
+		httpClient: srv.Client(),
+		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+	}
+	need := TranslationNeeded{
+		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+	}
+
+	m.fetchArtifact(context.Background(), need)
+	_, err := m.fetchArtifact(context.Background(), need)
+
+	if !errors.Is(err, ErrArtifactNotFound) {
+		t.Fatalf("expected ErrArtifactNotFound, got %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("expected 1 HTTP call (second should hit negative cache), got %d", calls)
+	}
+}
+
+func TestFetchArtifact_RetryOnServerError(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/jsonata")
+		w.Write([]byte(`$.id`))
+	}))
+	defer srv.Close()
+
+	m := &mediator{
+		httpClient: srv.Client(),
+		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+	}
+	need := TranslationNeeded{
+		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+	}
+
+	got, err := m.fetchArtifact(context.Background(), need)
+	if err != nil {
+		t.Fatalf("expected success after retry, got %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("expected 2 HTTP calls (1 failure + 1 retry), got %d", calls)
+	}
+	if string(got.Content) != `$.id` {
+		t.Errorf("unexpected content: %s", got.Content)
+	}
+}
+
+func TestFetchArtifact_NoRetryOn404(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	m := &mediator{
+		httpClient: srv.Client(),
+		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+	}
+	need := TranslationNeeded{
+		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+	}
+
+	m.fetchArtifact(context.Background(), need)
+	if calls != 1 {
+		t.Errorf("expected exactly 1 HTTP call (no retry on 404), got %d", calls)
+	}
+}
+
+// --- loadMapManagerConfig tests ---
+
+func TestLoadMapManagerConfig_Defaults(t *testing.T) {
+	ft, pos, neg, max, err := loadMapManagerConfig(map[string]string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ft != defaultFetchTimeout {
+		t.Errorf("fetchTimeout: expected %v, got %v", defaultFetchTimeout, ft)
+	}
+	if pos != defaultPositiveTTL {
+		t.Errorf("artifactCacheTTL: expected %v, got %v", defaultPositiveTTL, pos)
+	}
+	if neg != defaultNegativeTTL {
+		t.Errorf("negativeCacheTTL: expected %v, got %v", defaultNegativeTTL, neg)
+	}
+	if max != defaultMaxCacheEntries {
+		t.Errorf("maxCacheEntries: expected %v, got %v", defaultMaxCacheEntries, max)
+	}
+}
+
+func TestLoadMapManagerConfig_ValidOverrides(t *testing.T) {
+	ft, pos, neg, max, err := loadMapManagerConfig(map[string]string{
+		"fetchTimeout":     "10s",
+		"artifactCacheTTL": "1h",
+		"negativeCacheTTL": "2m",
+		"maxCacheEntries":  "100",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ft != 10*time.Second {
+		t.Errorf("fetchTimeout: got %v", ft)
+	}
+	if pos != time.Hour {
+		t.Errorf("artifactCacheTTL: got %v", pos)
+	}
+	if neg != 2*time.Minute {
+		t.Errorf("negativeCacheTTL: got %v", neg)
+	}
+	if max != 100 {
+		t.Errorf("maxCacheEntries: got %v", max)
+	}
+}
+
+func TestLoadMapManagerConfig_InvalidDuration(t *testing.T) {
+	_, _, _, _, err := loadMapManagerConfig(map[string]string{"fetchTimeout": "notaduration"})
+	if err == nil {
+		t.Fatal("expected error for invalid fetchTimeout")
+	}
+}
+
+func TestLoadMapManagerConfig_InvalidMaxEntries(t *testing.T) {
+	_, _, _, _, err := loadMapManagerConfig(map[string]string{"maxCacheEntries": "-1"})
+	if err == nil {
+		t.Fatal("expected error for non-positive maxCacheEntries")
 	}
 }
 
