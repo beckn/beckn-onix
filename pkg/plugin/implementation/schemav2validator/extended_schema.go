@@ -479,8 +479,11 @@ func findSchemaByType(ctx context.Context, doc *openapi3.T, typeName string) (*o
 }
 
 // isAllowedDomain checks if the host of an already-parsed URL is in the allowlist.
-// Callers must guard with len(allowedDomains) > 0 before calling; an empty list returns false.
+// An empty allowlist returns true (no restriction configured).
 func isAllowedDomain(u *url.URL, allowedDomains []string) bool {
+	if len(allowedDomains) == 0 {
+		return true
+	}
 	for _, domain := range allowedDomains {
 		domain = strings.TrimSpace(domain)
 		if domain == "" {

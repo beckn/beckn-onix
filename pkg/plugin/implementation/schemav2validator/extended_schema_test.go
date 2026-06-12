@@ -445,6 +445,12 @@ func TestIsAllowedDomain(t *testing.T) {
 			allowedDomains: []string{"raw.githubusercontent.com"},
 			want:           false,
 		},
+		{
+			name:           "empty allowlist allows any domain",
+			schemaURL:      "https://any.domain.example.com/schema.yaml",
+			allowedDomains: []string{},
+			want:           true,
+		},
 	}
 
 	for _, tt := range tests {
