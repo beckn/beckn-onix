@@ -478,13 +478,18 @@ func findSchemaByType(ctx context.Context, doc *openapi3.T, typeName string) (*o
 	return nil, fmt.Errorf("no schema found for @type: %s", typeName)
 }
 
-// isAllowedDomain checks if the URL domain is in the whitelist.
-func isAllowedDomain(schemaURL string, allowedDomains []string) bool {
+// isAllowedDomain checks if the host of an already-parsed URL is in the allowlist.
+// An empty allowlist returns true (no restriction configured).
+func isAllowedDomain(u *url.URL, allowedDomains []string) bool {
 	if len(allowedDomains) == 0 {
-		return true // No whitelist = all allowed
+		return true
 	}
 	for _, domain := range allowedDomains {
-		if strings.Contains(schemaURL, domain) {
+		domain = strings.TrimSpace(domain)
+		if domain == "" {
+			continue
+		}
+		if u.Host == domain || strings.HasSuffix(u.Host, "."+domain) {
 			return true
 		}
 	}
@@ -516,9 +521,18 @@ func (c *schemaCache) validateReferencedObject(
 	}
 
 	if doc == nil {
-		if !isAllowedDomain(obj.Context, allowedDomains) {
-			log.Warnf(ctx, "Domain not in whitelist: %s", obj.Context)
-			return fmt.Errorf("domain not allowed: %s", obj.Context)
+		if len(allowedDomains) > 0 {
+			// Allowlist is configured → restrict to http/https only and check host.
+			// Parsing once covers both the scheme check and the domain check.
+			u, err := url.Parse(obj.Context)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+				log.Warnf(ctx, "Invalid or disallowed scheme in @context: %s", obj.Context)
+				return fmt.Errorf("invalid scheme in @context: %s", obj.Context)
+			}
+			if !isAllowedDomain(u, allowedDomains) {
+				log.Warnf(ctx, "Domain not in whitelist: %s", obj.Context)
+				return fmt.Errorf("domain not allowed: %s", obj.Context)
+			}
 		}
 		schemaPath := transformContextToSchemaURL(obj.Context)
 		log.Debugf(ctx, "Transformed %s -> %s (localSchema=%v)", obj.Context, schemaPath, localSchema)
