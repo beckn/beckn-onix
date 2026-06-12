@@ -232,6 +232,7 @@ func newArtifactCache(positiveTTL, negativeTTL time.Duration, maxEntries int) *a
 
 // get returns the cached artifact and whether a valid cache entry was found.
 // artifact == nil with found == true means a valid negative cache entry (404).
+// Expired entries are evicted from the map on read to prevent stale accumulation.
 func (c *artifactCache) get(key string) (artifact *TranslationArtifact, found bool) {
 	c.mu.RLock()
 	entry, ok := c.entries[key]
@@ -244,6 +245,9 @@ func (c *artifactCache) get(key string) (artifact *TranslationArtifact, found bo
 		ttl = c.negativeTTL
 	}
 	if time.Since(entry.fetchedAt) > ttl {
+		c.mu.Lock()
+		delete(c.entries, key)
+		c.mu.Unlock()
 		return nil, false
 	}
 	return entry.artifact, true
@@ -339,6 +343,8 @@ func (m *mediator) httpFetch(ctx context.Context, artifactURL string) (*Translat
 	}
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
+		// Artifact URL convention omits file extensions, so Content-Type is the
+		// only reliable signal for which Translator to dispatch to.
 		return nil, fmt.Errorf("schemaversionmediator: artifact %q: missing Content-Type header", artifactURL)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxArtifactBodySize))
@@ -353,6 +359,9 @@ func (m *mediator) httpFetch(ctx context.Context, artifactURL string) (*Translat
 
 // deriveArtifactURL constructs the translation artifact URL from a TranslationNeeded.
 // Convention: {directory of To.ContextURL}/{From.Type}_from_{fromVersion}
+// From.Type is used (not To.Type) because the artifact describes how to map *from*
+// the old type representation; if a type is renamed across versions, the artifact
+// is identified by what it transforms away from.
 // Example: https://schema.beckn.io/retail/v2.0/Order_from_v1.1
 func deriveArtifactURL(need TranslationNeeded) (string, error) {
 	if need.To == nil {
@@ -366,8 +375,9 @@ func deriveArtifactURL(need TranslationNeeded) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	base := toURL.Scheme + "://" + toURL.Host + path.Dir(toURL.Path)
-	return base + "/" + need.From.Type + "_from_" + fromVersion, nil
+	result := *toURL
+	result.Path = path.Dir(toURL.Path) + "/" + need.From.Type + "_from_" + fromVersion
+	return result.String(), nil
 }
 
 // extractVersionSegment walks the path segments of a context URL and returns
@@ -386,7 +396,9 @@ func extractVersionSegment(contextURL string) (string, error) {
 }
 
 // isVersionSegment returns true for path segments that are version identifiers
-// (e.g. "v1.1", "v2.0", "1.0"). Replicates schemav2validator's convention.
+// (e.g. "v1.1", "v2.0", "1.0"). Requires at least one dot to avoid matching
+// bare numbers like "2" that could be part of a path name. Replicates
+// schemav2validator's convention.
 func isVersionSegment(s string) bool {
 	if len(s) == 0 {
 		return false
@@ -398,12 +410,19 @@ func isVersionSegment(s string) bool {
 	if len(check) == 0 {
 		return false
 	}
+	hasDot := false
+	hasDigit := false
 	for _, c := range check {
-		if c != '.' && (c < '0' || c > '9') {
+		if c == '.' {
+			hasDot = true
+			continue
+		}
+		if c < '0' || c > '9' {
 			return false
 		}
+		hasDigit = true
 	}
-	return true
+	return hasDot && hasDigit
 }
 
 // loadMapManagerConfig parses map manager config keys from the plugin config map.

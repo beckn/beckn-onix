@@ -373,9 +373,13 @@ func TestIsVersionSegment(t *testing.T) {
 		{"v2.0", true},
 		{"V1.0", true},
 		{"1.0", true},
+		{"1.0.0", true},
 		{"retail", false},
 		{"", false},
 		{"v", false},
+		{"2", false},   // bare number with no dot must not match
+		{"v2", false},  // bare number with v prefix, no dot
+		{"v.", false},  // dot but no digits
 		{"vX.Y", false},
 		{"order.jsonld", false},
 	}
@@ -522,30 +526,6 @@ func TestArtifactCache_Eviction(t *testing.T) {
 
 // --- fetchArtifact tests ---
 
-func newTestMediator(server *httptest.Server) *mediator {
-	originalFunc := httpClientFunc
-	httpClientFunc = func(_ time.Duration) *http.Client { return server.Client() }
-	m := &mediator{
-		httpClient: httpClientFunc(defaultFetchTimeout),
-		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
-	}
-	httpClientFunc = originalFunc
-	return m
-}
-
-func testNeed(fromVersion string) TranslationNeeded {
-	return TranslationNeeded{
-		From: model.SchemaObject{
-			ContextURL: "https://schema.beckn.io/retail/" + fromVersion + "/Order.jsonld",
-			Type:       "Order",
-		},
-		To: &model.SchemaObject{
-			ContextURL: "https://schema.beckn.io/retail/v2.0/Order.jsonld",
-			Type:       "Order",
-		},
-	}
-}
-
 func TestFetchArtifact_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/jsonata")
@@ -572,6 +552,30 @@ func TestFetchArtifact_Success(t *testing.T) {
 	}
 	if string(got.Content) != `$.orderId` {
 		t.Errorf("unexpected Content: %s", got.Content)
+	}
+}
+
+func TestFetchArtifact_MissingContentType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Suppress Go's content-type sniffing by setting it explicitly to "".
+		w.Header()["Content-Type"] = []string{""}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`$.orderId`))
+	}))
+	defer srv.Close()
+
+	m := &mediator{
+		httpClient: srv.Client(),
+		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+	}
+	need := TranslationNeeded{
+		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+	}
+
+	_, err := m.fetchArtifact(context.Background(), need)
+	if err == nil {
+		t.Fatal("expected error when Content-Type header is absent")
 	}
 }
 
