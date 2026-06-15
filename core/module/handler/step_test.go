@@ -474,7 +474,7 @@ func TestValidate_NonEd25519Algorithm_ReturnsError(t *testing.T) {
 		badAlgHeader,
 		`{"context":{"action":"on_search","messageId":"msg-alg-001","version":"2.0.0"}}`)
 
-	if err := vStep.validate(ctx, badAlgHeader, ""); err == nil {
+	if _, err := vStep.validate(ctx, badAlgHeader, ""); err == nil {
 		t.Fatal("expected error for non-ed25519 algorithm")
 	}
 	if sv.validateCalled || sv.validateAckCalled {
@@ -634,6 +634,22 @@ func TestValidateHeaders_SubIdentity_GatewayRole_Skips(t *testing.T) {
 
 	if err := vStep.validateHeaders(ctx); err != nil {
 		t.Fatalf("validateHeaders() unexpected error for Gateway role: %v", err)
+	}
+}
+
+func TestValidateHeaders_SubIdentity_MalformedBody_Skips(t *testing.T) {
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, nil)
+	vStep := step.(*validateSignStep)
+
+	authHeader := providerInitiatedAuthHeader("anyone.example.com")
+	// Body is not valid JSON — Unmarshal will fail; check must skip, not error.
+	ctx := makeValidateStepCtxFull(model.RoleBPP, "", "2.0.0", "msg-si-malformed", "bpp.example.com",
+		authHeader, `not-valid-json`)
+
+	if err := vStep.validateHeaders(ctx); err != nil {
+		t.Fatalf("validateHeaders() should skip identity check on malformed body, got: %v", err)
 	}
 }
 
