@@ -23,18 +23,6 @@ type Config struct {
 
 const contextKey = "context"
 
-// firstNonNil returns the first non-nil value from the provided list.
-// Used to resolve context fields that may appear under different key names
-// (e.g. bap_id, bapId, or senderId) depending on the beckn spec version in use.
-func firstNonNil(values ...any) any {
-	for _, v := range values {
-		if v != nil {
-			return v
-		}
-	}
-	return nil
-}
-
 // snakeToCamel converts a snake_case string to camelCase.
 // For example: "transaction_id" -> "transactionId".
 // Returns the input unchanged if it contains no underscores.
@@ -95,26 +83,12 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				return
 			}
 
-			// Resolve subscriber ID — tries legacy snake_case, then camelCase, then
-			// the new Beckn spec v2 names (senderId / receiverId).
-			var subID any
-			switch cfg.Role {
-			case "bap":
-				subID = firstNonNil(reqContext["bap_id"], reqContext["bapId"], reqContext["senderId"])
-			case "bpp":
-				subID = firstNonNil(reqContext["bpp_id"], reqContext["bppId"], reqContext["receiverId"])
-			}
+			// Resolve subscriber ID and caller ID using shared utilities that handle
+			// the triple-key alias chain (legacy snake_case, camelCase, spec v2 names).
+			subID := model.ResolveSubscriberID(reqContext, model.Role(cfg.Role))
+			callerID := model.ResolveCallerID(reqContext, model.Role(cfg.Role))
 
-			// Resolve caller ID — same triple-key pattern, opposite role.
-			var callerID any
-			switch cfg.Role {
-			case "bap":
-				callerID = firstNonNil(reqContext["bpp_id"], reqContext["bppId"], reqContext["receiverId"])
-			case "bpp":
-				callerID = firstNonNil(reqContext["bap_id"], reqContext["bapId"], reqContext["senderId"])
-			}
-
-			if subID != nil {
+			if subID != "" {
 				log.Debugf(ctx, "adding subscriberId to request:%s, %v", model.ContextKeySubscriberID, subID)
 				ctx = context.WithValue(ctx, model.ContextKeySubscriberID, subID)
 			}
@@ -124,7 +98,7 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				ctx = context.WithValue(ctx, model.ContextKeyParentID, cfg.ParentID)
 			}
 
-			if callerID != nil {
+			if callerID != "" {
 				log.Debugf(ctx, "adding callerID to request:%s, %v", model.ContextKeyRemoteID, callerID)
 				ctx = context.WithValue(ctx, model.ContextKeyRemoteID, callerID)
 			}

@@ -171,6 +171,50 @@ func (r *Role) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
+// ResolveCallerID returns the expected signing subscriber ID from a parsed Beckn context map.
+// For BAP role: returns the BPP's declared ID (bpp_id / bppId / receiverId).
+// For BPP role: returns the BAP's declared ID (bap_id / bapId / senderId).
+// Returns "" when the role is not BAP/BPP or no matching key is found.
+func ResolveCallerID(reqContext map[string]interface{}, role Role) string {
+	var keys []string
+	switch role {
+	case RoleBAP:
+		keys = []string{"bpp_id", "bppId", "receiverId"}
+	case RoleBPP:
+		keys = []string{"bap_id", "bapId", "senderId"}
+	default:
+		return ""
+	}
+	for _, k := range keys {
+		if v, ok := reqContext[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// ResolveSubscriberID returns the node's own subscriber ID from a parsed Beckn context map.
+// For BAP role: returns bap_id / bapId / senderId.
+// For BPP role: returns bpp_id / bppId / receiverId.
+// Returns "" when the role is not BAP/BPP or no matching key is found.
+func ResolveSubscriberID(reqContext map[string]interface{}, role Role) string {
+	var keys []string
+	switch role {
+	case RoleBAP:
+		keys = []string{"bap_id", "bapId", "senderId"}
+	case RoleBPP:
+		keys = []string{"bpp_id", "bppId", "receiverId"}
+	default:
+		return ""
+	}
+	for _, k := range keys {
+		if v, ok := reqContext[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // Route represents a network route for message processing.
 type Route struct {
 	TargetType  string   // "url" or "publisher"

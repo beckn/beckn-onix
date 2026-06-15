@@ -483,6 +483,161 @@ func TestValidate_NonEd25519Algorithm_ReturnsError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// validateHeaders — subscriber identity cross-check
+// ---------------------------------------------------------------------------
+
+// makeValidateStepCtxFull builds a StepContext with an optional role and callerID
+// (simulating what reqpreprocessor writes to model.ContextKeyRemoteID).
+func makeValidateStepCtxFull(role model.Role, callerID, protocolVersion, messageID, subID, authHeader, bodyJSON string) *model.StepContext {
+	goCtx := context.Background()
+	if callerID != "" {
+		goCtx = context.WithValue(goCtx, model.ContextKeyRemoteID, callerID)
+	}
+	req, _ := http.NewRequest(http.MethodPost, "/", strings.NewReader(bodyJSON))
+	req.Header.Set(model.AuthHeaderSubscriber, authHeader)
+	return &model.StepContext{
+		Context:         goCtx,
+		Request:         req,
+		Body:            []byte(bodyJSON),
+		Role:            role,
+		ProtocolVersion: protocolVersion,
+		MessageID:       messageID,
+		SubID:           subID,
+		RespHeader:      http.Header{},
+	}
+}
+
+func TestValidateHeaders_SubIdentity_FromContext_Match_NoError(t *testing.T) {
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, nil)
+	vStep := step.(*validateSignStep)
+
+	authHeader := providerInitiatedAuthHeader("bap.example.com")
+	ctx := makeValidateStepCtxFull(model.RoleBPP, "bap.example.com", "2.0.0", "msg-si-001", "bpp.example.com",
+		authHeader,
+		`{"context":{"action":"search","messageId":"msg-si-001","version":"2.0.0","bap_id":"bap.example.com"}}`)
+
+	if err := vStep.validateHeaders(ctx); err != nil {
+		t.Fatalf("validateHeaders() unexpected error: %v", err)
+	}
+}
+
+func TestValidateHeaders_SubIdentity_FromContext_Mismatch_ReturnsError(t *testing.T) {
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, nil)
+	vStep := step.(*validateSignStep)
+
+	authHeader := providerInitiatedAuthHeader("evil.com")
+	ctx := makeValidateStepCtxFull(model.RoleBPP, "bap.example.com", "2.0.0", "msg-si-002", "bpp.example.com",
+		authHeader,
+		`{"context":{"action":"search","messageId":"msg-si-002","version":"2.0.0","bap_id":"bap.example.com"}}`)
+
+	if err := vStep.validateHeaders(ctx); err == nil {
+		t.Fatal("expected error when signing subscriber does not match declared context identity")
+	}
+}
+
+func TestValidateHeaders_SubIdentity_FromBody_Match_NoError(t *testing.T) {
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, nil)
+	vStep := step.(*validateSignStep)
+
+	// No ContextKeyRemoteID in context — check falls back to body.
+	authHeader := providerInitiatedAuthHeader("bap.example.com")
+	ctx := makeValidateStepCtxFull(model.RoleBPP, "", "2.0.0", "msg-si-003", "bpp.example.com",
+		authHeader,
+		`{"context":{"action":"search","messageId":"msg-si-003","version":"2.0.0","bap_id":"bap.example.com"}}`)
+
+	if err := vStep.validateHeaders(ctx); err != nil {
+		t.Fatalf("validateHeaders() unexpected error: %v", err)
+	}
+}
+
+func TestValidateHeaders_SubIdentity_FromBody_Mismatch_ReturnsError(t *testing.T) {
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, nil)
+	vStep := step.(*validateSignStep)
+
+	authHeader := providerInitiatedAuthHeader("evil.com")
+	ctx := makeValidateStepCtxFull(model.RoleBPP, "", "2.0.0", "msg-si-004", "bpp.example.com",
+		authHeader,
+		`{"context":{"action":"search","messageId":"msg-si-004","version":"2.0.0","bap_id":"bap.example.com"}}`)
+
+	if err := vStep.validateHeaders(ctx); err == nil {
+		t.Fatal("expected error when body bap_id does not match signing subscriber")
+	}
+}
+
+func TestValidateHeaders_SubIdentity_V2Alias_SenderId_Match(t *testing.T) {
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, nil)
+	vStep := step.(*validateSignStep)
+
+	authHeader := providerInitiatedAuthHeader("bap.example.com")
+	ctx := makeValidateStepCtxFull(model.RoleBPP, "", "2.0.0", "msg-si-005", "bpp.example.com",
+		authHeader,
+		`{"context":{"action":"search","messageId":"msg-si-005","version":"2.0.0","senderId":"bap.example.com"}}`)
+
+	if err := vStep.validateHeaders(ctx); err != nil {
+		t.Fatalf("validateHeaders() unexpected error with senderId alias: %v", err)
+	}
+}
+
+func TestValidateHeaders_SubIdentity_V2Alias_ReceiverId_Match(t *testing.T) {
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, nil)
+	vStep := step.(*validateSignStep)
+
+	authHeader := providerInitiatedAuthHeader("bpp.example.com")
+	ctx := makeValidateStepCtxFull(model.RoleBAP, "", "2.0.0", "msg-si-006", "bap.example.com",
+		authHeader,
+		`{"context":{"action":"on_search","messageId":"msg-si-006","version":"2.0.0","receiverId":"bpp.example.com"}}`)
+
+	if err := vStep.validateHeaders(ctx); err != nil {
+		t.Fatalf("validateHeaders() unexpected error with receiverId alias: %v", err)
+	}
+}
+
+func TestValidateHeaders_SubIdentity_NoCallerIDField_Skips(t *testing.T) {
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, nil)
+	vStep := step.(*validateSignStep)
+
+	// Body has no bap_id/bapId/senderId — check should be skipped.
+	authHeader := providerInitiatedAuthHeader("anyone.example.com")
+	ctx := makeValidateStepCtxFull(model.RoleBPP, "", "2.0.0", "msg-si-007", "bpp.example.com",
+		authHeader,
+		`{"context":{"action":"search","messageId":"msg-si-007","version":"2.0.0"}}`)
+
+	if err := vStep.validateHeaders(ctx); err != nil {
+		t.Fatalf("validateHeaders() unexpected error when no caller ID field in body: %v", err)
+	}
+}
+
+func TestValidateHeaders_SubIdentity_GatewayRole_Skips(t *testing.T) {
+	sv := &mockSignValidatorBasic{}
+	km := &mockKMBasic{publicKey: "pubKey=="}
+	step, _ := newValidateSignStep(sv, km, nil)
+	vStep := step.(*validateSignStep)
+
+	authHeader := providerInitiatedAuthHeader("gateway.example.com")
+	ctx := makeValidateStepCtxFull(model.RoleGateway, "", "2.0.0", "msg-si-008", "gateway.example.com",
+		authHeader,
+		`{"context":{"action":"search","messageId":"msg-si-008","version":"2.0.0","bap_id":"bap.example.com"}}`)
+
+	if err := vStep.validateHeaders(ctx); err != nil {
+		t.Fatalf("validateHeaders() unexpected error for Gateway role: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // signStep — constructor and generateAuthHeader tests
 // ---------------------------------------------------------------------------
 

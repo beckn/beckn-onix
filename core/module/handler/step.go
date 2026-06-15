@@ -213,6 +213,10 @@ func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
 		return model.NewSignValidationErr(fmt.Errorf("failed to validate %s: %w", model.AuthHeaderSubscriber, err))
 	}
+	if err := s.checkSubscriberIdentity(ctx, headerValue); err != nil {
+		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
+		return model.NewSignValidationErr(err)
+	}
 	return nil
 }
 
@@ -270,6 +274,44 @@ func (s *validateSignStep) validate(ctx *model.StepContext, value, requestSig st
 	}
 	if validErr != nil {
 		return fmt.Errorf("sign validation failed: %w", validErr)
+	}
+	return nil
+}
+
+// checkSubscriberIdentity asserts that the subscriber who signed the request
+// (from the Authorization header's keyId) matches the caller identity declared
+// in the request body context.
+// Uses ContextKeyRemoteID when already resolved by reqpreprocessor; falls back
+// to parsing the body directly via model.ResolveCallerID so the check runs even
+// without reqpreprocessor in the middleware chain.
+func (s *validateSignStep) checkSubscriberIdentity(ctx *model.StepContext, authHeader string) error {
+	// Fast path: reqpreprocessor already resolved and cached the caller ID.
+	expected, _ := ctx.Value(model.ContextKeyRemoteID).(string)
+
+	// Slow path: reqpreprocessor not configured; parse body directly.
+	if expected == "" {
+		var payload struct {
+			Context map[string]interface{} `json:"context"`
+		}
+		if err := json.Unmarshal(ctx.Body, &payload); err == nil && payload.Context != nil {
+			expected = model.ResolveCallerID(payload.Context, ctx.Role)
+		}
+	}
+
+	if expected == "" {
+		// Gateway role or body has no matching context field;
+		// a missing field will be caught by schema validation separately.
+		log.Debugf(ctx, "checkSubscriberIdentity: no caller ID available for role %v; skipping check", ctx.Role)
+		return nil
+	}
+
+	parsed, err := parseHeader(authHeader)
+	if err != nil {
+		return fmt.Errorf("failed to parse header for identity check: %w", err)
+	}
+	if parsed.SubscriberID != expected {
+		return fmt.Errorf("subscriber identity mismatch: signing subscriber %q does not match declared context identity %q",
+			parsed.SubscriberID, expected)
 	}
 	return nil
 }
