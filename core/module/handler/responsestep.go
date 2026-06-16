@@ -389,7 +389,7 @@ func (v *validateAckSignatureStep) RunOnResponse(ctx *model.StepContext, rctx *m
 		return nil
 	}
 
-	if err := v.signValidator.ValidateAck(ctx, rctx.Body, sigHeader, outboundAuth, publicKey); err != nil {
+	if err := v.signValidator.ValidateAck(ctx, rctx.Body, sigHeader, outboundAuth, publicKey, false); err != nil {
 		log.Warnf(ctx, "validateAckSign: Signature verification failed (status=%d): %v — degraded trust", rctx.StatusCode, err)
 		return nil
 	}
