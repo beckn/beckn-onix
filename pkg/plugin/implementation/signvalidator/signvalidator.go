@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"golang.org/x/crypto/blake2b"
 )
@@ -29,8 +31,8 @@ func New(ctx context.Context, config *Config) (*validator, func() error, error) 
 	return v, nil, nil
 }
 
-// Verify checks the signature for the given payload and public key.
-func (v *validator) Validate(ctx context.Context, body []byte, header string, publicKeyBase64 string) error {
+// Validate verifies the 3-line signing string for inbound requests.
+func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBase64 string) error {
 	createdTimestamp, expiredTimestamp, signature, err := parseAuthHeader(header)
 	if err != nil {
 		return model.NewSignValidationErr(fmt.Errorf("error parsing header: %w", err))
@@ -48,7 +50,7 @@ func (v *validator) Validate(ctx context.Context, body []byte, header string, pu
 	createdTime := time.Unix(createdTimestamp, 0)
 	expiredTime := time.Unix(expiredTimestamp, 0)
 
-	signingString := hash(body, createdTime.Unix(), expiredTime.Unix())
+	signingString := hash(ctx.Body, createdTime.Unix(), expiredTime.Unix())
 
 	decodedPublicKey, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 	if err != nil {
@@ -59,6 +61,11 @@ func (v *validator) Validate(ctx context.Context, body []byte, header string, pu
 		return model.NewSignValidationErr(fmt.Errorf("signature verification failed"))
 	}
 
+	if ctx.Request.Header.Get(model.AuthHeaderSubscriber) == header {
+		if err := checkSubscriberIdentity(ctx, ctx.Body, header); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -102,14 +109,10 @@ func parseAuthHeader(header string) (int64, int64, string, error) {
 	return createdTimestamp, expiredTimestamp, signature, nil
 }
 
-// ValidateAck verifies a Beckn v2.0.0 AckSignature per NFH-004 §3.4.
-// The signing string is identical to regular request signing with one addition:
-// if outboundAuthSignature is non-empty, a fourth line is appended:
-//
-//	request-signature: <outboundAuthSignature>
-//
-// This mirrors exactly what ackSigner builds in SignAck.
-func (v *validator) ValidateAck(ctx context.Context, ackBody []byte, signatureHeader, outboundAuthSignature, publicKeyBase64 string) error {
+// ValidateAck verifies the 4-line signing string per NFH-004 §3.4.
+// body is passed explicitly because the two call sites hash different bodies:
+// the on_search request body (step.go) vs the ACK response body (responsestep.go).
+func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHeader, outboundAuthSignature, publicKeyBase64 string) error {
 	createdTimestamp, expiredTimestamp, signature, err := parseAuthHeader(signatureHeader)
 	if err != nil {
 		return model.NewSignValidationErr(fmt.Errorf("error parsing Signature header: %w", err))
@@ -124,7 +127,7 @@ func (v *validator) ValidateAck(ctx context.Context, ackBody []byte, signatureHe
 		return err
 	}
 
-	signingString := hashAck(ackBody, createdTimestamp, expiredTimestamp, outboundAuthSignature)
+	signingString := hashAck(body, createdTimestamp, expiredTimestamp, outboundAuthSignature)
 
 	decodedPublicKey, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 	if err != nil {
@@ -135,6 +138,63 @@ func (v *validator) ValidateAck(ctx context.Context, ackBody []byte, signatureHe
 		return model.NewSignValidationErr(fmt.Errorf("AckSignature verification failed"))
 	}
 
+	if ctx.Request.Header.Get(model.AuthHeaderSubscriber) == signatureHeader {
+		if err := checkSubscriberIdentity(ctx, body, signatureHeader); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// extractSubscriberIDFromHeader extracts the subscriber ID (first |-delimited
+// component of keyId) from a Beckn Authorization header. Returns "" if keyId
+// is absent or malformed.
+func extractSubscriberIDFromHeader(header string) string {
+	const prefix = `keyId="`
+	idx := strings.Index(header, prefix)
+	if idx == -1 {
+		return ""
+	}
+	idx += len(prefix)
+	end := strings.Index(header[idx:], `"`)
+	if end == -1 {
+		return ""
+	}
+	parts := strings.SplitN(strings.TrimSpace(header[idx:idx+end]), "|", 2)
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(parts[0])
+}
+
+// checkSubscriberIdentity asserts that the subscriber who signed the request
+// (from keyId in the Authorization header) matches the caller identity declared
+// in the request body context. body is the body that was actually validated so
+// callers with different bodies (Validate vs ValidateAck) each pass the right one.
+func checkSubscriberIdentity(ctx *model.StepContext, body []byte, header string) error {
+	expected, _ := ctx.Value(model.ContextKeyRemoteID).(string)
+
+	if expected == "" {
+		var payload struct {
+			Context map[string]interface{} `json:"context"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			log.Debugf(ctx, "checkSubscriberIdentity: failed to parse body: %v; skipping check", err)
+		} else if payload.Context != nil {
+			expected = model.ResolveCallerID(payload.Context, ctx.Role)
+		}
+	}
+
+	if expected == "" {
+		log.Debugf(ctx, "checkSubscriberIdentity: no caller ID available for role %v; skipping check", ctx.Role)
+		return nil
+	}
+
+	signerID := extractSubscriberIDFromHeader(header)
+	if signerID != expected {
+		return fmt.Errorf("subscriber identity mismatch: signing subscriber %q does not match declared context identity %q",
+			signerID, expected)
+	}
 	return nil
 }
 

@@ -4,11 +4,19 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/beckn-one/beckn-onix/pkg/model"
 )
+
+// ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
 
 // generateTestKeyPair generates a new ED25519 key pair for testing.
 func generateTestKeyPair() (string, string) {
@@ -26,6 +34,54 @@ func signTestData(privateKeyBase64 string, body []byte, createdAt, expiresAt int
 
 	return base64.StdEncoding.EncodeToString(signature)
 }
+
+// signedHeaderWithKeyID builds a full Authorization header including keyId so that
+// extractSubscriberIDFromHeader can extract the subscriber ID for identity checks.
+func signedHeaderWithKeyID(subscriberID, privateKeyBase64 string, body []byte, createdAt, expiresAt int64) string {
+	sig := signTestData(privateKeyBase64, body, createdAt, expiresAt)
+	return fmt.Sprintf(
+		`Signature keyId="%s|key-1|ed25519",algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
+		subscriberID, createdAt, expiresAt, sig,
+	)
+}
+
+// makeCtx builds a minimal StepContext. When subscriberHeader is non-empty it is
+// set as the Authorization header on the request, which causes the identity check
+// gate inside Validate/ValidateAck to open.
+func makeCtx(body []byte, role model.Role, subscriberHeader string) *model.StepContext {
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	if subscriberHeader != "" {
+		req.Header.Set(model.AuthHeaderSubscriber, subscriberHeader)
+	}
+	return &model.StepContext{
+		Context:    context.Background(),
+		Body:       body,
+		Role:       role,
+		Request:    req,
+		RespHeader: http.Header{},
+	}
+}
+
+// makeCtxWithCallerID is like makeCtx but also injects a callerID into the Go
+// context, simulating what reqpreprocessor writes to model.ContextKeyRemoteID.
+func makeCtxWithCallerID(body []byte, role model.Role, subscriberHeader, callerID string) *model.StepContext {
+	goCtx := context.WithValue(context.Background(), model.ContextKeyRemoteID, callerID)
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	if subscriberHeader != "" {
+		req.Header.Set(model.AuthHeaderSubscriber, subscriberHeader)
+	}
+	return &model.StepContext{
+		Context:    goCtx,
+		Body:       body,
+		Role:       role,
+		Request:    req,
+		RespHeader: http.Header{},
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Crypto verification — Validate
+// ---------------------------------------------------------------------------
 
 // TestVerifySuccessCases tests all valid signature verification cases.
 func TestVerifySuccess(t *testing.T) {
@@ -53,7 +109,8 @@ func TestVerifySuccess(t *testing.T) {
 				`", signature="` + signature + `"`
 
 			verifier, close, _ := New(context.Background(), &Config{})
-			err := verifier.Validate(context.Background(), tt.body, header, publicKeyBase64)
+			// subscriberHeader not set — identity check gate evaluates false, check skipped.
+			err := verifier.Validate(makeCtx(tt.body, "", ""), header, publicKeyBase64)
 
 			if err != nil {
 				t.Fatalf("Expected no error, but got: %v", err)
@@ -151,7 +208,8 @@ func TestVerifyFailure(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			verifier, close, _ := New(context.Background(), &Config{})
-			err := verifier.Validate(context.Background(), tt.body, tt.header, tt.pubKey)
+			// subscriberHeader not set — identity check gate evaluates false, check skipped.
+			err := verifier.Validate(makeCtx(tt.body, "", ""), tt.header, tt.pubKey)
 
 			if err == nil {
 				t.Fatal("Expected an error but got none")
@@ -165,5 +223,129 @@ func TestVerifyFailure(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Subscriber identity check — Validate
+// ---------------------------------------------------------------------------
+
+func TestValidate_SubIdentity_FromContext_Match(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte(`{"context":{"action":"search","bap_id":"bap.example.com"}}`)
+	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	header := signedHeaderWithKeyID("bap.example.com", privateKey, body, now, exp)
+
+	verifier, _, _ := New(context.Background(), &Config{})
+	ctx := makeCtxWithCallerID(body, model.RoleBPP, header, "bap.example.com")
+	if err := verifier.Validate(ctx, header, publicKey); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidate_SubIdentity_FromContext_Mismatch(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte(`{"context":{"action":"search","bap_id":"bap.example.com"}}`)
+	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	header := signedHeaderWithKeyID("evil.com", privateKey, body, now, exp)
+
+	verifier, _, _ := New(context.Background(), &Config{})
+	ctx := makeCtxWithCallerID(body, model.RoleBPP, header, "bap.example.com")
+	if err := verifier.Validate(ctx, header, publicKey); err == nil {
+		t.Fatal("expected error: signer evil.com does not match callerID bap.example.com")
+	}
+}
+
+func TestValidate_SubIdentity_FromBody_Match(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte(`{"context":{"action":"search","bap_id":"bap.example.com"}}`)
+	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	header := signedHeaderWithKeyID("bap.example.com", privateKey, body, now, exp)
+
+	verifier, _, _ := New(context.Background(), &Config{})
+	// No ContextKeyRemoteID — check falls back to body.
+	ctx := makeCtx(body, model.RoleBPP, header)
+	if err := verifier.Validate(ctx, header, publicKey); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidate_SubIdentity_FromBody_Mismatch(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte(`{"context":{"action":"search","bap_id":"bap.example.com"}}`)
+	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	header := signedHeaderWithKeyID("evil.com", privateKey, body, now, exp)
+
+	verifier, _, _ := New(context.Background(), &Config{})
+	ctx := makeCtx(body, model.RoleBPP, header)
+	if err := verifier.Validate(ctx, header, publicKey); err == nil {
+		t.Fatal("expected error: signer evil.com does not match body bap_id bap.example.com")
+	}
+}
+
+func TestValidate_SubIdentity_V2Alias_SenderId(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte(`{"context":{"action":"search","senderId":"bap.example.com"}}`)
+	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	header := signedHeaderWithKeyID("bap.example.com", privateKey, body, now, exp)
+
+	verifier, _, _ := New(context.Background(), &Config{})
+	ctx := makeCtx(body, model.RoleBPP, header)
+	if err := verifier.Validate(ctx, header, publicKey); err != nil {
+		t.Fatalf("expected no error with senderId alias, got: %v", err)
+	}
+}
+
+func TestValidate_SubIdentity_V2Alias_ReceiverId(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte(`{"context":{"action":"on_search","receiverId":"bpp.example.com"}}`)
+	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	header := signedHeaderWithKeyID("bpp.example.com", privateKey, body, now, exp)
+
+	verifier, _, _ := New(context.Background(), &Config{})
+	ctx := makeCtx(body, model.RoleBAP, header)
+	if err := verifier.Validate(ctx, header, publicKey); err != nil {
+		t.Fatalf("expected no error with receiverId alias, got: %v", err)
+	}
+}
+
+func TestValidate_SubIdentity_NoCallerIDField_Skips(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair()
+	// Body has no bap_id/bapId/senderId — identity check must be skipped.
+	body := []byte(`{"context":{"action":"search"}}`)
+	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	header := signedHeaderWithKeyID("anyone.example.com", privateKey, body, now, exp)
+
+	verifier, _, _ := New(context.Background(), &Config{})
+	ctx := makeCtx(body, model.RoleBPP, header)
+	if err := verifier.Validate(ctx, header, publicKey); err != nil {
+		t.Fatalf("expected no error when no caller ID field in body, got: %v", err)
+	}
+}
+
+func TestValidate_SubIdentity_GatewayRole_Skips(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte(`{"context":{"action":"search","bap_id":"bap.example.com"}}`)
+	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	header := signedHeaderWithKeyID("gateway.example.com", privateKey, body, now, exp)
+
+	verifier, _, _ := New(context.Background(), &Config{})
+	// Gate is open (header set), but RoleGateway causes ResolveCallerID to return "" → skipped.
+	ctx := makeCtx(body, model.RoleGateway, header)
+	if err := verifier.Validate(ctx, header, publicKey); err != nil {
+		t.Fatalf("expected no error for Gateway role, got: %v", err)
+	}
+}
+
+func TestValidate_SubIdentity_MalformedBody_Skips(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte(`not-valid-json`)
+	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	header := signedHeaderWithKeyID("anyone.example.com", privateKey, body, now, exp)
+
+	verifier, _, _ := New(context.Background(), &Config{})
+	ctx := makeCtx(body, model.RoleBPP, header)
+	if err := verifier.Validate(ctx, header, publicKey); err != nil {
+		t.Fatalf("expected identity check to be skipped on malformed body, got: %v", err)
 	}
 }

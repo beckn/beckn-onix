@@ -192,7 +192,7 @@ func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 	headerValue := ctx.Request.Header.Get(model.AuthHeaderGateway)
 	if len(headerValue) != 0 {
 		log.Debugf(ctx, "Validating %v Header", model.AuthHeaderGateway)
-		if _, err := s.validate(ctx, headerValue, ""); err != nil {
+		if err := s.validate(ctx, headerValue, ""); err != nil {
 			ctx.RespHeader.Set(model.UnaAuthorizedHeaderGateway, unauthHeader)
 			return model.NewSignValidationErr(fmt.Errorf("failed to validate %s: %w", model.AuthHeaderGateway, err))
 		}
@@ -209,14 +209,9 @@ func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
 		return model.NewSignValidationErr(err)
 	}
-	parsedSubscriberHeader, err := s.validate(ctx, headerValue, reqSig)
-	if err != nil {
+	if err := s.validate(ctx, headerValue, reqSig); err != nil {
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
 		return model.NewSignValidationErr(fmt.Errorf("failed to validate %s: %w", model.AuthHeaderSubscriber, err))
-	}
-	if err := s.checkSubscriberIdentity(ctx, parsedSubscriberHeader); err != nil {
-		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
-		return model.NewSignValidationErr(err)
 	}
 	return nil
 }
@@ -252,67 +247,29 @@ func (s *validateSignStep) lookupCallbackRequestSig(ctx *model.StepContext, auth
 // When requestSig is non-empty (solicited callback path) it calls ValidateAck
 // to verify against the 4-line signing string (NFH-004 §3.3); otherwise it
 // calls Validate for the standard 3-line signing string.
-// Returns the parsed authHeader on success so callers can reuse it without
-// re-parsing (e.g. checkSubscriberIdentity).
-func (s *validateSignStep) validate(ctx *model.StepContext, value, requestSig string) (*authHeader, error) {
+func (s *validateSignStep) validate(ctx *model.StepContext, value, requestSig string) error {
 	headerVals, err := parseHeader(value)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse header")
+		return fmt.Errorf("failed to parse header")
 	}
 	// Guards the keyId component (sub|key|alg); parseAuthHeader in signvalidator
 	// guards the outer algorithm= attribute — the two cover different header fields.
 	if headerVals.Algorithm != "ed25519" {
-		return nil, fmt.Errorf("unsupported algorithm %q: only ed25519 is permitted", headerVals.Algorithm)
+		return fmt.Errorf("unsupported algorithm %q: only ed25519 is permitted", headerVals.Algorithm)
 	}
 	log.Debugf(ctx, "Validating Signature for subscriberID: %v", headerVals.SubscriberID)
 	signingPublicKey, _, err := s.km.LookupNPKeys(ctx, headerVals.SubscriberID, headerVals.UniqueID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get validation key: %w", err)
+		return fmt.Errorf("failed to get validation key: %w", err)
 	}
 	var validErr error
 	if requestSig != "" {
 		validErr = s.validator.ValidateAck(ctx, ctx.Body, value, requestSig, signingPublicKey)
 	} else {
-		validErr = s.validator.Validate(ctx, ctx.Body, value, signingPublicKey)
+		validErr = s.validator.Validate(ctx, value, signingPublicKey)
 	}
 	if validErr != nil {
-		return nil, fmt.Errorf("sign validation failed: %w", validErr)
-	}
-	return headerVals, nil
-}
-
-// checkSubscriberIdentity asserts that the subscriber who signed the request
-// (from the already-parsed Authorization header) matches the caller identity
-// declared in the request body context.
-// Uses ContextKeyRemoteID when already resolved by reqpreprocessor; falls back
-// to parsing the body directly via model.ResolveCallerID so the check runs even
-// without reqpreprocessor in the middleware chain.
-func (s *validateSignStep) checkSubscriberIdentity(ctx *model.StepContext, parsed *authHeader) error {
-	// Fast path: reqpreprocessor already resolved and cached the caller ID.
-	expected, _ := ctx.Value(model.ContextKeyRemoteID).(string)
-
-	// Slow path: reqpreprocessor not configured; parse body directly.
-	if expected == "" {
-		var payload struct {
-			Context map[string]interface{} `json:"context"`
-		}
-		if err := json.Unmarshal(ctx.Body, &payload); err != nil {
-			log.Debugf(ctx, "checkSubscriberIdentity: failed to parse body: %v; skipping check", err)
-		} else if payload.Context != nil {
-			expected = model.ResolveCallerID(payload.Context, ctx.Role)
-		}
-	}
-
-	if expected == "" {
-		// Gateway role or body has no matching context field;
-		// a missing field will be caught by schema validation separately.
-		log.Debugf(ctx, "checkSubscriberIdentity: no caller ID available for role %v; skipping check", ctx.Role)
-		return nil
-	}
-
-	if parsed.SubscriberID != expected {
-		return fmt.Errorf("subscriber identity mismatch: signing subscriber %q does not match declared context identity %q",
-			parsed.SubscriberID, expected)
+		return fmt.Errorf("sign validation failed: %w", validErr)
 	}
 	return nil
 }
