@@ -32,7 +32,7 @@ func New(ctx context.Context, config *Config) (*validator, func() error, error) 
 }
 
 // Validate verifies the 3-line signing string for inbound requests.
-func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBase64 string) error {
+func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBase64 string, checkIdentity bool) error {
 	createdTimestamp, expiredTimestamp, signature, subscriberID, err := parseAuthHeader(header)
 	if err != nil {
 		return model.NewSignValidationErr(fmt.Errorf("error parsing header: %w", err))
@@ -61,7 +61,7 @@ func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBas
 		return model.NewSignValidationErr(fmt.Errorf("signature verification failed"))
 	}
 
-	if ctx.Request.Header.Get(model.AuthHeaderSubscriber) == header {
+	if checkIdentity {
 		if err := checkSubscriberIdentity(ctx, ctx.Body, subscriberID); err != nil {
 			return err
 		}
@@ -120,7 +120,7 @@ func parseAuthHeader(header string) (int64, int64, string, string, error) {
 // ValidateAck verifies the 4-line signing string per NFH-004 §3.4.
 // body is passed explicitly because the two call sites hash different bodies:
 // the on_search request body (step.go) vs the ACK response body (responsestep.go).
-func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHeader, outboundAuthSignature, publicKeyBase64 string) error {
+func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHeader, outboundAuthSignature, publicKeyBase64 string, checkIdentity bool) error {
 	createdTimestamp, expiredTimestamp, signature, subscriberID, err := parseAuthHeader(signatureHeader)
 	if err != nil {
 		return model.NewSignValidationErr(fmt.Errorf("error parsing Signature header: %w", err))
@@ -146,7 +146,7 @@ func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHe
 		return model.NewSignValidationErr(fmt.Errorf("AckSignature verification failed"))
 	}
 
-	if ctx.Request.Header.Get(model.AuthHeaderSubscriber) == signatureHeader {
+	if checkIdentity {
 		if err := checkSubscriberIdentity(ctx, body, subscriberID); err != nil {
 			return err
 		}

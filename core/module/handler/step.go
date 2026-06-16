@@ -192,7 +192,7 @@ func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 	headerValue := ctx.Request.Header.Get(model.AuthHeaderGateway)
 	if len(headerValue) != 0 {
 		log.Debugf(ctx, "Validating %v Header", model.AuthHeaderGateway)
-		if err := s.validate(ctx, headerValue, ""); err != nil {
+		if err := s.validate(ctx, headerValue, "", false); err != nil {
 			ctx.RespHeader.Set(model.UnaAuthorizedHeaderGateway, unauthHeader)
 			return model.NewSignValidationErr(fmt.Errorf("failed to validate %s: %w", model.AuthHeaderGateway, err))
 		}
@@ -209,7 +209,7 @@ func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
 		return model.NewSignValidationErr(err)
 	}
-	if err := s.validate(ctx, headerValue, reqSig); err != nil {
+	if err := s.validate(ctx, headerValue, reqSig, true); err != nil {
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
 		return model.NewSignValidationErr(fmt.Errorf("failed to validate %s: %w", model.AuthHeaderSubscriber, err))
 	}
@@ -247,7 +247,7 @@ func (s *validateSignStep) lookupCallbackRequestSig(ctx *model.StepContext, auth
 // When requestSig is non-empty (solicited callback path) it calls ValidateAck
 // to verify against the 4-line signing string (NFH-004 §3.3); otherwise it
 // calls Validate for the standard 3-line signing string.
-func (s *validateSignStep) validate(ctx *model.StepContext, value, requestSig string) error {
+func (s *validateSignStep) validate(ctx *model.StepContext, value, requestSig string, checkIdentity bool) error {
 	headerVals, err := parseHeader(value)
 	if err != nil {
 		return fmt.Errorf("failed to parse header")
@@ -264,9 +264,9 @@ func (s *validateSignStep) validate(ctx *model.StepContext, value, requestSig st
 	}
 	var validErr error
 	if requestSig != "" {
-		validErr = s.validator.ValidateAck(ctx, ctx.Body, value, requestSig, signingPublicKey)
+		validErr = s.validator.ValidateAck(ctx, ctx.Body, value, requestSig, signingPublicKey, checkIdentity)
 	} else {
-		validErr = s.validator.Validate(ctx, value, signingPublicKey)
+		validErr = s.validator.Validate(ctx, value, signingPublicKey, checkIdentity)
 	}
 	if validErr != nil {
 		return fmt.Errorf("sign validation failed: %w", validErr)

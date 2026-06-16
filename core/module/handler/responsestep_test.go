@@ -481,11 +481,11 @@ type mockSignValidatorWithAck struct {
 	validateAckErr    error
 }
 
-func (m *mockSignValidatorWithAck) Validate(_ *model.StepContext, _ string, _ string) error {
+func (m *mockSignValidatorWithAck) Validate(_ *model.StepContext, _ string, _ string, _ bool) error {
 	return nil
 }
 
-func (m *mockSignValidatorWithAck) ValidateAck(_ *model.StepContext, _ []byte, _, _, _ string) error {
+func (m *mockSignValidatorWithAck) ValidateAck(_ *model.StepContext, _ []byte, _, _, _ string, _ bool) error {
 	m.validateAckCalled = true
 	return m.validateAckErr
 }
