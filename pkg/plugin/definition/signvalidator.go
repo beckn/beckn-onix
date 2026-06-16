@@ -12,13 +12,17 @@ type SignValidator interface {
 	// The request body is available as ctx.Body.
 	Validate(ctx *model.StepContext, header string, publicKeyBase64 string) error
 
-	// ValidateAck verifies the 4-line signing string per NFH-004 §3.4:
+	// ValidateAck verifies a Beckn v2.0.0 AckSignature per NFH-004 §3.4.
+	// The four-line signing string is:
 	//   (created): <ts>
 	//   (expires): <ts>
 	//   digest: BLAKE-512=<base64(blake2b512(body))>
-	//   request-signature: <outboundAuthSignature>  (omitted when empty)
-	// body is passed explicitly because the two call sites hash different bodies:
-	// the on_search request body (step.go) vs the ACK response body (responsestep.go).
+	//   request-signature: <outboundAuthSignature>
+	// outboundAuthSignature is the raw Base64 signature value from the original
+	// outbound Authorization header's signature="..." attribute. If empty the
+	// fourth line is omitted (matches the ackSigner signing-string construction).
+	// body is passed explicitly because different call sites hash different bodies:
+	// solicited callback bodies differ from synchronous ACK response bodies.
 	ValidateAck(ctx *model.StepContext, body []byte, signatureHeader, outboundAuthSignature, publicKeyBase64 string) error
 }
 
