@@ -192,8 +192,8 @@ func checkSubscriberIdentity(ctx *model.StepContext, body []byte, header string)
 
 	signerID := extractSubscriberIDFromHeader(header)
 	if signerID != expected {
-		return fmt.Errorf("subscriber identity mismatch: signing subscriber %q does not match declared context identity %q",
-			signerID, expected)
+		return model.NewSignValidationErr(fmt.Errorf("subscriber identity mismatch: signing subscriber %q does not match declared context identity %q",
+			signerID, expected))
 	}
 	return nil
 }
