@@ -171,9 +171,10 @@ func (r *Role) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
-// ResolveCallerID returns the expected signing subscriber ID from a parsed Beckn context map.
-// For BAP role: returns the BPP's declared ID (bpp_id / bppId / receiverId).
-// For BPP role: returns the BAP's declared ID (bap_id / bapId / senderId).
+// ResolveCallerID returns the ID of the other party in a Beckn exchange — i.e. who
+// sent the inbound message — from a parsed Beckn context map.
+// For BPP role: the caller is the BAP (bap_id / bapId / senderId).
+// For BAP role: the caller is the BPP (bpp_id / bppId / receiverId).
 // Returns "" when the role is not BAP/BPP or no matching key is found.
 func ResolveCallerID(reqContext map[string]interface{}, role Role) string {
 	var keys []string
