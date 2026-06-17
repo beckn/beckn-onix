@@ -1015,3 +1015,95 @@ func TestRouteBodyless(t *testing.T) {
 		})
 	}
 }
+
+func TestRouteQueryParamsForwarded(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name         string
+		configFile   string
+		endpoint     string
+		body         string
+		rawQuery     string
+		wantRawQuery string
+	}{
+		{
+			name:         "bpp_uri routing preserves query params",
+			configFile:   "bap_caller.yaml",
+			endpoint:     "select",
+			body:         `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_uri": "https://bpp1.example.com"}}`,
+			rawQuery:     "subscriptionId=abc&page=1",
+			wantRawQuery: "subscriptionId=abc&page=1",
+		},
+		{
+			name:         "bap_uri routing preserves query params",
+			configFile:   "bpp_caller.yaml",
+			endpoint:     "on_select",
+			body:         `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bap_uri": "https://bap1.example.com"}}`,
+			rawQuery:     "token=xyz",
+			wantRawQuery: "token=xyz",
+		},
+		{
+			name:         "static url routing preserves query params",
+			configFile:   "bpp_receiver.yaml",
+			endpoint:     "select",
+			body:         `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0"}}`,
+			rawQuery:     "filter=active",
+			wantRawQuery: "filter=active",
+		},
+		{
+			name:         "no query params — RawQuery remains empty",
+			configFile:   "bap_caller.yaml",
+			endpoint:     "select",
+			body:         `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_uri": "https://bpp1.example.com"}}`,
+			rawQuery:     "",
+			wantRawQuery: "",
+		},
+		{
+			name:         "bpp routing with gateway fallback URL preserves query params",
+			configFile:   "bap_caller.yaml",
+			endpoint:     "search",
+			body:         `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0"}}`,
+			rawQuery:     "subscriptionId=abc",
+			wantRawQuery: "subscriptionId=abc",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router, _, rulesFilePath := setupRouter(t, tt.configFile)
+			defer os.RemoveAll(filepath.Dir(rulesFilePath))
+
+			reqURL := &url.URL{Path: tt.endpoint, RawQuery: tt.rawQuery}
+			route, err := router.Route(ctx, reqURL, []byte(tt.body))
+			if err != nil {
+				t.Fatalf("Route() error = %v, want nil", err)
+			}
+			if route.URL == nil {
+				t.Fatal("Route() returned nil URL")
+			}
+			if route.URL.RawQuery != tt.wantRawQuery {
+				t.Errorf("RawQuery = %q, want %q", route.URL.RawQuery, tt.wantRawQuery)
+			}
+		})
+	}
+}
+
+func TestRouteBodylessQueryParamsForwarded(t *testing.T) {
+	ctx := context.Background()
+
+	router, _, rulesFilePath := setupRouter(t, "v2_catalog_url.yaml")
+	defer os.RemoveAll(filepath.Dir(rulesFilePath))
+
+	reqURL := &url.URL{Path: "catalog/subscription", RawQuery: "subscriptionId=test123"}
+	route, err := router.Route(ctx, reqURL, nil)
+	if err != nil {
+		t.Fatalf("Route() error = %v, want nil", err)
+	}
+	if route.URL == nil {
+		t.Fatal("Route() returned nil URL")
+	}
+	if route.URL.RawQuery != "subscriptionId=test123" {
+		t.Errorf("RawQuery = %q, want %q", route.URL.RawQuery, "subscriptionId=test123")
+	}
+}

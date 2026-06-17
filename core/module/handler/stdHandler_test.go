@@ -866,3 +866,29 @@ func TestStorePayloadStep_Run_PropagatesError(t *testing.T) {
 		t.Fatal("expected error from Run when Store fails")
 	}
 }
+
+func TestProxy_QueryParamsForwardedToUpstream(t *testing.T) {
+	var capturedRawQuery string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedRawQuery = r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	upstreamURL, _ := url.Parse(upstream.URL)
+	upstreamURL.RawQuery = "subscriptionId=test123&page=2"
+
+	stepCtx := &model.StepContext{
+		Context: context.Background(),
+		Route:   &model.Route{TargetType: "url", URL: upstreamURL},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/?subscriptionId=test123&page=2", strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+
+	proxy(stepCtx, req, rr, http.DefaultClient, nil)
+
+	if capturedRawQuery != "subscriptionId=test123&page=2" {
+		t.Errorf("upstream received RawQuery = %q, want %q", capturedRawQuery, "subscriptionId=test123&page=2")
+	}
+}
