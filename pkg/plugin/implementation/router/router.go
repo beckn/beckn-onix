@@ -371,12 +371,12 @@ func handleProtocolMapping(route *model.Route, npURI, endpoint, rawQuery string)
 		if route.URL == nil {
 			return nil, fmt.Errorf("could not determine destination for endpoint '%s': neither request contained a %s URI nor was a default URL configured in routing rules", endpoint, role)
 		}
-		fallback := *route.URL
-		fallback.RawQuery = rawQuery
-		return &model.Route{
-			TargetType: targetTypeURL,
-			URL:        &fallback,
-		}, nil
+		if rawQuery != "" {
+			fallback := *route.URL
+			fallback.RawQuery = rawQuery
+			return &model.Route{TargetType: targetTypeURL, URL: &fallback}, nil
+		}
+		return &model.Route{TargetType: targetTypeURL, URL: route.URL}, nil
 	}
 	targetURL, err := url.Parse(target)
 	if err != nil {

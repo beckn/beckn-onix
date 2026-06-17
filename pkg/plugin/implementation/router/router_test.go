@@ -1083,7 +1083,7 @@ func TestRouteQueryParamsForwarded(t *testing.T) {
 				t.Fatalf("Route() error = %v, want nil", err)
 			}
 			if route.URL == nil {
-				t.Fatal("Route() returned nil URL")
+				t.Fatalf("Route() returned nil URL for endpoint %q (config: %s) — check that the test body resolves to a URL-type target", tt.endpoint, tt.configFile)
 			}
 			if route.URL.RawQuery != tt.wantRawQuery {
 				t.Errorf("RawQuery = %q, want %q", route.URL.RawQuery, tt.wantRawQuery)
