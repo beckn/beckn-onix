@@ -383,7 +383,9 @@ func handleProtocolMapping(route *model.Route, npURI, endpoint, rawQuery string)
 		return nil, fmt.Errorf("invalid %s URI - %s in request body for %s: %w", role, target, endpoint, err)
 	}
 	targetURL.Path = joinPath(targetURL, endpoint)
-	targetURL.RawQuery = rawQuery
+	if rawQuery != "" {
+		targetURL.RawQuery = rawQuery
+	}
 	return &model.Route{
 		TargetType: targetTypeURL,
 		URL:        targetURL,
