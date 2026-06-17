@@ -299,7 +299,7 @@ func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*mode
 	}
 	// For static URL targets, copy inbound query params onto a URL clone so the
 	// upstream receives them. The baked-in URL has no RawQuery of its own.
-	if route.TargetType == targetTypeURL && rawQuery != "" && route.URL != nil {
+	if rawQuery != "" && route.TargetType == targetTypeURL && route.URL != nil {
 		clone := *route.URL
 		clone.RawQuery = rawQuery
 		return &model.Route{TargetType: targetTypeURL, URL: &clone}, nil
@@ -340,7 +340,7 @@ func (r *Router) routeBodyless(endpoint, rawQuery string) (*model.Route, error) 
 		if rawQuery != "" && route.TargetType == targetTypeURL && route.URL != nil {
 			clone := *route.URL
 			clone.RawQuery = rawQuery
-			return &model.Route{TargetType: route.TargetType, URL: &clone}, nil
+			return &model.Route{TargetType: targetTypeURL, URL: &clone}, nil
 		}
 		return route, nil
 	}
@@ -386,10 +386,7 @@ func handleProtocolMapping(route *model.Route, npURI, endpoint, rawQuery string)
 	if rawQuery != "" {
 		targetURL.RawQuery = rawQuery
 	}
-	return &model.Route{
-		TargetType: targetTypeURL,
-		URL:        targetURL,
-	}, nil
+	return &model.Route{TargetType: targetTypeURL, URL: targetURL}, nil
 }
 
 func joinPath(u *url.URL, endpoint string) string {
