@@ -1121,21 +1121,23 @@ func TestRouteNilReqURL(t *testing.T) {
 	}
 }
 
-// TestRouteBodylessPublisherUnaffectedByQueryParams confirms that publisher-type
-// bodyless routes are returned unchanged when RawQuery is present — publisher
-// routes carry no URL, so there is nothing to attach the query string to.
+// TestRouteBodylessPublisherUnaffectedByQueryParams confirms that a truly
+// bodyless request (nil body) whose matched v2 rule has targetType: publisher
+// is returned unchanged when RawQuery is non-empty — publisher routes carry
+// no URL so there is nothing to attach the query string to.
+// This exercises the routeBodyless → switch fall-through → return route, nil path.
 func TestRouteBodylessPublisherUnaffectedByQueryParams(t *testing.T) {
 	ctx := context.Background()
 
-	// bpp_receiver has a publisher target for "search"
-	router, _, rulesFilePath := setupRouter(t, "bpp_receiver.yaml")
+	// v2_bpp_receiver has a v2 publisher target for "search".
+	router, _, rulesFilePath := setupRouter(t, "v2_bpp_receiver.yaml")
 	defer os.RemoveAll(filepath.Dir(rulesFilePath))
 
-	// "search" maps to targetType=publisher in bpp_receiver.yaml — no URL field.
-	// Passing a query string must not cause a panic or error; the route is returned
-	// with its PublisherID intact and URL remaining nil.
+	// nil body → routeBodyless; "search" maps to targetType=publisher.
+	// A non-empty RawQuery must not cause a panic or error; the route is
+	// returned with its PublisherID intact and URL remaining nil.
 	reqURL := &url.URL{Path: "search", RawQuery: "foo=bar"}
-	route, err := router.Route(ctx, reqURL, []byte(`{"context":{"domain":"ONDC:TRV10","version":"1.1.0"}}`))
+	route, err := router.Route(ctx, reqURL, nil)
 	if err != nil {
 		t.Fatalf("Route() error = %v, want nil", err)
 	}
