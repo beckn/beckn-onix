@@ -221,6 +221,9 @@ func getContextString(ctx map[string]interface{}, keys ...string) string {
 // base path by the step layer (e.g. "search" or "catalog/subscription").
 // reqURL.RawQuery is forwarded verbatim to the upstream target URL.
 func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*model.Route, error) {
+	if reqURL == nil {
+		return nil, fmt.Errorf("reqURL must not be nil")
+	}
 	endpoint := reqURL.Path
 	rawQuery := reqURL.RawQuery
 	// Bodyless requests (GET/DELETE) carry no JSON body; domain, version, and
@@ -332,10 +335,12 @@ func (r *Router) routeBodyless(endpoint, rawQuery string) (*model.Route, error) 
 		case targetTypeBPP, targetTypeBAP, targetTypeReceiver, targetTypeSender:
 			return nil, fmt.Errorf("bodyless endpoint '%s' (version %s) is configured with target type '%s': dynamic BAP/BPP URI routing is not supported for bodyless requests", endpoint, version, route.TargetType)
 		}
-		if rawQuery != "" && route.URL != nil {
+		// Publisher routes address a queue by ID — they carry no URL, so
+		// RawQuery does not apply. Only clone for URL-type targets.
+		if rawQuery != "" && route.TargetType == targetTypeURL && route.URL != nil {
 			clone := *route.URL
 			clone.RawQuery = rawQuery
-			return &model.Route{TargetType: route.TargetType, PublisherID: route.PublisherID, URL: &clone}, nil
+			return &model.Route{TargetType: route.TargetType, URL: &clone}, nil
 		}
 		return route, nil
 	}

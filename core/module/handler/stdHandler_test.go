@@ -867,6 +867,10 @@ func TestStorePayloadStep_Run_PropagatesError(t *testing.T) {
 	}
 }
 
+// TestProxy_QueryParamsForwardedToUpstream verifies that the proxy director
+// forwards RawQuery from the route URL verbatim to the upstream server.
+// The companion router tests (TestRouteQueryParamsForwarded) verify that the
+// router correctly populates route.URL.RawQuery from the inbound request.
 func TestProxy_QueryParamsForwardedToUpstream(t *testing.T) {
 	var capturedRawQuery string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -875,6 +879,8 @@ func TestProxy_QueryParamsForwardedToUpstream(t *testing.T) {
 	}))
 	defer upstream.Close()
 
+	// Simulate what the router produces after the fix: a route URL that already
+	// carries the inbound query string on its RawQuery field.
 	upstreamURL, _ := url.Parse(upstream.URL)
 	upstreamURL.RawQuery = "subscriptionId=test123&page=2"
 
@@ -883,7 +889,7 @@ func TestProxy_QueryParamsForwardedToUpstream(t *testing.T) {
 		Route:   &model.Route{TargetType: "url", URL: upstreamURL},
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/?subscriptionId=test123&page=2", strings.NewReader(`{}`))
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	rr := httptest.NewRecorder()
 
 	proxy(stepCtx, req, rr, http.DefaultClient, nil)
