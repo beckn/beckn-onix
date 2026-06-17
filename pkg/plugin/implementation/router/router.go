@@ -296,13 +296,14 @@ func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*mode
 		return handleProtocolMapping(route, bppURI, endpoint, rawQuery)
 	case targetTypeBAP, targetTypeSender:
 		return handleProtocolMapping(route, bapURI, endpoint, rawQuery)
-	}
-	// For static URL targets, copy inbound query params onto a URL clone so the
-	// upstream receives them. The baked-in URL has no RawQuery of its own.
-	if rawQuery != "" && route.TargetType == targetTypeURL && route.URL != nil {
-		clone := *route.URL
-		clone.RawQuery = rawQuery
-		return &model.Route{TargetType: targetTypeURL, URL: &clone}, nil
+	case targetTypeURL:
+		// Copy inbound query params onto a URL clone so the upstream receives them.
+		// The baked-in URL has no RawQuery of its own.
+		if rawQuery != "" && route.URL != nil {
+			clone := *route.URL
+			clone.RawQuery = rawQuery
+			return &model.Route{TargetType: targetTypeURL, URL: &clone}, nil
+		}
 	}
 	return route, nil
 }
