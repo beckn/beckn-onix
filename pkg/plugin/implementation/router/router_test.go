@@ -1015,3 +1015,136 @@ func TestRouteBodyless(t *testing.T) {
 		})
 	}
 }
+
+func TestRouteQueryParamsForwarded(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name         string
+		configFile   string
+		endpoint     string
+		body         string
+		rawQuery     string
+		wantRawQuery string
+	}{
+		{
+			name:         "bpp_uri routing preserves query params",
+			configFile:   "bap_caller.yaml",
+			endpoint:     "select",
+			body:         `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_uri": "https://bpp1.example.com"}}`,
+			rawQuery:     "subscriptionId=abc&page=1",
+			wantRawQuery: "subscriptionId=abc&page=1",
+		},
+		{
+			name:         "bap_uri routing preserves query params",
+			configFile:   "bpp_caller.yaml",
+			endpoint:     "on_select",
+			body:         `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bap_uri": "https://bap1.example.com"}}`,
+			rawQuery:     "token=xyz",
+			wantRawQuery: "token=xyz",
+		},
+		{
+			name:         "static url routing preserves query params",
+			configFile:   "bpp_receiver.yaml",
+			endpoint:     "select",
+			body:         `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0"}}`,
+			rawQuery:     "filter=active",
+			wantRawQuery: "filter=active",
+		},
+		{
+			name:         "no query params — RawQuery remains empty",
+			configFile:   "bap_caller.yaml",
+			endpoint:     "select",
+			body:         `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_uri": "https://bpp1.example.com"}}`,
+			rawQuery:     "",
+			wantRawQuery: "",
+		},
+		{
+			// handleProtocolMapping fallback: bpp_uri absent in body, so the
+			// gateway URL configured in the routing rule is used as the target.
+			// Verifies the fallback clone path in handleProtocolMapping carries RawQuery.
+			name:         "bpp routing: no bpp_uri in body falls back to gateway URL and preserves query params",
+			configFile:   "bap_caller.yaml",
+			endpoint:     "search",
+			body:         `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0"}}`,
+			rawQuery:     "subscriptionId=abc",
+			wantRawQuery: "subscriptionId=abc",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router, _, rulesFilePath := setupRouter(t, tt.configFile)
+			defer os.RemoveAll(filepath.Dir(rulesFilePath))
+
+			reqURL := &url.URL{Path: tt.endpoint, RawQuery: tt.rawQuery}
+			route, err := router.Route(ctx, reqURL, []byte(tt.body))
+			if err != nil {
+				t.Fatalf("Route() error = %v, want nil", err)
+			}
+			if route.URL == nil {
+				t.Fatalf("Route() returned nil URL for endpoint %q (config: %s) — check that the test body resolves to a URL-type target", tt.endpoint, tt.configFile)
+			}
+			if route.URL.RawQuery != tt.wantRawQuery {
+				t.Errorf("RawQuery = %q, want %q", route.URL.RawQuery, tt.wantRawQuery)
+			}
+		})
+	}
+}
+
+func TestRouteBodylessQueryParamsForwarded(t *testing.T) {
+	ctx := context.Background()
+
+	router, _, rulesFilePath := setupRouter(t, "v2_catalog_url.yaml")
+	defer os.RemoveAll(filepath.Dir(rulesFilePath))
+
+	reqURL := &url.URL{Path: "catalog/subscription", RawQuery: "subscriptionId=test123"}
+	route, err := router.Route(ctx, reqURL, nil)
+	if err != nil {
+		t.Fatalf("Route() error = %v, want nil", err)
+	}
+	if route.URL == nil {
+		t.Fatal("Route() returned nil URL")
+	}
+	if route.URL.RawQuery != "subscriptionId=test123" {
+		t.Errorf("RawQuery = %q, want %q", route.URL.RawQuery, "subscriptionId=test123")
+	}
+}
+
+func TestRouteNilReqURL(t *testing.T) {
+	router, _, rulesFilePath := setupRouter(t, "bap_caller.yaml")
+	defer os.RemoveAll(filepath.Dir(rulesFilePath))
+
+	_, err := router.Route(context.Background(), nil, []byte(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "reqURL must not be nil") {
+		t.Errorf("Route(nil URL) = %v, want error containing 'reqURL must not be nil'", err)
+	}
+}
+
+// TestRouteBodylessPublisherUnaffectedByQueryParams confirms that a truly
+// bodyless request (nil body) whose matched v2 rule has targetType: publisher
+// is returned unchanged when RawQuery is non-empty — publisher routes carry
+// no URL so there is nothing to attach the query string to.
+// This exercises the routeBodyless → switch fall-through → return route, nil path.
+func TestRouteBodylessPublisherUnaffectedByQueryParams(t *testing.T) {
+	ctx := context.Background()
+
+	// v2_bpp_receiver has a v2 publisher target for "search".
+	router, _, rulesFilePath := setupRouter(t, "v2_bpp_receiver.yaml")
+	defer os.RemoveAll(filepath.Dir(rulesFilePath))
+
+	// nil body → routeBodyless; "search" maps to targetType=publisher.
+	// A non-empty RawQuery must not cause a panic or error; the route is
+	// returned with its PublisherID intact and URL remaining nil.
+	reqURL := &url.URL{Path: "search", RawQuery: "foo=bar"}
+	route, err := router.Route(ctx, reqURL, nil)
+	if err != nil {
+		t.Fatalf("Route() error = %v, want nil", err)
+	}
+	if route.TargetType != targetTypePublisher {
+		t.Errorf("TargetType = %q, want %q", route.TargetType, targetTypePublisher)
+	}
+	if route.URL != nil {
+		t.Errorf("expected route.URL to be nil for publisher route, got %v", route.URL)
+	}
+}
