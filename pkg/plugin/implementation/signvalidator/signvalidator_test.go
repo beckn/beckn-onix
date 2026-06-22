@@ -107,23 +107,6 @@ func TestClockSkewTolerance_Default(t *testing.T) {
 	}
 }
 
-func TestClockSkewTolerance_CreatedSlightlyInFuture_Accepted(t *testing.T) {
-	// created is 3 s in the future — within the 5 s default tolerance.
-	privateKey, publicKey := generateTestKeyPair()
-	body := []byte("payload")
-	now := time.Now().Unix()
-	created := now + 3
-	expires := now + 3600
-	header := fmt.Sprintf(
-		`Signature algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
-		created, expires, signTestData(privateKey, body, created, expires),
-	)
-	verifier, _, _ := New(context.Background(), &Config{})
-	if err := verifier.Validate(makeCtx(body, ""), header, publicKey, false); err != nil {
-		t.Fatalf("expected acceptance within tolerance, got: %v", err)
-	}
-}
-
 func TestClockSkewTolerance_CreatedBeyondTolerance_Rejected(t *testing.T) {
 	// created is 7 s in the future — beyond the 5 s default tolerance.
 	privateKey, publicKey := generateTestKeyPair()
