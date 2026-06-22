@@ -807,7 +807,7 @@ Auxiliary specs are additive — they may only introduce new action verbs not al
 signValidator:
   id: signvalidator
   config:
-    clockSkewToleranceSeconds: "5"   # optional — see parameters below
+    clockSkewToleranceSeconds: 5   # optional — see parameters below
 ```
 
 **Parameters**:

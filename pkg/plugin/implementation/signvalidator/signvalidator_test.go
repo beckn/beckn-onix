@@ -90,10 +90,20 @@ func makeCtxWithCallerID(body []byte, role model.Role, callerID string) *model.S
 // ---------------------------------------------------------------------------
 
 func TestClockSkewTolerance_Default(t *testing.T) {
-	// A validator with no explicit tolerance should default to 5 s.
-	v, _, _ := New(context.Background(), &Config{})
-	if v.config.ClockSkewTolerance != defaultClockSkewTolerance {
-		t.Fatalf("expected default tolerance %v, got %v", defaultClockSkewTolerance, v.config.ClockSkewTolerance)
+	// With no explicit tolerance configured, a created timestamp 3 s in the
+	// future should be accepted (within the 5 s spec default).
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte("payload")
+	now := time.Now().Unix()
+	created := now + 3
+	expires := now + 3600
+	header := fmt.Sprintf(
+		`Signature algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
+		created, expires, signTestData(privateKey, body, created, expires),
+	)
+	verifier, _, _ := New(context.Background(), &Config{})
+	if err := verifier.Validate(makeCtx(body, ""), header, publicKey, false); err != nil {
+		t.Fatalf("expected default 5 s tolerance to accept created+3s, got: %v", err)
 	}
 }
 
@@ -143,7 +153,8 @@ func TestClockSkewTolerance_ExpiredNeverTolerated(t *testing.T) {
 		created, expires, signTestData(privateKey, body, created, expires),
 	)
 	// Use a large tolerance to confirm it has no effect on expires.
-	verifier, _, _ := New(context.Background(), &Config{ClockSkewTolerance: 30 * time.Second})
+	d := 30 * time.Second
+	verifier, _, _ := New(context.Background(), &Config{ClockSkewTolerance: &d})
 	if err := verifier.Validate(makeCtx(body, ""), header, publicKey, false); err == nil {
 		t.Fatal("expected rejection of expired signature even with large tolerance")
 	}
@@ -160,7 +171,8 @@ func TestClockSkewTolerance_CustomTolerance(t *testing.T) {
 		`Signature algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
 		created, expires, signTestData(privateKey, body, created, expires),
 	)
-	verifier, _, _ := New(context.Background(), &Config{ClockSkewTolerance: 10 * time.Second})
+	d := 10 * time.Second
+	verifier, _, _ := New(context.Background(), &Config{ClockSkewTolerance: &d})
 	if err := verifier.Validate(makeCtx(body, ""), header, publicKey, false); err != nil {
 		t.Fatalf("expected acceptance with 10 s tolerance, got: %v", err)
 	}

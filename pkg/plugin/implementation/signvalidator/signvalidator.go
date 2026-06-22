@@ -23,28 +23,30 @@ const (
 // Config struct for Verifier.
 type Config struct {
 	// ClockSkewTolerance is the maximum future drift allowed for the `created`
-	// field. Defaults to 5 s per the Beckn Auth & Trust spec. NFOs may override
-	// this per-subnet via the plugin config key "clockSkewToleranceSeconds".
+	// field. nil means use the spec default (5 s). Set to a zero-value pointer
+	// (&0) to enforce strict same-second validation. NFOs may override this
+	// per-subnet via the plugin config key "clockSkewToleranceSeconds".
 	// The `expires` field always uses zero tolerance regardless of this value.
-	ClockSkewTolerance time.Duration
+	ClockSkewTolerance *time.Duration
 }
 
 // validator implements the validator interface.
 type validator struct {
-	config *Config
+	clockSkewTolerance time.Duration // resolved at construction; never changes
 }
 
 // New creates a new Verifier instance.
+// The caller's Config is never mutated.
 func New(ctx context.Context, config *Config) (*validator, func() error, error) {
-	if config.ClockSkewTolerance == 0 {
-		config.ClockSkewTolerance = defaultClockSkewTolerance
+	tolerance := defaultClockSkewTolerance
+	if config.ClockSkewTolerance != nil {
+		tolerance = *config.ClockSkewTolerance
 	}
-	if config.ClockSkewTolerance > maxClockSkewTolerance {
+	if tolerance > maxClockSkewTolerance {
 		log.Warnf(ctx, "signvalidator: clockSkewToleranceSeconds=%ds exceeds recommended maximum of %ds; large tolerances widen the replay window",
-			int(config.ClockSkewTolerance.Seconds()), int(maxClockSkewTolerance.Seconds()))
+			int(tolerance.Seconds()), int(maxClockSkewTolerance.Seconds()))
 	}
-	v := &validator{config: config}
-	return v, nil, nil
+	return &validator{clockSkewTolerance: tolerance}, nil, nil
 }
 
 // Validate verifies the 3-line signing string for inbound requests.
@@ -59,7 +61,7 @@ func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBas
 		return fmt.Errorf("error decoding signature: %w", err)
 	}
 
-	if err := checkTimestampWindow("signature", createdTimestamp, expiredTimestamp, v.config.ClockSkewTolerance); err != nil {
+	if err := checkTimestampWindow("signature", createdTimestamp, expiredTimestamp, v.clockSkewTolerance); err != nil {
 		return err
 	}
 
@@ -147,7 +149,7 @@ func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHe
 		return fmt.Errorf("error decoding signature: %w", err)
 	}
 
-	if err := checkTimestampWindow("AckSignature", createdTimestamp, expiredTimestamp, v.config.ClockSkewTolerance); err != nil {
+	if err := checkTimestampWindow("AckSignature", createdTimestamp, expiredTimestamp, v.clockSkewTolerance); err != nil {
 		return err
 	}
 
@@ -209,12 +211,12 @@ func checkTimestampWindow(prefix string, createdTimestamp, expiredTimestamp int6
 	// Accept created values up to clockSkewTolerance in the future.
 	deadline := now.Add(clockSkewTolerance)
 	if time.Unix(createdTimestamp, 0).UTC().After(deadline) {
-		return model.NewSignValidationErr(fmt.Errorf("%s not yet valid: created=%s, server_time=%s, tolerance=%ds, delta=%ds",
+		return model.NewSignValidationErr(fmt.Errorf("%s not yet valid: created=%s, server_time=%s, tolerance=%ds, overshoot=%ds",
 			prefix,
 			time.Unix(createdTimestamp, 0).UTC().Format(time.RFC3339),
 			now.Format(time.RFC3339),
 			int(clockSkewTolerance.Seconds()),
-			createdTimestamp-now.Unix(),
+			createdTimestamp-deadline.Unix(),
 		))
 	}
 	// expires: zero tolerance — reject without exception.

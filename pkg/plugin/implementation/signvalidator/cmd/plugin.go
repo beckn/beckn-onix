@@ -25,7 +25,8 @@ func (vp provider) New(ctx context.Context, config map[string]string) (definitio
 		if err != nil || secs < 0 {
 			return nil, nil, errors.New("signvalidator: clockSkewToleranceSeconds must be a non-negative integer")
 		}
-		cfg.ClockSkewTolerance = time.Duration(secs) * time.Second
+		d := time.Duration(secs) * time.Second
+		cfg.ClockSkewTolerance = &d
 	}
 
 	return signvalidator.New(ctx, cfg)
