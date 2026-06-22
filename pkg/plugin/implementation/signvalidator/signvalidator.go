@@ -15,8 +15,18 @@ import (
 	"golang.org/x/crypto/blake2b"
 )
 
+const (
+	defaultClockSkewTolerance = 5 * time.Second
+	maxClockSkewTolerance     = 10 * time.Second
+)
+
 // Config struct for Verifier.
 type Config struct {
+	// ClockSkewTolerance is the maximum future drift allowed for the `created`
+	// field. Defaults to 5 s per the Beckn Auth & Trust spec. NFOs may override
+	// this per-subnet via the plugin config key "clockSkewToleranceSeconds".
+	// The `expires` field always uses zero tolerance regardless of this value.
+	ClockSkewTolerance time.Duration
 }
 
 // validator implements the validator interface.
@@ -26,8 +36,14 @@ type validator struct {
 
 // New creates a new Verifier instance.
 func New(ctx context.Context, config *Config) (*validator, func() error, error) {
+	if config.ClockSkewTolerance == 0 {
+		config.ClockSkewTolerance = defaultClockSkewTolerance
+	}
+	if config.ClockSkewTolerance > maxClockSkewTolerance {
+		log.Warnf(ctx, "signvalidator: clockSkewToleranceSeconds=%ds exceeds recommended maximum of %ds; large tolerances widen the replay window",
+			int(config.ClockSkewTolerance.Seconds()), int(maxClockSkewTolerance.Seconds()))
+	}
 	v := &validator{config: config}
-
 	return v, nil, nil
 }
 
@@ -43,7 +59,7 @@ func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBas
 		return fmt.Errorf("error decoding signature: %w", err)
 	}
 
-	if err := checkTimestampWindow("signature", createdTimestamp, expiredTimestamp); err != nil {
+	if err := checkTimestampWindow("signature", createdTimestamp, expiredTimestamp, v.config.ClockSkewTolerance); err != nil {
 		return err
 	}
 
@@ -131,7 +147,7 @@ func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHe
 		return fmt.Errorf("error decoding signature: %w", err)
 	}
 
-	if err := checkTimestampWindow("AckSignature", createdTimestamp, expiredTimestamp); err != nil {
+	if err := checkTimestampWindow("AckSignature", createdTimestamp, expiredTimestamp, v.config.ClockSkewTolerance); err != nil {
 		return err
 	}
 
@@ -184,26 +200,30 @@ func checkSubscriberIdentity(ctx *model.StepContext, body []byte, signerID strin
 	return nil
 }
 
-// checkTimestampWindow validates that the current server time falls within
-// [created, expires]. prefix ("signature" or "AckSignature") is used in the
-// error message to distinguish the two callers in logs.
-func checkTimestampWindow(prefix string, createdTimestamp, expiredTimestamp int64) error {
+// checkTimestampWindow validates the created/expires timestamp pair.
+// clockSkewTolerance is applied to `created` only — the spec permits a
+// configurable forward drift window to accommodate NTP skew between NPs.
+// `expires` is always checked with zero tolerance per the spec.
+func checkTimestampWindow(prefix string, createdTimestamp, expiredTimestamp int64, clockSkewTolerance time.Duration) error {
 	now := time.Now().UTC()
-	current := now.Unix()
-	if createdTimestamp > current {
-		return model.NewSignValidationErr(fmt.Errorf("%s not yet valid: created=%s, server_time=%s, delta=%ds",
+	// Accept created values up to clockSkewTolerance in the future.
+	deadline := now.Add(clockSkewTolerance)
+	if time.Unix(createdTimestamp, 0).UTC().After(deadline) {
+		return model.NewSignValidationErr(fmt.Errorf("%s not yet valid: created=%s, server_time=%s, tolerance=%ds, delta=%ds",
 			prefix,
 			time.Unix(createdTimestamp, 0).UTC().Format(time.RFC3339),
 			now.Format(time.RFC3339),
-			createdTimestamp-current,
+			int(clockSkewTolerance.Seconds()),
+			createdTimestamp-now.Unix(),
 		))
 	}
-	if current > expiredTimestamp {
+	// expires: zero tolerance — reject without exception.
+	if now.Unix() > expiredTimestamp {
 		return model.NewSignValidationErr(fmt.Errorf("%s expired: expires=%s, server_time=%s, expired_by=%ds",
 			prefix,
 			time.Unix(expiredTimestamp, 0).UTC().Format(time.RFC3339),
 			now.Format(time.RFC3339),
-			current-expiredTimestamp,
+			now.Unix()-expiredTimestamp,
 		))
 	}
 	return nil
