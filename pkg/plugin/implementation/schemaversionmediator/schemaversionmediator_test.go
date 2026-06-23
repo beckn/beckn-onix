@@ -14,6 +14,26 @@ import (
 	"github.com/jsonata-go/jsonata"
 )
 
+// mockManifestLoader is a test double for definition.ManifestLoader.
+type mockManifestLoader struct {
+	bySubscriberID func(ctx context.Context, subscriberID string) (*model.ManifestDocument, error)
+}
+
+func (m *mockManifestLoader) GetBySubscriberID(ctx context.Context, subscriberID string) (*model.ManifestDocument, error) {
+	if m.bySubscriberID != nil {
+		return m.bySubscriberID(ctx, subscriberID)
+	}
+	return nil, nil
+}
+
+func (m *mockManifestLoader) GetByNetworkID(ctx context.Context, networkID string) (*model.ManifestDocument, error) {
+	return nil, nil
+}
+
+func (m *mockManifestLoader) GetByMetadata(ctx context.Context, metadata model.ManifestMetadata) (*model.ManifestDocument, error) {
+	return nil, nil
+}
+
 // --- WalkPayload tests ---
 
 func TestWalkPayload_SingleObject(t *testing.T) {
@@ -298,7 +318,7 @@ func TestLoadTranslationPolicy_Defaults(t *testing.T) {
 }
 
 func TestLoadTranslationPolicy_AllValidActions(t *testing.T) {
-	for _, action := range []PolicyAction{PolicyActionReject, PolicyActionTranslate, PolicyActionPassIncompatible} {
+	for _, action := range []PolicyAction{PolicyActionReject, PolicyActionTranslate} {
 		p, err := loadTranslationPolicy(map[string]string{"action": string(action)})
 		if err != nil {
 			t.Errorf("action=%q: unexpected error: %v", action, err)
@@ -310,8 +330,15 @@ func TestLoadTranslationPolicy_AllValidActions(t *testing.T) {
 	}
 }
 
+func TestLoadTranslationPolicy_PassThroughAsActionRejected(t *testing.T) {
+	_, err := loadTranslationPolicy(map[string]string{"action": "passThrough"})
+	if err == nil {
+		t.Fatal("expected error when action=passThrough, got nil")
+	}
+}
+
 func TestLoadTranslationPolicy_ValidOnFailure(t *testing.T) {
-	for _, onFailure := range []PolicyAction{PolicyActionReject, PolicyActionPassIncompatible} {
+	for _, onFailure := range []PolicyAction{PolicyActionReject, PolicyActionPassThrough} {
 		p, err := loadTranslationPolicy(map[string]string{
 			"action":    "translate",
 			"onFailure": string(onFailure),
@@ -348,20 +375,17 @@ func TestLoadTranslationPolicy_OnFailureTranslateRejected(t *testing.T) {
 }
 
 func TestLoadTranslationPolicy_OnFailureIgnoredWhenActionNotTranslate(t *testing.T) {
-	// onFailure is meaningless when action=reject or pass_incompatible.
-	// A stale/invalid onFailure key must not produce an error in those cases.
-	for _, action := range []PolicyAction{PolicyActionReject, PolicyActionPassIncompatible} {
-		p, err := loadTranslationPolicy(map[string]string{
-			"action":    string(action),
-			"onFailure": "unknown_value",
-		})
-		if err != nil {
-			t.Errorf("action=%q: expected no error for stale onFailure key, got %v", action, err)
-			continue
-		}
-		if p.Action != action {
-			t.Errorf("action=%q: got %q", action, p.Action)
-		}
+	// onFailure is meaningless when action=reject.
+	// A stale/invalid onFailure key must not produce an error in that case.
+	p, err := loadTranslationPolicy(map[string]string{
+		"action":    "reject",
+		"onFailure": "unknown_value",
+	})
+	if err != nil {
+		t.Errorf("action=reject: expected no error for stale onFailure key, got %v", err)
+	}
+	if p != nil && p.Action != PolicyActionReject {
+		t.Errorf("action=reject: got %q", p.Action)
 	}
 }
 
@@ -1122,5 +1146,418 @@ func TestFetchAllArtifacts_PartialSuccessReturnsBothSets(t *testing.T) {
 	}
 	if _, ok := artifacts["$.message"]; !ok {
 		t.Error("Order artifact should be present despite Fulfillment failure")
+	}
+}
+
+// --- provider.New / cold-start tests ---
+
+// nodeManifestDoc returns a ManifestDocument whose Content is a valid node
+// manifest YAML parseable by model.ParseNodeManifest. YAML keys match the
+// struct tags in model.NodeManifest (camelCase).
+func nodeManifestDoc(objects ...model.SchemaObject) *model.ManifestDocument {
+	var sb strings.Builder
+	sb.WriteString("manifestType: node-manifest\n")
+	sb.WriteString("schema:\n  schemaObjects:\n")
+	for _, o := range objects {
+		sb.WriteString("  - contextUrl: " + o.ContextURL + "\n")
+		sb.WriteString("    type: " + o.Type + "\n")
+	}
+	return &model.ManifestDocument{Content: []byte(sb.String())}
+}
+
+func TestNew_ColdStart_LoaderError(t *testing.T) {
+	loader := &mockManifestLoader{
+		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
+			return nil, errors.New("dedi unavailable")
+		},
+	}
+	p := &provider{}
+	svm, _, err := p.New(context.Background(), loader, map[string]string{"nodeId": "test-node"})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	med := svm.(*mediator)
+	if !med.notOnboarded {
+		t.Error("expected notOnboarded=true when loader returns error")
+	}
+}
+
+func TestNew_ColdStart_EmptySchemaObjects(t *testing.T) {
+	loader := &mockManifestLoader{
+		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
+			return nodeManifestDoc( /* no objects */ ), nil
+		},
+	}
+	p := &provider{}
+	svm, _, err := p.New(context.Background(), loader, map[string]string{"nodeId": "test-node"})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	med := svm.(*mediator)
+	if !med.notOnboarded {
+		t.Error("expected notOnboarded=true when manifest has no schemaObjects")
+	}
+}
+
+func TestNew_ColdStart_MissingNodeId(t *testing.T) {
+	p := &provider{}
+	svm, _, err := p.New(context.Background(), &mockManifestLoader{}, map[string]string{})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	med := svm.(*mediator)
+	if !med.notOnboarded {
+		t.Error("expected notOnboarded=true when nodeId config key is absent")
+	}
+}
+
+func TestNew_ValidManifest_NotOnboarded_False(t *testing.T) {
+	loader := &mockManifestLoader{
+		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
+			return nodeManifestDoc(model.SchemaObject{
+				ContextURL: "https://schema.beckn.io/retail/v2.0/Order.jsonld",
+				Type:       "Order",
+			}), nil
+		},
+	}
+	p := &provider{}
+	svm, _, err := p.New(context.Background(), loader, map[string]string{"nodeId": "test-node"})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	med := svm.(*mediator)
+	if med.notOnboarded {
+		t.Error("expected notOnboarded=false for valid manifest with schemaObjects")
+	}
+}
+
+// --- Mediate tests ---
+
+// buildPayload builds a minimal Beckn JSON body with the given network_id and
+// optional message-level schema object declaration.
+func buildPayload(networkID, counterpartyID string, msgContextURL, msgType string) []byte {
+	msg := `{}`
+	if msgContextURL != "" {
+		msg = `{"@context":"` + msgContextURL + `","@type":"` + msgType + `"}`
+	}
+	return []byte(`{"context":{"network_id":"` + networkID + `","bap_id":"` + counterpartyID + `"},"message":` + msg + `}`)
+}
+
+func newTestMediatorFull(t *testing.T, loader *mockManifestLoader, cfg map[string]string) *mediator {
+	t.Helper()
+	instance, err := jsonata.OpenLatest()
+	if err != nil {
+		t.Fatalf("jsonata.OpenLatest: %v", err)
+	}
+	policy, err := loadTranslationPolicy(cfg)
+	if err != nil {
+		t.Fatalf("loadTranslationPolicy: %v", err)
+	}
+	return &mediator{
+		policy:          *policy,
+		loader:          loader,
+		httpClient:      &http.Client{},
+		cache:           newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+		jsonataInstance: instance,
+		exprs:           newExprCache(),
+	}
+}
+
+func stepCtxWithRemoteID(body []byte, remoteID string) *model.StepContext {
+	ctx := context.WithValue(context.Background(), model.ContextKeyRemoteID, remoteID)
+	return &model.StepContext{
+		Context: ctx,
+		Body:    body,
+	}
+}
+
+func TestMediate_NotOnboarded(t *testing.T) {
+	m := &mediator{notOnboarded: true}
+	err := m.Mediate(&model.StepContext{Context: context.Background(), Body: []byte(`{}`)})
+	var me *MediationError
+	if !errors.As(err, &me) {
+		t.Fatalf("expected MediationError, got %T: %v", err, err)
+	}
+	if me.Code != "subscriberNotOnboarded" {
+		t.Errorf("expected subscriberNotOnboarded, got %q", me.Code)
+	}
+}
+
+func TestMediate_NoNetworkID_PassThrough(t *testing.T) {
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{})
+	body := []byte(`{"context":{},"message":{}}`)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+	if err := m.Mediate(ctx); err != nil {
+		t.Fatalf("expected pass-through (nil), got: %v", err)
+	}
+}
+
+func TestMediate_NetworkIdCamelCase_Recognised(t *testing.T) {
+	// networkId (camelCase) must be accepted in addition to network_id (snake_case).
+	loader := &mockManifestLoader{
+		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
+			return nil, errors.New("dedi lookup failed")
+		},
+	}
+	m := newTestMediatorFull(t, loader, map[string]string{"onFailure": "reject"})
+	// Use camelCase networkId key.
+	body := []byte(`{"context":{"networkId":"net1"},"message":{}}`)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+	// Expecting schemaIncompatible (not pass-through) proves networkId was read.
+	err := m.Mediate(ctx)
+	var me *MediationError
+	if !errors.As(err, &me) {
+		t.Fatalf("expected MediationError (networkId recognised), got %T: %v", err, err)
+	}
+	if me.Code != "schemaIncompatible" {
+		t.Errorf("expected schemaIncompatible, got %q", me.Code)
+	}
+}
+
+func TestMediate_NoCounterpartyID_PassThrough(t *testing.T) {
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{})
+	body := []byte(`{"context":{"network_id":"net1"},"message":{}}`)
+	sctx := &model.StepContext{Context: context.Background(), Body: body}
+	if err := m.Mediate(sctx); err != nil {
+		t.Fatalf("expected pass-through (nil), got: %v", err)
+	}
+}
+
+func TestMediate_CounterpartyManifestUnavailable_Reject(t *testing.T) {
+	loader := &mockManifestLoader{
+		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
+			return nil, errors.New("dedi lookup failed")
+		},
+	}
+	m := newTestMediatorFull(t, loader, map[string]string{"onFailure": "reject"})
+	body := buildPayload("net1", "bap.example.com", "", "")
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+	err := m.Mediate(ctx)
+	var me *MediationError
+	if !errors.As(err, &me) {
+		t.Fatalf("expected MediationError, got %T: %v", err, err)
+	}
+	if me.Code != "schemaIncompatible" {
+		t.Errorf("expected schemaIncompatible, got %q", me.Code)
+	}
+}
+
+func TestMediate_CounterpartyManifestUnavailable_PassThrough(t *testing.T) {
+	loader := &mockManifestLoader{
+		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
+			return nil, errors.New("dedi lookup failed")
+		},
+	}
+	m := newTestMediatorFull(t, loader, map[string]string{"onFailure": "passThrough"})
+	body := buildPayload("net1", "bap.example.com", "", "")
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+	if err := m.Mediate(ctx); err != nil {
+		t.Fatalf("expected pass-through (nil), got: %v", err)
+	}
+}
+
+func TestMediate_AllCompatible_PassThrough(t *testing.T) {
+	loader := &mockManifestLoader{
+		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
+			return nodeManifestDoc(model.SchemaObject{
+				ContextURL: "https://schema.beckn.io/retail/v2.0/Order.jsonld",
+				Type:       "Order",
+			}), nil
+		},
+	}
+	m := newTestMediatorFull(t, loader, map[string]string{})
+	body := buildPayload("net1", "bap.example.com",
+		"https://schema.beckn.io/retail/v2.0/Order.jsonld", "Order")
+	original := string(body)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+	if err := m.Mediate(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(ctx.Body) != original {
+		t.Error("body should be unchanged when all schema objects are compatible")
+	}
+}
+
+func TestMediate_ActionReject_OnIncompatible(t *testing.T) {
+	loader := &mockManifestLoader{
+		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
+			// counterparty is on v1.0, we are on v2.0 — mismatch
+			return nodeManifestDoc(model.SchemaObject{
+				ContextURL: "https://schema.beckn.io/retail/v1.0/Order.jsonld",
+				Type:       "Order",
+			}), nil
+		},
+	}
+	m := newTestMediatorFull(t, loader, map[string]string{"action": "reject"})
+	body := buildPayload("net1", "bap.example.com",
+		"https://schema.beckn.io/retail/v2.0/Order.jsonld", "Order")
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+	err := m.Mediate(ctx)
+	var me *MediationError
+	if !errors.As(err, &me) {
+		t.Fatalf("expected MediationError, got %T: %v", err, err)
+	}
+	if me.Code != "schemaIncompatible" {
+		t.Errorf("expected schemaIncompatible, got %q", me.Code)
+	}
+}
+
+func TestMediate_ArtifactNotFound_Reject(t *testing.T) {
+	// Artifact server returns 404 for all requests.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	// Loader returns a manifest whose ContextURL is on srv so the derived
+	// artifact URL points at srv and the 404 is actually exercised.
+	loader := &mockManifestLoader{
+		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
+			return nodeManifestDoc(model.SchemaObject{
+				ContextURL: srv.URL + "/retail/v1.0/Order.jsonld",
+				Type:       "Order",
+			}), nil
+		},
+	}
+
+	m := newTestMediatorFull(t, loader, map[string]string{"onFailure": "reject"})
+	m.httpClient = srv.Client()
+
+	body := []byte(`{"context":{"network_id":"net1"},"message":{"@context":"` +
+		srv.URL + `/retail/v2.0/Order.jsonld","@type":"Order"}}`)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+	err := m.Mediate(ctx)
+	var me *MediationError
+	if !errors.As(err, &me) {
+		t.Fatalf("expected MediationError, got %T: %v", err, err)
+	}
+	if me.Code != "schemaIncompatible" {
+		t.Errorf("expected schemaIncompatible, got %q", me.Code)
+	}
+}
+
+func TestMediate_ArtifactNotFound_PassThrough(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	loader := &mockManifestLoader{
+		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
+			return nodeManifestDoc(model.SchemaObject{
+				ContextURL: srv.URL + "/retail/v1.0/Order.jsonld",
+				Type:       "Order",
+			}), nil
+		},
+	}
+
+	m := newTestMediatorFull(t, loader, map[string]string{"onFailure": "passThrough"})
+	m.httpClient = srv.Client()
+
+	body := []byte(`{"context":{"network_id":"net1"},"message":{"@context":"` +
+		srv.URL + `/retail/v2.0/Order.jsonld","@type":"Order"}}`)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+	if err := m.Mediate(ctx); err != nil {
+		t.Fatalf("expected pass-through (nil), got: %v", err)
+	}
+}
+
+func TestMediate_TranslationApplied(t *testing.T) {
+	// Artifact server returns a JSONata expression that adds "state" from "status".
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/jsonata")
+		w.Write([]byte(`{"state": status}`))
+	}))
+	defer srv.Close()
+
+	// Counterparty manifest is on v1.0 (srv-hosted URLs); inbound payload declares
+	// v2.0 URLs → mismatch, artifact fetch goes to srv, translation applied.
+	loader := &mockManifestLoader{
+		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
+			return nodeManifestDoc(model.SchemaObject{
+				ContextURL: srv.URL + "/retail/v1.0/Order.jsonld",
+				Type:       "Order",
+			}), nil
+		},
+	}
+
+	m := newTestMediatorFull(t, loader, map[string]string{})
+	m.httpClient = srv.Client()
+
+	body := []byte(`{"context":{"network_id":"net1"},"message":{"@context":"` +
+		srv.URL + `/retail/v2.0/Order.jsonld","@type":"Order","status":"ACTIVE"}}`)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+
+	if err := m.Mediate(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(ctx.Body, &envelope); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	var msg map[string]any
+	if err := json.Unmarshal(envelope["message"], &msg); err != nil {
+		t.Fatalf("unmarshal message: %v", err)
+	}
+	if msg["state"] != "ACTIVE" {
+		t.Errorf("expected state=ACTIVE after translation, got %v", msg["state"])
+	}
+}
+
+// TestMediate_DataLoss note: the JSONata $merge executor is additive by design —
+// it cannot drop fields present in the source. Data-loss detection in Mediate is
+// therefore not reachable through the current JSONata executor path. The
+// droppedFields function is tested directly in TestDroppedFields_* below. A
+// Mediate-level integration test requires a replacement (non-merge) executor and
+// will be added when non-JSONata translator support is introduced.
+
+// --- droppedFields tests ---
+
+func TestDroppedFields_NoneDropped(t *testing.T) {
+	src := []byte(`{"a":"1","b":"2"}`)
+	dst := []byte(`{"a":"1","b":"2","c":"3"}`)
+	dropped, err := droppedFields(src, dst)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dropped) != 0 {
+		t.Errorf("expected no dropped fields, got %v", dropped)
+	}
+}
+
+func TestDroppedFields_OneDropped(t *testing.T) {
+	src := []byte(`{"a":"1","b":"2"}`)
+	dst := []byte(`{"a":"1"}`)
+	dropped, err := droppedFields(src, dst)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dropped) != 1 || dropped[0] != "b" {
+		t.Errorf("expected [b], got %v", dropped)
+	}
+}
+
+func TestDroppedFields_NestedDropped(t *testing.T) {
+	src := []byte(`{"order":{"id":"1","status":"ACTIVE"}}`)
+	dst := []byte(`{"order":{"id":"1"}}`)
+	dropped, err := droppedFields(src, dst)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dropped) != 1 || dropped[0] != "order.status" {
+		t.Errorf("expected [order.status], got %v", dropped)
+	}
+}
+
+func TestDroppedFields_NoneDropped_Nested(t *testing.T) {
+	src := []byte(`{"order":{"id":"1","status":"ACTIVE"}}`)
+	dst := []byte(`{"order":{"id":"1","status":"ACTIVE","state":"ACTIVE"}}`)
+	dropped, err := droppedFields(src, dst)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dropped) != 0 {
+		t.Errorf("expected no dropped fields, got %v", dropped)
 	}
 }
