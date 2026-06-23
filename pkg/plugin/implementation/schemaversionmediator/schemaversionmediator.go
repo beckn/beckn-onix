@@ -19,6 +19,7 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/jsonata-go/jsonata"
 )
 
 // PolicyAction defines what the mediator does when schema incompatibility is
@@ -104,6 +105,18 @@ func loadTranslationPolicy(config map[string]string) (*TranslationPolicy, error)
 // be determined without a manifest, but the absence of one is not a hard failure.
 var ErrNoManifest = errors.New("schemaversionmediator: node manifest unavailable, skipping mediation")
 
+// SchemaObjectRef is a schema object extracted from a payload, extended with
+// the JSONata path to the node that declared it. The path flows through to
+// TranslationNeeded and MappingEntry for the caller's logging and debugging use;
+// it is not interpreted by ComposeExpression.
+type SchemaObjectRef struct {
+	model.SchemaObject
+	// JSONataPath is the JSONata dot-notation path from the payload root to this
+	// node, e.g. "$.message.order" or "$.message.order.fulfillments[0]".
+	// The root node itself has path "$" (JSONata root reference).
+	JSONataPath string
+}
+
 // TranslationNeeded describes a single schema object from the payload that
 // the local node cannot handle as-is and requires translation.
 //
@@ -111,53 +124,58 @@ var ErrNoManifest = errors.New("schemaversionmediator: node manifest unavailable
 // To is the schema object the local node supports for the same Type.
 // To is nil when the Type is entirely absent from the local node manifest —
 // an unknown schema whose handling is governed by the data-loss policy.
+// JSONataPath is the path to the node in the payload — forwarded from SchemaObjectRef.
 type TranslationNeeded struct {
-	From model.SchemaObject
-	To   *model.SchemaObject
+	From        model.SchemaObject
+	To          *model.SchemaObject
+	JSONataPath string
 }
 
 // WalkPayload recursively traverses a JSON payload and returns all schema
-// objects declared via JSON-LD "@context" and "@type" fields. The walk is
-// depth-first and collects every qualifying node regardless of nesting level,
-// including both a parent node and its nested children when both carry
-// "@context"/"@type" declarations — each is an independent schema contract.
-// The payload is not modified.
-func WalkPayload(payload []byte) ([]model.SchemaObject, error) {
+// objects declared via JSON-LD "@context" and "@type" fields, each annotated
+// with the JSONata path to its location in the tree. The walk is depth-first
+// and collects every qualifying node regardless of nesting level, including
+// both a parent node and its nested children when both carry "@context"/"@type"
+// declarations — each is an independent schema contract. The payload is not modified.
+func WalkPayload(payload []byte) ([]SchemaObjectRef, error) {
 	var root any
 	if err := json.Unmarshal(payload, &root); err != nil {
 		return nil, fmt.Errorf("schemaversionmediator: walk payload: %w", err)
 	}
-	var results []model.SchemaObject
-	walkNode(root, &results)
+	var results []SchemaObjectRef
+	walkNode(root, "$", &results)
 	return results, nil
 }
 
 // walkNode is the recursive descent worker for WalkPayload.
+// path is the JSONata path of the current node from the payload root.
 // When a map node carries both "@context" and "@type" it is collected, then
-// the walk continues into its children — a parent and its nested children may
-// each declare independent schema objects and both are valid collection targets.
-func walkNode(node any, results *[]model.SchemaObject) {
+// the walk continues into its children.
+func walkNode(node any, nodePath string, results *[]SchemaObjectRef) {
 	switch v := node.(type) {
 	case map[string]any:
 		if contextURL, ok := stringField(v, "@context"); ok {
 			if typ, ok := stringField(v, "@type"); ok {
-				*results = append(*results, model.SchemaObject{
-					ContextURL: contextURL,
-					Type:       typ,
+				*results = append(*results, SchemaObjectRef{
+					SchemaObject: model.SchemaObject{
+						ContextURL: contextURL,
+						Type:       typ,
+					},
+					JSONataPath: nodePath,
 				})
 			}
 		}
 		for key, child := range v {
-			// Skip the JSON-LD marker fields themselves — they are strings and
-			// descending into them is a no-op, but skipping makes intent explicit.
 			if key == "@context" || key == "@type" {
 				continue
 			}
-			walkNode(child, results)
+			childPath := nodePath + "." + key
+			walkNode(child, childPath, results)
 		}
 	case []any:
-		for _, item := range v {
-			walkNode(item, results)
+		for i, item := range v {
+			childPath := fmt.Sprintf("%s[%d]", nodePath, i)
+			walkNode(item, childPath, results)
 		}
 	}
 }
@@ -272,13 +290,35 @@ func (c *artifactCache) set(key string, artifact *TranslationArtifact) {
 	c.entries[key] = &artifactCacheEntry{artifact: artifact, fetchedAt: time.Now()}
 }
 
+// defaultMaxExprCacheEntries caps the compiled-expression cache. Expressions are
+// deterministic and never expire, but the cap prevents unbounded growth on nodes
+// that encounter an unusually large number of distinct schema version pairs.
+// When the cap is reached, new expressions are compiled and returned but not cached.
+const defaultMaxExprCacheEntries = 200
+
+// exprCache stores compiled JSONata expressions keyed by the raw expression string.
+// Entries never expire — expressions are deterministic and there are very few
+// unique ones in practice (bounded by the set of schema version pairs deployed
+// on a given node). See defaultMaxExprCacheEntries for the size cap.
+type exprCache struct {
+	mu      sync.RWMutex
+	entries map[string]jsonata.Expression
+	max     int
+}
+
+func newExprCache() *exprCache {
+	return &exprCache{entries: make(map[string]jsonata.Expression), max: defaultMaxExprCacheEntries}
+}
+
 // mediator is the runtime state for the SchemaVersionMediator plugin.
 // The Mediate method and provider New function are added in the mediation loop branch.
 type mediator struct {
-	policy     TranslationPolicy
-	loader     definition.ManifestLoader
-	httpClient *http.Client
-	cache      *artifactCache
+	policy          TranslationPolicy
+	loader          definition.ManifestLoader
+	httpClient      *http.Client
+	cache           *artifactCache
+	jsonataInstance jsonata.JSONataInstance
+	exprs           *exprCache
 }
 
 // fetchArtifact returns the translation artifact for the given TranslationNeeded.
@@ -290,7 +330,13 @@ func (m *mediator) fetchArtifact(ctx context.Context, need TranslationNeeded) (*
 	if err != nil {
 		return nil, err
 	}
+	return m.fetchArtifactByURL(ctx, artifactURL)
+}
 
+// fetchArtifactByURL is the URL-scoped fetch primitive used by both fetchArtifact
+// and fetchAllArtifacts. Callers that have already derived the URL use this
+// directly to avoid a second derivation.
+func (m *mediator) fetchArtifactByURL(ctx context.Context, artifactURL string) (*TranslationArtifact, error) {
 	if artifact, found := m.cache.get(artifactURL); found {
 		if artifact == nil {
 			return nil, ErrArtifactNotFound
@@ -459,22 +505,166 @@ func loadMapManagerConfig(config map[string]string) (fetchTimeout, positiveTTL, 
 	return
 }
 
+// --- JSONata composition and execution ---
+
+// MappingEntry pairs a translation artifact expression with the payload path
+// of the schema object it targets. The artifact expression is written to operate
+// on the Beckn message subtree (not the full payload) and must return an object
+// whose fields are merged at the message root — i.e. a message-level patch.
+//
+// JSONataPath is metadata carried for the caller's logging and debugging use.
+// ComposeExpression does not interpret it — the Expression itself must reference
+// message-level paths directly (e.g. `fulfillment.type`, not `$.message.fulfillment.type`).
+//
+// Example for an Order at $.message:
+//
+//	Expression: `{"state": status}`  →  adds "state" from "status" at message root
+//
+// Example for a Fulfillment at $.message.fulfillment:
+//
+//	Expression: `{"fulfillment": $merge([fulfillment, {"fulfillment_type": fulfillment.type}])}`
+type MappingEntry struct {
+	JSONataPath string // from WalkPayload, e.g. "$.message.fulfillment"; metadata only for the caller
+	Expression  string // message-level patch expression
+}
+
+// ComposeExpression combines N per-object patch expressions into a single JSONata
+// expression that applies all transforms to the message subtree in one Evaluate call.
+//
+// Each entry's Expression must return an object that is merged at the message root.
+// Artifact authors write expressions that reference message-level paths directly
+// (e.g. `fulfillment.type`). See TestExecute_MultiPathComposed for a verified
+// example of three schema objects transformed in a single composed expression.
+//
+// An empty entries list returns the identity expression "$".
+// The returned string can be compiled and evaluated by Execute.
+func ComposeExpression(entries []MappingEntry) (string, error) {
+	if len(entries) == 0 {
+		return "$", nil
+	}
+	patches := make([]string, len(entries))
+	for i, e := range entries {
+		if strings.TrimSpace(e.Expression) == "" {
+			return "", fmt.Errorf("schemaversionmediator: compose expression: entry %d (path %q) has empty expression", i, e.JSONataPath)
+		}
+		patches[i] = e.Expression
+	}
+	return "$merge([$, " + strings.Join(patches, ", ") + "])", nil
+}
+
+// compiledExpr returns a cached compiled JSONata expression for the given
+// expression string, compiling and caching it on the first call.
+func (m *mediator) compiledExpr(expression string) (jsonata.Expression, error) {
+	m.exprs.mu.RLock()
+	if expr, ok := m.exprs.entries[expression]; ok {
+		m.exprs.mu.RUnlock()
+		return expr, nil
+	}
+	m.exprs.mu.RUnlock()
+
+	expr, err := m.jsonataInstance.Compile(expression, false)
+	if err != nil {
+		return nil, fmt.Errorf("schemaversionmediator: compile expression: %w", err)
+	}
+
+	m.exprs.mu.Lock()
+	if len(m.exprs.entries) < m.exprs.max {
+		m.exprs.entries[expression] = expr
+	}
+	m.exprs.mu.Unlock()
+	return expr, nil
+}
+
+// Execute compiles (with caching) and evaluates a JSONata expression against
+// the Beckn message subtree bytes. It returns the transformed message bytes.
+// The expression is typically produced by ComposeExpression.
+// ctx is accepted for interface consistency; jsonata-go does not support
+// context cancellation, so it is not forwarded to the evaluator.
+func (m *mediator) Execute(ctx context.Context, expression string, message []byte) ([]byte, error) {
+	_ = ctx
+	expr, err := m.compiledExpr(expression)
+	if err != nil {
+		return nil, err
+	}
+	result, err := expr.Evaluate(message, nil)
+	if err != nil {
+		return nil, fmt.Errorf("schemaversionmediator: execute expression: %w", err)
+	}
+	return result, nil
+}
+
+// --- Batch artifact fetching with comprehensive failure reporting ---
+
+// ArtifactFetchFailure records a single failed artifact fetch with the full
+// context needed for a structured log event: which schema object was being
+// translated, from/to what version, which URL was attempted, and why it failed.
+type ArtifactFetchFailure struct {
+	Need   TranslationNeeded
+	URL    string // artifact URL that was attempted; empty when URL derivation failed
+	Reason error
+}
+
+// fetchAllArtifacts attempts to fetch translation artifacts for every need in
+// the slice. All fetches are attempted regardless of individual failures so the
+// caller can log the complete failure picture in a single structured log event
+// rather than surfacing one error at a time.
+//
+// Two distinct failure modes are reported through ArtifactFetchFailure:
+//  1. To == nil: the schema type is entirely absent from the local manifest;
+//     no artifact URL can be derived. Reason will describe the missing type.
+//  2. fetchArtifact returned an error: URL was derived but the fetch failed
+//     (ErrArtifactNotFound or a transient network error).
+//
+// Returns a nil error slice only when ALL fetches succeed. The caller must check
+// for failures before calling ComposeExpression and Execute.
+func (m *mediator) fetchAllArtifacts(ctx context.Context, needs []TranslationNeeded) (map[string]*TranslationArtifact, []ArtifactFetchFailure) {
+	artifacts := make(map[string]*TranslationArtifact, len(needs))
+	var failures []ArtifactFetchFailure
+
+	for _, need := range needs {
+		if need.To == nil {
+			failures = append(failures, ArtifactFetchFailure{
+				Need:   need,
+				Reason: fmt.Errorf("type %q not in local manifest: no translation target known", need.From.Type),
+			})
+			continue
+		}
+
+		artifactURL, err := deriveArtifactURL(need)
+		if err != nil {
+			failures = append(failures, ArtifactFetchFailure{Need: need, Reason: err})
+			continue
+		}
+
+		artifact, err := m.fetchArtifactByURL(ctx, artifactURL)
+		if err != nil {
+			failures = append(failures, ArtifactFetchFailure{Need: need, URL: artifactURL, Reason: err})
+			continue
+		}
+		artifacts[need.JSONataPath] = artifact
+	}
+	return artifacts, failures
+}
+
 // --- CheckCompatibility ---
 
-// CheckCompatibility compares extracted schema objects against the local node
+// CheckCompatibility compares extracted schema object refs against the local node
 // manifest and returns those that require translation. An empty result means
 // the payload is fully compatible and the mediator can short-circuit.
 //
 // Returns ErrNoManifest if manifest is nil — the caller should log a warning
 // and skip mediation rather than treating this as a hard failure.
 //
-// For each extracted SchemaObject:
+// For each extracted SchemaObjectRef:
 //   - Exact match in manifest → compatible, omitted from result.
 //   - Same Type, different ContextURL → TranslationNeeded with To set to the
 //     locally supported SchemaObject (version the node expects).
 //   - Type absent from manifest entirely → TranslationNeeded with To nil;
 //     handling is delegated to the data-loss policy enforcer.
-func CheckCompatibility(extracted []model.SchemaObject, manifest *model.NodeManifest) ([]TranslationNeeded, error) {
+//
+// The JSONataPath from each ref is forwarded into TranslationNeeded for the
+// caller's logging and debugging use; it is not interpreted by ComposeExpression.
+func CheckCompatibility(extracted []SchemaObjectRef, manifest *model.NodeManifest) ([]TranslationNeeded, error) {
 	if manifest == nil {
 		return nil, ErrNoManifest
 	}
@@ -485,18 +675,15 @@ func CheckCompatibility(extracted []model.SchemaObject, manifest *model.NodeMani
 	}
 
 	var needs []TranslationNeeded
-	for _, from := range extracted {
-		local, known := supported[from.Type]
+	for _, ref := range extracted {
+		local, known := supported[ref.Type]
 		switch {
 		case !known:
-			// Type entirely absent from the local manifest — unknown schema.
-			needs = append(needs, TranslationNeeded{From: from})
-		case local.ContextURL != from.ContextURL:
-			// Same type, different version — translation required.
+			needs = append(needs, TranslationNeeded{From: ref.SchemaObject, JSONataPath: ref.JSONataPath})
+		case local.ContextURL != ref.ContextURL:
 			to := local
-			needs = append(needs, TranslationNeeded{From: from, To: &to})
+			needs = append(needs, TranslationNeeded{From: ref.SchemaObject, To: &to, JSONataPath: ref.JSONataPath})
 		}
-		// Exact match: compatible — no entry added.
 	}
 	return needs, nil
 }

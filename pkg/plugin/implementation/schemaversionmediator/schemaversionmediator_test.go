@@ -2,13 +2,16 @@ package schemaversionmediator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/jsonata-go/jsonata"
 )
 
 // --- WalkPayload tests ---
@@ -143,8 +146,8 @@ func schemaObj(contextURL, typ string) model.SchemaObject {
 }
 
 func TestCheckCompatibility_NilManifest(t *testing.T) {
-	extracted := []model.SchemaObject{
-		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"),
+	extracted := []SchemaObjectRef{
+		schemaRef("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order", "$.message.order"),
 	}
 	needs, err := CheckCompatibility(extracted, nil)
 	if !errors.Is(err, ErrNoManifest) {
@@ -156,8 +159,8 @@ func TestCheckCompatibility_NilManifest(t *testing.T) {
 }
 
 func TestCheckCompatibility_AllCompatible(t *testing.T) {
-	extracted := []model.SchemaObject{
-		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"),
+	extracted := []SchemaObjectRef{
+		schemaRef("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order", "$.message.order"),
 	}
 	m := manifest(schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"))
 
@@ -171,8 +174,8 @@ func TestCheckCompatibility_AllCompatible(t *testing.T) {
 }
 
 func TestCheckCompatibility_VersionMismatch(t *testing.T) {
-	extracted := []model.SchemaObject{
-		schemaObj("https://schema.beckn.io/retail/schema/1.0.0/order.jsonld", "Order"),
+	extracted := []SchemaObjectRef{
+		schemaRef("https://schema.beckn.io/retail/schema/1.0.0/order.jsonld", "Order", "$.message.order"),
 	}
 	m := manifest(schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"))
 
@@ -195,8 +198,8 @@ func TestCheckCompatibility_VersionMismatch(t *testing.T) {
 }
 
 func TestCheckCompatibility_UnknownType(t *testing.T) {
-	extracted := []model.SchemaObject{
-		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/quote.jsonld", "Quote"),
+	extracted := []SchemaObjectRef{
+		schemaRef("https://schema.beckn.io/retail/schema/1.1.0/quote.jsonld", "Quote", "$.message.quote"),
 	}
 	m := manifest(schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"))
 
@@ -213,10 +216,10 @@ func TestCheckCompatibility_UnknownType(t *testing.T) {
 }
 
 func TestCheckCompatibility_MixedOutcomes(t *testing.T) {
-	extracted := []model.SchemaObject{
-		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"),  // compatible
-		schemaObj("https://schema.beckn.io/retail/schema/1.0.0/item.jsonld", "Item"),    // version mismatch
-		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/quote.jsonld", "Quote"), // unknown type
+	extracted := []SchemaObjectRef{
+		schemaRef("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order", "$.message.order"),  // compatible
+		schemaRef("https://schema.beckn.io/retail/schema/1.0.0/item.jsonld", "Item", "$.message.order.items[0]"),    // version mismatch
+		schemaRef("https://schema.beckn.io/retail/schema/1.1.0/quote.jsonld", "Quote", "$.message.quote"), // unknown type
 	}
 	m := manifest(
 		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"),
@@ -250,8 +253,8 @@ func TestCheckCompatibility_MixedOutcomes(t *testing.T) {
 }
 
 func TestCheckCompatibility_EmptyManifest(t *testing.T) {
-	extracted := []model.SchemaObject{
-		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"),
+	extracted := []SchemaObjectRef{
+		schemaRef("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order", "$.message.order"),
 	}
 	m := manifest() // no schema objects
 
@@ -268,7 +271,7 @@ func TestCheckCompatibility_EmptyManifest(t *testing.T) {
 }
 
 func TestCheckCompatibility_EmptyPayload(t *testing.T) {
-	needs, err := CheckCompatibility([]model.SchemaObject{}, manifest(
+	needs, err := CheckCompatibility([]SchemaObjectRef{}, manifest(
 		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"),
 	))
 	if err != nil {
@@ -774,7 +777,7 @@ func TestLoadMapManagerConfig_InvalidMaxEntries(t *testing.T) {
 
 // --- helpers ---
 
-func assertContainsType(t *testing.T, objects []model.SchemaObject, typ string) {
+func assertContainsType(t *testing.T, objects []SchemaObjectRef, typ string) {
 	t.Helper()
 	for _, o := range objects {
 		if o.Type == typ {
@@ -784,6 +787,11 @@ func assertContainsType(t *testing.T, objects []model.SchemaObject, typ string) 
 	t.Errorf("expected schema object with Type=%q not found in %v", typ, objects)
 }
 
+// schemaRef wraps schemaObj into a SchemaObjectRef with a synthetic path for tests.
+func schemaRef(contextURL, typ, jsonataPath string) SchemaObjectRef {
+	return SchemaObjectRef{SchemaObject: schemaObj(contextURL, typ), JSONataPath: jsonataPath}
+}
+
 func findNeedByType(needs []TranslationNeeded, typ string) *TranslationNeeded {
 	for i := range needs {
 		if needs[i].From.Type == typ {
@@ -791,4 +799,328 @@ func findNeedByType(needs []TranslationNeeded, typ string) *TranslationNeeded {
 		}
 	}
 	return nil
+}
+
+// --- ComposeExpression tests ---
+
+func TestComposeExpression_Empty(t *testing.T) {
+	expr, err := ComposeExpression(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if expr != "$" {
+		t.Errorf("expected identity expression \"$\", got %q", expr)
+	}
+}
+
+func TestComposeExpression_SinglePatch(t *testing.T) {
+	entries := []MappingEntry{
+		{JSONataPath: "$.message", Expression: `{"state": status}`},
+	}
+	expr, err := ComposeExpression(entries)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := `$merge([$, {"state": status}])`
+	if expr != want {
+		t.Errorf("got %q, want %q", expr, want)
+	}
+}
+
+func TestComposeExpression_MultiPatch(t *testing.T) {
+	entries := []MappingEntry{
+		{JSONataPath: "$.message", Expression: `{"state": status}`},
+		{
+			JSONataPath: "$.message.fulfillment",
+			Expression:  `{"fulfillment": $merge([fulfillment, {"fulfillment_type": fulfillment.type}])}`,
+		},
+	}
+	expr, err := ComposeExpression(entries)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Expression must begin with the merge wrapper and contain both patches.
+	if !strings.Contains(expr, "$merge([$,") {
+		t.Errorf("composed expression missing merge wrapper: %s", expr)
+	}
+	if !strings.Contains(expr, `{"state": status}`) {
+		t.Errorf("composed expression missing Order patch: %s", expr)
+	}
+	if !strings.Contains(expr, `{"fulfillment":`) {
+		t.Errorf("composed expression missing Fulfillment patch: %s", expr)
+	}
+}
+
+func TestComposeExpression_EmptyExpressionReturnsError(t *testing.T) {
+	entries := []MappingEntry{
+		{JSONataPath: "$.message", Expression: ""},
+	}
+	_, err := ComposeExpression(entries)
+	if err == nil {
+		t.Fatal("expected error for empty expression, got nil")
+	}
+}
+
+// --- Execute tests ---
+
+func newTestTranslatorMediator(t *testing.T) *mediator {
+	t.Helper()
+	instance, err := jsonata.OpenLatest()
+	if err != nil {
+		t.Fatalf("jsonata.OpenLatest: %v", err)
+	}
+	return &mediator{
+		jsonataInstance: instance,
+		exprs:           newExprCache(),
+		cache:           newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+		httpClient:      &http.Client{},
+	}
+}
+
+func TestExecute_IdentityExpression(t *testing.T) {
+	m := newTestTranslatorMediator(t)
+	message := []byte(`{"id":"order-1","status":"ACTIVE"}`)
+	result, err := m.Execute(context.Background(), "$", message)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	// Compare by value, not byte-for-byte: jsonata-go may re-serialize with
+	// different key ordering than the original input.
+	var orig, got map[string]any
+	if err := json.Unmarshal(message, &orig); err != nil {
+		t.Fatalf("unmarshal original: %v", err)
+	}
+	if err := json.Unmarshal(result, &got); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if got["id"] != orig["id"] || got["status"] != orig["status"] {
+		t.Errorf("identity expression changed field values: got %s", result)
+	}
+}
+
+func TestExecute_SingleFieldRename(t *testing.T) {
+	m := newTestTranslatorMediator(t)
+	message := []byte(`{"id":"order-1","status":"ACTIVE","fulfillment":{"id":"ff-1","type":"HOME"}}`)
+
+	expr, err := ComposeExpression([]MappingEntry{
+		{JSONataPath: "$.message", Expression: `{"state": status}`},
+	})
+	if err != nil {
+		t.Fatalf("ComposeExpression: %v", err)
+	}
+
+	result, err := m.Execute(context.Background(), expr, message)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var out map[string]any
+	if err := unmarshalResult(result, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out["state"] != "ACTIVE" {
+		t.Errorf("expected state=ACTIVE, got %v", out["state"])
+	}
+	if _, ok := out["status"]; !ok {
+		t.Error("status field should still be present after merge (non-destructive)")
+	}
+}
+
+func TestExecute_MultiPathComposed(t *testing.T) {
+	m := newTestTranslatorMediator(t)
+	message := []byte(`{"id":"order-1","status":"ACTIVE","fulfillment":{"id":"ff-1","type":"HOME"},"quote":{"price":{"currency":"INR"}}}`)
+
+	expr, err := ComposeExpression([]MappingEntry{
+		{JSONataPath: "$.message", Expression: `{"state": status}`},
+		{JSONataPath: "$.message.fulfillment", Expression: `{"fulfillment": $merge([fulfillment, {"fulfillment_type": fulfillment.type}])}`},
+		{JSONataPath: "$.message.quote", Expression: `{"quote": $merge([quote, {"currency_code": quote.price.currency}])}`},
+	})
+	if err != nil {
+		t.Fatalf("ComposeExpression: %v", err)
+	}
+
+	result, err := m.Execute(context.Background(), expr, message)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var out map[string]any
+	if err := unmarshalResult(result, &out); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+
+	if out["state"] != "ACTIVE" {
+		t.Errorf("Order transform: expected state=ACTIVE, got %v", out["state"])
+	}
+	if ff, ok := out["fulfillment"].(map[string]any); !ok || ff["fulfillment_type"] != "HOME" {
+		t.Errorf("Fulfillment transform: expected fulfillment_type=HOME, got %v", out["fulfillment"])
+	}
+	if q, ok := out["quote"].(map[string]any); !ok || q["currency_code"] != "INR" {
+		t.Errorf("Quote transform: expected currency_code=INR, got %v", out["quote"])
+	}
+}
+
+func TestExecute_ExpressionCacheHit(t *testing.T) {
+	m := newTestTranslatorMediator(t)
+	message := []byte(`{"status":"ACTIVE"}`)
+	expr := `$merge([$, {"state": status}])`
+
+	// First call compiles and caches.
+	if _, err := m.Execute(context.Background(), expr, message); err != nil {
+		t.Fatalf("first Execute: %v", err)
+	}
+	// Second call should hit cache (same compiled expression returned).
+	if _, err := m.Execute(context.Background(), expr, message); err != nil {
+		t.Fatalf("second Execute: %v", err)
+	}
+	m.exprs.mu.RLock()
+	_, cached := m.exprs.entries[expr]
+	m.exprs.mu.RUnlock()
+	if !cached {
+		t.Error("expression should be in cache after first Execute call")
+	}
+}
+
+func TestExecute_InvalidExpression(t *testing.T) {
+	m := newTestTranslatorMediator(t)
+	_, err := m.Execute(context.Background(), "!!!invalid jsonata{{", []byte(`{}`))
+	if err == nil {
+		t.Fatal("expected error for invalid JSONata expression")
+	}
+}
+
+// unmarshalResult unmarshals JSON bytes into v, for use in Execute tests.
+func unmarshalResult(b []byte, v any) error {
+	return json.Unmarshal(b, v)
+}
+
+// --- fetchAllArtifacts tests ---
+
+func TestFetchAllArtifacts_AllSucceed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/jsonata")
+		w.Write([]byte(`{"state": status}`))
+	}))
+	defer srv.Close()
+
+	m := &mediator{
+		httpClient: srv.Client(),
+		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+	}
+
+	needs := []TranslationNeeded{
+		{
+			From:        model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+			To:          &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+			JSONataPath: "$.message",
+		},
+	}
+
+	artifacts, failures := m.fetchAllArtifacts(context.Background(), needs)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures, got: %v", failures[0].Reason)
+	}
+	if _, ok := artifacts["$.message"]; !ok {
+		t.Error("artifact keyed by JSONataPath not found in result")
+	}
+}
+
+func TestFetchAllArtifacts_NilToIsFailure(t *testing.T) {
+	m := &mediator{
+		httpClient: &http.Client{},
+		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+	}
+
+	needs := []TranslationNeeded{
+		{
+			From:        model.SchemaObject{ContextURL: "https://schema.beckn.io/v1.1/Unknown.jsonld", Type: "Unknown"},
+			To:          nil,
+			JSONataPath: "$.message.unknown",
+		},
+	}
+
+	_, failures := m.fetchAllArtifacts(context.Background(), needs)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure for nil To, got %d", len(failures))
+	}
+	if failures[0].Need.From.Type != "Unknown" {
+		t.Errorf("unexpected failed type: %q", failures[0].Need.From.Type)
+	}
+}
+
+func TestFetchAllArtifacts_CollectsAllFailures(t *testing.T) {
+	// Server returns 404 for all requests.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	m := &mediator{
+		httpClient: srv.Client(),
+		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+	}
+
+	needs := []TranslationNeeded{
+		{
+			From:        model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+			To:          &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+			JSONataPath: "$.message",
+		},
+		{
+			From:        model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Fulfillment.jsonld", Type: "Fulfillment"},
+			To:          &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Fulfillment.jsonld", Type: "Fulfillment"},
+			JSONataPath: "$.message.fulfillment",
+		},
+	}
+
+	_, failures := m.fetchAllArtifacts(context.Background(), needs)
+	if len(failures) != 2 {
+		t.Fatalf("expected 2 failures (one per 404), got %d", len(failures))
+	}
+	for _, f := range failures {
+		if !errors.Is(f.Reason, ErrArtifactNotFound) {
+			t.Errorf("expected ErrArtifactNotFound for %q, got: %v", f.Need.From.Type, f.Reason)
+		}
+	}
+}
+
+func TestFetchAllArtifacts_PartialSuccessReturnsBothSets(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/retail/v2.0/Order_from_v1.1" {
+			w.Header().Set("Content-Type", "application/jsonata")
+			w.Write([]byte(`{"state": status}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	m := &mediator{
+		httpClient: srv.Client(),
+		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+	}
+
+	needs := []TranslationNeeded{
+		{
+			From:        model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+			To:          &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+			JSONataPath: "$.message",
+		},
+		{
+			From:        model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Fulfillment.jsonld", Type: "Fulfillment"},
+			To:          &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Fulfillment.jsonld", Type: "Fulfillment"},
+			JSONataPath: "$.message.fulfillment",
+		},
+	}
+
+	artifacts, failures := m.fetchAllArtifacts(context.Background(), needs)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure, got %d", len(failures))
+	}
+	if failures[0].Need.From.Type != "Fulfillment" {
+		t.Errorf("wrong failed type: %q", failures[0].Need.From.Type)
+	}
+	if _, ok := artifacts["$.message"]; !ok {
+		t.Error("Order artifact should be present despite Fulfillment failure")
+	}
 }
