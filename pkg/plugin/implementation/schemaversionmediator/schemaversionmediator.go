@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,9 +33,10 @@ const (
 	// PolicyActionTranslate attempts translation for each incompatible schema
 	// object. On failure the OnFailure policy applies.
 	PolicyActionTranslate PolicyAction = "translate"
-	// PolicyActionPassIncompatible forwards the request as-is with a structured
-	// log signal indicating which schema objects were not translated.
-	PolicyActionPassIncompatible PolicyAction = "pass_incompatible"
+	// PolicyActionPassThrough forwards the request as-is with a structured log
+	// signal. Valid only as onFailure — used when no artifact is published yet
+	// and the operator accepts the risk of forwarding an untranslated payload.
+	PolicyActionPassThrough PolicyAction = "passThrough"
 )
 
 // TranslationPolicy governs mediator behaviour when schema incompatibilities
@@ -62,10 +64,11 @@ var defaultPolicy = TranslationPolicy{
 // Config keys: "action" and "onFailure". Both are optional — absent keys fall
 // back to the default policy (translate/reject).
 //
-// Valid values for action:    reject | translate | pass_incompatible
-// Valid values for onFailure: reject | pass_incompatible (only validated when action=translate;
+// Valid values for action:    reject | translate
+// Valid values for onFailure: reject | passThrough (only validated when action=translate;
 // ignored otherwise since no translation is ever attempted)
 // Setting onFailure to "translate" is not permitted — it would cause a loop.
+// "passThrough" is not a valid action — it may only appear as onFailure.
 func loadTranslationPolicy(config map[string]string) (*TranslationPolicy, error) {
 	p := &TranslationPolicy{
 		Action:    defaultPolicy.Action,
@@ -74,10 +77,12 @@ func loadTranslationPolicy(config map[string]string) (*TranslationPolicy, error)
 
 	if raw, ok := config["action"]; ok {
 		switch PolicyAction(raw) {
-		case PolicyActionReject, PolicyActionTranslate, PolicyActionPassIncompatible:
+		case PolicyActionReject, PolicyActionTranslate:
 			p.Action = PolicyAction(raw)
+		case PolicyActionPassThrough:
+			return nil, fmt.Errorf("schemaversionmediator: action cannot be %q — passThrough is only valid as onFailure", raw)
 		default:
-			return nil, fmt.Errorf("schemaversionmediator: invalid action %q: must be reject, translate, or pass_incompatible", raw)
+			return nil, fmt.Errorf("schemaversionmediator: invalid action %q: must be reject or translate", raw)
 		}
 	}
 
@@ -87,12 +92,12 @@ func loadTranslationPolicy(config map[string]string) (*TranslationPolicy, error)
 	if p.Action == PolicyActionTranslate {
 		if raw, ok := config["onFailure"]; ok {
 			switch PolicyAction(raw) {
-			case PolicyActionReject, PolicyActionPassIncompatible:
+			case PolicyActionReject, PolicyActionPassThrough:
 				p.OnFailure = PolicyAction(raw)
 			case PolicyActionTranslate:
 				return nil, fmt.Errorf("schemaversionmediator: onFailure cannot be %q — would cause a translation loop", raw)
 			default:
-				return nil, fmt.Errorf("schemaversionmediator: invalid onFailure %q: must be reject or pass_incompatible", raw)
+				return nil, fmt.Errorf("schemaversionmediator: invalid onFailure %q: must be reject or passThrough", raw)
 			}
 		}
 	}
@@ -311,7 +316,6 @@ func newExprCache() *exprCache {
 }
 
 // mediator is the runtime state for the SchemaVersionMediator plugin.
-// The Mediate method and provider New function are added in the mediation loop branch.
 type mediator struct {
 	policy          TranslationPolicy
 	loader          definition.ManifestLoader
@@ -319,6 +323,304 @@ type mediator struct {
 	cache           *artifactCache
 	jsonataInstance jsonata.JSONataInstance
 	exprs           *exprCache
+	notOnboarded    bool // set at New() when local manifest is absent or has no schemaObjects
+}
+
+// provider is the factory for mediator instances. It implements
+// definition.SchemaVersionMediatorProvider.
+type provider struct{}
+
+// New constructs a mediator, validates config, and performs the cold-start
+// check. If the local node manifest is absent or carries no schemaObjects the
+// mediator's notOnboarded flag is set; Mediate will reject every inbound
+// request until the manifest is published and the adapter is restarted.
+func (p *provider) New(ctx context.Context, loader definition.ManifestLoader, cfg map[string]string) (definition.SchemaVersionMediator, func() error, error) {
+	policy, err := loadTranslationPolicy(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	fetchTimeout, positiveTTL, negativeTTL, maxEntries, err := loadMapManagerConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	instance, err := jsonata.OpenLatest()
+	if err != nil {
+		return nil, nil, fmt.Errorf("schemaversionmediator: open jsonata: %w", err)
+	}
+
+	m := &mediator{
+		policy:          *policy,
+		loader:          loader,
+		httpClient:      httpClientFunc(fetchTimeout),
+		cache:           newArtifactCache(positiveTTL, negativeTTL, maxEntries),
+		jsonataInstance: instance,
+		exprs:           newExprCache(),
+	}
+
+	// Cold-start check: attempt to load the local node manifest. If it is
+	// absent or has no schemaObjects, mark as not onboarded so Mediate rejects
+	// every inbound call with a clear error rather than silently pass-through.
+	nodeID := cfg["nodeId"]
+	if nodeID == "" {
+		m.notOnboarded = true
+	} else {
+		doc, err := loader.GetBySubscriberID(ctx, nodeID)
+		if err != nil || doc == nil {
+			m.notOnboarded = true
+		} else {
+			nm, err := parseNodeManifest(doc)
+			if err != nil || len(nm.Schema.SchemaObjects) == 0 {
+				m.notOnboarded = true
+			}
+		}
+	}
+
+	return m, func() error { return nil }, nil
+}
+
+// Mediate runs the full inbound schema version mediation sequence on ctx.Body.
+// It is direction-agnostic: the caller (BAPCaller / BPPCaller handler) invokes
+// it for inbound payloads; the response path uses RunOnResponse (not yet implemented).
+func (m *mediator) Mediate(ctx *model.StepContext) error {
+	if m.notOnboarded {
+		return &MediationError{
+			Code:    "subscriberNotOnboarded",
+			Message: "Local node manifest is missing or has no schemaObjects. Publish your manifest to DeDi before going live.",
+		}
+	}
+
+	networkID := extractNetworkID(ctx.Body)
+	counterpartyID, _ := ctx.Value(model.ContextKeyRemoteID).(string)
+
+	// No policy match → pass through unchanged.
+	if networkID == "" || counterpartyID == "" {
+		return nil
+	}
+
+	// Fetch counterparty manifest. Absent manifest drives onFailure branch.
+	counterpartyManifest, err := m.fetchCounterpartyManifest(ctx, counterpartyID)
+	if err != nil {
+		return m.applyOnFailure(fmt.Errorf("schemaversionmediator: counterparty manifest unavailable for %q: %w", counterpartyID, err))
+	}
+
+	refs, err := WalkPayload(ctx.Body)
+	if err != nil {
+		return fmt.Errorf("schemaversionmediator: walk payload: %w", err)
+	}
+
+	needs, err := CheckCompatibility(refs, counterpartyManifest)
+	if err != nil {
+		return err
+	}
+	if len(needs) == 0 {
+		return nil // fully compatible
+	}
+
+	if m.policy.Action == PolicyActionReject {
+		return &MediationError{
+			Code:    "schemaIncompatible",
+			Message: fmt.Sprintf("payload contains %d incompatible schema object(s) and policy is reject", len(needs)),
+		}
+	}
+
+	// Fetch all translation artifacts; any failure applies onFailure policy.
+	artifacts, failures := m.fetchAllArtifacts(ctx, needs)
+	if len(failures) > 0 {
+		return m.applyOnFailure(fmt.Errorf("schemaversionmediator: %d artifact fetch failure(s): first: %w", len(failures), failures[0].Reason))
+	}
+
+	// Build mapping entries from artifacts (JSONata content-type only for now).
+	entries := make([]MappingEntry, 0, len(artifacts))
+	for jsonataPath, artifact := range artifacts {
+		entries = append(entries, MappingEntry{
+			JSONataPath: jsonataPath,
+			Expression:  string(artifact.Content),
+		})
+	}
+
+	expression, err := ComposeExpression(entries)
+	if err != nil {
+		return fmt.Errorf("schemaversionmediator: compose expression: %w", err)
+	}
+
+	msgBytes, err := extractMessageSubtree(ctx.Body)
+	if err != nil {
+		return fmt.Errorf("schemaversionmediator: extract message subtree: %w", err)
+	}
+
+	translated, err := m.Execute(ctx, expression, msgBytes)
+	if err != nil {
+		return fmt.Errorf("schemaversionmediator: execute translation: %w", err)
+	}
+
+	dropped, err := droppedFields(msgBytes, translated)
+	if err != nil {
+		return fmt.Errorf("schemaversionmediator: data-loss detection: %w", err)
+	}
+	if len(dropped) > 0 {
+		return &MediationError{
+			Code:         "schemaTranslationDataLoss",
+			Message:      "translation dropped fields that were present in the source payload",
+			DroppedFields: dropped,
+		}
+	}
+
+	patched, err := patchMessageSubtree(ctx.Body, translated)
+	if err != nil {
+		return fmt.Errorf("schemaversionmediator: patch message subtree: %w", err)
+	}
+	ctx.Body = patched
+	return nil
+}
+
+// applyOnFailure returns the appropriate error or nil depending on policy.OnFailure.
+// cause is retained for the wrapped error chain but not surfaced in the
+// user-facing MediationError.Message to avoid leaking internal detail.
+func (m *mediator) applyOnFailure(cause error) error {
+	if m.policy.OnFailure == PolicyActionPassThrough {
+		return nil
+	}
+	return &MediationError{
+		Code:    "schemaIncompatible",
+		Message: "schema version mediation failed; check adapter logs for details",
+		cause:   cause,
+	}
+}
+
+// fetchCounterpartyManifest fetches and parses the counterparty's node manifest
+// via the manifest loader.
+func (m *mediator) fetchCounterpartyManifest(ctx context.Context, counterpartyID string) (*model.NodeManifest, error) {
+	doc, err := m.loader.GetBySubscriberID(ctx, counterpartyID)
+	if err != nil {
+		return nil, err
+	}
+	if doc == nil {
+		return nil, fmt.Errorf("no manifest document returned")
+	}
+	return parseNodeManifest(doc)
+}
+
+// parseNodeManifest parses the raw YAML content of a ManifestDocument into a NodeManifest.
+func parseNodeManifest(doc *model.ManifestDocument) (*model.NodeManifest, error) {
+	nm, err := model.ParseNodeManifest(doc.Content)
+	if err != nil {
+		return nil, fmt.Errorf("schemaversionmediator: parse node manifest: %w", err)
+	}
+	return nm, nil
+}
+
+// extractNetworkID reads context.network_id / context.networkId from a Beckn payload.
+func extractNetworkID(body []byte) string {
+	var envelope struct {
+		Context map[string]json.RawMessage `json:"context"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return ""
+	}
+	for _, key := range []string{"network_id", "networkId"} {
+		if raw, ok := envelope.Context[key]; ok {
+			var s string
+			if err := json.Unmarshal(raw, &s); err == nil && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// extractMessageSubtree returns the raw JSON bytes of the "message" field from
+// a Beckn payload. Returns an error if "message" is absent.
+func extractMessageSubtree(body []byte) ([]byte, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, err
+	}
+	msg, ok := envelope["message"]
+	if !ok {
+		return nil, fmt.Errorf("payload has no \"message\" field")
+	}
+	return msg, nil
+}
+
+// patchMessageSubtree replaces the "message" value in body with translated and
+// returns the re-serialised full payload.
+func patchMessageSubtree(body, translated []byte) ([]byte, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, err
+	}
+	envelope["message"] = translated
+	return json.Marshal(envelope)
+}
+
+// MediationError is a structured rejection returned by Mediate. It carries a
+// camelCase error code and a human-readable message so the handler can build a
+// Beckn NACK response with the correct fault details. cause is the underlying
+// technical error; it is available via errors.Unwrap for logging but is not
+// exposed in the user-facing Message.
+type MediationError struct {
+	Code          string
+	Message       string
+	DroppedFields []string // non-nil only for schemaTranslationDataLoss
+	cause         error    // internal; use errors.Unwrap to access
+}
+
+func (e *MediationError) Error() string {
+	if len(e.DroppedFields) > 0 {
+		return fmt.Sprintf("schemaversionmediator: %s: %s (dropped: %s)", e.Code, e.Message, strings.Join(e.DroppedFields, ", "))
+	}
+	return fmt.Sprintf("schemaversionmediator: %s: %s", e.Code, e.Message)
+}
+
+func (e *MediationError) Unwrap() error { return e.cause }
+
+// droppedFields returns the sorted set of dot-notation key paths that are
+// present in src but absent in dst. Both must be JSON object bytes.
+// Arrays are treated as opaque leaf values — element-level drops within an
+// array are not detected. Only object key presence is compared.
+func droppedFields(src, dst []byte) ([]string, error) {
+	var srcMap, dstMap map[string]any
+	if err := json.Unmarshal(src, &srcMap); err != nil {
+		return nil, fmt.Errorf("unmarshal source: %w", err)
+	}
+	if err := json.Unmarshal(dst, &dstMap); err != nil {
+		return nil, fmt.Errorf("unmarshal translated: %w", err)
+	}
+	srcKeys := flattenKeyPaths(srcMap, "")
+	dstKeys := flattenKeyPaths(dstMap, "")
+	dstSet := make(map[string]struct{}, len(dstKeys))
+	for _, k := range dstKeys {
+		dstSet[k] = struct{}{}
+	}
+	var dropped []string
+	for _, k := range srcKeys {
+		if _, ok := dstSet[k]; !ok {
+			dropped = append(dropped, k)
+		}
+	}
+	sort.Strings(dropped)
+	return dropped, nil
+}
+
+// flattenKeyPaths recursively collects all dot-notation leaf paths from a
+// JSON object tree. Array elements are not indexed — array presence is
+// tracked at the array key level only.
+func flattenKeyPaths(v map[string]any, prefix string) []string {
+	var keys []string
+	for k, child := range v {
+		full := k
+		if prefix != "" {
+			full = prefix + "." + k
+		}
+		if nested, ok := child.(map[string]any); ok {
+			keys = append(keys, flattenKeyPaths(nested, full)...)
+		} else {
+			keys = append(keys, full)
+		}
+	}
+	return keys
 }
 
 // fetchArtifact returns the translation artifact for the given TranslationNeeded.
