@@ -15,20 +15,38 @@ import (
 	"golang.org/x/crypto/blake2b"
 )
 
+const (
+	defaultClockSkewTolerance = 5 * time.Second
+	maxClockSkewTolerance     = 10 * time.Second
+)
+
 // Config struct for Verifier.
 type Config struct {
+	// ClockSkewTolerance is the maximum future drift allowed for the `created`
+	// field. nil means use the spec default (5 s). Set to a zero-value pointer
+	// (&0) to enforce strict same-second validation. NFOs may override this
+	// per-subnet via the plugin config key "clockSkewToleranceSeconds".
+	// The `expires` field always uses zero tolerance regardless of this value.
+	ClockSkewTolerance *time.Duration
 }
 
 // validator implements the validator interface.
 type validator struct {
-	config *Config
+	clockSkewTolerance time.Duration // resolved at construction; never changes
 }
 
 // New creates a new Verifier instance.
+// The caller's Config is never mutated.
 func New(ctx context.Context, config *Config) (*validator, func() error, error) {
-	v := &validator{config: config}
-
-	return v, nil, nil
+	tolerance := defaultClockSkewTolerance
+	if config.ClockSkewTolerance != nil {
+		tolerance = *config.ClockSkewTolerance
+	}
+	if tolerance > maxClockSkewTolerance {
+		log.Warnf(ctx, "signvalidator: clockSkewToleranceSeconds=%ds exceeds recommended maximum of %ds; large tolerances widen the replay window",
+			int(tolerance.Seconds()), int(maxClockSkewTolerance.Seconds()))
+	}
+	return &validator{clockSkewTolerance: tolerance}, nil, nil
 }
 
 // Validate verifies the 3-line signing string for inbound requests.
@@ -43,7 +61,7 @@ func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBas
 		return fmt.Errorf("error decoding signature: %w", err)
 	}
 
-	if err := checkTimestampWindow("signature", createdTimestamp, expiredTimestamp); err != nil {
+	if err := checkTimestampWindow("signature", createdTimestamp, expiredTimestamp, v.clockSkewTolerance); err != nil {
 		return err
 	}
 
@@ -131,7 +149,7 @@ func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHe
 		return fmt.Errorf("error decoding signature: %w", err)
 	}
 
-	if err := checkTimestampWindow("AckSignature", createdTimestamp, expiredTimestamp); err != nil {
+	if err := checkTimestampWindow("AckSignature", createdTimestamp, expiredTimestamp, v.clockSkewTolerance); err != nil {
 		return err
 	}
 
@@ -184,26 +202,30 @@ func checkSubscriberIdentity(ctx *model.StepContext, body []byte, signerID strin
 	return nil
 }
 
-// checkTimestampWindow validates that the current server time falls within
-// [created, expires]. prefix ("signature" or "AckSignature") is used in the
-// error message to distinguish the two callers in logs.
-func checkTimestampWindow(prefix string, createdTimestamp, expiredTimestamp int64) error {
+// checkTimestampWindow validates the created/expires timestamp pair.
+// clockSkewTolerance is applied to `created` only — the spec permits a
+// configurable forward drift window to accommodate NTP skew between NPs.
+// `expires` is always checked with zero tolerance per the spec.
+func checkTimestampWindow(prefix string, createdTimestamp, expiredTimestamp int64, clockSkewTolerance time.Duration) error {
 	now := time.Now().UTC()
-	current := now.Unix()
-	if createdTimestamp > current {
-		return model.NewSignValidationErr(fmt.Errorf("%s not yet valid: created=%s, server_time=%s, delta=%ds",
+	// Accept created values up to clockSkewTolerance in the future.
+	deadline := now.Add(clockSkewTolerance)
+	if time.Unix(createdTimestamp, 0).UTC().After(deadline) {
+		return model.NewSignValidationErr(fmt.Errorf("%s not yet valid: created=%s, server_time=%s, tolerance=%ds, overshoot=%ds",
 			prefix,
 			time.Unix(createdTimestamp, 0).UTC().Format(time.RFC3339),
 			now.Format(time.RFC3339),
-			createdTimestamp-current,
+			int(clockSkewTolerance.Seconds()),
+			createdTimestamp-deadline.Unix(),
 		))
 	}
-	if current > expiredTimestamp {
+	// expires: zero tolerance — reject without exception.
+	if now.Unix() > expiredTimestamp {
 		return model.NewSignValidationErr(fmt.Errorf("%s expired: expires=%s, server_time=%s, expired_by=%ds",
 			prefix,
 			time.Unix(expiredTimestamp, 0).UTC().Format(time.RFC3339),
 			now.Format(time.RFC3339),
-			current-expiredTimestamp,
+			now.Unix()-expiredTimestamp,
 		))
 	}
 	return nil

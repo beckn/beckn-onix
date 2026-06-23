@@ -86,6 +86,82 @@ func makeCtxWithCallerID(body []byte, role model.Role, callerID string) *model.S
 }
 
 // ---------------------------------------------------------------------------
+// Clock-skew tolerance
+// ---------------------------------------------------------------------------
+
+func TestClockSkewTolerance_Default(t *testing.T) {
+	// With no explicit tolerance configured, a created timestamp 3 s in the
+	// future should be accepted (within the 5 s spec default).
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte("payload")
+	now := time.Now().Unix()
+	created := now + 3
+	expires := now + 3600
+	header := fmt.Sprintf(
+		`Signature algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
+		created, expires, signTestData(privateKey, body, created, expires),
+	)
+	verifier, _, _ := New(context.Background(), &Config{})
+	if err := verifier.Validate(makeCtx(body, ""), header, publicKey, false); err != nil {
+		t.Fatalf("expected default 5 s tolerance to accept created+3s, got: %v", err)
+	}
+}
+
+func TestClockSkewTolerance_CreatedBeyondTolerance_Rejected(t *testing.T) {
+	// created is 7 s in the future — beyond the 5 s default tolerance.
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte("payload")
+	now := time.Now().Unix()
+	created := now + 7
+	expires := now + 3600
+	header := fmt.Sprintf(
+		`Signature algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
+		created, expires, signTestData(privateKey, body, created, expires),
+	)
+	verifier, _, _ := New(context.Background(), &Config{})
+	if err := verifier.Validate(makeCtx(body, ""), header, publicKey, false); err == nil {
+		t.Fatal("expected rejection when created exceeds tolerance")
+	}
+}
+
+func TestClockSkewTolerance_ExpiredNeverTolerated(t *testing.T) {
+	// expires is 1 s in the past — must be rejected regardless of tolerance config.
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte("payload")
+	now := time.Now().Unix()
+	created := now - 60
+	expires := now - 1
+	header := fmt.Sprintf(
+		`Signature algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
+		created, expires, signTestData(privateKey, body, created, expires),
+	)
+	// Use a large tolerance to confirm it has no effect on expires.
+	d := 30 * time.Second
+	verifier, _, _ := New(context.Background(), &Config{ClockSkewTolerance: &d})
+	if err := verifier.Validate(makeCtx(body, ""), header, publicKey, false); err == nil {
+		t.Fatal("expected rejection of expired signature even with large tolerance")
+	}
+}
+
+func TestClockSkewTolerance_CustomTolerance(t *testing.T) {
+	// created is 8 s in the future — rejected with default 5 s, accepted with 10 s tolerance.
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte("payload")
+	now := time.Now().Unix()
+	created := now + 8
+	expires := now + 3600
+	header := fmt.Sprintf(
+		`Signature algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
+		created, expires, signTestData(privateKey, body, created, expires),
+	)
+	d := 10 * time.Second
+	verifier, _, _ := New(context.Background(), &Config{ClockSkewTolerance: &d})
+	if err := verifier.Validate(makeCtx(body, ""), header, publicKey, false); err != nil {
+		t.Fatalf("expected acceptance with 10 s tolerance, got: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Crypto verification — Validate
 // ---------------------------------------------------------------------------
 

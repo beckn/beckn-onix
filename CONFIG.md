@@ -806,9 +806,16 @@ Auxiliary specs are additive — they may only introduce new action verbs not al
 ```yaml
 signValidator:
   id: signvalidator
+  config:
+    clockSkewToleranceSeconds: 5   # optional — see parameters below
 ```
 
-**Parameters**: None required. Uses key manager for public key lookup.
+**Parameters**:
+
+- `clockSkewToleranceSeconds` *(optional, integer, default: `5`)*: Maximum number of seconds the `created` timestamp in an inbound signature header may be ahead of the server clock. Accommodates NTP drift between network participants. Per the Beckn Auth & Trust spec the recommended default is 5 s; NFOs may configure a stricter or more permissive value for their subnet.
+  - A value of `0` enforces strict same-second validation.
+  - Values greater than `10` are accepted but trigger a startup warning — large tolerances widen the replay window.
+  - **The `expires` field always uses zero tolerance regardless of this setting.** An expired signature is rejected unconditionally.
 
 ---
 
