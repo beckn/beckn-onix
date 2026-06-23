@@ -946,7 +946,9 @@ func TestExecute_MultiPathComposed(t *testing.T) {
 	}
 
 	var out map[string]any
-	unmarshalResult(result, &out)
+	if err := unmarshalResult(result, &out); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
 
 	if out["state"] != "ACTIVE" {
 		t.Errorf("Order transform: expected state=ACTIVE, got %v", out["state"])

@@ -106,9 +106,9 @@ func loadTranslationPolicy(config map[string]string) (*TranslationPolicy, error)
 var ErrNoManifest = errors.New("schemaversionmediator: node manifest unavailable, skipping mediation")
 
 // SchemaObjectRef is a schema object extracted from a payload, extended with
-// the JSONata path to the node that declared it. The path is used by
-// ComposeExpression to anchor each per-object translation artifact to its
-// correct location in the payload tree.
+// the JSONata path to the node that declared it. The path flows through to
+// TranslationNeeded and MappingEntry for the caller's logging and debugging use;
+// it is not interpreted by ComposeExpression.
 type SchemaObjectRef struct {
 	model.SchemaObject
 	// JSONataPath is the JSONata dot-notation path from the payload root to this
@@ -533,8 +533,8 @@ type MappingEntry struct {
 //
 // Each entry's Expression must return an object that is merged at the message root.
 // Artifact authors write expressions that reference message-level paths directly
-// (e.g. `fulfillment.type`), consistent with the spike findings in
-// TestSpike_ComposedExpression_MultiPath.
+// (e.g. `fulfillment.type`). See TestExecute_MultiPathComposed for a verified
+// example of three schema objects transformed in a single composed expression.
 //
 // An empty entries list returns the identity expression "$".
 // The returned string can be compiled and evaluated by Execute.
