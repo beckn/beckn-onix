@@ -112,7 +112,7 @@ var ErrNoManifest = errors.New("schemaversionmediator: node manifest unavailable
 type SchemaObjectRef struct {
 	model.SchemaObject
 	// JSONataPath is the JSONata dot-notation path from the payload root to this
-	// node, e.g. "message.order" or "message.order.fulfillments[0]".
+	// node, e.g. "$.message.order" or "$.message.order.fulfillments[0]".
 	// The root node itself has path "$" (JSONata root reference).
 	JSONataPath string
 }
@@ -662,8 +662,8 @@ func (m *mediator) fetchAllArtifacts(ctx context.Context, needs []TranslationNee
 //   - Type absent from manifest entirely → TranslationNeeded with To nil;
 //     handling is delegated to the data-loss policy enforcer.
 //
-// The JSONataPath from each ref is forwarded into TranslationNeeded for use
-// by ComposeExpression when assembling the single-pass translation expression.
+// The JSONataPath from each ref is forwarded into TranslationNeeded for the
+// caller's logging and debugging use; it is not interpreted by ComposeExpression.
 func CheckCompatibility(extracted []SchemaObjectRef, manifest *model.NodeManifest) ([]TranslationNeeded, error) {
 	if manifest == nil {
 		return nil, ErrNoManifest

@@ -861,7 +861,6 @@ func TestComposeExpression_EmptyExpressionReturnsError(t *testing.T) {
 	}
 }
 
-
 // --- Execute tests ---
 
 func newTestTranslatorMediator(t *testing.T) *mediator {
