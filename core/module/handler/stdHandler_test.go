@@ -158,6 +158,9 @@ func (noopPluginManager) TransportWrapper(context.Context, *plugin.Config) (defi
 func (noopPluginManager) SchemaValidator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
+func (noopPluginManager) SchemaVersionMediator(context.Context, definition.ManifestLoader, *plugin.Config) (definition.SchemaVersionMediator, error) {
+	return nil, nil
+}
 func (noopPluginManager) PayloadStore(_ context.Context, _ definition.Cache, _ string, _ *plugin.Config) (definition.PayloadStore, error) {
 	return nil, nil
 }
@@ -213,6 +216,67 @@ func TestLoadManifestLoader_RequiresRegistryMetadataLookup(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "does not implement RegistryMetadataLookup") {
 		t.Fatalf("expected RegistryMetadataLookup error, got %v", err)
 	}
+}
+
+func TestLoadSchemaVersionMediator_NilCfg_Skipped(t *testing.T) {
+	svm, err := loadSchemaVersionMediator(context.Background(), noopPluginManager{}, nil, "sub1", nil)
+	if err != nil {
+		t.Fatalf("expected nil error when cfg is nil, got %v", err)
+	}
+	if svm != nil {
+		t.Error("expected nil SchemaVersionMediator when cfg is nil")
+	}
+}
+
+func TestLoadSchemaVersionMediator_RequiresManifestLoader(t *testing.T) {
+	_, err := loadSchemaVersionMediator(context.Background(), noopPluginManager{}, nil, "sub1", &plugin.Config{ID: "translationmapmediator"})
+	if err == nil || !strings.Contains(err.Error(), "ManifestLoader plugin not configured") {
+		t.Fatalf("expected ManifestLoader error, got %v", err)
+	}
+}
+
+func TestLoadSchemaVersionMediator_InjectsNodeId(t *testing.T) {
+	var capturedCfg map[string]string
+	mgr := &injectCaptureMgr{
+		schemaVersionMediatorFunc: func(_ context.Context, _ definition.ManifestLoader, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
+			capturedCfg = cfg.Config
+			return nil, nil
+		},
+	}
+	loader := &stubManifestLoader{}
+	_, err := loadSchemaVersionMediator(context.Background(), mgr, loader, "my-subscriber-id", &plugin.Config{ID: "translationmapmediator"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedCfg["nodeId"] != "my-subscriber-id" {
+		t.Errorf("expected nodeId=my-subscriber-id, got %q", capturedCfg["nodeId"])
+	}
+}
+
+// injectCaptureMgr is a PluginManager stub that captures the cfg passed to SchemaVersionMediator.
+type injectCaptureMgr struct {
+	noopPluginManager
+	schemaVersionMediatorFunc func(context.Context, definition.ManifestLoader, *plugin.Config) (definition.SchemaVersionMediator, error)
+}
+
+func (m *injectCaptureMgr) SchemaVersionMediator(ctx context.Context, loader definition.ManifestLoader, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
+	if m.schemaVersionMediatorFunc != nil {
+		return m.schemaVersionMediatorFunc(ctx, loader, cfg)
+	}
+	return nil, nil
+}
+
+// stubManifestLoader satisfies definition.ManifestLoader with no-op implementations.
+type stubManifestLoader struct{}
+
+func (stubManifestLoader) GetByNetworkID(context.Context, string) (*model.ManifestDocument, error) {
+	return nil, nil
+}
+func (stubManifestLoader) GetBySubscriberID(context.Context, string) (*model.ManifestDocument, error) {
+	return nil, nil
+}
+func (stubManifestLoader) GetByMetadata(context.Context, model.ManifestMetadata) (*model.ManifestDocument, error) {
+	return nil, nil
 }
 
 func TestNewHTTPClient(t *testing.T) {

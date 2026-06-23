@@ -518,6 +518,22 @@ func (s *checkPolicyStep) Run(ctx *model.StepContext) error {
 	return s.checker.CheckPolicy(ctx)
 }
 
+// mediateSchemaStep adapts SchemaVersionMediator into the Step interface.
+type mediateSchemaStep struct {
+	mediator definition.SchemaVersionMediator
+}
+
+func newMediateSchemaStep(mediator definition.SchemaVersionMediator) (definition.Step, error) {
+	if mediator == nil {
+		return nil, fmt.Errorf("invalid config: SchemaVersionMediator plugin not configured")
+	}
+	return &mediateSchemaStep{mediator: mediator}, nil
+}
+
+func (s *mediateSchemaStep) Run(ctx *model.StepContext) error {
+	return s.mediator.Mediate(ctx)
+}
+
 // storePayloadStep adapts PayloadStore into the Step interface.
 type storePayloadStep struct {
 	store definition.PayloadStore

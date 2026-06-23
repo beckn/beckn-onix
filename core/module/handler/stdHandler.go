@@ -37,8 +37,9 @@ type stdHandler struct {
 	manifestLoader     definition.ManifestLoader
 	km                 definition.KeyManager
 	schemaValidator    definition.SchemaValidator
-	policyChecker      definition.PolicyChecker
-	router             definition.Router
+	policyChecker         definition.PolicyChecker
+	schemaVersionMediator definition.SchemaVersionMediator
+	router                definition.Router
 	publisher          definition.Publisher
 	transportWrapper   definition.TransportWrapper
 	payloadTransformer definition.Step
@@ -469,6 +470,29 @@ func loadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader de
 	return checker, nil
 }
 
+func loadSchemaVersionMediator(ctx context.Context, mgr PluginManager, manifestLoader definition.ManifestLoader, subscriberID string, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
+	if cfg == nil {
+		log.Debug(ctx, "Skipping SchemaVersionMediator plugin: not configured")
+		return nil, nil
+	}
+	if manifestLoader == nil {
+		return nil, fmt.Errorf("failed to load SchemaVersionMediator plugin (%s): ManifestLoader plugin not configured", cfg.ID)
+	}
+	// Inject subscriberID as nodeId so the operator does not need to repeat it in
+	// plugin YAML config. cfg is owned by this handler's single construction call
+	// so mutating it in place is safe.
+	if cfg.Config == nil {
+		cfg.Config = make(map[string]string)
+	}
+	cfg.Config["nodeId"] = subscriberID
+	mediator, err := mgr.SchemaVersionMediator(ctx, manifestLoader, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load SchemaVersionMediator plugin (%s): %w", cfg.ID, err)
+	}
+	log.Debugf(ctx, "Loaded SchemaVersionMediator plugin: %s", cfg.ID)
+	return mediator, nil
+}
+
 func loadPayloadTransformerStep(ctx context.Context, mgr PluginManager, cfg *plugin.Config) (definition.Step, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping PayloadTransformer plugin: not configured")
@@ -521,6 +545,9 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 		return err
 	}
 	if h.policyChecker, err = loadPolicyChecker(ctx, mgr, h.manifestLoader, cfg.PolicyChecker); err != nil {
+		return err
+	}
+	if h.schemaVersionMediator, err = loadSchemaVersionMediator(ctx, mgr, h.manifestLoader, h.SubscriberID, cfg.SchemaVersionMediator); err != nil {
 		return err
 	}
 	if h.payloadTransformer, err = loadPayloadTransformerStep(ctx, mgr, cfg.PayloadTransformer); err != nil {
@@ -595,6 +622,8 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			s, err = newAddRouteStep(h.router, h.basePath)
 		case "checkPolicy":
 			s, err = newCheckPolicyStep(h.policyChecker)
+		case "mediateSchema":
+			s, err = newMediateSchemaStep(h.schemaVersionMediator)
 		case "transformPayload":
 			if h.payloadTransformer == nil {
 				return fmt.Errorf("invalid config: PayloadTransformer plugin not configured")
