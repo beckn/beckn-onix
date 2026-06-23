@@ -290,17 +290,24 @@ func (c *artifactCache) set(key string, artifact *TranslationArtifact) {
 	c.entries[key] = &artifactCacheEntry{artifact: artifact, fetchedAt: time.Now()}
 }
 
+// defaultMaxExprCacheEntries caps the compiled-expression cache. Expressions are
+// deterministic and never expire, but the cap prevents unbounded growth on nodes
+// that encounter an unusually large number of distinct schema version pairs.
+// When the cap is reached, new expressions are compiled and returned but not cached.
+const defaultMaxExprCacheEntries = 200
+
 // exprCache stores compiled JSONata expressions keyed by the raw expression string.
 // Entries never expire — expressions are deterministic and there are very few
 // unique ones in practice (bounded by the set of schema version pairs deployed
-// on a given node).
+// on a given node). See defaultMaxExprCacheEntries for the size cap.
 type exprCache struct {
 	mu      sync.RWMutex
 	entries map[string]jsonata.Expression
+	max     int
 }
 
 func newExprCache() *exprCache {
-	return &exprCache{entries: make(map[string]jsonata.Expression)}
+	return &exprCache{entries: make(map[string]jsonata.Expression), max: defaultMaxExprCacheEntries}
 }
 
 // mediator is the runtime state for the SchemaVersionMediator plugin.
@@ -323,7 +330,13 @@ func (m *mediator) fetchArtifact(ctx context.Context, need TranslationNeeded) (*
 	if err != nil {
 		return nil, err
 	}
+	return m.fetchArtifactByURL(ctx, artifactURL)
+}
 
+// fetchArtifactByURL is the URL-scoped fetch primitive used by both fetchArtifact
+// and fetchAllArtifacts. Callers that have already derived the URL use this
+// directly to avoid a second derivation.
+func (m *mediator) fetchArtifactByURL(ctx context.Context, artifactURL string) (*TranslationArtifact, error) {
 	if artifact, found := m.cache.get(artifactURL); found {
 		if artifact == nil {
 			return nil, ErrArtifactNotFound
@@ -499,6 +512,10 @@ func loadMapManagerConfig(config map[string]string) (fetchTimeout, positiveTTL, 
 // on the Beckn message subtree (not the full payload) and must return an object
 // whose fields are merged at the message root — i.e. a message-level patch.
 //
+// JSONataPath is metadata carried for the caller's logging and debugging use.
+// ComposeExpression does not interpret it — the Expression itself must reference
+// message-level paths directly (e.g. `fulfillment.type`, not `$.message.fulfillment.type`).
+//
 // Example for an Order at $.message:
 //
 //	Expression: `{"state": status}`  →  adds "state" from "status" at message root
@@ -507,7 +524,7 @@ func loadMapManagerConfig(config map[string]string) (fetchTimeout, positiveTTL, 
 //
 //	Expression: `{"fulfillment": $merge([fulfillment, {"fulfillment_type": fulfillment.type}])}`
 type MappingEntry struct {
-	JSONataPath string // path from WalkPayload, e.g. "$.message.fulfillment"
+	JSONataPath string // from WalkPayload, e.g. "$.message.fulfillment"; metadata only for the caller
 	Expression  string // message-level patch expression
 }
 
@@ -551,7 +568,9 @@ func (m *mediator) compiledExpr(expression string) (jsonata.Expression, error) {
 	}
 
 	m.exprs.mu.Lock()
-	m.exprs.entries[expression] = expr
+	if len(m.exprs.entries) < m.exprs.max {
+		m.exprs.entries[expression] = expr
+	}
 	m.exprs.mu.Unlock()
 	return expr, nil
 }
@@ -559,7 +578,10 @@ func (m *mediator) compiledExpr(expression string) (jsonata.Expression, error) {
 // Execute compiles (with caching) and evaluates a JSONata expression against
 // the Beckn message subtree bytes. It returns the transformed message bytes.
 // The expression is typically produced by ComposeExpression.
+// ctx is accepted for interface consistency; jsonata-go does not support
+// context cancellation, so it is not forwarded to the evaluator.
 func (m *mediator) Execute(ctx context.Context, expression string, message []byte) ([]byte, error) {
+	_ = ctx
 	expr, err := m.compiledExpr(expression)
 	if err != nil {
 		return nil, err
@@ -614,7 +636,7 @@ func (m *mediator) fetchAllArtifacts(ctx context.Context, needs []TranslationNee
 			continue
 		}
 
-		artifact, err := m.fetchArtifact(ctx, need)
+		artifact, err := m.fetchArtifactByURL(ctx, artifactURL)
 		if err != nil {
 			failures = append(failures, ArtifactFetchFailure{Need: need, URL: artifactURL, Reason: err})
 			continue

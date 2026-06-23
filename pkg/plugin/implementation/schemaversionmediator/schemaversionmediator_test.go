@@ -885,8 +885,17 @@ func TestExecute_IdentityExpression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if string(result) != string(message) {
-		t.Errorf("identity expression changed payload: got %s", result)
+	// Compare by value, not byte-for-byte: jsonata-go may re-serialize with
+	// different key ordering than the original input.
+	var orig, got map[string]any
+	if err := json.Unmarshal(message, &orig); err != nil {
+		t.Fatalf("unmarshal original: %v", err)
+	}
+	if err := json.Unmarshal(result, &got); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if got["id"] != orig["id"] || got["status"] != orig["status"] {
+		t.Errorf("identity expression changed field values: got %s", result)
 	}
 }
 
