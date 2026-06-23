@@ -478,9 +478,11 @@ func loadSchemaVersionMediator(ctx context.Context, mgr PluginManager, manifestL
 	if manifestLoader == nil {
 		return nil, fmt.Errorf("failed to load SchemaVersionMediator plugin (%s): ManifestLoader plugin not configured", cfg.ID)
 	}
-	// Inject subscriberID as nodeId so the operator does not need to repeat it in
-	// plugin YAML config. cfg is owned by this handler's single construction call
-	// so mutating it in place is safe.
+	// Inject subscriberID as nodeId for the plugin's cold-start manifest lookup
+	// in New. nodeId is not an operator-facing config field — the plugin reads it
+	// only at boot time to check whether the local node manifest is published.
+	// cfg is owned by this handler's single construction call so mutating it in
+	// place is safe.
 	if cfg.Config == nil {
 		cfg.Config = make(map[string]string)
 	}
