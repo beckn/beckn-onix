@@ -326,6 +326,11 @@ type mediator struct {
 	notOnboarded    bool // set at New() when local manifest is absent or has no schemaObjects
 }
 
+// New is the package-level constructor used by the plugin entrypoint.
+func New(ctx context.Context, loader definition.ManifestLoader, cfg map[string]string) (definition.SchemaVersionMediator, func() error, error) {
+	return (&provider{}).New(ctx, loader, cfg)
+}
+
 // provider is the factory for mediator instances. It implements
 // definition.SchemaVersionMediatorProvider.
 type provider struct{}
