@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 )
 
@@ -135,8 +137,8 @@ func TestNew(t *testing.T) {
 		wantErr bool
 	}{
 		{"nil config", nil, true},
-		{"empty type", &Config{Type: "", Location: "http://example.com"}, true},
-		{"empty location", &Config{Type: "url", Location: ""}, true},
+		{"empty type with location set", &Config{Type: "", Location: "http://example.com"}, true},
+		{"empty location with type set", &Config{Type: "url", Location: ""}, true},
 		{"invalid type", &Config{Type: "invalid", Location: "http://example.com"}, true},
 		{"invalid URL", &Config{Type: "url", Location: "http://invalid-domain-12345.com/spec.yaml"}, true},
 	}
@@ -366,8 +368,8 @@ func TestLoadSpec_LocalFile(t *testing.T) {
 	validator.specMutex.RLock()
 	defer validator.specMutex.RUnlock()
 
-	if validator.spec == nil || validator.spec.doc == nil {
-		t.Error("Spec not loaded from local file")
+	if len(validator.actionSchemas) == 0 {
+		t.Error("Spec not loaded from local file — action index is empty")
 	}
 }
 
@@ -437,6 +439,467 @@ func TestValidate_EdgeCases(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// testSpecV2 is a replacement spec used in TTL-refresh tests; it exposes only the "confirm" action (distinct from testSpec).
+const testSpecV2 = `openapi: 3.1.0
+info:
+  title: Test API v2
+  version: 2.0.0
+paths:
+  /confirm:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [context, message]
+              properties:
+                context:
+                  type: object
+                  required: [action]
+                  properties:
+                    action:
+                      const: confirm
+                message:
+                  type: object
+`
+
+// testSpecAux is an OpenAPI 3.1 spec used as an auxiliary spec in tests; it defines the "subscribe" and "renew" actions.
+const testSpecAux = `openapi: 3.1.0
+info:
+  title: Auxiliary API
+  version: 1.0.0
+paths:
+  /subscribe:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [context, message]
+              properties:
+                context:
+                  type: object
+                  properties:
+                    action:
+                      const: subscribe
+                message:
+                  type: object
+  /renew:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [context, message]
+              properties:
+                context:
+                  type: object
+                  properties:
+                    action:
+                      const: renew
+                message:
+                  type: object
+`
+
+// testSpecConflict defines "search" — same action as testSpec — to trigger hard-reject.
+const testSpecConflict = `openapi: 3.1.0
+info:
+  title: Conflict API
+  version: 1.0.0
+paths:
+  /search:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context:
+                  type: object
+                  properties:
+                    action:
+                      const: search
+`
+
+func TestAuxiliary_AddsNewActions(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testSpec))
+	}))
+	defer primary.Close()
+
+	auxiliary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testSpecAux))
+	}))
+	defer auxiliary.Close()
+
+	validator, _, err := New(context.Background(), &Config{
+		Type:     "url",
+		Location: primary.URL,
+		CacheTTL: 3600,
+		Auxiliary: []AuxSpec{
+			{Type: "url", Location: auxiliary.URL},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	cases := []struct {
+		action  string
+		payload string
+	}{
+		{"search", `{"context":{"action":"search","domain":"retail"},"message":{}}`},
+		{"select", `{"context":{"action":"select"},"message":{"order":{}}}`},
+		{"subscribe", `{"context":{"action":"subscribe"},"message":{}}`},
+		{"renew", `{"context":{"action":"renew"},"message":{}}`},
+	}
+	for _, c := range cases {
+		if err := validator.Validate(context.Background(), nil, []byte(c.payload)); err != nil {
+			t.Errorf("action %q: unexpected validation error: %v", c.action, err)
+		}
+	}
+}
+
+func TestAuxiliary_ShadowPrimaryHardRejects(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testSpec))
+	}))
+	defer primary.Close()
+
+	conflict := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testSpecConflict))
+	}))
+	defer conflict.Close()
+
+	_, _, err := New(context.Background(), &Config{
+		Type:     "url",
+		Location: primary.URL,
+		CacheTTL: 3600,
+		Auxiliary: []AuxSpec{
+			{Type: "url", Location: conflict.URL},
+		},
+	})
+	if err == nil {
+		t.Fatal("New() expected error for action collision, got nil")
+	}
+	if !contains(err.Error(), "already defined") {
+		t.Errorf("New() error = %v, want it to mention 'already defined'", err)
+	}
+}
+
+func TestAuxiliary_DirType(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(dir, "aux1.yaml"), []byte(testSpecAux), 0644); err != nil {
+		t.Fatalf("failed to write aux1.yaml: %v", err)
+	}
+
+	// A second spec with a unique action to confirm both files are loaded.
+	spec2 := `openapi: 3.1.0
+info:
+  title: Dir Spec 2
+  version: 1.0.0
+paths:
+  /cancel:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context:
+                  type: object
+                  properties:
+                    action:
+                      const: cancel
+`
+	if err := os.WriteFile(filepath.Join(dir, "aux2.yaml"), []byte(spec2), 0644); err != nil {
+		t.Fatalf("failed to write aux2.yaml: %v", err)
+	}
+
+	validator, _, err := New(context.Background(), &Config{
+		CacheTTL: 3600,
+		Auxiliary: []AuxSpec{
+			{Type: "dir", Location: dir},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	for _, payload := range []string{
+		`{"context":{"action":"subscribe"},"message":{}}`,
+		`{"context":{"action":"renew"},"message":{}}`,
+		`{"context":{"action":"cancel"}}`,
+	} {
+		if err := validator.Validate(context.Background(), nil, []byte(payload)); err != nil {
+			t.Errorf("dir type validation failed for %s: %v", payload, err)
+		}
+	}
+}
+
+func TestAuxiliary_NoPrimary_NonBeckn(t *testing.T) {
+	auxiliary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testSpecAux))
+	}))
+	defer auxiliary.Close()
+
+	validator, _, err := New(context.Background(), &Config{
+		CacheTTL: 3600,
+		Auxiliary: []AuxSpec{
+			{Type: "url", Location: auxiliary.URL},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"subscribe"},"message":{}}`)); err != nil {
+		t.Errorf("non-Beckn deployment: unexpected validation error: %v", err)
+	}
+}
+
+func TestAuxiliary_BadLocationSkipped(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testSpec))
+	}))
+	defer primary.Close()
+
+	// Adapter should still start; the bad auxiliary is skipped.
+	validator, _, err := New(context.Background(), &Config{
+		Type:     "url",
+		Location: primary.URL,
+		CacheTTL: 3600,
+		Auxiliary: []AuxSpec{
+			{Type: "url", Location: "http://invalid-domain-99999.example.com/spec.yaml"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() unexpected error for bad auxiliary: %v", err)
+	}
+
+	// Primary actions still available.
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"search","domain":"retail"},"message":{}}`)); err != nil {
+		t.Errorf("primary action failed after bad auxiliary skipped: %v", err)
+	}
+}
+
+// TestAuxiliary_RefreshRetainsIndexOnAuxFailure verifies that when an auxiliary
+// spec becomes unavailable during a TTL refresh, the old merged index is retained
+// so that all previously-valid actions remain available.
+func TestAuxiliary_RefreshRetainsIndexOnAuxFailure(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testSpec))
+	}))
+	defer primary.Close()
+
+	// Auxiliary starts healthy. Use atomic.Bool to avoid a data race between
+	// the test goroutine (which sets the flag) and the httptest handler goroutine.
+	var auxHealthy atomic.Bool
+	auxHealthy.Store(true)
+	aux := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auxHealthy.Load() {
+			w.Write([]byte(testSpecAux))
+		} else {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		}
+	}))
+	defer aux.Close()
+
+	validator, _, err := New(context.Background(), &Config{
+		Type:     "url",
+		Location: primary.URL,
+		CacheTTL: 3600,
+		Auxiliary: []AuxSpec{
+			{Type: "url", Location: aux.URL},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	// Auxiliary actions should be available after startup.
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"subscribe"},"message":{}}`)); err != nil {
+		t.Fatalf("auxiliary action unavailable at startup: %v", err)
+	}
+
+	// Auxiliary goes down — the reload hits the server, gets a 503, and the old index is retained.
+	auxHealthy.Store(false)
+
+	// Force a TTL refresh.
+	validator.reloadAllSpecs(context.Background())
+
+	// Old index must be retained: both primary and auxiliary actions stay available.
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"subscribe"},"message":{}}`)); err != nil {
+		t.Errorf("auxiliary action dropped after failed refresh — old index should have been retained: %v", err)
+	}
+
+	// Primary actions must also still work.
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"search","domain":"retail"},"message":{}}`)); err != nil {
+		t.Errorf("primary action dropped after failed refresh: %v", err)
+	}
+}
+
+func TestAuxiliary_DirType_IntraDirCollisionHardRejects(t *testing.T) {
+	dir := t.TempDir()
+
+	// Both files define "subscribe" — within-dir collision must cause New() to fail.
+	// The specific collision error is logged; New() surfaces "no actions indexed"
+	// because the colliding dir spec is skipped (same skip policy as load failures)
+	// and no other spec is configured.
+	for _, name := range []string{"a.yaml", "b.yaml"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(testSpecAux), 0644); err != nil {
+			t.Fatalf("failed to write %s: %v", name, err)
+		}
+	}
+
+	_, _, err := New(context.Background(), &Config{
+		CacheTTL: 3600,
+		Auxiliary: []AuxSpec{
+			{Type: "dir", Location: dir},
+		},
+	})
+	if err == nil {
+		t.Fatal("New() expected error for intra-dir action collision, got nil")
+	}
+	// The adapter refuses to start; the specific collision detail appears in error logs.
+	if !contains(err.Error(), "no actions indexed") {
+		t.Errorf("New() error = %v, want it to mention 'no actions indexed'", err)
+	}
+}
+
+func TestAuxiliary_AllSpecsFail_HardRejects(t *testing.T) {
+	// No primary, no valid auxiliary — adapter must refuse to start.
+	_, _, err := New(context.Background(), &Config{
+		CacheTTL: 3600,
+		Auxiliary: []AuxSpec{
+			{Type: "url", Location: "http://invalid-domain-99999.example.com/spec.yaml"},
+		},
+	})
+	if err == nil {
+		t.Fatal("New() expected error when all specs fail to load, got nil")
+	}
+	if !contains(err.Error(), "no actions indexed") {
+		t.Errorf("New() error = %v, want it to mention 'no actions indexed'", err)
+	}
+}
+
+func TestFreshReadFromURI_BodyTooLarge(t *testing.T) {
+	old := maxSpecBodyBytes
+	maxSpecBodyBytes = 10
+	defer func() { maxSpecBodyBytes = old }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("this body is definitely more than ten bytes"))
+	}))
+	defer server.Close()
+
+	u, _ := url.Parse(server.URL)
+	_, err := freshReadFromURI(newFreshLoader(), u)
+	if err == nil {
+		t.Fatal("expected error for oversized response body, got nil")
+	}
+}
+
+func TestTTLRefresh_PicksUpChangedURLSpec(t *testing.T) {
+	var serveV2 atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveV2.Load() {
+			w.Write([]byte(testSpecV2))
+		} else {
+			w.Write([]byte(testSpec))
+		}
+	}))
+	defer server.Close()
+
+	validator, _, err := New(context.Background(), &Config{Type: "url", Location: server.URL, CacheTTL: 3600})
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"search","domain":"retail"},"message":{}}`)); err != nil {
+		t.Fatalf("search action unavailable at startup: %v", err)
+	}
+
+	serveV2.Store(true)
+	validator.reloadAllSpecs(context.Background())
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"confirm"},"message":{}}`)); err != nil {
+		t.Errorf("confirm action unavailable after TTL refresh — v2 spec not picked up: %v", err)
+	}
+}
+
+func TestTTLRefresh_PicksUpChangedDirSpec(t *testing.T) {
+	dir := t.TempDir()
+	specFile := filepath.Join(dir, "spec.yaml")
+
+	if err := os.WriteFile(specFile, []byte(testSpec), 0644); err != nil {
+		t.Fatalf("failed to write initial spec: %v", err)
+	}
+
+	validator, _, err := New(context.Background(), &Config{Type: "dir", Location: dir, CacheTTL: 3600})
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"search","domain":"retail"},"message":{}}`)); err != nil {
+		t.Fatalf("search action unavailable at startup: %v", err)
+	}
+
+	// Overwrite the existing file in-place — this is the case issue #795 highlighted
+	// as silently ignored before the fix.
+	if err := os.WriteFile(specFile, []byte(testSpecV2), 0644); err != nil {
+		t.Fatalf("failed to overwrite spec file: %v", err)
+	}
+
+	validator.reloadAllSpecs(context.Background())
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"confirm"},"message":{}}`)); err != nil {
+		t.Errorf("confirm action unavailable after TTL refresh — in-place file edit not picked up: %v", err)
+	}
+}
+
+func TestTTLRefresh_PicksUpChangedFileSpec(t *testing.T) {
+	f, err := os.CreateTemp("", "spec-*.yaml")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(testSpec); err != nil {
+		t.Fatalf("failed to write v1 spec: %v", err)
+	}
+	f.Close()
+
+	validator, _, err := New(context.Background(), &Config{Type: "file", Location: f.Name(), CacheTTL: 3600})
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"search","domain":"retail"},"message":{}}`)); err != nil {
+		t.Fatalf("search action unavailable at startup: %v", err)
+	}
+
+	if err := os.WriteFile(f.Name(), []byte(testSpecV2), 0644); err != nil {
+		t.Fatalf("failed to overwrite spec file: %v", err)
+	}
+
+	validator.reloadAllSpecs(context.Background())
+
+	if err := validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"confirm"},"message":{}}`)); err != nil {
+		t.Errorf("confirm action unavailable after TTL refresh — v2 spec not picked up: %v", err)
 	}
 }
 

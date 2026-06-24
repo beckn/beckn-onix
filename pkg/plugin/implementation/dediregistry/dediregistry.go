@@ -12,8 +12,14 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"github.com/hashicorp/go-retryablehttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 )
+
+const defaultCacheTTL = 5 * time.Minute
 
 // dediAllRegistriesWildcard is the wildcard constant required by the DeDi registry service
 // to search across all cached registries in Beckn One. This value must not be configured externally.
@@ -22,6 +28,7 @@ const dediAllRegistriesWildcard = "subscribers.beckn.one"
 // Config holds configuration parameters for the DeDi registry client.
 type Config struct {
 	URL               string        `yaml:"url" json:"url"`
+	CacheTTL          time.Duration `yaml:"cacheTTL" json:"cacheTTL"`
 	AllowedNetworkIDs []string      `yaml:"allowedNetworkIDs" json:"allowedNetworkIDs"`
 	Timeout           int           `yaml:"timeout" json:"timeout"`
 	RetryMax          int           `yaml:"retry_max" json:"retry_max"`
@@ -31,8 +38,10 @@ type Config struct {
 
 // DeDiRegistryClient encapsulates the logic for calling the DeDi registry endpoints.
 type DeDiRegistryClient struct {
-	config *Config
-	client *retryablehttp.Client
+	config   *Config
+	client   *retryablehttp.Client
+	cache    definition.Cache
+	cacheTTL time.Duration
 }
 
 // validate checks if the provided DeDi registry configuration is valid.
@@ -47,7 +56,7 @@ func validate(cfg *Config) error {
 }
 
 // New creates a new instance of DeDiRegistryClient.
-func New(ctx context.Context, cfg *Config) (*DeDiRegistryClient, func() error, error) {
+func New(ctx context.Context, cache definition.Cache, cfg *Config) (*DeDiRegistryClient, func() error, error) {
 	log.Debugf(ctx, "Initializing DeDi Registry client with config: %+v", cfg)
 
 	if err := validate(cfg); err != nil {
@@ -72,9 +81,16 @@ func New(ctx context.Context, cfg *Config) (*DeDiRegistryClient, func() error, e
 		retryClient.RetryWaitMax = cfg.RetryWaitMax
 	}
 
+	ttl := cfg.CacheTTL
+	if ttl <= 0 {
+		ttl = defaultCacheTTL
+	}
+
 	client := &DeDiRegistryClient{
-		config: cfg,
-		client: retryClient,
+		config:   cfg,
+		client:   retryClient,
+		cache:    cache,
+		cacheTTL: ttl,
 	}
 
 	// Cleanup function
@@ -195,6 +211,8 @@ func parseMetaFromData(ctx context.Context, data map[string]any) map[string]stri
 }
 
 // Lookup implements RegistryLookup interface — calls the DeDi wrapper lookup endpoint and returns Subscription.
+// Results are cached using the subscriber ID and key ID as the cache key.
+// On a cache hit the network call is skipped entirely.
 func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription) ([]model.Subscription, error) {
 	subscriberID := req.SubscriberID
 	keyID := req.KeyID
@@ -206,9 +224,28 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 		return nil, fmt.Errorf("key_id is required for DeDi lookup")
 	}
 
+	cacheKey := fmt.Sprintf("lookup_%s_%s", subscriberID, keyID)
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
+
+	if c.cache != nil {
+		cacheCtx, cacheSpan := tracer.Start(ctx, "cache lookup")
+		cached, err := c.cache.Get(cacheCtx, cacheKey)
+		if err == nil {
+			var results []model.Subscription
+			if err := json.Unmarshal([]byte(cached), &results); err == nil {
+				log.Debugf(ctx, "DeDi registry lookup cache hit for key: %s", cacheKey)
+				cacheSpan.End()
+				return results, nil
+			}
+		}
+		cacheSpan.End()
+	}
+
 	lookupURL := fmt.Sprintf("%s/lookup/%s/%s/%s", c.config.URL, subscriberID, dediAllRegistriesWildcard, keyID)
 
-	data, err := c.fetchDeDiData(ctx, lookupURL, "record lookup")
+	httpCtx, httpSpan := tracer.Start(ctx, "http lookup")
+	data, err := c.fetchDeDiData(httpCtx, lookupURL, "record lookup")
+	httpSpan.End()
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +272,22 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 
 	subscription.KeyID = keyID
 	log.Debugf(ctx, "DeDi lookup successful, found subscription for subscriber: %s", subscription.SubscriberID)
-	return []model.Subscription{*subscription}, nil
+
+	results := []model.Subscription{*subscription}
+
+	if c.cache != nil {
+		ttl := c.cacheTTL
+		if ttlSec, ok := data["ttl"].(float64); ok && ttlSec > 0 {
+			ttl = time.Duration(ttlSec) * time.Second
+		}
+		if encoded, err := json.Marshal(results); err == nil {
+			if err := c.cache.Set(ctx, cacheKey, string(encoded), ttl); err != nil {
+				log.Warnf(ctx, "Failed to cache DeDi registry lookup result for key %s: %v", cacheKey, err)
+			}
+		}
+	}
+
+	return results, nil
 }
 
 // LookupRegistry fetches registry-level metadata for the given DeDi registry path.

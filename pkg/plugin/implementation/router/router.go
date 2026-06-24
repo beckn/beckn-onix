@@ -219,12 +219,17 @@ func getContextString(ctx map[string]interface{}, keys ...string) string {
 // Route determines the routing destination based on the request context.
 // reqURL.Path holds the Beckn endpoint action already stripped of the module
 // base path by the step layer (e.g. "search" or "catalog/subscription").
+// reqURL.RawQuery is forwarded verbatim to the upstream target URL.
 func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*model.Route, error) {
+	if reqURL == nil {
+		return nil, fmt.Errorf("reqURL must not be nil")
+	}
 	endpoint := reqURL.Path
+	rawQuery := reqURL.RawQuery
 	// Bodyless requests (GET/DELETE) carry no JSON body; domain, version, and
 	// BAP/BPP URIs are not available. Route using the v2 config version.
 	if len(body) == 0 {
-		return r.routeBodyless(endpoint)
+		return r.routeBodyless(endpoint, rawQuery)
 	}
 
 	// Parse domain and version via typed struct.
@@ -288,9 +293,17 @@ func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*mode
 	// Both legacy ("bpp"/"bap") and new spec v2 ("receiver"/"sender") values are accepted.
 	switch route.TargetType {
 	case targetTypeBPP, targetTypeReceiver:
-		return handleProtocolMapping(route, bppURI, endpoint)
+		return handleProtocolMapping(route, bppURI, endpoint, rawQuery)
 	case targetTypeBAP, targetTypeSender:
-		return handleProtocolMapping(route, bapURI, endpoint)
+		return handleProtocolMapping(route, bapURI, endpoint, rawQuery)
+	case targetTypeURL:
+		// Copy inbound query params onto a URL clone so the upstream receives them.
+		// The baked-in URL has no RawQuery of its own.
+		if rawQuery != "" && route.URL != nil {
+			clone := *route.URL
+			clone.RawQuery = rawQuery
+			return &model.Route{TargetType: targetTypeURL, URL: &clone}, nil
+		}
 	}
 	return route, nil
 }
@@ -308,7 +321,7 @@ func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*mode
 //     should not configure publisher targets for bodyless endpoints.
 //   - bpp / bap / receiver / sender: rejected — the target URI is read from the request body,
 //     which is absent for bodyless requests.
-func (r *Router) routeBodyless(endpoint string) (*model.Route, error) {
+func (r *Router) routeBodyless(endpoint, rawQuery string) (*model.Route, error) {
 	v2Rules, ok := r.rules["*"]
 	if !ok {
 		return nil, fmt.Errorf("no v2 routing rules found; bodyless requests require a v2 config")
@@ -322,6 +335,13 @@ func (r *Router) routeBodyless(endpoint string) (*model.Route, error) {
 		switch route.TargetType {
 		case targetTypeBPP, targetTypeBAP, targetTypeReceiver, targetTypeSender:
 			return nil, fmt.Errorf("bodyless endpoint '%s' (version %s) is configured with target type '%s': dynamic BAP/BPP URI routing is not supported for bodyless requests", endpoint, version, route.TargetType)
+		}
+		// Publisher routes address a queue by ID — they carry no URL, so
+		// RawQuery does not apply. Only clone for URL-type targets.
+		if rawQuery != "" && route.TargetType == targetTypeURL && route.URL != nil {
+			clone := *route.URL
+			clone.RawQuery = rawQuery
+			return &model.Route{TargetType: targetTypeURL, URL: &clone}, nil
 		}
 		return route, nil
 	}
@@ -343,28 +363,31 @@ func canonicalRoleName(targetType string) string {
 	}
 }
 
-// handleProtocolMapping handles both BPP and BAP routing with proper URL construction
-func handleProtocolMapping(route *model.Route, npURI, endpoint string) (*model.Route, error) {
+// handleProtocolMapping handles both BPP and BAP routing with proper URL construction.
+// rawQuery is the inbound request's query string and is forwarded verbatim to the upstream URL.
+func handleProtocolMapping(route *model.Route, npURI, endpoint, rawQuery string) (*model.Route, error) {
 	target := strings.TrimSpace(npURI)
 	role := canonicalRoleName(route.TargetType)
 	if len(target) == 0 {
 		if route.URL == nil {
 			return nil, fmt.Errorf("could not determine destination for endpoint '%s': neither request contained a %s URI nor was a default URL configured in routing rules", endpoint, role)
 		}
-		return &model.Route{
-			TargetType: targetTypeURL,
-			URL:        route.URL,
-		}, nil
+		if rawQuery != "" {
+			fallback := *route.URL
+			fallback.RawQuery = rawQuery
+			return &model.Route{TargetType: targetTypeURL, URL: &fallback}, nil
+		}
+		return &model.Route{TargetType: targetTypeURL, URL: route.URL}, nil
 	}
 	targetURL, err := url.Parse(target)
 	if err != nil {
 		return nil, fmt.Errorf("invalid %s URI - %s in request body for %s: %w", role, target, endpoint, err)
 	}
 	targetURL.Path = joinPath(targetURL, endpoint)
-	return &model.Route{
-		TargetType: targetTypeURL,
-		URL:        targetURL,
-	}, nil
+	if rawQuery != "" {
+		targetURL.RawQuery = rawQuery
+	}
+	return &model.Route{TargetType: targetTypeURL, URL: targetURL}, nil
 }
 
 func joinPath(u *url.URL, endpoint string) string {

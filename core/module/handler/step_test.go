@@ -25,11 +25,11 @@ type mockSignValidatorBasic struct {
 	validateAckCalled bool
 }
 
-func (m *mockSignValidatorBasic) Validate(_ context.Context, _ []byte, _ string, _ string) error {
+func (m *mockSignValidatorBasic) Validate(_ *model.StepContext, _ string, _ string, _ bool) error {
 	m.validateCalled = true
 	return m.validateErr
 }
-func (m *mockSignValidatorBasic) ValidateAck(_ context.Context, _ []byte, _, _, _ string) error {
+func (m *mockSignValidatorBasic) ValidateAck(_ *model.StepContext, _ []byte, _, _, _ string, _ bool) error {
 	m.validateAckCalled = true
 	return m.validateAckErr
 }
@@ -474,7 +474,7 @@ func TestValidate_NonEd25519Algorithm_ReturnsError(t *testing.T) {
 		badAlgHeader,
 		`{"context":{"action":"on_search","messageId":"msg-alg-001","version":"2.0.0"}}`)
 
-	if err := vStep.validate(ctx, badAlgHeader, ""); err == nil {
+	if err := vStep.validate(ctx, badAlgHeader, "", false); err == nil {
 		t.Fatal("expected error for non-ed25519 algorithm")
 	}
 	if sv.validateCalled || sv.validateAckCalled {

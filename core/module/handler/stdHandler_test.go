@@ -143,10 +143,10 @@ func (noopPluginManager) PolicyChecker(context.Context, definition.ManifestLoade
 func (noopPluginManager) Cache(context.Context, *plugin.Config) (definition.Cache, error) {
 	return nil, nil
 }
-func (noopPluginManager) Registry(context.Context, *plugin.Config) (definition.RegistryLookup, error) {
+func (noopPluginManager) Registry(context.Context, definition.Cache, *plugin.Config) (definition.RegistryLookup, error) {
 	return nil, nil
 }
-func (noopPluginManager) KeyManager(context.Context, definition.Cache, definition.RegistryLookup, *plugin.Config) (definition.KeyManager, error) {
+func (noopPluginManager) KeyManager(context.Context, definition.RegistryLookup, *plugin.Config) (definition.KeyManager, error) {
 	return nil, nil
 }
 func (noopPluginManager) ManifestLoader(context.Context, definition.Cache, definition.RegistryMetadataLookup, *plugin.Config) (definition.ManifestLoader, error) {
@@ -928,5 +928,37 @@ func TestStorePayloadStep_Run_PropagatesError(t *testing.T) {
 
 	if err := step.Run(ctx); err == nil {
 		t.Fatal("expected error from Run when Store fails")
+	}
+}
+
+// TestProxy_QueryParamsForwardedToUpstream verifies that the proxy director
+// forwards RawQuery from the route URL verbatim to the upstream server.
+// The companion router tests (TestRouteQueryParamsForwarded) verify that the
+// router correctly populates route.URL.RawQuery from the inbound request.
+func TestProxy_QueryParamsForwardedToUpstream(t *testing.T) {
+	var capturedRawQuery string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedRawQuery = r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	// Simulate what the router produces after the fix: a route URL that already
+	// carries the inbound query string on its RawQuery field.
+	upstreamURL, _ := url.Parse(upstream.URL)
+	upstreamURL.RawQuery = "subscriptionId=test123&page=2"
+
+	stepCtx := &model.StepContext{
+		Context: context.Background(),
+		Route:   &model.Route{TargetType: "url", URL: upstreamURL},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+
+	proxy(stepCtx, req, rr, http.DefaultClient, nil)
+
+	if capturedRawQuery != "subscriptionId=test123&page=2" {
+		t.Errorf("upstream received RawQuery = %q, want %q", capturedRawQuery, "subscriptionId=test123&page=2")
 	}
 }

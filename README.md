@@ -2,14 +2,14 @@
 
 <div align="center">
 
-[![Go Version](https://img.shields.io/badge/Go-1.23-blue.svg)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.24-blue.svg)](https://golang.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
 [![CI Status](https://img.shields.io/github/actions/workflow/status/beckn/beckn-onix/ci.yml)](https://github.com/beckn/beckn-onix/actions)
 [![Coverage](https://img.shields.io/badge/Coverage-90%25-brightgreen.svg)](https://codecov.io/gh/beckn/beckn-onix)
 
 **A production-ready, plugin-based middleware adapter for the Beckn Protocol**
 
-[Overview](#overview) • [Features](#features) • [Architecture](#architecture) • [Quick Start](#quick-start) • [Documentation](#documentation) • [Contributing](#contributing)
+[Overview](#overview) • [Features](#features) • [Architecture](#architecture) • [Key Aspects](#key-aspects) • [Quick Start](#quick-start) • [Documentation](#documentation) • [Contributing](#contributing)
 
 </div>
 
@@ -133,7 +133,39 @@ The **Beckn Protocol** is an open protocol that enables location-aware, local co
 - **ReqPreprocessor**: Request preprocessing (UUID generation, headers)
 - **ReqMapper**: Step plugin (id: `reqmapper`) used by the handler's `transformPayload` step to transform payloads at an explicit point in the pipeline.
 - **OtelSetup**: Observability setup for metrics, traces, and logs (OTLP). Supports optional audit log configuration via `auditFieldsConfig` (YAML mapping actions to fields) . See [CONFIG.md](CONFIG.md) for details.
+- **OpaPolicyChecker**: OPA-based network business policy enforcement. Evaluates Rego policies per request; supports network-specific policy configs, signed policy artifact verification, manifest-backed policies, and hot-reload. See [plugin docs](pkg/plugin/implementation/opapolicychecker/README.md).
+- **ManifestLoader**: Fetches a network manifest published by a Network Facilitator Organization (NFO), verifies its detached signature, and caches the verified document for downstream consumers such as `opapolicychecker`. See [plugin docs](pkg/plugin/implementation/manifestloader/README.md).
+- **PayloadStore**: Records every inbound request payload indexed by `message_id` and `transaction_id` with TTL-based expiration via the cache backend. Enables stateful use cases (duplicate detection, transaction history) without requiring other plugins to manage storage. See [plugin docs](pkg/plugin/implementation/payloadstore/README.md).
 
+## Key Aspects
+
+### 📊 Observability
+
+Beckn-ONIX emits structured logs, OpenTelemetry metrics, and distributed traces via the `otelsetup` plugin. A reference collector stack (OpenTelemetry Collector, Grafana, Loki) is included in `install/network-observability/` for local and production use.
+
+See [OBSERVABILITY.md](pkg/plugin/implementation/otelsetup/OBSERVABILITY.md) for the full architecture, signal catalogue, and setup guide.
+
+### 🔒 Network Business Policy Enforcement
+
+The `opapolicychecker` plugin evaluates [OPA](https://www.openpolicyagent.org/) Rego policies against every Beckn request. Policies can be scoped per network, distributed as signed artifacts by a Network Facilitator Organization (NFO), and hot-reloaded without a restart.
+
+See [opapolicychecker README](pkg/plugin/implementation/opapolicychecker/README.md) for policy authoring, configuration, signature verification, and manifest-backed policy setup.
+
+### ⚡ Performance
+
+Beckn-ONIX is benchmarked end-to-end using Go's native `testing.B` framework — no Docker or external services required.
+
+```bash
+# Install benchstat (one-time)
+go install golang.org/x/perf/cmd/benchstat@latest
+
+# Run all benchmark scenarios and generate report
+bash benchmarks/run_benchmarks.sh
+```
+
+Results land in `benchmarks/results/<timestamp>/`. The latest committed report is at [benchmarks/results/BENCHMARK_REPORT.md](benchmarks/reports/REPORT_ONIX_v150.md). See [benchmarks/README.md](benchmarks/README.md) for full methodology and interpretation guidance.
+
+---
 
 ## Quick Start
 

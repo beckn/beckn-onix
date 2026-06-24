@@ -19,20 +19,55 @@ func (vp schemav2ValidatorProvider) New(ctx context.Context, config map[string]s
 		return nil, nil, errors.New("context cannot be nil")
 	}
 
-	typeVal, hasType := config["type"]
-	locVal, hasLoc := config["location"]
+	typeVal := config["type"]
+	locVal := config["location"]
 
-	if !hasType || typeVal == "" {
-		return nil, nil, errors.New("type not configured")
-	}
-	if !hasLoc || locVal == "" {
+	// Primary spec is optional — a non-Beckn deployment may rely solely on auxiliary specs.
+	// Validation that at least something is loaded happens inside schemav2validator.New.
+	if typeVal != "" && locVal == "" {
 		return nil, nil, errors.New("location not configured")
+	}
+	if locVal != "" && typeVal == "" {
+		return nil, nil, errors.New("type not configured")
 	}
 
 	cfg := &schemav2validator.Config{
 		Type:     typeVal,
 		Location: locVal,
 		CacheTTL: 3600,
+	}
+
+	// Parse auxiliary specs from comma-separated auxiliaryTypes and auxiliaryLocations.
+	// Both lists must have the same length.
+	auxTypes := config["auxiliaryTypes"]
+	auxLocations := config["auxiliaryLocations"]
+
+	if auxTypes != "" || auxLocations != "" {
+		// Guard against one key being set without the other before splitting —
+		// strings.Split("", ",") returns [""] (length 1), not [], which would
+		// pass the length check but produce a misleading empty-entry error.
+		if auxTypes == "" {
+			return nil, nil, errors.New("auxiliaryLocations is set but auxiliaryTypes is missing")
+		}
+		if auxLocations == "" {
+			return nil, nil, errors.New("auxiliaryTypes is set but auxiliaryLocations is missing")
+		}
+
+		types := strings.Split(auxTypes, ",")
+		locations := strings.Split(auxLocations, ",")
+
+		if len(types) != len(locations) {
+			return nil, nil, errors.New("auxiliaryTypes and auxiliaryLocations must have the same number of comma-separated entries")
+		}
+
+		for i := range types {
+			t := strings.TrimSpace(types[i])
+			l := strings.TrimSpace(locations[i])
+			if t == "" || l == "" {
+				return nil, nil, errors.New("auxiliaryTypes and auxiliaryLocations entries must not be empty")
+			}
+			cfg.Auxiliary = append(cfg.Auxiliary, schemav2validator.AuxSpec{Type: t, Location: l})
+		}
 	}
 
 	if ttlStr, ok := config["cacheTTL"]; ok {

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"strconv"
+	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/signvalidator"
@@ -17,7 +19,17 @@ func (vp provider) New(ctx context.Context, config map[string]string) (definitio
 		return nil, nil, errors.New("context cannot be nil")
 	}
 
-	return signvalidator.New(ctx, &signvalidator.Config{})
+	cfg := &signvalidator.Config{}
+	if s, ok := config["clockSkewToleranceSeconds"]; ok {
+		secs, err := strconv.Atoi(s)
+		if err != nil || secs < 0 {
+			return nil, nil, errors.New("signvalidator: clockSkewToleranceSeconds must be a non-negative integer")
+		}
+		d := time.Duration(secs) * time.Second
+		cfg.ClockSkewTolerance = &d
+	}
+
+	return signvalidator.New(ctx, cfg)
 }
 
 // Provider is the exported symbol that the plugin manager will look for.

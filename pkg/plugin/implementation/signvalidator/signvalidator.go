@@ -4,34 +4,54 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"golang.org/x/crypto/blake2b"
 )
 
+const (
+	defaultClockSkewTolerance = 5 * time.Second
+	maxClockSkewTolerance     = 10 * time.Second
+)
+
 // Config struct for Verifier.
 type Config struct {
+	// ClockSkewTolerance is the maximum future drift allowed for the `created`
+	// field. nil means use the spec default (5 s). Set to a zero-value pointer
+	// (&0) to enforce strict same-second validation. NFOs may override this
+	// per-subnet via the plugin config key "clockSkewToleranceSeconds".
+	// The `expires` field always uses zero tolerance regardless of this value.
+	ClockSkewTolerance *time.Duration
 }
 
 // validator implements the validator interface.
 type validator struct {
-	config *Config
+	clockSkewTolerance time.Duration // resolved at construction; never changes
 }
 
 // New creates a new Verifier instance.
+// The caller's Config is never mutated.
 func New(ctx context.Context, config *Config) (*validator, func() error, error) {
-	v := &validator{config: config}
-
-	return v, nil, nil
+	tolerance := defaultClockSkewTolerance
+	if config.ClockSkewTolerance != nil {
+		tolerance = *config.ClockSkewTolerance
+	}
+	if tolerance > maxClockSkewTolerance {
+		log.Warnf(ctx, "signvalidator: clockSkewToleranceSeconds=%ds exceeds recommended maximum of %ds; large tolerances widen the replay window",
+			int(tolerance.Seconds()), int(maxClockSkewTolerance.Seconds()))
+	}
+	return &validator{clockSkewTolerance: tolerance}, nil, nil
 }
 
-// Verify checks the signature for the given payload and public key.
-func (v *validator) Validate(ctx context.Context, body []byte, header string, publicKeyBase64 string) error {
-	createdTimestamp, expiredTimestamp, signature, err := parseAuthHeader(header)
+// Validate verifies the 3-line signing string for inbound requests.
+func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBase64 string, checkIdentity bool) error {
+	createdTimestamp, expiredTimestamp, signature, subscriberID, err := parseAuthHeader(header)
 	if err != nil {
 		return model.NewSignValidationErr(fmt.Errorf("error parsing header: %w", err))
 	}
@@ -41,15 +61,14 @@ func (v *validator) Validate(ctx context.Context, body []byte, header string, pu
 		return fmt.Errorf("error decoding signature: %w", err)
 	}
 
-	currentTime := time.Now().Unix()
-	if createdTimestamp > currentTime || currentTime > expiredTimestamp {
-		return model.NewSignValidationErr(fmt.Errorf("signature is expired or not yet valid"))
+	if err := checkTimestampWindow("signature", createdTimestamp, expiredTimestamp, v.clockSkewTolerance); err != nil {
+		return err
 	}
 
 	createdTime := time.Unix(createdTimestamp, 0)
 	expiredTime := time.Unix(expiredTimestamp, 0)
 
-	signingString := hash(body, createdTime.Unix(), expiredTime.Unix())
+	signingString := hash(ctx.Body, createdTime.Unix(), expiredTime.Unix())
 
 	decodedPublicKey, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 	if err != nil {
@@ -60,11 +79,17 @@ func (v *validator) Validate(ctx context.Context, body []byte, header string, pu
 		return model.NewSignValidationErr(fmt.Errorf("signature verification failed"))
 	}
 
+	if checkIdentity {
+		if err := checkSubscriberIdentity(ctx, ctx.Body, subscriberID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 // parseAuthHeader extracts signature values from the Authorization header.
-func parseAuthHeader(header string) (int64, int64, string, error) {
+// subscriberID is the first |-delimited component of keyId="..." (empty if keyId absent).
+func parseAuthHeader(header string) (int64, int64, string, string, error) {
 	header = strings.TrimPrefix(header, "Signature ")
 
 	parts := strings.Split(header, ",")
@@ -80,38 +105,41 @@ func parseAuthHeader(header string) (int64, int64, string, error) {
 	}
 
 	if signatureMap["algorithm"] != "ed25519" {
-		return 0, 0, "", model.NewSignValidationErr(fmt.Errorf("unsupported algorithm %q: only ed25519 is permitted", signatureMap["algorithm"]))
+		return 0, 0, "", "", model.NewSignValidationErr(fmt.Errorf("unsupported algorithm %q: only ed25519 is permitted", signatureMap["algorithm"]))
 	}
 
 	createdTimestamp, err := strconv.ParseInt(signatureMap["created"], 10, 64)
 	if err != nil {
 		// TODO: Return appropriate error code when Error Code Handling Module is ready
-		return 0, 0, "", fmt.Errorf("invalid created timestamp: %w", err)
+		return 0, 0, "", "", fmt.Errorf("invalid created timestamp: %w", err)
 	}
 
 	expiredTimestamp, err := strconv.ParseInt(signatureMap["expires"], 10, 64)
 	if err != nil {
-		return 0, 0, "", model.NewSignValidationErr(fmt.Errorf("invalid expires timestamp: %w", err))
+		return 0, 0, "", "", model.NewSignValidationErr(fmt.Errorf("invalid expires timestamp: %w", err))
 	}
 
 	signature := signatureMap["signature"]
 	if signature == "" {
 		// TODO: Return appropriate error code when Error Code Handling Module is ready
-		return 0, 0, "", model.NewSignValidationErr(fmt.Errorf("signature missing in header"))
+		return 0, 0, "", "", model.NewSignValidationErr(fmt.Errorf("signature missing in header"))
 	}
 
-	return createdTimestamp, expiredTimestamp, signature, nil
+	var subscriberID string
+	if keyID := signatureMap["keyId"]; keyID != "" {
+		if p := strings.SplitN(keyID, "|", 2); len(p) >= 2 {
+			subscriberID = strings.TrimSpace(p[0])
+		}
+	}
+
+	return createdTimestamp, expiredTimestamp, signature, subscriberID, nil
 }
 
-// ValidateAck verifies a Beckn v2.0.0 AckSignature per NFH-004 §3.4.
-// The signing string is identical to regular request signing with one addition:
-// if outboundAuthSignature is non-empty, a fourth line is appended:
-//
-//	request-signature: <outboundAuthSignature>
-//
-// This mirrors exactly what ackSigner builds in SignAck.
-func (v *validator) ValidateAck(ctx context.Context, ackBody []byte, signatureHeader, outboundAuthSignature, publicKeyBase64 string) error {
-	createdTimestamp, expiredTimestamp, signature, err := parseAuthHeader(signatureHeader)
+// ValidateAck verifies the 4-line signing string per NFH-004 §3.4.
+// body is passed explicitly because the two call sites hash different bodies:
+// the on_search request body (step.go) vs the ACK response body (responsestep.go).
+func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHeader, outboundAuthSignature, publicKeyBase64 string, checkIdentity bool) error {
+	createdTimestamp, expiredTimestamp, signature, subscriberID, err := parseAuthHeader(signatureHeader)
 	if err != nil {
 		return model.NewSignValidationErr(fmt.Errorf("error parsing Signature header: %w", err))
 	}
@@ -121,12 +149,11 @@ func (v *validator) ValidateAck(ctx context.Context, ackBody []byte, signatureHe
 		return fmt.Errorf("error decoding signature: %w", err)
 	}
 
-	currentTime := time.Now().Unix()
-	if createdTimestamp > currentTime || currentTime > expiredTimestamp {
-		return model.NewSignValidationErr(fmt.Errorf("AckSignature is expired or not yet valid"))
+	if err := checkTimestampWindow("AckSignature", createdTimestamp, expiredTimestamp, v.clockSkewTolerance); err != nil {
+		return err
 	}
 
-	signingString := hashAck(ackBody, createdTimestamp, expiredTimestamp, outboundAuthSignature)
+	signingString := hashAck(body, createdTimestamp, expiredTimestamp, outboundAuthSignature)
 
 	decodedPublicKey, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 	if err != nil {
@@ -137,6 +164,70 @@ func (v *validator) ValidateAck(ctx context.Context, ackBody []byte, signatureHe
 		return model.NewSignValidationErr(fmt.Errorf("AckSignature verification failed"))
 	}
 
+	if checkIdentity {
+		if err := checkSubscriberIdentity(ctx, body, subscriberID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkSubscriberIdentity asserts that the subscriber who signed the request
+// (signerID from keyId in the parsed header) matches the caller identity declared
+// in the request body context. body is the body that was actually validated so
+// callers with different bodies (Validate vs ValidateAck) each pass the right one.
+func checkSubscriberIdentity(ctx *model.StepContext, body []byte, signerID string) error {
+	expected, _ := ctx.Value(model.ContextKeyRemoteID).(string)
+
+	if expected == "" {
+		var payload struct {
+			Context map[string]interface{} `json:"context"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			log.Debugf(ctx, "checkSubscriberIdentity: failed to parse body: %v; skipping check", err)
+		} else if payload.Context != nil {
+			expected = model.ResolveCallerID(payload.Context, ctx.Role)
+		}
+	}
+
+	if expected == "" {
+		log.Debugf(ctx, "checkSubscriberIdentity: no caller ID available for role %v; skipping check", ctx.Role)
+		return nil
+	}
+
+	if signerID != expected {
+		return model.NewSignValidationErr(fmt.Errorf("subscriber identity mismatch: signing subscriber %q does not match declared context identity %q",
+			signerID, expected))
+	}
+	return nil
+}
+
+// checkTimestampWindow validates the created/expires timestamp pair.
+// clockSkewTolerance is applied to `created` only — the spec permits a
+// configurable forward drift window to accommodate NTP skew between NPs.
+// `expires` is always checked with zero tolerance per the spec.
+func checkTimestampWindow(prefix string, createdTimestamp, expiredTimestamp int64, clockSkewTolerance time.Duration) error {
+	now := time.Now().UTC()
+	// Accept created values up to clockSkewTolerance in the future.
+	deadline := now.Add(clockSkewTolerance)
+	if time.Unix(createdTimestamp, 0).UTC().After(deadline) {
+		return model.NewSignValidationErr(fmt.Errorf("%s not yet valid: created=%s, server_time=%s, tolerance=%ds, overshoot=%ds",
+			prefix,
+			time.Unix(createdTimestamp, 0).UTC().Format(time.RFC3339),
+			now.Format(time.RFC3339),
+			int(clockSkewTolerance.Seconds()),
+			createdTimestamp-deadline.Unix(),
+		))
+	}
+	// expires: zero tolerance — reject without exception.
+	if now.Unix() > expiredTimestamp {
+		return model.NewSignValidationErr(fmt.Errorf("%s expired: expires=%s, server_time=%s, expired_by=%ds",
+			prefix,
+			time.Unix(expiredTimestamp, 0).UTC().Format(time.RFC3339),
+			now.Format(time.RFC3339),
+			now.Unix()-expiredTimestamp,
+		))
+	}
 	return nil
 }
 

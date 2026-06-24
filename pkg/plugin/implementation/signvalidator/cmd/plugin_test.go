@@ -50,6 +50,47 @@ func TestVerifierProviderSuccess(t *testing.T) {
 	}
 }
 
+// TestVerifierProviderClockSkewConfig tests that clockSkewToleranceSeconds is parsed correctly.
+func TestVerifierProviderClockSkewConfig(t *testing.T) {
+	p := provider{}
+
+	tests := []struct {
+		name    string
+		config  map[string]string
+		wantErr bool
+	}{
+		{
+			name:    "valid tolerance",
+			config:  map[string]string{"clockSkewToleranceSeconds": "8"},
+			wantErr: false,
+		},
+		{
+			name:    "zero tolerance",
+			config:  map[string]string{"clockSkewToleranceSeconds": "0"},
+			wantErr: false,
+		},
+		{
+			name:    "non-integer value",
+			config:  map[string]string{"clockSkewToleranceSeconds": "5s"},
+			wantErr: true,
+		},
+		{
+			name:    "negative value",
+			config:  map[string]string{"clockSkewToleranceSeconds": "-1"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := p.New(context.Background(), tt.config)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("wantErr=%v, got err=%v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
 // TestVerifierProviderFailure tests cases where verifier creation should fail.
 func TestVerifierProviderFailure(t *testing.T) {
 	provider := provider{}

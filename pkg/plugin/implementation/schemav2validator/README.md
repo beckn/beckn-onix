@@ -32,15 +32,28 @@ schemaValidator:
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `type` | string | Yes | - | Type of spec source: "url" or "file" ("dir" reserved for future) |
-| `location` | string | Yes | - | URL or file path to OpenAPI 3.1 spec |
-| `cacheTTL` | string | No | "3600" | Cache TTL in seconds before reloading spec |
-| `extendedSchema_enabled` | string | No | "false" | Enable extended schema validation for `@context` objects |
-| `extendedSchema_cacheTTL` | string | No | "86400" | Domain schema cache TTL in seconds |
-| `extendedSchema_maxCacheSize` | string | No | "100" | Maximum number of cached domain schemas |
-| `extendedSchema_downloadTimeout` | string | No | "30" | Timeout for downloading domain schemas |
-| `extendedSchema_allowedDomains` | string | No | "" | Comma-separated domain whitelist (empty = all allowed) |
-| `extendedSchema_localSchemaPath` | string | No | "" | Path to local schema directory; schemas preloaded at startup, network used as fallback |
+| `type` | string | No | - | Primary spec source type: `"url"`, `"file"`, or `"dir"`. **In standard Beckn deployments this is injected automatically from the signed beckn-constants file — do not set it manually.** Set to `"file"` (or `"dir"`) only for non-Beckn or offline deployments; ONIX will log a WARN at startup. Omit entirely for auxiliary-only mode. If `location` is set, `type` must also be set. |
+| `location` | string | No | - | URL or file path to the primary OpenAPI 3.1 spec. **In standard Beckn deployments this is injected automatically from the signed beckn-constants file — do not set it manually.** Set freely when `type` is `"file"` or `"dir"`. Omit entirely for auxiliary-only mode. If `type` is set, `location` must also be set. |
+| `cacheTTL` | string | No | `"3600"` | Cache TTL in seconds before reloading all specs (primary + auxiliary) |
+| `auxiliaryTypes` | string | No | - | Comma-separated source types for auxiliary specs (`"url"`, `"file"`, or `"dir"`) |
+| `auxiliaryLocations` | string | No | - | Comma-separated locations for auxiliary specs — must have the same number of entries as `auxiliaryTypes` |
+| `extendedSchema_enabled` | string | No | `"false"` | Enable extended schema validation for `@context` objects |
+| `extendedSchema_cacheTTL` | string | No | `"86400"` | Domain schema cache TTL in seconds |
+| `extendedSchema_maxCacheSize` | string | No | `"100"` | Maximum number of cached domain schemas |
+| `extendedSchema_downloadTimeout` | string | No | `"30"` | Timeout for downloading domain schemas |
+| `extendedSchema_allowedDomains` | string | No | `""` | Comma-separated domain whitelist (empty = all allowed) |
+| `extendedSchema_localSchemaPath` | string | No | `""` | Path to local schema directory; schemas preloaded at startup, network used as fallback |
+
+### Auxiliary Specs
+
+Auxiliary specs allow operators to extend schema validation with additional action verbs beyond those defined in the primary Beckn spec. Both `auxiliaryTypes` and `auxiliaryLocations` must be set together as matching comma-separated lists.
+
+**Rules:**
+- Auxiliary specs are loaded after the primary spec; their actions are merged into a single index
+- An auxiliary spec may only **add** new actions — any action already defined in any previously loaded spec (primary or an earlier auxiliary) causes a hard error at startup
+- If an auxiliary spec fails to load, it is skipped with an error logged; the primary spec remains active
+- The `dir` type loads all top-level `*.yaml`, `*.yml`, and `*.json` files in the specified directory (no recursion); duplicate action definitions across files within the same dir are a hard error — the entire dir spec is rejected and startup fails
+- All specs (primary and auxiliary) share the same `cacheTTL` refresh cycle
 
 ### Local Schema Directory Layout
 
@@ -61,17 +74,15 @@ A startup warning is logged if no schemas are found, which usually means the dir
 
 ### Initialization (Load Time)
 
-**Core Protocol Validation Setup**:
-1. **Load OpenAPI Spec**: Loads main spec from `location` (URL or file) with external `$ref` resolution
-2. **Build Action Index**: Creates action→schema map for O(1) lookup by scanning all paths/methods
-3. **Validate Spec**: Validates OpenAPI spec structure (warnings logged, non-fatal)
-4. **Cache Spec**: Stores loaded spec with `loadedAt` timestamp
+**Spec Loading**:
+1. **Load Primary Spec**: Loads the primary spec from `location` (URL, file, or dir) with external `$ref` resolution and builds its action index
+2. **Load Auxiliary Specs**: Each auxiliary spec is loaded independently in order; its action index is merged into the shared map. Hard error if any action collides with any previously loaded spec (primary or earlier auxiliary) — the adapter will not start
+3. **Merged Action Index**: A single flat `action → schema` map is built from all specs for O(1) lookup at runtime
+4. **Start Background Refresh**: Launches goroutine; every `cacheTTL` seconds the entire index is rebuilt from scratch (primary first, then auxiliaries). On failure the previous valid index is retained and an error is logged
 
 **Extended Schema Setup** (if `extendedSchema_enabled: "true"`):
 5. **Initialize Schema Cache**: Creates LRU cache with `maxCacheSize` (default: 100)
-6. **Start Background Refresh**: Launches goroutine with two tickers:
-   - Core spec refresh every `cacheTTL` seconds (default: 3600)
-   - Extended schema cleanup every `extendedSchema_cacheTTL` seconds (default: 86400)
+6. **Extended schema cleanup** ticker runs every `extendedSchema_cacheTTL` seconds (default: 86400)
 
 ### Request Validation (Runtime)
 
@@ -149,7 +160,7 @@ The loader will automatically fetch and resolve the external reference.
 
 ## Example Usage
 
-### Remote URL
+### Remote URL (Primary only)
 
 ```yaml
 schemaValidator:
@@ -160,7 +171,7 @@ schemaValidator:
     cacheTTL: "7200"
 ```
 
-### Local File
+### Local File (Primary only)
 
 ```yaml
 schemaValidator:
@@ -169,6 +180,21 @@ schemaValidator:
     type: file
     location: ./validation-scripts/l2-config/mobility_1.1.0_openapi_3.1.yaml
     cacheTTL: "3600"
+```
+
+### Primary with Auxiliary Specs
+
+Extends the Beckn core spec with additional action verbs from a local file and a directory of domain schemas:
+
+```yaml
+schemaValidator:
+  id: schemav2validator
+  config:
+    type: url
+    location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/tags/core-v2.0.0-lts/api/v2.0.0/beckn.yaml
+    cacheTTL: "3600"
+    auxiliaryTypes: "file,dir"
+    auxiliaryLocations: "/etc/onix/schemas/energy-verbs.yaml,/etc/onix/schemas/domain/"
 ```
 
 ### With Extended Schema Validation
@@ -212,4 +238,10 @@ schemaValidator:
 | Action not in spec | `"unsupported action: <action>"` |
 | Invalid URL | `"Invalid URL or unreachable: <url>"` |
 | Schema validation fails | Returns detailed field-level errors |
+| Auxiliary action collides with primary or another auxiliary | `"auxiliary spec[N] (<location>) defines action \"<action>\" which is already defined in a previously loaded spec — auxiliary specs may only add new actions"` |
+| Within-dir action collision | Error logged; dir spec skipped; startup fails with `"no actions indexed"` if no other spec is available |
+| No specs loaded / all specs failed | `"schemav2validator: no actions indexed after loading all specs — configure at least one valid primary or auxiliary spec"` |
+| `auxiliaryTypes` set without `auxiliaryLocations` | `"auxiliaryTypes is set but auxiliaryLocations is missing"` |
+| `auxiliaryLocations` set without `auxiliaryTypes` | `"auxiliaryLocations is set but auxiliaryTypes is missing"` |
+| Mismatched auxiliary list lengths | `"auxiliaryTypes and auxiliaryLocations must have the same number of comma-separated entries"` |
 

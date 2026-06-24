@@ -2,9 +2,12 @@ package schemav2validator
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -383,18 +386,6 @@ func TestIsAllowedDomain(t *testing.T) {
 		want           bool
 	}{
 		{
-			name:           "empty whitelist - all allowed",
-			schemaURL:      "https://example.com/schema.yaml",
-			allowedDomains: []string{},
-			want:           true,
-		},
-		{
-			name:           "nil whitelist - all allowed",
-			schemaURL:      "https://example.com/schema.yaml",
-			allowedDomains: nil,
-			want:           true,
-		},
-		{
 			name:           "domain in whitelist",
 			schemaURL:      "https://raw.githubusercontent.com/beckn/schema.yaml",
 			allowedDomains: []string{"raw.githubusercontent.com", "schemas.beckn.org"},
@@ -407,16 +398,66 @@ func TestIsAllowedDomain(t *testing.T) {
 			want:           false,
 		},
 		{
-			name:           "partial domain match",
+			name:           "exact domain match",
+			schemaURL:      "https://raw.githubusercontent.com/beckn/schema.yaml",
+			allowedDomains: []string{"raw.githubusercontent.com"},
+			want:           true,
+		},
+		{
+			name:           "legitimate subdomain passes",
 			schemaURL:      "https://raw.githubusercontent.com/beckn/schema.yaml",
 			allowedDomains: []string{"githubusercontent.com"},
+			want:           true,
+		},
+		{
+			name:           "prefix bypass blocked - evil-beckn.io vs beckn.io",
+			schemaURL:      "https://evil-beckn.io/schema.yaml",
+			allowedDomains: []string{"beckn.io"},
+			want:           false,
+		},
+		{
+			name:           "suffix bypass blocked - beckn.io.evil.com vs beckn.io",
+			schemaURL:      "https://beckn.io.evil.com/schema.yaml",
+			allowedDomains: []string{"beckn.io"},
+			want:           false,
+		},
+		{
+			name:           "substring bypass blocked - notraw.githubusercontent.com vs raw.githubusercontent.com",
+			schemaURL:      "https://notraw.githubusercontent.com/schema.yaml",
+			allowedDomains: []string{"raw.githubusercontent.com"},
+			want:           false,
+		},
+		{
+			name:           "allowlist entry with leading/trailing spaces",
+			schemaURL:      "https://raw.githubusercontent.com/beckn/schema.yaml",
+			allowedDomains: []string{"  raw.githubusercontent.com  "},
+			want:           true,
+		},
+		{
+			name:           "fragment injection bypass attempt",
+			schemaURL:      "file:///dev/zero#raw.githubusercontent.com",
+			allowedDomains: []string{"raw.githubusercontent.com"},
+			want:           false,
+		},
+		{
+			name:           "no host (file://) does not match even with non-empty allowlist",
+			schemaURL:      "file:///etc/passwd",
+			allowedDomains: []string{"raw.githubusercontent.com"},
+			want:           false,
+		},
+		{
+			name:           "empty allowlist allows any domain",
+			schemaURL:      "https://any.domain.example.com/schema.yaml",
+			allowedDomains: []string{},
 			want:           true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isAllowedDomain(tt.schemaURL, tt.allowedDomains)
+			u, err := url.Parse(tt.schemaURL)
+			assert.NoError(t, err)
+			got := isAllowedDomain(u, tt.allowedDomains)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -672,6 +713,103 @@ func TestValidateReferencedObject_DomainNotAllowed(t *testing.T) {
 	err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, allowedDomains, false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "domain not allowed")
+}
+
+func TestValidateReferencedObject_NonHttpSchemeRejectedWhenAllowlistSet(t *testing.T) {
+	tests := []struct {
+		name    string
+		context string
+	}{
+		{
+			name:    "file scheme with fragment bypass",
+			context: "file:///dev/zero#raw.githubusercontent.com",
+		},
+		{
+			name:    "file scheme local path",
+			context: "file:///etc/passwd",
+		},
+		{
+			// host IS in allowlist — scheme check must fire before domain check
+			name:    "gopher scheme with allowlisted host",
+			context: "gopher://raw.githubusercontent.com/schema.yaml",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := newSchemaCache(10)
+			ctx := context.Background()
+
+			obj := referencedObject{
+				Path:    "message.test",
+				Context: tt.context,
+				Type:    "Dos",
+				Data:    map[string]interface{}{},
+			}
+
+			allowedDomains := []string{"raw.githubusercontent.com"}
+
+			err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, allowedDomains, false)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid scheme in @context")
+		})
+	}
+}
+
+func TestValidateReferencedObject_EmptyAllowlistSkipsDomainCheck(t *testing.T) {
+	schemaContent := `openapi: 3.1.0
+info:
+  title: Test Schema
+  version: 1.0.0
+components:
+  schemas:
+    TestType:
+      type: object
+      additionalProperties: false
+      x-jsonld:
+        "@context": ./context.jsonld
+        "@type": TestType
+      properties:
+        field1:
+          type: string
+      required:
+        - field1`
+
+	tests := []struct {
+		name          string
+		allowedDomains []string
+	}{
+		{name: "file scheme allowed when no allowlist (nil)", allowedDomains: nil},
+		{name: "file scheme allowed when no allowlist (empty)", allowedDomains: []string{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpFile, err := os.CreateTemp("", "test-schema-*.yaml")
+			assert.NoError(t, err)
+			defer os.Remove(tmpFile.Name())
+			tmpFile.Write([]byte(schemaContent))
+			tmpFile.Close()
+
+			cache := newSchemaCache(10)
+			ctx := context.Background()
+
+			// Use file:// scheme — would be rejected by scheme check if allowlist were set.
+			obj := referencedObject{
+				Path:    "message.test",
+				Context: "file://" + tmpFile.Name(),
+				Type:    "TestType",
+				Data:    map[string]interface{}{"field1": "value1"},
+			}
+
+			err = cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, tt.allowedDomains, false)
+			// No domain or scheme error — allowlist check was skipped entirely.
+			if err != nil {
+				assert.NotContains(t, err.Error(), "domain not allowed")
+				assert.NotContains(t, err.Error(), "invalid scheme in @context")
+			}
+		})
+	}
 }
 
 func TestValidateExtendedSchemas_NoObjects(t *testing.T) {
@@ -989,4 +1127,75 @@ components:
 	// rawSchemas empty, localSchema=true — local miss, falls back to @context file path
 	err = cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, nil, true)
 	assert.NoError(t, err)
+}
+
+func TestValidateReferencedObject_AllowlistedHttpsURLPasses(t *testing.T) {
+	schemaContent := `openapi: 3.1.0
+info:
+  title: Test Schema
+  version: 1.0.0
+components:
+  schemas:
+    TestType:
+      type: object
+      additionalProperties: false
+      x-jsonld:
+        "@context": ./context.jsonld
+        "@type": TestType
+      properties:
+        field1:
+          type: string
+      required:
+        - field1`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(schemaContent))
+	}))
+	defer server.Close()
+
+	// Extract just the host (e.g. "127.0.0.1:PORT") and add it to the allowlist.
+	serverURL, _ := url.Parse(server.URL)
+	allowedDomains := []string{serverURL.Host}
+
+	cache := newSchemaCache(10)
+	ctx := context.Background()
+
+	obj := referencedObject{
+		Path:    "message.test",
+		Context: server.URL + "/schema/context.jsonld",
+		Type:    "TestType",
+		Data:    map[string]interface{}{"field1": "value1"},
+	}
+
+	err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, allowedDomains, false)
+	assert.NoError(t, err, "valid http URL with allowlisted host should pass")
+}
+
+func TestLoadSchemaFromPath_TTLExpiry_FetchesFresh(t *testing.T) {
+	var serveV2 atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveV2.Load() {
+			w.Write([]byte("openapi: 3.1.0\ninfo:\n  title: Schema v2\n  version: 2.0.0\n"))
+		} else {
+			w.Write([]byte("openapi: 3.1.0\ninfo:\n  title: Schema v1\n  version: 1.0.0\n"))
+		}
+	}))
+	defer server.Close()
+
+	cache := newSchemaCache(10)
+	ctx := context.Background()
+
+	// Load v1 with a 1ms TTL so the LRU entry expires almost immediately.
+	doc1, err := cache.loadSchemaFromPath(ctx, server.URL, 1*time.Millisecond, 30*time.Second, false)
+	assert.NoError(t, err)
+	assert.Equal(t, "Schema v1", doc1.Info.Title)
+
+	// Wait for the LRU entry to expire, then switch the server to v2.
+	time.Sleep(10 * time.Millisecond)
+	serveV2.Store(true)
+
+	// Re-load — LRU miss (expired), freshReadFromURI fetches from the server and gets v2.
+	doc2, err := cache.loadSchemaFromPath(ctx, server.URL, 1*time.Hour, 30*time.Second, false)
+	assert.NoError(t, err)
+	assert.Equal(t, "Schema v2", doc2.Info.Title, "expected v2 after TTL expiry — global URIMapCache not bypassed")
 }

@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -24,10 +28,12 @@ type payload struct {
 
 // schemav2Validator implements the SchemaValidator interface.
 type schemav2Validator struct {
-	config      *Config
-	spec        *cachedSpec
-	specMutex   sync.RWMutex
-	schemaCache *schemaCache // cache for extended schemas
+	config          *Config
+	specMutex       sync.RWMutex
+	specsLoaded     bool                            // true once at least one successful loadAllSpecs has completed
+	actionSchemas   map[string]*openapi3.SchemaRef  // merged across primary + all auxiliary specs
+	bodylessActions map[string]struct{}              // merged across primary + all auxiliary specs
+	schemaCache     *schemaCache                     // cache for extended schemas
 }
 
 // cachedSpec holds a cached OpenAPI spec.
@@ -38,11 +44,21 @@ type cachedSpec struct {
 	loadedAt        time.Time
 }
 
-// Config struct for Schemav2Validator.
-type Config struct {
+// AuxSpec holds the type and location for a single auxiliary OpenAPI spec.
+type AuxSpec struct {
 	Type     string // "url", "file", or "dir"
 	Location string // URL, file path, or directory path
+}
+
+// Config struct for Schemav2Validator.
+type Config struct {
+	Type     string // "url", "file", or "dir" — primary spec
+	Location string // URL, file path, or directory path — primary spec
 	CacheTTL int
+
+	// Auxiliary specs — operator-defined, unsigned, additive only.
+	// Actions defined here must not overlap with the primary spec.
+	Auxiliary []AuxSpec
 
 	// Extended Schema configuration
 	EnableExtendedSchema bool
@@ -54,14 +70,19 @@ func New(ctx context.Context, config *Config) (*schemav2Validator, func() error,
 	if config == nil {
 		return nil, nil, fmt.Errorf("config cannot be nil")
 	}
-	if config.Type == "" {
-		return nil, nil, fmt.Errorf("config type cannot be empty")
-	}
-	if config.Location == "" {
-		return nil, nil, fmt.Errorf("config location cannot be empty")
-	}
-	if config.Type != "url" && config.Type != "file" && config.Type != "dir" {
-		return nil, nil, fmt.Errorf("config type must be 'url', 'file', or 'dir'")
+
+	// Primary spec is optional — a non-Beckn deployment may use only auxiliary specs.
+	// If one of type/location is set, both must be set and type must be valid.
+	if config.Type != "" || config.Location != "" {
+		if config.Type == "" {
+			return nil, nil, fmt.Errorf("config type cannot be empty when location is set")
+		}
+		if config.Location == "" {
+			return nil, nil, fmt.Errorf("config location cannot be empty when type is set")
+		}
+		if config.Type != "url" && config.Type != "file" && config.Type != "dir" {
+			return nil, nil, fmt.Errorf("config type must be 'url', 'file', or 'dir'")
+		}
 	}
 
 	if config.CacheTTL == 0 {
@@ -69,7 +90,9 @@ func New(ctx context.Context, config *Config) (*schemav2Validator, func() error,
 	}
 
 	v := &schemav2Validator{
-		config: config,
+		config:          config,
+		actionSchemas:   make(map[string]*openapi3.SchemaRef),
+		bodylessActions: make(map[string]struct{}),
 	}
 
 	// Initialize extended schema cache if enabled
@@ -114,10 +137,11 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 		}
 
 		v.specMutex.RLock()
-		spec := v.spec
+		specsLoaded := v.specsLoaded
+		bodylessActions := v.bodylessActions
 		v.specMutex.RUnlock()
 
-		if spec == nil || spec.doc == nil {
+		if !specsLoaded {
 			return model.NewBadReqErr(fmt.Errorf("no OpenAPI spec loaded"))
 		}
 
@@ -126,7 +150,7 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 		// Empty-body POST requests are rejected upstream by validateSchemaStep before
 		// reaching here, so only GET/DELETE arrive at this branch.
 		action := reqURL.Path
-		if _, ok := spec.bodylessActions[action]; !ok {
+		if _, ok := bodylessActions[action]; !ok {
 			return model.NewBadReqErr(fmt.Errorf("unsupported bodyless request for endpoint: %s", action))
 		}
 
@@ -145,17 +169,18 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 	}
 
 	v.specMutex.RLock()
-	spec := v.spec
+	specsLoaded := v.specsLoaded
+	actionSchemas := v.actionSchemas
 	v.specMutex.RUnlock()
 
-	if spec == nil || spec.doc == nil {
+	if !specsLoaded {
 		return model.NewBadReqErr(fmt.Errorf("no OpenAPI spec loaded"))
 	}
 
 	action := payloadData.Context.Action
 
-	// O(1) lookup from action index
-	schema := spec.actionSchemas[action]
+	// O(1) lookup from merged action index
+	schema := actionSchemas[action]
 	if schema == nil || schema.Value == nil {
 		return model.NewBadReqErr(fmt.Errorf("unsupported action: %s", action))
 	}
@@ -192,66 +217,255 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 	return nil
 }
 
-// initialise loads the OpenAPI spec from the configuration.
+// initialise loads all specs (primary + auxiliary) from the configuration.
+// Auxiliary load failures are skipped at startup — the adapter starts with whatever loaded.
 func (v *schemav2Validator) initialise(ctx context.Context) error {
-	return v.loadSpec(ctx)
+	return v.loadAllSpecs(ctx, false)
 }
 
-// loadSpec loads the OpenAPI spec from URL or local path.
-func (v *schemav2Validator) loadSpec(ctx context.Context) error {
-	loader := openapi3.NewLoader()
+// loadAllSpecs loads the primary spec (if configured) and all auxiliary specs,
+// merging their action indexes into the validator-level maps.
+//
+// failOnAuxError controls auxiliary failure handling:
+//   - false (startup): a failed auxiliary is skipped and logged; the adapter starts
+//     with whatever was successfully loaded.
+//   - true (TTL refresh): any auxiliary failure returns an error so the caller
+//     retains the previous valid index intact rather than silently dropping
+//     the actions that were contributed by the failed spec.
+//
+// Auxiliary specs may only add new actions — any collision is always a hard error.
+func (v *schemav2Validator) loadAllSpecs(ctx context.Context, failOnAuxError bool) error {
+	mergedActionSchemas := make(map[string]*openapi3.SchemaRef)
+	mergedBodylessActions := make(map[string]struct{})
 
-	// Allow external references
-	loader.IsExternalRefsAllowed = true
+	hasPrimary := v.config.Type != "" && v.config.Location != ""
+
+	if !hasPrimary {
+		log.Warnf(ctx, "schemav2validator: no primary spec configured — operating without a signed trust anchor")
+	}
+
+	// Load primary spec first.
+	if hasPrimary {
+		spec, err := v.loadSingleSpec(ctx, v.config.Type, v.config.Location)
+		if err != nil {
+			return fmt.Errorf("failed to load primary spec: %w", err)
+		}
+		for action, schema := range spec.actionSchemas {
+			mergedActionSchemas[action] = schema
+		}
+		for action := range spec.bodylessActions {
+			mergedBodylessActions[action] = struct{}{}
+		}
+		log.Debugf(ctx, "Primary spec loaded: %d body actions, %d bodyless actions", len(spec.actionSchemas), len(spec.bodylessActions))
+	}
+
+	// Load each auxiliary spec and merge — hard-reject on action collision.
+	for i, aux := range v.config.Auxiliary {
+		spec, err := v.loadSingleSpec(ctx, aux.Type, aux.Location)
+		if err != nil {
+			if failOnAuxError {
+				// On TTL refresh: propagate the error so reloadAllSpecs retains
+				// the previous valid index rather than committing an index that
+				// is missing this auxiliary's actions.
+				return fmt.Errorf("auxiliary spec[%d] (%s: %s) failed to reload — retaining previous index: %w",
+					i, aux.Type, aux.Location, err)
+			}
+			log.Errorf(ctx, err, "Failed to load auxiliary spec[%d] (%s: %s) — skipping", i, aux.Type, aux.Location)
+			continue
+		}
+		for action, schema := range spec.actionSchemas {
+			if _, exists := mergedActionSchemas[action]; exists {
+				return fmt.Errorf("auxiliary spec[%d] (%s) defines action %q which is already defined in a previously loaded spec — auxiliary specs may only add new actions",
+					i, aux.Location, action)
+			}
+			mergedActionSchemas[action] = schema
+		}
+		for action := range spec.bodylessActions {
+			if _, exists := mergedBodylessActions[action]; exists {
+				return fmt.Errorf("auxiliary spec[%d] (%s) defines bodyless action %q which is already defined in a previously loaded spec — auxiliary specs may only add new actions",
+					i, aux.Location, action)
+			}
+			mergedBodylessActions[action] = struct{}{}
+		}
+		log.Debugf(ctx, "Auxiliary spec[%d] loaded from %s: %d body actions, %d bodyless actions", i, aux.Location, len(spec.actionSchemas), len(spec.bodylessActions))
+	}
+
+	if len(mergedActionSchemas) == 0 && len(mergedBodylessActions) == 0 {
+		return fmt.Errorf("schemav2validator: no actions indexed after loading all specs — configure at least one valid primary or auxiliary spec")
+	}
+
+	v.specMutex.Lock()
+	v.specsLoaded = true
+	v.actionSchemas = mergedActionSchemas
+	v.bodylessActions = mergedBodylessActions
+	v.specMutex.Unlock()
+
+	log.Debugf(ctx, "schemav2validator: merged index ready — %d body actions, %d bodyless actions",
+		len(mergedActionSchemas), len(mergedBodylessActions))
+	return nil
+}
+
+// specHTTPClient is used by freshReadFromURI for all remote spec fetches.
+// The 30 s timeout prevents a hanging server from stalling the reload goroutine
+// indefinitely; caller context deadlines further constrain it when set.
+var specHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+// maxSpecBodyBytes caps how much of a spec response is read into memory.
+// No legitimate OpenAPI spec approaches this limit; it guards against
+// misconfigured proxies and adversarial servers sending arbitrarily large bodies.
+var maxSpecBodyBytes int64 = 32 * 1024 * 1024 // 32 MB
+
+// freshReadFromURI reads bytes directly from disk or network, bypassing the
+// kin-openapi package-level URIMapCache so TTL reloads always fetch current content.
+func freshReadFromURI(loader *openapi3.Loader, u *url.URL) ([]byte, error) {
+	switch u.Scheme {
+	case "http", "https":
+		ctx := context.Background()
+		if loader.Context != nil {
+			ctx = loader.Context
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := specHTTPClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("HTTP %d fetching %s", resp.StatusCode, u)
+		}
+		limited := io.LimitReader(resp.Body, maxSpecBodyBytes+1)
+		data, err := io.ReadAll(limited)
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(data)) > maxSpecBodyBytes {
+			return nil, fmt.Errorf("spec response exceeds %d MB limit", maxSpecBodyBytes/(1024*1024))
+		}
+		return data, nil
+	default: // "file" scheme or bare path
+		return os.ReadFile(u.Path)
+	}
+}
+
+// newFreshLoader returns a loader whose ReadFromURIFunc bypasses the global
+// URIMapCache. Use this everywhere instead of openapi3.NewLoader() so that
+// TTL-driven reloads always read the current file or remote content.
+//
+// Note: setting ReadFromURIFunc causes kin-openapi to skip its own
+// IsExternalRefsAllowed guard (the custom function becomes the sole access
+// policy). IsExternalRefsAllowed=true is kept for documentation intent but
+// has no runtime effect once ReadFromURIFunc is non-nil.
+func newFreshLoader() *openapi3.Loader {
+	l := openapi3.NewLoader()
+	l.IsExternalRefsAllowed = true
+	l.ReadFromURIFunc = freshReadFromURI
+	return l
+}
+
+// loadSingleSpec loads one OpenAPI document from the given type and location.
+// For type "dir", all top-level *.yaml and *.json files are loaded and their
+// action indexes are merged into a single cachedSpec.
+func (v *schemav2Validator) loadSingleSpec(ctx context.Context, specType, location string) (*cachedSpec, error) {
+	if specType == "dir" {
+		return v.loadSpecFromDir(ctx, location)
+	}
+
+	loader := newFreshLoader()
+	loader.Context = ctx
 
 	var doc *openapi3.T
 	var err error
 
-	switch v.config.Type {
+	switch specType {
 	case "url":
-		u, parseErr := url.Parse(v.config.Location)
+		u, parseErr := url.Parse(location)
 		if parseErr != nil {
-			return fmt.Errorf("failed to parse URL: %v", parseErr)
+			return nil, fmt.Errorf("failed to parse URL: %v", parseErr)
 		}
 		doc, err = loader.LoadFromURI(u)
 	case "file":
-		doc, err = loader.LoadFromFile(v.config.Location)
-	case "dir":
-		return fmt.Errorf("directory loading not yet implemented")
+		doc, err = loader.LoadFromFile(location)
 	default:
-		return fmt.Errorf("unsupported type: %s", v.config.Type)
+		return nil, fmt.Errorf("unsupported type: %s", specType)
 	}
 
 	if err != nil {
-		log.Errorf(ctx, err, "Failed to load from %s: %s", v.config.Type, v.config.Location)
-		return fmt.Errorf("failed to load OpenAPI document: %v", err)
+		log.Errorf(ctx, err, "Failed to load from %s: %s", specType, location)
+		return nil, fmt.Errorf("failed to load OpenAPI document: %v", err)
 	}
 
-	// Validate spec (skip strict validation to allow JSON Schema keywords)
 	if err := doc.Validate(ctx); err != nil {
-		log.Debugf(ctx, "Spec validation warnings (non-fatal): %v", err)
-	} else {
-		log.Debugf(ctx, "Spec validation passed")
+		log.Debugf(ctx, "Spec validation warnings (non-fatal) for %s: %v", location, err)
 	}
 
-	// Build action→schema index (body operations) and bodyless action set (GET/DELETE)
 	actionSchemas, bodylessActions := v.buildActionIndex(ctx, doc)
 
-	v.specMutex.Lock()
-	v.spec = &cachedSpec{
+	log.Debugf(ctx, "Loaded spec from %s: %s — %d body actions, %d bodyless actions",
+		specType, location, len(actionSchemas), len(bodylessActions))
+
+	return &cachedSpec{
 		doc:             doc,
 		actionSchemas:   actionSchemas,
 		bodylessActions: bodylessActions,
 		loadedAt:        time.Now(),
-	}
-	v.specMutex.Unlock()
-
-	log.Debugf(ctx, "Loaded OpenAPI spec from %s: %s with %d body actions and %d bodyless actions indexed",
-		v.config.Type, v.config.Location, len(actionSchemas), len(bodylessActions))
-	return nil
+	}, nil
 }
 
-// refreshLoop periodically reloads expired specs based on TTL.
+// loadSpecFromDir loads all top-level *.yaml and *.json files in the given
+// directory as independent specs and merges their action indexes.
+func (v *schemav2Validator) loadSpecFromDir(ctx context.Context, dir string) (*cachedSpec, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read directory %s: %w", dir, err)
+	}
+
+	merged := &cachedSpec{
+		actionSchemas:   make(map[string]*openapi3.SchemaRef),
+		bodylessActions: make(map[string]struct{}),
+		loadedAt:        time.Now(),
+	}
+
+	loaded := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		filePath := filepath.Join(dir, name)
+		spec, err := v.loadSingleSpec(ctx, "file", filePath)
+		if err != nil {
+			log.Errorf(ctx, err, "Skipping file in dir spec: %s", filePath)
+			continue
+		}
+		for action, schema := range spec.actionSchemas {
+			if _, exists := merged.actionSchemas[action]; exists {
+				return nil, fmt.Errorf("dir spec %q: action %q defined in multiple files — last seen in %s; remove the duplicate", dir, action, filePath)
+			}
+			merged.actionSchemas[action] = schema
+		}
+		for action := range spec.bodylessActions {
+			if _, exists := merged.bodylessActions[action]; exists {
+				return nil, fmt.Errorf("dir spec %q: bodyless action %q defined in multiple files — last seen in %s; remove the duplicate", dir, action, filePath)
+			}
+			merged.bodylessActions[action] = struct{}{}
+		}
+		loaded++
+	}
+
+	if loaded == 0 {
+		log.Warnf(ctx, "No valid OpenAPI files found in directory: %s", dir)
+	}
+
+	return merged, nil
+}
+
+// refreshLoop periodically reloads all specs based on TTL.
 func (v *schemav2Validator) refreshLoop(ctx context.Context) {
 	coreTicker := time.NewTicker(time.Duration(v.config.CacheTTL) * time.Second)
 	defer coreTicker.Stop()
@@ -275,7 +489,7 @@ func (v *schemav2Validator) refreshLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-coreTicker.C:
-			v.reloadExpiredSpec(ctx)
+			v.reloadAllSpecs(ctx)
 		case <-refTickerCh:
 			if v.schemaCache != nil {
 				count := v.schemaCache.cleanupExpired()
@@ -287,22 +501,14 @@ func (v *schemav2Validator) refreshLoop(ctx context.Context) {
 	}
 }
 
-// reloadExpiredSpec reloads spec if it has exceeded its TTL.
-func (v *schemav2Validator) reloadExpiredSpec(ctx context.Context) {
-	v.specMutex.RLock()
-	if v.spec == nil {
-		v.specMutex.RUnlock()
-		return
-	}
-	needsReload := time.Since(v.spec.loadedAt) >= time.Duration(v.config.CacheTTL)*time.Second
-	v.specMutex.RUnlock()
-
-	if needsReload {
-		if err := v.loadSpec(ctx); err != nil {
-			log.Errorf(ctx, err, "Failed to reload spec")
-		} else {
-			log.Debugf(ctx, "Reloaded spec from %s: %s", v.config.Type, v.config.Location)
-		}
+// reloadAllSpecs rebuilds the merged action index from all specs on TTL expiry.
+// Any failure (primary, auxiliary, or collision) causes the previous valid index
+// to be retained — the new index is only committed when all specs load cleanly.
+func (v *schemav2Validator) reloadAllSpecs(ctx context.Context) {
+	if err := v.loadAllSpecs(ctx, true); err != nil {
+		log.Errorf(ctx, err, "Failed to reload specs — serving stale action index until next TTL cycle")
+	} else {
+		log.Debugf(ctx, "Reloaded all specs successfully")
 	}
 }
 
