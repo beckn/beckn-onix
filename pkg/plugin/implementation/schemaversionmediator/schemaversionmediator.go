@@ -367,10 +367,6 @@ func (p *provider) New(ctx context.Context, loader definition.ManifestLoader, cf
 	// Cold-start check: attempt to load the local node manifest. If it is
 	// absent or has no schemaObjects, mark as not onboarded so Mediate rejects
 	// every inbound call with a clear error rather than silently pass-through.
-	//
-	// nodeId is not an operator-facing config field. The handler injects the
-	// handler-level subscriberId here before calling New so that the cold-start
-	// lookup can run at boot time, before any StepContext is available.
 	nodeID := cfg["nodeId"]
 	if nodeID == "" {
 		m.notOnboarded = true

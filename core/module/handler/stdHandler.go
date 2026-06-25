@@ -467,7 +467,7 @@ func loadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader de
 	return checker, nil
 }
 
-func loadSchemaVersionMediator(ctx context.Context, mgr PluginManager, manifestLoader definition.ManifestLoader, subscriberID string, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
+func loadSchemaVersionMediator(ctx context.Context, mgr PluginManager, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping SchemaVersionMediator plugin: not configured")
 		return nil, nil
@@ -475,15 +475,6 @@ func loadSchemaVersionMediator(ctx context.Context, mgr PluginManager, manifestL
 	if manifestLoader == nil {
 		return nil, fmt.Errorf("failed to load SchemaVersionMediator plugin (%s): ManifestLoader plugin not configured", cfg.ID)
 	}
-	// Inject subscriberID as nodeId for the plugin's cold-start manifest lookup
-	// in New. nodeId is not an operator-facing config field — the plugin reads it
-	// only at boot time to check whether the local node manifest is published.
-	// cfg is owned by this handler's single construction call so mutating it in
-	// place is safe.
-	if cfg.Config == nil {
-		cfg.Config = make(map[string]string)
-	}
-	cfg.Config["nodeId"] = subscriberID
 	mediator, err := mgr.SchemaVersionMediator(ctx, manifestLoader, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load SchemaVersionMediator plugin (%s): %w", cfg.ID, err)
@@ -548,7 +539,7 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.policyChecker, err = loadPolicyChecker(ctx, mgr, h.manifestLoader, cfg.PolicyChecker); err != nil {
 		return err
 	}
-	if h.schemaVersionMediator, err = loadSchemaVersionMediator(ctx, mgr, h.manifestLoader, h.SubscriberID, cfg.SchemaVersionMediator); err != nil {
+	if h.schemaVersionMediator, err = loadSchemaVersionMediator(ctx, mgr, h.manifestLoader, cfg.SchemaVersionMediator); err != nil {
 		return err
 	}
 	if h.payloadTransformer, err = loadPayloadTransformerStep(ctx, mgr, cfg.PayloadTransformer); err != nil {

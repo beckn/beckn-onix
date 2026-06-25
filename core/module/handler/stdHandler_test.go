@@ -219,7 +219,7 @@ func TestLoadManifestLoader_RequiresRegistryMetadataLookup(t *testing.T) {
 }
 
 func TestLoadSchemaVersionMediator_NilCfg_Skipped(t *testing.T) {
-	svm, err := loadSchemaVersionMediator(context.Background(), noopPluginManager{}, nil, "sub1", nil)
+	svm, err := loadSchemaVersionMediator(context.Background(), noopPluginManager{}, nil, nil)
 	if err != nil {
 		t.Fatalf("expected nil error when cfg is nil, got %v", err)
 	}
@@ -229,13 +229,31 @@ func TestLoadSchemaVersionMediator_NilCfg_Skipped(t *testing.T) {
 }
 
 func TestLoadSchemaVersionMediator_RequiresManifestLoader(t *testing.T) {
-	_, err := loadSchemaVersionMediator(context.Background(), noopPluginManager{}, nil, "sub1", &plugin.Config{ID: "translationmapmediator"})
+	_, err := loadSchemaVersionMediator(context.Background(), noopPluginManager{}, nil, &plugin.Config{ID: "translationmapmediator"})
 	if err == nil || !strings.Contains(err.Error(), "ManifestLoader plugin not configured") {
 		t.Fatalf("expected ManifestLoader error, got %v", err)
 	}
 }
 
-func TestLoadSchemaVersionMediator_InjectsNodeId(t *testing.T) {
+func TestLoadSchemaVersionMediator_PassesLoaderThrough(t *testing.T) {
+	var capturedLoader definition.ManifestLoader
+	mgr := &injectCaptureMgr{
+		schemaVersionMediatorFunc: func(_ context.Context, loader definition.ManifestLoader, _ *plugin.Config) (definition.SchemaVersionMediator, error) {
+			capturedLoader = loader
+			return nil, nil
+		},
+	}
+	loader := &stubManifestLoader{}
+	_, err := loadSchemaVersionMediator(context.Background(), mgr, loader, &plugin.Config{ID: "translationmapmediator"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedLoader != loader {
+		t.Error("expected loader to be passed through to SchemaVersionMediator")
+	}
+}
+
+func TestLoadSchemaVersionMediator_OperatorNodeIdPassedThrough(t *testing.T) {
 	var capturedCfg map[string]string
 	mgr := &injectCaptureMgr{
 		schemaVersionMediatorFunc: func(_ context.Context, _ definition.ManifestLoader, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
@@ -244,12 +262,15 @@ func TestLoadSchemaVersionMediator_InjectsNodeId(t *testing.T) {
 		},
 	}
 	loader := &stubManifestLoader{}
-	_, err := loadSchemaVersionMediator(context.Background(), mgr, loader, "my-subscriber-id", &plugin.Config{ID: "translationmapmediator"})
+	_, err := loadSchemaVersionMediator(context.Background(), mgr, loader, &plugin.Config{
+		ID:     "translationmapmediator",
+		Config: map[string]string{"nodeId": "nfh.global/subscribers.beckn.one/sandbox.open-kitchen.com"},
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if capturedCfg["nodeId"] != "my-subscriber-id" {
-		t.Errorf("expected nodeId=my-subscriber-id, got %q", capturedCfg["nodeId"])
+	if capturedCfg["nodeId"] != "nfh.global/subscribers.beckn.one/sandbox.open-kitchen.com" {
+		t.Errorf("expected operator nodeId to be passed through, got %q", capturedCfg["nodeId"])
 	}
 }
 
