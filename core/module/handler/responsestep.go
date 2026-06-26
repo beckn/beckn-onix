@@ -43,7 +43,7 @@ type preV2Response struct {
 // All other versions use the pre-v2 envelope:
 //
 //	{"message":{"ack":{"status":"ACK"}}}
-func sendAck(ctx context.Context, w http.ResponseWriter) {
+func sendAck(ctx context.Context, w http.ResponseWriter) []byte {
 	var data []byte
 	if isAtLeastV2(ctx) {
 		resp := &model.Response{
@@ -66,6 +66,7 @@ func sendAck(ctx context.Context, w http.ResponseWriter) {
 	if _, err := w.Write(data); err != nil {
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
 	}
+	return data
 }
 
 // nackBecknError maps an error to its Beckn model.Error representation, HTTP
@@ -140,7 +141,7 @@ func nackBytes(ctx context.Context, err error) []byte {
 // All other versions:
 //
 //	{"message":{"ack":{"status":"<bodyStatus>"},"error":{...}}}
-func nack(ctx context.Context, w http.ResponseWriter, becknErr *model.Error, httpStatus int, bodyStatus model.Status) {
+func nack(ctx context.Context, w http.ResponseWriter, becknErr *model.Error, httpStatus int, bodyStatus model.Status) []byte {
 	data := nackBodyBytes(ctx, becknErr, bodyStatus)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(httpStatus)
@@ -148,12 +149,13 @@ func nack(ctx context.Context, w http.ResponseWriter, becknErr *model.Error, htt
 		log.Debugf(ctx, "Error writing response: %v, MessageID: %s", er, ctx.Value(model.ContextKeyMsgID))
 		http.Error(w, fmt.Sprintf("Internal server error, MessageID: %s", ctx.Value(model.ContextKeyMsgID)), http.StatusInternalServerError)
 	}
+	return data
 }
 
 // sendNack maps err to its Beckn error type and sends the appropriate response.
-func sendNack(ctx context.Context, w http.ResponseWriter, err error) {
+func sendNack(ctx context.Context, w http.ResponseWriter, err error) []byte {
 	becknErr, httpStatus, bodyStatus := nackBecknError(ctx, err)
-	nack(ctx, w, becknErr, httpStatus, bodyStatus)
+	return nack(ctx, w, becknErr, httpStatus, bodyStatus)
 }
 
 // isAtLeastV2 reports whether the request uses Beckn protocol v2.0.0 or later.
