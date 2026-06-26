@@ -34,11 +34,12 @@ type pathOverrideDef struct {
 }
 
 type auditConfig struct {
-	Mode           string                `yaml:"mode"`           // "full" | "selective"
-	Patterns       map[string]patternDef `yaml:"patterns"`
-	MaskRules      []maskRule            `yaml:"maskRules"`
-	PathOverrides  []pathOverrideDef     `yaml:"pathOverrides"`
-	SelectedFields map[string][]string   `yaml:"selectedFields"` // action → field paths; "default" is the fallback
+	Mode                    string                `yaml:"mode"`           // "full" | "selective"
+	Patterns                map[string]patternDef `yaml:"patterns"`
+	MaskRules               []maskRule            `yaml:"maskRules"`
+	PathOverrides           []pathOverrideDef     `yaml:"pathOverrides"`
+	SelectedFields          map[string][]string   `yaml:"selectedFields"` // action → field paths; "default" is the fallback
+	CaptureSignatureHeaders bool                  `yaml:"captureSignatureHeaders"`
 }
 
 // ── Compiled config ──────────────────────────────────────────────────────────
@@ -49,13 +50,19 @@ type CompiledPattern struct {
 	Mask     string // literal mask for MaskType "replace"
 }
 
+// signatureHeaders is the fixed set of HTTP headers captured when
+// captureSignatureHeaders is enabled. These headers carry the Beckn Ed25519
+// signature and are intentionally verifiable, not secret credentials.
+var signatureHeaders = []string{"Authorization", "X-Request-Id"}
+
 // CompiledConfig is the compiled, query-ready form of auditConfig.
 // All lookups are O(1) map operations so the per-request cost is minimal.
 type CompiledConfig struct {
-	mode          string                         // "full" or "selective"
-	keyToPattern  map[string]*CompiledPattern    // field name → pattern (from maskRules)
-	pathOverrides map[string]*CompiledPattern    // full dot-path → pattern
-	keepPaths     map[string]map[string]struct{} // action → set of paths to keep/traverse (selective only)
+	mode                    string                         // "full" or "selective"
+	keyToPattern            map[string]*CompiledPattern    // field name → pattern (from maskRules)
+	pathOverrides           map[string]*CompiledPattern    // full dot-path → pattern
+	keepPaths               map[string]map[string]struct{} // action → set of paths to keep/traverse (selective only)
+	captureSignatureHeaders bool
 }
 
 var (
@@ -198,11 +205,18 @@ func compile(ctx context.Context, cfg *auditConfig) (*CompiledConfig, error) {
 	}
 
 	return &CompiledConfig{
-		mode:          mode,
-		keyToPattern:  keyToPattern,
-		pathOverrides: pathOverrides,
-		keepPaths:     keepPaths,
+		mode:                    mode,
+		keyToPattern:            keyToPattern,
+		pathOverrides:           pathOverrides,
+		keepPaths:               keepPaths,
+		captureSignatureHeaders: cfg.CaptureSignatureHeaders,
 	}, nil
+}
+
+// CaptureSignatureHeaders reports whether Beckn signature headers should be
+// included as attributes on audit log records.
+func (c *CompiledConfig) CaptureSignatureHeaders() bool {
+	return c.captureSignatureHeaders
 }
 
 // buildKeepSet expands dot-paths into a set containing each path AND all its

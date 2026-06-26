@@ -20,6 +20,7 @@ type ManifestMetadata struct {
 // ManifestDocument is the cached and returned verified manifest payload.
 type ManifestDocument struct {
 	NetworkID    string    `json:"network_id,omitempty"`
+	SubscriberID string    `json:"subscriber_id,omitempty"`
 	ContentType  string    `json:"content_type,omitempty"`
 	Content      []byte    `json:"content"`
 	Digest       string    `json:"digest"`
@@ -32,6 +33,8 @@ type ManifestDocument struct {
 const (
 	// NetworkManifestType is the manifest_type value for network manifests.
 	NetworkManifestType = "network-manifest"
+	// NodeManifestType is the manifest_type value for node manifests.
+	NodeManifestType = "node-manifest"
 	// PolicyTypeRego is the policies.type value for Rego policy manifests.
 	PolicyTypeRego = "rego"
 	// PolicySourceBundle is the policies.source value for OPA bundle policies.
@@ -192,6 +195,110 @@ func (m *NetworkManifest) Validate(expectedNetworkID string, now time.Time) erro
 		}
 	default:
 		return fmt.Errorf("manifest for network %q uses unsupported policies.source %q", expectedNetworkID, m.Policies.Source)
+	}
+
+	return nil
+}
+
+// --- Node manifest types ---
+
+// SchemaObject declares a single schema object version that a participant's application handles.
+// ContextURL is the full @context URL including version; Type is the @type value.
+// Both fields together uniquely identify a schema contract.
+type SchemaObject struct {
+	ContextURL string `yaml:"contextUrl"`
+	Type       string `yaml:"type"`
+}
+
+// NodeManifestSchema holds the schema capability declarations for a node manifest.
+type NodeManifestSchema struct {
+	SchemaObjects []SchemaObject `yaml:"schemaObjects"`
+}
+
+// NodeManifestGovernance describes the temporal validity of a node manifest.
+// Unlike NetworkManifestGovernance it carries no Signed field — signature
+// verification is handled by the manifest loader infrastructure.
+type NodeManifestGovernance struct {
+	EffectiveFrom  string `yaml:"effectiveFrom"`
+	EffectiveUntil string `yaml:"effectiveUntil"` // optional — omit for indefinite validity
+}
+
+// NodeManifest is the typed YAML schema for a node-manifest document.
+// It is a sibling to NetworkManifest and shares the same DeDi registry
+// placement convention, signing policy, and manifest loader infrastructure.
+//
+// SubscriberID is the fully-qualified three-part DeDi reference in the format
+// namespace/registry/recordId — e.g. "nfh.global/subscribers.beckn.one/bpp.energy-provider.com".
+// This corresponds to bapId/bppId in the Beckn transaction context.
+type NodeManifest struct {
+	ManifestVersion string                 `yaml:"manifestVersion"`
+	ManifestType    string                 `yaml:"manifestType"`
+	SubscriberID    string                 `yaml:"subscriberId"`
+	Schema          NodeManifestSchema     `yaml:"schema"`
+	Governance      NodeManifestGovernance `yaml:"governance"`
+}
+
+// ParseNodeManifest parses YAML node manifest content.
+func ParseNodeManifest(content []byte) (*NodeManifest, error) {
+	var manifest NodeManifest
+	if err := yaml.Unmarshal(content, &manifest); err != nil {
+		return nil, err
+	}
+	return &manifest, nil
+}
+
+// Validate checks the node manifest against schema rules for the given subscriber ID and time.
+func (m *NodeManifest) Validate(expectedSubscriberID string, now time.Time) error {
+	if m == nil {
+		return fmt.Errorf("node manifest for subscriber %q cannot be nil", expectedSubscriberID)
+	}
+	if strings.TrimSpace(m.ManifestVersion) == "" {
+		return fmt.Errorf("node manifest for subscriber %q is missing manifestVersion", expectedSubscriberID)
+	}
+	if m.ManifestType != NodeManifestType {
+		return fmt.Errorf("node manifest for subscriber %q must have manifestType=%q", expectedSubscriberID, NodeManifestType)
+	}
+	if strings.TrimSpace(m.SubscriberID) == "" {
+		return fmt.Errorf("node manifest for subscriber %q is missing subscriberId", expectedSubscriberID)
+	}
+	parts := strings.Split(m.SubscriberID, "/")
+	if len(parts) != 3 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+		return fmt.Errorf("node manifest subscriberId %q must be in namespace/registry/recordId format", m.SubscriberID)
+	}
+	if m.SubscriberID != expectedSubscriberID {
+		return fmt.Errorf("node manifest subscriberId %q does not match expected %q", m.SubscriberID, expectedSubscriberID)
+	}
+	if len(m.Schema.SchemaObjects) == 0 {
+		return fmt.Errorf("node manifest for subscriber %q must have at least one schema object", expectedSubscriberID)
+	}
+	for i, obj := range m.Schema.SchemaObjects {
+		if strings.TrimSpace(obj.ContextURL) == "" {
+			return fmt.Errorf("node manifest for subscriber %q: schema object at index %d is missing contextUrl", expectedSubscriberID, i)
+		}
+		if strings.TrimSpace(obj.Type) == "" {
+			return fmt.Errorf("node manifest for subscriber %q: schema object at index %d is missing type", expectedSubscriberID, i)
+		}
+	}
+
+	effectiveFrom, err := time.Parse(time.RFC3339, m.Governance.EffectiveFrom)
+	if err != nil {
+		return fmt.Errorf("node manifest for subscriber %q has invalid governance.effectiveFrom: %w", expectedSubscriberID, err)
+	}
+	if now.Before(effectiveFrom) {
+		return fmt.Errorf("node manifest for subscriber %q is not active until %s", expectedSubscriberID, effectiveFrom.Format(time.RFC3339))
+	}
+
+	if m.Governance.EffectiveUntil != "" {
+		effectiveUntil, err := time.Parse(time.RFC3339, m.Governance.EffectiveUntil)
+		if err != nil {
+			return fmt.Errorf("node manifest for subscriber %q has invalid governance.effectiveUntil: %w", expectedSubscriberID, err)
+		}
+		if !effectiveUntil.After(effectiveFrom) {
+			return fmt.Errorf("node manifest for subscriber %q must have governance.effectiveUntil later than governance.effectiveFrom", expectedSubscriberID)
+		}
+		if now.After(effectiveUntil) {
+			return fmt.Errorf("node manifest for subscriber %q expired at %s", expectedSubscriberID, effectiveUntil.Format(time.RFC3339))
+		}
 	}
 
 	return nil

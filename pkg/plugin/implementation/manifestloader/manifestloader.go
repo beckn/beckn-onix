@@ -39,8 +39,12 @@ type Loader struct {
 }
 
 var (
-	ErrNilCache    = errors.New("cache implementation cannot be nil")
-	ErrNilRegistry = errors.New("registry metadata lookup cannot be nil")
+	ErrNilCache        = errors.New("cache implementation cannot be nil")
+	ErrNilMetaRegistry = errors.New("registry metadata lookup cannot be nil")
+	// ErrNoManifestPublished is returned by GetBySubscriberID when the registry returns
+	// metadata for the subscriber but carries no manifestUrl — the participant has not yet
+	// published a node manifest. Callers should treat this as a graceful absence, not a fault.
+	ErrNoManifestPublished = errors.New("subscriber has not published a node manifest")
 )
 
 const (
@@ -58,7 +62,7 @@ func New(ctx context.Context, cache definition.Cache, registry definition.Regist
 		return nil, nil, ErrNilCache
 	}
 	if registry == nil {
-		return nil, nil, ErrNilRegistry
+		return nil, nil, ErrNilMetaRegistry
 	}
 	if cfg == nil {
 		cfg = &Config{}
@@ -132,6 +136,52 @@ func (l *Loader) GetByNetworkID(ctx context.Context, networkID string) (*model.M
 
 func (l *Loader) GetByMetadata(ctx context.Context, metadata model.ManifestMetadata) (*model.ManifestDocument, error) {
 	return l.getByMetadata(ctx, metadata, l.shouldBypassCache(metadataCacheKey(metadata)))
+}
+
+func (l *Loader) GetBySubscriberID(ctx context.Context, subscriberID string) (*model.ManifestDocument, error) {
+	if parts := strings.Split(subscriberID, "/"); len(parts) != 3 ||
+		strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+		return nil, fmt.Errorf("subscriberID %q must be in namespace/registry/recordName format", subscriberID)
+	}
+
+	subscriberKey := subscriberCacheKey(subscriberID)
+	bypassCache := l.shouldBypassCache(subscriberKey)
+	if !bypassCache {
+		if doc, err := l.loadFromCache(ctx, subscriberKey); err == nil && doc != nil {
+			log.Infof(ctx, "ManifestLoader: cache hit for subscriberID=%q fetchedAt=%s source=%s", subscriberID, doc.FetchedAt.Format(time.RFC3339), doc.SourceURL)
+			return doc, nil
+		} else if err != nil {
+			log.Warnf(ctx, "ManifestLoader: cache error for subscriberID=%q key=%q: %v", subscriberID, subscriberKey, err)
+		} else {
+			log.Debugf(ctx, "ManifestLoader: cache miss for subscriberID=%q key=%q", subscriberID, subscriberKey)
+		}
+	} else {
+		log.Infof(ctx, "ManifestLoader: bypassing cache for subscriberID=%q", subscriberID)
+	}
+
+	record, err := l.registry.LookupNode(ctx, subscriberID)
+	if err != nil {
+		return nil, err
+	}
+	if len(record.Meta) == 0 || strings.TrimSpace(record.Meta["manifestUrl"]) == "" {
+		log.Infof(ctx, "ManifestLoader: subscriberID=%q has no manifestUrl in registry metadata — no node manifest published", subscriberID)
+		return nil, ErrNoManifestPublished
+	}
+	manifestMetadata, err := metadataFromNodeMeta(record.Meta, l.config.SkipSignatureVerification)
+	if err != nil {
+		return nil, err
+	}
+	doc, err := l.getByMetadata(ctx, manifestMetadata, bypassCache)
+	if err != nil {
+		return nil, err
+	}
+	doc.SubscriberID = subscriberID
+	// Store under the subscriber key so future GetBySubscriberID calls can short-circuit
+	// the registry metadata lookup, mirroring the pattern used by GetByNetworkID.
+	if err := l.store(ctx, subscriberKey, doc); err != nil {
+		return nil, err
+	}
+	return doc, nil
 }
 
 func (l *Loader) getByMetadata(ctx context.Context, metadata model.ManifestMetadata, bypassCache bool) (*model.ManifestDocument, error) {
@@ -273,6 +323,10 @@ func networkCacheKey(networkID string) string {
 	return "manifest:network:" + networkID
 }
 
+func subscriberCacheKey(subscriberID string) string {
+	return "manifest:subscriber:" + subscriberID
+}
+
 func metadataCacheKey(m model.ManifestMetadata) string {
 	hash := sha256.Sum256([]byte(m.ManifestURL + "|" + m.ManifestSignatureURL + "|" + m.SigningPublicKeyLookupURL))
 	return "manifest:metadata:" + hex.EncodeToString(hash[:])
@@ -284,6 +338,15 @@ func splitNetworkID(networkID string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid networkID %q: expected <namespaceIdentifier>/<registryName>", networkID)
 	}
 	return parts[0], parts[1], nil
+}
+
+func metadataFromNodeMeta(meta map[string]string, skipSig bool) (model.ManifestMetadata, error) {
+	result := model.ManifestMetadata{
+		ManifestURL:               meta["manifestUrl"],
+		ManifestSignatureURL:      meta["manifestSignatureUrl"],
+		SigningPublicKeyLookupURL: meta["signingPublicKeyLookupUrl"],
+	}
+	return result, validateMetadata(result, skipSig)
 }
 
 func metadataFromRegistry(meta *model.RegistryMetadata, skipSig bool) (model.ManifestMetadata, error) {
