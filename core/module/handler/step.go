@@ -489,6 +489,26 @@ func extractAuthSignature(authHeader string) string {
 	return rest[:end]
 }
 
+// extractRemoteKeyID pulls the unique key ID (middle component of keyId="sub|uniqueId|algo")
+// from an Authorization header. Returns "" when the header is absent or malformed.
+func extractRemoteKeyID(authHeader string) string {
+	const marker = `keyId="`
+	idx := strings.Index(authHeader, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := authHeader[idx+len(marker):]
+	end := strings.IndexByte(rest, '"')
+	if end < 0 {
+		return ""
+	}
+	parts := strings.SplitN(rest[:end], "|", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
+}
+
 func extractMessageID(body []byte) string {
 	type contextEnvelope struct {
 		Context struct {

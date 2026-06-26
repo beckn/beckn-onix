@@ -256,6 +256,7 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 	messageID := extractMessageID(body)
 	log.Debugf(r.Context(), "stepCtx: extracted protocolVersion=%q messageId=%q", protocolVersion, messageID)
 	inboundAuthSignature := extractAuthSignature(r.Header.Get(model.AuthHeaderSubscriber))
+	remoteKeyID := extractRemoteKeyID(r.Header.Get(model.AuthHeaderSubscriber))
 	// Store both protocol version and message ID in the Go context so downstream
 	// functions that only receive a context.Context (e.g. sendNack,
 	// sendAck) can read them without needing StepContext.
@@ -271,6 +272,7 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 		ProtocolVersion:      protocolVersion,
 		MessageID:            messageID,
 		InboundAuthSignature: inboundAuthSignature,
+		RemoteKeyID:          remoteKeyID,
 	}, nil
 }
 

@@ -499,10 +499,16 @@ func (m *mediator) applyOnFailure(cause error) error {
 	}
 }
 
-// fetchCounterpartyManifest fetches and parses the counterparty's node manifest
-// via the manifest loader.
-func (m *mediator) fetchCounterpartyManifest(ctx context.Context, counterpartyID string) (*model.NodeManifest, error) {
-	doc, err := m.loader.GetBySubscriberID(ctx, counterpartyID)
+// fetchCounterpartyManifest fetches and parses the counterparty's node manifest.
+// When ctx carries a RemoteKeyID (extracted from the inbound Authorization header),
+// the DeDi 3-part node path {subscriberId}/subscribers.beckn.one/{keyId} is used,
+// which is where DeDi stores keyset records including manifest metadata.
+func (m *mediator) fetchCounterpartyManifest(ctx *model.StepContext, counterpartyID string) (*model.NodeManifest, error) {
+	lookupID := counterpartyID
+	if ctx.RemoteKeyID != "" {
+		lookupID = counterpartyID + "/subscribers.beckn.one/" + ctx.RemoteKeyID
+	}
+	doc, err := m.loader.GetBySubscriberID(ctx, lookupID)
 	if err != nil {
 		return nil, err
 	}
