@@ -791,7 +791,8 @@ func TestProxy_ModifyResponse_202_InvokesResponseSteps(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/bpp/receiver/", strings.NewReader(`{}`))
 	rr := httptest.NewRecorder()
 
-	proxy(stepCtx, req, rr, http.DefaultClient, []definition.ResponseStep{respStep})
+	var responseBody []byte
+	proxy(stepCtx, req, rr, http.DefaultClient, []definition.ResponseStep{respStep}, &responseBody)
 
 	if rr.Code != http.StatusAccepted {
 		t.Errorf("expected upstream 202 to be relayed, got %d", rr.Code)
@@ -892,7 +893,8 @@ func TestProxy_QueryParamsForwardedToUpstream(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
 	rr := httptest.NewRecorder()
 
-	proxy(stepCtx, req, rr, http.DefaultClient, nil)
+	var responseBody []byte
+	proxy(stepCtx, req, rr, http.DefaultClient, nil, &responseBody)
 
 	if capturedRawQuery != "subscriptionId=test123&page=2" {
 		t.Errorf("upstream received RawQuery = %q, want %q", capturedRawQuery, "subscriptionId=test123&page=2")
