@@ -58,9 +58,17 @@ func EmitAuditLogs(ctx context.Context, body []byte, header http.Header, attrs .
 		record.AddAttributes(attrs...)
 	}
 
+	// cfg was already read above via ProcessAuditPayload → GetCompiledConfig, but we
+	// re-read here to avoid threading the value through. The RWMutex is uncontended
+	// on the read path so the cost is negligible; if that changes, snapshot once at
+	// the top of this function instead.
 	if cfg := GetCompiledConfig(); cfg != nil && cfg.CaptureSignatureHeaders() && header != nil {
 		for _, name := range signatureHeaders {
 			if val := header.Get(name); val != "" {
+				// strings.ToLower is intentional: OTel semantic conventions require
+				// header attribute keys to be lowercase (e.g. "x-request-id").
+				// header.Get uses canonical MIME casing internally, so lookup is
+				// case-insensitive regardless of how name is cased in signatureHeaders.
 				record.AddAttributes(log.String("http.request.header."+strings.ToLower(name), val))
 			}
 		}

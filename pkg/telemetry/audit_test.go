@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
 	"os"
 	"testing"
 
@@ -89,6 +90,78 @@ func TestEmitAuditLogs_Enabled(t *testing.T) {
 	assert.True(t, hasChecksum, "audit record should include checkSum attribute")
 	assert.True(t, hasLogUUID, "audit record should include log_uuid attribute")
 	assert.True(t, hasExtraKey, "audit record should include caller-supplied extra_key attribute")
+}
+
+func TestEmitAuditLogs_CaptureSignatureHeaders(t *testing.T) {
+	ctx := context.Background()
+	provider, exporter, err := NewTestProviderWithLogs(ctx)
+	require.NoError(t, err)
+	defer provider.Shutdown(ctx)
+
+	// Enable captureSignatureHeaders via compiled config.
+	compiledCfgMu.Lock()
+	prev := compiledCfg
+	compiledCfg = &CompiledConfig{captureSignatureHeaders: true}
+	compiledCfgMu.Unlock()
+	t.Cleanup(func() {
+		compiledCfgMu.Lock()
+		compiledCfg = prev
+		compiledCfgMu.Unlock()
+	})
+
+	hdr := http.Header{}
+	hdr.Set("Authorization", `Signature keyId="bap.example.com",algorithm="ed25519",signature="abc123"`)
+	hdr.Set("X-Request-Id", "req-abc-123")
+
+	EmitAuditLogs(ctx, []byte(`{}`), hdr)
+
+	records := exporter.Records()
+	require.Len(t, records, 1, "exactly one log record should be emitted")
+
+	var hasAuth, hasReqID bool
+	records[0].WalkAttributes(func(kv log.KeyValue) bool {
+		switch kv.Key {
+		case "http.request.header.authorization":
+			hasAuth = true
+		case "http.request.header.x-request-id":
+			hasReqID = true
+		}
+		return true
+	})
+	assert.True(t, hasAuth, "authorization header should be captured as an audit attribute")
+	assert.True(t, hasReqID, "x-request-id header should be captured as an audit attribute")
+}
+
+func TestEmitAuditLogs_CaptureSignatureHeaders_Disabled(t *testing.T) {
+	ctx := context.Background()
+	provider, exporter, err := NewTestProviderWithLogs(ctx)
+	require.NoError(t, err)
+	defer provider.Shutdown(ctx)
+
+	// Ensure captureSignatureHeaders is explicitly false.
+	compiledCfgMu.Lock()
+	prev := compiledCfg
+	compiledCfg = &CompiledConfig{captureSignatureHeaders: false}
+	compiledCfgMu.Unlock()
+	t.Cleanup(func() {
+		compiledCfgMu.Lock()
+		compiledCfg = prev
+		compiledCfgMu.Unlock()
+	})
+
+	hdr := http.Header{}
+	hdr.Set("Authorization", `Signature keyId="bap.example.com"`)
+
+	EmitAuditLogs(ctx, []byte(`{}`), hdr)
+
+	records := exporter.Records()
+	require.Len(t, records, 1)
+
+	records[0].WalkAttributes(func(kv log.KeyValue) bool {
+		assert.NotEqual(t, "http.request.header.authorization", kv.Key,
+			"authorization header must not appear when captureSignatureHeaders is false")
+		return true
+	})
 }
 
 func TestNewTestProviderWithLogs_ShutdownResetsFlag(t *testing.T) {
