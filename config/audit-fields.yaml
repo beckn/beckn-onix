@@ -43,6 +43,12 @@ maskRules:
   - keys: [paymentURL, txnRef, paidAt]
     pattern: sensitive
 
+# captureSignatureHeaders — when true, the HTTP Authorization and X-Request-Id
+# headers are captured verbatim as attributes on every audit log record.
+# These carry the Beckn Ed25519 signature and are intentionally verifiable —
+# no masking is applied. Defaults to false.
+captureSignatureHeaders: false
+
 # pathOverrides — use sparingly.
 # These bind masking to a specific dot-path and are harder to maintain as schemas
 # evolve. Prefer maskRules (key-name matching) wherever possible.

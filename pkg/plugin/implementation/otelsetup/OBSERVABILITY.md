@@ -398,6 +398,17 @@ These fields are always present regardless of mode or field selection:
 | `sender.id` | Sender subscriber ID |
 | `receiver.id` | Receiver subscriber ID |
 
+### Optional signature header attributes
+
+When `captureSignatureHeaders: true` is set in the audit-fields config, the following HTTP request headers are captured verbatim as additional attributes on every audit log record:
+
+| Attribute | HTTP header | Description |
+|---|---|---|
+| `http.request.header.authorization` | `Authorization` | Beckn Ed25519 signature (`Signature keyId=...`) |
+| `http.request.header.x-request-id` | `X-Request-Id` | Request correlation ID |
+
+These headers are intentionally not masked — the Beckn `Authorization` header carries a cryptographic signature that is verifiable by anyone with the sender's public key. Capturing it enables post-hoc payload verification and non-repudiation from the audit trail alone.
+
 ### Audit pipeline: modes and masking
 
 The audit configuration file (`config/audit-fields.yaml`) controls a single-pass pipeline applied to every payload before the record is emitted:
@@ -445,6 +456,11 @@ maskRules:
     pattern: account
   - keys: [paymentURL, txnRef, paidAt]
     pattern: sensitive
+
+# captureSignatureHeaders — when true, Authorization and X-Request-Id headers
+# are captured verbatim as audit log attributes (no masking applied).
+# Enables post-hoc signature verification and non-repudiation. Default: false.
+captureSignatureHeaders: false
 
 # Path-override masking — use sparingly, prefer maskRules
 pathOverrides: []
