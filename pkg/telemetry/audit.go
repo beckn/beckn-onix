@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
+	"strings"
 	"time"
 
 	logger "github.com/beckn-one/beckn-onix/pkg/log"
@@ -15,7 +17,7 @@ import (
 
 const auditLoggerName = "Beckn_ONIX"
 
-func EmitAuditLogs(ctx context.Context, body []byte, attrs ...log.KeyValue) {
+func EmitAuditLogs(ctx context.Context, body []byte, header http.Header, attrs ...log.KeyValue) {
 	// global.GetLoggerProvider() always returns a no-op provider (never nil),
 	// so a nil-check on the provider is ineffective. Instead we rely on the
 	// logEnabled atomic flag, which otelsetup sets to true after calling
@@ -54,6 +56,14 @@ func EmitAuditLogs(ctx context.Context, body []byte, attrs ...log.KeyValue) {
 
 	if len(attrs) > 0 {
 		record.AddAttributes(attrs...)
+	}
+
+	if cfg := GetCompiledConfig(); cfg != nil && cfg.CaptureSignatureHeaders() && header != nil {
+		for _, name := range signatureHeaders {
+			if val := header.Get(name); val != "" {
+				record.AddAttributes(log.String("http.request.header."+strings.ToLower(name), val))
+			}
+		}
 	}
 
 	auditlog.Emit(ctx, record)

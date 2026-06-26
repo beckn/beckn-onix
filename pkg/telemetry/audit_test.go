@@ -44,7 +44,7 @@ func TestEmitAuditLogs_Disabled(t *testing.T) {
 	os.Stdout = w
 
 	require.NotPanics(t, func() {
-		EmitAuditLogs(context.Background(), []byte(`{"message":"test"}`))
+		EmitAuditLogs(context.Background(), []byte(`{"message":"test"}`), nil)
 	}, "EmitAuditLogs should not panic when logs are disabled")
 
 	w.Close()
@@ -65,7 +65,7 @@ func TestEmitAuditLogs_Enabled(t *testing.T) {
 	require.True(t, LogsEnabled(), "LogsEnabled should be true after NewTestProviderWithLogs")
 
 	require.NotPanics(t, func() {
-		EmitAuditLogs(ctx, []byte(`{"message":"audit-test"}`), log.String("extra_key", "extra_value"))
+		EmitAuditLogs(ctx, []byte(`{"message":"audit-test"}`), nil, log.String("extra_key", "extra_value"))
 	}, "EmitAuditLogs should not panic when logs are enabled")
 
 	// One log record must be emitted regardless of how selectAuditPayload
