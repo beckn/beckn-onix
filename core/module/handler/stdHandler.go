@@ -359,7 +359,6 @@ func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpC
 			return fmt.Errorf("modifyResponse: failed to read upstream response body: %w", err)
 		}
 		resp.Body = io.NopCloser(bytes.NewReader(body))
-		*responseBody = body
 		rctx := &model.ResponseStepContext{
 			StatusCode: resp.StatusCode,
 			Header:     resp.Header,
@@ -370,6 +369,10 @@ func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpC
 				return err
 			}
 		}
+		// Capture only after all response steps succeed — if a step fails the
+		// ReverseProxy error handler writes a 502, so the upstream body is not
+		// what the caller received.
+		*responseBody = body
 		return nil
 	}
 

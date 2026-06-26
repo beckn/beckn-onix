@@ -803,6 +803,63 @@ func TestProxy_ModifyResponse_202_InvokesResponseSteps(t *testing.T) {
 	if rr.Body.String() != ackBody {
 		t.Errorf("expected upstream body to be relayed unchanged: got %q", rr.Body.String())
 	}
+	if string(responseBody) != ackBody {
+		t.Errorf("responseBody = %q, want %q", responseBody, ackBody)
+	}
+}
+
+// TestProxy_ResponseBodyPopulatedOnSuccess verifies that the responseBody pointer
+// is set to the upstream body when the proxy call succeeds and all response steps pass.
+func TestProxy_ResponseBodyPopulatedOnSuccess(t *testing.T) {
+	upstreamBody := `{"message":{"ack":{"status":"ACK"}}}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(upstreamBody))
+	}))
+	defer upstream.Close()
+
+	upstreamURL, _ := url.Parse(upstream.URL)
+	stepCtx := &model.StepContext{
+		Context: context.Background(),
+		Route:   &model.Route{TargetType: "url", URL: upstreamURL},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+
+	var responseBody []byte
+	proxy(stepCtx, req, rr, http.DefaultClient, nil, &responseBody)
+
+	if string(responseBody) != upstreamBody {
+		t.Errorf("responseBody = %q, want %q", responseBody, upstreamBody)
+	}
+}
+
+// TestProxy_ResponseBodyEmptyWhenResponseStepFails verifies that responseBody is
+// not populated when a response step fails — the wire response in that case is a
+// 502 from the ReverseProxy error handler, not the upstream body.
+func TestProxy_ResponseBodyEmptyWhenResponseStepFails(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"message":{"ack":{"status":"ACK"}}}`))
+	}))
+	defer upstream.Close()
+
+	upstreamURL, _ := url.Parse(upstream.URL)
+	stepCtx := &model.StepContext{
+		Context: context.Background(),
+		Route:   &model.Route{TargetType: "url", URL: upstreamURL},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+
+	failingStep := &mockResponseStep{err: fmt.Errorf("response step failure")}
+	var responseBody []byte
+	proxy(stepCtx, req, rr, http.DefaultClient, []definition.ResponseStep{failingStep}, &responseBody)
+
+	if len(responseBody) != 0 {
+		t.Errorf("expected responseBody to be empty on response step failure, got %q", responseBody)
+	}
 }
 
 // stubPayloadStore is a minimal PayloadStore for storePayloadStep unit tests.
