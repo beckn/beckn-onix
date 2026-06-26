@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/jsonata-go/jsonata"
@@ -420,8 +421,10 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 		return err
 	}
 	if len(needs) == 0 {
+		log.Debugf(ctx, "schemaversionmediator: compatibilityCheck counterparty=%q result=compatible objects=%d", counterpartyID, len(refs))
 		return nil // fully compatible
 	}
+	log.Debugf(ctx, "schemaversionmediator: compatibilityCheck counterparty=%q result=incompatible needs=%d", counterpartyID, len(needs))
 
 	if m.policy.Action == PolicyActionReject {
 		return &MediationError{
@@ -477,6 +480,7 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 		return fmt.Errorf("schemaversionmediator: patch message subtree: %w", err)
 	}
 	ctx.Body = patched
+	log.Debugf(ctx, "schemaversionmediator: translationApplied counterparty=%q objects=%d", counterpartyID, len(needs))
 	return nil
 }
 
