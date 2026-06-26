@@ -437,7 +437,9 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 	// Fetch all translation artifacts; any failure applies onFailure policy.
 	artifacts, failures := m.fetchAllArtifacts(ctx, needs)
 	if len(failures) > 0 {
-		return m.applyOnFailure(fmt.Errorf("schemaversionmediator: %d artifact fetch failure(s): first: %w", len(failures), failures[0].Reason))
+		cause := fmt.Errorf("schemaversionmediator: %d artifact fetch failure(s): first: %w", len(failures), failures[0].Reason)
+		log.Warnf(ctx, "schemaversionmediator: artifact fetch failed counterparty=%q onFailure=%s cause=%v", counterpartyID, m.policy.OnFailure, cause)
+		return m.applyOnFailure(cause)
 	}
 
 	// Build mapping entries from artifacts (JSONata content-type only for now).
