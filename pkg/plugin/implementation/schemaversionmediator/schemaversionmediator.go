@@ -402,6 +402,7 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 
 	// No policy match → pass through unchanged.
 	if networkID == "" || counterpartyID == "" {
+		log.Debugf(ctx, "schemaversionmediator: passThrough networkID=%q counterpartyID=%q (one or both empty)", networkID, counterpartyID)
 		return nil
 	}
 
