@@ -405,6 +405,8 @@ spec:
         env:
         - name: REDIS_ADDR
           value: redis-cnode.beckn-onix.svc.cluster.local:6379
+        # The following three vars are only needed if using the keymanager plugin (Vault-backed keys).
+        # Remove them if using simplekeymanager.
         - name: VAULT_ADDR
           valueFrom:
             secretKeyRef:
