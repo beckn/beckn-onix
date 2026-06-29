@@ -666,7 +666,7 @@ Check that `REDIS_ADDR` in the container environment matches the Redis service n
 
 - Confirm the correct key pair is configured — the public key registered with the network registry must match the private key in `simplekeymanager` or Vault
 - Check clock synchronization between nodes; the signature includes a `created` timestamp and the validator applies a clock-skew tolerance
-- Confirm the `subscriber_id` in the config matches what is registered in the network registry
+- Confirm the `subscriber_id` and `key_id` in the config match what is registered in the network registry
 
 ### Vault authentication failures
 
