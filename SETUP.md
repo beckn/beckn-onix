@@ -25,7 +25,7 @@ This document covers only how to get ONIX running. Three companion documents:
 
 ## 1. The Fastest Path: NFH Fabric Starter Kit
 
-The [Beckn Starter Kit](https://github.com/beckn/beckn-onix-starter-kit) provisions a complete working network in a single command: two ONIX adapters (Consumer Node + Provider Node), sandbox applications, and the NFH fabric services that tie them together. No prior ONIX experience required.
+The [Beckn Starter Kit](https://github.com/beckn/starter-kit) provisions a complete working network in a single command: two ONIX adapters (Consumer Node + Provider Node), sandbox applications, and the NFH fabric services that tie them together. No prior ONIX experience required.
 
 Follow the starter kit's own README for setup instructions. Everything in this document targets operators who need to go beyond the starter kit — custom deployment topology, production hardening, or custom plugins.
 
@@ -275,7 +275,7 @@ In a production deployment, ONIX and Redis run as containers alongside your appl
 
 ### 4.2 Docker Compose
 
-For VM-based deployments, extend your existing docker-compose file to include ONIX and Redis alongside your application containers. The starter kit's docker-compose is a good starting point — see the [starter kit](https://github.com/beckn/beckn-onix-starter-kit) for a complete working example.
+For VM-based deployments, extend your existing docker-compose file to include ONIX and Redis alongside your application containers. The starter kit's docker-compose is a good starting point — see the [starter kit](https://github.com/beckn/starter-kit) for a complete working example.
 
 A production-oriented compose file adds dedicated Redis instances per node and removes dev-only services:
 
