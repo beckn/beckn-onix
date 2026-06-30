@@ -29,7 +29,8 @@ type Subscription struct {
 	Status           string    `json:"status,omitzero" enum:"INITIATED,UNDER_SUBSCRIPTION,SUBSCRIBED,EXPIRED,UNSUBSCRIBED,INVALID_SSL"`
 	Created          time.Time `json:"created,omitzero" format:"date-time"`
 	Updated          time.Time `json:"updated,omitzero" format:"date-time"`
-	Nonce            string    `json:"nonce,omitzero"`
+	Nonce              string   `json:"nonce,omitzero"`
+	NetworkMemberships []string `json:"network_memberships,omitempty"`
 }
 
 // RegistryMetadata represents metadata configured on a registry itself rather than on a specific record.
@@ -72,6 +73,10 @@ const (
 	// ContextKeyProtocolVersion is the context key for the Beckn protocol version
 	// extracted from context.version in the inbound request body.
 	ContextKeyProtocolVersion ContextKey = "protocol_version"
+
+	// ContextKeyNetworkID is the context key for the network identifier extracted from
+	// context.network_id (or context.networkId) in the inbound request body.
+	ContextKeyNetworkID ContextKey = "network_id"
 )
 
 // ProtocolVersionV2 is the Beckn protocol version string for the v2.0.0 release.

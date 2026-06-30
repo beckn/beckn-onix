@@ -103,6 +103,18 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				ctx = context.WithValue(ctx, model.ContextKeyRemoteID, callerID)
 			}
 
+			var networkID string
+			for _, key := range []string{"network_id", "networkId"} {
+				if v, ok := reqContext[key].(string); ok && v != "" {
+					networkID = v
+					break
+				}
+			}
+			if networkID != "" {
+				log.Debugf(ctx, "adding networkID to request:%s, %v", model.ContextKeyNetworkID, networkID)
+				ctx = context.WithValue(ctx, model.ContextKeyNetworkID, networkID)
+			}
+
 			// Extract generic context keys (e.g. transaction_id, message_id).
 			// For each configured snake_case key, also try its camelCase equivalent
 			// so that a single config entry covers both beckn spec versions.

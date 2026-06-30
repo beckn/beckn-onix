@@ -874,3 +874,222 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 		}
 	})
 }
+
+// makeStepCtx returns a *model.StepContext with network_id stored as a context value
+// (matching the production flow where reqpreprocessor sets it before any OTel wrapping).
+func makeStepCtx(networkID string) *model.StepContext {
+	goCtx := context.Background()
+	if networkID != "" {
+		goCtx = context.WithValue(goCtx, model.ContextKeyNetworkID, networkID)
+	}
+	return &model.StepContext{Context: goCtx}
+}
+
+// registryHandlerWithMemberships returns an httptest.HandlerFunc that responds with
+// a DeDi-shaped payload carrying the given subscriber and network_memberships.
+func registryHandlerWithMemberships(subscriberID, signingKey string, memberships []string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		resp := map[string]interface{}{
+			"message": "Record retrieved from registry cache",
+			"data": map[string]interface{}{
+				"details": map[string]interface{}{
+					"url":                "http://example.com/beckn",
+					"type":               "BAP",
+					"domain":             "retail",
+					"subscriber_id":      subscriberID,
+					"signing_public_key": signingKey,
+				},
+				"network_memberships": memberships,
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp) //nolint:errcheck
+	}
+}
+
+func TestContextNetworkIDValidation(t *testing.T) {
+	const (
+		sub     = "np.example.com"
+		key     = "test-signing-key-base64="
+		net1    = "nfo1.com/retail"
+		net2    = "nfo2.com/retail"
+	)
+
+	req := &model.Subscription{
+		Subscriber: model.Subscriber{SubscriberID: sub},
+		KeyID:      "key-001",
+	}
+
+	type tc struct {
+		name        string
+		memberships []string
+		allowlist   []string
+		networkID   string // empty string means absent from body
+		wantErr     bool
+	}
+
+	cases := []tc{
+		// allow cases
+		{
+			name:        "allow — network_id matches memberships and allowlist",
+			memberships: []string{net1},
+			allowlist:   []string{net1},
+			networkID:   net1,
+			wantErr:     false,
+		},
+		{
+			name:        "allow — no allowlist, network_id matches memberships",
+			memberships: []string{net1},
+			allowlist:   nil,
+			networkID:   net1,
+			wantErr:     false,
+		},
+		{
+			name:        "allow — no network_id present, allowlist set",
+			memberships: []string{net1},
+			allowlist:   []string{net1},
+			networkID:   "",
+			wantErr:     false,
+		},
+		{
+			name:        "allow — no network_id present, no allowlist",
+			memberships: []string{net1},
+			allowlist:   nil,
+			networkID:   "",
+			wantErr:     false,
+		},
+		{
+			name:        "allow — network_id in memberships and in multi-entry allowlist",
+			memberships: []string{net1},
+			allowlist:   []string{net1, net2},
+			networkID:   net1,
+			wantErr:     false,
+		},
+		// block cases
+		{
+			name:        "block — network_id not in memberships (allowlist set)",
+			memberships: []string{net1},
+			allowlist:   []string{net1},
+			networkID:   net2,
+			wantErr:     true,
+		},
+		{
+			name:        "block — network_id not in memberships (no allowlist)",
+			memberships: []string{net1},
+			allowlist:   nil,
+			networkID:   net2,
+			wantErr:     true,
+		},
+		{
+			name:        "block — multi-membership, network_id not in allowlist",
+			memberships: []string{net1, net2},
+			allowlist:   []string{net1},
+			networkID:   net2,
+			wantErr:     true,
+		},
+		{
+			name:        "block — empty memberships, no allowlist, network_id present",
+			memberships: nil,
+			allowlist:   nil,
+			networkID:   net1,
+			wantErr:     true,
+		},
+		{
+			name:        "block — network_id in memberships but not in allowlist",
+			memberships: []string{net1},
+			allowlist:   []string{net1, net2},
+			networkID:   net2,
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(registryHandlerWithMemberships(sub, key, tt.memberships))
+			defer server.Close()
+
+			cfg := &Config{
+				URL:               server.URL + "/dedi",
+				AllowedNetworkIDs: tt.allowlist,
+			}
+			client, closer, err := New(context.Background(), nil, cfg)
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			defer closer()
+
+			ctx := makeStepCtx(tt.networkID)
+			_, err = client.Lookup(ctx, req)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Lookup() error = %v, wantErr = %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestExtractContextNetworkID(t *testing.T) {
+	// Primary path: context value set by reqpreprocessor.
+	t.Run("context value (primary path)", func(t *testing.T) {
+		goCtx := context.WithValue(context.Background(), model.ContextKeyNetworkID, "nfo1.com/retail")
+		sc := &model.StepContext{Context: goCtx}
+		if got := extractContextNetworkID(sc); got != "nfo1.com/retail" {
+			t.Errorf("got %q, want %q", got, "nfo1.com/retail")
+		}
+	})
+
+	t.Run("context value on plain context (no StepContext)", func(t *testing.T) {
+		goCtx := context.WithValue(context.Background(), model.ContextKeyNetworkID, "nfo1.com/retail")
+		if got := extractContextNetworkID(goCtx); got != "nfo1.com/retail" {
+			t.Errorf("got %q, want %q", got, "nfo1.com/retail")
+		}
+	})
+
+	t.Run("context value takes precedence over body", func(t *testing.T) {
+		goCtx := context.WithValue(context.Background(), model.ContextKeyNetworkID, "nfo1.com/retail")
+		sc := &model.StepContext{
+			Context: goCtx,
+			Body:    []byte(`{"context":{"network_id":"nfo2.com/retail"}}`),
+		}
+		if got := extractContextNetworkID(sc); got != "nfo1.com/retail" {
+			t.Errorf("context value should win: got %q, want %q", got, "nfo1.com/retail")
+		}
+	})
+
+	// Fallback path: body parsing when context value is absent.
+	t.Run("snake_case network_id in body (fallback)", func(t *testing.T) {
+		sc := &model.StepContext{
+			Context: context.Background(),
+			Body:    []byte(`{"context":{"network_id":"nfo1.com/retail"}}`),
+		}
+		if got := extractContextNetworkID(sc); got != "nfo1.com/retail" {
+			t.Errorf("got %q, want %q", got, "nfo1.com/retail")
+		}
+	})
+
+	t.Run("camelCase networkId in body (fallback)", func(t *testing.T) {
+		sc := &model.StepContext{
+			Context: context.Background(),
+			Body:    []byte(`{"context":{"networkId":"nfo2.com/retail"}}`),
+		}
+		if got := extractContextNetworkID(sc); got != "nfo2.com/retail" {
+			t.Errorf("got %q, want %q", got, "nfo2.com/retail")
+		}
+	})
+
+	// Absent / empty cases.
+	t.Run("absent from both context value and body", func(t *testing.T) {
+		sc := &model.StepContext{
+			Context: context.Background(),
+			Body:    []byte(`{"context":{}}`),
+		}
+		if got := extractContextNetworkID(sc); got != "" {
+			t.Errorf("expected empty string, got %q", got)
+		}
+	})
+
+	t.Run("plain context with no context value returns empty", func(t *testing.T) {
+		if got := extractContextNetworkID(context.Background()); got != "" {
+			t.Errorf("expected empty string, got %q", got)
+		}
+	})
+}

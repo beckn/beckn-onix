@@ -239,11 +239,24 @@ func (skm *SimpleKeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueK
 
 	var subscribers []model.Subscription
 	{
-		spanCtx, span := tracer.Start(ctx, "registry lookup")
-		defer span.End()
+		// Wrap the embedded context.Context field rather than the full interface value,
+		// so *model.StepContext is preserved as the outermost type passed to Registry.Lookup.
+		// Downstream plugins can then type-assert back to *model.StepContext to access Body.
+		registryCtx := ctx
+		if sc, ok := ctx.(*model.StepContext); ok {
+			spanCtx, span := tracer.Start(sc.Context, "registry lookup")
+			defer span.End()
+			scCopy := *sc
+			scCopy.WithContext(spanCtx)
+			registryCtx = &scCopy
+		} else {
+			var span trace.Span
+			registryCtx, span = tracer.Start(ctx, "registry lookup")
+			defer span.End()
+		}
 		var err error
 
-		subscribers, err = skm.Registry.Lookup(spanCtx, &model.Subscription{
+		subscribers, err = skm.Registry.Lookup(registryCtx, &model.Subscription{
 			Subscriber: model.Subscriber{
 				SubscriberID: subscriberID,
 			},
