@@ -381,7 +381,7 @@ func (c *DeDiRegistryClient) validateContextNetworkID(ctx context.Context, netwo
 	if !containsAny(networkMemberships, []string{networkID}) {
 		return fmt.Errorf("context.network_id %q is not in network_memberships of subscriber %q", networkID, subscriberID)
 	}
-	if len(c.config.AllowedNetworkIDs) > 0 && !containsAny(c.config.AllowedNetworkIDs, []string{networkID}) {
+	if len(c.config.AllowedNetworkIDs) > 0 && !containsAny([]string{networkID}, c.config.AllowedNetworkIDs) {
 		return fmt.Errorf("context.network_id %q is not in configured allowedNetworkIDs", networkID)
 	}
 	return nil
