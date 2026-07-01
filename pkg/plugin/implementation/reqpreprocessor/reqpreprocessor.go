@@ -105,7 +105,16 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 
 			var networkID string
 			for _, key := range []string{"network_id", "networkId"} {
-				if v, ok := reqContext[key].(string); ok && v != "" {
+				val, exists := reqContext[key]
+				if !exists {
+					continue
+				}
+				v, ok := val.(string)
+				if !ok {
+					log.Warnf(ctx, "context.%s is present but not a string (got %T); network_id check will be skipped", key, val)
+					break
+				}
+				if v != "" {
 					networkID = v
 					break
 				}
