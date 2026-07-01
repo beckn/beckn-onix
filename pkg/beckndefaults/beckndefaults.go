@@ -25,9 +25,12 @@ var shippedConstantsSig []byte
 //go:embed beckn_public_key.pem
 var becknPublicKeyPEM []byte
 
-const (
+var (
 	remoteConstantsURL    = "https://raw.githubusercontent.com/beckn/beckn-onix/main/pkg/beckndefaults/beckn-constants.yaml"
 	remoteConstantsSigURL = "https://raw.githubusercontent.com/beckn/beckn-onix/main/pkg/beckndefaults/beckn-constants.yaml.sig"
+)
+
+const (
 	remoteTimeout         = 10 * time.Second
 	maxConstantsFileBytes = 64 << 10 // 64 KiB — well above any realistic constants file
 )

@@ -175,11 +175,72 @@ func TestLoad_RemoteUnavailable_FallsBackToShipped(t *testing.T) {
 	assert.Equal(t, "v1", bc.Version)
 }
 
-// TestLoad_RemoteRefresh exercises the full remote-fetch path; skipped under -short.
+// TestLoad_RemoteRefresh verifies that Load accepts validly signed remote content.
 func TestLoad_RemoteRefresh(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping network test in short mode")
-	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+
+	content := []byte("becknConstantsVersion: \"v1\"\nlocked: {}\noverridable: {}\n")
+	sig := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, content))
+
+	pkix, err := x509.MarshalPKIXPublicKey(pub)
+	require.NoError(t, err)
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pkix})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/constants":
+			w.Write(content)
+		case "/sig":
+			w.Write([]byte(sig))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	origConstantsURL, origSigURL, origPubKey := remoteConstantsURL, remoteConstantsSigURL, becknPublicKeyPEM
+	remoteConstantsURL = srv.URL + "/constants"
+	remoteConstantsSigURL = srv.URL + "/sig"
+	becknPublicKeyPEM = pubPEM
+	defer func() {
+		remoteConstantsURL = origConstantsURL
+		remoteConstantsSigURL = origSigURL
+		becknPublicKeyPEM = origPubKey
+	}()
+
+	bc, err := Load(context.Background(), false)
+	require.NoError(t, err)
+	require.NotNil(t, bc)
+	assert.Equal(t, "v1", bc.Version)
+}
+
+// TestLoad_RemoteRefreshBadSig_FallsBackToShipped verifies that a remote sig failure falls back to the shipped baseline.
+func TestLoad_RemoteRefreshBadSig_FallsBackToShipped(t *testing.T) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+
+	wrongSig := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, shippedConstants))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/constants":
+			w.Write(shippedConstants)
+		case "/sig":
+			w.Write([]byte(wrongSig))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	origConstantsURL, origSigURL := remoteConstantsURL, remoteConstantsSigURL
+	remoteConstantsURL = srv.URL + "/constants"
+	remoteConstantsSigURL = srv.URL + "/sig"
+	defer func() {
+		remoteConstantsURL = origConstantsURL
+		remoteConstantsSigURL = origSigURL
+	}()
 
 	bc, err := Load(context.Background(), false)
 	require.NoError(t, err)
