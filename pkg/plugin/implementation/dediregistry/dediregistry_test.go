@@ -1079,6 +1079,48 @@ func TestContextNetworkIDValidation(t *testing.T) {
 			networkID:   net2,
 			wantErr:     true,
 		},
+		{
+			name:        "block — memberships disjoint from allowlist, network_id=net1",
+			memberships: []string{net1},
+			allowlist:   []string{net2},
+			networkID:   net1,
+			wantErr:     true,
+		},
+		{
+			name:        "block — memberships disjoint from allowlist, network_id=net2",
+			memberships: []string{net1},
+			allowlist:   []string{net2},
+			networkID:   net2,
+			wantErr:     true,
+		},
+		{
+			name:        "block — memberships disjoint from allowlist, network_id absent",
+			memberships: []string{net1},
+			allowlist:   []string{net2},
+			networkID:   "",
+			wantErr:     true,
+		},
+		{
+			name:        "allow — multi-membership, network_id is the one in allowlist",
+			memberships: []string{net1, net2},
+			allowlist:   []string{net1},
+			networkID:   net1,
+			wantErr:     false,
+		},
+		{
+			name:        "block — empty memberships, allowlist set, network_id present",
+			memberships: nil,
+			allowlist:   []string{net1},
+			networkID:   net1,
+			wantErr:     true,
+		},
+		{
+			name:        "allow — empty memberships, no allowlist, no network_id",
+			memberships: nil,
+			allowlist:   nil,
+			networkID:   "",
+			wantErr:     false,
+		},
 	}
 
 	for _, tt := range cases {
