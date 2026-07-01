@@ -1073,7 +1073,7 @@ func TestContextNetworkIDValidation(t *testing.T) {
 			wantErr:     true,
 		},
 		{
-			name:        "block — network_id in memberships but not in allowlist",
+			name:        "block — network_id not in memberships (multi-entry allowlist)",
 			memberships: []string{net1},
 			allowlist:   []string{net1, net2},
 			networkID:   net2,
