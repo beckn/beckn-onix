@@ -20,17 +20,17 @@ type Subscriber struct {
 
 // Subscription represents subscription details of a network participant.
 type Subscription struct {
-	Subscriber       `json:",inline"`
-	KeyID            string    `json:"key_id,omitzero" format:"uuid"`
-	SigningPublicKey string    `json:"signing_public_key,omitzero"`
-	EncrPublicKey    string    `json:"encr_public_key,omitzero"`
-	ValidFrom        time.Time `json:"valid_from,omitzero" format:"date-time"`
-	ValidUntil       time.Time `json:"valid_until,omitzero" format:"date-time"`
-	Status           string    `json:"status,omitzero" enum:"INITIATED,UNDER_SUBSCRIPTION,SUBSCRIBED,EXPIRED,UNSUBSCRIBED,INVALID_SSL"`
-	Created          time.Time `json:"created,omitzero" format:"date-time"`
-	Updated          time.Time `json:"updated,omitzero" format:"date-time"`
-	Nonce              string   `json:"nonce,omitzero"`
-	NetworkMemberships []string `json:"network_memberships,omitempty"`
+	Subscriber         `json:",inline"`
+	KeyID              string    `json:"key_id,omitzero" format:"uuid"`
+	SigningPublicKey   string    `json:"signing_public_key,omitzero"`
+	EncrPublicKey      string    `json:"encr_public_key,omitzero"`
+	ValidFrom          time.Time `json:"valid_from,omitzero" format:"date-time"`
+	ValidUntil         time.Time `json:"valid_until,omitzero" format:"date-time"`
+	Status             string    `json:"status,omitzero" enum:"INITIATED,UNDER_SUBSCRIPTION,SUBSCRIBED,EXPIRED,UNSUBSCRIBED,INVALID_SSL"`
+	Created            time.Time `json:"created,omitzero" format:"date-time"`
+	Updated            time.Time `json:"updated,omitzero" format:"date-time"`
+	Nonce              string    `json:"nonce,omitzero"`
+	NetworkMemberships []string  `json:"network_memberships,omitempty"`
 }
 
 // RegistryMetadata represents metadata configured on a registry itself rather than on a specific record.
@@ -241,12 +241,12 @@ type Keyset struct {
 // StepContext holds context information for a request processing step.
 type StepContext struct {
 	context.Context
-	Request         *http.Request
-	Body            []byte
-	Route           *Route
-	SubID           string
-	Role            Role
-	RespHeader      http.Header
+	Request              *http.Request
+	Body                 []byte
+	Route                *Route
+	SubID                string
+	Role                 Role
+	RespHeader           http.Header
 	ProtocolVersion      string // Protocol version parsed from context.version (e.g. "2.0.0")
 	MessageID            string // Message ID parsed from context.messageId in the request body
 	InboundAuthSignature string // Raw Base64 signature from the inbound Authorization header's signature="..." attribute

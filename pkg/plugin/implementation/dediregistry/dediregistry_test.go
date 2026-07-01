@@ -103,8 +103,8 @@ func TestNew(t *testing.T) {
 
 	t.Run("should apply custom retry settings", func(t *testing.T) {
 		cfg := &Config{
-			URL:      "http://test.com",
-			RetryMax: 10,
+			URL:          "http://test.com",
+			RetryMax:     10,
 			RetryWaitMin: 100 * time.Millisecond,
 			RetryWaitMax: 1 * time.Second,
 		}
@@ -192,8 +192,8 @@ func TestLookup(t *testing.T) {
 		defer server.Close()
 
 		config := &Config{
-			URL:          server.URL + "/dedi",
-			Timeout:      30,
+			URL:     server.URL + "/dedi",
+			Timeout: 30,
 		}
 
 		client, closer, err := New(ctx, nil, config)
@@ -368,7 +368,7 @@ func TestLookup(t *testing.T) {
 	// Test empty subscriber ID
 	t.Run("empty subscriber ID", func(t *testing.T) {
 		config := &Config{
-			URL:          "https://test.com/dedi",
+			URL: "https://test.com/dedi",
 		}
 
 		client, closer, err := New(ctx, nil, config)
@@ -395,7 +395,7 @@ func TestLookup(t *testing.T) {
 	// Test empty key ID
 	t.Run("empty key ID", func(t *testing.T) {
 		config := &Config{
-			URL:          "https://test.com/dedi",
+			URL: "https://test.com/dedi",
 		}
 
 		client, closer, err := New(ctx, nil, config)
@@ -428,7 +428,7 @@ func TestLookup(t *testing.T) {
 		defer server.Close()
 
 		config := &Config{
-			URL:          server.URL + "/dedi",
+			URL: server.URL + "/dedi",
 		}
 
 		client, closer, err := New(ctx, nil, config)
@@ -465,7 +465,7 @@ func TestLookup(t *testing.T) {
 		defer server.Close()
 
 		config := &Config{
-			URL:          server.URL + "/dedi",
+			URL: server.URL + "/dedi",
 		}
 
 		client, closer, err := New(ctx, nil, config)
@@ -495,7 +495,7 @@ func TestLookup(t *testing.T) {
 		defer server.Close()
 
 		config := &Config{
-			URL:          server.URL + "/dedi",
+			URL: server.URL + "/dedi",
 		}
 
 		client, closer, err := New(ctx, nil, config)
@@ -528,7 +528,7 @@ func TestLookup(t *testing.T) {
 		defer server.Close()
 
 		config := &Config{
-			URL:          server.URL + "/dedi",
+			URL: server.URL + "/dedi",
 		}
 
 		client, closer, err := New(ctx, nil, config)
@@ -552,8 +552,8 @@ func TestLookup(t *testing.T) {
 	// Test network error
 	t.Run("network error", func(t *testing.T) {
 		config := &Config{
-			URL:          "http://invalid-url-that-does-not-exist.local/dedi",
-			Timeout:      1,
+			URL:     "http://invalid-url-that-does-not-exist.local/dedi",
+			Timeout: 1,
 		}
 
 		client, closer, err := New(ctx, nil, config)
@@ -592,8 +592,8 @@ func TestLookupRegistry(t *testing.T) {
 				"data": map[string]interface{}{
 					"registry_name": "mobility-network",
 					"meta": map[string]interface{}{
-						"manifestUrl":                  "https://example.org/manifest.yaml",
-						"manifestSignatureUrl":        "https://example.org/manifest.yaml.sig",
+						"manifestUrl":               "https://example.org/manifest.yaml",
+						"manifestSignatureUrl":      "https://example.org/manifest.yaml.sig",
 						"signingPublicKeyLookupUrl": "https://example.org/keys/manifest",
 					},
 				},
@@ -604,7 +604,7 @@ func TestLookupRegistry(t *testing.T) {
 		defer server.Close()
 
 		client, closer, err := New(ctx, nil, &Config{
-			URL:          server.URL + "/dedi",
+			URL: server.URL + "/dedi",
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -639,7 +639,7 @@ func TestLookupRegistry(t *testing.T) {
 		defer server.Close()
 
 		client, closer, err := New(ctx, nil, &Config{
-			URL:          server.URL,
+			URL: server.URL,
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -656,7 +656,7 @@ func TestLookupRegistry(t *testing.T) {
 			response := map[string]interface{}{
 				"data": map[string]interface{}{
 					"meta": map[string]interface{}{
-						"manifestUrl":   "https://example.org/manifest.yaml",
+						"manifestUrl":    "https://example.org/manifest.yaml",
 						"non_string_key": true,
 					},
 				},
@@ -667,7 +667,7 @@ func TestLookupRegistry(t *testing.T) {
 		defer server.Close()
 
 		client, closer, err := New(ctx, nil, &Config{
-			URL:          server.URL,
+			URL: server.URL,
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -691,7 +691,7 @@ func TestLookupRegistry(t *testing.T) {
 		defer server.Close()
 
 		client, closer, err := New(ctx, nil, &Config{
-			URL:          server.URL + "/dedi",
+			URL: server.URL + "/dedi",
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -877,7 +877,7 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 	t.Run("cache hit allows matching context.network_id", func(t *testing.T) {
 		cached := []model.Subscription{{
 			Subscriber:         model.Subscriber{SubscriberID: "sub.example.com"},
-			SigningPublicKey:    "cached-key",
+			SigningPublicKey:   "cached-key",
 			NetworkMemberships: []string{"commerce.org/prod"},
 		}}
 		cachedJSON, _ := json.Marshal(cached)
@@ -902,7 +902,7 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 	t.Run("cache hit blocks mismatched context.network_id", func(t *testing.T) {
 		cached := []model.Subscription{{
 			Subscriber:         model.Subscriber{SubscriberID: "sub.example.com"},
-			SigningPublicKey:    "cached-key",
+			SigningPublicKey:   "cached-key",
 			NetworkMemberships: []string{"commerce.org/prod"},
 		}}
 		cachedJSON, _ := json.Marshal(cached)
@@ -930,7 +930,7 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 		// context.network_id=net2 is not in allowlist — validateContextNetworkID blocks it.
 		cached := []model.Subscription{{
 			Subscriber:         model.Subscriber{SubscriberID: "sub.example.com"},
-			SigningPublicKey:    "cached-key",
+			SigningPublicKey:   "cached-key",
 			NetworkMemberships: []string{"nfo1.com/retail", "nfo2.com/retail"},
 		}}
 		cachedJSON, _ := json.Marshal(cached)
@@ -958,7 +958,7 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 	t.Run("cache hit enforces allowedNetworkIDs", func(t *testing.T) {
 		cached := []model.Subscription{{
 			Subscriber:         model.Subscriber{SubscriberID: "sub.example.com"},
-			SigningPublicKey:    "cached-key",
+			SigningPublicKey:   "cached-key",
 			NetworkMemberships: []string{"commerce.org/prod"},
 		}}
 		cachedJSON, _ := json.Marshal(cached)
@@ -1018,10 +1018,10 @@ func registryHandlerWithMemberships(subscriberID, signingKey string, memberships
 
 func TestContextNetworkIDValidation(t *testing.T) {
 	const (
-		sub     = "np.example.com"
-		key     = "test-signing-key-base64="
-		net1    = "nfo1.com/retail"
-		net2    = "nfo2.com/retail"
+		sub  = "np.example.com"
+		key  = "test-signing-key-base64="
+		net1 = "nfo1.com/retail"
+		net2 = "nfo2.com/retail"
 	)
 
 	req := &model.Subscription{

@@ -24,10 +24,10 @@ import (
 type Config struct {
 	SubscriberID      string `yaml:"subscriberId" json:"subscriberId"`
 	KeyID             string `yaml:"keyId" json:"keyId"`
-	SigningPrivateKey  string `yaml:"signingPrivateKey" json:"signingPrivateKey"`
-	SigningPublicKey   string `yaml:"signingPublicKey" json:"signingPublicKey"`
-	EncrPrivateKey     string `yaml:"encrPrivateKey" json:"encrPrivateKey"`
-	EncrPublicKey      string `yaml:"encrPublicKey" json:"encrPublicKey"`
+	SigningPrivateKey string `yaml:"signingPrivateKey" json:"signingPrivateKey"`
+	SigningPublicKey  string `yaml:"signingPublicKey" json:"signingPublicKey"`
+	EncrPrivateKey    string `yaml:"encrPrivateKey" json:"encrPrivateKey"`
+	EncrPublicKey     string `yaml:"encrPublicKey" json:"encrPublicKey"`
 }
 
 // SimpleKeyMgr provides methods for managing cryptographic keys using configuration.
