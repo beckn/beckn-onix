@@ -924,6 +924,37 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 		}
 	})
 
+	t.Run("cache hit blocks context.network_id not in allowlist (both guards active)", func(t *testing.T) {
+		// memberships=[net1,net2], allowlist=[net1], context.network_id=net2
+		// Static guard passes (net1 satisfies memberships∩allowlist), but
+		// context.network_id=net2 is not in allowlist — validateContextNetworkID blocks it.
+		cached := []model.Subscription{{
+			Subscriber:         model.Subscriber{SubscriberID: "sub.example.com"},
+			SigningPublicKey:    "cached-key",
+			NetworkMemberships: []string{"nfo1.com/retail", "nfo2.com/retail"},
+		}}
+		cachedJSON, _ := json.Marshal(cached)
+
+		cache := &mockCache{
+			getFunc: func(ctx context.Context, key string) (string, error) {
+				return string(cachedJSON), nil
+			},
+		}
+		client, closer, err := New(ctx, cache, &Config{
+			URL:               "http://unused",
+			AllowedNetworkIDs: []string{"nfo1.com/retail"},
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		_, err = client.Lookup(makeStepCtx("nfo2.com/retail"), sub)
+		if err == nil {
+			t.Error("expected block when context.network_id is in memberships but not in allowlist")
+		}
+	})
+
 	t.Run("cache hit enforces allowedNetworkIDs", func(t *testing.T) {
 		cached := []model.Subscription{{
 			Subscriber:         model.Subscriber{SubscriberID: "sub.example.com"},
