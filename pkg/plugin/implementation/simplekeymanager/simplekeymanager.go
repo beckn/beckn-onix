@@ -243,7 +243,7 @@ func (skm *SimpleKeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueK
 		// so *model.StepContext is preserved as the outermost type passed to Registry.Lookup.
 		// Downstream plugins can then type-assert back to *model.StepContext to access Body.
 		registryCtx := ctx
-		if sc, ok := ctx.(*model.StepContext); ok {
+		if sc, ok := ctx.(*model.StepContext); ok && sc != nil {
 			spanCtx, span := tracer.Start(sc.Context, "registry lookup")
 			defer span.End()
 			scCopy := *sc
