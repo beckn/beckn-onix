@@ -733,7 +733,7 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 		Subscriber: model.Subscriber{SubscriberID: "sub.example.com"},
 		KeyID:      "key-1",
 	}
-	expectedCacheKey := "lookup_sub.example.com_key-1"
+	expectedCacheKey := "dedi_lookup_sub.example.com_key-1"
 
 	t.Run("cache hit skips HTTP call", func(t *testing.T) {
 		cached := []model.Subscription{{SigningPublicKey: "cached-key"}}

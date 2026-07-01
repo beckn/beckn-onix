@@ -160,7 +160,7 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 		return nil, fmt.Errorf("key_id is required for DeDi lookup")
 	}
 
-	cacheKey := fmt.Sprintf("lookup_%s_%s", subscriberID, keyID)
+	cacheKey := fmt.Sprintf("dedi_lookup_%s_%s", subscriberID, keyID)
 	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
 
 	if c.cache != nil {
