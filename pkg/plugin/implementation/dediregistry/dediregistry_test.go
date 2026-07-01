@@ -874,6 +874,56 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 		}
 	})
 
+	t.Run("cache hit allows matching context.network_id", func(t *testing.T) {
+		cached := []model.Subscription{{
+			Subscriber:         model.Subscriber{SubscriberID: "sub.example.com"},
+			SigningPublicKey:    "cached-key",
+			NetworkMemberships: []string{"commerce.org/prod"},
+		}}
+		cachedJSON, _ := json.Marshal(cached)
+
+		cache := &mockCache{
+			getFunc: func(ctx context.Context, key string) (string, error) {
+				return string(cachedJSON), nil
+			},
+		}
+		client, closer, err := New(ctx, cache, &Config{URL: "http://unused"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		_, err = client.Lookup(makeStepCtx("commerce.org/prod"), sub)
+		if err != nil {
+			t.Errorf("expected allow when context.network_id matches cached memberships, got: %v", err)
+		}
+	})
+
+	t.Run("cache hit blocks mismatched context.network_id", func(t *testing.T) {
+		cached := []model.Subscription{{
+			Subscriber:         model.Subscriber{SubscriberID: "sub.example.com"},
+			SigningPublicKey:    "cached-key",
+			NetworkMemberships: []string{"commerce.org/prod"},
+		}}
+		cachedJSON, _ := json.Marshal(cached)
+
+		cache := &mockCache{
+			getFunc: func(ctx context.Context, key string) (string, error) {
+				return string(cachedJSON), nil
+			},
+		}
+		client, closer, err := New(ctx, cache, &Config{URL: "http://unused"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		_, err = client.Lookup(makeStepCtx("other.org/prod"), sub)
+		if err == nil {
+			t.Error("expected block when context.network_id is not in cached memberships")
+		}
+	})
+
 	t.Run("cache hit enforces allowedNetworkIDs", func(t *testing.T) {
 		cached := []model.Subscription{{
 			Subscriber:         model.Subscriber{SubscriberID: "sub.example.com"},
