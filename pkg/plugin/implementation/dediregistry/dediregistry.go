@@ -172,7 +172,7 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 				log.Debugf(ctx, "DeDi registry lookup cache hit for key: %s", cacheKey)
 				cacheSpan.End()
 				if len(results) > 0 {
-					if err := c.validateContextNetworkID(ctx, results[0].NetworkMemberships, req.Subscriber.SubscriberID); err != nil {
+					if err := c.validateMemberships(ctx, results[0].NetworkMemberships, results[0].Subscriber.SubscriberID); err != nil {
 						return nil, err
 					}
 				}
@@ -213,12 +213,7 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 
 	// Validate network memberships if configured.
 	networkMemberships := extractStringSlice(ctx, "network_memberships", data["network_memberships"])
-	if len(c.config.AllowedNetworkIDs) > 0 {
-		if len(networkMemberships) == 0 || !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
-			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", detailsSubscriberID)
-		}
-	}
-	if err := c.validateContextNetworkID(ctx, networkMemberships, detailsSubscriberID); err != nil {
+	if err := c.validateMemberships(ctx, networkMemberships, detailsSubscriberID); err != nil {
 		return nil, err
 	}
 
@@ -361,6 +356,18 @@ func containsAny(values []string, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+// validateMemberships runs both the static allowedNetworkIDs guard and the per-request
+// context.network_id check against the subscriber's network_memberships.
+// Called on both the cache-hit and HTTP paths.
+func (c *DeDiRegistryClient) validateMemberships(ctx context.Context, networkMemberships []string, subscriberID string) error {
+	if len(c.config.AllowedNetworkIDs) > 0 {
+		if len(networkMemberships) == 0 || !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
+			return fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", subscriberID)
+		}
+	}
+	return c.validateContextNetworkID(ctx, networkMemberships, subscriberID)
 }
 
 // validateContextNetworkID checks context.network_id (when present in the request body) against

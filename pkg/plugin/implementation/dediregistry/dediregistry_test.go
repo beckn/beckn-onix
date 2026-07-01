@@ -873,6 +873,34 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 			t.Errorf("expected HTTP result after corrupt cache, got %+v", results)
 		}
 	})
+
+	t.Run("cache hit enforces allowedNetworkIDs", func(t *testing.T) {
+		cached := []model.Subscription{{
+			Subscriber:         model.Subscriber{SubscriberID: "sub.example.com"},
+			SigningPublicKey:    "cached-key",
+			NetworkMemberships: []string{"commerce.org/prod"},
+		}}
+		cachedJSON, _ := json.Marshal(cached)
+
+		cache := &mockCache{
+			getFunc: func(ctx context.Context, key string) (string, error) {
+				return string(cachedJSON), nil
+			},
+		}
+		client, closer, err := New(ctx, cache, &Config{
+			URL:               "http://unused",
+			AllowedNetworkIDs: []string{"other.org/prod"},
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		_, err = client.Lookup(ctx, sub)
+		if err == nil {
+			t.Error("expected error when cached memberships do not match allowedNetworkIDs")
+		}
+	})
 }
 
 // makeStepCtx returns a *model.StepContext with network_id stored as a context value
