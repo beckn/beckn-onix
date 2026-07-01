@@ -247,7 +247,7 @@ func (skm *SimpleKeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueK
 			spanCtx, span := tracer.Start(sc.Context, "registry lookup")
 			defer span.End()
 			scCopy := *sc
-			scCopy.WithContext(spanCtx)
+			scCopy.Context = spanCtx
 			registryCtx = &scCopy
 		} else {
 			var span trace.Span
