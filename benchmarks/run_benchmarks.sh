@@ -84,6 +84,15 @@ echo "Results dir : $RESULTS_DIR"
 echo "Package     : $BENCH_PKG"
 echo ""
 
+# ── Capture logical core count (portable across macOS and Linux) ─────────────
+# GOMAXPROCS defaults to this value, and the concurrency sweep below is only
+# meaningful relative to it — record it so the generated report can show
+# "GOMAXPROCS=10 of 10 cores" instead of a bare, ambiguous number.
+CORES="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo unknown)"
+echo "$CORES" > "$RESULTS_DIR/cores.txt"
+echo "Cores       : $CORES"
+echo ""
+
 # ── Serial runs (3x for benchstat stability) ──────────────────────────────────
 echo "Running serial benchmarks (3 runs × ${BENCH_TIME_SERIAL})..."
 for run in 1 2 3; do
