@@ -176,6 +176,18 @@ func (r *Role) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
+// ResolveNetworkID returns context.network_id from a parsed Beckn context map,
+// trying "network_id" (snake_case) then "networkId" (camelCase).
+// Returns "" when absent, empty, or not a string under either alias.
+func ResolveNetworkID(reqContext map[string]interface{}) string {
+	for _, k := range []string{"network_id", "networkId"} {
+		if v, ok := reqContext[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // ResolveCallerID returns the ID of the other party in a Beckn exchange — i.e. who
 // sent the inbound message — from a parsed Beckn context map.
 // For BPP role: the caller is the BAP (bap_id / bapId / senderId).

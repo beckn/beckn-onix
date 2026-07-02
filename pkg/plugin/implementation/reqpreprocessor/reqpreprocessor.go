@@ -103,23 +103,7 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				ctx = context.WithValue(ctx, model.ContextKeyRemoteID, callerID)
 			}
 
-			var networkID string
-			for _, key := range []string{"network_id", "networkId"} {
-				val, exists := reqContext[key]
-				if !exists {
-					continue
-				}
-				v, ok := val.(string)
-				if !ok {
-					log.Warnf(ctx, "context.%s is present but not a string (got %T); ignoring this key", key, val)
-					continue
-				}
-				if v != "" {
-					networkID = v
-					break
-				}
-			}
-			if networkID != "" {
+			if networkID := model.ResolveNetworkID(reqContext); networkID != "" {
 				log.Debugf(ctx, "adding networkID to request:%s, %v", model.ContextKeyNetworkID, networkID)
 				ctx = context.WithValue(ctx, model.ContextKeyNetworkID, networkID)
 			}

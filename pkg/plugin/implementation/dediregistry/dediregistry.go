@@ -401,19 +401,8 @@ func extractContextNetworkID(ctx context.Context) string {
 			Context map[string]interface{} `json:"context"`
 		}
 		if err := json.Unmarshal(sc.Body, &payload); err == nil && payload.Context != nil {
-			for _, key := range []string{"network_id", "networkId"} {
-				val, exists := payload.Context[key]
-				if !exists {
-					continue
-				}
-				v, ok := val.(string)
-				if !ok {
-					log.Warnf(ctx, "context.%s is present but not a string (got %T); ignoring this key", key, val)
-					continue
-				}
-				if v != "" {
-					return v
-				}
+			if v := model.ResolveNetworkID(payload.Context); v != "" {
+				return v
 			}
 		}
 	}
