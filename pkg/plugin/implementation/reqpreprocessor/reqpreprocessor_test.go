@@ -432,12 +432,12 @@ func TestCamelCaseContextKeys(t *testing.T) {
 // and that the static ParentID config value is still injected.
 func TestBodylessRequest(t *testing.T) {
 	tests := []struct {
-		name          string
-		method        string
-		path          string
-		role          string
-		parentID      string
-		wantParentID  bool
+		name         string
+		method       string
+		path         string
+		role         string
+		parentID     string
+		wantParentID bool
 	}{
 		{
 			name:   "GET catalog/subscription — bap role",
@@ -525,6 +525,72 @@ func TestBodylessRequest(t *testing.T) {
 			}
 			if !reached {
 				t.Error("expected next handler to be called, but it was not")
+			}
+		})
+	}
+}
+
+func TestNewPreProcessorAddsNetworkIDToContext(t *testing.T) {
+	cases := []struct {
+		name        string
+		body        map[string]interface{}
+		wantNetwork string
+	}{
+		{
+			name: "snake_case network_id stored in context",
+			body: map[string]interface{}{"context": map[string]interface{}{
+				"bap_id": "bap.example.com", "network_id": "nfo1.com/retail",
+			}},
+			wantNetwork: "nfo1.com/retail",
+		},
+		{
+			name: "camelCase networkId stored in context",
+			body: map[string]interface{}{"context": map[string]interface{}{
+				"bap_id": "bap.example.com", "networkId": "nfo1.com/retail",
+			}},
+			wantNetwork: "nfo1.com/retail",
+		},
+		{
+			name: "non-string network_id falls through to networkId alias",
+			body: map[string]interface{}{"context": map[string]interface{}{
+				"bap_id": "bap.example.com", "network_id": 12345, "networkId": "nfo1.com/retail",
+			}},
+			wantNetwork: "nfo1.com/retail",
+		},
+		{
+			name: "absent network_id leaves context value unset",
+			body: map[string]interface{}{"context": map[string]interface{}{
+				"bap_id": "bap.example.com",
+			}},
+			wantNetwork: "",
+		},
+	}
+
+	cfg := &Config{Role: "bap"}
+	middleware, err := NewPreProcessor(cfg)
+	if err != nil {
+		t.Fatalf("NewPreProcessor: %v", err)
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bodyBytes, _ := json.Marshal(tc.body)
+			var got interface{}
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Context().Value(model.ContextKeyNetworkID)
+				w.WriteHeader(http.StatusOK)
+			})
+			req := httptest.NewRequest("POST", "/", bytes.NewReader(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			middleware(handler).ServeHTTP(httptest.NewRecorder(), req)
+			if tc.wantNetwork == "" {
+				if got != nil {
+					t.Errorf("expected no network_id in context, got %v", got)
+				}
+			} else {
+				if got != tc.wantNetwork {
+					t.Errorf("got %v, want %q", got, tc.wantNetwork)
+				}
 			}
 		})
 	}

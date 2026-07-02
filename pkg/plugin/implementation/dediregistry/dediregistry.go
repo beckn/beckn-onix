@@ -160,7 +160,7 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 		return nil, fmt.Errorf("key_id is required for DeDi lookup")
 	}
 
-	cacheKey := fmt.Sprintf("lookup_%s_%s", subscriberID, keyID)
+	cacheKey := fmt.Sprintf("dedi_lookup_%s_%s", subscriberID, keyID)
 	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
 
 	if c.cache != nil {
@@ -171,6 +171,11 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 			if err := json.Unmarshal([]byte(cached), &results); err == nil {
 				log.Debugf(ctx, "DeDi registry lookup cache hit for key: %s", cacheKey)
 				cacheSpan.End()
+				if len(results) > 0 {
+					if err := c.validateMemberships(ctx, results[0].NetworkMemberships, results[0].Subscriber.SubscriberID); err != nil {
+						return nil, err
+					}
+				}
 				return results, nil
 			}
 		}
@@ -208,10 +213,8 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 
 	// Validate network memberships if configured.
 	networkMemberships := extractStringSlice(ctx, "network_memberships", data["network_memberships"])
-	if len(c.config.AllowedNetworkIDs) > 0 {
-		if len(networkMemberships) == 0 || !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
-			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", detailsSubscriberID)
-		}
+	if err := c.validateMemberships(ctx, networkMemberships, detailsSubscriberID); err != nil {
+		return nil, err
 	}
 
 	// Extract encr_public_key if available (optional field)
@@ -229,11 +232,12 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 			Domain:       detailsDomain,
 			Type:         detailsType,
 		},
-		KeyID:            keyID, // Use original keyID from request
-		SigningPublicKey: signingPublicKey,
-		EncrPublicKey:    encrPublicKey, // May be empty if not provided
-		Created:          parseTime(createdAt),
-		Updated:          parseTime(updatedAt),
+		KeyID:              keyID, // Use original keyID from request
+		SigningPublicKey:   signingPublicKey,
+		EncrPublicKey:      encrPublicKey, // May be empty if not provided
+		Created:            parseTime(createdAt),
+		Updated:            parseTime(updatedAt),
+		NetworkMemberships: networkMemberships,
 	}
 
 	results := []model.Subscription{subscription}
@@ -352,4 +356,55 @@ func containsAny(values []string, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+// validateMemberships runs both the static allowedNetworkIDs guard and the per-request
+// context.network_id check against the subscriber's network_memberships.
+// Called on both the cache-hit and HTTP paths.
+func (c *DeDiRegistryClient) validateMemberships(ctx context.Context, networkMemberships []string, subscriberID string) error {
+	if len(c.config.AllowedNetworkIDs) > 0 {
+		if len(networkMemberships) == 0 || !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
+			return fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", subscriberID)
+		}
+	}
+	return c.validateContextNetworkID(ctx, networkMemberships, subscriberID)
+}
+
+// validateContextNetworkID checks context.network_id (when present in the request body) against
+// the caller's network_memberships and the configured allowedNetworkIDs.
+// Returns nil when context.network_id is absent or empty.
+func (c *DeDiRegistryClient) validateContextNetworkID(ctx context.Context, networkMemberships []string, subscriberID string) error {
+	networkID := extractContextNetworkID(ctx)
+	if networkID == "" {
+		return nil
+	}
+	if !containsAny(networkMemberships, []string{networkID}) {
+		return fmt.Errorf("context.network_id %q is not in network_memberships of subscriber %q", networkID, subscriberID)
+	}
+	if len(c.config.AllowedNetworkIDs) > 0 && !containsAny([]string{networkID}, c.config.AllowedNetworkIDs) {
+		return fmt.Errorf("context.network_id %q is not in configured allowedNetworkIDs", networkID)
+	}
+	return nil
+}
+
+// extractContextNetworkID returns context.network_id from the request.
+// Primary path: reads the context value set by reqpreprocessor (survives any OTel wrapping depth).
+// Fallback path: type-asserts to *model.StepContext and parses Body directly — works when
+// simplekeymanager preserves *model.StepContext through its OTel span, and also with keymanager.
+// Checks both "network_id" (snake_case) and "networkId" (camelCase). Returns "" when absent.
+func extractContextNetworkID(ctx context.Context) string {
+	if v, _ := ctx.Value(model.ContextKeyNetworkID).(string); v != "" {
+		return v
+	}
+	if sc, ok := ctx.(*model.StepContext); ok && len(sc.Body) > 0 {
+		var payload struct {
+			Context map[string]interface{} `json:"context"`
+		}
+		if err := json.Unmarshal(sc.Body, &payload); err == nil && payload.Context != nil {
+			if v := model.ResolveNetworkID(payload.Context); v != "" {
+				return v
+			}
+		}
+	}
+	return ""
 }
