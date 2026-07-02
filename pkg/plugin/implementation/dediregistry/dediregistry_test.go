@@ -1227,6 +1227,16 @@ func TestExtractContextNetworkID(t *testing.T) {
 		}
 	})
 
+	t.Run("non-string network_id falls through to networkId alias", func(t *testing.T) {
+		sc := &model.StepContext{
+			Context: context.Background(),
+			Body:    []byte(`{"context":{"network_id":12345,"networkId":"nfo1.com/retail"}}`),
+		}
+		if got := extractContextNetworkID(sc); got != "nfo1.com/retail" {
+			t.Errorf("got %q, want %q", got, "nfo1.com/retail")
+		}
+	})
+
 	// Absent / empty cases.
 	t.Run("absent from both context value and body", func(t *testing.T) {
 		sc := &model.StepContext{

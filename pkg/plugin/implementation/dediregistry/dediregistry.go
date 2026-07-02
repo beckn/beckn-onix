@@ -408,8 +408,8 @@ func extractContextNetworkID(ctx context.Context) string {
 				}
 				v, ok := val.(string)
 				if !ok {
-					log.Warnf(ctx, "context.%s is present but not a string (got %T); network_id check will be skipped", key, val)
-					break
+					log.Warnf(ctx, "context.%s is present but not a string (got %T); ignoring this key", key, val)
+					continue
 				}
 				if v != "" {
 					return v
