@@ -8,7 +8,8 @@
 #
 # Requirements:
 #   - Go 1.24+ installed
-#   - benchstat is declared as a tool in go.mod; invoked via "go tool benchstat"
+#   - benchstat installed on PATH: go install golang.org/x/perf/cmd/benchstat@latest
+#     (intentionally NOT a go.mod tool dependency — see README "Dependencies")
 #
 # Output:
 #   benchmarks/results/<YYYY-MM-DD_HH-MM-SS>/
@@ -64,8 +65,13 @@ RESULTS_DIR="$REPO_ROOT/benchmarks/results/$(date +%Y-%m-%d_%H-%M-%S)"
 
 cd "$REPO_ROOT"
 
-# ── benchstat is declared as a go tool in go.mod; no separate install needed ──
-# Use: go tool benchstat  (works anywhere without PATH changes)
+# ── benchstat must be installed on PATH (not a go.mod tool dependency) ───────
+if ! command -v benchstat >/dev/null 2>&1; then
+  echo "ERROR: benchstat not found on PATH."
+  echo "  Install it with: go install golang.org/x/perf/cmd/benchstat@latest"
+  echo "  Then ensure \$(go env GOPATH)/bin is on your PATH."
+  exit 1
+fi
 
 # bench_filter: tee full output to the .log file for debugging, and write a
 # clean copy (only benchstat-parseable lines) to the .txt file.
@@ -82,6 +88,15 @@ mkdir -p "$RESULTS_DIR"
 echo "=== beckn-onix Benchmark Runner ==="
 echo "Results dir : $RESULTS_DIR"
 echo "Package     : $BENCH_PKG"
+echo ""
+
+# ── Capture logical core count (portable across macOS and Linux) ─────────────
+# GOMAXPROCS defaults to this value, and the concurrency sweep below is only
+# meaningful relative to it — record it so the generated report can show
+# "GOMAXPROCS=10 of 10 cores" instead of a bare, ambiguous number.
+CORES="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo unknown)"
+echo "$CORES" > "$RESULTS_DIR/cores.txt"
+echo "Cores       : $CORES"
 echo ""
 
 # ── Serial runs (3x for benchstat stability) ──────────────────────────────────
@@ -145,7 +160,7 @@ echo ""
 
 # ── benchstat statistical summary ─────────────────────────────────────────────
 echo "Running benchstat statistical analysis..."
-go tool benchstat \
+benchstat \
   "$RESULTS_DIR/run1.txt" \
   "$RESULTS_DIR/run2.txt" \
   "$RESULTS_DIR/run3.txt" \
