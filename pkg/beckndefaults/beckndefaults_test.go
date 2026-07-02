@@ -187,25 +187,13 @@ func TestLoad_RemoteRefresh(t *testing.T) {
 	require.NoError(t, err)
 	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pkix})
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/constants":
-			w.Write(content)
-		case "/sig":
-			w.Write([]byte(sig))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer srv.Close()
-
-	origConstantsURL, origSigURL, origPubKey := remoteConstantsURL, remoteConstantsSigURL, becknPublicKeyPEM
-	remoteConstantsURL = srv.URL + "/constants"
-	remoteConstantsSigURL = srv.URL + "/sig"
+	origFetch, origPubKey := fetchRemote, becknPublicKeyPEM
+	fetchRemote = func(_ context.Context) ([]byte, []byte, error) {
+		return content, []byte(sig), nil
+	}
 	becknPublicKeyPEM = pubPEM
 	defer func() {
-		remoteConstantsURL = origConstantsURL
-		remoteConstantsSigURL = origSigURL
+		fetchRemote = origFetch
 		becknPublicKeyPEM = origPubKey
 	}()
 
@@ -222,25 +210,11 @@ func TestLoad_RemoteRefreshBadSig_FallsBackToShipped(t *testing.T) {
 
 	wrongSig := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, shippedConstants))
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/constants":
-			w.Write(shippedConstants)
-		case "/sig":
-			w.Write([]byte(wrongSig))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer srv.Close()
-
-	origConstantsURL, origSigURL := remoteConstantsURL, remoteConstantsSigURL
-	remoteConstantsURL = srv.URL + "/constants"
-	remoteConstantsSigURL = srv.URL + "/sig"
-	defer func() {
-		remoteConstantsURL = origConstantsURL
-		remoteConstantsSigURL = origSigURL
-	}()
+	orig := fetchRemote
+	fetchRemote = func(_ context.Context) ([]byte, []byte, error) {
+		return shippedConstants, []byte(wrongSig), nil
+	}
+	defer func() { fetchRemote = orig }()
 
 	bc, err := Load(context.Background(), false)
 	require.NoError(t, err)

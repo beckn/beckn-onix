@@ -25,12 +25,9 @@ var shippedConstantsSig []byte
 //go:embed beckn_public_key.pem
 var becknPublicKeyPEM []byte
 
-var (
+const (
 	remoteConstantsURL    = "https://raw.githubusercontent.com/beckn/beckn-onix/main/pkg/beckndefaults/beckn-constants.yaml"
 	remoteConstantsSigURL = "https://raw.githubusercontent.com/beckn/beckn-onix/main/pkg/beckndefaults/beckn-constants.yaml.sig"
-)
-
-const (
 	remoteTimeout         = 10 * time.Second
 	maxConstantsFileBytes = 64 << 10 // 64 KiB — well above any realistic constants file
 )
@@ -78,12 +75,11 @@ func loadAndVerify(constants, sig []byte) (*BecknConstants, error) {
 	return &bc, nil
 }
 
-func fetchRemote(ctx context.Context) ([]byte, []byte, error) {
+var fetchRemote = func(ctx context.Context) ([]byte, []byte, error) {
 	return fetchFromURLs(ctx, remoteConstantsURL, remoteConstantsSigURL)
 }
 
 // fetchFromURLs fetches the constants file and its signature from the given URLs.
-// Separated from fetchRemote so tests can inject an httptest.Server URL.
 func fetchFromURLs(ctx context.Context, constantsURL, sigURL string) ([]byte, []byte, error) {
 	client := &http.Client{Timeout: remoteTimeout}
 
