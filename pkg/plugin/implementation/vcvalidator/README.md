@@ -1,15 +1,17 @@
-# vcvalidator — Verifiable Credential validator middleware
+# vcvalidator — Verifiable Credential validator step
 
-A beckn-onix `Middleware` plugin that verifies the [W3C Verifiable
+A beckn-onix processing `Step` plugin that verifies the [W3C Verifiable
 Credentials](https://www.w3.org/TR/vc-data-model-2.0/) embedded in a request
 body. When enabled it gates the configured beckn action(s) and rejects the
 request with a **NACK** if any embedded credential fails verification — the
-request is never forwarded to the next handler.
+request never reaches routing.
 
-It implements the
-[`definition.MiddlewareProvider`](../../definition/middleware.go) contract and
-is loaded by the plugin manager as `vcvalidator.so`, like any other middleware
-(e.g. `reqpreprocessor`).
+It implements the [`definition.StepProvider`](../../definition/step.go)
+contract and is loaded by the plugin manager as `vcvalidator.so`. Running
+inside the handler's step pipeline means rejections go through the same
+signed-NACK path as every other step (`validateSign`, `validateSchema`): the
+handler builds the NACK envelope and signs it before it is written to the
+wire.
 
 A credential is any JSON object in the body carrying both a `proof` and a
 `credentialSubject`. This is the combination beckn uses for an embedded VC (for
@@ -47,26 +49,33 @@ such credentials are rejected; with `requireProof: false` the signature step is
 skipped and only the validity window, revocation, and verification-method
 resolvability are checked.
 
-## NACK error codes
+## NACK failure classes
 
-| code | meaning | HTTP |
+A rejection is returned to the handler as one of the standard model error
+types, so the NACK carries the usual `error.code` plus a message that starts
+with the machine-readable failure class:
+
+| failure class | meaning | model error → HTTP |
 |------|---------|------|
-| `INVALID_CREDENTIAL` | malformed credential / missing issuer | 400 |
-| `INVALID_PROOF` | signature invalid, missing, or alg mismatch | 401 |
-| `ISSUER_MISMATCH` | proof signer ≠ declared issuer | 401 |
-| `CREDENTIAL_EXPIRED` | outside validity window | 401 |
-| `DID_RESOLUTION_FAILED` | could not resolve issuer / verification-method DID | 401 |
-| `CREDENTIAL_REVOKED` | revoked per `credentialStatus` | 403 |
+| `INVALID_CREDENTIAL` | malformed credential / missing issuer | `BadReqErr` → 400 |
+| `INVALID_PROOF` | signature invalid, missing, or alg mismatch | `SignValidationErr` → 401 |
+| `ISSUER_MISMATCH` | proof signer ≠ declared issuer | `SignValidationErr` → 401 |
+| `CREDENTIAL_EXPIRED` | outside validity window | `SignValidationErr` → 401 |
+| `DID_RESOLUTION_FAILED` | could not resolve issuer / verification-method DID | `SignValidationErr` → 401 |
+| `CREDENTIAL_REVOKED` | revoked per `credentialStatus` | `SignValidationErr` → 401 |
 
-The NACK body matches beckn-onix's v2 shape:
+The NACK body matches beckn-onix's v2 shape and is signed by the handler
+(`Signature` response header) like every other pipeline NACK:
 
 ```json
-{"message":{"status":"NACK","messageId":"…","error":{"code":"…","message":"…"}}}
+{"message":{"status":"NACK","messageId":"…","error":{"code":"Unauthorized","message":"Signature Validation Error: CREDENTIAL_REVOKED: …"}}}
 ```
 
 ## Configuration
 
-Wired as a `middleware` entry on a module handler (alongside `reqpreprocessor`):
+Wired as a `steps` plugin on a module handler, then referenced by id in the
+pipeline's `steps` list (typically after `validateSign`, before
+`validateSchema`):
 
 ```yaml
 modules:
@@ -76,7 +85,7 @@ modules:
       type: std
       role: bpp
       plugins:
-        middleware:
+        steps:
           - id: vcvalidator
             config:
               enabled: "true"           # master switch
@@ -88,6 +97,12 @@ modules:
               failOpen: "false"         # on did:web/revocation network errors: false = reject
               httpTimeout: "10"         # seconds
               debugLogging: "false"
+      steps:
+        - validateSign
+        - vcvalidator
+        - validateSchema
+        - addRoute
+        - signAck
 ```
 
 | key | required | default | meaning |
@@ -123,6 +138,9 @@ The suite runs fully offline. It includes:
 - Negative tests for tampered signatures, expired / not-yet-valid windows,
   issuer mismatch, did:web unreachable (fail-closed and fail-open), DEDI
   revocation, and Data Integrity proof rejection.
+- Step-level tests (`TestStepPassThrough`, `TestStepNackErrorTypes`) — the
+  pass-through cases (disabled, non-gated action, no credentials) and the
+  mapping of rejections to the model error types the handler NACKs with.
 
 See [`testdata/README.md`](testdata/README.md) for the fixtures and how to
 regenerate them.

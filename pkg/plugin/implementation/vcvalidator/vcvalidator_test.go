@@ -1,10 +1,14 @@
 package vcvalidator
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +18,8 @@ import (
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/lestrrat-go/jwx/v3/jws"
+
+	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
 // fixedNow pins the clock to a moment inside every fixture's validity window
@@ -318,6 +324,104 @@ func TestExtractCredentialsFromBecknBody(t *testing.T) {
 	if len(creds) != 1 {
 		t.Fatalf("expected 1 credential, got %d", len(creds))
 	}
+}
+
+// ── step tests ──────────────────────────────────────────────────────────
+
+// testStep builds the Step around an offline verifier gating "confirm".
+func testStep() *step {
+	cfg := DefaultConfig()
+	cfg.Actions = []string{"confirm"}
+	return &step{cfg: cfg, v: testVerifier(cfg)}
+}
+
+// stepCtx builds a StepContext for a POST of body to the given path.
+func stepCtx(path string, body []byte) *model.StepContext {
+	return &model.StepContext{
+		Context: context.Background(),
+		Request: httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body)),
+		Body:    body,
+	}
+}
+
+// becknBody wraps a credential in a beckn envelope the way participants embed
+// VCs (message.contract.participants[].participantAttributes).
+func becknBody(t *testing.T, action string, vc map[string]any) []byte {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"context": map[string]any{"action": action, "messageId": "m-1"},
+		"message": map[string]any{"contract": map[string]any{"participants": []any{
+			map[string]any{"id": "p1", "participantAttributes": vc},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("marshal beckn body: %v", err)
+	}
+	return body
+}
+
+// TestStepPassThrough covers the cases where Run must not reject: plugin
+// disabled, non-gated action, and a gated action without embedded credentials.
+func TestStepPassThrough(t *testing.T) {
+	badVC := loadVC(t)
+	badVC["issuer"] = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH" // would fail if verified
+
+	t.Run("disabled", func(t *testing.T) {
+		s := testStep()
+		s.cfg.Enabled = false
+		if err := s.Run(stepCtx("/bpp/receiver/confirm", becknBody(t, "confirm", badVC))); err != nil {
+			t.Fatalf("disabled step must pass through, got: %v", err)
+		}
+	})
+	t.Run("non-gated action", func(t *testing.T) {
+		if err := testStep().Run(stepCtx("/bpp/receiver/search", becknBody(t, "search", badVC))); err != nil {
+			t.Fatalf("non-gated action must pass through, got: %v", err)
+		}
+	})
+	t.Run("no credentials", func(t *testing.T) {
+		body := []byte(`{"context":{"action":"confirm"},"message":{"order":{}}}`)
+		if err := testStep().Run(stepCtx("/bpp/receiver/confirm", body)); err != nil {
+			t.Fatalf("body without credentials must pass through, got: %v", err)
+		}
+	})
+	t.Run("valid credential", func(t *testing.T) {
+		if err := testStep().Run(stepCtx("/bpp/receiver/confirm", becknBody(t, "confirm", loadVC(t)))); err != nil {
+			t.Fatalf("valid credential must pass, got: %v", err)
+		}
+	})
+}
+
+// TestStepNackErrorTypes asserts that rejections carry the model error type
+// the handler's NACK mapping understands: BadReqErr for structurally broken
+// credentials, SignValidationErr for authenticity failures. The failure class
+// must survive in the error message.
+func TestStepNackErrorTypes(t *testing.T) {
+	t.Run("authenticity failure is SignValidationErr", func(t *testing.T) {
+		vc := loadVC(t)
+		vc["issuer"] = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH" // signer ≠ issuer
+		err := testStep().Run(stepCtx("/bpp/receiver/confirm", becknBody(t, "confirm", vc)))
+		var signErr *model.SignValidationErr
+		if !errors.As(err, &signErr) {
+			t.Fatalf("expected *model.SignValidationErr, got %T: %v", err, err)
+		}
+		if !strings.Contains(err.Error(), string(failIssuer)) {
+			t.Fatalf("failure class missing from error: %v", err)
+		}
+	})
+	t.Run("structural failure is BadReqErr", func(t *testing.T) {
+		vc := map[string]any{ // no issuer → failStructure
+			"credentialSubject": map[string]any{"id": "x"},
+			"proof":             map[string]any{"jwt": "a.b.c"},
+		}
+		err := testStep().Run(stepCtx("/bpp/receiver/confirm", becknBody(t, "confirm", vc)))
+		var badReq *model.BadReqErr
+		if !errors.As(err, &badReq) {
+			t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+		}
+		if !strings.Contains(err.Error(), string(failStructure)) {
+			t.Fatalf("failure class missing from error: %v", err)
+		}
+	})
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 // Package main provides the plugin entry point for the VC Validator
-// middleware. It is compiled as a Go plugin (.so) via
+// processing step. It is compiled as a Go plugin (.so) via
 //
 //	go build -buildmode=plugin -o plugins/vcvalidator.so \
 //	    ./pkg/plugin/implementation/vcvalidator/cmd/plugin.go
@@ -10,7 +10,6 @@ package main
 
 import (
 	"context"
-	"net/http"
 
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/vcvalidator"
@@ -18,13 +17,14 @@ import (
 
 type provider struct{}
 
-// New builds the VC validator middleware from its YAML config map.
-func (p provider) New(ctx context.Context, cfg map[string]string) (func(http.Handler) http.Handler, error) {
-	return vcvalidator.NewMiddleware(cfg)
+// New builds the VC validator step from its YAML config map.
+func (p provider) New(ctx context.Context, cfg map[string]string) (definition.Step, func(), error) {
+	step, err := vcvalidator.New(cfg)
+	return step, nil, err
 }
 
 // Provider is the exported symbol that the beckn-onix plugin manager looks up.
 var Provider = provider{}
 
-// Compile-time assurance that Provider satisfies the middleware plugin contract.
-var _ definition.MiddlewareProvider = Provider
+// Compile-time assurance that Provider satisfies the step plugin contract.
+var _ definition.StepProvider = Provider
