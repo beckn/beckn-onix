@@ -26,6 +26,7 @@ plugins=(
     "signvalidator"
     "opapolicychecker"
     "payloadstore"
+    "vcvalidator"
 )
 
 for plugin in "${plugins[@]}"; do
