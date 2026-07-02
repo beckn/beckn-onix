@@ -26,9 +26,9 @@ adapter-internal latency from network variables.
 
 | Metric | Value |
 |--------|-------|
-| Serial p50 latency (discover) | **__P50_US__ µs** |
-| Serial p95 latency (discover) | **__P95_US__ µs** |
-| Serial p99 latency (discover) | **__P99_US__ µs** |
+| Serial p50 latency (discover) | **__P50_US__** |
+| Serial p95 latency (discover) | **__P95_US__** |
+| Serial p99 latency (discover) | **__P99_US__** |
 | Serial mean latency (discover) | **__MEAN_DISCOVER_US__ µs** |
 | Peak parallel throughput | **__PEAK_RPS__ req/s** |
 | Cache warm vs cold delta | **__CACHE_DELTA__** |

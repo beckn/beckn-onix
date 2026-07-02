@@ -125,6 +125,7 @@ Committed reports are stored in `benchmarks/reports/`. Each report documents the
 | File | Platform | Adapter version |
 |------|----------|-----------------|
 | `REPORT_ONIX_v150.md` | Apple M5 (cores not recorded — see [#841](https://github.com/beckn/beckn-onix/issues/841)) · darwin/arm64 · GOMAXPROCS=10 | beckn-onix v1.5.0 |
+| `REPORT_ONIX_v172.md` | Apple M5 (10 cores) · darwin/arm64 · GOMAXPROCS=10 | beckn-onix v1.7.2 |
 
 The script auto-generates `BENCHMARK_REPORT.md` in each results directory using `REPORT_TEMPLATE.md`. To permanently record a run:
 1. Run `bash benchmarks/run_benchmarks.sh` — `BENCHMARK_REPORT.md` is generated automatically.
