@@ -15,6 +15,7 @@
 //   - throughput_report.csv    — RPS and latency by GOMAXPROCS level
 //   - benchstat_summary.txt    — raw benchstat output block
 //   - run1.txt                 — goos / goarch / cpu metadata
+//   - cores.txt                — logical core count (written by run_benchmarks.sh)
 //
 // Placeholders filled in the template:
 //
@@ -23,6 +24,7 @@
 //	__GOOS__              from run1.txt header
 //	__GOARCH__            from run1.txt header
 //	__CPU__               from run1.txt header
+//	__CORES__             from cores.txt ("unknown" if the file is absent)
 //	__GOMAXPROCS__        derived from the benchmark name suffix in run1.txt
 //	__P50_US__            p50 latency in µs (from Discover_Percentiles row)
 //	__P95_US__            p95 latency in µs
@@ -94,6 +96,7 @@ func main() {
 
 	// ── Parse run1.txt for environment metadata ────────────────────────────────
 	env := parseEnv(filepath.Join(*dir, "run1.txt"))
+	env["cores"] = strings.TrimSpace(readFileOrDefault(filepath.Join(*dir, "cores.txt"), "unknown"))
 
 	// ── Parse latency_report.csv ──────────────────────────────────────────────
 	latency, err := parseLatencyCSV(filepath.Join(*dir, "latency_report.csv"))
@@ -155,43 +158,44 @@ func main() {
 
 	// ── Apply substitutions ────────────────────────────────────────────────────
 	replacements := map[string]string{
-		"__TIMESTAMP__":        timestamp,
-		"__ONIX_VERSION__":     *version,
-		"__GOOS__":             env["goos"],
-		"__GOARCH__":           env["goarch"],
-		"__CPU__":              env["cpu"],
-		"__GOMAXPROCS__":       env["gomaxprocs"],
-		"__P50_US__":           p50,
-		"__P95_US__":           p95,
-		"__P99_US__":           p99,
-		"__MEAN_DISCOVER_US__": meanDiscoverUS,
-		"__MEAN_SELECT_US__":   meanSelectUS,
-		"__MEAN_INIT_US__":     meanInitUS,
-		"__MEAN_CONFIRM_US__":  meanConfirmUS,
-		"__ALLOCS_DISCOVER__":  fmtInt(latency["BenchmarkBAPCaller_Discover"]["allocs_op"]),
-		"__ALLOCS_SELECT__":    fmtInt(latency["BenchmarkBAPCaller_AllActions/select"]["allocs_op"]),
-		"__ALLOCS_INIT__":      fmtInt(latency["BenchmarkBAPCaller_AllActions/init"]["allocs_op"]),
-		"__ALLOCS_CONFIRM__":   fmtInt(latency["BenchmarkBAPCaller_AllActions/confirm"]["allocs_op"]),
-		"__BYTES_DISCOVER__":   fmtInt(latency["BenchmarkBAPCaller_Discover"]["bytes_op"]),
-		"__BYTES_SELECT__":     fmtInt(latency["BenchmarkBAPCaller_AllActions/select"]["bytes_op"]),
-		"__BYTES_INIT__":       fmtInt(latency["BenchmarkBAPCaller_AllActions/init"]["bytes_op"]),
-		"__BYTES_CONFIRM__":    fmtInt(latency["BenchmarkBAPCaller_AllActions/confirm"]["bytes_op"]),
-		"__MEM_DISCOVER_KB__":  memDiscoverKB,
-		"__MEM_SELECT_KB__":    memSelectKB,
-		"__MEM_INIT_KB__":      memInitKB,
-		"__MEM_CONFIRM_KB__":   memConfirmKB,
-		"__PEAK_RPS__":         peakRPS,
-		"__CACHE_WARM_US__":    warmUS,
-		"__CACHE_COLD_US__":    coldUS,
+		"__TIMESTAMP__":         timestamp,
+		"__ONIX_VERSION__":      *version,
+		"__GOOS__":              env["goos"],
+		"__GOARCH__":            env["goarch"],
+		"__CPU__":               env["cpu"],
+		"__CORES__":             env["cores"],
+		"__GOMAXPROCS__":        env["gomaxprocs"],
+		"__P50_US__":            p50,
+		"__P95_US__":            p95,
+		"__P99_US__":            p99,
+		"__MEAN_DISCOVER_US__":  meanDiscoverUS,
+		"__MEAN_SELECT_US__":    meanSelectUS,
+		"__MEAN_INIT_US__":      meanInitUS,
+		"__MEAN_CONFIRM_US__":   meanConfirmUS,
+		"__ALLOCS_DISCOVER__":   fmtInt(latency["BenchmarkBAPCaller_Discover"]["allocs_op"]),
+		"__ALLOCS_SELECT__":     fmtInt(latency["BenchmarkBAPCaller_AllActions/select"]["allocs_op"]),
+		"__ALLOCS_INIT__":       fmtInt(latency["BenchmarkBAPCaller_AllActions/init"]["allocs_op"]),
+		"__ALLOCS_CONFIRM__":    fmtInt(latency["BenchmarkBAPCaller_AllActions/confirm"]["allocs_op"]),
+		"__BYTES_DISCOVER__":    fmtInt(latency["BenchmarkBAPCaller_Discover"]["bytes_op"]),
+		"__BYTES_SELECT__":      fmtInt(latency["BenchmarkBAPCaller_AllActions/select"]["bytes_op"]),
+		"__BYTES_INIT__":        fmtInt(latency["BenchmarkBAPCaller_AllActions/init"]["bytes_op"]),
+		"__BYTES_CONFIRM__":     fmtInt(latency["BenchmarkBAPCaller_AllActions/confirm"]["bytes_op"]),
+		"__MEM_DISCOVER_KB__":   memDiscoverKB,
+		"__MEM_SELECT_KB__":     memSelectKB,
+		"__MEM_INIT_KB__":       memInitKB,
+		"__MEM_CONFIRM_KB__":    memConfirmKB,
+		"__PEAK_RPS__":          peakRPS,
+		"__CACHE_WARM_US__":     warmUS,
+		"__CACHE_COLD_US__":     coldUS,
 		"__CACHE_WARM_ALLOCS__": fmtInt(latency["BenchmarkBAPCaller_CacheWarm"]["allocs_op"]),
 		"__CACHE_COLD_ALLOCS__": fmtInt(latency["BenchmarkBAPCaller_CacheCold"]["allocs_op"]),
 		"__CACHE_WARM_BYTES__":  fmtInt(latency["BenchmarkBAPCaller_CacheWarm"]["bytes_op"]),
 		"__CACHE_COLD_BYTES__":  fmtInt(latency["BenchmarkBAPCaller_CacheCold"]["bytes_op"]),
-		"__CACHE_DELTA__":      cacheDelta,
+		"__CACHE_DELTA__":       cacheDelta,
 		"__THROUGHPUT_TABLE__":  throughputTable,
 		"__BENCHSTAT_SUMMARY__": benchstat,
-		"__INTERPRETATION__":   interpretation,
-		"__RECOMMENDATION__":   recommendation,
+		"__INTERPRETATION__":    interpretation,
+		"__RECOMMENDATION__":    recommendation,
 	}
 
 	for placeholder, value := range replacements {
