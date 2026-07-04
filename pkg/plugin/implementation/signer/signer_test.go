@@ -102,3 +102,38 @@ func TestSignFailure(t *testing.T) {
 		})
 	}
 }
+
+// TestSignAck tests SignAck with empty, non-empty, and invalid request signatures.
+func TestSignAck(t *testing.T) {
+	privateKey, _ := generateTestKeys()
+	config := Config{}
+	signer, _, _ := New(context.Background(), &config)
+	now := time.Now().Unix()
+
+	t.Run("valid key with empty request signature", func(t *testing.T) {
+		sig, err := signer.SignAck(context.Background(), []byte("ack body"), "", privateKey, now, now+3600)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if len(sig) == 0 {
+			t.Errorf("expected non-empty signature")
+		}
+	})
+
+	t.Run("valid key with non-empty request signature", func(t *testing.T) {
+		sig, err := signer.SignAck(context.Background(), []byte("ack body"), "existing-signature-value", privateKey, now, now+3600)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if len(sig) == 0 {
+			t.Errorf("expected non-empty signature")
+		}
+	})
+
+	t.Run("invalid private key returns error", func(t *testing.T) {
+		_, err := signer.SignAck(context.Background(), []byte("ack body"), "", "not_valid_base64!!!", now, now+3600)
+		if err == nil {
+			t.Error("expected error but got none")
+		}
+	})
+}
