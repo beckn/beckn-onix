@@ -1,5 +1,8 @@
 // Package vcvalidator provides a processing Step that validates W3C
-// Verifiable Credentials embedded in a beckn request body.
+// Verifiable Credentials embedded in a beckn request body. It is built as
+// validateVC.so, so pipelines reference it by the step id validateVC —
+// matching the verb naming of the built-in steps (validateSign,
+// validateSchema).
 //
 // For the configured beckn actions it verifies every embedded credential's
 // proof, validity window and revocation status. On any failure the step
@@ -17,7 +20,6 @@ package vcvalidator
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -38,14 +40,14 @@ type step struct {
 	v   *verifier
 }
 
-// New builds the vcvalidator Step from its YAML config map.
+// New builds the validateVC Step from its YAML config map.
 func New(cfg map[string]string) (definition.Step, error) {
 	config, err := ParseConfig(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("vcvalidator: config: %w", err)
+		return nil, fmt.Errorf("validateVC: config: %w", err)
 	}
 
-	client := &http.Client{Timeout: config.HTTPTimeout}
+	client := newHTTPClient(config)
 	v := newVerifier(config, httpFetcher(client))
 	v.statusGet = httpStatusFetcher(client)
 
@@ -69,20 +71,31 @@ func (s *step) Run(ctx *model.StepContext) error {
 	creds := extractCredentials(ctx.Body)
 	if len(creds) == 0 {
 		if s.cfg.DebugLogging {
-			log.Debugf(ctx, "vcvalidator: action=%s: no embedded credentials, passing through", action)
+			log.Debugf(ctx, "validateVC: action=%s: no embedded credentials, passing through", action)
 		}
 		return nil
+	}
+
+	// Cap the per-request workload before any network I/O: each credential can
+	// cost up to httpTimeout for did:web resolution plus another for the
+	// revocation fetch, so an unbounded count would let a single request tie up
+	// a handler goroutine indefinitely.
+	if len(creds) > s.cfg.MaxCredentials {
+		ve := failf(failStructure, "request carries %d credentials, exceeding maxCredentials=%d",
+			len(creds), s.cfg.MaxCredentials)
+		log.Errorf(ctx, ve, "validateVC: action=%s rejected", action)
+		return nackErr(ve)
 	}
 
 	for i, raw := range creds {
 		if err := s.v.verify(ctx, raw); err != nil {
 			ve := asVCError(err)
-			log.Errorf(ctx, ve, "vcvalidator: action=%s credential[%d] rejected", action, i)
+			log.Errorf(ctx, ve, "validateVC: action=%s credential[%d] rejected", action, i)
 			return nackErr(ve)
 		}
 	}
 
-	log.Infof(ctx, "vcvalidator: action=%s: %d credential(s) verified OK", action, len(creds))
+	log.Infof(ctx, "validateVC: action=%s: %d credential(s) verified OK", action, len(creds))
 	return nil
 }
 
@@ -166,6 +179,20 @@ type Config struct {
 	// Default: 10s.
 	HTTPTimeout time.Duration
 
+	// MaxCredentials caps how many embedded credentials a single request may
+	// carry. Each credential can cost up to two HTTP fetches (did:web
+	// resolution + revocation), so the cap bounds the per-request work; a
+	// request exceeding it is rejected with a Bad Request NACK before any
+	// network I/O. Default: 10.
+	MaxCredentials int
+
+	// AllowPrivateNetworks permits did:web and revocation fetches to resolve
+	// to private, loopback or link-local addresses. The fetched URLs come from
+	// the request body, so this MUST stay false in production (SSRF); it
+	// exists for local/devkit deployments where issuers and registries live on
+	// a private docker network. Default: false.
+	AllowPrivateNetworks bool
+
 	// DebugLogging enables verbose per-credential logging.
 	DebugLogging bool
 }
@@ -175,14 +202,16 @@ type Config struct {
 // left empty — ParseConfig requires it in the YAML.
 func DefaultConfig() *Config {
 	return &Config{
-		Enabled:           true,
-		AllowedDIDMethods: []string{"key", "jwk", "web"},
-		CheckExpiry:       true,
-		CheckRevocation:   true,
-		RequireProof:      true,
-		FailOpen:          false,
-		HTTPTimeout:       10 * time.Second,
-		DebugLogging:      false,
+		Enabled:              true,
+		AllowedDIDMethods:    []string{"key", "jwk", "web"},
+		CheckExpiry:          true,
+		CheckRevocation:      true,
+		RequireProof:         true,
+		FailOpen:             false,
+		HTTPTimeout:          10 * time.Second,
+		MaxCredentials:       10,
+		AllowPrivateNetworks: false,
+		DebugLogging:         false,
 	}
 }
 
@@ -251,8 +280,20 @@ func ParseConfig(cfg map[string]string) (*Config, error) {
 		} else if d, err2 := time.ParseDuration(strings.TrimSpace(v)); err2 == nil {
 			config.HTTPTimeout = d
 		} else {
-			return nil, fmt.Errorf("vcvalidator: invalid httpTimeout %q", v)
+			return nil, fmt.Errorf("validateVC: invalid httpTimeout %q", v)
 		}
+	}
+
+	if v, ok := cfg["maxCredentials"]; ok && strings.TrimSpace(v) != "" {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("validateVC: invalid maxCredentials %q (must be a positive integer)", v)
+		}
+		config.MaxCredentials = n
+	}
+
+	if v, ok := cfg["allowPrivateNetworks"]; ok {
+		config.AllowPrivateNetworks = parseBool(v, config.AllowPrivateNetworks)
 	}
 
 	if v, ok := cfg["debugLogging"]; ok {
@@ -263,7 +304,7 @@ func ParseConfig(cfg map[string]string) (*Config, error) {
 	// actions are gated so the behaviour is visible from the config alone.
 	if config.Enabled && len(config.Actions) == 0 {
 		return nil, fmt.Errorf(
-			"vcvalidator: actions is required when enabled (e.g. \"confirm,init\")")
+			"validateVC: actions is required when enabled (e.g. \"confirm,init\")")
 	}
 
 	return config, nil

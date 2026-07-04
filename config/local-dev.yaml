@@ -153,8 +153,20 @@ modules:
           id: router
           config:
             routingConfig: ./config/local-routing.yaml
+        # Step plugins are loaded here and referenced by id in the steps list.
+        steps:
+          - id: validateVC
+            config:
+              enabled: "false"    # flip to "true" to gate the listed actions on embedded VCs
+              actions: "confirm"  # REQUIRED when enabled — comma list of gated beckn actions
+              allowedDidMethods: "key,jwk,web"
+              failOpen: "false"
+              httpTimeout: "10"
+              maxCredentials: "10"
+              allowPrivateNetworks: "false"  # local-only escape hatch for the SSRF guard
       steps:
         - validateSign
+        - validateVC
         - addRoute
         - validateSchema
         - signAck

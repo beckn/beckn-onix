@@ -15,9 +15,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -876,6 +878,58 @@ func toInt(v any) (int, error) {
 // ---------------------------------------------------------------------------
 // HTTP fetchers
 // ---------------------------------------------------------------------------
+
+// maxRedirects caps redirect-following on did:web and revocation fetches.
+// The destination guard sits at the dial layer, so every redirect hop is
+// re-validated against it automatically.
+const maxRedirects = 3
+
+// newHTTPClient builds the http.Client shared by did:web resolution and
+// revocation fetches. The URLs those fetches target are taken from the
+// request body (the credential's issuer DID and credentialStatus), so unless
+// AllowPrivateNetworks is set the client refuses to dial private, loopback,
+// link-local or otherwise non-public addresses. The check runs on the IP
+// actually being dialed — after DNS resolution — which also defeats DNS
+// rebinding.
+func newHTTPClient(cfg *Config) *http.Client {
+	client := &http.Client{
+		Timeout: cfg.HTTPTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return fmt.Errorf("stopped after %d redirects", maxRedirects)
+			}
+			return nil
+		},
+	}
+	if !cfg.AllowPrivateNetworks {
+		dialer := &net.Dialer{Control: guardDial}
+		client.Transport = &http.Transport{DialContext: dialer.DialContext}
+	}
+	return client
+}
+
+// guardDial rejects dials to non-public addresses. address is the resolved
+// "ip:port" the socket is about to connect to.
+func guardDial(network, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("blocked dial to %q: %v", address, err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || isDisallowedIP(ip) {
+		return fmt.Errorf("blocked dial to non-public address %q (set allowPrivateNetworks=true only for local deployments)", address)
+	}
+	return nil
+}
+
+// isDisallowedIP reports whether ip must not be fetched from: loopback,
+// private (RFC1918 / ULA), link-local (which covers the cloud metadata
+// endpoint 169.254.169.254), multicast, unspecified or broadcast.
+func isDisallowedIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() || ip.IsUnspecified() || ip.Equal(net.IPv4bcast)
+}
 
 // fetcher abstracts HTTP GET so tests can inject responses.
 type fetcher func(ctx context.Context, url string) ([]byte, error)

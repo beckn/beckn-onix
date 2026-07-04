@@ -1,4 +1,4 @@
-# vcvalidator — Verifiable Credential validator step
+# validateVC — Verifiable Credential validator step
 
 A beckn-onix processing `Step` plugin that verifies the [W3C Verifiable
 Credentials](https://www.w3.org/TR/vc-data-model-2.0/) embedded in a request
@@ -7,11 +7,12 @@ request with a **NACK** if any embedded credential fails verification — the
 request never reaches routing.
 
 It implements the [`definition.StepProvider`](../../definition/step.go)
-contract and is loaded by the plugin manager as `vcvalidator.so`. Running
-inside the handler's step pipeline means rejections go through the same
-signed-NACK path as every other step (`validateSign`, `validateSchema`): the
-handler builds the NACK envelope and signs it before it is written to the
-wire.
+contract and is built as `validateVC.so` (the .so basename is the plugin id,
+so pipelines wire it as the `validateVC` step — the Go package remains
+`vcvalidator`). Running inside the handler's step pipeline means rejections
+go through the same signed-NACK path as every other step (`validateSign`,
+`validateSchema`): the handler builds the NACK envelope and signs it before
+it is written to the wire.
 
 A credential is any JSON object in the body carrying both a `proof` and a
 `credentialSubject`. This is the combination beckn uses for an embedded VC (for
@@ -48,6 +49,26 @@ which this plugin does **not** implement. With `requireProof: true` (default)
 such credentials are rejected; with `requireProof: false` the signature step is
 skipped and only the validity window, revocation, and verification-method
 resolvability are checked.
+
+## Outbound fetch hardening
+
+did:web resolution and revocation checks issue HTTP GETs to URLs taken from
+the request body (the credential's issuer DID and `credentialStatus`), which
+is an SSRF surface. The shared HTTP client therefore:
+
+- **blocks non-public destinations** — loopback, RFC1918/ULA private,
+  link-local (including the cloud metadata endpoint `169.254.169.254`),
+  multicast, unspecified and broadcast addresses. The check runs at the dial
+  layer on the resolved IP, so it also defeats DNS rebinding.
+- **caps redirects at 3 hops**, each hop passing through the same dial guard.
+- **caps the per-request credential count** (`maxCredentials`, default 10):
+  each credential can cost up to two fetches of `httpTimeout` each, so the
+  cap bounds how long a single request can hold a handler goroutine. Excess
+  is rejected with a Bad Request NACK before any network I/O.
+
+Deployments whose issuers or registries live on a private network (e.g. the
+DEG devkit's docker network) must opt in explicitly with
+`allowPrivateNetworks: "true"` — never do this in production.
 
 ## NACK failure classes
 
@@ -86,7 +107,7 @@ modules:
       role: bpp
       plugins:
         steps:
-          - id: vcvalidator
+          - id: validateVC
             config:
               enabled: "true"           # master switch
               actions: "confirm"        # REQUIRED — comma list of gated beckn actions
@@ -96,10 +117,12 @@ modules:
               requireProof: "true"      # reject proofs this plugin cannot verify
               failOpen: "false"         # on did:web/revocation network errors: false = reject
               httpTimeout: "10"         # seconds
+              maxCredentials: "10"      # cap on embedded credentials per request
+              allowPrivateNetworks: "false"  # SSRF guard escape hatch — local/devkit only
               debugLogging: "false"
       steps:
         - validateSign
-        - vcvalidator
+        - validateVC
         - validateSchema
         - addRoute
         - signAck
@@ -115,6 +138,8 @@ modules:
 | `requireProof` | no | `true` | reject credentials whose proof this plugin cannot verify |
 | `failOpen` | no | `false` | on transient network errors, `true` allows / `false` rejects |
 | `httpTimeout` | no | `10` | seconds; bounds did:web and revocation-list fetches |
+| `maxCredentials` | no | `10` | max embedded credentials per request; excess → Bad Request NACK |
+| `allowPrivateNetworks` | no | `false` | permit fetches to private/loopback/link-local addresses (local deployments only) |
 | `debugLogging` | no | `false` | verbose per-credential logging |
 
 `actions` has no hidden code default — it must be declared in the YAML so the
@@ -147,10 +172,11 @@ regenerate them.
 
 ## Building
 
-`vcvalidator` is listed in [`install/build-plugins.sh`](../../../../install/build-plugins.sh)
-and is built like any other plugin:
+The plugin is listed in [`install/build-plugins.sh`](../../../../install/build-plugins.sh)
+(entry `vcvalidator:validateVC` — source dir : output name) and is built like
+any other plugin:
 
 ```bash
-go build -buildmode=plugin -o plugins/vcvalidator.so \
+go build -buildmode=plugin -o plugins/validateVC.so \
     ./pkg/plugin/implementation/vcvalidator/cmd/plugin.go
 ```

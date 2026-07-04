@@ -1,11 +1,12 @@
 // Package main provides the plugin entry point for the VC Validator
 // processing step. It is compiled as a Go plugin (.so) via
 //
-//	go build -buildmode=plugin -o plugins/vcvalidator.so \
+//	go build -buildmode=plugin -o plugins/validateVC.so \
 //	    ./pkg/plugin/implementation/vcvalidator/cmd/plugin.go
 //
 // and loaded by the beckn-onix plugin manager at runtime, which looks up the
-// exported Provider symbol.
+// exported Provider symbol. The .so basename is the plugin id, so pipelines
+// wire the step as validateVC.
 package main
 
 import (

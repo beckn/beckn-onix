@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -315,6 +316,31 @@ func TestConfigRequiresActions(t *testing.T) {
 	}
 }
 
+func TestConfigMaxCredentialsAndPrivateNetworks(t *testing.T) {
+	cfg, err := ParseConfig(map[string]string{
+		"actions": "confirm", "maxCredentials": "3", "allowPrivateNetworks": "true",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.MaxCredentials != 3 {
+		t.Fatalf("expected maxCredentials=3, got %d", cfg.MaxCredentials)
+	}
+	if !cfg.AllowPrivateNetworks {
+		t.Fatal("expected allowPrivateNetworks=true")
+	}
+
+	if def, err := ParseConfig(map[string]string{"actions": "confirm"}); err != nil || def.MaxCredentials != 10 || def.AllowPrivateNetworks {
+		t.Fatalf("expected defaults maxCredentials=10 allowPrivateNetworks=false, got %+v (%v)", def, err)
+	}
+
+	for _, bad := range []string{"0", "-1", "abc"} {
+		if _, err := ParseConfig(map[string]string{"actions": "confirm", "maxCredentials": bad}); err == nil {
+			t.Fatalf("expected error for maxCredentials=%q", bad)
+		}
+	}
+}
+
 func TestExtractCredentialsFromBecknBody(t *testing.T) {
 	body := []byte(`{"context":{"action":"confirm"},"message":{"contract":{"participants":[
 		{"id":"a"},
@@ -422,6 +448,122 @@ func TestStepNackErrorTypes(t *testing.T) {
 			t.Fatalf("failure class missing from error: %v", err)
 		}
 	})
+}
+
+// TestStepMaxCredentials asserts the per-request credential cap: a request
+// carrying more than maxCredentials must be rejected as a Bad Request before
+// any credential is verified — even if the individual credentials would fail
+// verification for a different reason.
+func TestStepMaxCredentials(t *testing.T) {
+	badVC := loadVC(t)
+	badVC["issuer"] = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH" // ISSUER_MISMATCH if verified
+
+	s := testStep()
+	s.cfg.MaxCredentials = 5
+
+	participants := make([]any, 6)
+	for i := range participants {
+		participants[i] = map[string]any{"id": fmt.Sprintf("p%d", i), "participantAttributes": badVC}
+	}
+	body, err := json.Marshal(map[string]any{
+		"context": map[string]any{"action": "confirm", "messageId": "m-1"},
+		"message": map[string]any{"contract": map[string]any{"participants": participants}},
+	})
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+
+	runErr := s.Run(stepCtx("/bpp/receiver/confirm", body))
+	var badReq *model.BadReqErr
+	if !errors.As(runErr, &badReq) {
+		t.Fatalf("expected *model.BadReqErr, got %T: %v", runErr, runErr)
+	}
+	if !strings.Contains(runErr.Error(), "maxCredentials") {
+		t.Fatalf("expected cap rejection, got: %v", runErr)
+	}
+
+	// At the cap it must fall through to per-credential verification.
+	s.cfg.MaxCredentials = 6
+	runErr = s.Run(stepCtx("/bpp/receiver/confirm", body))
+	if runErr == nil || !strings.Contains(runErr.Error(), string(failIssuer)) {
+		t.Fatalf("expected per-credential verification at the cap, got: %v", runErr)
+	}
+}
+
+// ── outbound fetch hardening ────────────────────────────────────────────
+
+func TestIsDisallowedIP(t *testing.T) {
+	cases := []struct {
+		ip   string
+		want bool
+	}{
+		{"127.0.0.1", true},             // loopback
+		{"10.1.2.3", true},              // RFC1918
+		{"172.16.0.1", true},            // RFC1918
+		{"192.168.1.1", true},           // RFC1918
+		{"169.254.169.254", true},       // link-local / cloud metadata
+		{"0.0.0.0", true},               // unspecified
+		{"255.255.255.255", true},       // broadcast
+		{"224.0.0.1", true},             // multicast
+		{"::1", true},                   // v6 loopback
+		{"fe80::1", true},               // v6 link-local
+		{"fc00::1", true},               // v6 ULA
+		{"::ffff:10.0.0.1", true},       // v4-mapped private
+		{"8.8.8.8", false},              // public v4
+		{"2001:4860:4860::8888", false}, // public v6
+	}
+	for _, tc := range cases {
+		ip := net.ParseIP(tc.ip)
+		if ip == nil {
+			t.Fatalf("bad test ip %q", tc.ip)
+		}
+		if got := isDisallowedIP(ip); got != tc.want {
+			t.Errorf("isDisallowedIP(%s) = %v, want %v", tc.ip, got, tc.want)
+		}
+	}
+}
+
+// TestGuardBlocksPrivateFetch asserts the default client refuses to dial a
+// loopback destination (the SSRF guard), and that allowPrivateNetworks
+// re-enables it for local deployments.
+func TestGuardBlocksPrivateFetch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	cfg := DefaultConfig()
+	cfg.Actions = []string{"confirm"}
+
+	fetch := httpFetcher(newHTTPClient(cfg))
+	if _, err := fetch(context.Background(), srv.URL); err == nil || !strings.Contains(err.Error(), "blocked dial") {
+		t.Fatalf("expected blocked dial to loopback, got: %v", err)
+	}
+
+	cfg.AllowPrivateNetworks = true
+	fetch = httpFetcher(newHTTPClient(cfg))
+	if _, err := fetch(context.Background(), srv.URL); err != nil {
+		t.Fatalf("allowPrivateNetworks: expected fetch to succeed, got: %v", err)
+	}
+}
+
+// TestRedirectCap asserts redirect-following stops after maxRedirects hops.
+func TestRedirectCap(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, srv.URL+r.URL.Path+"x", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	cfg := DefaultConfig()
+	cfg.Actions = []string{"confirm"}
+	cfg.AllowPrivateNetworks = true // so the loopback test server is dialable
+
+	fetch := httpFetcher(newHTTPClient(cfg))
+	_, err := fetch(context.Background(), srv.URL)
+	if err == nil || !strings.Contains(err.Error(), "stopped after 3 redirects") {
+		t.Fatalf("expected redirect cap error, got: %v", err)
+	}
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────
