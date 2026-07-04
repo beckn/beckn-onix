@@ -316,3 +316,79 @@ func TestToPluginConfig_BooleanConversion(t *testing.T) {
 		})
 	}
 }
+
+// TestSetup_New_TracingEnabled tests New with only tracing enabled.
+func TestSetup_New_TracingEnabled(t *testing.T) {
+	setup := Setup{}
+	ctx := context.Background()
+
+	cfg := &Config{
+		ServiceName:    "trace-service",
+		ServiceVersion: "1.0.0",
+		EnableMetrics:  false,
+		EnableTracing:  true,
+		EnableLogs:     false,
+		OtlpEndpoint:   "localhost:4317",
+		TimeInterval:   5,
+	}
+
+	provider, err := setup.New(ctx, cfg)
+	require.NoError(t, err, "New() should succeed with tracing enabled")
+	require.NotNil(t, provider, "New() should return a non-nil provider")
+	assert.NotNil(t, provider.TraceProvider, "TraceProvider should be set when tracing is enabled")
+	assert.Nil(t, provider.MeterProvider, "MeterProvider should be nil when metrics are disabled")
+	assert.Nil(t, provider.LogProvider, "LogProvider should be nil when logs are disabled")
+
+	_ = provider.Shutdown(ctx)
+}
+
+// TestSetup_New_LogsEnabled tests New with only logs enabled.
+func TestSetup_New_LogsEnabled(t *testing.T) {
+	setup := Setup{}
+	ctx := context.Background()
+
+	cfg := &Config{
+		ServiceName:    "log-service",
+		ServiceVersion: "1.0.0",
+		EnableMetrics:  false,
+		EnableTracing:  false,
+		EnableLogs:     true,
+		OtlpEndpoint:   "localhost:4317",
+		TimeInterval:   5,
+	}
+
+	provider, err := setup.New(ctx, cfg)
+	require.NoError(t, err, "New() should succeed with logs enabled")
+	require.NotNil(t, provider, "New() should return a non-nil provider")
+	assert.NotNil(t, provider.LogProvider, "LogProvider should be set when logs are enabled")
+	assert.Nil(t, provider.MeterProvider, "MeterProvider should be nil when metrics are disabled")
+	assert.Nil(t, provider.TraceProvider, "TraceProvider should be nil when tracing is disabled")
+
+	_ = provider.Shutdown(ctx)
+}
+
+// TestSetup_New_AllEnabled tests New with all signals enabled and calls shutdown.
+func TestSetup_New_AllEnabled(t *testing.T) {
+	setup := Setup{}
+	ctx := context.Background()
+
+	cfg := &Config{
+		ServiceName:    "full-service",
+		ServiceVersion: "1.0.0",
+		EnableMetrics:  true,
+		EnableTracing:  true,
+		EnableLogs:     true,
+		OtlpEndpoint:   "localhost:4317",
+		TimeInterval:   5,
+	}
+
+	provider, err := setup.New(ctx, cfg)
+	require.NoError(t, err, "New() should succeed with all signals enabled")
+	require.NotNil(t, provider, "New() should return a non-nil provider")
+	assert.NotNil(t, provider.MeterProvider, "MeterProvider should be set")
+	assert.NotNil(t, provider.TraceProvider, "TraceProvider should be set")
+	assert.NotNil(t, provider.LogProvider, "LogProvider should be set")
+
+	// Shutdown exercises the full provider shutdown path.
+	_ = provider.Shutdown(ctx)
+}

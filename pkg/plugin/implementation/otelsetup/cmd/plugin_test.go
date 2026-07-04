@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/otelsetup"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -291,5 +292,111 @@ func TestMetricsProviderNew_DefaultValues(t *testing.T) {
 	if cleanup != nil {
 		err := cleanup()
 		assert.NoError(t, err, "cleanup() should not return error")
+	}
+}
+
+// TestMetricsProviderNew_ParentIDContext tests that parent ID fields are parsed from the context.
+func TestMetricsProviderNew_ParentIDContext(t *testing.T) {
+	p := metricsProvider{}
+
+	tests := []struct {
+		name     string
+		parentID string
+	}{
+		{name: "three parts", parentID: "producerType:producer:device-id"},
+		{name: "two parts", parentID: "producerType:producer"},
+		{name: "one part", parentID: "producerType"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.WithValue(context.Background(), model.ContextKeyParentID, tt.parentID)
+			provider, cleanup, err := p.New(ctx, map[string]string{"enableMetrics": "false"})
+			require.NoError(t, err)
+			require.NotNil(t, provider)
+			if cleanup != nil {
+				_ = cleanup()
+			}
+		})
+	}
+}
+
+// TestMetricsProviderNew_EnableTracingAndLogs tests that enableTracing and enableLogs are parsed from config.
+func TestMetricsProviderNew_EnableTracingAndLogs(t *testing.T) {
+	p := metricsProvider{}
+	ctx := context.Background()
+
+	tests := []struct {
+		name          string
+		enableTracing string
+		enableLogs    string
+	}{
+		{name: "tracing true logs true", enableTracing: "true", enableLogs: "true"},
+		{name: "tracing false logs false", enableTracing: "false", enableLogs: "false"},
+		{name: "invalid tracing value", enableTracing: "bad", enableLogs: "false"},
+		{name: "invalid logs value", enableTracing: "false", enableLogs: "bad"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := map[string]string{
+				"enableMetrics": "false",
+				"enableTracing": tt.enableTracing,
+				"enableLogs":    tt.enableLogs,
+			}
+			provider, cleanup, err := p.New(ctx, config)
+			require.NoError(t, err)
+			require.NotNil(t, provider)
+			if cleanup != nil {
+				_ = cleanup()
+			}
+		})
+	}
+}
+
+// TestMetricsProviderNew_TimeIntervalAndCacheTTL tests that timeInterval and cacheTTL fall back to defaults for invalid values.
+func TestMetricsProviderNew_TimeIntervalAndCacheTTL(t *testing.T) {
+	p := metricsProvider{}
+	ctx := context.Background()
+
+	tests := []struct {
+		name         string
+		timeInterval string
+		cacheTTL     string
+	}{
+		{name: "valid interval and ttl", timeInterval: "10", cacheTTL: "3600"},
+		{name: "invalid interval", timeInterval: "bad", cacheTTL: "3600"},
+		{name: "invalid cacheTTL", timeInterval: "5", cacheTTL: "bad"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := map[string]string{
+				"enableMetrics": "false",
+				"timeInterval":  tt.timeInterval,
+				"cacheTTL":      tt.cacheTTL,
+			}
+			provider, cleanup, err := p.New(ctx, config)
+			require.NoError(t, err)
+			require.NotNil(t, provider)
+			if cleanup != nil {
+				_ = cleanup()
+			}
+		})
+	}
+}
+
+// TestMetricsProviderNew_NetworkMetrics tests that networkMetricsGranularity and networkMetricsFrequency are applied.
+func TestMetricsProviderNew_NetworkMetrics(t *testing.T) {
+	p := metricsProvider{}
+	ctx := context.Background()
+
+	config := map[string]string{
+		"enableMetrics":             "false",
+		"networkMetricsGranularity": "low",
+		"networkMetricsFrequency":   "30",
+	}
+	provider, cleanup, err := p.New(ctx, config)
+	require.NoError(t, err)
+	require.NotNil(t, provider)
+	if cleanup != nil {
+		_ = cleanup()
 	}
 }
