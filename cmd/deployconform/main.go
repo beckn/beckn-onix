@@ -282,10 +282,12 @@ func printResult(out, errOut io.Writer, result *deployconform.VerifyResult) {
 	for _, report := range result.Reports {
 		if report.Compliant() {
 			fmt.Fprintf(out, "OK   role %q conforms to the network baseline (root %.12s…)\n", report.Role, report.ComputedRoot)
+			printRenames(out, report)
 			continue
 		}
 		fmt.Fprintf(out, "WARN role %q deviates from the network baseline (expected root %.12s…, computed %.12s…)\n",
 			report.Role, report.ExpectedRoot, report.ComputedRoot)
+		printRenames(out, report)
 		for _, finding := range report.Findings {
 			switch finding.Kind {
 			case deployconform.FindingPolicy:
@@ -300,6 +302,14 @@ func printResult(out, errOut io.Writer, result *deployconform.VerifyResult) {
 	}
 	for _, warning := range result.Warnings {
 		fmt.Fprintf(errOut, "WARN: %s\n", warning)
+	}
+}
+
+// printRenames lists content-conformant file renames beneath a role line.
+// Renames are informational: they never affect compliance.
+func printRenames(out io.Writer, report *deployconform.Report) {
+	for _, rename := range report.Renames {
+		fmt.Fprintf(out, "  [renamed] %s → %s\n", rename.From, rename.To)
 	}
 }
 

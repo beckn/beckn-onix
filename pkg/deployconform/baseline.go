@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // GenerateBaseline fills the computed fields of a baseline spec — per-role
@@ -70,14 +71,23 @@ func GenerateBaseline(devkit *Devkit, spec *Baseline) (*Baseline, error) {
 	return &result, nil
 }
 
-// hashArtifact produces the baseline entry for one discovered artifact:
-// variance rules are applied (redacting participant-owned paths, or the whole
-// artifact), the result is canonicalized, and both the canonical form and its
-// SHA-256 are recorded. The canonical form lets verifiers report the exact
-// deviating paths instead of just "hash mismatch".
+// hashArtifact produces the baseline entry for one discovered artifact under
+// the variance profile selected by its own ID. See hashArtifactWithProfile.
 func hashArtifact(a Artifact, variance []VarianceRule, placeholder string) (BaselineArtifact, error) {
 	patterns, wholeArtifact := varianceFor(variance, a.ID)
+	return hashArtifactWithProfile(a, patterns, wholeArtifact, placeholder)
+}
 
+// hashArtifactWithProfile produces the baseline entry for one discovered
+// artifact under an explicit variance profile: file-reference tokens are
+// applied (so referenced file names never influence hashes), participant-
+// owned paths are redacted (or the whole artifact replaced by the
+// placeholder), the result is canonicalized, and both the canonical form and
+// its SHA-256 are recorded. The canonical form lets verifiers report the
+// exact deviating paths instead of just "hash mismatch". The profile is a
+// parameter because rename matching re-hashes a local file under a baseline
+// slot's profile to test whether it fills that slot.
+func hashArtifactWithProfile(a Artifact, patterns []string, wholeArtifact bool, placeholder string) (BaselineArtifact, error) {
 	var canonical []byte
 	var err error
 	switch {
@@ -88,7 +98,8 @@ func hashArtifact(a Artifact, variance []VarianceRule, placeholder string) (Base
 	case a.Kind == KindRaw:
 		canonical = normalizeRaw(a.Raw)
 	default:
-		canonical, err = CanonicalJSON(redactTree(a.Tree, patterns, placeholder))
+		tree := applyTokens(a.Tree, a.Tokens)
+		canonical, err = CanonicalJSON(redactTree(tree, patterns, placeholder))
 	}
 	if err != nil {
 		return BaselineArtifact{}, err
@@ -127,6 +138,13 @@ func VerifyRole(devkit *Devkit, baseline *Baseline, roleName string) (*Report, e
 // for policy input) discovers exactly once and both layers see the same
 // snapshot. Deviations are returned in the report, never as an error; the
 // error path is reserved for the verification process itself failing.
+//
+// Matching is name-tolerant for files: artifacts are paired by ID first (the
+// common case, giving path-level diffs), and leftover baseline entries are
+// then paired with leftover local files by content — a local file fills a
+// baseline slot when, hashed under that slot's variance profile, it
+// reproduces the slot's hash. Such pairs are reported as renames, not
+// deviations. Compose services always match by name: roles bind to them.
 func VerifyRoleArtifacts(baseline *Baseline, roleName string, artifacts []Artifact) (*Report, error) {
 	role, ok := baseline.Roles[roleName]
 	if !ok {
@@ -134,15 +152,15 @@ func VerifyRoleArtifacts(baseline *Baseline, roleName string, artifacts []Artifa
 	}
 
 	placeholder := baseline.placeholderValue()
+	localArtifacts := make(map[string]Artifact, len(artifacts))
 	local := make(map[string]BaselineArtifact, len(artifacts))
-	localList := make([]BaselineArtifact, 0, len(artifacts))
 	for _, a := range artifacts {
 		ba, err := hashArtifact(a, baseline.Variance, placeholder)
 		if err != nil {
 			return nil, fmt.Errorf("hash local artifact %s: %w", a.ID, err)
 		}
+		localArtifacts[a.ID] = a
 		local[ba.ID] = ba
-		localList = append(localList, ba)
 	}
 
 	report := &Report{
@@ -151,15 +169,28 @@ func VerifyRoleArtifacts(baseline *Baseline, roleName string, artifacts []Artifa
 		ReleaseID:    baseline.ReleaseID,
 		Role:         roleName,
 		ExpectedRoot: role.RootSHA256,
-		ComputedRoot: rootHash(localList),
 	}
 
+	// assigned collects the hashes the computed root is built from — for a
+	// renamed file that is the hash under its baseline slot's profile, so a
+	// rename-only checkout reproduces the baseline root exactly.
+	assigned := make([]BaselineArtifact, 0, len(artifacts))
+	matchedLocal := make(map[string]bool, len(artifacts))
+	var unmatchedBaseline []BaselineArtifact
+
+	// Pass 1: pair by ID.
 	for _, want := range role.Artifacts {
 		got, exists := local[want.ID]
 		if !exists {
-			report.Findings = append(report.Findings, Finding{ArtifactID: want.ID, Kind: FindingMissing})
+			if strings.HasPrefix(want.ID, composeArtifactPrefix) {
+				report.Findings = append(report.Findings, Finding{ArtifactID: want.ID, Kind: FindingMissing})
+			} else {
+				unmatchedBaseline = append(unmatchedBaseline, want)
+			}
 			continue
 		}
+		matchedLocal[want.ID] = true
+		assigned = append(assigned, got)
 		if got.SHA256 != want.SHA256 {
 			report.Findings = append(report.Findings, Finding{
 				ArtifactID: want.ID,
@@ -169,20 +200,42 @@ func VerifyRoleArtifacts(baseline *Baseline, roleName string, artifacts []Artifa
 		}
 	}
 
-	known := make(map[string]bool, len(role.Artifacts))
-	for _, want := range role.Artifacts {
-		known[want.ID] = true
-	}
-	extras := make([]string, 0)
+	remainingLocal := make([]string, 0)
 	for id := range local {
-		if !known[id] {
-			extras = append(extras, id)
+		if !matchedLocal[id] {
+			remainingLocal = append(remainingLocal, id)
 		}
 	}
-	sort.Strings(extras)
-	for _, id := range extras {
-		report.Findings = append(report.Findings, Finding{ArtifactID: id, Kind: FindingUnexpected})
+	sort.Strings(remainingLocal)
+
+	// Pass 2: pair leftover baseline file slots with leftover local files by
+	// content, re-hashing each candidate under the slot's variance profile so
+	// a file renamed out of its variance glob still matches its slot.
+	for _, want := range unmatchedBaseline {
+		patterns, wholeArtifact := varianceFor(baseline.Variance, want.ID)
+		renamed := false
+		for i, id := range remainingLocal {
+			candidate, err := hashArtifactWithProfile(localArtifacts[id], patterns, wholeArtifact, placeholder)
+			if err != nil || candidate.SHA256 != want.SHA256 {
+				continue
+			}
+			report.Renames = append(report.Renames, Rename{From: want.ID, To: id})
+			assigned = append(assigned, candidate)
+			remainingLocal = append(remainingLocal[:i], remainingLocal[i+1:]...)
+			renamed = true
+			break
+		}
+		if !renamed {
+			report.Findings = append(report.Findings, Finding{ArtifactID: want.ID, Kind: FindingMissing})
+		}
 	}
+
+	for _, id := range remainingLocal {
+		report.Findings = append(report.Findings, Finding{ArtifactID: id, Kind: FindingUnexpected})
+		assigned = append(assigned, local[id])
+	}
+
+	report.ComputedRoot = rootHash(assigned)
 	return report, nil
 }
 

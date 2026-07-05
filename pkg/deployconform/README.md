@@ -155,6 +155,60 @@ Notes on the format:
 - **`include`** (optional) adds files discovery would not reach, e.g.
   `include: ["schemas/**"]`.
 
+## Renaming files is free — content is identity
+
+For file artifacts, the baseline pins **what** a file contains, not **what it
+is called**. A participant may rename or move any configuration file (and
+update the references to it) without deviating, as long as the content still
+conforms. Three easy examples:
+
+**Example 1 — rename a routing config.** The devkit ships
+`config/routing-bap.yaml`; you prefer `config/my-routes.yaml`:
+
+```bash
+mv config/routing-bap.yaml config/my-routes.yaml
+# and update the pointer in the adapter config:
+#   routingConfig: ./config/my-routes.yaml
+```
+
+```
+OK   role "bap" conforms to the network baseline (root 3f2a1b9c04de…)
+  [renamed] config/routing-bap.yaml → config/my-routes.yaml
+```
+
+Still compliant; the rename is reported for transparency but is not a
+finding. This works because (a) the file is matched by its content hash, not
+its name, and (b) every string that discovery resolved to a local file —
+`routingConfig:`, `CONFIG_FILE=…`, `--config=…`, file bind mounts — is
+replaced by a neutral `__LOCAL_FILE_REF__` token before hashing, so the
+*pointer* does not pin the name either.
+
+**Example 2 — rename and modify.** Rename the network Rego file *and* edit a
+line in it: now no baseline entry matches the content, so you get honest
+findings — `missing: policies/network.rego` plus
+`unexpected: policies/my.rego`. A rename is only free when the content
+conforms.
+
+**Example 3 — URLs are not names.** Changing
+`url: "https://sandbox:3001/api/webhook"` to another URL is a **content**
+change, not a rename: URLs never resolve to local files, so they are hashed
+verbatim and remain governed by variance rules like any other value. Rename
+freedom applies to files on disk, nothing else.
+
+Mechanically: files are paired by path first (so the common no-rename case
+gets precise diffs), then leftover baseline entries are paired with leftover
+local files by content — re-hashed under the baseline entry's variance
+profile, so a file renamed out of its variance glob (e.g.
+`config/adapter-*.yaml` → `config/main.yaml`) still matches its slot. The
+role root hash contains file hashes without names, so a renamed-only
+checkout reproduces the baseline root byte-for-byte.
+
+One deliberate trade-off: because reference tokens are name-neutral,
+swapping two individually-conformant files between two pointer fields is not
+detected at the parent (each file still verifies on its own). If a specific
+binding matters, pin it in the deployment Rego policy — it sees the real
+file names.
+
 ## Generating and publishing a baseline (NFO)
 
 1. Author a spec — the baseline document above without `artifacts`/
@@ -366,6 +420,10 @@ errors.
   for remote artifacts belongs to their own signature/checksum mechanisms.
 - Environment variables interpolated by compose (`${VAR}`) are hashed as
   written, not expanded.
+- Rename freedom covers files only: compose *service* names are identity
+  (roles bind to them), and swapping two conformant files between two
+  reference fields is not detected at the referencing artifact (see the
+  rename section).
 - Conformance is advisory: it detects and reports drift, it does not prevent
   a deviating stack from starting.
 

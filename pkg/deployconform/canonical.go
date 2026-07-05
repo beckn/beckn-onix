@@ -107,13 +107,22 @@ func sha256Hex(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// rootHash commits to a full artifact list: the SHA-256 over the sorted
-// "id sha256" lines of every artifact. A single comparison of root hashes
-// answers "is this deployment conformant" before any per-artifact work.
+// rootHash commits to a full artifact list: the SHA-256 over its sorted
+// artifact lines. A single comparison of root hashes answers "is this
+// deployment conformant" before any per-artifact work.
+//
+// Compose-service artifacts contribute "compose:<name> <sha256>" — service
+// names are identity, roles bind to them. File artifacts contribute only
+// "file <sha256>": files are identified by content, so a renamed but
+// otherwise untouched checkout produces an identical root.
 func rootHash(artifacts []BaselineArtifact) string {
 	lines := make([]string, 0, len(artifacts))
 	for _, a := range artifacts {
-		lines = append(lines, a.ID+" "+a.SHA256+"\n")
+		if strings.HasPrefix(a.ID, composeArtifactPrefix) {
+			lines = append(lines, a.ID+" "+a.SHA256+"\n")
+		} else {
+			lines = append(lines, "file "+a.SHA256+"\n")
+		}
 	}
 	sort.Strings(lines)
 	h := sha256.New()
@@ -189,6 +198,48 @@ func redactPath(node any, segments []string, placeholder string) {
 			} else {
 				redactPath(t[key], segments[1:], placeholder)
 			}
+		}
+	}
+}
+
+// applyTokens returns a copy of tree with every string value that appears in
+// tokens replaced by its mapped value. It is how file-name references are
+// neutralized before hashing: discovery maps each string that resolved to a
+// local file artifact onto a name-free token, so renaming the file cannot
+// change the hash of the artifact referencing it. Strings not in the map —
+// URLs in particular — pass through untouched.
+func applyTokens(tree any, tokens map[string]string) any {
+	if len(tokens) == 0 {
+		return tree
+	}
+	copied := deepCopy(tree)
+	replaceStrings(copied, tokens)
+	return copied
+}
+
+// replaceStrings substitutes mapped string values in place, recursing through
+// maps and slices.
+func replaceStrings(node any, tokens map[string]string) {
+	switch t := node.(type) {
+	case []any:
+		for i, item := range t {
+			if s, ok := item.(string); ok {
+				if v, hit := tokens[s]; hit {
+					t[i] = v
+				}
+				continue
+			}
+			replaceStrings(item, tokens)
+		}
+	case map[string]any:
+		for k, item := range t {
+			if s, ok := item.(string); ok {
+				if v, hit := tokens[s]; hit {
+					t[k] = v
+				}
+				continue
+			}
+			replaceStrings(item, tokens)
 		}
 	}
 }

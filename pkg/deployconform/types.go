@@ -198,6 +198,14 @@ type Finding struct {
 	Details    []FindingDetail `json:"details,omitempty"`
 }
 
+// Rename records that a baseline file artifact is present locally under a
+// different name with conformant content. Renames are transparency, not
+// deviations: file identity is content, the name is a label.
+type Rename struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
 // Report is the outcome of verifying one role of a deployment against the
 // network baseline.
 type Report struct {
@@ -208,6 +216,7 @@ type Report struct {
 	ExpectedRoot   string    `json:"expectedRoot"`
 	ComputedRoot   string    `json:"computedRoot"`
 	Findings       []Finding `json:"findings,omitempty"`
+	Renames        []Rename  `json:"renames,omitempty"`
 	BaselineDigest string    `json:"baselineDigest,omitempty"`
 }
 

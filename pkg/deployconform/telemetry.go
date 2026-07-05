@@ -31,6 +31,7 @@ type DeviationEvent struct {
 	ComputedRoot   string    `json:"computedRoot"`
 	BaselineDigest string    `json:"baselineDigest,omitempty"`
 	Findings       []Finding `json:"findings,omitempty"`
+	Renames        []Rename  `json:"renames,omitempty"`
 	GeneratedAt    time.Time `json:"generatedAt"`
 }
 
@@ -63,6 +64,7 @@ func NewDeviationEvent(report *Report, generatedAt time.Time) DeviationEvent {
 		ComputedRoot:   report.ComputedRoot,
 		BaselineDigest: report.BaselineDigest,
 		Findings:       findings,
+		Renames:        report.Renames,
 		GeneratedAt:    generatedAt.UTC(),
 	}
 }

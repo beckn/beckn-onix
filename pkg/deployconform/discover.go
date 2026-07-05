@@ -41,14 +41,26 @@ const (
 	KindRaw ArtifactKind = "raw"
 )
 
+// localFileRefToken replaces, before hashing, every string value that
+// discovery resolved to a local file artifact. Files are identified by their
+// content, not their name (see baseline.go), so the pointer to a file must
+// not pin its name either — otherwise renaming a file would still deviate
+// through the field that references it. URLs never resolve as local files
+// and are therefore always hashed verbatim.
+const localFileRefToken = "__LOCAL_FILE_REF__"
+
 // Artifact is one discovered unit of deployed configuration, before
 // redaction. Tree holds the parsed form for structured kinds; Raw holds the
-// normalized bytes for raw kinds.
+// normalized bytes for raw kinds. Tokens maps string values inside Tree that
+// discovery resolved to local file artifacts onto their name-neutral
+// replacement (see localFileRefToken); hashing applies it so file renames do
+// not change the hash of the artifact holding the reference.
 type Artifact struct {
-	ID   string
-	Kind ArtifactKind
-	Tree any
-	Raw  []byte
+	ID     string
+	Kind   ArtifactKind
+	Tree   any
+	Raw    []byte
+	Tokens map[string]string
 }
 
 // Devkit is a loaded devkit checkout: the resolved root directory and the
@@ -157,15 +169,22 @@ func (d *Devkit) RoleArtifacts(services, include []string) ([]Artifact, error) {
 // bind-mounted files, and the adapter config named by the CONFIG_FILE
 // environment variable or a --config=<path> command argument (both are
 // container paths, translated to host paths through the service's mounts).
+// Every string in the service subtree that resolved to a file artifact is
+// recorded in the compose artifact's token map, so the service definition
+// hashes independently of the referenced file names.
 func (d *Devkit) discoverServiceFiles(name string, byID map[string]Artifact) error {
 	service, _ := d.services[name].(map[string]any)
 	mounts := d.serviceMounts(service)
+	tokens := make(map[string]string)
 
 	for _, m := range mounts {
 		abs := filepath.Join(d.root, filepath.FromSlash(m.hostRel))
 		if info, err := os.Stat(abs); err == nil && info.Mode().IsRegular() {
 			if err := d.addFile(m.hostRel, byID, 0); err != nil {
 				return err
+			}
+			if _, added := byID[m.hostRel]; added {
+				tokens[m.tokenKey] = m.tokenValue
 			}
 		}
 	}
@@ -178,6 +197,20 @@ func (d *Devkit) discoverServiceFiles(name string, byID map[string]Artifact) err
 		if err := d.addFile(hostRel, byID, 0); err != nil {
 			return err
 		}
+		if _, added := byID[hostRel]; added {
+			// Cover every syntactic site the container path can appear in:
+			// environment map value, "CONFIG_FILE=…" list entry, and both
+			// --config argument forms.
+			tokens[containerPath] = localFileRefToken
+			tokens["CONFIG_FILE="+containerPath] = "CONFIG_FILE=" + localFileRefToken
+			tokens["--config="+containerPath] = "--config=" + localFileRefToken
+		}
+	}
+
+	if len(tokens) > 0 {
+		artifact := byID[composeArtifactPrefix+name]
+		artifact.Tokens = tokens
+		byID[composeArtifactPrefix+name] = artifact
 	}
 	return nil
 }
@@ -213,6 +246,7 @@ func (d *Devkit) addFile(rel string, byID map[string]Artifact, depth int) error 
 	}
 	byID[rel] = Artifact{ID: rel, Kind: KindStructured, Tree: tree}
 
+	tokens := make(map[string]string)
 	for _, ref := range collectPathRefs(tree) {
 		refRel, err := d.confine(ref)
 		if err != nil {
@@ -225,6 +259,12 @@ func (d *Devkit) addFile(rel string, byID map[string]Artifact, depth int) error 
 		if err := d.addFile(refRel, byID, depth+1); err != nil {
 			return err
 		}
+		tokens[ref] = localFileRefToken
+	}
+	if len(tokens) > 0 {
+		artifact := byID[rel]
+		artifact.Tokens = tokens
+		byID[rel] = artifact
 	}
 	return nil
 }
@@ -285,10 +325,16 @@ func (d *Devkit) confine(p string) (string, error) {
 }
 
 // mount is one bind mount of a compose service, with the host side already
-// resolved to a root-relative slash path.
+// resolved to a root-relative slash path. tokenKey is the original string
+// value carrying the host path in the compose tree; tokenValue is that value
+// with the host path replaced by localFileRefToken — applied only when the
+// mounted file becomes an artifact, so file bind mounts hash independently
+// of the file's name.
 type mount struct {
-	hostRel   string
-	container string
+	hostRel    string
+	container  string
+	tokenKey   string
+	tokenValue string
 }
 
 // serviceMounts parses the service's volumes into bind mounts. Named volumes
@@ -299,7 +345,7 @@ func (d *Devkit) serviceMounts(service map[string]any) []mount {
 	volumes, _ := service["volumes"].([]any)
 	var mounts []mount
 	for _, v := range volumes {
-		var host, container string
+		var host, container, tokenKey, tokenValue string
 		switch t := v.(type) {
 		case string:
 			parts := strings.SplitN(t, ":", 3)
@@ -307,9 +353,13 @@ func (d *Devkit) serviceMounts(service map[string]any) []mount {
 				continue
 			}
 			host, container = parts[0], parts[1]
+			tokenKey = t
+			tokenValue = localFileRefToken + strings.TrimPrefix(t, host)
 		case map[string]any:
 			host, _ = t["source"].(string)
 			container, _ = t["target"].(string)
+			tokenKey = host
+			tokenValue = localFileRefToken
 		}
 		if !strings.HasPrefix(host, "./") && !strings.HasPrefix(host, "../") {
 			continue // named volume or absolute path
@@ -320,7 +370,7 @@ func (d *Devkit) serviceMounts(service map[string]any) []mount {
 		if err != nil {
 			continue
 		}
-		mounts = append(mounts, mount{hostRel: hostRel, container: path.Clean(container)})
+		mounts = append(mounts, mount{hostRel: hostRel, container: path.Clean(container), tokenKey: tokenKey, tokenValue: tokenValue})
 	}
 	return mounts
 }
