@@ -215,7 +215,10 @@ file names.
 ## Generating and publishing a baseline (NFO)
 
 1. Author a spec — the baseline document above without `artifacts`/
-   `rootSha256` — and check out the exact devkit release it describes.
+   `rootSha256` — and check out the exact devkit release it describes. A
+   complete, commented, working example ships at
+   [`testdata/baseline-spec.yaml`](testdata/baseline-spec.yaml); the test
+   suite generates and verifies from it, so it cannot go stale.
 2. Generate:
 
    ```bash

@@ -9,36 +9,22 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// testSpec returns the baseline spec used by the roundtrip tests: identity
-// fields (keys, participant names, ports) are participant-owned, routing
-// configs are wholly participant-owned, compose runtime knobs vary.
-func testSpec() *Baseline {
-	return &Baseline{
-		NetworkID:   "example.org/testnet",
-		DevkitID:    "mini-devkit",
-		ReleaseID:   "2026.07",
-		ComposePath: "install/docker-compose.yml",
-		Variance: []VarianceRule{
-			{
-				Artifacts: []string{"config/adapter-*.yaml"},
-				Paths: []string{
-					"http.port",
-					"modules.handler.plugins.keyManager.config",
-				},
-			},
-			{
-				Artifacts: []string{"config/routing-*.yaml"},
-			},
-			{
-				Artifacts: []string{"compose:*"},
-				Paths:     []string{"ports", "container_name", "environment.REDIS_ADDR"},
-			},
-		},
-		Roles: map[string]*BaselineRole{
-			"alpha": {Services: []string{"onix-alpha", "redis-alpha"}},
-			"beta":  {Services: []string{"onix-beta"}},
-		},
+// testSpec loads the example baseline spec shipped as a fixture. The fixture
+// doubles as copyable NFO documentation, and loading it here guarantees the
+// documented example keeps working: identity fields (keys, participant
+// names, ports) are participant-owned, routing configs are wholly
+// participant-owned, compose runtime knobs vary.
+func testSpec(t *testing.T) *Baseline {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join("testdata", "baseline-spec.yaml"))
+	if err != nil {
+		t.Fatalf("read baseline spec fixture: %v", err)
 	}
+	spec, err := ParseBaseline(content)
+	if err != nil {
+		t.Fatalf("parse baseline spec fixture: %v", err)
+	}
+	return spec
 }
 
 // copyDevkit clones the testdata devkit into a temp dir so tests can tamper
@@ -75,7 +61,7 @@ func copyDevkit(t *testing.T) string {
 func generateTestBaseline(t *testing.T) *Baseline {
 	t.Helper()
 	devkit := testDevkit(t)
-	baseline, err := GenerateBaseline(devkit, testSpec())
+	baseline, err := GenerateBaseline(devkit, testSpec(t))
 	if err != nil {
 		t.Fatalf("GenerateBaseline: %v", err)
 	}
@@ -131,7 +117,7 @@ func TestGenerateBaseline(t *testing.T) {
 
 	// Generating from a missing service must fail: the facilitator's checkout
 	// defines conformance.
-	badSpec := testSpec()
+	badSpec := testSpec(t)
 	badSpec.Roles["gamma"] = &BaselineRole{Services: []string{"missing-service"}}
 	if _, err := GenerateBaseline(testDevkit(t), badSpec); err == nil || !strings.Contains(err.Error(), "missing-service") {
 		t.Fatalf("expected missing-service error, got %v", err)
