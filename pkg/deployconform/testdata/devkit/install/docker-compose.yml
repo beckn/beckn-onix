@@ -1,0 +1,35 @@
+# Miniature devkit stack used by discovery and verification tests. It mirrors
+# the shapes real devkits use: map-form and list-form environment sections,
+# CONFIG_FILE and --config entrypoints, relative bind mounts, a raw
+# bind-mounted file, and a named volume that must be ignored.
+services:
+  onix-alpha:
+    image: example/onix-adapter:v2
+    container_name: onix-alpha
+    ports:
+      - "8081:8081"
+    environment:
+      CONFIG_FILE: /app/config/adapter-alpha.yaml
+      REDIS_ADDR: redis:6379
+    volumes:
+      - ../config:/app/config
+      - ../policies:/app/policies
+      - ./startup.js:/startup/startup.js:ro
+      - cachevol:/data
+    command: ["./server", "--config=/app/config/adapter-alpha.yaml"]
+
+  redis-alpha:
+    image: redis:alpine
+    container_name: redis-alpha
+
+  onix-beta:
+    image: example/onix-adapter:v2
+    container_name: onix-beta
+    environment:
+      - CONFIG_FILE=/app/config/adapter-beta.yaml
+      - NODE_ENV=production
+    volumes:
+      - ../config:/app/config
+
+volumes:
+  cachevol:

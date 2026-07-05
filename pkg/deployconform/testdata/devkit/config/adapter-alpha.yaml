@@ -1,0 +1,33 @@
+# Adapter config for the alpha participant. Exercises recursive reference
+# discovery (policy config and routing config) plus an unresolvable
+# reference (pluginManager.root exists only inside the image) and an
+# escaping reference that must be ignored.
+appName: onix-test
+log:
+  level: debug
+http:
+  port: 8081
+pluginManager:
+  root: ./plugins
+modules:
+  - name: txnReceiver
+    handler:
+      plugins:
+        keyManager:
+          config:
+            networkParticipant: alpha.example.com
+            keyId: alpha-key-1
+            signingPrivateKey: ALPHA-PRIVATE-KEY
+        checkPolicy:
+          config:
+            networkPolicyConfig: ./config/opa-policies.yaml
+        router:
+          config:
+            routingConfig: ./config/routing-alpha.yaml
+        escape:
+          config:
+            badReference: ../../../etc/hosts
+      steps:
+        - validateSign
+        - checkPolicy
+        - addRoute
