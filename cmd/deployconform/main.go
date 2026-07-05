@@ -129,6 +129,7 @@ func runVerify(ctx context.Context, args []string) {
 	collectorURL := fs.String("collector-url", "", "override the manifest's observability collector URL")
 	telemetry := fs.Bool("telemetry", true, "emit deviation events to the observability collector")
 	watch := fs.Duration("watch", 0, "re-verify on this interval (e.g. 15m); 0 verifies once")
+	statusFile := fs.String("status-file", "", "marker file kept present while conformant and removed on deviation, for container healthchecks (gate-on-start, warn-while-running)")
 	strict := fs.Bool("strict", false, "exit with code 2 when deviations are found")
 	jsonOut := fs.Bool("json", false, "print reports as JSON instead of text")
 	timeout := fs.Duration("timeout", 30*time.Second, "timeout for each remote fetch")
@@ -158,8 +159,15 @@ func runVerify(ctx context.Context, args []string) {
 		*watch = minWatchInterval
 	}
 
+	// A stale marker from a previous run must not satisfy a healthcheck
+	// before the first pass of this run has verified anything.
+	if *statusFile != "" {
+		_ = os.Remove(*statusFile)
+	}
+
 	for {
 		compliant := verifyOnce(ctx, *opts, *jsonOut, *watch <= 0)
+		updateStatusFile(*statusFile, compliant)
 		if *watch <= 0 {
 			if !compliant && *strict {
 				os.Exit(2)
@@ -171,6 +179,25 @@ func runVerify(ctx context.Context, args []string) {
 			return
 		case <-time.After(*watch):
 		}
+	}
+}
+
+// updateStatusFile maintains the conformance marker consumed by container
+// healthchecks: present (holding the pass timestamp) after a compliant pass,
+// absent after deviations or execution errors. Combined with
+// `depends_on: condition: service_healthy`, this gates dependent services at
+// startup only — Docker does not stop running dependents when the check
+// later turns unhealthy, which is exactly the warn-while-running model.
+func updateStatusFile(path string, compliant bool) {
+	if path == "" {
+		return
+	}
+	if !compliant {
+		_ = os.Remove(path)
+		return
+	}
+	if err := os.WriteFile(path, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: write status file %s: %v\n", path, err)
 	}
 }
 

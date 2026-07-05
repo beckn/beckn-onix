@@ -286,29 +286,52 @@ Add the verifier to the devkit stack so drift is caught continuously:
 The sidecar needs only a read-only mount of the devkit and outbound HTTPS;
 it never modifies anything.
 
-### Gating startup on conformance (optional)
+### Recommended operation: gate on start, warn while running
 
-The default posture is warn-and-alert: a deviating stack still runs. A
-participant (or a devkit author) can opt into hard gating with compose
-dependencies — `--strict` exits with code 2 on any deviation, so a one-shot
-gate service blocks everything that depends on it:
+The recommended posture combines the startup gate with periodic warn-only
+checks, using one sidecar and Docker's own dependency semantics:
 
 ```yaml
-  conformance-gate:
+  conformance:
     image: <image with deployconform>
     command: ["deployconform", "verify", "--root", "/devkit",
-              "--network-id", "nfo.example.org/production", "--strict"]
+              "--network-id", "nfo.example.org/production",
+              "--watch", "15m", "--status-file", "/run/conformant"]
     volumes:
       - ..:/devkit:ro
+    healthcheck:
+      test: ["CMD", "test", "-f", "/run/conformant"]
+      interval: 30s
+      retries: 1
+      start_period: 120s   # allow the first pass (remote fetches) to finish
 
   onix-bap:
     depends_on:
-      conformance-gate:
-        condition: service_completed_successfully
+      conformance:
+        condition: service_healthy
     ...
 ```
 
-Two caveats before enabling this:
+`--status-file` keeps a marker file present while the deployment conforms
+and removes it on any deviation (or verification error); the healthcheck
+simply probes the marker. The behavior that falls out:
+
+- **On `docker compose up` (first start or after a reboot)** the adapters
+  wait for the sidecar to become healthy. A non-conforming checkout never
+  produces the marker, so the stack does not start until conformance is
+  restored — deviations accumulated during a previous run block the
+  *restart*, not the run.
+- **While running**, a deviation turns the sidecar unhealthy, logs WARN
+  lines, and emits telemetry — but Docker never stops already-running
+  dependents on a later health change, so the live stack is untouched.
+  Exactly warn-while-running.
+- A stale marker from a previous run is removed at process start, so a
+  reboot always re-verifies before the gate opens.
+
+For CI and certification runs, the one-shot form is simpler: `deployconform
+verify --strict` exits with code 2 on any deviation.
+
+Two caveats before relying on the gate:
 
 - **It is cooperative, not tamper-proof.** The gate runs on the
   participant's host; deleting the `depends_on` stanza removes it. Doing so
@@ -317,10 +340,10 @@ Two caveats before enabling this:
   detection of a silenced verifier is the collector noticing a missing
   heartbeat, not the gate. Treat gating as protection against *accidental*
   drift, not against a hostile participant.
-- **It couples availability to remote infrastructure.** Strict gating makes
-  stack startup depend on DeDi, the manifest host, and the baseline host
-  being reachable. Prefer warn-only for production serving stacks and
-  strict gating for certification runs, CI, and first-time onboarding.
+- **It couples startup availability to remote infrastructure.** The gate
+  needs DeDi, the manifest host, and the baseline host reachable to open.
+  That is usually acceptable for planned restarts; if it is not, drop the
+  `depends_on` and run the sidecar purely warn-only.
 
 ## Writing deployment policies
 

@@ -109,3 +109,23 @@ func TestPrintResult(t *testing.T) {
 		t.Fatalf("stderr missing warning: %s", errOut.String())
 	}
 }
+
+// TestUpdateStatusFile checks the healthcheck marker lifecycle: created on a
+// compliant pass, removed on deviation, inert with no path configured.
+func TestUpdateStatusFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "conformant")
+
+	updateStatusFile(path, true)
+	content, err := os.ReadFile(path)
+	if err != nil || len(content) == 0 {
+		t.Fatalf("compliant pass must create the marker with a timestamp, got %q, %v", content, err)
+	}
+
+	updateStatusFile(path, false)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("deviation must remove the marker, stat err = %v", err)
+	}
+
+	updateStatusFile(path, false) // removing an absent marker is fine
+	updateStatusFile("", true)    // no path configured is a no-op
+}
