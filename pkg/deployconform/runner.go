@@ -69,8 +69,9 @@ func (r *VerifyResult) Compliant() bool {
 }
 
 // RunVerification executes a full verification pass per opts. Deviations are
-// reported in the result, never as an error: the network policy model is
-// warn-and-alert, not block.
+// reported in the result, never as an error: the library only reports;
+// enforcement (startup gating via --strict or --status-file) is composed by
+// the caller.
 func RunVerification(ctx context.Context, opts VerifyOptions) (*VerifyResult, error) {
 	if opts.Timeout <= 0 {
 		opts.Timeout = defaultTimeout
