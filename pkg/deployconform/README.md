@@ -12,9 +12,12 @@ reference. A participant that quietly removes the `checkPolicy` step, swaps
 an image tag, or points at a different Rego file deviates from the network's
 operating agreement even though every message it sends still validates.
 
-Conformance is **warn-and-alert, never block**: deviations are logged as
-warnings and (optionally) reported to the network's observability collector.
-Nothing stops a deviating stack from running.
+Conformance **never stops a running stack**: at runtime, deviations are
+logged as warnings and (optionally) reported to the network's observability
+collector. **Startup is where enforcement can bite**: with the recommended
+gate-on-start posture (see below), a non-conforming checkout will not start
+— including after a reboot, if deviations accumulated while running.
+Without the gate, verification is warn-only everywhere.
 
 ## How it works
 
@@ -447,8 +450,9 @@ errors.
   (roles bind to them), and swapping two conformant files between two
   reference fields is not detected at the referencing artifact (see the
   rename section).
-- Conformance is advisory: it detects and reports drift, it does not prevent
-  a deviating stack from starting.
+- Enforcement is startup-only and opt-in: the gate blocks a deviant
+  checkout from (re)starting, but nothing ever stops a stack that is
+  already running, and a participant can run without the gate entirely.
 
 ## Dependencies
 
