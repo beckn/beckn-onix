@@ -232,6 +232,42 @@ Add the verifier to the devkit stack so drift is caught continuously:
 The sidecar needs only a read-only mount of the devkit and outbound HTTPS;
 it never modifies anything.
 
+### Gating startup on conformance (optional)
+
+The default posture is warn-and-alert: a deviating stack still runs. A
+participant (or a devkit author) can opt into hard gating with compose
+dependencies — `--strict` exits with code 2 on any deviation, so a one-shot
+gate service blocks everything that depends on it:
+
+```yaml
+  conformance-gate:
+    image: <image with deployconform>
+    command: ["deployconform", "verify", "--root", "/devkit",
+              "--network-id", "nfo.example.org/production", "--strict"]
+    volumes:
+      - ..:/devkit:ro
+
+  onix-bap:
+    depends_on:
+      conformance-gate:
+        condition: service_completed_successfully
+    ...
+```
+
+Two caveats before enabling this:
+
+- **It is cooperative, not tamper-proof.** The gate runs on the
+  participant's host; deleting the `depends_on` stanza removes it. Doing so
+  makes the compose service subtree deviate from the baseline, but the
+  verifier that would report it is the thing being disabled — network-side
+  detection of a silenced verifier is the collector noticing a missing
+  heartbeat, not the gate. Treat gating as protection against *accidental*
+  drift, not against a hostile participant.
+- **It couples availability to remote infrastructure.** Strict gating makes
+  stack startup depend on DeDi, the manifest host, and the baseline host
+  being reachable. Prefer warn-only for production serving stacks and
+  strict gating for certification runs, CI, and first-time onboarding.
+
 ## Writing deployment policies
 
 The policy input for each role is:
