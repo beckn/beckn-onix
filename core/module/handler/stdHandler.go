@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
@@ -338,6 +339,30 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 	*responseBody = sendAck(ctx, w)
 }
 
+// proxyBufPool backs reverseProxyBufferPool. Without a BufferPool set on
+// httputil.ReverseProxy, copyBuffer allocates a fresh 32KB []byte per
+// proxied response (see https://github.com/beckn/beckn-onix/issues/848) —
+// pooling avoids that allocation on every request.
+var proxyBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 32*1024)
+		return &b
+	},
+}
+
+// reverseProxyBufferPool implements httputil.BufferPool over proxyBufPool.
+// Buffers are stored as *[]byte rather than []byte so Put does not box a
+// fresh interface value (and allocate) on every call.
+type reverseProxyBufferPool struct{}
+
+func (reverseProxyBufferPool) Get() []byte {
+	return *(proxyBufPool.Get().(*[]byte))
+}
+
+func (reverseProxyBufferPool) Put(b []byte) {
+	proxyBufPool.Put(&b)
+}
+
 func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpClient *http.Client, responseSteps []definition.ResponseStep, responseBody *[]byte) {
 	target := ctx.Route.URL
 	r.Header.Set("X-Forwarded-Host", r.Host)
@@ -380,6 +405,7 @@ func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpC
 		Director:       director,
 		Transport:      httpClient.Transport,
 		ModifyResponse: modifyResponse,
+		BufferPool:     reverseProxyBufferPool{},
 	}
 
 	p.ServeHTTP(w, r)
