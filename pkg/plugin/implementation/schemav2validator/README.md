@@ -99,8 +99,7 @@ A startup warning is logged if no schemas are found, which usually means the dir
 
 **Extended Schema Validation** (if `extendedSchema_enabled: "true"` AND core validation passed):
 5. **Scan for @context**: Recursively traverse `message` field for objects with `@context` and `@type`
-6. **Filter Core Schemas**: Skip objects with `/schema/core/` in `@context` URL
-7. **Validate Each Domain Object**:
+6. **Validate Each Domain Object**:
    - Check domain whitelist (if `allowedDomains` configured)
    - Transform `@context` URL: `context.jsonld` → `attributes.yaml`
    - Load schema from URL/file (check cache first, download if miss)
@@ -108,7 +107,7 @@ A startup warning is logged if no schemas are found, which usually means the dir
    - Strip `@context` and `@type` metadata from object
    - Validate remaining data against domain schema
    - Prefix error paths with object location (e.g., `message.order.field`)
-8. **Return Errors**: Returns first validation error (fail-fast)
+7. **Return Errors**: Returns first validation error (fail-fast)
 
 ## Action-Based Matching
 
@@ -219,7 +218,6 @@ schemaValidator:
 
 **At Runtime** (after core validation passes):
 - Scans `message` field for objects with `@context` and `@type`
-- Skips core Beckn schemas (containing `/schema/core/`)
 - Downloads domain schemas from `@context` URLs (cached for 24 hours)
 - Validates domain-specific data against schemas
 - Returns errors with full JSON paths (e.g., `message.order.chargingRate`)
