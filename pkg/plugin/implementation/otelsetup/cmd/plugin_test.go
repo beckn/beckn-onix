@@ -6,6 +6,7 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/otelsetup"
+	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -326,14 +327,16 @@ func TestMetricsProviderNew_EnableTracingAndLogs(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name          string
-		enableTracing string
-		enableLogs    string
+		name              string
+		enableTracing     string
+		enableLogs        string
+		wantTraceProvider bool
+		wantLogProvider   bool
 	}{
-		{name: "tracing true logs true", enableTracing: "true", enableLogs: "true"},
-		{name: "tracing false logs false", enableTracing: "false", enableLogs: "false"},
-		{name: "invalid tracing value", enableTracing: "bad", enableLogs: "false"},
-		{name: "invalid logs value", enableTracing: "false", enableLogs: "bad"},
+		{name: "tracing true logs true", enableTracing: "true", enableLogs: "true", wantTraceProvider: true, wantLogProvider: true},
+		{name: "tracing false logs false", enableTracing: "false", enableLogs: "false", wantTraceProvider: false, wantLogProvider: false},
+		{name: "invalid tracing value", enableTracing: "bad", enableLogs: "false", wantTraceProvider: false, wantLogProvider: false},
+		{name: "invalid logs value", enableTracing: "false", enableLogs: "bad", wantTraceProvider: false, wantLogProvider: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -345,6 +348,16 @@ func TestMetricsProviderNew_EnableTracingAndLogs(t *testing.T) {
 			provider, cleanup, err := p.New(ctx, config)
 			require.NoError(t, err)
 			require.NotNil(t, provider)
+			if tt.wantTraceProvider {
+				assert.NotNil(t, provider.TraceProvider, "expected TraceProvider to be set")
+			} else {
+				assert.Nil(t, provider.TraceProvider, "expected TraceProvider to be nil")
+			}
+			if tt.wantLogProvider {
+				assert.NotNil(t, provider.LogProvider, "expected LogProvider to be set")
+			} else {
+				assert.Nil(t, provider.LogProvider, "expected LogProvider to be nil")
+			}
 			if cleanup != nil {
 				_ = cleanup()
 			}
@@ -396,6 +409,9 @@ func TestMetricsProviderNew_NetworkMetrics(t *testing.T) {
 	provider, cleanup, err := p.New(ctx, config)
 	require.NoError(t, err)
 	require.NotNil(t, provider)
+	granularity, frequency := telemetry.GetNetworkMetricsConfig()
+	assert.Equal(t, "low", granularity, "expected networkMetricsGranularity to be applied")
+	assert.Equal(t, "30", frequency, "expected networkMetricsFrequency to be applied")
 	if cleanup != nil {
 		_ = cleanup()
 	}
