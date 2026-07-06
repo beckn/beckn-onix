@@ -103,14 +103,14 @@ func TestSignFailure(t *testing.T) {
 	}
 }
 
-// TestSignAck tests SignAck with empty, non-empty, and invalid request signatures.
+// TestSignAck tests SignAck with empty, non-empty, and invalid private key inputs.
 func TestSignAck(t *testing.T) {
 	privateKey, _ := generateTestKeys()
 	config := Config{}
 	signer, _, _ := New(context.Background(), &config)
 	now := time.Now().Unix()
 
-	t.Run("valid key with empty request signature", func(t *testing.T) {
+	t.Run("empty request signature", func(t *testing.T) {
 		sig, err := signer.SignAck(context.Background(), []byte("ack body"), "", privateKey, now, now+3600)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
@@ -120,13 +120,19 @@ func TestSignAck(t *testing.T) {
 		}
 	})
 
-	t.Run("valid key with non-empty request signature", func(t *testing.T) {
-		sig, err := signer.SignAck(context.Background(), []byte("ack body"), "existing-signature-value", privateKey, now, now+3600)
+	t.Run("non-empty request signature changes output", func(t *testing.T) {
+		ctx := context.Background()
+		body := []byte("ack body")
+		sigWithout, err := signer.SignAck(ctx, body, "", privateKey, now, now+3600)
 		if err != nil {
-			t.Errorf("unexpected error: %v", err)
+			t.Errorf("unexpected error (without): %v", err)
 		}
-		if len(sig) == 0 {
-			t.Errorf("expected non-empty signature")
+		sigWith, err := signer.SignAck(ctx, body, "existing-signature-value", privateKey, now, now+3600)
+		if err != nil {
+			t.Errorf("unexpected error (with): %v", err)
+		}
+		if sigWithout == sigWith {
+			t.Error("expected signatures to differ when request-signature is included")
 		}
 	})
 
