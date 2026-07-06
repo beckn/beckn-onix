@@ -15,42 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestIsCoreSchema(t *testing.T) {
-	tests := []struct {
-		name       string
-		contextURL string
-		want       bool
-	}{
-		{
-			name:       "core schema URL",
-			contextURL: "https://raw.githubusercontent.com/beckn/protocol-specifications-new/refs/heads/draft/schema/core/v2/context.jsonld",
-			want:       true,
-		},
-		{
-			name:       "domain schema URL",
-			contextURL: "https://raw.githubusercontent.com/beckn/protocol-specifications-new/refs/heads/draft/schema/EvChargingOffer/v1/context.jsonld",
-			want:       false,
-		},
-		{
-			name:       "empty URL",
-			contextURL: "",
-			want:       false,
-		},
-		{
-			name:       "URL without schema/core",
-			contextURL: "https://example.com/some/path/context.jsonld",
-			want:       false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := isCoreSchema(tt.contextURL)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
 func TestFindReferencedObjects(t *testing.T) {
 	tests := []struct {
 		name string
@@ -69,14 +33,14 @@ func TestFindReferencedObjects(t *testing.T) {
 			want: 1,
 		},
 		{
-			name: "core schema object - should be skipped",
+			name: "object with @context and @type is always found",
 			data: map[string]interface{}{
 				"@context": "https://example.com/schema/core/v2/context.jsonld",
 				"@type":    "beckn:Order",
 				"field":    "value",
 			},
 			path: "message",
-			want: 0,
+			want: 1,
 		},
 		{
 			name: "nested domain objects",
@@ -92,7 +56,7 @@ func TestFindReferencedObjects(t *testing.T) {
 				},
 			},
 			path: "message",
-			want: 1, // Only domain object, core skipped
+			want: 2, // both the outer and nested object are found
 		},
 		{
 			name: "array with domain objects",
