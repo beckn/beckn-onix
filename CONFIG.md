@@ -893,7 +893,7 @@ middleware:
 
 ---
 
-#### 11. ReqMapper Plugin (Step)
+#### 12. ReqMapper Plugin (Step)
 
 **Purpose**: Run payload transformation at an explicit point in the step pipeline. This is the safe option for receiver flows where signature and schema validation must happen on the original inbound network payload before any mutation.
 
@@ -1048,6 +1048,49 @@ steps:
   - validateSchema
   - addRoute
 ```
+
+---
+
+#### 14. VC Validator Plugin (Step)
+
+**Purpose**: Verify [W3C Verifiable Credentials](https://www.w3.org/TR/vc-data-model-2.0/) embedded in request payloads for configured beckn actions. Checks the proof signature (VC-JWT, resolving the issuer key via `did:key` / `did:jwk` / `did:web`), issuer binding, validity window, and revocation status (StatusList2021 / BitstringStatusList, DEDI registry, generic). Any failure rejects the request with a signed NACK before it reaches routing. See the [plugin README](pkg/plugin/implementation/vcvalidator/README.md) for the full verification model and NACK failure classes.
+
+**Configuration** (wired as a handler `plugins.steps` entry, then referenced by id in the `steps` list):
+```yaml
+plugins:
+  steps:
+    - id: validateVC
+      config:
+        enabled: "true"
+        actions: "confirm"
+        allowedDidMethods: "key,jwk,web"
+        checkExpiry: "true"
+        checkRevocation: "true"
+        requireProof: "true"
+        failOpen: "false"
+        httpTimeout: "10"
+        maxCredentials: "10"
+        allowPrivateNetworks: "false"
+        debugLogging: "false"
+steps:
+  - validateSign
+  - validateVC
+  - validateSchema
+  - addRoute
+```
+
+**Parameters**:
+- `enabled`: Master switch; when `"false"` every request passes through untouched. Default: `"true"`.
+- `actions`: Comma-separated list of beckn actions whose payloads are gated (e.g. `"confirm,init"`). **Required** when enabled — there is no code default, so the gated messages are always visible from the config.
+- `allowedDidMethods`: Permitted issuer / verification-method DID methods. Default: `"key,jwk,web"`.
+- `checkExpiry`: Enforce `validFrom`/`validUntil` and JWT `nbf`/`exp`. Default: `"true"`.
+- `checkRevocation`: Check `credentialStatus` revocation entries. Default: `"true"`.
+- `requireProof`: Reject credentials whose proof this plugin cannot cryptographically verify (e.g. JSON-LD Data Integrity proofs). Default: `"true"`.
+- `failOpen`: On transient network errors during did:web resolution or revocation fetches, `"true"` allows the credential through, `"false"` rejects. Default: `"false"` (fail closed).
+- `httpTimeout`: Bounds each did:web / revocation-list fetch, in seconds (or a Go duration). Default: `"10"`.
+- `maxCredentials`: Maximum embedded credentials per request; a request exceeding it is rejected with a Bad Request NACK before any network I/O. Default: `"10"`.
+- `allowPrivateNetworks`: Permit did:web / revocation fetches to private, loopback or link-local addresses. These URLs come from the request body, so the plugin blocks non-public destinations by default (SSRF protection, enforced on the resolved IP at the dial layer, redirects capped at 3 hops). Set to `"true"` only for local deployments whose issuers/registries live on a private network. Default: `"false"`.
+- `debugLogging`: Verbose per-credential logging. Default: `"false"`.
 
 ---
 

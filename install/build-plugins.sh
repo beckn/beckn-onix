@@ -3,7 +3,10 @@
 # Create plugins directory
 mkdir -p plugins
 
-# Build each plugin as a shared library
+# Build each plugin as a shared library. Entries are "<source dir>" or
+# "<source dir>:<output name>" — the .so basename is the plugin id used in
+# config, so it can differ from the package directory (vcvalidator builds as
+# validateVC.so to match the verb naming of pipeline steps).
 echo "Building plugins..."
 
 plugins=(
@@ -26,11 +29,14 @@ plugins=(
     "signvalidator"
     "opapolicychecker"
     "payloadstore"
+    "vcvalidator:validateVC"
 )
 
-for plugin in "${plugins[@]}"; do
+for entry in "${plugins[@]}"; do
+    plugin="${entry%%:*}"
+    out="${entry#*:}"
     echo "Building $plugin plugin..."
-    go build -buildmode=plugin -o "plugins/${plugin}.so" "./pkg/plugin/implementation/${plugin}/cmd/plugin.go"
+    go build -buildmode=plugin -o "plugins/${out}.so" "./pkg/plugin/implementation/${plugin}/cmd/plugin.go"
     if [ $? -eq 0 ]; then
         echo "✓ Successfully built $plugin plugin"
     else

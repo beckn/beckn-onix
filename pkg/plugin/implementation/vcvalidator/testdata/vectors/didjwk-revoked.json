@@ -1,0 +1,29 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/credentials/v2",
+    "https://w3id.org/vc/status-list/2021/v1"
+  ],
+  "id": "urn:uuid:22222222-2222-2222-2222-222222222222",
+  "type": [
+    "VerifiableCredential",
+    "MeterDataRequestCredential"
+  ],
+  "issuer": "did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6Ik81N2RfbGt5VHZJd1JNYTVsRllWNkpxUGhWY1prUGFSaGJHZWo0RDl0WHcifQ",
+  "validFrom": "2026-01-01T00:00:00Z",
+  "validUntil": "2027-12-31T23:59:59Z",
+  "credentialStatus": {
+    "id": "https://status.example.org/revocation/1#94",
+    "type": "StatusList2021Entry",
+    "statusPurpose": "revocation",
+    "statusListIndex": "94",
+    "statusListCredential": "https://status.example.org/revocation/1"
+  },
+  "credentialSubject": {
+    "id": "did:example:consumer-002",
+    "role": "data-consumer"
+  },
+  "proof": {
+    "type": "JsonWebSignature2020",
+    "jwt": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRpZDpqd2s6ZXlKamNuWWlPaUpGWkRJMU5URTVJaXdpYTNSNUlqb2lUMHRRSWl3aWVDSTZJazgxTjJSZmJHdDVWSFpKZDFKTllUVnNSbGxXTmtweFVHaFdZMXByVUdGU2FHSkhaV28wUkRsMFdIY2lmUSMwIiwidHlwIjoiSldUIn0.ewogICJpc3MiOiAiZGlkOmp3azpleUpqY25ZaU9pSkZaREkxTlRFNUlpd2lhM1I1SWpvaVQwdFFJaXdpZUNJNklrODFOMlJmYkd0NVZIWkpkMUpOWVRWc1JsbFdOa3B4VUdoV1kxcHJVR0ZTYUdKSFpXbzBSRGwwV0hjaWZRIiwKICAic3ViIjogImRpZDpleGFtcGxlOnN1YmplY3QiLAogICJuYmYiOiAxNzY3MjI1NjAwLAogICJleHAiOiAxODMwMjk3NTk5LAogICJpYXQiOiAxNzY3MjI1NjAwCn0K.ijpBrDV1UO9cvPmFW_3ehVmmEgRCvxkqB_JlD9TOPgENOWXkLBtYHhUOLiq58Ur_JokEnwBjF2d0MRorIXtPDQ"
+  }
+}

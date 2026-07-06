@@ -136,6 +136,7 @@ The **Beckn Protocol** is an open protocol that enables location-aware, local co
 - **OpaPolicyChecker**: OPA-based network business policy enforcement. Evaluates Rego policies per request; supports network-specific policy configs, signed policy artifact verification, manifest-backed policies, and hot-reload. See [plugin docs](pkg/plugin/implementation/opapolicychecker/README.md).
 - **ManifestLoader**: Fetches a network manifest published by a Network Facilitator Organization (NFO), verifies its detached signature, and caches the verified document for downstream consumers such as `opapolicychecker`. See [plugin docs](pkg/plugin/implementation/manifestloader/README.md).
 - **PayloadStore**: Records every inbound request payload indexed by `message_id` and `transaction_id` with TTL-based expiration via the cache backend. Enables stateful use cases (duplicate detection, transaction history) without requiring other plugins to manage storage. See [plugin docs](pkg/plugin/implementation/payloadstore/README.md).
+- **VCValidator**: Step plugin (id: `validateVC`) that verifies W3C Verifiable Credentials embedded in request payloads for configured beckn actions — proof signature (did:key / did:jwk / did:web), issuer binding, validity window, and revocation (StatusList2021/Bitstring, DEDI) — rejecting failures with a signed NACK before routing. See [plugin docs](pkg/plugin/implementation/vcvalidator/README.md).
 
 ## Key Aspects
 
