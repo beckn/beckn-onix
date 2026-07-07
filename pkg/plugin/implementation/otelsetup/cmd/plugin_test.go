@@ -4,7 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/otelsetup"
+	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,6 +47,31 @@ func TestMetricsProviderNew_Success(t *testing.T) {
 			config: map[string]string{
 				"serviceName":    "custom-service",
 				"serviceVersion": "2.0.0",
+			},
+		},
+		{
+			name: "Config with parentID in context",
+			ctx:  context.WithValue(context.Background(), model.ContextKeyParentID, "producerType:producer:device-id"),
+			config: map[string]string{
+				"enableMetrics": "false",
+			},
+		},
+		{
+			name: "Config with valid timeInterval and cacheTTL",
+			ctx:  context.Background(),
+			config: map[string]string{
+				"enableMetrics": "false",
+				"timeInterval":  "10",
+				"cacheTTL":      "7200",
+			},
+		},
+		{
+			name: "Config with invalid timeInterval and cacheTTL falls back to defaults",
+			ctx:  context.Background(),
+			config: map[string]string{
+				"enableMetrics": "false",
+				"timeInterval":  "bad",
+				"cacheTTL":      "bad",
 			},
 		},
 	}
@@ -291,5 +318,145 @@ func TestMetricsProviderNew_DefaultValues(t *testing.T) {
 	if cleanup != nil {
 		err := cleanup()
 		assert.NoError(t, err, "cleanup() should not return error")
+	}
+}
+
+// TestParseParentID tests parseParentID splits a colon-delimited parent ID correctly.
+func TestParseParentID(t *testing.T) {
+	tests := []struct {
+		name             string
+		parentID         string
+		wantProducerType string
+		wantProducer     string
+		wantDeviceID     string
+	}{
+		{
+			name:             "three parts",
+			parentID:         "producerType:producer:device-id",
+			wantProducerType: "producerType",
+			wantProducer:     "producer",
+			wantDeviceID:     "device-id",
+		},
+		{
+			name:             "two parts",
+			parentID:         "producerType:producer",
+			wantProducerType: "producerType",
+			wantProducer:     "producer",
+			wantDeviceID:     "producer",
+		},
+		{
+			name:             "one part",
+			parentID:         "producerType",
+			wantProducerType: "producerType",
+			wantProducer:     "",
+			wantDeviceID:     "producerType",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pt, prod, devID := parseParentID(tt.parentID)
+			assert.Equal(t, tt.wantProducerType, pt)
+			assert.Equal(t, tt.wantProducer, prod)
+			assert.Equal(t, tt.wantDeviceID, devID)
+		})
+	}
+}
+
+// TestMetricsProviderNew_EnableTracingAndLogs tests that enableTracing and enableLogs are parsed from config.
+func TestMetricsProviderNew_EnableTracingAndLogs(t *testing.T) {
+	p := metricsProvider{}
+	ctx := context.Background()
+
+	tests := []struct {
+		name              string
+		enableTracing     string
+		enableLogs        string
+		wantTraceProvider bool
+		wantLogProvider   bool
+	}{
+		{name: "tracing true logs true", enableTracing: "true", enableLogs: "true", wantTraceProvider: true, wantLogProvider: true},
+		{name: "tracing false logs false", enableTracing: "false", enableLogs: "false", wantTraceProvider: false, wantLogProvider: false},
+		{name: "invalid tracing value", enableTracing: "bad", enableLogs: "false", wantTraceProvider: false, wantLogProvider: false},
+		{name: "invalid logs value", enableTracing: "false", enableLogs: "bad", wantTraceProvider: false, wantLogProvider: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := map[string]string{
+				"enableMetrics": "false",
+				"enableTracing": tt.enableTracing,
+				"enableLogs":    tt.enableLogs,
+			}
+			provider, cleanup, err := p.New(ctx, config)
+			require.NoError(t, err)
+			require.NotNil(t, provider)
+			if tt.wantTraceProvider {
+				assert.NotNil(t, provider.TraceProvider, "expected TraceProvider to be set")
+			} else {
+				assert.Nil(t, provider.TraceProvider, "expected TraceProvider to be nil")
+			}
+			if tt.wantLogProvider {
+				assert.NotNil(t, provider.LogProvider, "expected LogProvider to be set")
+			} else {
+				assert.Nil(t, provider.LogProvider, "expected LogProvider to be nil")
+			}
+			if cleanup != nil {
+				_ = cleanup()
+			}
+		})
+	}
+}
+
+// TestParseTimeInterval tests parseTimeInterval returns the parsed value or 5 on error.
+func TestParseTimeInterval(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  int64
+	}{
+		{name: "valid integer", input: "10", want: 10},
+		{name: "invalid value falls back to default", input: "bad", want: 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, parseTimeInterval(tt.input))
+		})
+	}
+}
+
+// TestParseCacheTTL tests parseCacheTTL returns the parsed value or 3600 on error.
+func TestParseCacheTTL(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  int64
+	}{
+		{name: "valid integer", input: "7200", want: 7200},
+		{name: "invalid value falls back to default", input: "bad", want: 3600},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, parseCacheTTL(tt.input))
+		})
+	}
+}
+
+// TestMetricsProviderNew_NetworkMetrics tests that networkMetricsGranularity and networkMetricsFrequency are applied.
+func TestMetricsProviderNew_NetworkMetrics(t *testing.T) {
+	p := metricsProvider{}
+	ctx := context.Background()
+
+	config := map[string]string{
+		"enableMetrics":             "false",
+		"networkMetricsGranularity": "low",
+		"networkMetricsFrequency":   "30",
+	}
+	provider, cleanup, err := p.New(ctx, config)
+	require.NoError(t, err)
+	require.NotNil(t, provider)
+	granularity, frequency := telemetry.GetNetworkMetricsConfig()
+	assert.Equal(t, "low", granularity, "expected networkMetricsGranularity to be applied")
+	assert.Equal(t, "30", frequency, "expected networkMetricsFrequency to be applied")
+	if cleanup != nil {
+		_ = cleanup()
 	}
 }
