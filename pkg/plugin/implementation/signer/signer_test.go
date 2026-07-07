@@ -102,3 +102,44 @@ func TestSignFailure(t *testing.T) {
 		})
 	}
 }
+
+// TestSignAck tests SignAck with empty, non-empty, and invalid private key inputs.
+func TestSignAck(t *testing.T) {
+	privateKey, _ := generateTestKeys()
+	config := Config{}
+	signer, _, _ := New(context.Background(), &config)
+	now := time.Now().Unix()
+
+	t.Run("empty request signature", func(t *testing.T) {
+		sig, err := signer.SignAck(context.Background(), []byte("ack body"), "", privateKey, now, now+3600)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if len(sig) == 0 {
+			t.Errorf("expected non-empty signature")
+		}
+	})
+
+	t.Run("non-empty request signature changes output", func(t *testing.T) {
+		ctx := context.Background()
+		body := []byte("ack body")
+		sigWithout, err := signer.SignAck(ctx, body, "", privateKey, now, now+3600)
+		if err != nil {
+			t.Errorf("unexpected error (without): %v", err)
+		}
+		sigWith, err := signer.SignAck(ctx, body, "existing-signature-value", privateKey, now, now+3600)
+		if err != nil {
+			t.Errorf("unexpected error (with): %v", err)
+		}
+		if sigWithout == sigWith {
+			t.Error("expected signatures to differ when request-signature is included")
+		}
+	})
+
+	t.Run("invalid private key returns error", func(t *testing.T) {
+		_, err := signer.SignAck(context.Background(), []byte("ack body"), "", "not_valid_base64!!!", now, now+3600)
+		if err == nil {
+			t.Error("expected error but got none")
+		}
+	})
+}
