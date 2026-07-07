@@ -49,6 +49,31 @@ func TestMetricsProviderNew_Success(t *testing.T) {
 				"serviceVersion": "2.0.0",
 			},
 		},
+		{
+			name: "Config with parentID in context",
+			ctx:  context.WithValue(context.Background(), model.ContextKeyParentID, "producerType:producer:device-id"),
+			config: map[string]string{
+				"enableMetrics": "false",
+			},
+		},
+		{
+			name: "Config with valid timeInterval and cacheTTL",
+			ctx:  context.Background(),
+			config: map[string]string{
+				"enableMetrics": "false",
+				"timeInterval":  "10",
+				"cacheTTL":      "7200",
+			},
+		},
+		{
+			name: "Config with invalid timeInterval and cacheTTL falls back to defaults",
+			ctx:  context.Background(),
+			config: map[string]string{
+				"enableMetrics": "false",
+				"timeInterval":  "bad",
+				"cacheTTL":      "bad",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -296,27 +321,43 @@ func TestMetricsProviderNew_DefaultValues(t *testing.T) {
 	}
 }
 
-// TestMetricsProviderNew_ParentIDContext tests that parent ID fields are parsed from the context.
-func TestMetricsProviderNew_ParentIDContext(t *testing.T) {
-	p := metricsProvider{}
-
+// TestParseParentID tests parseParentID splits a colon-delimited parent ID correctly.
+func TestParseParentID(t *testing.T) {
 	tests := []struct {
-		name     string
-		parentID string
+		name             string
+		parentID         string
+		wantProducerType string
+		wantProducer     string
+		wantDeviceID     string
 	}{
-		{name: "three parts", parentID: "producerType:producer:device-id"},
-		{name: "two parts", parentID: "producerType:producer"},
-		{name: "one part", parentID: "producerType"},
+		{
+			name:             "three parts",
+			parentID:         "producerType:producer:device-id",
+			wantProducerType: "producerType",
+			wantProducer:     "producer",
+			wantDeviceID:     "device-id",
+		},
+		{
+			name:             "two parts",
+			parentID:         "producerType:producer",
+			wantProducerType: "producerType",
+			wantProducer:     "producer",
+			wantDeviceID:     "producer",
+		},
+		{
+			name:             "one part",
+			parentID:         "producerType",
+			wantProducerType: "producerType",
+			wantProducer:     "",
+			wantDeviceID:     "producerType",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.WithValue(context.Background(), model.ContextKeyParentID, tt.parentID)
-			provider, cleanup, err := p.New(ctx, map[string]string{"enableMetrics": "false"})
-			require.NoError(t, err)
-			require.NotNil(t, provider)
-			if cleanup != nil {
-				_ = cleanup()
-			}
+			pt, prod, devID := parseParentID(tt.parentID)
+			assert.Equal(t, tt.wantProducerType, pt)
+			assert.Equal(t, tt.wantProducer, prod)
+			assert.Equal(t, tt.wantDeviceID, devID)
 		})
 	}
 }
@@ -365,33 +406,36 @@ func TestMetricsProviderNew_EnableTracingAndLogs(t *testing.T) {
 	}
 }
 
-// TestMetricsProviderNew_TimeIntervalAndCacheTTL tests that timeInterval and cacheTTL fall back to defaults for invalid values.
-func TestMetricsProviderNew_TimeIntervalAndCacheTTL(t *testing.T) {
-	p := metricsProvider{}
-	ctx := context.Background()
-
+// TestParseTimeInterval tests parseTimeInterval returns the parsed value or 5 on error.
+func TestParseTimeInterval(t *testing.T) {
 	tests := []struct {
-		name         string
-		timeInterval string
-		cacheTTL     string
+		name  string
+		input string
+		want  int64
 	}{
-		{name: "valid interval and ttl", timeInterval: "10", cacheTTL: "3600"},
-		{name: "invalid interval", timeInterval: "bad", cacheTTL: "3600"},
-		{name: "invalid cacheTTL", timeInterval: "5", cacheTTL: "bad"},
+		{name: "valid integer", input: "10", want: 10},
+		{name: "invalid value falls back to default", input: "bad", want: 5},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := map[string]string{
-				"enableMetrics": "false",
-				"timeInterval":  tt.timeInterval,
-				"cacheTTL":      tt.cacheTTL,
-			}
-			provider, cleanup, err := p.New(ctx, config)
-			require.NoError(t, err)
-			require.NotNil(t, provider)
-			if cleanup != nil {
-				_ = cleanup()
-			}
+			assert.Equal(t, tt.want, parseTimeInterval(tt.input))
+		})
+	}
+}
+
+// TestParseCacheTTL tests parseCacheTTL returns the parsed value or 3600 on error.
+func TestParseCacheTTL(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  int64
+	}{
+		{name: "valid integer", input: "7200", want: 7200},
+		{name: "invalid value falls back to default", input: "bad", want: 3600},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, parseCacheTTL(tt.input))
 		})
 	}
 }

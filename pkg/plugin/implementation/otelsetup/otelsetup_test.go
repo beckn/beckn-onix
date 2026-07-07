@@ -367,6 +367,13 @@ func TestSetup_New_LogsEnabled(t *testing.T) {
 	_ = provider.Shutdown(ctx)
 }
 
+// TestSetup_New_NilConfig tests that New returns an error for a nil config.
+func TestSetup_New_NilConfig(t *testing.T) {
+	setup := Setup{}
+	_, err := setup.New(context.Background(), nil)
+	assert.ErrorContains(t, err, "telemetry config cannot be nil")
+}
+
 // TestSetup_New_AllEnabled tests New with all signals enabled and calls shutdown.
 func TestSetup_New_AllEnabled(t *testing.T) {
 	setup := Setup{}
