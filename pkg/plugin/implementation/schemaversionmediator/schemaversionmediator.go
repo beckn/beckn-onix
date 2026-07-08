@@ -763,11 +763,11 @@ func (m *mediator) httpFetch(ctx context.Context, artifactURL string) (*Translat
 }
 
 // deriveArtifactURL constructs the translation artifact URL from a TranslationNeeded.
-// Convention: {To.BaseURL}/{CanonicalVersion}/{From.Type}_from_{fromVersion}
+// Convention: {To.BaseURL}/{CanonicalVersion}/{From.Type}_from_{fromVersion}.jsonata
 // From.Type is used (not To.Type) because the artifact describes how to map *from*
 // the old type representation; if a type is renamed across versions, the artifact
 // is identified by what it transforms away from.
-// Example: https://schema.beckn.io/retail/v2.0/Order_from_v1.1
+// Example: https://schema.beckn.io/retail/v2.0/Order_from_v1.1.jsonata
 func deriveArtifactURL(need TranslationNeeded) (string, error) {
 	if need.To == nil {
 		return "", fmt.Errorf("schemaversionmediator: cannot derive artifact URL for unknown schema type %q (To is nil)", need.From.Type)
@@ -776,7 +776,7 @@ func deriveArtifactURL(need TranslationNeeded) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return need.To.BaseURL + "/" + need.CanonicalVersion + "/" + need.From.Type + "_from_" + fromVersion, nil
+	return need.To.BaseURL + "/" + need.CanonicalVersion + "/" + need.From.Type + "_from_" + fromVersion + ".jsonata", nil
 }
 
 // extractVersionSegment walks the path segments of a context URL and returns

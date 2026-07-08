@@ -451,7 +451,7 @@ func TestDeriveArtifactURL_Valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := "https://schema.beckn.io/retail/v2.0/Order_from_v1.1"
+	want := "https://schema.beckn.io/retail/v2.0/Order_from_v1.1.jsonata"
 	if got != want {
 		t.Errorf("expected %q, got %q", want, got)
 	}
@@ -1117,7 +1117,7 @@ func TestFetchAllArtifacts_CollectsAllFailures(t *testing.T) {
 
 func TestFetchAllArtifacts_PartialSuccessReturnsBothSets(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/retail/v2.0/Order_from_v1.1" {
+		if r.URL.Path == "/retail/v2.0/Order_from_v1.1.jsonata" {
 			w.Header().Set("Content-Type", "application/jsonata")
 			w.Write([]byte(`{"state": status}`))
 			return
