@@ -506,7 +506,10 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 		return fmt.Errorf("schemaversionmediator: patch message subtree: %w", err)
 	}
 	ctx.Body = patched
-	log.Debugf(ctx, "schemaversionmediator: translationApplied counterparty=%q objects=%d", counterpartyID, len(needs))
+	log.Infof(ctx, "schemaversionmediator: translationApplied counterparty=%q objects=%d", counterpartyID, len(needs))
+	for _, n := range needs {
+		log.Infof(ctx, "schemaversionmediator: translatedObject counterparty=%q type=%q from=%q to=%q", counterpartyID, n.From.Type, n.From.ContextURL, n.To.ContextURL)
+	}
 	return nil
 }
 
@@ -975,12 +978,14 @@ func (m *mediator) fetchAllArtifacts(ctx context.Context, needs []TranslationNee
 
 		artifactURL, err := deriveArtifactURL(need)
 		if err != nil {
+			log.Warnf(ctx, "schemaversionmediator: artifactURLDeriveFailed type=%q reason=%v", need.From.Type, err)
 			failures = append(failures, ArtifactFetchFailure{Need: need, Reason: err})
 			continue
 		}
 
 		artifact, err := m.fetchArtifactByURL(ctx, artifactURL)
 		if err != nil {
+			log.Warnf(ctx, "schemaversionmediator: artifactFetchFailed type=%q url=%q reason=%v", need.From.Type, artifactURL, err)
 			failures = append(failures, ArtifactFetchFailure{Need: need, URL: artifactURL, Reason: err})
 			continue
 		}
