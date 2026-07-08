@@ -426,6 +426,9 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 		return nil // fully compatible
 	}
 	log.Debugf(ctx, "schemaversionmediator: compatibilityCheck counterparty=%q result=incompatible needs=%d", counterpartyID, len(needs))
+	for _, n := range needs {
+		log.Debugf(ctx, "schemaversionmediator: incompatibleType counterparty=%q type=%q fromContext=%q toContext=%q", counterpartyID, n.From.Type, n.From.ContextURL, n.To.ContextURL)
+	}
 
 	if m.policy.Action == PolicyActionReject {
 		return &MediationError{
