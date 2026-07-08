@@ -383,6 +383,9 @@ func (p *provider) New(ctx context.Context, loader definition.ManifestLoader, cf
 				m.notOnboarded = true
 			} else {
 				m.localManifest = nm
+				for _, obj := range nm.Schema.SchemaObjects {
+					log.Infof(ctx, "schemaversionmediator: localManifest type=%q contextUrl=%q", obj.Type, obj.ContextURL)
+				}
 			}
 		}
 	}
@@ -413,6 +416,9 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 	refs, err := WalkPayload(ctx.Body)
 	if err != nil {
 		return fmt.Errorf("schemaversionmediator: walk payload: %w", err)
+	}
+	for _, ref := range refs {
+		log.Debugf(ctx, "schemaversionmediator: payloadRef type=%q contextUrl=%q path=%q", ref.Type, ref.ContextURL, ref.JSONataPath)
 	}
 
 	// Receiver (BPP): check inbound payload against local manifest — translate to match what we expect.
