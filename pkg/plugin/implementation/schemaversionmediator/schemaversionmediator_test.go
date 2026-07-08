@@ -1231,7 +1231,7 @@ func buildPayload(networkID, counterpartyID string, msgContextURL, msgType strin
 	return []byte(`{"context":{"network_id":"` + networkID + `","bap_id":"` + counterpartyID + `"},"message":` + msg + `}`)
 }
 
-func newTestMediatorFull(t *testing.T, loader *mockManifestLoader, cfg map[string]string) *mediator {
+func newTestMediatorFull(t *testing.T, loader *mockManifestLoader, cfg map[string]string, localManifest *model.NodeManifest) *mediator {
 	t.Helper()
 	instance, err := jsonata.OpenLatest()
 	if err != nil {
@@ -1248,14 +1248,37 @@ func newTestMediatorFull(t *testing.T, loader *mockManifestLoader, cfg map[strin
 		cache:           newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
 		jsonataInstance: instance,
 		exprs:           newExprCache(),
+		localManifest:   localManifest,
 	}
 }
 
+// stepCtxWithRemoteID returns a receiver StepContext (IsCallerHandler=false).
 func stepCtxWithRemoteID(body []byte, remoteID string) *model.StepContext {
 	ctx := context.WithValue(context.Background(), model.ContextKeyRemoteID, remoteID)
 	return &model.StepContext{
 		Context: ctx,
 		Body:    body,
+	}
+}
+
+// callerStepCtxWithRemoteID returns a caller StepContext (IsCallerHandler=true).
+func callerStepCtxWithRemoteID(body []byte, remoteID string) *model.StepContext {
+	ctx := context.WithValue(context.Background(), model.ContextKeyRemoteID, remoteID)
+	return &model.StepContext{
+		Context:         ctx,
+		Body:            body,
+		IsCallerHandler: true,
+	}
+}
+
+// localManifestWith builds a minimal NodeManifest for use as the receiver's local manifest.
+func localManifestWith(objs ...model.SchemaObject) *model.NodeManifest {
+	return &model.NodeManifest{
+		ManifestVersion: "1.0",
+		ManifestType:    "node-manifest",
+		SubscriberID:    "test/test/test",
+		Schema:          model.NodeManifestSchema{SchemaObjects: objs},
+		Governance:      model.NodeManifestGovernance{EffectiveFrom: "2020-01-01T00:00:00Z"},
 	}
 }
 
@@ -1272,7 +1295,7 @@ func TestMediate_NotOnboarded(t *testing.T) {
 }
 
 func TestMediate_NoNetworkID_PassThrough(t *testing.T) {
-	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, nil)
 	body := []byte(`{"context":{},"message":{}}`)
 	ctx := stepCtxWithRemoteID(body, "bap.example.com")
 	if err := m.Mediate(ctx); err != nil {
@@ -1282,16 +1305,14 @@ func TestMediate_NoNetworkID_PassThrough(t *testing.T) {
 
 func TestMediate_NetworkIdCamelCase_Recognised(t *testing.T) {
 	// networkId (camelCase) must be accepted in addition to network_id (snake_case).
-	loader := &mockManifestLoader{
-		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
-			return nil, errors.New("dedi lookup failed")
-		},
-	}
-	m := newTestMediatorFull(t, loader, map[string]string{"onFailure": "reject"})
-	// Use camelCase networkId key.
-	body := []byte(`{"context":{"networkId":"net1"},"message":{}}`)
+	// Use a local manifest with v1.0; payload is at v2.0 → incompatible → reject proves networkId was read.
+	lm := localManifestWith(model.SchemaObject{
+		ContextURL: "https://schema.beckn.io/retail/v1.0/Order.jsonld",
+		Type:       "Order",
+	})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{"action": "reject"}, lm)
+	body := []byte(`{"context":{"networkId":"net1"},"message":{"@context":"https://schema.beckn.io/retail/v2.0/Order.jsonld","@type":"Order"}}`)
 	ctx := stepCtxWithRemoteID(body, "bap.example.com")
-	// Expecting schemaIncompatible (not pass-through) proves networkId was read.
 	err := m.Mediate(ctx)
 	var me *MediationError
 	if !errors.As(err, &me) {
@@ -1303,7 +1324,7 @@ func TestMediate_NetworkIdCamelCase_Recognised(t *testing.T) {
 }
 
 func TestMediate_NoCounterpartyID_PassThrough(t *testing.T) {
-	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, nil)
 	body := []byte(`{"context":{"network_id":"net1"},"message":{}}`)
 	sctx := &model.StepContext{Context: context.Background(), Body: body}
 	if err := m.Mediate(sctx); err != nil {
@@ -1312,14 +1333,15 @@ func TestMediate_NoCounterpartyID_PassThrough(t *testing.T) {
 }
 
 func TestMediate_CounterpartyManifestUnavailable_Reject(t *testing.T) {
+	// Caller path: counterparty manifest fetch fails → onFailure=reject.
 	loader := &mockManifestLoader{
 		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
 			return nil, errors.New("dedi lookup failed")
 		},
 	}
-	m := newTestMediatorFull(t, loader, map[string]string{"onFailure": "reject"})
+	m := newTestMediatorFull(t, loader, map[string]string{"onFailure": "reject"}, nil)
 	body := buildPayload("net1", "bap.example.com", "", "")
-	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+	ctx := callerStepCtxWithRemoteID(body, "bap.example.com")
 	err := m.Mediate(ctx)
 	var me *MediationError
 	if !errors.As(err, &me) {
@@ -1331,29 +1353,26 @@ func TestMediate_CounterpartyManifestUnavailable_Reject(t *testing.T) {
 }
 
 func TestMediate_CounterpartyManifestUnavailable_PassThrough(t *testing.T) {
+	// Caller path: counterparty manifest fetch fails → onFailure=passThrough.
 	loader := &mockManifestLoader{
 		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
 			return nil, errors.New("dedi lookup failed")
 		},
 	}
-	m := newTestMediatorFull(t, loader, map[string]string{"onFailure": "passThrough"})
+	m := newTestMediatorFull(t, loader, map[string]string{"onFailure": "passThrough"}, nil)
 	body := buildPayload("net1", "bap.example.com", "", "")
-	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+	ctx := callerStepCtxWithRemoteID(body, "bap.example.com")
 	if err := m.Mediate(ctx); err != nil {
 		t.Fatalf("expected pass-through (nil), got: %v", err)
 	}
 }
 
 func TestMediate_AllCompatible_PassThrough(t *testing.T) {
-	loader := &mockManifestLoader{
-		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
-			return nodeManifestDoc(model.SchemaObject{
-				ContextURL: "https://schema.beckn.io/retail/v2.0/Order.jsonld",
-				Type:       "Order",
-			}), nil
-		},
-	}
-	m := newTestMediatorFull(t, loader, map[string]string{})
+	lm := localManifestWith(model.SchemaObject{
+		ContextURL: "https://schema.beckn.io/retail/v2.0/Order.jsonld",
+		Type:       "Order",
+	})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, lm)
 	body := buildPayload("net1", "bap.example.com",
 		"https://schema.beckn.io/retail/v2.0/Order.jsonld", "Order")
 	original := string(body)
@@ -1367,16 +1386,12 @@ func TestMediate_AllCompatible_PassThrough(t *testing.T) {
 }
 
 func TestMediate_ActionReject_OnIncompatible(t *testing.T) {
-	loader := &mockManifestLoader{
-		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
-			// counterparty is on v1.0, we are on v2.0 — mismatch
-			return nodeManifestDoc(model.SchemaObject{
-				ContextURL: "https://schema.beckn.io/retail/v1.0/Order.jsonld",
-				Type:       "Order",
-			}), nil
-		},
-	}
-	m := newTestMediatorFull(t, loader, map[string]string{"action": "reject"})
+	// Receiver expects v1.0; inbound payload is at v2.0 — mismatch → reject.
+	lm := localManifestWith(model.SchemaObject{
+		ContextURL: "https://schema.beckn.io/retail/v1.0/Order.jsonld",
+		Type:       "Order",
+	})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{"action": "reject"}, lm)
 	body := buildPayload("net1", "bap.example.com",
 		"https://schema.beckn.io/retail/v2.0/Order.jsonld", "Order")
 	ctx := stepCtxWithRemoteID(body, "bap.example.com")
@@ -1397,18 +1412,12 @@ func TestMediate_ArtifactNotFound_Reject(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Loader returns a manifest whose ContextURL is on srv so the derived
-	// artifact URL points at srv and the 404 is actually exercised.
-	loader := &mockManifestLoader{
-		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
-			return nodeManifestDoc(model.SchemaObject{
-				ContextURL: srv.URL + "/retail/v1.0/Order.jsonld",
-				Type:       "Order",
-			}), nil
-		},
-	}
-
-	m := newTestMediatorFull(t, loader, map[string]string{"onFailure": "reject"})
+	// Local manifest expects v1.0; payload is at v2.0 → mismatch → artifact fetch → 404 → reject.
+	lm := localManifestWith(model.SchemaObject{
+		ContextURL: srv.URL + "/retail/v1.0/Order.jsonld",
+		Type:       "Order",
+	})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{"onFailure": "reject"}, lm)
 	m.httpClient = srv.Client()
 
 	body := []byte(`{"context":{"network_id":"net1"},"message":{"@context":"` +
@@ -1430,16 +1439,11 @@ func TestMediate_ArtifactNotFound_PassThrough(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	loader := &mockManifestLoader{
-		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
-			return nodeManifestDoc(model.SchemaObject{
-				ContextURL: srv.URL + "/retail/v1.0/Order.jsonld",
-				Type:       "Order",
-			}), nil
-		},
-	}
-
-	m := newTestMediatorFull(t, loader, map[string]string{"onFailure": "passThrough"})
+	lm := localManifestWith(model.SchemaObject{
+		ContextURL: srv.URL + "/retail/v1.0/Order.jsonld",
+		Type:       "Order",
+	})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{"onFailure": "passThrough"}, lm)
 	m.httpClient = srv.Client()
 
 	body := []byte(`{"context":{"network_id":"net1"},"message":{"@context":"` +
@@ -1458,18 +1462,12 @@ func TestMediate_TranslationApplied(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Counterparty manifest is on v1.0 (srv-hosted URLs); inbound payload declares
-	// v2.0 URLs → mismatch, artifact fetch goes to srv, translation applied.
-	loader := &mockManifestLoader{
-		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
-			return nodeManifestDoc(model.SchemaObject{
-				ContextURL: srv.URL + "/retail/v1.0/Order.jsonld",
-				Type:       "Order",
-			}), nil
-		},
-	}
-
-	m := newTestMediatorFull(t, loader, map[string]string{})
+	// Local manifest expects v1.0; inbound payload declares v2.0 → mismatch → artifact fetched → translation applied.
+	lm := localManifestWith(model.SchemaObject{
+		ContextURL: srv.URL + "/retail/v1.0/Order.jsonld",
+		Type:       "Order",
+	})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, lm)
 	m.httpClient = srv.Client()
 
 	body := []byte(`{"context":{"network_id":"net1"},"message":{"@context":"` +

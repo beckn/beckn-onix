@@ -421,16 +421,16 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 		log.Debugf(ctx, "schemaversionmediator: payloadRef type=%q contextUrl=%q path=%q", ref.Type, ref.ContextURL, ref.JSONataPath)
 	}
 
-	// Receiver (BPP): check inbound payload against local manifest — translate to match what we expect.
-	// Caller (BAP): check outbound payload against counterparty manifest — translate to match what they expect.
+	// Receiver: check inbound payload against local manifest — translate to match what we expect.
+	// Caller: check outbound payload against counterparty manifest — translate to match what they expect.
 	var targetManifest *model.NodeManifest
-	if ctx.Role == model.RoleBPP {
-		targetManifest = m.localManifest
-	} else {
+	if ctx.IsCallerHandler {
 		targetManifest, err = m.fetchCounterpartyManifest(ctx, counterpartyID)
 		if err != nil {
 			return m.applyOnFailure(fmt.Errorf("schemaversionmediator: counterparty manifest unavailable for %q: %w", counterpartyID, err))
 		}
+	} else {
+		targetManifest = m.localManifest
 	}
 
 	needs, err := CheckCompatibility(refs, targetManifest)

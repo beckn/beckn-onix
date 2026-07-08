@@ -273,6 +273,7 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 		MessageID:            messageID,
 		InboundAuthSignature: inboundAuthSignature,
 		RemoteKeyID:          remoteKeyID,
+		IsCallerHandler:      strings.Contains(h.moduleName, "Caller"),
 	}, nil
 }
 
