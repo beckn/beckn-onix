@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -111,30 +110,44 @@ func loadTranslationPolicy(config map[string]string) (*TranslationPolicy, error)
 // be determined without a manifest, but the absence of one is not a hard failure.
 var ErrNoManifest = errors.New("schemaversionmediator: node manifest unavailable, skipping mediation")
 
-// SchemaObjectRef is a schema object extracted from a payload, extended with
-// the JSONata path to the node that declared it. The path flows through to
-// TranslationNeeded and MappingEntry for the caller's logging and debugging use;
-// it is not interpreted by ComposeExpression.
+// PayloadRef is the schema identity as extracted from the wire payload:
+// the raw @context URL and @type value found at a specific node in the payload.
+// It is distinct from model.SchemaObject, which is the manifest declaration.
+type PayloadRef struct {
+	ContextURL string
+	Type       string
+}
+
+// SchemaObjectRef is a PayloadRef annotated with the JSONata dot-notation path
+// to its location in the payload (e.g. "$.message.order"). The path flows
+// through to TranslationNeeded for logging and debugging; it is not interpreted
+// by ComposeExpression.
 type SchemaObjectRef struct {
-	model.SchemaObject
-	// JSONataPath is the JSONata dot-notation path from the payload root to this
-	// node, e.g. "$.message.order" or "$.message.order.fulfillments[0]".
-	// The root node itself has path "$" (JSONata root reference).
+	PayloadRef
 	JSONataPath string
 }
 
-// TranslationNeeded describes a single schema object from the payload that
-// the local node cannot handle as-is and requires translation.
+// TranslationNeeded describes a single payload schema object that requires translation.
 //
-// From is the schema object as declared in the inbound payload.
-// To is the schema object the local node supports for the same Type.
-// To is nil when the Type is entirely absent from the local node manifest —
-// an unknown schema whose handling is governed by the data-loss policy.
-// JSONataPath is the path to the node in the payload — forwarded from SchemaObjectRef.
+// From is the schema identity as declared in the payload.
+// To is the manifest entry this node supports for the same type.
+// CanonicalVersion is the resolved translation target version from To's policy —
+// pre-computed at CheckCompatibility time so deriveArtifactURL needs no manifest context.
+// JSONataPath is the payload path forwarded from SchemaObjectRef.
 type TranslationNeeded struct {
-	From        model.SchemaObject
-	To          *model.SchemaObject
-	JSONataPath string
+	From             PayloadRef
+	To               *model.SchemaObject
+	CanonicalVersion string
+	JSONataPath      string
+}
+
+// ToContextURL returns the canonical @context URL for the translation target:
+// {To.BaseURL}/{CanonicalVersion}/context.jsonld.
+func (t TranslationNeeded) ToContextURL() string {
+	if t.To == nil {
+		return "<nil>"
+	}
+	return t.To.BaseURL + "/" + t.CanonicalVersion + "/context.jsonld"
 }
 
 // WalkPayload recursively traverses a JSON payload and returns all schema
@@ -163,7 +176,7 @@ func walkNode(node any, nodePath string, results *[]SchemaObjectRef) {
 		if contextURL, ok := stringField(v, "@context"); ok {
 			if typ, ok := stringField(v, "@type"); ok {
 				*results = append(*results, SchemaObjectRef{
-					SchemaObject: model.SchemaObject{
+					PayloadRef: PayloadRef{
 						ContextURL: contextURL,
 						Type:       typ,
 					},
@@ -384,7 +397,8 @@ func (p *provider) New(ctx context.Context, loader definition.ManifestLoader, cf
 			} else {
 				m.localManifest = nm
 				for _, obj := range nm.Schema.SchemaObjects {
-					log.Infof(ctx, "schemaversionmediator: localManifest type=%q contextUrl=%q", obj.Type, obj.ContextURL)
+					canonical, _ := obj.CanonicalVersion(nm.Schema.DefaultVersionPolicy)
+					log.Infof(ctx, "schemaversionmediator: localManifest type=%q baseUrl=%q supportedVersions=%v canonical=%q", obj.Type, obj.BaseURL, obj.SupportedVersions, canonical)
 				}
 			}
 		}
@@ -443,11 +457,7 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 	}
 	log.Debugf(ctx, "schemaversionmediator: compatibilityCheck counterparty=%q result=incompatible needs=%d", counterpartyID, len(needs))
 	for _, n := range needs {
-		toContext := "<nil>"
-		if n.To != nil {
-			toContext = n.To.ContextURL
-		}
-		log.Debugf(ctx, "schemaversionmediator: incompatibleType counterparty=%q type=%q fromContext=%q toContext=%q", counterpartyID, n.From.Type, n.From.ContextURL, toContext)
+		log.Debugf(ctx, "schemaversionmediator: incompatibleType counterparty=%q type=%q fromContext=%q toContext=%q", counterpartyID, n.From.Type, n.From.ContextURL, n.ToContextURL())
 	}
 
 	if m.policy.Action == PolicyActionReject {
@@ -508,7 +518,7 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 	ctx.Body = patched
 	log.Infof(ctx, "schemaversionmediator: translationApplied counterparty=%q objects=%d", counterpartyID, len(needs))
 	for _, n := range needs {
-		log.Infof(ctx, "schemaversionmediator: translatedObject counterparty=%q type=%q from=%q to=%q", counterpartyID, n.From.Type, n.From.ContextURL, n.To.ContextURL)
+		log.Infof(ctx, "schemaversionmediator: translatedObject counterparty=%q type=%q from=%q to=%q", counterpartyID, n.From.Type, n.From.ContextURL, n.ToContextURL())
 	}
 	return nil
 }
@@ -753,7 +763,7 @@ func (m *mediator) httpFetch(ctx context.Context, artifactURL string) (*Translat
 }
 
 // deriveArtifactURL constructs the translation artifact URL from a TranslationNeeded.
-// Convention: {directory of To.ContextURL}/{From.Type}_from_{fromVersion}
+// Convention: {To.BaseURL}/{CanonicalVersion}/{From.Type}_from_{fromVersion}
 // From.Type is used (not To.Type) because the artifact describes how to map *from*
 // the old type representation; if a type is renamed across versions, the artifact
 // is identified by what it transforms away from.
@@ -762,17 +772,11 @@ func deriveArtifactURL(need TranslationNeeded) (string, error) {
 	if need.To == nil {
 		return "", fmt.Errorf("schemaversionmediator: cannot derive artifact URL for unknown schema type %q (To is nil)", need.From.Type)
 	}
-	toURL, err := url.Parse(need.To.ContextURL)
-	if err != nil {
-		return "", fmt.Errorf("schemaversionmediator: invalid To context URL %q: %w", need.To.ContextURL, err)
-	}
 	fromVersion, err := extractVersionSegment(need.From.ContextURL)
 	if err != nil {
 		return "", err
 	}
-	result := *toURL
-	result.Path = path.Dir(toURL.Path) + "/" + need.From.Type + "_from_" + fromVersion
-	return result.String(), nil
+	return need.To.BaseURL + "/" + need.CanonicalVersion + "/" + need.From.Type + "_from_" + fromVersion, nil
 }
 
 // extractVersionSegment walks the path segments of a context URL and returns
@@ -1017,28 +1021,43 @@ func CheckCompatibility(extracted []SchemaObjectRef, manifest *model.NodeManifes
 		return nil, ErrNoManifest
 	}
 
-	supported := make(map[string]model.SchemaObject, len(manifest.Schema.SchemaObjects))
-	for _, obj := range manifest.Schema.SchemaObjects {
-		supported[obj.Type] = obj
+	supported := make(map[string]*model.SchemaObject, len(manifest.Schema.SchemaObjects))
+	for i := range manifest.Schema.SchemaObjects {
+		supported[manifest.Schema.SchemaObjects[i].Type] = &manifest.Schema.SchemaObjects[i]
 	}
+
+	defaultPolicy := manifest.Schema.DefaultVersionPolicy
 
 	var needs []TranslationNeeded
 	for _, ref := range extracted {
 		// Normalize JSON-LD compact IRI: "rcpa:RetailConsideration" → "RetailConsideration".
-		// Manifests declare plain type names; payloads may use prefixed compact IRIs.
 		typeName := ref.Type
 		if idx := strings.LastIndex(typeName, ":"); idx >= 0 {
 			typeName = typeName[idx+1:]
 		}
 		local, known := supported[typeName]
 		if !known {
-			// Type not declared in target manifest — no translation target, skip.
+			// Type not declared in target manifest — skip.
 			continue
 		}
-		if local.ContextURL != ref.ContextURL {
-			to := local
-			needs = append(needs, TranslationNeeded{From: ref.SchemaObject, To: &to, JSONataPath: ref.JSONataPath})
+		payloadVersion, err := extractVersionSegment(ref.ContextURL)
+		if err != nil || !containsVersion(local.SupportedVersions, payloadVersion) {
+			canonical, cerr := local.CanonicalVersion(defaultPolicy)
+			if cerr != nil {
+				continue
+			}
+			needs = append(needs, TranslationNeeded{From: ref.PayloadRef, To: local, CanonicalVersion: canonical, JSONataPath: ref.JSONataPath})
 		}
 	}
 	return needs, nil
+}
+
+// containsVersion reports whether v is present in the versions slice (exact string match).
+func containsVersion(versions []string, v string) bool {
+	for _, sv := range versions {
+		if sv == v {
+			return true
+		}
+	}
+	return false
 }

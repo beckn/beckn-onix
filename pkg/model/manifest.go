@@ -4,6 +4,7 @@ package model
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -202,17 +203,99 @@ func (m *NetworkManifest) Validate(expectedNetworkID string, now time.Time) erro
 
 // --- Node manifest types ---
 
-// SchemaObject declares a single schema object version that a participant's application handles.
-// ContextURL is the full @context URL including version; Type is the @type value.
-// Both fields together uniquely identify a schema contract.
+const (
+	// VersionPolicyLatest resolves to the highest version in SupportedVersions.
+	VersionPolicyLatest = "latest"
+	// VersionPolicyPinned resolves to the explicit PinnedVersion field.
+	VersionPolicyPinned = "pinned"
+)
+
+// SchemaObject declares the schema types a node supports, with all accepted versions.
+// BaseURL is the base URL prefix shared by all versions (e.g. "https://.../schema/RetailOffer").
+// SupportedVersions lists every version the app handles natively — payloads at any of
+// these versions are considered compatible without translation.
+// VersionPolicy controls which version is the canonical translation target:
+//   - "latest" (default) — highest version in SupportedVersions
+//   - "pinned" — the explicit PinnedVersion value
+//
+// Wire format convention: {BaseURL}/{version}/context.jsonld
 type SchemaObject struct {
-	ContextURL string `yaml:"contextUrl"`
-	Type       string `yaml:"type"`
+	Type              string   `yaml:"type"`
+	BaseURL           string   `yaml:"baseUrl"`
+	SupportedVersions []string `yaml:"supportedVersions"`
+	VersionPolicy     string   `yaml:"versionPolicy,omitempty"`
+	PinnedVersion     string   `yaml:"pinnedVersion,omitempty"`
+}
+
+// CanonicalVersion resolves the preferred version for this schema object.
+// defaultPolicy is used when the object's own VersionPolicy is empty; pass
+// manifest.Schema.DefaultVersionPolicy. Falls back to VersionPolicyLatest.
+func (s *SchemaObject) CanonicalVersion(defaultPolicy string) (string, error) {
+	if len(s.SupportedVersions) == 0 {
+		return "", fmt.Errorf("schema object %q has no supported versions", s.Type)
+	}
+	policy := s.VersionPolicy
+	if policy == "" {
+		policy = defaultPolicy
+	}
+	if policy == "" {
+		policy = VersionPolicyLatest
+	}
+	switch policy {
+	case VersionPolicyLatest:
+		return latestVersion(s.SupportedVersions)
+	case VersionPolicyPinned:
+		if s.PinnedVersion == "" {
+			return "", fmt.Errorf("schema object %q has versionPolicy=%q but no pinnedVersion", s.Type, VersionPolicyPinned)
+		}
+		return s.PinnedVersion, nil
+	default:
+		return "", fmt.Errorf("schema object %q has unknown versionPolicy %q", s.Type, policy)
+	}
+}
+
+// latestVersion returns the highest version from the list using major.minor numeric comparison.
+func latestVersion(versions []string) (string, error) {
+	if len(versions) == 0 {
+		return "", fmt.Errorf("empty versions list")
+	}
+	best := versions[0]
+	for _, v := range versions[1:] {
+		if compareVersion(v, best) > 0 {
+			best = v
+		}
+	}
+	return best, nil
+}
+
+// compareVersion compares two version strings (e.g. "v2.1", "v2.10").
+// Returns positive when a > b, negative when a < b, zero when equal.
+// Strips an optional leading "v"/"V" before parsing major.minor as integers.
+func compareVersion(a, b string) int {
+	parse := func(s string) (int, int) {
+		if len(s) > 0 && (s[0] == 'v' || s[0] == 'V') {
+			s = s[1:]
+		}
+		parts := strings.SplitN(s, ".", 2)
+		major, _ := strconv.Atoi(parts[0])
+		minor := 0
+		if len(parts) > 1 {
+			minor, _ = strconv.Atoi(parts[1])
+		}
+		return major, minor
+	}
+	aM, am := parse(a)
+	bM, bm := parse(b)
+	if aM != bM {
+		return aM - bM
+	}
+	return am - bm
 }
 
 // NodeManifestSchema holds the schema capability declarations for a node manifest.
 type NodeManifestSchema struct {
-	SchemaObjects []SchemaObject `yaml:"schemaObjects"`
+	DefaultVersionPolicy string         `yaml:"defaultVersionPolicy,omitempty"`
+	SchemaObjects        []SchemaObject `yaml:"schemaObjects"`
 }
 
 // NodeManifestGovernance describes the temporal validity of a node manifest.
@@ -268,15 +351,41 @@ func (m *NodeManifest) Validate(expectedSubscriberID string, now time.Time) erro
 	if m.SubscriberID != expectedSubscriberID {
 		return fmt.Errorf("node manifest subscriberId %q does not match expected %q", m.SubscriberID, expectedSubscriberID)
 	}
+	if m.Schema.DefaultVersionPolicy != "" &&
+		m.Schema.DefaultVersionPolicy != VersionPolicyLatest &&
+		m.Schema.DefaultVersionPolicy != VersionPolicyPinned {
+		return fmt.Errorf("node manifest for subscriber %q has unknown defaultVersionPolicy %q", expectedSubscriberID, m.Schema.DefaultVersionPolicy)
+	}
 	if len(m.Schema.SchemaObjects) == 0 {
 		return fmt.Errorf("node manifest for subscriber %q must have at least one schema object", expectedSubscriberID)
 	}
 	for i, obj := range m.Schema.SchemaObjects {
-		if strings.TrimSpace(obj.ContextURL) == "" {
-			return fmt.Errorf("node manifest for subscriber %q: schema object at index %d is missing contextUrl", expectedSubscriberID, i)
-		}
 		if strings.TrimSpace(obj.Type) == "" {
 			return fmt.Errorf("node manifest for subscriber %q: schema object at index %d is missing type", expectedSubscriberID, i)
+		}
+		if strings.TrimSpace(obj.BaseURL) == "" {
+			return fmt.Errorf("node manifest for subscriber %q: schema object at index %d is missing baseUrl", expectedSubscriberID, i)
+		}
+		if len(obj.SupportedVersions) == 0 {
+			return fmt.Errorf("node manifest for subscriber %q: schema object at index %d has no supportedVersions", expectedSubscriberID, i)
+		}
+		if obj.VersionPolicy != "" && obj.VersionPolicy != VersionPolicyLatest && obj.VersionPolicy != VersionPolicyPinned {
+			return fmt.Errorf("node manifest for subscriber %q: schema object at index %d has unknown versionPolicy %q", expectedSubscriberID, i, obj.VersionPolicy)
+		}
+		if obj.VersionPolicy == VersionPolicyPinned || (obj.VersionPolicy == "" && m.Schema.DefaultVersionPolicy == VersionPolicyPinned) {
+			if strings.TrimSpace(obj.PinnedVersion) == "" {
+				return fmt.Errorf("node manifest for subscriber %q: schema object at index %d has versionPolicy=pinned but no pinnedVersion", expectedSubscriberID, i)
+			}
+			found := false
+			for _, v := range obj.SupportedVersions {
+				if v == obj.PinnedVersion {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("node manifest for subscriber %q: schema object at index %d pinnedVersion %q is not in supportedVersions", expectedSubscriberID, i, obj.PinnedVersion)
+			}
 		}
 	}
 

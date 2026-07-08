@@ -161,8 +161,11 @@ func manifest(objects ...model.SchemaObject) *model.NodeManifest {
 	}
 }
 
-func schemaObj(contextURL, typ string) model.SchemaObject {
-	return model.SchemaObject{ContextURL: contextURL, Type: typ}
+// schemaObj builds a SchemaObject for test manifests.
+// baseURL is the URL prefix without version; versions are the supported version strings.
+// The first version is used as the canonical (latest) by default.
+func schemaObj(baseURL, typ string, versions ...string) model.SchemaObject {
+	return model.SchemaObject{BaseURL: baseURL, Type: typ, SupportedVersions: versions}
 }
 
 func TestCheckCompatibility_NilManifest(t *testing.T) {
@@ -182,7 +185,7 @@ func TestCheckCompatibility_AllCompatible(t *testing.T) {
 	extracted := []SchemaObjectRef{
 		schemaRef("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order", "$.message.order"),
 	}
-	m := manifest(schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"))
+	m := manifest(schemaObj("https://schema.beckn.io/retail/schema", "Order", "1.1.0"))
 
 	needs, err := CheckCompatibility(extracted, m)
 	if err != nil {
@@ -197,7 +200,7 @@ func TestCheckCompatibility_VersionMismatch(t *testing.T) {
 	extracted := []SchemaObjectRef{
 		schemaRef("https://schema.beckn.io/retail/schema/1.0.0/order.jsonld", "Order", "$.message.order"),
 	}
-	m := manifest(schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"))
+	m := manifest(schemaObj("https://schema.beckn.io/retail/schema", "Order", "1.1.0"))
 
 	needs, err := CheckCompatibility(extracted, m)
 	if err != nil {
@@ -212,8 +215,11 @@ func TestCheckCompatibility_VersionMismatch(t *testing.T) {
 	if needs[0].To == nil {
 		t.Fatal("expected To to be set for version mismatch")
 	}
-	if needs[0].To.ContextURL != "https://schema.beckn.io/retail/schema/1.1.0/order.jsonld" {
-		t.Errorf("unexpected To.ContextURL: %s", needs[0].To.ContextURL)
+	if needs[0].CanonicalVersion != "1.1.0" {
+		t.Errorf("unexpected CanonicalVersion: %s", needs[0].CanonicalVersion)
+	}
+	if needs[0].To.BaseURL != "https://schema.beckn.io/retail/schema" {
+		t.Errorf("unexpected To.BaseURL: %s", needs[0].To.BaseURL)
 	}
 }
 
@@ -221,7 +227,7 @@ func TestCheckCompatibility_UnknownType(t *testing.T) {
 	extracted := []SchemaObjectRef{
 		schemaRef("https://schema.beckn.io/retail/schema/1.1.0/quote.jsonld", "Quote", "$.message.quote"),
 	}
-	m := manifest(schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"))
+	m := manifest(schemaObj("https://schema.beckn.io/retail/schema", "Order", "1.1.0"))
 
 	needs, err := CheckCompatibility(extracted, m)
 	if err != nil {
@@ -235,13 +241,13 @@ func TestCheckCompatibility_UnknownType(t *testing.T) {
 
 func TestCheckCompatibility_MixedOutcomes(t *testing.T) {
 	extracted := []SchemaObjectRef{
-		schemaRef("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order", "$.message.order"),  // compatible
-		schemaRef("https://schema.beckn.io/retail/schema/1.0.0/item.jsonld", "Item", "$.message.order.items[0]"),    // version mismatch
-		schemaRef("https://schema.beckn.io/retail/schema/1.1.0/quote.jsonld", "Quote", "$.message.quote"), // unknown type
+		schemaRef("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order", "$.message.order"),        // compatible
+		schemaRef("https://schema.beckn.io/retail/schema/1.0.0/item.jsonld", "Item", "$.message.order.items[0]"), // version mismatch
+		schemaRef("https://schema.beckn.io/retail/schema/1.1.0/quote.jsonld", "Quote", "$.message.quote"),        // unknown type
 	}
 	m := manifest(
-		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"),
-		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/item.jsonld", "Item"),
+		schemaObj("https://schema.beckn.io/retail/schema", "Order", "1.1.0"),
+		schemaObj("https://schema.beckn.io/retail/schema", "Item", "1.1.0"),
 	)
 
 	needs, err := CheckCompatibility(extracted, m)
@@ -280,7 +286,7 @@ func TestCheckCompatibility_EmptyManifest(t *testing.T) {
 
 func TestCheckCompatibility_EmptyPayload(t *testing.T) {
 	needs, err := CheckCompatibility([]SchemaObjectRef{}, manifest(
-		schemaObj("https://schema.beckn.io/retail/schema/1.1.0/order.jsonld", "Order"),
+		schemaObj("https://schema.beckn.io/retail/schema", "Order", "1.1.0"),
 	))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -437,8 +443,9 @@ func TestExtractVersionSegment_InvalidURL(t *testing.T) {
 
 func TestDeriveArtifactURL_Valid(t *testing.T) {
 	need := TranslationNeeded{
-		From: model.SchemaObject{ContextURL: "https://schema.beckn.io/retail/v1.1/Order.jsonld", Type: "Order"},
-		To:   &model.SchemaObject{ContextURL: "https://schema.beckn.io/retail/v2.0/Order.jsonld", Type: "Order"},
+		From:             PayloadRef{ContextURL: "https://schema.beckn.io/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:               &model.SchemaObject{BaseURL: "https://schema.beckn.io/retail", Type: "Order", SupportedVersions: []string{"v1.1", "v2.0"}},
+		CanonicalVersion: "v2.0",
 	}
 	got, err := deriveArtifactURL(need)
 	if err != nil {
@@ -452,7 +459,7 @@ func TestDeriveArtifactURL_Valid(t *testing.T) {
 
 func TestDeriveArtifactURL_NilTo(t *testing.T) {
 	need := TranslationNeeded{
-		From: model.SchemaObject{ContextURL: "https://schema.beckn.io/retail/v1.1/Order.jsonld", Type: "Order"},
+		From: PayloadRef{ContextURL: "https://schema.beckn.io/retail/v1.1/Order.jsonld", Type: "Order"},
 	}
 	_, err := deriveArtifactURL(need)
 	if err == nil {
@@ -462,8 +469,9 @@ func TestDeriveArtifactURL_NilTo(t *testing.T) {
 
 func TestDeriveArtifactURL_NoVersionInFrom(t *testing.T) {
 	need := TranslationNeeded{
-		From: model.SchemaObject{ContextURL: "https://schema.beckn.io/retail/Order.jsonld", Type: "Order"},
-		To:   &model.SchemaObject{ContextURL: "https://schema.beckn.io/retail/v2.0/Order.jsonld", Type: "Order"},
+		From:             PayloadRef{ContextURL: "https://schema.beckn.io/retail/Order.jsonld", Type: "Order"},
+		To:               &model.SchemaObject{BaseURL: "https://schema.beckn.io/retail", Type: "Order", SupportedVersions: []string{"v2.0"}},
+		CanonicalVersion: "v2.0",
 	}
 	_, err := deriveArtifactURL(need)
 	if err == nil {
@@ -556,8 +564,9 @@ func TestFetchArtifact_Success(t *testing.T) {
 	}
 
 	need := TranslationNeeded{
-		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
-		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+		From:             PayloadRef{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:               &model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Order", SupportedVersions: []string{"v1.1", "v2.0"}},
+		CanonicalVersion: "v2.0",
 	}
 
 	got, err := m.fetchArtifact(context.Background(), need)
@@ -586,8 +595,9 @@ func TestFetchArtifact_MissingContentType(t *testing.T) {
 		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
 	}
 	need := TranslationNeeded{
-		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
-		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+		From:             PayloadRef{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:               &model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Order", SupportedVersions: []string{"v1.1", "v2.0"}},
+		CanonicalVersion: "v2.0",
 	}
 
 	_, err := m.fetchArtifact(context.Background(), need)
@@ -610,8 +620,9 @@ func TestFetchArtifact_CacheHit(t *testing.T) {
 		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
 	}
 	need := TranslationNeeded{
-		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
-		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+		From:             PayloadRef{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:               &model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Order", SupportedVersions: []string{"v1.1", "v2.0"}},
+		CanonicalVersion: "v2.0",
 	}
 
 	m.fetchArtifact(context.Background(), need)
@@ -633,8 +644,9 @@ func TestFetchArtifact_NotFound(t *testing.T) {
 		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
 	}
 	need := TranslationNeeded{
-		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
-		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+		From:             PayloadRef{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:               &model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Order", SupportedVersions: []string{"v1.1", "v2.0"}},
+		CanonicalVersion: "v2.0",
 	}
 
 	_, err := m.fetchArtifact(context.Background(), need)
@@ -656,8 +668,9 @@ func TestFetchArtifact_NegativeCached(t *testing.T) {
 		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
 	}
 	need := TranslationNeeded{
-		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
-		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+		From:             PayloadRef{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:               &model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Order", SupportedVersions: []string{"v1.1", "v2.0"}},
+		CanonicalVersion: "v2.0",
 	}
 
 	m.fetchArtifact(context.Background(), need)
@@ -689,8 +702,9 @@ func TestFetchArtifact_RetryOnServerError(t *testing.T) {
 		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
 	}
 	need := TranslationNeeded{
-		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
-		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+		From:             PayloadRef{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:               &model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Order", SupportedVersions: []string{"v1.1", "v2.0"}},
+		CanonicalVersion: "v2.0",
 	}
 
 	got, err := m.fetchArtifact(context.Background(), need)
@@ -718,8 +732,9 @@ func TestFetchArtifact_NoRetryOn404(t *testing.T) {
 		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
 	}
 	need := TranslationNeeded{
-		From: model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
-		To:   &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
+		From:             PayloadRef{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+		To:               &model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Order", SupportedVersions: []string{"v1.1", "v2.0"}},
+		CanonicalVersion: "v2.0",
 	}
 
 	m.fetchArtifact(context.Background(), need)
@@ -799,9 +814,10 @@ func assertContainsType(t *testing.T, objects []SchemaObjectRef, typ string) {
 	t.Errorf("expected schema object with Type=%q not found in %v", typ, objects)
 }
 
-// schemaRef wraps schemaObj into a SchemaObjectRef with a synthetic path for tests.
+// schemaRef builds a SchemaObjectRef from a payload contextURL, type, and path.
+// contextURL is the full URL as it appears in the payload (includes version segment).
 func schemaRef(contextURL, typ, jsonataPath string) SchemaObjectRef {
-	return SchemaObjectRef{SchemaObject: schemaObj(contextURL, typ), JSONataPath: jsonataPath}
+	return SchemaObjectRef{PayloadRef: PayloadRef{ContextURL: contextURL, Type: typ}, JSONataPath: jsonataPath}
 }
 
 func findNeedByType(needs []TranslationNeeded, typ string) *TranslationNeeded {
@@ -1022,9 +1038,10 @@ func TestFetchAllArtifacts_AllSucceed(t *testing.T) {
 
 	needs := []TranslationNeeded{
 		{
-			From:        model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
-			To:          &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
-			JSONataPath: "$.message",
+			From:             PayloadRef{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+			To:               &model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Order", SupportedVersions: []string{"v1.1", "v2.0"}},
+			CanonicalVersion: "v2.0",
+			JSONataPath:      "$.message",
 		},
 	}
 
@@ -1045,7 +1062,7 @@ func TestFetchAllArtifacts_NilToIsFailure(t *testing.T) {
 
 	needs := []TranslationNeeded{
 		{
-			From:        model.SchemaObject{ContextURL: "https://schema.beckn.io/v1.1/Unknown.jsonld", Type: "Unknown"},
+			From:        PayloadRef{ContextURL: "https://schema.beckn.io/v1.1/Unknown.jsonld", Type: "Unknown"},
 			To:          nil,
 			JSONataPath: "$.message.unknown",
 		},
@@ -1074,14 +1091,16 @@ func TestFetchAllArtifacts_CollectsAllFailures(t *testing.T) {
 
 	needs := []TranslationNeeded{
 		{
-			From:        model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
-			To:          &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
-			JSONataPath: "$.message",
+			From:             PayloadRef{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+			To:               &model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Order", SupportedVersions: []string{"v1.1", "v2.0"}},
+			CanonicalVersion: "v2.0",
+			JSONataPath:      "$.message",
 		},
 		{
-			From:        model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Fulfillment.jsonld", Type: "Fulfillment"},
-			To:          &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Fulfillment.jsonld", Type: "Fulfillment"},
-			JSONataPath: "$.message.fulfillment",
+			From:             PayloadRef{ContextURL: srv.URL + "/retail/v1.1/Fulfillment.jsonld", Type: "Fulfillment"},
+			To:               &model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Fulfillment", SupportedVersions: []string{"v1.1", "v2.0"}},
+			CanonicalVersion: "v2.0",
+			JSONataPath:      "$.message.fulfillment",
 		},
 	}
 
@@ -1114,14 +1133,16 @@ func TestFetchAllArtifacts_PartialSuccessReturnsBothSets(t *testing.T) {
 
 	needs := []TranslationNeeded{
 		{
-			From:        model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
-			To:          &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Order.jsonld", Type: "Order"},
-			JSONataPath: "$.message",
+			From:             PayloadRef{ContextURL: srv.URL + "/retail/v1.1/Order.jsonld", Type: "Order"},
+			To:               &model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Order", SupportedVersions: []string{"v1.1", "v2.0"}},
+			CanonicalVersion: "v2.0",
+			JSONataPath:      "$.message",
 		},
 		{
-			From:        model.SchemaObject{ContextURL: srv.URL + "/retail/v1.1/Fulfillment.jsonld", Type: "Fulfillment"},
-			To:          &model.SchemaObject{ContextURL: srv.URL + "/retail/v2.0/Fulfillment.jsonld", Type: "Fulfillment"},
-			JSONataPath: "$.message.fulfillment",
+			From:             PayloadRef{ContextURL: srv.URL + "/retail/v1.1/Fulfillment.jsonld", Type: "Fulfillment"},
+			To:               &model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Fulfillment", SupportedVersions: []string{"v1.1", "v2.0"}},
+			CanonicalVersion: "v2.0",
+			JSONataPath:      "$.message.fulfillment",
 		},
 	}
 
@@ -1145,11 +1166,18 @@ func TestFetchAllArtifacts_PartialSuccessReturnsBothSets(t *testing.T) {
 func nodeManifestDoc(objects ...model.SchemaObject) *model.ManifestDocument {
 	var sb strings.Builder
 	sb.WriteString("manifestType: node-manifest\n")
+	sb.WriteString("manifestVersion: \"2.0\"\n")
+	sb.WriteString("subscriberId: \"test/test/test\"\n")
 	sb.WriteString("schema:\n  schemaObjects:\n")
 	for _, o := range objects {
-		sb.WriteString("  - contextUrl: " + o.ContextURL + "\n")
-		sb.WriteString("    type: " + o.Type + "\n")
+		sb.WriteString("  - type: " + o.Type + "\n")
+		sb.WriteString("    baseUrl: " + o.BaseURL + "\n")
+		sb.WriteString("    supportedVersions:\n")
+		for _, v := range o.SupportedVersions {
+			sb.WriteString("      - \"" + v + "\"\n")
+		}
 	}
+	sb.WriteString("governance:\n  effectiveFrom: \"2020-01-01T00:00:00Z\"\n")
 	return &model.ManifestDocument{Content: []byte(sb.String())}
 }
 
@@ -1203,8 +1231,9 @@ func TestNew_ValidManifest_NotOnboarded_False(t *testing.T) {
 	loader := &mockManifestLoader{
 		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
 			return nodeManifestDoc(model.SchemaObject{
-				ContextURL: "https://schema.beckn.io/retail/v2.0/Order.jsonld",
-				Type:       "Order",
+				BaseURL:           "https://schema.beckn.io/retail",
+				Type:              "Order",
+				SupportedVersions: []string{"v2.0"},
 			}), nil
 		},
 	}
@@ -1307,8 +1336,9 @@ func TestMediate_NetworkIdCamelCase_Recognised(t *testing.T) {
 	// networkId (camelCase) must be accepted in addition to network_id (snake_case).
 	// Use a local manifest with v1.0; payload is at v2.0 → incompatible → reject proves networkId was read.
 	lm := localManifestWith(model.SchemaObject{
-		ContextURL: "https://schema.beckn.io/retail/v1.0/Order.jsonld",
-		Type:       "Order",
+		BaseURL:           "https://schema.beckn.io/retail",
+		Type:              "Order",
+		SupportedVersions: []string{"v1.0"},
 	})
 	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{"action": "reject"}, lm)
 	body := []byte(`{"context":{"networkId":"net1"},"message":{"@context":"https://schema.beckn.io/retail/v2.0/Order.jsonld","@type":"Order"}}`)
@@ -1369,8 +1399,9 @@ func TestMediate_CounterpartyManifestUnavailable_PassThrough(t *testing.T) {
 
 func TestMediate_AllCompatible_PassThrough(t *testing.T) {
 	lm := localManifestWith(model.SchemaObject{
-		ContextURL: "https://schema.beckn.io/retail/v2.0/Order.jsonld",
-		Type:       "Order",
+		BaseURL:           "https://schema.beckn.io/retail",
+		Type:              "Order",
+		SupportedVersions: []string{"v2.0"},
 	})
 	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, lm)
 	body := buildPayload("net1", "bap.example.com",
@@ -1388,8 +1419,9 @@ func TestMediate_AllCompatible_PassThrough(t *testing.T) {
 func TestMediate_ActionReject_OnIncompatible(t *testing.T) {
 	// Receiver expects v1.0; inbound payload is at v2.0 — mismatch → reject.
 	lm := localManifestWith(model.SchemaObject{
-		ContextURL: "https://schema.beckn.io/retail/v1.0/Order.jsonld",
-		Type:       "Order",
+		BaseURL:           "https://schema.beckn.io/retail",
+		Type:              "Order",
+		SupportedVersions: []string{"v1.0"},
 	})
 	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{"action": "reject"}, lm)
 	body := buildPayload("net1", "bap.example.com",
@@ -1414,8 +1446,9 @@ func TestMediate_ArtifactNotFound_Reject(t *testing.T) {
 
 	// Local manifest expects v1.0; payload is at v2.0 → mismatch → artifact fetch → 404 → reject.
 	lm := localManifestWith(model.SchemaObject{
-		ContextURL: srv.URL + "/retail/v1.0/Order.jsonld",
-		Type:       "Order",
+		BaseURL:           srv.URL + "/retail",
+		Type:              "Order",
+		SupportedVersions: []string{"v1.0"},
 	})
 	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{"onFailure": "reject"}, lm)
 	m.httpClient = srv.Client()
@@ -1440,8 +1473,9 @@ func TestMediate_ArtifactNotFound_PassThrough(t *testing.T) {
 	defer srv.Close()
 
 	lm := localManifestWith(model.SchemaObject{
-		ContextURL: srv.URL + "/retail/v1.0/Order.jsonld",
-		Type:       "Order",
+		BaseURL:           srv.URL + "/retail",
+		Type:              "Order",
+		SupportedVersions: []string{"v1.0"},
 	})
 	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{"onFailure": "passThrough"}, lm)
 	m.httpClient = srv.Client()
@@ -1464,8 +1498,9 @@ func TestMediate_TranslationApplied(t *testing.T) {
 
 	// Local manifest expects v1.0; inbound payload declares v2.0 → mismatch → artifact fetched → translation applied.
 	lm := localManifestWith(model.SchemaObject{
-		ContextURL: srv.URL + "/retail/v1.0/Order.jsonld",
-		Type:       "Order",
+		BaseURL:           srv.URL + "/retail",
+		Type:              "Order",
+		SupportedVersions: []string{"v1.0"},
 	})
 	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, lm)
 	m.httpClient = srv.Client()

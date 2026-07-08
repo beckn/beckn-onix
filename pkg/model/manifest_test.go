@@ -147,8 +147,9 @@ func validNodeManifestForTest(subscriberID string, now time.Time) NodeManifest {
 		Schema: NodeManifestSchema{
 			SchemaObjects: []SchemaObject{
 				{
-					ContextURL: "https://schema.beckn.io/Order/2.0/context.jsonld",
-					Type:       "beckn:Order",
+					Type:              "beckn:Order",
+					BaseURL:           "https://schema.beckn.io/Order",
+					SupportedVersions: []string{"2.0"},
 				},
 			},
 		},
@@ -223,18 +224,46 @@ func TestValidateNodeManifest(t *testing.T) {
 			wantErrSub: "at least one schema object",
 		},
 		{
-			name: "schema object missing contextUrl",
+			name: "schema object missing baseUrl",
 			mutate: func(m *NodeManifest) {
-				m.Schema.SchemaObjects = []SchemaObject{{Type: "beckn:Order"}}
+				m.Schema.SchemaObjects = []SchemaObject{{Type: "beckn:Order", SupportedVersions: []string{"2.0"}}}
 			},
-			wantErrSub: "missing contextUrl",
+			wantErrSub: "missing baseUrl",
 		},
 		{
 			name: "schema object missing type",
 			mutate: func(m *NodeManifest) {
-				m.Schema.SchemaObjects = []SchemaObject{{ContextURL: "https://schema.beckn.io/Order/2.0/context.jsonld"}}
+				m.Schema.SchemaObjects = []SchemaObject{{BaseURL: "https://schema.beckn.io/Order", SupportedVersions: []string{"2.0"}}}
 			},
 			wantErrSub: "missing type",
+		},
+		{
+			name: "schema object missing supportedVersions",
+			mutate: func(m *NodeManifest) {
+				m.Schema.SchemaObjects = []SchemaObject{{Type: "beckn:Order", BaseURL: "https://schema.beckn.io/Order"}}
+			},
+			wantErrSub: "no supportedVersions",
+		},
+		{
+			name: "schema object unknown versionPolicy",
+			mutate: func(m *NodeManifest) {
+				m.Schema.SchemaObjects = []SchemaObject{{Type: "beckn:Order", BaseURL: "https://schema.beckn.io/Order", SupportedVersions: []string{"2.0"}, VersionPolicy: "newest"}}
+			},
+			wantErrSub: "unknown versionPolicy",
+		},
+		{
+			name: "schema object pinned without pinnedVersion",
+			mutate: func(m *NodeManifest) {
+				m.Schema.SchemaObjects = []SchemaObject{{Type: "beckn:Order", BaseURL: "https://schema.beckn.io/Order", SupportedVersions: []string{"2.0"}, VersionPolicy: "pinned"}}
+			},
+			wantErrSub: "no pinnedVersion",
+		},
+		{
+			name: "schema object pinnedVersion not in supportedVersions",
+			mutate: func(m *NodeManifest) {
+				m.Schema.SchemaObjects = []SchemaObject{{Type: "beckn:Order", BaseURL: "https://schema.beckn.io/Order", SupportedVersions: []string{"2.0"}, VersionPolicy: "pinned", PinnedVersion: "1.0"}}
+			},
+			wantErrSub: "not in supportedVersions",
 		},
 		{
 			name: "invalid effectiveFrom",
@@ -306,11 +335,19 @@ manifestVersion: "1.0"
 manifestType: "node-manifest"
 subscriberId: "nfh.global/subscribers.beckn.one/marketplace.example.com"
 schema:
+  defaultVersionPolicy: "latest"
   schemaObjects:
-    - contextUrl: "https://schema.beckn.io/Order/2.0/context.jsonld"
-      type: "beckn:Order"
-    - contextUrl: "https://schema.beckn.io/Order/1.0/context.jsonld"
-      type: "beckn:Order"
+    - type: "beckn:Order"
+      baseUrl: "https://schema.beckn.io/Order"
+      supportedVersions:
+        - "2.0"
+        - "2.1"
+    - type: "beckn:Item"
+      baseUrl: "https://schema.beckn.io/Item"
+      supportedVersions:
+        - "1.0"
+      versionPolicy: "pinned"
+      pinnedVersion: "1.0"
 governance:
   effectiveFrom: "2026-01-01T00:00:00Z"
 `
@@ -327,14 +364,25 @@ governance:
 	if m.SubscriberID != "nfh.global/subscribers.beckn.one/marketplace.example.com" {
 		t.Errorf("unexpected subscriberId: %q", m.SubscriberID)
 	}
+	if m.Schema.DefaultVersionPolicy != "latest" {
+		t.Errorf("unexpected defaultVersionPolicy: %q", m.Schema.DefaultVersionPolicy)
+	}
 	if len(m.Schema.SchemaObjects) != 2 {
 		t.Fatalf("expected 2 schema objects, got %d", len(m.Schema.SchemaObjects))
 	}
-	if m.Schema.SchemaObjects[0].ContextURL != "https://schema.beckn.io/Order/2.0/context.jsonld" {
-		t.Errorf("unexpected contextUrl: %q", m.Schema.SchemaObjects[0].ContextURL)
+	obj0 := m.Schema.SchemaObjects[0]
+	if obj0.Type != "beckn:Order" {
+		t.Errorf("unexpected type: %q", obj0.Type)
 	}
-	if m.Schema.SchemaObjects[0].Type != "beckn:Order" {
-		t.Errorf("unexpected type: %q", m.Schema.SchemaObjects[0].Type)
+	if obj0.BaseURL != "https://schema.beckn.io/Order" {
+		t.Errorf("unexpected baseUrl: %q", obj0.BaseURL)
+	}
+	if len(obj0.SupportedVersions) != 2 || obj0.SupportedVersions[0] != "2.0" || obj0.SupportedVersions[1] != "2.1" {
+		t.Errorf("unexpected supportedVersions: %v", obj0.SupportedVersions)
+	}
+	obj1 := m.Schema.SchemaObjects[1]
+	if obj1.VersionPolicy != "pinned" || obj1.PinnedVersion != "1.0" {
+		t.Errorf("unexpected pinned policy: policy=%q pinnedVersion=%q", obj1.VersionPolicy, obj1.PinnedVersion)
 	}
 	if m.Governance.EffectiveFrom != "2026-01-01T00:00:00Z" {
 		t.Errorf("unexpected effectiveFrom: %q", m.Governance.EffectiveFrom)
