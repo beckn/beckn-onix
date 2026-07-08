@@ -1013,9 +1013,15 @@ func CheckCompatibility(extracted []SchemaObjectRef, manifest *model.NodeManifes
 
 	var needs []TranslationNeeded
 	for _, ref := range extracted {
-		local, known := supported[ref.Type]
+		// Normalize JSON-LD compact IRI: "rcpa:RetailConsideration" → "RetailConsideration".
+		// Manifests declare plain type names; payloads may use prefixed compact IRIs.
+		typeName := ref.Type
+		if idx := strings.LastIndex(typeName, ":"); idx >= 0 {
+			typeName = typeName[idx+1:]
+		}
+		local, known := supported[typeName]
 		if !known {
-			// Type not declared in local manifest — no translation target, skip.
+			// Type not declared in target manifest — no translation target, skip.
 			continue
 		}
 		if local.ContextURL != ref.ContextURL {
