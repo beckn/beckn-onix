@@ -227,11 +227,9 @@ func TestCheckCompatibility_UnknownType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(needs) != 1 {
-		t.Fatalf("expected 1 translation needed, got %d", len(needs))
-	}
-	if needs[0].To != nil {
-		t.Error("expected To to be nil for unknown type")
+	// Unknown types (not declared in target manifest) are skipped — no translation target exists.
+	if len(needs) != 0 {
+		t.Fatalf("expected 0 translation needs for unknown type, got %d", len(needs))
 	}
 }
 
@@ -250,25 +248,17 @@ func TestCheckCompatibility_MixedOutcomes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(needs) != 2 {
-		t.Fatalf("expected 2 translation needs, got %d", len(needs))
+	// Quote is unknown (not in manifest) → skipped. Only Item (version mismatch) is returned.
+	if len(needs) != 1 {
+		t.Fatalf("expected 1 translation need, got %d", len(needs))
 	}
 
-	// Assert by type rather than by index — order is an implementation detail.
 	itemNeed := findNeedByType(needs, "Item")
 	if itemNeed == nil {
 		t.Fatal("expected TranslationNeeded entry for Item")
 	}
 	if itemNeed.To == nil {
 		t.Error("expected To to be set for Item version mismatch")
-	}
-
-	quoteNeed := findNeedByType(needs, "Quote")
-	if quoteNeed == nil {
-		t.Fatal("expected TranslationNeeded entry for Quote")
-	}
-	if quoteNeed.To != nil {
-		t.Error("expected To to be nil for unknown Quote type")
 	}
 }
 
@@ -282,11 +272,9 @@ func TestCheckCompatibility_EmptyManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(needs) != 1 {
-		t.Fatalf("expected 1 translation needed, got %d", len(needs))
-	}
-	if needs[0].To != nil {
-		t.Error("expected To to be nil when manifest is empty")
+	// Empty manifest declares no types — all payload types are unknown and skipped.
+	if len(needs) != 0 {
+		t.Fatalf("expected 0 translation needs for empty manifest, got %d", len(needs))
 	}
 }
 

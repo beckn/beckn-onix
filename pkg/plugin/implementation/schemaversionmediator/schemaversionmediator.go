@@ -324,7 +324,8 @@ type mediator struct {
 	cache           *artifactCache
 	jsonataInstance jsonata.JSONataInstance
 	exprs           *exprCache
-	notOnboarded    bool // set at New() when local manifest is absent or has no schemaObjects
+	notOnboarded    bool                // set at New() when local manifest is absent or has no schemaObjects
+	localManifest   *model.NodeManifest // local node manifest loaded at startup; nil when notOnboarded
 }
 
 // New is the package-level constructor used by the plugin entrypoint.
@@ -380,6 +381,8 @@ func (p *provider) New(ctx context.Context, loader definition.ManifestLoader, cf
 			nm, err := parseNodeManifest(doc)
 			if err != nil || len(nm.Schema.SchemaObjects) == 0 {
 				m.notOnboarded = true
+			} else {
+				m.localManifest = nm
 			}
 		}
 	}
@@ -407,18 +410,24 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 		return nil
 	}
 
-	// Fetch counterparty manifest. Absent manifest drives onFailure branch.
-	counterpartyManifest, err := m.fetchCounterpartyManifest(ctx, counterpartyID)
-	if err != nil {
-		return m.applyOnFailure(fmt.Errorf("schemaversionmediator: counterparty manifest unavailable for %q: %w", counterpartyID, err))
-	}
-
 	refs, err := WalkPayload(ctx.Body)
 	if err != nil {
 		return fmt.Errorf("schemaversionmediator: walk payload: %w", err)
 	}
 
-	needs, err := CheckCompatibility(refs, counterpartyManifest)
+	// Receiver (BPP): check inbound payload against local manifest — translate to match what we expect.
+	// Caller (BAP): check outbound payload against counterparty manifest — translate to match what they expect.
+	var targetManifest *model.NodeManifest
+	if ctx.Role == model.RoleBPP {
+		targetManifest = m.localManifest
+	} else {
+		targetManifest, err = m.fetchCounterpartyManifest(ctx, counterpartyID)
+		if err != nil {
+			return m.applyOnFailure(fmt.Errorf("schemaversionmediator: counterparty manifest unavailable for %q: %w", counterpartyID, err))
+		}
+	}
+
+	needs, err := CheckCompatibility(refs, targetManifest)
 	if err != nil {
 		return err
 	}
