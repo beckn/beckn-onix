@@ -285,3 +285,70 @@ func TestVerifyDetachedArtifact_InvalidPublicKeyBody(t *testing.T) {
 		t.Fatal("expected error for invalid public key body")
 	}
 }
+
+// TestVerifyDetached_Ed25519_RejectsTamperedSignature tests that a tampered Ed25519 signature is rejected.
+func TestVerifyDetached_Ed25519_RejectsTamperedSignature(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate Ed25519 key: %v", err)
+	}
+	content := []byte("manifest: true")
+	sig := ed25519.Sign(privateKey, content)
+	sig[0] ^= 0xFF // tamper
+	if err := VerifyDetached(content, sig, publicKey); err == nil {
+		t.Fatal("expected verification to fail for tampered Ed25519 signature")
+	}
+}
+
+// TestVerifyDetached_RSA_RejectsTamperedSignature tests that a tampered RSA signature is rejected.
+func TestVerifyDetached_RSA_RejectsTamperedSignature(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+	content := []byte("manifest: true")
+	sum := sha256.Sum256(content)
+	sig, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, sum[:])
+	if err != nil {
+		t.Fatalf("failed to sign: %v", err)
+	}
+	sig[0] ^= 0xFF // tamper
+	if err := VerifyDetached(content, sig, &privateKey.PublicKey); err == nil {
+		t.Fatal("expected verification to fail for tampered RSA signature")
+	}
+}
+
+// TestVerifyDetached_ECDSA_RejectsTamperedSignature tests that a tampered ECDSA signature is rejected.
+func TestVerifyDetached_ECDSA_RejectsTamperedSignature(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate ECDSA key: %v", err)
+	}
+	content := []byte("manifest: true")
+	sum := sha256.Sum256(content)
+	sig, err := ecdsa.SignASN1(rand.Reader, privateKey, sum[:])
+	if err != nil {
+		t.Fatalf("failed to sign: %v", err)
+	}
+	sig[len(sig)-1] ^= 0xFF // tamper last byte of s integer
+	if err := VerifyDetached(content, sig, &privateKey.PublicKey); err == nil {
+		t.Fatal("expected verification to fail for tampered ECDSA signature")
+	}
+}
+
+// TestVerifyDetached_WrongKey tests that a signature from one key is rejected when verified against another.
+func TestVerifyDetached_WrongKey(t *testing.T) {
+	_, privA, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key A: %v", err)
+	}
+	pubB, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key B: %v", err)
+	}
+	content := []byte("manifest: true")
+	sig := ed25519.Sign(privA, content)
+	if err := VerifyDetached(content, sig, pubB); err == nil {
+		t.Fatal("expected verification to fail when signature is from a different key")
+	}
+}
