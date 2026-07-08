@@ -1025,6 +1025,7 @@ The sample illustrates how a single mapping file can convert `search` requests a
 schemaVersionMediator:
   id: schemaversionmediator
   config:
+    nodeId: "nfh.global/subscribers.beckn.one/open-kitchen-bpp"
     action: translate
     onFailure: reject
     fetchTimeoutMs: "5000"
@@ -1037,14 +1038,13 @@ schemaVersionMediator:
 
 | Key | Values | Default | Description |
 |---|---|---|---|
+| `nodeId` | string | — | **Required.** Three-part DeDi subscriber identity for this node (`namespace/registry/recordId`). Used at startup to load the local node manifest. |
 | `action` | `translate` \| `reject` | `translate` | What to do when schema objects are incompatible. `translate` fetches and applies an artifact; `reject` returns `schemaIncompatible` immediately. |
 | `onFailure` | `reject` \| `passThrough` | `reject` | Applied when `action=translate` but no artifact can be fetched. `passThrough` forwards the untranslated payload — operator escape hatch only, not for production. |
 | `fetchTimeoutMs` | integer string | `"5000"` | HTTP timeout in milliseconds for artifact fetch. |
 | `positiveCacheTTL` | duration string | `"1h"` | How long to cache successfully fetched translation artifacts. |
 | `negativeCacheTTL` | duration string | `"5m"` | How long to cache artifact-not-found responses. |
 | `maxCacheEntries` | integer string | `"1000"` | Maximum entries in the artifact cache. |
-
-> **`nodeId` is not an operator-facing config field.** The handler automatically injects the adapter's `subscriberId` as `nodeId` before calling the plugin. Do not set this manually.
 
 **Step ordering — `validateSchema` must come before `mediateSchema`:**
 
@@ -1062,12 +1062,11 @@ This order is universal for both caller and receiver handlers. Schema definition
 
 ```yaml
 modules:
-  - name: bapTxnReceiver
-    path: /bap/receiver/
+  - name: bppTxnReceiver
+    path: /bpp/receiver/
     handler:
       type: std
-      role: bap
-      subscriberId: "bap.example.com"
+      role: bpp
       plugins:
         registry:
           id: dediregistry
@@ -1082,6 +1081,7 @@ modules:
         schemaVersionMediator:
           id: schemaversionmediator
           config:
+            nodeId: "nfh.global/subscribers.beckn.one/open-kitchen-bpp"
             action: translate
             onFailure: reject
         signValidator:

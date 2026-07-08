@@ -10,11 +10,13 @@
 2. [Plugin ID and Dependencies](#plugin-id-and-dependencies)
 3. [Configuration Reference](#configuration-reference)
 4. [Step Ordering](#step-ordering)
-5. [Cold-Start Behaviour](#cold-start-behaviour)
-6. [Error Codes](#error-codes)
-7. [Translation Artifacts](#translation-artifacts)
-8. [Data-Loss Detection](#data-loss-detection)
-9. [Known Limitations](#known-limitations)
+5. [Direction Awareness](#direction-awareness)
+6. [Cold-Start Behaviour](#cold-start-behaviour)
+7. [Node Manifest Schema](#node-manifest-schema)
+8. [Error Codes](#error-codes)
+9. [Translation Artifacts](#translation-artifacts)
+10. [Data-Loss Detection](#data-loss-detection)
+11. [Known Limitations](#known-limitations)
 
 ---
 
@@ -22,12 +24,14 @@
 
 On every inbound request, `Mediate` runs the following sequence:
 
-1. **Cold-start guard** — if the local node manifest was absent or had no `schemaObjects` at startup, every call is rejected immediately with `subscriberNotOnboarded`.
-2. **Identity extraction** — reads `networkId`/`network_id` from the payload `context` block; reads the counterparty subscriber ID from `ContextKeyRemoteID` (set by `reqpreprocessor`).
-3. **Counterparty manifest lookup** — calls `ManifestLoader.GetBySubscriberID` to fetch the counterparty's node manifest from DeDi.
-4. **Compatibility check** — walks the payload for `@context`+`@type` pairs and compares them against the counterparty manifest's `schemaObjects`. If all match, the payload passes through unchanged.
-5. **Artifact fetch** — for each incompatible schema object, fetches a translation artifact from the URL derived from the counterparty manifest's `contextUrl`.
-6. **Translation** — composes the fetched artifacts into a single JSONata expression and executes it against the `message` subtree of the payload.
+1. **Cold-start guard** — if the local node manifest was absent, unreachable, or had no `schemaObjects` at startup (or if `nodeId` was not set in config), every call is rejected immediately with `subscriberNotOnboarded`.
+2. **Identity extraction** — reads `networkId`/`network_id` from the payload `context` block; reads the counterparty subscriber ID from `ContextKeyRemoteID` (set by `reqpreprocessor`). If either is empty the payload passes through unchanged.
+3. **Target manifest selection** — direction-aware:
+   - **Receiver handler** (`bapTxnReceiver`, `bppTxnReceiver`): uses the local node manifest loaded at startup. No network call at request time.
+   - **Caller handler** (`bapTxnCaller`, `bppTxnCaller`): calls `ManifestLoader.GetBySubscriberID` to fetch the counterparty's node manifest from DeDi at request time.
+4. **Compatibility check** — walks the payload for `@context`+`@type` pairs and compares them against the target manifest's `schemaObjects`. If all objects are at a supported version, the payload passes through unchanged.
+5. **Artifact fetch** — for each incompatible schema object, derives the artifact URL from the target manifest's `baseUrl`, canonical version, and the source version, then fetches it over HTTP.
+6. **Translation** — composes the fetched artifacts into a single JSONata expression (`$merge([$, patch1, patch2, ...])`) and executes it against the `message` subtree of the payload in one pass.
 7. **Data-loss detection** — compares flattened key paths of the source and translated message. If any source keys are absent in the output, the request is rejected with `schemaTranslationDataLoss`.
 8. **Patch** — replaces the `message` field in `ctx.Body` with the translated output.
 
@@ -42,7 +46,8 @@ plugins:
   schemaVersionMediator:
     id: schemaversionmediator
     config:
-      action: translate         # see Configuration Reference
+      nodeId: "nfh.global/subscribers.beckn.one/open-kitchen-bpp"  # required
+      action: translate
       onFailure: reject
 ```
 
@@ -50,10 +55,10 @@ plugins:
 
 | Dependency | Why |
 |---|---|
-| `manifestLoader` | Fetches counterparty node manifests from DeDi for compatibility checks |
-| `dediregistry` (backing the manifestLoader) | Resolves subscriber manifest URLs |
+| `manifestLoader` | Fetches counterparty node manifests from DeDi at request time (caller path) and the local manifest at startup |
+| `dediregistry` (backing the manifestLoader) | Resolves subscriber manifest URLs via DeDi |
 
-`nodeId` is **not** an operator-facing config field. The handler injects the adapter's `subscriberId` automatically before calling `New` so the cold-start manifest lookup can run at boot time.
+**`nodeId`** is an **operator-facing config field** set under `schemaVersionMediator.config`. It is the three-part DeDi subscriber identity for this node (`namespace/registry/recordId`, e.g. `nfh.global/subscribers.beckn.one/open-kitchen-bpp`). At startup the plugin calls `ManifestLoader.GetBySubscriberID(nodeId)` to load the local node manifest. If `nodeId` is absent or the manifest cannot be loaded, the mediator marks itself as `notOnboarded` and rejects every request.
 
 ---
 
@@ -61,12 +66,13 @@ plugins:
 
 | Key | Values | Default | Description |
 |---|---|---|---|
+| `nodeId` | string | — | **Required.** Three-part DeDi subscriber identity for this node (`namespace/registry/recordId`). Used at startup to load the local node manifest. |
 | `action` | `translate` \| `reject` | `translate` | What to do when schema objects are incompatible |
 | `onFailure` | `reject` \| `passThrough` | `reject` | What to do when `action=translate` but an artifact cannot be fetched |
-| `fetchTimeoutMs` | integer | `5000` | HTTP timeout for artifact fetch in milliseconds |
-| `positiveCacheTTL` | duration string | `1h` | How long to cache successfully fetched artifacts |
-| `negativeCacheTTL` | duration string | `5m` | How long to cache artifact-not-found responses |
-| `maxCacheEntries` | integer | `1000` | Maximum number of entries in the artifact cache |
+| `fetchTimeoutMs` | integer string | `"5000"` | HTTP timeout for artifact fetch in milliseconds |
+| `positiveCacheTTL` | duration string | `"1h"` | How long to cache successfully fetched artifacts |
+| `negativeCacheTTL` | duration string | `"5m"` | How long to cache artifact-not-found responses |
+| `maxCacheEntries` | integer string | `"1000"` | Maximum number of entries in the artifact cache |
 
 **`action` values:**
 
@@ -100,11 +106,106 @@ Schema definitions are publicly available and versioned. The schema validator re
 
 ---
 
+## Direction Awareness
+
+`Mediate` behaves differently depending on whether the handler is a caller or a receiver. The distinction is carried by `StepContext.IsCallerHandler`.
+
+| Handler type | Examples | Target manifest | Manifest source |
+|---|---|---|---|
+| **Receiver** | `bapTxnReceiver`, `bppTxnReceiver` | Local node manifest | Loaded once at startup via `nodeId` |
+| **Caller** | `bapTxnCaller`, `bppTxnCaller` | Counterparty node manifest | Fetched per-request via `ManifestLoader.GetBySubscriberID` |
+
+**Receiver path:** the plugin checks whether the inbound payload's schema versions are compatible with what *this* node expects. Translation makes the inbound payload match the local node's declared versions.
+
+**Caller path:** the plugin checks whether the outbound payload's schema versions are compatible with what the *counterparty* expects. Translation makes the outbound payload match the counterparty's declared versions before forwarding.
+
+Both paths use the same compatibility check, artifact fetch, and translation logic — only the manifest source differs.
+
+---
+
 ## Cold-Start Behaviour
 
-At startup, `New` calls `ManifestLoader.GetBySubscriberID` for the local node's subscriber ID. If the manifest is absent, unreachable, or contains no `schemaObjects`, the mediator sets an internal `notOnboarded` flag.
+At startup, `New` calls `ManifestLoader.GetBySubscriberID` using the `nodeId` config value to load the local node manifest. The mediator sets an internal `notOnboarded` flag if any of the following occur:
 
-While `notOnboarded` is set, every `Mediate` call returns `subscriberNotOnboarded` immediately. The adapter must be restarted after the local node manifest is published to DeDi and becomes resolvable.
+- `nodeId` is absent or empty in config
+- The manifest document cannot be fetched or parsed
+- The manifest contains no `schemaObjects`
+
+While `notOnboarded` is set, every `Mediate` call returns `subscriberNotOnboarded` immediately. The adapter must be restarted after the local node manifest is published to DeDi and `nodeId` is correctly set in config.
+
+---
+
+## Node Manifest Schema
+
+The node manifest is a YAML file that declares the schema types a participant supports and their accepted versions. It is the primary input to compatibility checking.
+
+### Full structure
+
+```yaml
+manifestVersion: "1.0"
+manifestType: "node-manifest"
+subscriberId: "nfh.global/subscribers.beckn.one/open-kitchen-bpp"
+
+schema:
+  defaultVersionPolicy: "latest"   # optional — applied to objects that don't set their own
+  schemaObjects:
+    - type: "RetailConsideration"
+      baseUrl: "https://raw.githubusercontent.com/beckn/local-retail/refs/heads/main/schema/RetailConsideration"
+      supportedVersions:
+        - "v2.1"
+        - "v2.2"
+      versionPolicy: "pinned"       # optional — overrides defaultVersionPolicy for this object
+      pinnedVersion: "v2.2"         # required when versionPolicy=pinned
+
+    - type: "RetailOffer"
+      baseUrl: "https://raw.githubusercontent.com/beckn/local-retail/refs/heads/main/schema/RetailOffer"
+      supportedVersions:
+        - "v2.1"
+
+governance:
+  effectiveFrom: "2024-01-01T00:00:00Z"
+  effectiveUntil: "2027-01-01T00:00:00Z"  # optional — omit for indefinite validity
+```
+
+### `schema` section
+
+| Field | Required | Description |
+|---|---|---|
+| `defaultVersionPolicy` | No | Applied to all `schemaObjects` that do not set their own `versionPolicy`. Values: `latest` (default) or `pinned`. |
+| `schemaObjects` | Yes | List of schema type declarations. At least one entry required for the mediator to consider the node onboarded. |
+
+### `schemaObjects` entries
+
+| Field | Required | Description |
+|---|---|---|
+| `type` | Yes | Schema type name as it appears in `@type` in the Beckn payload (e.g. `RetailConsideration`). Must match exactly — case-sensitive. |
+| `baseUrl` | Yes | Base URL prefix for this schema type. The mediator appends `/{version}/context.jsonld` to form the context URL, and `/{canonicalVersion}/{Type}_from_{fromVersion}` to derive artifact URLs. |
+| `supportedVersions` | Yes | List of schema versions this node handles natively. Payloads at any listed version are considered compatible — no translation triggered. |
+| `versionPolicy` | No | Controls which version is the canonical translation target. `latest` selects the highest version in `supportedVersions` by major.minor comparison. `pinned` uses `pinnedVersion`. Defaults to `defaultVersionPolicy`. |
+| `pinnedVersion` | No | Required when `versionPolicy: pinned`. Must be one of the versions in `supportedVersions`. |
+
+### `governance` section
+
+| Field | Required | Description |
+|---|---|---|
+| `effectiveFrom` | Yes | RFC 3339 timestamp from which the manifest is valid. Manifests with a future `effectiveFrom` are rejected at load time. |
+| `effectiveUntil` | No | RFC 3339 timestamp at which the manifest expires. Omit for indefinite validity. Expired manifests are rejected at load time. |
+
+### Artifact URL derivation
+
+When a payload carries a schema object at a version not in `supportedVersions`, the mediator constructs the artifact URL as:
+
+```
+{baseUrl}/{canonicalVersion}/{type}_from_{fromVersion}
+```
+
+For example, if `RetailConsideration` has `baseUrl: https://.../schema/RetailConsideration`, `supportedVersions: [v2.2]`, and the inbound payload declares `v2.1`:
+
+```
+https://.../schema/RetailConsideration/v2.2/RetailConsideration_from_v2.1
+```
+
+The artifact at that URL must contain a JSONata expression that transforms a `v2.1` message structure into a `v2.2`-compatible one.
 
 ---
 
