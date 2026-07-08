@@ -341,6 +341,7 @@ type provider struct{}
 // mediator's notOnboarded flag is set; Mediate will reject every inbound
 // request until the manifest is published and the adapter is restarted.
 func (p *provider) New(ctx context.Context, loader definition.ManifestLoader, cfg map[string]string) (definition.SchemaVersionMediator, func() error, error) {
+	log.Infof(ctx, "schemaversionmediator: loading plugin build=bfbc645")
 	policy, err := loadTranslationPolicy(cfg)
 	if err != nil {
 		return nil, nil, err
