@@ -98,11 +98,6 @@ type cachedDomainSchema struct {
 	accessCount  int64
 }
 
-// isCoreSchema checks if @context URL is a core Beckn schema.
-func isCoreSchema(contextURL string) bool {
-	return strings.Contains(contextURL, "/schema/core/")
-}
-
 func rawSchemaKey(rel string) string {
 	parts := strings.SplitN(filepath.ToSlash(rel), "/", 3)
 	if len(parts) == 3 {
@@ -160,7 +155,7 @@ func (v *schemav2Validator) validateExtendedSchemas(ctx context.Context, body in
 		return fmt.Errorf("missing 'message' field in request body")
 	}
 
-	// Find domain-specific objects with @context (skip core schemas)
+	// Find all objects with @context
 	objects := findReferencedObjects(message, "message")
 
 	if len(objects) == 0 {
@@ -412,15 +407,12 @@ func findReferencedObjects(data interface{}, path string) []referencedObject {
 		// Check for @context and @type
 		if contextVal, hasContext := v["@context"].(string); hasContext {
 			if typeVal, hasType := v["@type"].(string); hasType {
-				// Skip core schemas during traversal
-				if !isCoreSchema(contextVal) {
-					results = append(results, referencedObject{
-						Path:    path,
-						Context: contextVal,
-						Type:    typeVal,
-						Data:    v,
-					})
-				}
+				results = append(results, referencedObject{
+					Path:    path,
+					Context: contextVal,
+					Type:    typeVal,
+					Data:    v,
+				})
 			}
 		}
 

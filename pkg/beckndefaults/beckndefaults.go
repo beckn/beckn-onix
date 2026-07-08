@@ -75,12 +75,11 @@ func loadAndVerify(constants, sig []byte) (*BecknConstants, error) {
 	return &bc, nil
 }
 
-func fetchRemote(ctx context.Context) ([]byte, []byte, error) {
+var fetchRemote = func(ctx context.Context) ([]byte, []byte, error) {
 	return fetchFromURLs(ctx, remoteConstantsURL, remoteConstantsSigURL)
 }
 
 // fetchFromURLs fetches the constants file and its signature from the given URLs.
-// Separated from fetchRemote so tests can inject an httptest.Server URL.
 func fetchFromURLs(ctx context.Context, constantsURL, sigURL string) ([]byte, []byte, error) {
 	client := &http.Client{Timeout: remoteTimeout}
 

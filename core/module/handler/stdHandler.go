@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
@@ -171,6 +172,8 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Request(r.Context(), r, stepCtx.Body)
 
+	var responseBody []byte
+
 	defer func() {
 		span.SetAttributes(attribute.Int("http.response.status_code", wrapped.statusCode), attribute.String("http.request.error", errString(err)), attribute.String("observedTimeUnixNano", strconv.FormatInt(time.Now().UnixNano(), 10)))
 		if wrapped.statusCode < 200 || wrapped.statusCode >= 400 {
@@ -178,7 +181,10 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		body := stepCtx.Body
-		telemetry.EmitAuditLogs(r.Context(), body, auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.request.error", errString(err)), auditlog.String("sender.id", senderID), auditlog.String("receiver.id", receiverID))
+		telemetry.EmitAuditLogs(r.Context(), body, r.Header, auditlog.String("audit.direction", "request"), auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.request.error", errString(err)), auditlog.String("sender.id", senderID), auditlog.String("receiver.id", receiverID))
+		if len(responseBody) > 0 {
+			telemetry.EmitAuditLogs(r.Context(), responseBody, nil, auditlog.String("audit.direction", "response"), auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.request.error", errString(err)), auditlog.String("sender.id", senderID), auditlog.String("receiver.id", receiverID))
+		}
 		span.End()
 	}()
 
@@ -189,7 +195,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			log.Errorf(stepCtx, pipelineErr, "%T.run():%v", step, pipelineErr)
 			// Sign the NACK before writing HTTP headers (NFH-007 CON-004-02).
 			h.signNackResponse(stepCtx, pipelineErr)
-			sendNack(stepCtx, wrapped, pipelineErr)
+			responseBody = sendNack(stepCtx, wrapped, pipelineErr)
 			break
 		}
 	}
@@ -207,15 +213,15 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					// ackSignerStep itself failed — sign the NACK body if
 					// a different signing mechanism is available, or send unsigned.
 					h.signNackResponse(stepCtx, err)
-					sendNack(stepCtx, wrapped, err)
+					responseBody = sendNack(stepCtx, wrapped, err)
 					return
 				}
 			}
-			sendAck(stepCtx, wrapped)
+			responseBody = sendAck(stepCtx, wrapped)
 			return
 		}
 		// Handle routing based on the defined route type.
-		route(stepCtx, r, wrapped, h.publisher, h.httpClient, h.responseSteps, h.signNackResponse)
+		route(stepCtx, r, wrapped, h.publisher, h.httpClient, h.responseSteps, h.signNackResponse, &responseBody)
 	}
 }
 
@@ -286,7 +292,9 @@ func (h *stdHandler) subID(ctx context.Context) string {
 	return h.SubscriberID
 }
 
-var proxyFunc = proxy
+var proxyFunc = func(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpClient *http.Client, responseSteps []definition.ResponseStep, responseBody *[]byte) {
+	proxy(ctx, r, w, httpClient, responseSteps, responseBody)
+}
 
 // nackSignerFunc is the function type used to sign NACK responses before they
 // are written to the wire. On Receiver modules h.signNackResponse is passed;
@@ -294,26 +302,26 @@ var proxyFunc = proxy
 type nackSignerFunc func(ctx *model.StepContext, err error)
 
 // route handles request forwarding or message publishing based on the routing type.
-func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb definition.Publisher, httpClient *http.Client, responseSteps []definition.ResponseStep, signNack nackSignerFunc) {
+func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb definition.Publisher, httpClient *http.Client, responseSteps []definition.ResponseStep, signNack nackSignerFunc, responseBody *[]byte) {
 	log.Debugf(ctx, "Routing to ctx.Route to %#v", ctx.Route)
 	switch ctx.Route.TargetType {
 	case "url":
 		log.Infof(ctx.Context, "Forwarding request to URL: %s", ctx.Route.URL)
-		proxyFunc(ctx, r, w, httpClient, responseSteps)
+		proxyFunc(ctx, r, w, httpClient, responseSteps, responseBody)
 		return
 	case "publisher":
 		if pb == nil {
 			err := fmt.Errorf("publisher plugin not configured")
 			log.Errorf(ctx.Context, err, "Invalid configuration:%v", err)
 			signNack(ctx, err)
-			sendNack(ctx, w, err)
+			*responseBody = sendNack(ctx, w, err)
 			return
 		}
 		log.Infof(ctx.Context, "Publishing message to: %s", ctx.Route.PublisherID)
 		if err := pb.Publish(ctx, ctx.Route.PublisherID, ctx.Body); err != nil {
 			log.Errorf(ctx.Context, err, "Failed to publish message")
 			signNack(ctx, err)
-			sendNack(ctx, w, err)
+			*responseBody = sendNack(ctx, w, err)
 			return
 		}
 		// Publisher path: ONIX writes the ACK. Run response steps with resp=nil.
@@ -321,7 +329,7 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 			if err := step.RunOnResponse(ctx, nil); err != nil {
 				log.Errorf(ctx.Context, err, "response step failed: %v", err)
 				signNack(ctx, err)
-				sendNack(ctx, w, err)
+				*responseBody = sendNack(ctx, w, err)
 				return
 			}
 		}
@@ -329,13 +337,37 @@ func route(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, pb de
 		err := fmt.Errorf("unknown route type: %s", ctx.Route.TargetType)
 		log.Errorf(ctx.Context, err, "Invalid configuration:%v", err)
 		signNack(ctx, err)
-		sendNack(ctx, w, err)
+		*responseBody = sendNack(ctx, w, err)
 		return
 	}
-	sendAck(ctx, w)
+	*responseBody = sendAck(ctx, w)
 }
 
-func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpClient *http.Client, responseSteps []definition.ResponseStep) {
+// proxyBufPool backs reverseProxyBufferPool. Without a BufferPool set on
+// httputil.ReverseProxy, copyBuffer allocates a fresh 32KB []byte per
+// proxied response (see https://github.com/beckn/beckn-onix/issues/848) —
+// pooling avoids that allocation on every request.
+var proxyBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 32*1024)
+		return &b
+	},
+}
+
+// reverseProxyBufferPool implements httputil.BufferPool over proxyBufPool.
+// Buffers are stored as *[]byte rather than []byte so Put does not box a
+// fresh interface value (and allocate) on every call.
+type reverseProxyBufferPool struct{}
+
+func (reverseProxyBufferPool) Get() []byte {
+	return *(proxyBufPool.Get().(*[]byte))
+}
+
+func (reverseProxyBufferPool) Put(b []byte) {
+	proxyBufPool.Put(&b)
+}
+
+func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpClient *http.Client, responseSteps []definition.ResponseStep, responseBody *[]byte) {
 	target := ctx.Route.URL
 	r.Header.Set("X-Forwarded-Host", r.Host)
 
@@ -366,6 +398,10 @@ func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpC
 				return err
 			}
 		}
+		// Capture only after all response steps succeed — if a step fails the
+		// ReverseProxy error handler writes a 502, so the upstream body is not
+		// what the caller received.
+		*responseBody = body
 		return nil
 	}
 
@@ -373,6 +409,7 @@ func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpC
 		Director:       director,
 		Transport:      httpClient.Transport,
 		ModifyResponse: modifyResponse,
+		BufferPool:     reverseProxyBufferPool{},
 	}
 
 	p.ServeHTTP(w, r)

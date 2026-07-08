@@ -1,7 +1,7 @@
 # beckn-onix Adapter — Benchmark Report
 
 > **Run:** `__TIMESTAMP__`
-> **Platform:** __CPU__ · __GOOS__/__GOARCH__ · GOMAXPROCS=__GOMAXPROCS__ (default)
+> **Platform:** __CPU__ (__CORES__ cores) · __GOOS__/__GOARCH__ · GOMAXPROCS=__GOMAXPROCS__ (default)
 > **Adapter version:** __ONIX_VERSION__
 > **Beckn Protocol:** v2.0.0
 
@@ -26,9 +26,9 @@ adapter-internal latency from network variables.
 
 | Metric | Value |
 |--------|-------|
-| Serial p50 latency (discover) | **__P50_US__ µs** |
-| Serial p95 latency (discover) | **__P95_US__ µs** |
-| Serial p99 latency (discover) | **__P99_US__ µs** |
+| Serial p50 latency (discover) | **__P50_US__** |
+| Serial p95 latency (discover) | **__P95_US__** |
+| Serial p99 latency (discover) | **__P99_US__** |
 | Serial mean latency (discover) | **__MEAN_DISCOVER_US__ µs** |
 | Peak parallel throughput | **__PEAK_RPS__ req/s** |
 | Cache warm vs cold delta | **__CACHE_DELTA__** |
@@ -51,6 +51,7 @@ __RECOMMENDATION__
 | Parameter | Value |
 |-----------|-------|
 | CPU | __CPU__ (__GOARCH__) |
+| Cores | __CORES__ |
 | OS | __GOOS__/__GOARCH__ |
 | Go package | `github.com/beckn-one/beckn-onix/benchmarks/e2e` |
 | Default GOMAXPROCS | __GOMAXPROCS__ |

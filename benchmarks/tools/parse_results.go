@@ -106,9 +106,20 @@ func main() {
 			fmt.Fprintf(os.Stderr, "WARNING: could not parse parallel_cpu%d.txt: %v\n", cpu, err)
 			continue
 		}
+		// BenchmarkBAPCaller_Discover_Parallel and BenchmarkBAPCaller_RPS both run
+		// in this file at the same GOMAXPROCS level — merge them into a single row
+		// (latency from the former, req/s from the latter) instead of emitting one
+		// incomplete row per benchmark.
+		merged := benchResult{name: "Discover_Parallel+RPS"}
 		for _, r := range results {
-			throughputRows = append(throughputRows, cpuResult{cpu: cpu, res: r})
+			switch r.name {
+			case "BenchmarkBAPCaller_Discover_Parallel":
+				merged.nsPerOp = r.nsPerOp
+			case "BenchmarkBAPCaller_RPS":
+				merged.rps = r.rps
+			}
 		}
+		throughputRows = append(throughputRows, cpuResult{cpu: cpu, res: merged})
 	}
 
 	if err := writeThroughputCSV(filepath.Join(*out, "throughput_report.csv"), throughputRows); err != nil {

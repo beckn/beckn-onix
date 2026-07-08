@@ -224,7 +224,7 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 		return nil, fmt.Errorf("key_id is required for DeDi lookup")
 	}
 
-	cacheKey := fmt.Sprintf("lookup_%s_%s", subscriberID, keyID)
+	cacheKey := fmt.Sprintf("dedi_lookup_%s_%s", subscriberID, keyID)
 	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
 
 	if c.cache != nil {
@@ -235,6 +235,11 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 			if err := json.Unmarshal([]byte(cached), &results); err == nil {
 				log.Debugf(ctx, "DeDi registry lookup cache hit for key: %s", cacheKey)
 				cacheSpan.End()
+				if len(results) > 0 {
+					if err := c.validateMemberships(ctx, results[0].NetworkMemberships, results[0].Subscriber.SubscriberID); err != nil {
+						return nil, err
+					}
+				}
 				return results, nil
 			}
 		}
@@ -252,28 +257,51 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 
 	log.Debugf(ctx, "DeDi lookup request successful, parsing response")
 
-	subscription, err := c.parseSubscriptionFromData(ctx, data, true)
-	if err != nil {
-		return nil, err
+	details, ok := data["details"].(map[string]any)
+	if !ok {
+		log.Errorf(ctx, nil, "Invalid DeDi response format: missing or invalid details field")
+		return nil, fmt.Errorf("invalid response format: missing details field")
 	}
+
+	signingPublicKey, ok := details["signing_public_key"].(string)
+	if !ok || signingPublicKey == "" {
+		return nil, fmt.Errorf("invalid or missing signing_public_key in response")
+	}
+
+	detailsURL, _ := details["url"].(string)
+	detailsType, _ := details["type"].(string)
+	detailsDomain, _ := details["domain"].(string)
+	detailsSubscriberID, _ := details["subscriber_id"].(string)
 
 	// AllowedNetworkIDs is a trust boundary specific to Lookup: it ensures signing keys are only
 	// accepted from subscribers that belong to networks this adapter is configured to trust.
 	// LookupNode intentionally skips this check — node record reads are not trust decisions.
-	if len(c.config.AllowedNetworkIDs) > 0 {
-		networkMemberships := extractStringSlice(ctx, "network_memberships", data["network_memberships"])
-		if len(networkMemberships) == 0 {
-			return nil, fmt.Errorf("registry entry with subscriber_id '%s' has no network_memberships in response; cannot verify against registry.config.allowedNetworkIDs", subscription.SubscriberID)
-		}
-		if !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
-			return nil, fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", subscription.SubscriberID)
-		}
+	networkMemberships := extractStringSlice(ctx, "network_memberships", data["network_memberships"])
+	if err := c.validateMemberships(ctx, networkMemberships, detailsSubscriberID); err != nil {
+		return nil, err
 	}
 
-	subscription.KeyID = keyID
-	log.Debugf(ctx, "DeDi lookup successful, found subscription for subscriber: %s", subscription.SubscriberID)
+	encrPublicKey, _ := details["encr_public_key"].(string)
+	createdAt, _ := data["created_at"].(string)
+	updatedAt, _ := data["updated_at"].(string)
 
-	results := []model.Subscription{*subscription}
+	subscription := model.Subscription{
+		Subscriber: model.Subscriber{
+			SubscriberID: detailsSubscriberID,
+			URL:          detailsURL,
+			Domain:       detailsDomain,
+			Type:         detailsType,
+		},
+		KeyID:              keyID,
+		SigningPublicKey:   signingPublicKey,
+		EncrPublicKey:      encrPublicKey,
+		Created:            parseTime(createdAt),
+		Updated:            parseTime(updatedAt),
+		NetworkMemberships: networkMemberships,
+	}
+
+	results := []model.Subscription{subscription}
+	log.Debugf(ctx, "DeDi lookup successful, found subscription for subscriber: %s", detailsSubscriberID)
 
 	if c.cache != nil {
 		ttl := c.cacheTTL
@@ -422,4 +450,55 @@ func containsAny(values []string, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+// validateMemberships runs both the static allowedNetworkIDs guard and the per-request
+// context.network_id check against the subscriber's network_memberships.
+// Called on both the cache-hit and HTTP paths.
+func (c *DeDiRegistryClient) validateMemberships(ctx context.Context, networkMemberships []string, subscriberID string) error {
+	if len(c.config.AllowedNetworkIDs) > 0 {
+		if len(networkMemberships) == 0 || !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
+			return fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", subscriberID)
+		}
+	}
+	return c.validateContextNetworkID(ctx, networkMemberships, subscriberID)
+}
+
+// validateContextNetworkID checks context.network_id (when present in the request body) against
+// the caller's network_memberships and the configured allowedNetworkIDs.
+// Returns nil when context.network_id is absent or empty.
+func (c *DeDiRegistryClient) validateContextNetworkID(ctx context.Context, networkMemberships []string, subscriberID string) error {
+	networkID := extractContextNetworkID(ctx)
+	if networkID == "" {
+		return nil
+	}
+	if !containsAny(networkMemberships, []string{networkID}) {
+		return fmt.Errorf("context.network_id %q is not in network_memberships of subscriber %q", networkID, subscriberID)
+	}
+	if len(c.config.AllowedNetworkIDs) > 0 && !containsAny([]string{networkID}, c.config.AllowedNetworkIDs) {
+		return fmt.Errorf("context.network_id %q is not in configured allowedNetworkIDs", networkID)
+	}
+	return nil
+}
+
+// extractContextNetworkID returns context.network_id from the request.
+// Primary path: reads the context value set by reqpreprocessor (survives any OTel wrapping depth).
+// Fallback path: type-asserts to *model.StepContext and parses Body directly — works when
+// simplekeymanager preserves *model.StepContext through its OTel span, and also with keymanager.
+// Checks both "network_id" (snake_case) and "networkId" (camelCase). Returns "" when absent.
+func extractContextNetworkID(ctx context.Context) string {
+	if v, _ := ctx.Value(model.ContextKeyNetworkID).(string); v != "" {
+		return v
+	}
+	if sc, ok := ctx.(*model.StepContext); ok && len(sc.Body) > 0 {
+		var payload struct {
+			Context map[string]interface{} `json:"context"`
+		}
+		if err := json.Unmarshal(sc.Body, &payload); err == nil && payload.Context != nil {
+			if v := model.ResolveNetworkID(payload.Context); v != "" {
+				return v
+			}
+		}
+	}
+	return ""
 }

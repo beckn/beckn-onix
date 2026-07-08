@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // MockRedisClient is a mock implementation of the RedisClient interface
@@ -29,7 +31,7 @@ func (m *MockRedisClient) Set(ctx context.Context, key string, value interface{}
 
 func (m *MockRedisClient) Del(ctx context.Context, keys ...string) *redis.IntCmd {
 	args := m.Called(ctx, keys)
-	return redis.NewIntCmd(ctx, args.Int(0), args.Error(1))
+	return redis.NewIntResult(int64(args.Int(0)), args.Error(1))
 }
 
 func (m *MockRedisClient) FlushDB(ctx context.Context) *redis.StatusCmd {
@@ -215,4 +217,177 @@ func TestNew_ConnectionFailure(t *testing.T) {
 	// Verify error type is connection failure
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrConnectionFail)
+}
+
+// TestNew_Success tests New returns a cache when the Redis ping succeeds.
+func TestNew_Success(t *testing.T) {
+	mockClient := new(MockRedisClient)
+	mockClient.On("Ping", mock.Anything).Return(redis.NewStatusResult("PONG", nil))
+
+	original := RedisClientFunc
+	RedisClientFunc = func(cfg *Config) RedisClient { return mockClient }
+	defer func() { RedisClientFunc = original }()
+
+	cfg := &Config{Addr: "localhost:6379"}
+	c, closeFn, err := New(context.Background(), cfg)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, c)
+	assert.NotNil(t, closeFn)
+	mockClient.AssertExpectations(t)
+}
+
+// TestGetCacheMetrics_ReturnsCachedMetrics tests that repeated calls return the same metrics instance.
+func TestGetCacheMetrics_ReturnsCachedMetrics(t *testing.T) {
+	ctx := context.Background()
+	m1, err := GetCacheMetrics(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, m1)
+
+	m2, err := GetCacheMetrics(ctx)
+	require.NoError(t, err)
+	assert.Same(t, m1, m2, "second call should return the cached metrics instance")
+}
+
+// TestGetCacheMetrics_RebuildOnProviderChange tests that metrics are rebuilt when the OTel provider changes.
+func TestGetCacheMetrics_RebuildOnProviderChange(t *testing.T) {
+	ctx := context.Background()
+	m1, err := GetCacheMetrics(ctx)
+	require.NoError(t, err)
+
+	// Simulate a provider change by clearing the cache pointer.
+	cacheMetricsCache.mu.Lock()
+	cacheMetricsCache.provider = nil
+	cacheMetricsCache.mu.Unlock()
+
+	m2, err := GetCacheMetrics(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, m2)
+	assert.NotSame(t, m1, m2, "metrics should be rebuilt after provider change")
+}
+
+// TestCache_Get_WithMetrics tests that Get records hit, miss, and error metrics.
+func TestCache_Get_WithMetrics(t *testing.T) {
+	ctx := context.Background()
+	metrics, err := GetCacheMetrics(ctx)
+	require.NoError(t, err)
+
+	t.Run("cache hit records hit metric", func(t *testing.T) {
+		mockClient := new(MockRedisClient)
+		mockClient.On("Get", mock.Anything, "key").Return("value", nil)
+		c := &Cache{Client: mockClient, metrics: metrics}
+
+		val, err := c.Get(ctx, "key")
+		assert.NoError(t, err)
+		assert.Equal(t, "value", val)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("cache miss records miss metric", func(t *testing.T) {
+		mockClient := new(MockRedisClient)
+		mockClient.On("Get", mock.Anything, "missing").Return("", redis.Nil)
+		c := &Cache{Client: mockClient, metrics: metrics}
+
+		val, err := c.Get(ctx, "missing")
+		assert.NoError(t, err)
+		assert.Empty(t, val)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("cache error records error metric", func(t *testing.T) {
+		mockClient := new(MockRedisClient)
+		mockClient.On("Get", mock.Anything, "key").Return("", errors.New("redis error"))
+		c := &Cache{Client: mockClient, metrics: metrics}
+
+		_, err := c.Get(ctx, "key")
+		assert.Error(t, err)
+		mockClient.AssertExpectations(t)
+	})
+}
+
+// TestCache_Set_WithMetrics tests that Set records success and error metrics.
+func TestCache_Set_WithMetrics(t *testing.T) {
+	ctx := context.Background()
+	metrics, err := GetCacheMetrics(ctx)
+	require.NoError(t, err)
+
+	t.Run("set success records success metric", func(t *testing.T) {
+		mockClient := new(MockRedisClient)
+		mockClient.On("Set", mock.Anything, "key", "value", time.Minute).Return("OK", nil)
+		c := &Cache{Client: mockClient, metrics: metrics}
+
+		err := c.Set(ctx, "key", "value", time.Minute)
+		assert.NoError(t, err)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("set error records error metric", func(t *testing.T) {
+		mockClient := new(MockRedisClient)
+		mockClient.On("Set", mock.Anything, "key", "value", time.Minute).Return("", errors.New("set failed"))
+		c := &Cache{Client: mockClient, metrics: metrics}
+
+		err := c.Set(ctx, "key", "value", time.Minute)
+		assert.Error(t, err)
+		mockClient.AssertExpectations(t)
+	})
+}
+
+// TestCache_Delete_WithMetrics tests that Delete records success and error metrics.
+func TestCache_Delete_WithMetrics(t *testing.T) {
+	ctx := context.Background()
+	metrics, err := GetCacheMetrics(ctx)
+	require.NoError(t, err)
+
+	t.Run("delete success records success metric", func(t *testing.T) {
+		mockClient := new(MockRedisClient)
+		mockClient.On("Del", mock.Anything, []string{"key"}).Return(1, nil)
+		c := &Cache{Client: mockClient, metrics: metrics}
+
+		err := c.Delete(ctx, "key")
+		assert.NoError(t, err)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("delete error records error metric", func(t *testing.T) {
+		mockClient := new(MockRedisClient)
+		mockClient.On("Del", mock.Anything, []string{"key"}).Return(0, errors.New("del failed"))
+		c := &Cache{Client: mockClient, metrics: metrics}
+
+		err := c.Delete(ctx, "key")
+		assert.Error(t, err)
+		mockClient.AssertExpectations(t)
+	})
+}
+
+// TestGetCacheMetrics_ConcurrentAccess tests that concurrent callers all obtain the same metrics instance.
+func TestGetCacheMetrics_ConcurrentAccess(t *testing.T) {
+	// Reset cache to force all goroutines to rebuild.
+	cacheMetricsCache.mu.Lock()
+	cacheMetricsCache.provider = nil
+	cacheMetricsCache.m = nil
+	cacheMetricsCache.mu.Unlock()
+
+	ctx := context.Background()
+	const n = 20
+	results := make([]*CacheMetrics, n)
+	errs := make([]error, n)
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			results[idx], errs[idx] = GetCacheMetrics(ctx)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		require.NoError(t, err, "goroutine %d should not error", i)
+		require.NotNil(t, results[i], "goroutine %d should return non-nil metrics", i)
+	}
+	// All goroutines must receive the same cached instance.
+	for i := 1; i < n; i++ {
+		assert.Same(t, results[0], results[i], "goroutine %d returned a different metrics instance", i)
+	}
 }

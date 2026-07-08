@@ -1,0 +1,66 @@
+{
+    "@context": [
+        "https://www.w3.org/ns/credentials/v2"
+    ],
+    "credentialSchema": {
+        "id": "https://raw.githubusercontent.com/India-Energy-Stack/ies-accelerator/main/schemas/MeterDataRequestCredential/v0.1/schema.json",
+        "type": "JsonSchema"
+    },
+    "credentialSubject": {
+        "id": "did:key:z6MksPXPYXKnhtvgxzooB7ApMmHLh2dHaKrV4JDgCkX9YD7Z",
+        "meterDataRequest": {
+            "@context": "https://raw.githubusercontent.com/India-Energy-Stack/ies-accelerator/main/schemas/MeterDataRequest/v0.6/context.jsonld",
+            "@type": "MeterDataRequest",
+            "capabilitiesRequested": {
+                "profiles": [
+                    {
+                        "profileType": "CustomerProfile"
+                    },
+                    {
+                        "profileType": "IntervalProfile",
+                        "readings": [
+                            {
+                                "mode": "USAGE",
+                                "value": "kWh imp block"
+                            }
+                        ]
+                    },
+                    {
+                        "profileType": "DailyProfile",
+                        "readings": [
+                            {
+                                "mode": "READING",
+                                "value": "kWh imp"
+                            }
+                        ]
+                    },
+                    {
+                        "profileType": "MonthlyProfile",
+                        "readings": [
+                            {
+                                "mode": "USAGE",
+                                "value": "kWh imp"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "duration": "P6M",
+            "from": "2026-06-04T00:00:00Z",
+            "maxRecordsShared": 10000,
+            "resources": [],
+            "scope": "Resource"
+        }
+    },
+    "id": "urn:uuid:6f2d86e2-cdc3-4fdd-9144-8d7b76a0d350",
+    "issuer": "did:key:zDnaeVtysyVoSjwzhpHXEaLqGB2T5KgfDtANX9D5KN6bcMHR8",
+    "proof": {
+        "jwt": "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImRpZDprZXk6ekRuYWVWdHlzeVZvU2p3emhwSFhFYUxxR0IyVDVLZ2ZEdEFOWDlENUtONmJjTUhSOCN6RG5hZVZ0eXN5Vm9Tand6aHBIWEVhTHFHQjJUNUtnZkR0QU5YOUQ1S042YmNNSFI4In0.eyJpc3MiOiJkaWQ6a2V5OnpEbmFlVnR5c3lWb1Nqd3pocEhYRWFMcUdCMlQ1S2dmRHRBTlg5RDVLTjZiY01IUjgiLCJzdWIiOiJkaWQ6a2V5Ono2TWtzUFhQWVhLbmh0dmd4em9vQjdBcE1tSExoMmRIYUtyVjRKRGdDa1g5WUQ3WiIsImp0aSI6InVybjp1dWlkOjZmMmQ4NmUyLWNkYzMtNGZkZC05MTQ0LThkN2I3NmEwZDM1MCIsIm5iZiI6MTc4MDUzMTIwMCwiZXhwIjoxNzk2NDI4Nzk5LCJpYXQiOjE3ODA2NDExMzEsInZjIjp7IkBjb250ZXh0IjpbImh0dHBzOi8vd3d3LnczLm9yZy9ucy9jcmVkZW50aWFscy92MiJdLCJpZCI6InVybjp1dWlkOjZmMmQ4NmUyLWNkYzMtNGZkZC05MTQ0LThkN2I3NmEwZDM1MCIsInR5cGUiOlsiVmVyaWZpYWJsZUNyZWRlbnRpYWwiXSwiY3JlZGVudGlhbFN1YmplY3QiOnsibWV0ZXJEYXRhUmVxdWVzdCI6eyJAY29udGV4dCI6Imh0dHBzOi8vcmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbS9JbmRpYS1FbmVyZ3ktU3RhY2svaWVzLWFjY2VsZXJhdG9yL21haW4vc2NoZW1hcy9NZXRlckRhdGFSZXF1ZXN0L3YwLjYvY29udGV4dC5qc29ubGQiLCJAdHlwZSI6Ik1ldGVyRGF0YVJlcXVlc3QiLCJjYXBhYmlsaXRpZXNSZXF1ZXN0ZWQiOnsicHJvZmlsZXMiOlt7InByb2ZpbGVUeXBlIjoiQ3VzdG9tZXJQcm9maWxlIn0seyJwcm9maWxlVHlwZSI6IkludGVydmFsUHJvZmlsZSIsInJlYWRpbmdzIjpbeyJtb2RlIjoiVVNBR0UiLCJ2YWx1ZSI6ImtXaCBpbXAgYmxvY2sifV19LHsicHJvZmlsZVR5cGUiOiJEYWlseVByb2ZpbGUiLCJyZWFkaW5ncyI6W3sibW9kZSI6IlJFQURJTkciLCJ2YWx1ZSI6ImtXaCBpbXAifV19LHsicHJvZmlsZVR5cGUiOiJNb250aGx5UHJvZmlsZSIsInJlYWRpbmdzIjpbeyJtb2RlIjoiVVNBR0UiLCJ2YWx1ZSI6ImtXaCBpbXAifV19XX0sImR1cmF0aW9uIjoiUDZNIiwiZnJvbSI6IjIwMjYtMDYtMDRUMDA6MDA6MDBaIiwibWF4UmVjb3Jkc1NoYXJlZCI6MTAwMDAsInJlc291cmNlcyI6W10sInNjb3BlIjoiUmVzb3VyY2UifX0sImNyZWRlbnRpYWxTY2hlbWEiOnsiaWQiOiJodHRwczovL3Jhdy5naXRodWJ1c2VyY29udGVudC5jb20vSW5kaWEtRW5lcmd5LVN0YWNrL2llcy1hY2NlbGVyYXRvci9tYWluL3NjaGVtYXMvTWV0ZXJEYXRhUmVxdWVzdENyZWRlbnRpYWwvdjAuMS9zY2hlbWEuanNvbiIsInR5cGUiOiJKc29uU2NoZW1hIn19fQ.JRGqaiYwcItt6oqwdICLL1ywCSCDmwCE_Qj5C35Kj1B3mO2fOBPtSjaf238NidVrLFXpW04IdznyJEr6lCqq9g",
+        "type": "JsonWebSignature2020"
+    },
+    "type": [
+        "VerifiableCredential"
+    ],
+    "validFrom": "2026-06-04T00:00:00Z",
+    "validUntil": "2026-12-04T23:59:59Z"
+}

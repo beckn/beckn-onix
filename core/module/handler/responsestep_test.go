@@ -101,13 +101,16 @@ func TestSendAck(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rr := httptest.NewRecorder()
-			sendAck(tt.ctx, rr)
+			got := sendAck(tt.ctx, rr)
 
 			if rr.Code != http.StatusOK {
 				t.Errorf("wanted status code %d, got %d", http.StatusOK, rr.Code)
 			}
 			if rr.Body.String() != tt.expected {
 				t.Errorf("body = %s, want %s", rr.Body.String(), tt.expected)
+			}
+			if string(got) != tt.expected {
+				t.Errorf("return value = %s, want %s", got, tt.expected)
 			}
 		})
 	}
@@ -212,7 +215,7 @@ func TestSendNack(t *testing.T) {
 			}
 			rr := httptest.NewRecorder()
 
-			sendNack(ctx, rr, tt.err)
+			got := sendNack(ctx, rr, tt.err)
 
 			if rr.Code != tt.status {
 				t.Errorf("wanted status code %d, got %d", tt.status, rr.Code)
@@ -233,13 +236,16 @@ func TestSendNack(t *testing.T) {
 			if !compareJSON(expected, actual) {
 				t.Errorf("err.Error() = %s, want %s", actual, expected)
 			}
+			if string(got) != rr.Body.String() {
+				t.Errorf("return value = %s, want %s", got, rr.Body.String())
+			}
 		})
 	}
 
 	for _, tt := range v2Tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rr := httptest.NewRecorder()
-			sendNack(v2Context, rr, tt.err)
+			got := sendNack(v2Context, rr, tt.err)
 
 			if rr.Code != tt.status {
 				t.Errorf("wanted status code %d, got %d", tt.status, rr.Code)
@@ -255,6 +261,9 @@ func TestSendNack(t *testing.T) {
 			}
 			if !compareJSON(expected, actual) {
 				t.Errorf("body = %s, want %s", rr.Body.String(), tt.expected)
+			}
+			if string(got) != rr.Body.String() {
+				t.Errorf("return value = %s, want %s", got, rr.Body.String())
 			}
 		})
 	}

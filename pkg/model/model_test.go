@@ -4,10 +4,10 @@ import "testing"
 
 func TestResolveCallerID(t *testing.T) {
 	tests := []struct {
-		name    string
-		ctx     map[string]interface{}
-		role    Role
-		want    string
+		name string
+		ctx  map[string]interface{}
+		role Role
+		want string
 	}{
 		{
 			name: "BAP role returns bpp_id",
@@ -165,6 +165,29 @@ func TestResolveSubscriberID(t *testing.T) {
 			got := ResolveSubscriberID(tc.ctx, tc.role)
 			if got != tc.want {
 				t.Errorf("ResolveSubscriberID() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveNetworkID(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  map[string]interface{}
+		want string
+	}{
+		{name: "snake_case key", ctx: map[string]interface{}{"network_id": "nfo1.com/retail"}, want: "nfo1.com/retail"},
+		{name: "camelCase key", ctx: map[string]interface{}{"networkId": "nfo1.com/retail"}, want: "nfo1.com/retail"},
+		{name: "snake_case takes precedence over camelCase", ctx: map[string]interface{}{"network_id": "nfo1.com/retail", "networkId": "nfo2.com/retail"}, want: "nfo1.com/retail"},
+		{name: "non-string snake_case falls through to camelCase", ctx: map[string]interface{}{"network_id": 12345, "networkId": "nfo1.com/retail"}, want: "nfo1.com/retail"},
+		{name: "absent returns empty", ctx: map[string]interface{}{}, want: ""},
+		{name: "empty string returns empty", ctx: map[string]interface{}{"network_id": ""}, want: ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ResolveNetworkID(tc.ctx)
+			if got != tc.want {
+				t.Errorf("ResolveNetworkID() = %q, want %q", got, tc.want)
 			}
 		})
 	}

@@ -33,37 +33,18 @@ func (m metricsProvider) New(ctx context.Context, config map[string]string) (*te
 		OtlpEndpoint:   config["otlpEndpoint"],
 	}
 
-	// to extract the device id from the parent id from context
-	var deviceId string
-	var producer string
-	var producerType string
 	var err error
 	if v := ctx.Value(model.ContextKeyParentID); v != nil {
-		parentID := v.(string)
-		p := strings.Split(parentID, ":")
-		if len(p) >= 3 {
-			producerType = p[0]
-			producer = p[1]
-			deviceId = p[len(p)-1]
-		} else if len(p) >= 2 {
-			producerType = p[0]
-			producer = p[1]
-			deviceId = p[1]
-		} else if len(p) >= 1 {
-			producerType = p[0]
-			deviceId = p[0]
+		pt, prod, devID := parseParentID(v.(string))
+		if pt != "" {
+			telemetryConfig.ProducerType = pt
 		}
-	}
-
-	if deviceId != "" {
-		telemetryConfig.DeviceID = deviceId
-	}
-
-	if producer != "" {
-		telemetryConfig.Producer = producer
-	}
-	if producerType != "" {
-		telemetryConfig.ProducerType = producerType
+		if prod != "" {
+			telemetryConfig.Producer = prod
+		}
+		if devID != "" {
+			telemetryConfig.DeviceID = devID
+		}
 	}
 
 	// Parse enableTracing from config
@@ -92,20 +73,18 @@ func (m metricsProvider) New(ctx context.Context, config map[string]string) (*te
 
 	// Parse timeInterval as int
 	if timeIntervalStr, ok := config["timeInterval"]; ok && timeIntervalStr != "" {
-		telemetryConfig.TimeInterval, err = strconv.ParseInt(timeIntervalStr, 10, 64)
-		if err != nil {
-			log.Warnf(ctx, "Invalid timeInterval value: %s, defaulting to 5 second ", timeIntervalStr)
+		if _, err = strconv.ParseInt(timeIntervalStr, 10, 64); err != nil {
+			log.Warnf(ctx, "Invalid timeInterval value: %s, defaulting to 5 second", timeIntervalStr)
 		}
-
+		telemetryConfig.TimeInterval = parseTimeInterval(timeIntervalStr)
 	}
 
-	// Parse cacheTTL as in
+	// Parse cacheTTL as int
 	if cacheTTLStr, ok := config["cacheTTL"]; ok && cacheTTLStr != "" {
-		telemetryConfig.CacheTTL, err = strconv.ParseInt(cacheTTLStr, 10, 64)
-		if err != nil {
-			log.Warnf(ctx, "Invalid cacheTTL value: %s, defaulting to 3600 second ", cacheTTLStr)
-			telemetryConfig.CacheTTL = 3600
+		if _, err = strconv.ParseInt(cacheTTLStr, 10, 64); err != nil {
+			log.Warnf(ctx, "Invalid cacheTTL value: %s, defaulting to 3600 second", cacheTTLStr)
 		}
+		telemetryConfig.CacheTTL = parseCacheTTL(cacheTTLStr)
 	}
 	var stopAuditRefresh func()
 	// to set fields for audit logs
@@ -148,3 +127,35 @@ func (m metricsProvider) New(ctx context.Context, config map[string]string) (*te
 
 // Provider is the exported plugin instance
 var Provider = metricsProvider{}
+
+// parseParentID splits a colon-delimited parent ID into its component fields.
+func parseParentID(parentID string) (producerType, producer, deviceID string) {
+	p := strings.Split(parentID, ":")
+	switch {
+	case len(p) >= 3:
+		return p[0], p[1], p[len(p)-1]
+	case len(p) >= 2:
+		return p[0], p[1], p[1]
+	case len(p) >= 1:
+		return p[0], "", p[0]
+	}
+	return "", "", ""
+}
+
+// parseTimeInterval parses s as an integer interval in seconds. Returns 5 on parse error.
+func parseTimeInterval(s string) int64 {
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 5
+	}
+	return v
+}
+
+// parseCacheTTL parses s as an integer TTL in seconds. Returns 3600 on parse error.
+func parseCacheTTL(s string) int64 {
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 3600
+	}
+	return v
+}

@@ -20,16 +20,17 @@ type Subscriber struct {
 
 // Subscription represents subscription details of a network participant.
 type Subscription struct {
-	Subscriber       `json:",inline"`
-	KeyID            string    `json:"key_id,omitzero" format:"uuid"`
-	SigningPublicKey string    `json:"signing_public_key,omitzero"`
-	EncrPublicKey    string    `json:"encr_public_key,omitzero"`
-	ValidFrom        time.Time `json:"valid_from,omitzero" format:"date-time"`
-	ValidUntil       time.Time `json:"valid_until,omitzero" format:"date-time"`
-	Status           string    `json:"status,omitzero" enum:"INITIATED,UNDER_SUBSCRIPTION,SUBSCRIBED,EXPIRED,UNSUBSCRIBED,INVALID_SSL"`
-	Created          time.Time `json:"created,omitzero" format:"date-time"`
-	Updated          time.Time `json:"updated,omitzero" format:"date-time"`
-	Nonce            string    `json:"nonce,omitzero"`
+	Subscriber         `json:",inline"`
+	KeyID              string    `json:"key_id,omitzero" format:"uuid"`
+	SigningPublicKey   string    `json:"signing_public_key,omitzero"`
+	EncrPublicKey      string    `json:"encr_public_key,omitzero"`
+	ValidFrom          time.Time `json:"valid_from,omitzero" format:"date-time"`
+	ValidUntil         time.Time `json:"valid_until,omitzero" format:"date-time"`
+	Status             string    `json:"status,omitzero" enum:"INITIATED,UNDER_SUBSCRIPTION,SUBSCRIBED,EXPIRED,UNSUBSCRIBED,INVALID_SSL"`
+	Created            time.Time `json:"created,omitzero" format:"date-time"`
+	Updated            time.Time `json:"updated,omitzero" format:"date-time"`
+	Nonce              string    `json:"nonce,omitzero"`
+	NetworkMemberships []string  `json:"network_memberships,omitempty"`
 }
 
 // RegistryMetadata represents metadata configured on a registry itself rather than on a specific record.
@@ -81,6 +82,10 @@ const (
 	// ContextKeyProtocolVersion is the context key for the Beckn protocol version
 	// extracted from context.version in the inbound request body.
 	ContextKeyProtocolVersion ContextKey = "protocol_version"
+
+	// ContextKeyNetworkID is the context key for the network identifier extracted from
+	// context.network_id (or context.networkId) in the inbound request body.
+	ContextKeyNetworkID ContextKey = "network_id"
 )
 
 // ProtocolVersionV2 is the Beckn protocol version string for the v2.0.0 release.
@@ -180,6 +185,18 @@ func (r *Role) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
+// ResolveNetworkID returns context.network_id from a parsed Beckn context map,
+// trying "network_id" (snake_case) then "networkId" (camelCase).
+// Returns "" when absent, empty, or not a string under either alias.
+func ResolveNetworkID(reqContext map[string]interface{}) string {
+	for _, k := range []string{"network_id", "networkId"} {
+		if v, ok := reqContext[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // ResolveCallerID returns the ID of the other party in a Beckn exchange — i.e. who
 // sent the inbound message — from a parsed Beckn context map.
 // For BPP role: the caller is the BAP (bap_id / bapId / senderId).
@@ -245,12 +262,12 @@ type Keyset struct {
 // StepContext holds context information for a request processing step.
 type StepContext struct {
 	context.Context
-	Request         *http.Request
-	Body            []byte
-	Route           *Route
-	SubID           string
-	Role            Role
-	RespHeader      http.Header
+	Request              *http.Request
+	Body                 []byte
+	Route                *Route
+	SubID                string
+	Role                 Role
+	RespHeader           http.Header
 	ProtocolVersion      string // Protocol version parsed from context.version (e.g. "2.0.0")
 	MessageID            string // Message ID parsed from context.messageId in the request body
 	InboundAuthSignature string // Raw Base64 signature from the inbound Authorization header's signature="..." attribute
