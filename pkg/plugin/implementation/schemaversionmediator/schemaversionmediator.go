@@ -1005,10 +1005,11 @@ func CheckCompatibility(extracted []SchemaObjectRef, manifest *model.NodeManifes
 	var needs []TranslationNeeded
 	for _, ref := range extracted {
 		local, known := supported[ref.Type]
-		switch {
-		case !known:
-			needs = append(needs, TranslationNeeded{From: ref.SchemaObject, JSONataPath: ref.JSONataPath})
-		case local.ContextURL != ref.ContextURL:
+		if !known {
+			// Type not declared in local manifest — no translation target, skip.
+			continue
+		}
+		if local.ContextURL != ref.ContextURL {
 			to := local
 			needs = append(needs, TranslationNeeded{From: ref.SchemaObject, To: &to, JSONataPath: ref.JSONataPath})
 		}
