@@ -156,21 +156,29 @@ func (t TranslationNeeded) ToContextURL() string {
 // and collects every qualifying node regardless of nesting level, including
 // both a parent node and its nested children when both carry "@context"/"@type"
 // declarations — each is an independent schema contract. The payload is not modified.
-func WalkPayload(payload []byte) ([]SchemaObjectRef, error) {
+// WalkPayload recursively traverses a JSON payload and returns all schema
+// objects declared via JSON-LD "@context" and "@type" fields, each annotated
+// with its JSONata path from the payload root (e.g. "$.message.offer").
+// It collects both a parent node and its nested children when both carry
+// "@context"/"@type" pairs. Also returns skipped paths — nodes that have
+// "@context" but no "@type" — so callers can log warnings for misconfigured
+// payloads without silently ignoring them.
+func WalkPayload(payload []byte) (refs []SchemaObjectRef, skipped []string, err error) {
 	var root any
 	if err := json.Unmarshal(payload, &root); err != nil {
-		return nil, fmt.Errorf("schemaversionmediator: walk payload: %w", err)
+		return nil, nil, fmt.Errorf("schemaversionmediator: walk payload: %w", err)
 	}
-	var results []SchemaObjectRef
-	walkNode(root, "$", &results)
-	return results, nil
+	walkNode(root, "$", &refs, &skipped)
+	return refs, skipped, nil
 }
 
 // walkNode is the recursive descent worker for WalkPayload.
 // path is the JSONata path of the current node from the payload root.
 // When a map node carries both "@context" and "@type" it is collected, then
 // the walk continues into its children.
-func walkNode(node any, nodePath string, results *[]SchemaObjectRef) {
+// skipped accumulates paths where @context is present but @type is absent; the
+// caller logs these so operators can diagnose misconfigured payloads.
+func walkNode(node any, nodePath string, results *[]SchemaObjectRef, skipped *[]string) {
 	switch v := node.(type) {
 	case map[string]any:
 		if contextURL, ok := stringField(v, "@context"); ok {
@@ -182,6 +190,8 @@ func walkNode(node any, nodePath string, results *[]SchemaObjectRef) {
 					},
 					JSONataPath: nodePath,
 				})
+			} else {
+				*skipped = append(*skipped, fmt.Sprintf("%s (@context=%q, @type absent)", nodePath, contextURL))
 			}
 		}
 		for key, child := range v {
@@ -189,12 +199,12 @@ func walkNode(node any, nodePath string, results *[]SchemaObjectRef) {
 				continue
 			}
 			childPath := nodePath + "." + key
-			walkNode(child, childPath, results)
+			walkNode(child, childPath, results, skipped)
 		}
 	case []any:
 		for i, item := range v {
 			childPath := fmt.Sprintf("%s[%d]", nodePath, i)
-			walkNode(item, childPath, results)
+			walkNode(item, childPath, results, skipped)
 		}
 	}
 }
@@ -432,12 +442,15 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 		return nil
 	}
 
-	refs, err := WalkPayload(ctx.Body)
+	refs, skipped, err := WalkPayload(ctx.Body)
 	if err != nil {
 		return fmt.Errorf("schemaversionmediator: walk payload: %w", err)
 	}
 	for _, ref := range refs {
 		log.Debugf(ctx, "schemaversionmediator: payloadRef type=%q contextUrl=%q path=%q", ref.Type, ref.ContextURL, ref.JSONataPath)
+	}
+	for _, s := range skipped {
+		log.Warnf(ctx, "schemaversionmediator: skippedSchemaObject %s — @context present but @type absent; node will not be mediated", s)
 	}
 
 	// Receiver: check inbound payload against local manifest — translate to match what we expect.
@@ -490,8 +503,18 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 		return fmt.Errorf("schemaversionmediator: unmarshal message: %w", err)
 	}
 
+	// Sort paths shortest-first so parent objects are translated before their
+	// children in the rare case of overlapping paths (e.g. a parent and a
+	// nested child both carrying @context/@type).
+	sortedPaths := make([]string, 0, len(artifacts))
+	for p := range artifacts {
+		sortedPaths = append(sortedPaths, p)
+	}
+	sort.Strings(sortedPaths)
+
 	// Apply each artifact against its specific schema object subtree.
-	for jsonataPath, fa := range artifacts {
+	for _, jsonataPath := range sortedPaths {
+		fa := artifacts[jsonataPath]
 		relPath := strings.TrimPrefix(jsonataPath, "$.message.")
 		if relPath == jsonataPath {
 			// jsonataPath is exactly "$.message" — artifact applies to the whole message.
@@ -570,15 +593,8 @@ func (m *mediator) applyOnFailure(cause error) error {
 }
 
 // fetchCounterpartyManifest fetches and parses the counterparty's node manifest.
-// When ctx carries a RemoteKeyID (extracted from the inbound Authorization header),
-// the DeDi 3-part node path {subscriberId}/subscribers.beckn.one/{keyId} is used,
-// which is where DeDi stores keyset records including manifest metadata.
 func (m *mediator) fetchCounterpartyManifest(ctx *model.StepContext, counterpartyID string) (*model.NodeManifest, error) {
-	lookupID := counterpartyID
-	if ctx.RemoteKeyID != "" {
-		lookupID = counterpartyID + "/subscribers.beckn.one/" + ctx.RemoteKeyID
-	}
-	doc, err := m.loader.GetBySubscriberID(ctx, lookupID)
+	doc, err := m.loader.GetBySubscriberID(ctx, counterpartyID)
 	if err != nil {
 		return nil, err
 	}
@@ -891,7 +907,7 @@ func getAtPath(obj map[string]any, relPath string) (any, error) {
 		key, idx := parsePathSegment(part)
 		m, ok := cur.(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("expected object at %q", key)
+			return nil, fmt.Errorf("expected object at segment %q, got %T", key, cur)
 		}
 		val, exists := m[key]
 		if !exists {
@@ -900,7 +916,7 @@ func getAtPath(obj map[string]any, relPath string) (any, error) {
 		if idx >= 0 {
 			arr, ok := val.([]any)
 			if !ok {
-				return nil, fmt.Errorf("expected array at %q", key)
+				return nil, fmt.Errorf("expected array at segment %q, got %T", key, val)
 			}
 			if idx >= len(arr) {
 				return nil, fmt.Errorf("index %d out of range at %q (len %d)", idx, key, len(arr))
@@ -922,13 +938,13 @@ func setAtPath(obj map[string]any, relPath string, value any) error {
 		key, idx := parsePathSegment(part)
 		m, ok := cur.(map[string]any)
 		if !ok {
-			return fmt.Errorf("expected object at %q", key)
+			return fmt.Errorf("expected object at segment %q, got %T", key, cur)
 		}
 		val := m[key]
 		if idx >= 0 {
 			arr, ok := val.([]any)
 			if !ok {
-				return fmt.Errorf("expected array at %q", key)
+				return fmt.Errorf("expected array at segment %q, got %T", key, val)
 			}
 			if idx >= len(arr) {
 				return fmt.Errorf("index %d out of range at %q (len %d)", idx, key, len(arr))
@@ -941,7 +957,7 @@ func setAtPath(obj map[string]any, relPath string, value any) error {
 	key, idx := parsePathSegment(parts[len(parts)-1])
 	m, ok := cur.(map[string]any)
 	if !ok {
-		return fmt.Errorf("parent of %q is not an object", key)
+		return fmt.Errorf("parent of %q is not an object, got %T", key, cur)
 	}
 	if idx >= 0 {
 		arr, ok := m[key].([]any)
@@ -960,33 +976,31 @@ func setAtPath(obj map[string]any, relPath string, value any) error {
 }
 
 // MappingEntry pairs a translation artifact expression with the payload path
-// of the schema object it targets. The artifact expression is written to operate
-// on the Beckn message subtree (not the full payload) and must return an object
-// whose fields are merged at the message root — i.e. a message-level patch.
+// of the schema object it targets.
 //
-// JSONataPath is metadata carried for the caller's logging and debugging use.
-// ComposeExpression does not interpret it — the Expression itself must reference
-// message-level paths directly (e.g. `fulfillment.type`, not `$.message.fulfillment.type`).
+// NOTE: MappingEntry and ComposeExpression are NOT used by the mediation hot
+// path. The mediator executes each artifact expression independently against
+// its own schema object subtree (via getAtPath/setAtPath) so that artifact
+// authors write expressions scoped to the object, not the message root.
+// MappingEntry and ComposeExpression are retained as tested utilities for
+// callers that want to assemble and evaluate a composed message-root patch
+// expression outside the normal mediation flow.
 //
-// Example for an Order at $.message:
-//
-//	Expression: `{"state": status}`  →  adds "state" from "status" at message root
-//
-// Example for a Fulfillment at $.message.fulfillment:
-//
-//	Expression: `{"fulfillment": $merge([fulfillment, {"fulfillment_type": fulfillment.type}])}`
+// If you are writing a translation artifact: express it relative to the schema
+// object itself (e.g. `$ ~> |$|{"discountCode": "NONE"}|`), not relative to
+// the message root.
 type MappingEntry struct {
-	JSONataPath string // from WalkPayload, e.g. "$.message.fulfillment"; metadata only for the caller
-	Expression  string // message-level patch expression
+	JSONataPath string // from WalkPayload, e.g. "$.message.fulfillment"
+	Expression  string // JSONata expression scoped to the schema object subtree
 }
 
-// ComposeExpression combines N per-object patch expressions into a single JSONata
-// expression that applies all transforms to the message subtree in one Evaluate call.
+// ComposeExpression combines N schema-object-level patch expressions into a
+// single JSONata expression evaluated at the message root via $merge.
 //
-// Each entry's Expression must return an object that is merged at the message root.
-// Artifact authors write expressions that reference message-level paths directly
-// (e.g. `fulfillment.type`). See TestExecute_MultiPathComposed for a verified
-// example of three schema objects transformed in a single composed expression.
+// This function is NOT called by the mediator's translation loop. The mediator
+// executes each artifact against its own subtree independently. ComposeExpression
+// is provided for callers that need to assemble a single composed expression for
+// testing or non-standard evaluation outside the mediation pipeline.
 //
 // An empty entries list returns the identity expression "$".
 // The returned string can be compiled and evaluated by Execute.

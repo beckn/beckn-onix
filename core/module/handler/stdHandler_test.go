@@ -182,8 +182,9 @@ func (stubCache) Clear(context.Context) error                              { ret
 func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	ctx := context.Background()
 	cfg := &Config{
-		Plugins: PluginCfg{},
-		Steps:   []string{"checkPolicy"},
+		HandlerDirection: DirectionReceiver,
+		Plugins:   PluginCfg{},
+		Steps:     []string{"checkPolicy"},
 	}
 	_, err := NewStdHandler(ctx, noopPluginManager{}, cfg, "testModule")
 	if err == nil {
@@ -194,6 +195,20 @@ func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "PolicyChecker plugin not configured") {
 		t.Fatalf("expected explicit PolicyChecker config error, got: %v", err)
+	}
+}
+
+func TestNewStdHandler_MissingDirectionFails(t *testing.T) {
+	cfg := &Config{
+		Plugins: PluginCfg{},
+		Steps:   []string{},
+	}
+	_, err := NewStdHandler(context.Background(), noopPluginManager{}, cfg, "testModule")
+	if err == nil {
+		t.Fatal("expected error when direction is not set")
+	}
+	if !strings.Contains(err.Error(), "handlerDirection") {
+		t.Fatalf("expected direction error, got: %v", err)
 	}
 }
 

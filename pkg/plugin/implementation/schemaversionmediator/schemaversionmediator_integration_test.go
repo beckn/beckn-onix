@@ -21,12 +21,26 @@ package schemaversionmediator
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 )
+
+// checkConnectivity skips the test if raw.githubusercontent.com is unreachable.
+// This prevents opaque network failures on air-gapped runners or when the
+// feature branch is unavailable, replacing them with an explicit skip message.
+func checkConnectivity(t *testing.T) {
+	t.Helper()
+	conn, err := net.DialTimeout("tcp", "raw.githubusercontent.com:443", 5*time.Second)
+	if err != nil {
+		t.Skipf("skipping integration test: raw.githubusercontent.com unreachable (%v)", err)
+	}
+	conn.Close()
+}
 
 // featureBranchBaseURL is the raw GitHub base for all schema artifacts used in
 // these tests. Both BAP and BPP node manifests point to this branch for
@@ -74,6 +88,7 @@ func bapManifest() *model.NodeManifest {
 // local manifest is the BPP manifest (expects v2.2 schemas).
 func bppReceiverMediator(t *testing.T) *mediator {
 	t.Helper()
+	checkConnectivity(t)
 	return newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{"action": "translate", "onFailure": "reject"}, bppManifest())
 }
 
@@ -81,6 +96,7 @@ func bppReceiverMediator(t *testing.T) *mediator {
 // local manifest is the BAP manifest (expects v2.1 schemas).
 func bapReceiverMediator(t *testing.T) *mediator {
 	t.Helper()
+	checkConnectivity(t)
 	return newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{"action": "translate", "onFailure": "reject"}, bapManifest())
 }
 

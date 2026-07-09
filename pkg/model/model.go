@@ -271,7 +271,6 @@ type StepContext struct {
 	ProtocolVersion      string // Protocol version parsed from context.version (e.g. "2.0.0")
 	MessageID            string // Message ID parsed from context.messageId in the request body
 	InboundAuthSignature string // Raw Base64 signature from the inbound Authorization header's signature="..." attribute
-	RemoteKeyID          string // Unique key ID of the inbound request signer, extracted from the Authorization header's keyId="subscriberId|uniqueId|algo"
 	IsCallerHandler      bool   // True when the handler is a Caller (outbound); false for Receiver (inbound)
 }
 

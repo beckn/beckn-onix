@@ -69,10 +69,10 @@ plugins:
 | `nodeId` | string | — | **Required.** Three-part DeDi subscriber identity for this node (`namespace/registry/recordId`). Used at startup to load the local node manifest. |
 | `action` | `translate` \| `reject` | `translate` | What to do when schema objects are incompatible |
 | `onFailure` | `reject` \| `passThrough` | `reject` | What to do when `action=translate` but an artifact cannot be fetched |
-| `fetchTimeoutMs` | integer string | `"5000"` | HTTP timeout for artifact fetch in milliseconds |
-| `positiveCacheTTL` | duration string | `"1h"` | How long to cache successfully fetched artifacts |
+| `fetchTimeout` | duration string | `"30s"` | HTTP timeout for each artifact fetch (e.g. `"10s"`, `"1m"`) |
+| `artifactCacheTTL` | duration string | `"24h"` | How long to cache successfully fetched artifacts |
 | `negativeCacheTTL` | duration string | `"5m"` | How long to cache artifact-not-found responses |
-| `maxCacheEntries` | integer string | `"1000"` | Maximum number of entries in the artifact cache |
+| `maxCacheEntries` | integer string | `"500"` | Maximum number of entries in the artifact cache |
 
 **`action` values:**
 

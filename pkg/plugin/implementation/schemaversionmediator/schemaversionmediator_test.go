@@ -41,7 +41,7 @@ func TestWalkPayload_SingleObject(t *testing.T) {
 		"@context": "https://schema.beckn.io/retail/schema/1.1.0/order.jsonld",
 		"@type": "Order"
 	}`)
-	got, err := WalkPayload(payload)
+	got, _, err := WalkPayload(payload)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestWalkPayload_NestedObjects(t *testing.T) {
 			}
 		}
 	}`)
-	got, err := WalkPayload(payload)
+	got, _, err := WalkPayload(payload)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestWalkPayload_ParentAndChildBothCollected(t *testing.T) {
 			"@type": "Fulfillment"
 		}
 	}`)
-	got, err := WalkPayload(payload)
+	got, _, err := WalkPayload(payload)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestWalkPayload_ArrayOfObjects(t *testing.T) {
 			}
 		]
 	}`)
-	got, err := WalkPayload(payload)
+	got, _, err := WalkPayload(payload)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestWalkPayload_ArrayOfObjects(t *testing.T) {
 
 func TestWalkPayload_NoSchemaObjects(t *testing.T) {
 	payload := []byte(`{"context": {"domain": "retail"}, "message": {}}`)
-	got, err := WalkPayload(payload)
+	got, _, err := WalkPayload(payload)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,19 +135,22 @@ func TestWalkPayload_NoSchemaObjects(t *testing.T) {
 }
 
 func TestWalkPayload_MissingType(t *testing.T) {
-	// @context present but no @type — should not be collected
+	// @context present but no @type — not collected as a ref, but reported as skipped.
 	payload := []byte(`{"@context": "https://schema.beckn.io/retail/schema/1.1.0/order.jsonld"}`)
-	got, err := WalkPayload(payload)
+	got, skipped, err := WalkPayload(payload)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(got) != 0 {
 		t.Fatalf("expected 0 schema objects, got %d", len(got))
 	}
+	if len(skipped) != 1 {
+		t.Fatalf("expected 1 skipped entry, got %d: %v", len(skipped), skipped)
+	}
 }
 
 func TestWalkPayload_InvalidJSON(t *testing.T) {
-	_, err := WalkPayload([]byte(`not json`))
+	_, _, err := WalkPayload([]byte(`not json`))
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
 	}

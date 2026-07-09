@@ -116,7 +116,8 @@ func TestRegisterRejectsPolicyViolation(t *testing.T) {
 			Name: "test-module",
 			Path: "/test",
 			Handler: handler.Config{
-				Type: handler.HandlerTypeStd,
+				Type:      handler.HandlerTypeStd,
+				HandlerDirection: handler.DirectionReceiver,
 				Plugins: handler.PluginCfg{
 					PolicyChecker: &plugin.Config{ID: "mock-policy"},
 				},
@@ -160,7 +161,8 @@ func TestRegisterSuccess(t *testing.T) {
 			Name: "test-module",
 			Path: "/test",
 			Handler: handler.Config{
-				Type: handler.HandlerTypeStd,
+				Type:      handler.HandlerTypeStd,
+				HandlerDirection: handler.DirectionCaller,
 				Plugins: handler.PluginCfg{
 					Middleware: []plugin.Config{{ID: "mock-middleware"}},
 				},
@@ -241,7 +243,8 @@ func TestRegisterFailure(t *testing.T) {
 					Name: "test-module",
 					Path: "/test",
 					Handler: handler.Config{
-						Type: handler.HandlerTypeStd,
+						Type:      handler.HandlerTypeStd,
+						HandlerDirection: handler.DirectionCaller,
 						Plugins: handler.PluginCfg{
 							Middleware: []plugin.Config{{ID: "mock-middleware"}},
 						},

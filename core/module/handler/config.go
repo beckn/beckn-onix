@@ -39,6 +39,19 @@ const (
 	HandlerTypeStd Type = "std"
 )
 
+// HandlerDirection declares whether a handler is on the caller (outbound) or
+// receiver (inbound) side of the Beckn adapter. Required in handler config YAML.
+type HandlerDirection string
+
+const (
+	// DirectionCaller is an outbound handler: it forwards requests from the
+	// local application to a remote Beckn participant.
+	DirectionCaller HandlerDirection = "caller"
+	// DirectionReceiver is an inbound handler: it accepts requests arriving
+	// from the Beckn network on behalf of the local node.
+	DirectionReceiver HandlerDirection = "receiver"
+)
+
 // PluginCfg holds the configuration for various plugins.
 type PluginCfg struct {
 	SchemaValidator  *plugin.Config  `yaml:"schemaValidator,omitempty"`
@@ -117,11 +130,12 @@ type HttpClientConfig struct {
 
 // Config holds the configuration for request processing handlers.
 type Config struct {
-	Plugins          PluginCfg `yaml:"plugins"`
+	Plugins          PluginCfg        `yaml:"plugins"`
 	Steps            []string
 	Type             Type
-	RegistryURL      string `yaml:"registryUrl"`
+	RegistryURL      string           `yaml:"registryUrl"`
 	Role             model.Role
+	HandlerDirection HandlerDirection `yaml:"handlerDirection"`
 	SubscriberID     string           `yaml:"subscriberId"`
 	HttpClientConfig HttpClientConfig `yaml:"httpClientConfig"`
 	// BasePath is the HTTP path prefix at which this module is mounted (e.g.

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -51,6 +50,7 @@ type stdHandler struct {
 	ackSigner    *ackSignerStep
 	SubscriberID string
 	role         model.Role
+	direction    HandlerDirection
 	basePath     string
 	httpClient   *http.Client
 	moduleName   string
@@ -86,11 +86,15 @@ func newHTTPClient(cfg *HttpClientConfig, wrapper definition.TransportWrapper) *
 
 // NewStdHandler initializes a new processor with plugins and steps.
 func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleName string) (http.Handler, error) {
+	if cfg.HandlerDirection != DirectionCaller && cfg.HandlerDirection != DirectionReceiver {
+		return nil, fmt.Errorf("handler %q: handlerDirection must be %q or %q, got %q", moduleName, DirectionCaller, DirectionReceiver, cfg.HandlerDirection)
+	}
 	h := &stdHandler{
 		steps:         []definition.Step{},
 		responseSteps: []definition.ResponseStep{},
 		SubscriberID:  cfg.SubscriberID,
 		role:          cfg.Role,
+		direction:     cfg.HandlerDirection,
 		basePath:      cfg.BasePath,
 		moduleName:    moduleName,
 	}
@@ -262,7 +266,6 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 	messageID := extractMessageID(body)
 	log.Debugf(r.Context(), "stepCtx: extracted protocolVersion=%q messageId=%q", protocolVersion, messageID)
 	inboundAuthSignature := extractAuthSignature(r.Header.Get(model.AuthHeaderSubscriber))
-	remoteKeyID := extractRemoteKeyID(r.Header.Get(model.AuthHeaderSubscriber))
 	// Store both protocol version and message ID in the Go context so downstream
 	// functions that only receive a context.Context (e.g. sendNack,
 	// sendAck) can read them without needing StepContext.
@@ -278,8 +281,7 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 		ProtocolVersion:      protocolVersion,
 		MessageID:            messageID,
 		InboundAuthSignature: inboundAuthSignature,
-		RemoteKeyID:          remoteKeyID,
-		IsCallerHandler:      strings.Contains(h.moduleName, "Caller"),
+		IsCallerHandler:      h.direction == DirectionCaller,
 	}, nil
 }
 
@@ -703,7 +705,7 @@ func syncRequestBody(r *http.Request, body []byte) {
 func (h *stdHandler) resolveDirection(ctx context.Context) (senderID, receiverID string) {
 	selfID := h.SubscriberID
 	remoteID, _ := ctx.Value(model.ContextKeyRemoteID).(string)
-	if strings.Contains(h.moduleName, "Caller") {
+	if h.direction == DirectionCaller {
 		return selfID, remoteID
 	}
 	return remoteID, selfID

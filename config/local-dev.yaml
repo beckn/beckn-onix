@@ -21,6 +21,7 @@ modules:
     path: /bap/receiver/
     handler:
       type: std
+      handlerDirection: receiver
       role: bap
       httpClientConfig:
         maxIdleConns: 1000
@@ -72,6 +73,7 @@ modules:
     path: /bap/caller/
     handler:
       type: std
+      handlerDirection: caller
       role: bap
       httpClientConfig:
         maxIdleConns: 1000
@@ -116,6 +118,7 @@ modules:
     path: /bpp/receiver/
     handler:
       type: std
+      handlerDirection: receiver
       role: bpp
       httpClientConfig:
         maxIdleConns: 1000
@@ -175,6 +178,7 @@ modules:
     path: /bpp/caller/
     handler:
       type: std
+      handlerDirection: caller
       role: bpp
       httpClientConfig:
         maxIdleConns: 1000

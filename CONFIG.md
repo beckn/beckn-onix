@@ -511,6 +511,12 @@ modules:
 **Options**: `bap`, `bpp`  
 **Description**: Role of this handler in the Beckn protocol.
 
+##### `handlerDirection`
+**Type**: `string`  
+**Required**: Yes  
+**Options**: `caller`, `receiver`  
+**Description**: Whether this handler is on the outbound (`caller`) or inbound (`receiver`) side of the adapter. A receiver handler accepts requests from the Beckn network; a caller handler forwards requests to a remote participant. The adapter fails to start if this field is absent or invalid.
+
 ##### `subscriberId`
 **Type**: `string`  
 **Required**: No  
@@ -1028,10 +1034,10 @@ schemaVersionMediator:
     nodeId: "nfh.global/subscribers.beckn.one/open-kitchen-bpp"
     action: translate
     onFailure: reject
-    fetchTimeoutMs: "5000"
-    positiveCacheTTL: "1h"
+    fetchTimeout: "30s"
+    artifactCacheTTL: "24h"
     negativeCacheTTL: "5m"
-    maxCacheEntries: "1000"
+    maxCacheEntries: "500"
 ```
 
 **Parameters**:
@@ -1041,10 +1047,10 @@ schemaVersionMediator:
 | `nodeId` | string | — | **Required.** Three-part DeDi subscriber identity for this node (`namespace/registry/recordId`). Used at startup to load the local node manifest. |
 | `action` | `translate` \| `reject` | `translate` | What to do when schema objects are incompatible. `translate` fetches and applies an artifact; `reject` returns `schemaIncompatible` immediately. |
 | `onFailure` | `reject` \| `passThrough` | `reject` | Applied when `action=translate` but no artifact can be fetched. `passThrough` forwards the untranslated payload — operator escape hatch only, not for production. |
-| `fetchTimeoutMs` | integer string | `"5000"` | HTTP timeout in milliseconds for artifact fetch. |
-| `positiveCacheTTL` | duration string | `"1h"` | How long to cache successfully fetched translation artifacts. |
+| `fetchTimeout` | duration string | `"30s"` | HTTP timeout for each artifact fetch (e.g. `"10s"`, `"1m"`). |
+| `artifactCacheTTL` | duration string | `"24h"` | How long to cache successfully fetched translation artifacts. |
 | `negativeCacheTTL` | duration string | `"5m"` | How long to cache artifact-not-found responses. |
-| `maxCacheEntries` | integer string | `"1000"` | Maximum entries in the artifact cache. |
+| `maxCacheEntries` | integer string | `"500"` | Maximum entries in the artifact cache. |
 
 **Step ordering — `validateSchema` must come before `mediateSchema`:**
 
@@ -1067,6 +1073,7 @@ modules:
     handler:
       type: std
       role: bpp
+      handlerDirection: receiver
       plugins:
         registry:
           id: dediregistry
@@ -1076,8 +1083,6 @@ modules:
           id: manifestloader
           config:
             url: "https://fabric.nfh.global/registry/dedi"
-            positiveCacheTTL: "1h"
-            negativeCacheTTL: "5m"
         schemaVersionMediator:
           id: schemaversionmediator
           config:
