@@ -1323,36 +1323,6 @@ func TestMediate_NotOnboarded(t *testing.T) {
 	}
 }
 
-func TestMediate_NoNetworkID_PassThrough(t *testing.T) {
-	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, nil)
-	body := []byte(`{"context":{},"message":{}}`)
-	ctx := stepCtxWithRemoteID(body, "bap.example.com")
-	if err := m.Mediate(ctx); err != nil {
-		t.Fatalf("expected pass-through (nil), got: %v", err)
-	}
-}
-
-func TestMediate_NetworkIdCamelCase_Recognised(t *testing.T) {
-	// networkId (camelCase) must be accepted in addition to network_id (snake_case).
-	// Use a local manifest with v1.0; payload is at v2.0 → incompatible → reject proves networkId was read.
-	lm := localManifestWith(model.SchemaObject{
-		BaseURL:           "https://schema.beckn.io/retail",
-		Type:              "Order",
-		SupportedVersions: []string{"v1.0"},
-	})
-	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{"action": "reject"}, lm)
-	body := []byte(`{"context":{"networkId":"net1"},"message":{"@context":"https://schema.beckn.io/retail/v2.0/Order.jsonld","@type":"Order"}}`)
-	ctx := stepCtxWithRemoteID(body, "bap.example.com")
-	err := m.Mediate(ctx)
-	var me *MediationError
-	if !errors.As(err, &me) {
-		t.Fatalf("expected MediationError (networkId recognised), got %T: %v", err, err)
-	}
-	if me.Code != "schemaIncompatible" {
-		t.Errorf("expected schemaIncompatible, got %q", me.Code)
-	}
-}
-
 func TestMediate_NoCounterpartyID_PassThrough(t *testing.T) {
 	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, nil)
 	body := []byte(`{"context":{"network_id":"net1"},"message":{}}`)
@@ -1526,12 +1496,397 @@ func TestMediate_TranslationApplied(t *testing.T) {
 	}
 }
 
+func TestMediate_TranslationUpdatesContextURL(t *testing.T) {
+	// After translation the @context URL of the schema object must reflect the
+	// target version, not the source version declared in the incoming payload.
+	// Regression test for: mediator applied the JSONata expression but left @context
+	// pointing at the old (from) version.
+	srv := artifactServer(t, map[string]string{
+		"/retail/v1.0/Order_from_v2.0.jsonata": `$`,
+	})
+	defer srv.Close()
+
+	lm := localManifestWith(model.SchemaObject{
+		BaseURL:           srv.URL + "/retail",
+		Type:              "Order",
+		SupportedVersions: []string{"v1.0"},
+	})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, lm)
+	m.httpClient = srv.Client()
+
+	body := []byte(`{"context":{},"message":{"@context":"` + srv.URL + `/retail/v2.0/Order.jsonld","@type":"Order"}}`)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+
+	if err := m.Mediate(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope map[string]json.RawMessage
+	json.Unmarshal(ctx.Body, &envelope)
+	var msg map[string]any
+	json.Unmarshal(envelope["message"], &msg)
+
+	wantCtx := srv.URL + "/retail/v1.0/context.jsonld"
+	if msg["@context"] != wantCtx {
+		t.Errorf("@context after translation: got %q, want %q", msg["@context"], wantCtx)
+	}
+}
+
+func TestMediate_TranslationUpdatesContextURL_Nested(t *testing.T) {
+	// Same check for a schema object nested inside the message (not at root).
+	srv := artifactServer(t, map[string]string{
+		"/retail/v1.0/Order_from_v2.0.jsonata": `$`,
+	})
+	defer srv.Close()
+
+	lm := localManifestWith(model.SchemaObject{
+		BaseURL:           srv.URL + "/retail",
+		Type:              "Order",
+		SupportedVersions: []string{"v1.0"},
+	})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, lm)
+	m.httpClient = srv.Client()
+
+	body := []byte(`{"context":{},"message":{"offer":{"@context":"` + srv.URL + `/retail/v2.0/Order.jsonld","@type":"Order"}}}`)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+
+	if err := m.Mediate(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope map[string]json.RawMessage
+	json.Unmarshal(ctx.Body, &envelope)
+	var msg map[string]any
+	json.Unmarshal(envelope["message"], &msg)
+
+	offer := msg["offer"].(map[string]any)
+	wantCtx := srv.URL + "/retail/v1.0/context.jsonld"
+	if offer["@context"] != wantCtx {
+		t.Errorf("offer.@context after translation: got %q, want %q", offer["@context"], wantCtx)
+	}
+}
+
 // TestMediate_DataLoss note: the JSONata $merge executor is additive by design —
 // it cannot drop fields present in the source. Data-loss detection in Mediate is
 // therefore not reachable through the current JSONata executor path. The
 // droppedFields function is tested directly in TestDroppedFields_* below. A
 // Mediate-level integration test requires a replacement (non-merge) executor and
 // will be added when non-JSONata translator support is introduced.
+
+// --- Nested-path translation tests ---
+// These tests verify that artifact expressions are evaluated against the specific
+// schema object subtree (at its JSONataPath) rather than the message root.
+// The bug these guard against: ComposeExpression previously ran $merge at the
+// message root, so artifact field references found nothing in deeply nested objects.
+
+func artifactServer(t *testing.T, expressions map[string]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if expr, ok := expressions[r.URL.Path]; ok {
+			w.Header().Set("Content-Type", "application/jsonata")
+			w.Write([]byte(expr))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+}
+
+func TestMediate_TranslationApplied_NestedOneLevel(t *testing.T) {
+	// Schema object sits one level inside message: $.message.offer
+	// Artifact adds "state" from "status" — field must appear inside offer, not at message root.
+	srv := artifactServer(t, map[string]string{
+		"/retail/v1.0/Order_from_v2.0.jsonata": `{"state": status}`,
+	})
+	defer srv.Close()
+
+	lm := localManifestWith(model.SchemaObject{
+		BaseURL:           srv.URL + "/retail",
+		Type:              "Order",
+		SupportedVersions: []string{"v1.0"},
+	})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, lm)
+	m.httpClient = srv.Client()
+
+	body := []byte(`{"context":{"network_id":"net1"},"message":{"offer":{"@context":"` +
+		srv.URL + `/retail/v2.0/Order.jsonld","@type":"Order","status":"ACTIVE"}}}`)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+
+	if err := m.Mediate(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope map[string]json.RawMessage
+	json.Unmarshal(ctx.Body, &envelope)
+	var msg map[string]any
+	json.Unmarshal(envelope["message"], &msg)
+
+	offer, ok := msg["offer"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected offer to be an object, got %T", msg["offer"])
+	}
+	if offer["state"] != "ACTIVE" {
+		t.Errorf("expected offer.state=ACTIVE, got %v", offer["state"])
+	}
+	if _, atRoot := msg["state"]; atRoot {
+		t.Error("state must not appear at message root — translation was scoped to wrong level")
+	}
+}
+
+func TestMediate_TranslationApplied_DeeplyNested(t *testing.T) {
+	// Schema object at $.message.contract.consideration[0].considerationAttributes —
+	// mirrors the real RetailConsideration scenario.
+	// Artifact renames currencyCode → currency (add + drop).
+	srv := artifactServer(t, map[string]string{
+		"/retail/v2.2/Consideration_from_v2.1.jsonata": `$ ~> |$|{"currency": currencyCode}, ["currencyCode"]|`,
+	})
+	defer srv.Close()
+
+	lm := localManifestWith(model.SchemaObject{
+		BaseURL:           srv.URL + "/retail",
+		Type:              "Consideration",
+		SupportedVersions: []string{"v2.2"},
+	})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, lm)
+	m.httpClient = srv.Client()
+
+	body := []byte(`{"context":{"network_id":"net1"},"message":{"contract":{"consideration":[` +
+		`{"considerationAttributes":{"@context":"` + srv.URL + `/retail/v2.1/Consideration.jsonld",` +
+		`"@type":"Consideration","currencyCode":"INR","totalAmount":3000}}]}}}`)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+
+	if err := m.Mediate(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope map[string]json.RawMessage
+	json.Unmarshal(ctx.Body, &envelope)
+	var msg map[string]any
+	json.Unmarshal(envelope["message"], &msg)
+
+	attrs := msg["contract"].(map[string]any)["consideration"].([]any)[0].(map[string]any)["considerationAttributes"].(map[string]any)
+	if attrs["currency"] != "INR" {
+		t.Errorf("expected currency=INR after rename, got %v", attrs["currency"])
+	}
+	if _, stillThere := attrs["currencyCode"]; stillThere {
+		t.Error("currencyCode must be removed after translation")
+	}
+	if attrs["totalAmount"] != float64(3000) {
+		t.Errorf("unrelated field totalAmount must be preserved, got %v", attrs["totalAmount"])
+	}
+}
+
+func TestMediate_TranslationApplied_ArrayIndex(t *testing.T) {
+	// Schema object at $.message.items[2] — non-zero array index must be navigated correctly.
+	srv := artifactServer(t, map[string]string{
+		"/retail/v2.0/Item_from_v1.0.jsonata": `{"label": name}`,
+	})
+	defer srv.Close()
+
+	lm := localManifestWith(model.SchemaObject{
+		BaseURL:           srv.URL + "/retail",
+		Type:              "Item",
+		SupportedVersions: []string{"v2.0"},
+	})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, lm)
+	m.httpClient = srv.Client()
+
+	body := []byte(`{"context":{"network_id":"net1"},"message":{"items":[` +
+		`{"id":1},` +
+		`{"id":2},` +
+		`{"@context":"` + srv.URL + `/retail/v1.0/Item.jsonld","@type":"Item","name":"Flask"}` +
+		`]}}`)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+
+	if err := m.Mediate(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope map[string]json.RawMessage
+	json.Unmarshal(ctx.Body, &envelope)
+	var msg map[string]any
+	json.Unmarshal(envelope["message"], &msg)
+
+	items := msg["items"].([]any)
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(items))
+	}
+	translated := items[2].(map[string]any)
+	if translated["label"] != "Flask" {
+		t.Errorf("expected items[2].label=Flask, got %v", translated["label"])
+	}
+	// Siblings must be untouched.
+	if items[0].(map[string]any)["id"] != float64(1) || items[1].(map[string]any)["id"] != float64(2) {
+		t.Error("sibling items must be unchanged")
+	}
+}
+
+func TestMediate_TranslationApplied_MultipleObjectsDifferentPaths(t *testing.T) {
+	// Two schema objects at different paths both need translation.
+	// Verifies each artifact is scoped to its own path and both are applied.
+	srv := artifactServer(t, map[string]string{
+		"/retail/v2.0/Offer_from_v1.0.jsonata":    `{"offerState": offerStatus}`,
+		"/retail/v2.0/Resource_from_v1.0.jsonata":  `{"resourceLabel": resourceName}`,
+	})
+	defer srv.Close()
+
+	lm := localManifestWith(
+		model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Offer", SupportedVersions: []string{"v2.0"}},
+		model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Resource", SupportedVersions: []string{"v2.0"}},
+	)
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, lm)
+	m.httpClient = srv.Client()
+
+	body := []byte(`{"context":{"network_id":"net1"},"message":{` +
+		`"offer":{"@context":"` + srv.URL + `/retail/v1.0/Offer.jsonld","@type":"Offer","offerStatus":"ACTIVE"},` +
+		`"resource":{"@context":"` + srv.URL + `/retail/v1.0/Resource.jsonld","@type":"Resource","resourceName":"Flask"}` +
+		`}}`)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+
+	if err := m.Mediate(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope map[string]json.RawMessage
+	json.Unmarshal(ctx.Body, &envelope)
+	var msg map[string]any
+	json.Unmarshal(envelope["message"], &msg)
+
+	offer := msg["offer"].(map[string]any)
+	if offer["offerState"] != "ACTIVE" {
+		t.Errorf("expected offer.offerState=ACTIVE, got %v", offer["offerState"])
+	}
+	resource := msg["resource"].(map[string]any)
+	if resource["resourceLabel"] != "Flask" {
+		t.Errorf("expected resource.resourceLabel=Flask, got %v", resource["resourceLabel"])
+	}
+}
+
+func TestMediate_TranslationApplied_FieldRenameDropsOldField(t *testing.T) {
+	// Artifact that only drops a field (no additions) — $.message.attrs.
+	srv := artifactServer(t, map[string]string{
+		"/retail/v2.0/Offer_from_v1.0.jsonata": `$ ~> |$|{}, ["discountCode"]|`,
+	})
+	defer srv.Close()
+
+	lm := localManifestWith(model.SchemaObject{
+		BaseURL:           srv.URL + "/retail",
+		Type:              "Offer",
+		SupportedVersions: []string{"v2.0"},
+	})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, lm)
+	m.httpClient = srv.Client()
+
+	body := []byte(`{"context":{"network_id":"net1"},"message":{"attrs":{` +
+		`"@context":"` + srv.URL + `/retail/v1.0/Offer.jsonld","@type":"Offer",` +
+		`"price":100,"discountCode":"SAVE10"}}}`)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+
+	if err := m.Mediate(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope map[string]json.RawMessage
+	json.Unmarshal(ctx.Body, &envelope)
+	var msg map[string]any
+	json.Unmarshal(envelope["message"], &msg)
+
+	attrs := msg["attrs"].(map[string]any)
+	if _, present := attrs["discountCode"]; present {
+		t.Error("discountCode must be removed by translation")
+	}
+	if attrs["price"] != float64(100) {
+		t.Errorf("unrelated field price must be preserved, got %v", attrs["price"])
+	}
+}
+
+func TestMediate_TranslationApplied_UnaffectedObjectsUnchanged(t *testing.T) {
+	// Payload has two schema objects: one incompatible (translated), one compatible (untouched).
+	// The compatible object must be byte-for-byte identical after mediation.
+	srv := artifactServer(t, map[string]string{
+		"/retail/v2.0/Offer_from_v1.0.jsonata": `{"state": status}`,
+	})
+	defer srv.Close()
+
+	lm := localManifestWith(
+		model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Offer", SupportedVersions: []string{"v2.0"}},
+		model.SchemaObject{BaseURL: srv.URL + "/retail", Type: "Resource", SupportedVersions: []string{"v1.0"}},
+	)
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, lm)
+	m.httpClient = srv.Client()
+
+	// Offer at v1.0 → incompatible with manifest v2.0 → translated.
+	// Resource at v1.0 → compatible with manifest v1.0 → untouched.
+	body := []byte(`{"context":{"network_id":"net1"},"message":{` +
+		`"offer":{"@context":"` + srv.URL + `/retail/v1.0/Offer.jsonld","@type":"Offer","status":"ACTIVE"},` +
+		`"resource":{"@context":"` + srv.URL + `/retail/v1.0/Resource.jsonld","@type":"Resource","name":"Flask"}` +
+		`}}`)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+
+	if err := m.Mediate(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope map[string]json.RawMessage
+	json.Unmarshal(ctx.Body, &envelope)
+	var msg map[string]any
+	json.Unmarshal(envelope["message"], &msg)
+
+	// Offer translated.
+	offer := msg["offer"].(map[string]any)
+	if offer["state"] != "ACTIVE" {
+		t.Errorf("expected offer.state=ACTIVE, got %v", offer["state"])
+	}
+	// Resource untouched.
+	resource := msg["resource"].(map[string]any)
+	if resource["name"] != "Flask" {
+		t.Errorf("expected resource.name=Flask unchanged, got %v", resource["name"])
+	}
+	if _, extra := resource["state"]; extra {
+		t.Error("translation artifact must not bleed into compatible resource object")
+	}
+}
+
+func TestMediate_TranslationApplied_MultipleArrayItems(t *testing.T) {
+	// Array with two items both incompatible — both must be translated independently.
+	srv := artifactServer(t, map[string]string{
+		"/retail/v2.0/Item_from_v1.0.jsonata": `{"label": name}`,
+	})
+	defer srv.Close()
+
+	lm := localManifestWith(model.SchemaObject{
+		BaseURL:           srv.URL + "/retail",
+		Type:              "Item",
+		SupportedVersions: []string{"v2.0"},
+	})
+	m := newTestMediatorFull(t, &mockManifestLoader{}, map[string]string{}, lm)
+	m.httpClient = srv.Client()
+
+	body := []byte(`{"context":{"network_id":"net1"},"message":{"items":[` +
+		`{"@context":"` + srv.URL + `/retail/v1.0/Item.jsonld","@type":"Item","name":"Flask"},` +
+		`{"@context":"` + srv.URL + `/retail/v1.0/Item.jsonld","@type":"Item","name":"Mug"}` +
+		`]}}`)
+	ctx := stepCtxWithRemoteID(body, "bap.example.com")
+
+	if err := m.Mediate(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope map[string]json.RawMessage
+	json.Unmarshal(ctx.Body, &envelope)
+	var msg map[string]any
+	json.Unmarshal(envelope["message"], &msg)
+
+	items := msg["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+	if items[0].(map[string]any)["label"] != "Flask" {
+		t.Errorf("expected items[0].label=Flask, got %v", items[0].(map[string]any)["label"])
+	}
+	if items[1].(map[string]any)["label"] != "Mug" {
+		t.Errorf("expected items[1].label=Mug, got %v", items[1].(map[string]any)["label"])
+	}
+}
 
 // --- droppedFields tests ---
 

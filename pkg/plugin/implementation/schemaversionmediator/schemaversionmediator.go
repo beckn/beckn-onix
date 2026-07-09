@@ -240,6 +240,13 @@ type TranslationArtifact struct {
 	ContentType string
 }
 
+// fetchedArtifact pairs a translation artifact with the need it satisfies so
+// the mediation loop can update @context after applying the expression.
+type fetchedArtifact struct {
+	Artifact *TranslationArtifact
+	Need     TranslationNeeded
+}
+
 // artifactCacheEntry is a single cache slot.
 // artifact == nil marks a negative cache entry (404 remembered).
 type artifactCacheEntry struct {
@@ -418,12 +425,10 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 		}
 	}
 
-	networkID := extractNetworkID(ctx.Body)
 	counterpartyID, _ := ctx.Value(model.ContextKeyRemoteID).(string)
 
-	// No policy match → pass through unchanged.
-	if networkID == "" || counterpartyID == "" {
-		log.Debugf(ctx, "schemaversionmediator: passThrough networkID=%q counterpartyID=%q (one or both empty)", networkID, counterpartyID)
+	if counterpartyID == "" {
+		log.Debugf(ctx, "schemaversionmediator: passThrough counterpartyID empty")
 		return nil
 	}
 
@@ -475,43 +480,70 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 		return m.applyOnFailure(cause)
 	}
 
-	// Build mapping entries from artifacts (JSONata content-type only for now).
-	entries := make([]MappingEntry, 0, len(artifacts))
-	for jsonataPath, artifact := range artifacts {
-		entries = append(entries, MappingEntry{
-			JSONataPath: jsonataPath,
-			Expression:  string(artifact.Content),
-		})
-	}
-
-	expression, err := ComposeExpression(entries)
-	if err != nil {
-		return fmt.Errorf("schemaversionmediator: compose expression: %w", err)
-	}
-
 	msgBytes, err := extractMessageSubtree(ctx.Body)
 	if err != nil {
 		return fmt.Errorf("schemaversionmediator: extract message subtree: %w", err)
 	}
 
-	translated, err := m.Execute(ctx, expression, msgBytes)
-	if err != nil {
-		return fmt.Errorf("schemaversionmediator: execute translation: %w", err)
+	var msgObj map[string]any
+	if err := json.Unmarshal(msgBytes, &msgObj); err != nil {
+		return fmt.Errorf("schemaversionmediator: unmarshal message: %w", err)
 	}
 
-	dropped, err := droppedFields(msgBytes, translated)
-	if err != nil {
-		return fmt.Errorf("schemaversionmediator: data-loss detection: %w", err)
-	}
-	if len(dropped) > 0 {
-		return &MediationError{
-			Code:         "schemaTranslationDataLoss",
-			Message:      "translation dropped fields that were present in the source payload",
-			DroppedFields: dropped,
+	// Apply each artifact against its specific schema object subtree.
+	for jsonataPath, fa := range artifacts {
+		relPath := strings.TrimPrefix(jsonataPath, "$.message.")
+		if relPath == jsonataPath {
+			// jsonataPath is exactly "$.message" — artifact applies to the whole message.
+			relPath = ""
+		}
+
+		var subtreeBytes []byte
+		if relPath == "" {
+			subtreeBytes = msgBytes
+		} else {
+			subtree, err := getAtPath(msgObj, relPath)
+			if err != nil {
+				return fmt.Errorf("schemaversionmediator: extract subtree at %q: %w", relPath, err)
+			}
+			subtreeBytes, err = json.Marshal(subtree)
+			if err != nil {
+				return fmt.Errorf("schemaversionmediator: marshal subtree at %q: %w", relPath, err)
+			}
+		}
+
+		resultBytes, err := m.Execute(ctx, string(fa.Artifact.Content), subtreeBytes)
+		if err != nil {
+			return fmt.Errorf("schemaversionmediator: execute translation at %q: %w", relPath, err)
+		}
+
+		targetContextURL := fa.Need.ToContextURL()
+		if relPath == "" {
+			if err := json.Unmarshal(resultBytes, &msgObj); err != nil {
+				return fmt.Errorf("schemaversionmediator: unmarshal translated message: %w", err)
+			}
+			msgObj["@context"] = targetContextURL
+		} else {
+			var result any
+			if err := json.Unmarshal(resultBytes, &result); err != nil {
+				return fmt.Errorf("schemaversionmediator: unmarshal translated subtree at %q: %w", relPath, err)
+			}
+			if obj, ok := result.(map[string]any); ok {
+				obj["@context"] = targetContextURL
+				result = obj
+			}
+			if err := setAtPath(msgObj, relPath, result); err != nil {
+				return fmt.Errorf("schemaversionmediator: set translated subtree at %q: %w", relPath, err)
+			}
 		}
 	}
 
-	patched, err := patchMessageSubtree(ctx.Body, translated)
+	finalMsg, err := json.Marshal(msgObj)
+	if err != nil {
+		return fmt.Errorf("schemaversionmediator: marshal translated message: %w", err)
+	}
+
+	patched, err := patchMessageSubtree(ctx.Body, finalMsg)
 	if err != nil {
 		return fmt.Errorf("schemaversionmediator: patch message subtree: %w", err)
 	}
@@ -563,25 +595,6 @@ func parseNodeManifest(doc *model.ManifestDocument) (*model.NodeManifest, error)
 		return nil, fmt.Errorf("schemaversionmediator: parse node manifest: %w", err)
 	}
 	return nm, nil
-}
-
-// extractNetworkID reads context.network_id / context.networkId from a Beckn payload.
-func extractNetworkID(body []byte) string {
-	var envelope struct {
-		Context map[string]json.RawMessage `json:"context"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return ""
-	}
-	for _, key := range []string{"network_id", "networkId"} {
-		if raw, ok := envelope.Context[key]; ok {
-			var s string
-			if err := json.Unmarshal(raw, &s); err == nil && s != "" {
-				return s
-			}
-		}
-	}
-	return ""
 }
 
 // extractMessageSubtree returns the raw JSON bytes of the "message" field from
@@ -857,6 +870,95 @@ func loadMapManagerConfig(config map[string]string) (fetchTimeout, positiveTTL, 
 
 // --- JSONata composition and execution ---
 
+// parsePathSegment splits a path segment like "consideration[0]" into key="consideration"
+// and index=0. Returns index=-1 when there is no array accessor.
+func parsePathSegment(s string) (key string, index int) {
+	i := strings.LastIndex(s, "[")
+	if i >= 0 && strings.HasSuffix(s, "]") {
+		if n, err := strconv.Atoi(s[i+1 : len(s)-1]); err == nil {
+			return s[:i], n
+		}
+	}
+	return s, -1
+}
+
+// getAtPath navigates a parsed JSON object using a dot-separated relative path
+// (e.g. "contract.consideration[0].considerationAttributes") and returns the
+// value at that location.
+func getAtPath(obj map[string]any, relPath string) (any, error) {
+	var cur any = obj
+	for _, part := range strings.Split(relPath, ".") {
+		key, idx := parsePathSegment(part)
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("expected object at %q", key)
+		}
+		val, exists := m[key]
+		if !exists {
+			return nil, fmt.Errorf("key %q not found", key)
+		}
+		if idx >= 0 {
+			arr, ok := val.([]any)
+			if !ok {
+				return nil, fmt.Errorf("expected array at %q", key)
+			}
+			if idx >= len(arr) {
+				return nil, fmt.Errorf("index %d out of range at %q (len %d)", idx, key, len(arr))
+			}
+			cur = arr[idx]
+		} else {
+			cur = val
+		}
+	}
+	return cur, nil
+}
+
+// setAtPath navigates to the parent of the leaf described by relPath and
+// replaces the leaf value with value.
+func setAtPath(obj map[string]any, relPath string, value any) error {
+	parts := strings.Split(relPath, ".")
+	var cur any = obj
+	for _, part := range parts[:len(parts)-1] {
+		key, idx := parsePathSegment(part)
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return fmt.Errorf("expected object at %q", key)
+		}
+		val := m[key]
+		if idx >= 0 {
+			arr, ok := val.([]any)
+			if !ok {
+				return fmt.Errorf("expected array at %q", key)
+			}
+			if idx >= len(arr) {
+				return fmt.Errorf("index %d out of range at %q (len %d)", idx, key, len(arr))
+			}
+			cur = arr[idx]
+		} else {
+			cur = val
+		}
+	}
+	key, idx := parsePathSegment(parts[len(parts)-1])
+	m, ok := cur.(map[string]any)
+	if !ok {
+		return fmt.Errorf("parent of %q is not an object", key)
+	}
+	if idx >= 0 {
+		arr, ok := m[key].([]any)
+		if !ok {
+			return fmt.Errorf("expected array at leaf %q", key)
+		}
+		if idx >= len(arr) {
+			return fmt.Errorf("index %d out of range at leaf %q (len %d)", idx, key, len(arr))
+		}
+		arr[idx] = value
+		m[key] = arr
+	} else {
+		m[key] = value
+	}
+	return nil
+}
+
 // MappingEntry pairs a translation artifact expression with the payload path
 // of the schema object it targets. The artifact expression is written to operate
 // on the Beckn message subtree (not the full payload) and must return an object
@@ -967,8 +1069,8 @@ type ArtifactFetchFailure struct {
 //
 // Returns a nil error slice only when ALL fetches succeed. The caller must check
 // for failures before calling ComposeExpression and Execute.
-func (m *mediator) fetchAllArtifacts(ctx context.Context, needs []TranslationNeeded) (map[string]*TranslationArtifact, []ArtifactFetchFailure) {
-	artifacts := make(map[string]*TranslationArtifact, len(needs))
+func (m *mediator) fetchAllArtifacts(ctx context.Context, needs []TranslationNeeded) (map[string]fetchedArtifact, []ArtifactFetchFailure) {
+	artifacts := make(map[string]fetchedArtifact, len(needs))
 	var failures []ArtifactFetchFailure
 
 	for _, need := range needs {
@@ -993,7 +1095,7 @@ func (m *mediator) fetchAllArtifacts(ctx context.Context, needs []TranslationNee
 			failures = append(failures, ArtifactFetchFailure{Need: need, URL: artifactURL, Reason: err})
 			continue
 		}
-		artifacts[need.JSONataPath] = artifact
+		artifacts[need.JSONataPath] = fetchedArtifact{Artifact: artifact, Need: need}
 	}
 	return artifacts, failures
 }
