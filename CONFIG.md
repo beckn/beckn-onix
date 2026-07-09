@@ -511,12 +511,6 @@ modules:
 **Options**: `bap`, `bpp`  
 **Description**: Role of this handler in the Beckn protocol.
 
-##### `handlerDirection`
-**Type**: `string`  
-**Required**: Yes  
-**Options**: `caller`, `receiver`  
-**Description**: Whether this handler is on the outbound (`caller`) or inbound (`receiver`) side of the adapter. A receiver handler accepts requests from the Beckn network; a caller handler forwards requests to a remote participant. The adapter fails to start if this field is absent or invalid.
-
 ##### `subscriberId`
 **Type**: `string`  
 **Required**: No  
@@ -1073,7 +1067,6 @@ modules:
     handler:
       type: std
       role: bpp
-      handlerDirection: receiver
       plugins:
         registry:
           id: dediregistry
