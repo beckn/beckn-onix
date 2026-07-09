@@ -438,7 +438,7 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 	counterpartyID, _ := ctx.Value(model.ContextKeyRemoteID).(string)
 
 	if counterpartyID == "" {
-		log.Debugf(ctx, "schemaversionmediator: passThrough counterpartyID empty")
+		log.Warnf(ctx, "schemaversionmediator: passThrough counterpartyID empty — reqpreprocessor middleware may not be configured")
 		return nil
 	}
 

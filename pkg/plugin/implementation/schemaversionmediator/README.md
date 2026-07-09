@@ -57,6 +57,7 @@ plugins:
 |---|---|
 | `manifestLoader` | Fetches counterparty node manifests from DeDi at request time (caller path) and the local manifest at startup |
 | `dediregistry` (backing the manifestLoader) | Resolves subscriber manifest URLs via DeDi |
+| `reqpreprocessor` (middleware) | Extracts the counterparty subscriber ID from the inbound Authorization header and stores it in `ContextKeyRemoteID`. Without it, `counterpartyID` is empty and mediation is skipped with a warning on every request. |
 
 **`nodeId`** is an **operator-facing config field** set under `schemaVersionMediator.config`. It is the three-part DeDi subscriber identity for this node (`namespace/registry/recordId`, e.g. `nfh.global/subscribers.beckn.one/open-kitchen-bpp`). At startup the plugin calls `ManifestLoader.GetBySubscriberID(nodeId)` to load the local node manifest. If `nodeId` is absent or the manifest cannot be loaded, the mediator marks itself as `notOnboarded` and rejects every request.
 
@@ -97,6 +98,8 @@ steps:
   - mediateSchema       # translate domain schema objects if versions differ
   - addRoute
 ```
+
+**Prerequisite — `reqpreprocessor` middleware:** `mediateSchema` reads the counterparty subscriber ID from `ContextKeyRemoteID`, which is set by the `reqpreprocessor` middleware. This middleware must appear in the handler's `middleware` list (it runs before any step). If it is absent, `ContextKeyRemoteID` will be empty and every `Mediate` call will log a warning and pass through without translating.
 
 **Why this order works universally:**
 
