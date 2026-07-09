@@ -182,7 +182,6 @@ func (stubCache) Clear(context.Context) error                              { ret
 func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	ctx := context.Background()
 	cfg := &Config{
-		HandlerDirection: DirectionReceiver,
 		Plugins:   PluginCfg{},
 		Steps:     []string{"checkPolicy"},
 	}
@@ -198,17 +197,41 @@ func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	}
 }
 
-func TestNewStdHandler_MissingDirectionFails(t *testing.T) {
-	cfg := &Config{
-		Plugins: PluginCfg{},
-		Steps:   []string{},
+
+func TestDeriveDirection(t *testing.T) {
+	tests := []struct {
+		name   string
+		role   model.Role
+		action string
+		want   HandlerDirection
+	}{
+		// BAP initiates non-on_ requests → caller
+		{"BAP search", model.RoleBAP, "search", DirectionCaller},
+		{"BAP select", model.RoleBAP, "select", DirectionCaller},
+		{"BAP init", model.RoleBAP, "init", DirectionCaller},
+		// BAP receives on_ callbacks from BPP → receiver
+		{"BAP on_search", model.RoleBAP, "on_search", DirectionReceiver},
+		{"BAP on_select", model.RoleBAP, "on_select", DirectionReceiver},
+		{"BAP on_init", model.RoleBAP, "on_init", DirectionReceiver},
+		// BPP receives non-on_ requests from BAP → receiver
+		{"BPP search", model.RoleBPP, "search", DirectionReceiver},
+		{"BPP select", model.RoleBPP, "select", DirectionReceiver},
+		{"BPP init", model.RoleBPP, "init", DirectionReceiver},
+		// BPP sends on_ callbacks to BAP → caller
+		{"BPP on_search", model.RoleBPP, "on_search", DirectionCaller},
+		{"BPP on_select", model.RoleBPP, "on_select", DirectionCaller},
+		{"BPP on_init", model.RoleBPP, "on_init", DirectionCaller},
+		// Edge cases
+		{"BAP empty action", model.RoleBAP, "", DirectionCaller},
+		{"BPP empty action", model.RoleBPP, "", DirectionReceiver},
 	}
-	_, err := NewStdHandler(context.Background(), noopPluginManager{}, cfg, "testModule")
-	if err == nil {
-		t.Fatal("expected error when direction is not set")
-	}
-	if !strings.Contains(err.Error(), "handlerDirection") {
-		t.Fatalf("expected direction error, got: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := deriveDirection(tc.role, tc.action)
+			if got != tc.want {
+				t.Errorf("deriveDirection(role=%q, action=%q) = %q, want %q", tc.role, tc.action, got, tc.want)
+			}
+		})
 	}
 }
 

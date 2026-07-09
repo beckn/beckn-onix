@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +28,16 @@ import (
 )
 
 // stdHandler orchestrates the execution of defined processing steps.
+// HandlerDirection represents whether a handler is on the caller (outbound) or
+// receiver (inbound) side of the Beckn adapter. Derived at runtime from role
+// and payload action — not read from config.
+type HandlerDirection string
+
+const (
+	DirectionCaller   HandlerDirection = "caller"
+	DirectionReceiver HandlerDirection = "receiver"
+)
+
 type stdHandler struct {
 	signer             definition.Signer
 	steps              []definition.Step
@@ -50,7 +61,6 @@ type stdHandler struct {
 	ackSigner    *ackSignerStep
 	SubscriberID string
 	role         model.Role
-	direction    HandlerDirection
 	basePath     string
 	httpClient   *http.Client
 	moduleName   string
@@ -86,15 +96,11 @@ func newHTTPClient(cfg *HttpClientConfig, wrapper definition.TransportWrapper) *
 
 // NewStdHandler initializes a new processor with plugins and steps.
 func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleName string) (http.Handler, error) {
-	if cfg.HandlerDirection != DirectionCaller && cfg.HandlerDirection != DirectionReceiver {
-		return nil, fmt.Errorf("handler %q: handlerDirection must be %q or %q, got %q", moduleName, DirectionCaller, DirectionReceiver, cfg.HandlerDirection)
-	}
 	h := &stdHandler{
 		steps:         []definition.Step{},
 		responseSteps: []definition.ResponseStep{},
 		SubscriberID:  cfg.SubscriberID,
 		role:          cfg.Role,
-		direction:     cfg.HandlerDirection,
 		basePath:      cfg.BasePath,
 		moduleName:    moduleName,
 	}
@@ -156,7 +162,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		record:         nil,
 	}
 
-	senderID, receiverID := h.resolveDirection(r.Context())
+	senderID, receiverID := h.resolveDirection(r.Context(), action)
 	httpMeter, _ := GetHTTPMetrics(r.Context())
 	if httpMeter != nil {
 		recordOnce = func() {
@@ -264,7 +270,10 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 	subID := h.subID(r.Context())
 	protocolVersion := extractProtocolVersion(body)
 	messageID := extractMessageID(body)
-	log.Debugf(r.Context(), "stepCtx: extracted protocolVersion=%q messageId=%q", protocolVersion, messageID)
+	action := extractBecknAction(body)
+	direction := deriveDirection(h.role, action)
+	log.Debugf(r.Context(), "stepCtx: extracted protocolVersion=%q messageId=%q action=%q role=%q handlerDirection=%q",
+		protocolVersion, messageID, action, h.role, direction)
 	inboundAuthSignature := extractAuthSignature(r.Header.Get(model.AuthHeaderSubscriber))
 	// Store both protocol version and message ID in the Go context so downstream
 	// functions that only receive a context.Context (e.g. sendNack,
@@ -281,7 +290,7 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 		ProtocolVersion:      protocolVersion,
 		MessageID:            messageID,
 		InboundAuthSignature: inboundAuthSignature,
-		IsCallerHandler:      h.direction == DirectionCaller,
+		IsCallerHandler:      direction == DirectionCaller,
 	}, nil
 }
 
@@ -702,17 +711,44 @@ func syncRequestBody(r *http.Request, body []byte) {
 	r.TransferEncoding = nil
 }
 
-func (h *stdHandler) resolveDirection(ctx context.Context) (senderID, receiverID string) {
+// deriveDirection infers whether this handler is acting as a caller (outbound)
+// or receiver (inbound) from the Beckn role and the payload action alone.
+// No config field is needed because the direction is fully determined by the
+// Beckn protocol flow:
+//
+//   - A BAP *initiates* requests (search, select, init, …) → caller.
+//     It *receives* BPP callbacks (on_search, on_select, …) → receiver.
+//   - A BPP *receives* BAP requests → receiver.
+//     It *sends* callbacks back to the BAP (on_* actions) → caller.
+//
+// In short: on_* flips the direction relative to the non-on_* baseline.
+func deriveDirection(role model.Role, action string) HandlerDirection {
+	isOnAction := strings.HasPrefix(action, "on_")
+	if role == model.RoleBAP {
+		if isOnAction {
+			return DirectionReceiver
+		}
+		return DirectionCaller
+	}
+	// BPP: on_* means the BPP is sending a callback (caller); everything else
+	// is an inbound request from the BAP (receiver).
+	if isOnAction {
+		return DirectionCaller
+	}
+	return DirectionReceiver
+}
+
+func (h *stdHandler) resolveDirection(ctx context.Context, action string) (senderID, receiverID string) {
 	selfID := h.SubscriberID
 	remoteID, _ := ctx.Value(model.ContextKeyRemoteID).(string)
-	if h.direction == DirectionCaller {
+	if deriveDirection(h.role, action) == DirectionCaller {
 		return selfID, remoteID
 	}
 	return remoteID, selfID
 }
 
 func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler, action string) {
-	senderID, receiverID := h.resolveDirection(r.Context())
+	senderID, receiverID := h.resolveDirection(r.Context(), action)
 	attrs := []attribute.KeyValue{
 		telemetry.AttrRecipientID.String(receiverID),
 		telemetry.AttrSenderID.String(senderID),
