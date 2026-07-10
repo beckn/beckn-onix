@@ -204,7 +204,7 @@ func (m *mockSignerProvider) New(ctx context.Context, config map[string]string) 
 	if m.err != nil {
 		return nil, nil, m.err
 	}
-	return m.signer, func() error { return nil }, nil
+	return m.signer, m.errFunc, nil
 }
 
 type mockEncrypterProvider struct {
@@ -2620,4 +2620,470 @@ func TestResolveEffectiveType_FallbackToURL(t *testing.T) {
 func TestResolveEffectiveType_NonSchemaPlugin_Empty(t *testing.T) {
 	assert.Equal(t, "", resolveEffectiveType("dediregistry",
 		map[string]string{"type": "url"}, map[string]string{}))
+}
+
+type mockTransportWrapper struct{ definition.TransportWrapper }
+
+type mockTransportWrapperProvider struct {
+	wrapper *mockTransportWrapper
+	err     error
+}
+
+func (m *mockTransportWrapperProvider) New(ctx context.Context, config map[string]any) (definition.TransportWrapper, func(), error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return m.wrapper, func() {}, nil
+}
+
+type mockPolicyChecker struct{ definition.PolicyChecker }
+
+type mockPolicyCheckerProvider struct {
+	checker *mockPolicyChecker
+	err     error
+}
+
+func (m *mockPolicyCheckerProvider) New(ctx context.Context, loader definition.ManifestLoader, config map[string]string) (definition.PolicyChecker, func(), error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return m.checker, func() {}, nil
+}
+
+type mockPayloadStore struct{ definition.PayloadStore }
+
+type mockPayloadStoreProvider struct {
+	store *mockPayloadStore
+	err   error
+}
+
+func (m *mockPayloadStoreProvider) New(ctx context.Context, cache definition.Cache, namespace string, cfg map[string]string) (definition.PayloadStore, func() error, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return m.store, func() error { return nil }, nil
+}
+
+type mockManifestLoader struct{ definition.ManifestLoader }
+
+type mockManifestLoaderProvider struct {
+	loader *mockManifestLoader
+	err    error
+}
+
+func (m *mockManifestLoaderProvider) New(ctx context.Context, cache definition.Cache, lookup definition.RegistryMetadataLookup, cfg map[string]string) (definition.ManifestLoader, func() error, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return m.loader, func() error { return nil }, nil
+}
+
+type mockRegistryLookupImpl struct{ definition.RegistryLookup }
+
+type mockRegistryLookupProvider struct {
+	registry *mockRegistryLookupImpl
+	err      error
+}
+
+func (m *mockRegistryLookupProvider) New(ctx context.Context, cache definition.Cache, cfg map[string]string) (definition.RegistryLookup, func() error, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return m.registry, func() error { return nil }, nil
+}
+
+type mockRegistryMetadataLookup struct {
+	definition.RegistryMetadataLookup
+}
+
+type mockOtelSetupProvider struct {
+	provider *telemetry.Provider
+	err      error
+}
+
+func (m *mockOtelSetupProvider) New(ctx context.Context, config map[string]string) (*telemetry.Provider, func() error, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return m.provider, func() error { return nil }, nil
+}
+
+// TestOtelSetup_NilConfig tests that OtelSetup returns nil when cfg is nil.
+func TestOtelSetup_NilConfig(t *testing.T) {
+	m := &Manager{plugins: map[string]onixPlugin{}, closers: []func(){}}
+	prov, err := m.OtelSetup(context.Background(), nil)
+	assert.NoError(t, err)
+	assert.Nil(t, prov)
+}
+
+// TestOtelSetup_Success tests OtelSetup returns the provider on success.
+func TestOtelSetup_Success(t *testing.T) {
+	telProv := &telemetry.Provider{Shutdown: func(context.Context) error { return nil }}
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"otelsetup": &mockPlugin{symbol: &mockOtelSetupProvider{provider: telProv}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "otelsetup", Config: map[string]string{}}
+	got, err := m.OtelSetup(context.Background(), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, telProv, got)
+	assert.Len(t, m.closers, 1)
+}
+
+// TestOtelSetup_ProviderError tests OtelSetup returns an error when the provider fails.
+func TestOtelSetup_ProviderError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"otelsetup": &mockPlugin{symbol: &mockOtelSetupProvider{err: errors.New("otel init failed")}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "otelsetup", Config: map[string]string{}}
+	_, err := m.OtelSetup(context.Background(), cfg)
+	assert.Error(t, err)
+}
+
+// TestOtelSetup_PluginNotFound tests OtelSetup returns an error when the plugin is not registered.
+func TestOtelSetup_PluginNotFound(t *testing.T) {
+	m := &Manager{plugins: map[string]onixPlugin{}, closers: []func(){}}
+	cfg := &Config{ID: "missing-otel", Config: map[string]string{}}
+	_, err := m.OtelSetup(context.Background(), cfg)
+	assert.Error(t, err)
+}
+
+// TestTransportWrapper_Success tests TransportWrapper returns the wrapper on success.
+func TestTransportWrapper_Success(t *testing.T) {
+	wrapper := &mockTransportWrapper{}
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"transport": &mockPlugin{symbol: &mockTransportWrapperProvider{wrapper: wrapper}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "transport", Config: map[string]string{"key": "val"}}
+	got, err := m.TransportWrapper(context.Background(), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, wrapper, got)
+	assert.Len(t, m.closers, 1)
+}
+
+// TestTransportWrapper_ProviderError tests TransportWrapper returns an error when the provider fails.
+func TestTransportWrapper_ProviderError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"transport": &mockPlugin{symbol: &mockTransportWrapperProvider{err: errors.New("wrap error")}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "transport", Config: map[string]string{}}
+	_, err := m.TransportWrapper(context.Background(), cfg)
+	assert.Error(t, err)
+}
+
+// TestTransportWrapper_PluginNotFound tests TransportWrapper returns an error when the plugin is not registered.
+func TestTransportWrapper_PluginNotFound(t *testing.T) {
+	m := &Manager{plugins: map[string]onixPlugin{}, closers: []func(){}}
+	cfg := &Config{ID: "missing-transport", Config: map[string]string{}}
+	_, err := m.TransportWrapper(context.Background(), cfg)
+	assert.Error(t, err)
+}
+
+// TestPolicyChecker_Success tests PolicyChecker returns the checker on success.
+func TestPolicyChecker_Success(t *testing.T) {
+	checker := &mockPolicyChecker{}
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"policy": &mockPlugin{symbol: &mockPolicyCheckerProvider{checker: checker}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "policy", Config: map[string]string{}}
+	loader := &mockManifestLoader{}
+	got, err := m.PolicyChecker(context.Background(), loader, cfg)
+	require.NoError(t, err)
+	assert.Equal(t, checker, got)
+	assert.Len(t, m.closers, 1)
+}
+
+// TestPolicyChecker_ProviderError tests PolicyChecker returns an error when the provider fails.
+func TestPolicyChecker_ProviderError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"policy": &mockPlugin{symbol: &mockPolicyCheckerProvider{err: errors.New("policy error")}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "policy", Config: map[string]string{}}
+	_, err := m.PolicyChecker(context.Background(), &mockManifestLoader{}, cfg)
+	assert.Error(t, err)
+}
+
+// TestPolicyChecker_PluginNotFound tests PolicyChecker returns an error when the plugin is not registered.
+func TestPolicyChecker_PluginNotFound(t *testing.T) {
+	m := &Manager{plugins: map[string]onixPlugin{}, closers: []func(){}}
+	cfg := &Config{ID: "missing-policy", Config: map[string]string{}}
+	_, err := m.PolicyChecker(context.Background(), &mockManifestLoader{}, cfg)
+	assert.Error(t, err)
+}
+
+// TestSimpleKeyManager_Success tests SimpleKeyManager returns a key manager on success.
+func TestSimpleKeyManager_Success(t *testing.T) {
+	km := &mockKeyManager{}
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"simplekey": &mockPlugin{symbol: &mockKeyManagerProvider{keyManager: km}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "simplekey", Config: map[string]string{}}
+	got, err := m.SimpleKeyManager(context.Background(), &mockRegistryLookup{}, cfg)
+	require.NoError(t, err)
+	assert.Equal(t, km, got)
+}
+
+// TestSimpleKeyManager_PluginNotFound tests SimpleKeyManager returns an error when the plugin is not registered.
+func TestSimpleKeyManager_PluginNotFound(t *testing.T) {
+	m := &Manager{plugins: map[string]onixPlugin{}, closers: []func(){}}
+	cfg := &Config{ID: "missing-simplekey", Config: map[string]string{}}
+	_, err := m.SimpleKeyManager(context.Background(), &mockRegistryLookup{}, cfg)
+	assert.Error(t, err)
+}
+
+// TestPayloadStore_Success tests PayloadStore returns the store on success.
+func TestPayloadStore_Success(t *testing.T) {
+	store := &mockPayloadStore{}
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"payload": &mockPlugin{symbol: &mockPayloadStoreProvider{store: store}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "payload", Config: map[string]string{}}
+	got, err := m.PayloadStore(context.Background(), &mockCache{}, "ns", cfg)
+	require.NoError(t, err)
+	assert.Equal(t, store, got)
+	assert.Len(t, m.closers, 1)
+}
+
+// TestPayloadStore_ProviderError tests PayloadStore returns an error when the provider fails.
+func TestPayloadStore_ProviderError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"payload": &mockPlugin{symbol: &mockPayloadStoreProvider{err: errors.New("store error")}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "payload", Config: map[string]string{}}
+	_, err := m.PayloadStore(context.Background(), &mockCache{}, "ns", cfg)
+	assert.Error(t, err)
+}
+
+// TestPayloadStore_PluginNotFound tests PayloadStore returns an error when the plugin is not registered.
+func TestPayloadStore_PluginNotFound(t *testing.T) {
+	m := &Manager{plugins: map[string]onixPlugin{}, closers: []func(){}}
+	cfg := &Config{ID: "missing-payload", Config: map[string]string{}}
+	_, err := m.PayloadStore(context.Background(), &mockCache{}, "ns", cfg)
+	assert.Error(t, err)
+}
+
+// TestManifestLoader_Success tests ManifestLoader returns the loader on success.
+func TestManifestLoader_Success(t *testing.T) {
+	loader := &mockManifestLoader{}
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"manifest": &mockPlugin{symbol: &mockManifestLoaderProvider{loader: loader}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "manifest", Config: map[string]string{}}
+	got, err := m.ManifestLoader(context.Background(), &mockCache{}, &mockRegistryMetadataLookup{}, cfg)
+	require.NoError(t, err)
+	assert.Equal(t, loader, got)
+	assert.Len(t, m.closers, 1)
+}
+
+// TestManifestLoader_ProviderError tests ManifestLoader returns an error when the provider fails.
+func TestManifestLoader_ProviderError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"manifest": &mockPlugin{symbol: &mockManifestLoaderProvider{err: errors.New("manifest error")}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "manifest", Config: map[string]string{}}
+	_, err := m.ManifestLoader(context.Background(), &mockCache{}, &mockRegistryMetadataLookup{}, cfg)
+	assert.Error(t, err)
+}
+
+// TestManifestLoader_PluginNotFound tests ManifestLoader returns an error when the plugin is not registered.
+func TestManifestLoader_PluginNotFound(t *testing.T) {
+	m := &Manager{plugins: map[string]onixPlugin{}, closers: []func(){}}
+	cfg := &Config{ID: "missing-manifest", Config: map[string]string{}}
+	_, err := m.ManifestLoader(context.Background(), &mockCache{}, &mockRegistryMetadataLookup{}, cfg)
+	assert.Error(t, err)
+}
+
+// TestRegistry_Success tests Registry returns the lookup on success.
+func TestRegistry_Success(t *testing.T) {
+	reg := &mockRegistryLookupImpl{}
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"registry": &mockPlugin{symbol: &mockRegistryLookupProvider{registry: reg}},
+		},
+		closers:        []func(){},
+		overridesByKey: map[string]telemetry.ConstantsOverride{},
+	}
+	cfg := &Config{ID: "registry", Config: map[string]string{}}
+	got, err := m.Registry(context.Background(), &mockCache{}, cfg)
+	require.NoError(t, err)
+	assert.Equal(t, reg, got)
+	assert.Len(t, m.closers, 1)
+}
+
+// TestRegistry_ProviderError tests Registry returns an error when the provider fails.
+func TestRegistry_ProviderError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"registry": &mockPlugin{symbol: &mockRegistryLookupProvider{err: errors.New("registry error")}},
+		},
+		closers:        []func(){},
+		overridesByKey: map[string]telemetry.ConstantsOverride{},
+	}
+	cfg := &Config{ID: "registry", Config: map[string]string{}}
+	_, err := m.Registry(context.Background(), &mockCache{}, cfg)
+	assert.Error(t, err)
+}
+
+// TestRegistry_PluginNotFound tests Registry returns an error when the plugin is not registered.
+func TestRegistry_PluginNotFound(t *testing.T) {
+	m := &Manager{
+		plugins:        map[string]onixPlugin{},
+		closers:        []func(){},
+		overridesByKey: map[string]telemetry.ConstantsOverride{},
+	}
+	cfg := &Config{ID: "missing-registry", Config: map[string]string{}}
+	_, err := m.Registry(context.Background(), &mockCache{}, cfg)
+	assert.Error(t, err)
+}
+
+// TestDeDiRegistry_Success tests DeDiRegistry returns the lookup on success.
+func TestDeDiRegistry_Success(t *testing.T) {
+	reg := &mockRegistryLookupImpl{}
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"dedi": &mockPlugin{symbol: &mockRegistryLookupProvider{registry: reg}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "dedi", Config: map[string]string{}}
+	got, err := m.DeDiRegistry(context.Background(), &mockCache{}, cfg)
+	require.NoError(t, err)
+	assert.Equal(t, reg, got)
+	assert.Len(t, m.closers, 1)
+}
+
+// TestDeDiRegistry_ProviderError tests DeDiRegistry returns an error when the provider fails.
+func TestDeDiRegistry_ProviderError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"dedi": &mockPlugin{symbol: &mockRegistryLookupProvider{err: errors.New("dedi error")}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "dedi", Config: map[string]string{}}
+	_, err := m.DeDiRegistry(context.Background(), &mockCache{}, cfg)
+	assert.Error(t, err)
+}
+
+// TestDeDiRegistry_PluginNotFound tests DeDiRegistry returns an error when the plugin is not registered.
+func TestDeDiRegistry_PluginNotFound(t *testing.T) {
+	m := &Manager{plugins: map[string]onixPlugin{}, closers: []func(){}}
+	cfg := &Config{ID: "missing-dedi", Config: map[string]string{}}
+	_, err := m.DeDiRegistry(context.Background(), &mockCache{}, cfg)
+	assert.Error(t, err)
+}
+
+// TestRegisterBecknConstantsGauge_Empty tests RegisterBecknConstantsGauge with no overrides.
+func TestRegisterBecknConstantsGauge_Empty(t *testing.T) {
+	m := &Manager{overridesByKey: map[string]telemetry.ConstantsOverride{}}
+	err := m.RegisterBecknConstantsGauge(context.Background())
+	assert.NoError(t, err)
+}
+
+// TestRegisterBecknConstantsGauge_WithOverrides tests RegisterBecknConstantsGauge with non-empty overrides.
+func TestRegisterBecknConstantsGauge_WithOverrides(t *testing.T) {
+	m := &Manager{
+		overridesByKey: map[string]telemetry.ConstantsOverride{
+			"registry:url": {PluginID: "registry", Key: "url", Actual: "https://example.com"},
+		},
+	}
+	err := m.RegisterBecknConstantsGauge(context.Background())
+	assert.NoError(t, err)
+}
+
+// TestValidator_Panics tests that Validator panics because it is not implemented.
+func TestValidator_Panics(t *testing.T) {
+	m := &Manager{}
+	assert.Panics(t, func() {
+		_, _ = m.Validator(context.Background(), &Config{})
+	})
+}
+
+// TestSimpleKeyManager_ProviderError tests SimpleKeyManager returns an error when the provider fails.
+func TestSimpleKeyManager_ProviderError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"simplekey": &mockPlugin{symbol: &mockKeyManagerProvider{err: errors.New("km error")}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "simplekey", Config: map[string]string{}}
+	_, err := m.SimpleKeyManager(context.Background(), &mockRegistryLookup{}, cfg)
+	assert.Error(t, err)
+}
+
+// TestApplyConstants_NilConfigMap tests that applyConstants initialises cfg.Config when it is nil.
+func TestApplyConstants_NilConfigMap(t *testing.T) {
+	m := makeManager(map[string]map[string]string{"schemav2validator": {"location": "https://x.com"}}, nil)
+	c := &Config{ID: "schemav2validator", Config: nil}
+	require.NoError(t, m.applyConstants(context.Background(), c))
+	assert.NotNil(t, c.Config, "cfg.Config should be initialised when nil")
+}
+
+// TestPublisher_CloserPanicsOnError tests that the closer registered by Publisher panics on error.
+func TestPublisher_CloserPanicsOnError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"pub": &mockPlugin{symbol: &mockPublisherProvider{
+				publisher: &mockPublisher{},
+				errFunc:   func() error { return errors.New("close failed") },
+			}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "pub", Config: map[string]string{}}
+	_, err := m.Publisher(context.Background(), cfg)
+	require.NoError(t, err)
+	require.Len(t, m.closers, 1)
+	assert.Panics(t, func() { m.closers[0]() })
+}
+
+// TestSignerCloserPanicsOnError tests that the closer registered by Signer panics on error.
+func TestSignerCloserPanicsOnError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"sig": &mockPlugin{symbol: &mockSignerProvider{
+				signer:  &mockSigner{},
+				errFunc: func() error { return errors.New("close failed") },
+			}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "sig", Config: map[string]string{}}
+	_, err := m.Signer(context.Background(), cfg)
+	require.NoError(t, err)
+	require.Len(t, m.closers, 1)
+	assert.Panics(t, func() { m.closers[0]() })
 }
