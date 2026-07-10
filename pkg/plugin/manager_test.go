@@ -204,7 +204,7 @@ func (m *mockSignerProvider) New(ctx context.Context, config map[string]string) 
 	if m.err != nil {
 		return nil, nil, m.err
 	}
-	return m.signer, func() error { return nil }, nil
+	return m.signer, m.errFunc, nil
 }
 
 type mockEncrypterProvider struct {
@@ -3070,15 +3070,20 @@ func TestPublisher_CloserPanicsOnError(t *testing.T) {
 	assert.Panics(t, func() { m.closers[0]() })
 }
 
-// TestSignerCloserPanicsOnError tests that a manager closer panics when cleanup returns an error.
+// TestSignerCloserPanicsOnError tests that the closer registered by Signer panics on error.
 func TestSignerCloserPanicsOnError(t *testing.T) {
-	// Directly exercise the panic-in-closer pattern that all Signer/Encryptor/etc methods share.
-	m := &Manager{closers: []func(){}}
-	failingCloser := func() error { return errors.New("forced close error") }
-	m.closers = append(m.closers, func() {
-		if err := failingCloser(); err != nil {
-			panic(err)
-		}
-	})
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"sig": &mockPlugin{symbol: &mockSignerProvider{
+				signer:  &mockSigner{},
+				errFunc: func() error { return errors.New("close failed") },
+			}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "sig", Config: map[string]string{}}
+	_, err := m.Signer(context.Background(), cfg)
+	require.NoError(t, err)
+	require.Len(t, m.closers, 1)
 	assert.Panics(t, func() { m.closers[0]() })
 }
