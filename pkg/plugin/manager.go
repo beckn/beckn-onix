@@ -363,6 +363,26 @@ func (m *Manager) PolicyChecker(ctx context.Context, manifestLoader definition.M
 	return checker, nil
 }
 
+// SchemaVersionMediator returns a SchemaVersionMediator instance based on the provided configuration.
+func (m *Manager) SchemaVersionMediator(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *Config) (definition.SchemaVersionMediator, error) {
+	pp, err := provider[definition.SchemaVersionMediatorProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	mediator, closer, err := pp.New(ctx, manifestLoader, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.closers = append(m.closers, func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return mediator, nil
+}
+
 // Cache returns a Cache instance based on the provided configuration.
 // It registers a cleanup function for resource management.
 func (m *Manager) Cache(ctx context.Context, cfg *Config) (definition.Cache, error) {

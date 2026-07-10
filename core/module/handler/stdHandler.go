@@ -28,6 +28,16 @@ import (
 )
 
 // stdHandler orchestrates the execution of defined processing steps.
+// HandlerDirection represents whether a handler is on the caller (outbound) or
+// receiver (inbound) side of the Beckn adapter. Derived at runtime from role
+// and payload action — not read from config.
+type HandlerDirection string
+
+const (
+	DirectionCaller   HandlerDirection = "caller"
+	DirectionReceiver HandlerDirection = "receiver"
+)
+
 type stdHandler struct {
 	signer             definition.Signer
 	steps              []definition.Step
@@ -38,8 +48,9 @@ type stdHandler struct {
 	manifestLoader     definition.ManifestLoader
 	km                 definition.KeyManager
 	schemaValidator    definition.SchemaValidator
-	policyChecker      definition.PolicyChecker
-	router             definition.Router
+	policyChecker         definition.PolicyChecker
+	schemaVersionMediator definition.SchemaVersionMediator
+	router                definition.Router
 	publisher          definition.Publisher
 	transportWrapper   definition.TransportWrapper
 	payloadTransformer definition.Step
@@ -151,7 +162,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		record:         nil,
 	}
 
-	senderID, receiverID := h.resolveDirection(r.Context())
+	senderID, receiverID := h.resolveDirection(r.Context(), action)
 	httpMeter, _ := GetHTTPMetrics(r.Context())
 	if httpMeter != nil {
 		recordOnce = func() {
@@ -259,7 +270,10 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 	subID := h.subID(r.Context())
 	protocolVersion := extractProtocolVersion(body)
 	messageID := extractMessageID(body)
-	log.Debugf(r.Context(), "stepCtx: extracted protocolVersion=%q messageId=%q", protocolVersion, messageID)
+	action := extractBecknAction(body)
+	direction := deriveDirection(h.role, action)
+	log.Debugf(r.Context(), "stepCtx: extracted protocolVersion=%q messageId=%q action=%q role=%q handlerDirection=%q",
+		protocolVersion, messageID, action, h.role, direction)
 	inboundAuthSignature := extractAuthSignature(r.Header.Get(model.AuthHeaderSubscriber))
 	// Store both protocol version and message ID in the Go context so downstream
 	// functions that only receive a context.Context (e.g. sendNack,
@@ -276,6 +290,7 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 		ProtocolVersion:      protocolVersion,
 		MessageID:            messageID,
 		InboundAuthSignature: inboundAuthSignature,
+		IsCallerHandler:      direction == DirectionCaller,
 	}, nil
 }
 
@@ -503,6 +518,22 @@ func loadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader de
 	return checker, nil
 }
 
+func loadSchemaVersionMediator(ctx context.Context, mgr PluginManager, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
+	if cfg == nil {
+		log.Debug(ctx, "Skipping SchemaVersionMediator plugin: not configured")
+		return nil, nil
+	}
+	if manifestLoader == nil {
+		return nil, fmt.Errorf("failed to load SchemaVersionMediator plugin (%s): ManifestLoader plugin not configured", cfg.ID)
+	}
+	mediator, err := mgr.SchemaVersionMediator(ctx, manifestLoader, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load SchemaVersionMediator plugin (%s): %w", cfg.ID, err)
+	}
+	log.Debugf(ctx, "Loaded SchemaVersionMediator plugin: %s", cfg.ID)
+	return mediator, nil
+}
+
 func loadPayloadTransformerStep(ctx context.Context, mgr PluginManager, cfg *plugin.Config) (definition.Step, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping PayloadTransformer plugin: not configured")
@@ -557,6 +588,9 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 		return err
 	}
 	if h.policyChecker, err = loadPolicyChecker(ctx, mgr, h.manifestLoader, cfg.PolicyChecker); err != nil {
+		return err
+	}
+	if h.schemaVersionMediator, err = loadSchemaVersionMediator(ctx, mgr, h.manifestLoader, cfg.SchemaVersionMediator); err != nil {
 		return err
 	}
 	if h.payloadTransformer, err = loadPayloadTransformerStep(ctx, mgr, cfg.PayloadTransformer); err != nil {
@@ -631,6 +665,8 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 			s, err = newAddRouteStep(h.router, h.basePath)
 		case "checkPolicy":
 			s, err = newCheckPolicyStep(h.policyChecker)
+		case "mediateSchema":
+			s, err = newMediateSchemaStep(h.schemaVersionMediator)
 		case "transformPayload":
 			if h.payloadTransformer == nil {
 				return fmt.Errorf("invalid config: PayloadTransformer plugin not configured")
@@ -675,17 +711,44 @@ func syncRequestBody(r *http.Request, body []byte) {
 	r.TransferEncoding = nil
 }
 
-func (h *stdHandler) resolveDirection(ctx context.Context) (senderID, receiverID string) {
+// deriveDirection infers whether this handler is acting as a caller (outbound)
+// or receiver (inbound) from the Beckn role and the payload action alone.
+// No config field is needed because the direction is fully determined by the
+// Beckn protocol flow:
+//
+//   - A BAP *initiates* requests (search, select, init, …) → caller.
+//     It *receives* BPP callbacks (on_search, on_select, …) → receiver.
+//   - A BPP *receives* BAP requests → receiver.
+//     It *sends* callbacks back to the BAP (on_* actions) → caller.
+//
+// In short: on_* flips the direction relative to the non-on_* baseline.
+func deriveDirection(role model.Role, action string) HandlerDirection {
+	isOnAction := strings.HasPrefix(action, "on_")
+	if role == model.RoleBAP {
+		if isOnAction {
+			return DirectionReceiver
+		}
+		return DirectionCaller
+	}
+	// BPP: on_* means the BPP is sending a callback (caller); everything else
+	// is an inbound request from the BAP (receiver).
+	if isOnAction {
+		return DirectionCaller
+	}
+	return DirectionReceiver
+}
+
+func (h *stdHandler) resolveDirection(ctx context.Context, action string) (senderID, receiverID string) {
 	selfID := h.SubscriberID
 	remoteID, _ := ctx.Value(model.ContextKeyRemoteID).(string)
-	if strings.Contains(h.moduleName, "Caller") {
+	if deriveDirection(h.role, action) == DirectionCaller {
 		return selfID, remoteID
 	}
 	return remoteID, selfID
 }
 
 func setBecknAttr(span trace.Span, r *http.Request, h *stdHandler, action string) {
-	senderID, receiverID := h.resolveDirection(r.Context())
+	senderID, receiverID := h.resolveDirection(r.Context(), action)
 	attrs := []attribute.KeyValue{
 		telemetry.AttrRecipientID.String(receiverID),
 		telemetry.AttrSenderID.String(senderID),

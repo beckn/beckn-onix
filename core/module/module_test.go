@@ -89,6 +89,10 @@ func (m *mockPluginManager) PayloadStore(_ context.Context, _ definition.Cache, 
 	return nil, nil
 }
 
+func (m *mockPluginManager) SchemaVersionMediator(_ context.Context, _ definition.ManifestLoader, _ *plugin.Config) (definition.SchemaVersionMediator, error) {
+	return nil, nil
+}
+
 // PolicyChecker returns a mock policy checker implementation.
 func (m *mockPluginManager) PolicyChecker(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
 	if m.policyCheckerFunc != nil {
@@ -112,7 +116,7 @@ func TestRegisterRejectsPolicyViolation(t *testing.T) {
 			Name: "test-module",
 			Path: "/test",
 			Handler: handler.Config{
-				Type: handler.HandlerTypeStd,
+				Type:      handler.HandlerTypeStd,
 				Plugins: handler.PluginCfg{
 					PolicyChecker: &plugin.Config{ID: "mock-policy"},
 				},
@@ -156,7 +160,7 @@ func TestRegisterSuccess(t *testing.T) {
 			Name: "test-module",
 			Path: "/test",
 			Handler: handler.Config{
-				Type: handler.HandlerTypeStd,
+				Type:      handler.HandlerTypeStd,
 				Plugins: handler.PluginCfg{
 					Middleware: []plugin.Config{{ID: "mock-middleware"}},
 				},
@@ -237,7 +241,7 @@ func TestRegisterFailure(t *testing.T) {
 					Name: "test-module",
 					Path: "/test",
 					Handler: handler.Config{
-						Type: handler.HandlerTypeStd,
+						Type:      handler.HandlerTypeStd,
 						Plugins: handler.PluginCfg{
 							Middleware: []plugin.Config{{ID: "mock-middleware"}},
 						},

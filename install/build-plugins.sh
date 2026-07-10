@@ -29,6 +29,7 @@ plugins=(
     "signvalidator"
     "opapolicychecker"
     "payloadstore"
+    "schemaversionmediator"
     "vcvalidator:validateVC"
 )
 

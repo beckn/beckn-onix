@@ -21,6 +21,7 @@ type PluginManager interface {
 	Signer(ctx context.Context, cfg *plugin.Config) (definition.Signer, error)
 	Step(ctx context.Context, cfg *plugin.Config) (definition.Step, error)
 	PolicyChecker(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error)
+	SchemaVersionMediator(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.SchemaVersionMediator, error)
 	Cache(ctx context.Context, cfg *plugin.Config) (definition.Cache, error)
 	Registry(ctx context.Context, cache definition.Cache, cfg *plugin.Config) (definition.RegistryLookup, error)
 	KeyManager(ctx context.Context, rLookup definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error)
@@ -50,8 +51,9 @@ type PluginCfg struct {
 	Cache            *plugin.Config  `yaml:"cache,omitempty"`
 	Registry         *plugin.Config  `yaml:"registry,omitempty"`
 	KeyManager       *plugin.Config  `yaml:"keyManager,omitempty"`
-	ManifestLoader   *plugin.Config  `yaml:"manifestLoader,omitempty"`
-	TransportWrapper *plugin.Config  `yaml:"transportWrapper,omitempty"`
+	ManifestLoader        *plugin.Config `yaml:"manifestLoader,omitempty"`
+	SchemaVersionMediator *plugin.Config `yaml:"schemaVersionMediator,omitempty"`
+	TransportWrapper      *plugin.Config `yaml:"transportWrapper,omitempty"`
 	PayloadStore     *plugin.Config  `yaml:"payloadStore,omitempty"`
 	Middleware       []plugin.Config `yaml:"middleware,omitempty"`
 	Steps            []plugin.Config
@@ -77,6 +79,7 @@ func (p *PluginCfg) PluginEntries() []telemetry.PluginEntry {
 	add("cache", p.Cache)
 	add("transport_wrapper", p.TransportWrapper)
 	add("policy_checker", p.PolicyChecker)
+	add("schema_version_mediator", p.SchemaVersionMediator)
 	add("payload_transformer", p.PayloadTransformer)
 	add("key_manager", p.KeyManager)
 	add("payload_store", p.PayloadStore)
@@ -114,10 +117,10 @@ type HttpClientConfig struct {
 
 // Config holds the configuration for request processing handlers.
 type Config struct {
-	Plugins          PluginCfg `yaml:"plugins"`
+	Plugins          PluginCfg        `yaml:"plugins"`
 	Steps            []string
 	Type             Type
-	RegistryURL      string `yaml:"registryUrl"`
+	RegistryURL      string           `yaml:"registryUrl"`
 	Role             model.Role
 	SubscriberID     string           `yaml:"subscriberId"`
 	HttpClientConfig HttpClientConfig `yaml:"httpClientConfig"`

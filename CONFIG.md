@@ -553,9 +553,12 @@ modules:
 **Description**: Ordered list of processing steps to execute for each request.  
 **Common Steps**:
 - `validateSign` - Validate digital signature
-- `addRoute` - Determine routing destination
 - `validateSchema` - Validate against JSON schema
+- `mediateSchema` - Translate schema objects for cross-version interoperability
+- `addRoute` - Determine routing destination
 - `sign` - Sign outgoing request
+- `storePayload` - Record request payload in cache
+- `transformPayload` - Apply JSONata payload transformation
 - `publish` - Publish to message queue
 
 **Example**:
@@ -1012,7 +1015,99 @@ The sample illustrates how a single mapping file can convert `search` requests a
 
 ---
 
-#### 13. PayloadStore Plugin
+#### 13. SchemaVersionMediator Plugin
+
+**Purpose**: Mediate schema version differences between Beckn participants. When a BAP and BPP declare different schema object versions in their node manifests, this plugin fetches JSONata translation artifacts from the network's artifact registry and transforms the payload so each side receives data in the version it expects.
+
+**Requirements**: A `manifestLoader` plugin must be configured in the same handler.
+
+```yaml
+schemaVersionMediator:
+  id: schemaversionmediator
+  config:
+    nodeId: "nfh.global/subscribers.beckn.one/open-kitchen-bpp"
+    action: translate
+    onFailure: reject
+    fetchTimeout: "30s"
+    artifactCacheTTL: "24h"
+    negativeCacheTTL: "5m"
+    maxCacheEntries: "500"
+```
+
+**Parameters**:
+
+| Key | Values | Default | Description |
+|---|---|---|---|
+| `nodeId` | string | — | **Required.** Three-part DeDi subscriber identity for this node (`namespace/registry/recordId`). Used at startup to load the local node manifest. |
+| `action` | `translate` \| `reject` | `translate` | What to do when schema objects are incompatible. `translate` fetches and applies an artifact; `reject` returns `schemaIncompatible` immediately. |
+| `onFailure` | `reject` \| `passThrough` | `reject` | Applied when `action=translate` but no artifact can be fetched. `passThrough` forwards the untranslated payload — operator escape hatch only, not for production. |
+| `fetchTimeout` | duration string | `"30s"` | HTTP timeout for each artifact fetch (e.g. `"10s"`, `"1m"`). |
+| `artifactCacheTTL` | duration string | `"24h"` | How long to cache successfully fetched translation artifacts. |
+| `negativeCacheTTL` | duration string | `"5m"` | How long to cache artifact-not-found responses. |
+| `maxCacheEntries` | integer string | `"500"` | Maximum entries in the artifact cache. |
+
+**Step ordering — `validateSchema` must come before `mediateSchema`:**
+
+```yaml
+steps:
+  - validateSign
+  - validateSchema      # validates source payload in its declared schema version
+  - mediateSchema       # translates domain schema objects if versions differ
+  - addRoute
+```
+
+This order is universal for both caller and receiver handlers. Schema definitions are publicly available and versioned, so the schema validator can validate any version payload via `@context` URL resolution. Translating before validation would leave `@context` pointing at the source version while the field structure reflects the target — an inconsistency that extended schema validation (`extendedSchema_enabled: "true"`) would misread.
+
+**Minimal example — receiver handler with schema mediation enabled:**
+
+```yaml
+modules:
+  - name: bppTxnReceiver
+    path: /bpp/receiver/
+    handler:
+      type: std
+      role: bpp
+      plugins:
+        registry:
+          id: dediregistry
+          config:
+            url: "https://fabric.nfh.global/registry/dedi"
+        manifestLoader:
+          id: manifestloader
+          config:
+            url: "https://fabric.nfh.global/registry/dedi"
+        schemaVersionMediator:
+          id: schemaversionmediator
+          config:
+            nodeId: "nfh.global/subscribers.beckn.one/open-kitchen-bpp"
+            action: translate
+            onFailure: reject
+        signValidator:
+          id: signvalidator
+        schemaValidator:
+          id: schemav2validator
+          config:
+            type: url
+            location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/refs/tags/core-v2.0.0-lts/api/v2.0.0/beckn.yaml
+            extendedSchema_enabled: "true"
+      steps:
+        - validateSign
+        - validateSchema
+        - mediateSchema
+        - addRoute
+```
+
+**Error codes returned by `mediateSchema` step:**
+
+| Code | Cause |
+|---|---|
+| `subscriberNotOnboarded` | Local node manifest absent or has no `schemaObjects` at startup. Restart after publishing the manifest to DeDi. |
+| `schemaIncompatible` | Incompatible schema objects and `action=reject`, or artifact fetch failed and `onFailure=reject`. |
+| `schemaTranslationDataLoss` | Translation artifact dropped fields present in the source payload. Review the artifact. |
+
+---
+
+#### 14. PayloadStore Plugin
 
 **Purpose**: Record every inbound request payload processed by the handler, indexed by `message_id` and `transaction_id`, with TTL-based expiration via the cache backend. Provides the stateful foundation for plugins that need transaction history.
 

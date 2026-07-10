@@ -158,6 +158,9 @@ func (noopPluginManager) TransportWrapper(context.Context, *plugin.Config) (defi
 func (noopPluginManager) SchemaValidator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
+func (noopPluginManager) SchemaVersionMediator(context.Context, definition.ManifestLoader, *plugin.Config) (definition.SchemaVersionMediator, error) {
+	return nil, nil
+}
 func (noopPluginManager) PayloadStore(_ context.Context, _ definition.Cache, _ string, _ *plugin.Config) (definition.PayloadStore, error) {
 	return nil, nil
 }
@@ -179,8 +182,8 @@ func (stubCache) Clear(context.Context) error                              { ret
 func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	ctx := context.Background()
 	cfg := &Config{
-		Plugins: PluginCfg{},
-		Steps:   []string{"checkPolicy"},
+		Plugins:   PluginCfg{},
+		Steps:     []string{"checkPolicy"},
 	}
 	_, err := NewStdHandler(ctx, noopPluginManager{}, cfg, "testModule")
 	if err == nil {
@@ -191,6 +194,44 @@ func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "PolicyChecker plugin not configured") {
 		t.Fatalf("expected explicit PolicyChecker config error, got: %v", err)
+	}
+}
+
+
+func TestDeriveDirection(t *testing.T) {
+	tests := []struct {
+		name   string
+		role   model.Role
+		action string
+		want   HandlerDirection
+	}{
+		// BAP initiates non-on_ requests → caller
+		{"BAP search", model.RoleBAP, "search", DirectionCaller},
+		{"BAP select", model.RoleBAP, "select", DirectionCaller},
+		{"BAP init", model.RoleBAP, "init", DirectionCaller},
+		// BAP receives on_ callbacks from BPP → receiver
+		{"BAP on_search", model.RoleBAP, "on_search", DirectionReceiver},
+		{"BAP on_select", model.RoleBAP, "on_select", DirectionReceiver},
+		{"BAP on_init", model.RoleBAP, "on_init", DirectionReceiver},
+		// BPP receives non-on_ requests from BAP → receiver
+		{"BPP search", model.RoleBPP, "search", DirectionReceiver},
+		{"BPP select", model.RoleBPP, "select", DirectionReceiver},
+		{"BPP init", model.RoleBPP, "init", DirectionReceiver},
+		// BPP sends on_ callbacks to BAP → caller
+		{"BPP on_search", model.RoleBPP, "on_search", DirectionCaller},
+		{"BPP on_select", model.RoleBPP, "on_select", DirectionCaller},
+		{"BPP on_init", model.RoleBPP, "on_init", DirectionCaller},
+		// Edge cases
+		{"BAP empty action", model.RoleBAP, "", DirectionCaller},
+		{"BPP empty action", model.RoleBPP, "", DirectionReceiver},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := deriveDirection(tc.role, tc.action)
+			if got != tc.want {
+				t.Errorf("deriveDirection(role=%q, action=%q) = %q, want %q", tc.role, tc.action, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -213,6 +254,88 @@ func TestLoadManifestLoader_RequiresRegistryMetadataLookup(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "does not implement RegistryMetadataLookup") {
 		t.Fatalf("expected RegistryMetadataLookup error, got %v", err)
 	}
+}
+
+func TestLoadSchemaVersionMediator_NilCfg_Skipped(t *testing.T) {
+	svm, err := loadSchemaVersionMediator(context.Background(), noopPluginManager{}, nil, nil)
+	if err != nil {
+		t.Fatalf("expected nil error when cfg is nil, got %v", err)
+	}
+	if svm != nil {
+		t.Error("expected nil SchemaVersionMediator when cfg is nil")
+	}
+}
+
+func TestLoadSchemaVersionMediator_RequiresManifestLoader(t *testing.T) {
+	_, err := loadSchemaVersionMediator(context.Background(), noopPluginManager{}, nil, &plugin.Config{ID: "translationmapmediator"})
+	if err == nil || !strings.Contains(err.Error(), "ManifestLoader plugin not configured") {
+		t.Fatalf("expected ManifestLoader error, got %v", err)
+	}
+}
+
+func TestLoadSchemaVersionMediator_PassesLoaderThrough(t *testing.T) {
+	var capturedLoader definition.ManifestLoader
+	mgr := &injectCaptureMgr{
+		schemaVersionMediatorFunc: func(_ context.Context, loader definition.ManifestLoader, _ *plugin.Config) (definition.SchemaVersionMediator, error) {
+			capturedLoader = loader
+			return nil, nil
+		},
+	}
+	loader := &stubManifestLoader{}
+	_, err := loadSchemaVersionMediator(context.Background(), mgr, loader, &plugin.Config{ID: "translationmapmediator"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedLoader != loader {
+		t.Error("expected loader to be passed through to SchemaVersionMediator")
+	}
+}
+
+func TestLoadSchemaVersionMediator_OperatorNodeIdPassedThrough(t *testing.T) {
+	var capturedCfg map[string]string
+	mgr := &injectCaptureMgr{
+		schemaVersionMediatorFunc: func(_ context.Context, _ definition.ManifestLoader, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
+			capturedCfg = cfg.Config
+			return nil, nil
+		},
+	}
+	loader := &stubManifestLoader{}
+	_, err := loadSchemaVersionMediator(context.Background(), mgr, loader, &plugin.Config{
+		ID:     "translationmapmediator",
+		Config: map[string]string{"nodeId": "nfh.global/subscribers.beckn.one/sandbox.open-kitchen.com"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedCfg["nodeId"] != "nfh.global/subscribers.beckn.one/sandbox.open-kitchen.com" {
+		t.Errorf("expected operator nodeId to be passed through, got %q", capturedCfg["nodeId"])
+	}
+}
+
+// injectCaptureMgr is a PluginManager stub that captures the cfg passed to SchemaVersionMediator.
+type injectCaptureMgr struct {
+	noopPluginManager
+	schemaVersionMediatorFunc func(context.Context, definition.ManifestLoader, *plugin.Config) (definition.SchemaVersionMediator, error)
+}
+
+func (m *injectCaptureMgr) SchemaVersionMediator(ctx context.Context, loader definition.ManifestLoader, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
+	if m.schemaVersionMediatorFunc != nil {
+		return m.schemaVersionMediatorFunc(ctx, loader, cfg)
+	}
+	return nil, nil
+}
+
+// stubManifestLoader satisfies definition.ManifestLoader with no-op implementations.
+type stubManifestLoader struct{}
+
+func (stubManifestLoader) GetByNetworkID(context.Context, string) (*model.ManifestDocument, error) {
+	return nil, nil
+}
+func (stubManifestLoader) GetBySubscriberID(context.Context, string) (*model.ManifestDocument, error) {
+	return nil, nil
+}
+func (stubManifestLoader) GetByMetadata(context.Context, model.ManifestMetadata) (*model.ManifestDocument, error) {
+	return nil, nil
 }
 
 func TestNewHTTPClient(t *testing.T) {

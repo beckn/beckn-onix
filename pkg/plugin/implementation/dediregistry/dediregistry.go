@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
@@ -145,11 +147,73 @@ func (c *DeDiRegistryClient) fetchDeDiData(ctx context.Context, url, operation s
 	return data, nil
 }
 
-// Lookup implements RegistryLookup interface - calls the DeDi wrapper lookup endpoint and returns Subscription.
+// parseSubscriptionFromData extracts a Subscription from a DeDi response data map.
+// Shared by Lookup and LookupNode to avoid duplicating response-parsing logic.
+// When requireSigningKey is true an error is returned if signing_public_key is absent
+// — required for signature validation (Lookup) but not for URL resolution (LookupNode).
+func (c *DeDiRegistryClient) parseSubscriptionFromData(ctx context.Context, data map[string]any, requireSigningKey bool) (*model.Subscription, error) {
+	details, ok := data["details"].(map[string]any)
+	if !ok {
+		log.Errorf(ctx, nil, "Invalid DeDi response format: missing or invalid details field")
+		return nil, fmt.Errorf("invalid response format: missing details field")
+	}
+
+	signingPublicKey, _ := details["signing_public_key"].(string)
+	if requireSigningKey && signingPublicKey == "" {
+		return nil, fmt.Errorf("invalid or missing signing_public_key in response")
+	}
+
+	detailsURL, _ := details["url"].(string)
+	detailsType, _ := details["type"].(string)
+	detailsDomain, _ := details["domain"].(string)
+	detailsSubscriberID, _ := details["subscriber_id"].(string)
+
+	encrPublicKey, _ := details["encr_public_key"].(string)
+	createdAt, _ := data["created_at"].(string)
+	updatedAt, _ := data["updated_at"].(string)
+
+	return &model.Subscription{
+		Subscriber: model.Subscriber{
+			SubscriberID: detailsSubscriberID,
+			URL:          detailsURL,
+			Domain:       detailsDomain,
+			Type:         detailsType,
+		},
+		SigningPublicKey: signingPublicKey,
+		EncrPublicKey:   encrPublicKey,
+		Created:         parseTime(createdAt),
+		Updated:         parseTime(updatedAt),
+	}, nil
+}
+
+// parseMetaFromData extracts the node manifest metadata map from a DeDi response data map.
+// Returns an empty map (not an error) when the meta field is absent or null — the participant
+// has simply not published a node manifest yet.
+func parseMetaFromData(ctx context.Context, data map[string]any) map[string]string {
+	meta := make(map[string]string)
+	rawMetaValue, ok := data["meta"]
+	if !ok || rawMetaValue == nil {
+		return meta
+	}
+	rawMetaMap, ok := rawMetaValue.(map[string]any)
+	if !ok {
+		return meta
+	}
+	for key, value := range rawMetaMap {
+		strValue, ok := value.(string)
+		if !ok {
+			log.Warnf(ctx, "Ignoring non-string subscriber metadata value for key %q: got %T", key, value)
+			continue
+		}
+		meta[key] = strValue
+	}
+	return meta
+}
+
+// Lookup implements RegistryLookup interface — calls the DeDi wrapper lookup endpoint and returns Subscription.
 // Results are cached using the subscriber ID and key ID as the cache key.
 // On a cache hit the network call is skipped entirely.
 func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription) ([]model.Subscription, error) {
-	// Extract subscriber ID and key ID from request (both come from Authorization header parsing)
 	subscriberID := req.SubscriberID
 	keyID := req.KeyID
 	log.Infof(ctx, "DeDi Registry: Looking up subscriber ID: %s, key ID: %s", subscriberID, keyID)
@@ -199,32 +263,28 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 		return nil, fmt.Errorf("invalid response format: missing details field")
 	}
 
-	// Extract required fields from details
 	signingPublicKey, ok := details["signing_public_key"].(string)
 	if !ok || signingPublicKey == "" {
 		return nil, fmt.Errorf("invalid or missing signing_public_key in response")
 	}
 
-	// Extract fields from details
 	detailsURL, _ := details["url"].(string)
 	detailsType, _ := details["type"].(string)
 	detailsDomain, _ := details["domain"].(string)
 	detailsSubscriberID, _ := details["subscriber_id"].(string)
 
-	// Validate network memberships if configured.
+	// AllowedNetworkIDs is a trust boundary specific to Lookup: it ensures signing keys are only
+	// accepted from subscribers that belong to networks this adapter is configured to trust.
+	// LookupNode intentionally skips this check — node record reads are not trust decisions.
 	networkMemberships := extractStringSlice(ctx, "network_memberships", data["network_memberships"])
 	if err := c.validateMemberships(ctx, networkMemberships, detailsSubscriberID); err != nil {
 		return nil, err
 	}
 
-	// Extract encr_public_key if available (optional field)
 	encrPublicKey, _ := details["encr_public_key"].(string)
-
-	// Extract fields from data level
 	createdAt, _ := data["created_at"].(string)
 	updatedAt, _ := data["updated_at"].(string)
 
-	// Convert to Subscription format
 	subscription := model.Subscription{
 		Subscriber: model.Subscriber{
 			SubscriberID: detailsSubscriberID,
@@ -232,9 +292,9 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 			Domain:       detailsDomain,
 			Type:         detailsType,
 		},
-		KeyID:              keyID, // Use original keyID from request
+		KeyID:              keyID,
 		SigningPublicKey:   signingPublicKey,
-		EncrPublicKey:      encrPublicKey, // May be empty if not provided
+		EncrPublicKey:      encrPublicKey,
 		Created:            parseTime(createdAt),
 		Updated:            parseTime(updatedAt),
 		NetworkMemberships: networkMemberships,
@@ -299,6 +359,40 @@ func (c *DeDiRegistryClient) LookupRegistry(ctx context.Context, namespaceIdenti
 		NamespaceIdentifier: namespaceIdentifier,
 		RegistryName:        registryName,
 		RawMeta:             meta,
+	}, nil
+}
+
+// LookupNode looks up a subscriber record by its fully-qualified NodeID.
+// nodeID must be in namespace/registry/recordName format (exactly 3 non-empty parts separated by "/").
+// Returns a SubscriberRecord with both subscriber details (URL, keys) and node manifest metadata
+// from the same DeDi response. Meta is empty (not an error) when the participant has not yet
+// published a node manifest. AllowedNetworkIDs is not applied — node record reads are not trust
+// decisions and should not be gated by network membership.
+func (c *DeDiRegistryClient) LookupNode(ctx context.Context, nodeID string) (*model.SubscriberRecord, error) {
+	parts := strings.Split(nodeID, "/")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return nil, fmt.Errorf("nodeID %q must be in namespace/registry/recordName format with 3 non-empty parts", nodeID)
+	}
+
+	lookupURL := fmt.Sprintf("%s/lookup/%s/%s/%s", c.config.URL,
+		url.PathEscape(parts[0]), url.PathEscape(parts[1]), url.PathEscape(parts[2]))
+
+	data, err := c.fetchDeDiData(ctx, lookupURL, "node lookup")
+	if err != nil {
+		return nil, err
+	}
+
+	subscription, err := c.parseSubscriptionFromData(ctx, data, false)
+	if err != nil {
+		return nil, err
+	}
+
+	meta := parseMetaFromData(ctx, data)
+
+	log.Debugf(ctx, "DeDi node lookup successful for nodeID: %s, subscriber: %s, url: %s", nodeID, subscription.SubscriberID, subscription.URL)
+	return &model.SubscriberRecord{
+		Subscription: *subscription,
+		Meta:         meta,
 	}, nil
 }
 
