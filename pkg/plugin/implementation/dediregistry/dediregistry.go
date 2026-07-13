@@ -25,6 +25,21 @@ const defaultCacheTTL = 5 * time.Minute
 // to search across all cached registries in Beckn One. This value must not be configured externally.
 const dediAllRegistriesWildcard = "subscribers.beckn.one"
 
+// networkAgnosticSubscriberIDs identifies the common catalog service. These subscriber
+// IDs are treated as belonging to every network, since the catalog service is shared
+// across all networks by design — network-membership validation is skipped entirely
+// for lookups of these subscribers. Must not be configured externally.
+var networkAgnosticSubscriberIDs = map[string]struct{}{
+	"staging.catalg.fabric.nfh.global": {},
+	"fabric.nfh.global":                {},
+}
+
+// isNetworkAgnosticSubscriber reports whether subscriberID identifies the common catalog service.
+func isNetworkAgnosticSubscriber(subscriberID string) bool {
+	_, ok := networkAgnosticSubscriberIDs[subscriberID]
+	return ok
+}
+
 // Config holds configuration parameters for the DeDi registry client.
 type Config struct {
 	URL               string        `yaml:"url" json:"url"`
@@ -456,6 +471,9 @@ func containsAny(values []string, allowed []string) bool {
 // context.network_id check against the subscriber's network_memberships.
 // Called on both the cache-hit and HTTP paths.
 func (c *DeDiRegistryClient) validateMemberships(ctx context.Context, networkMemberships []string, subscriberID string) error {
+	if isNetworkAgnosticSubscriber(subscriberID) {
+		return nil
+	}
 	if len(c.config.AllowedNetworkIDs) > 0 {
 		if len(networkMemberships) == 0 || !containsAny(networkMemberships, c.config.AllowedNetworkIDs) {
 			return fmt.Errorf("registry entry with subscriber_id '%s' does not belong to any configured networks (registry.config.allowedNetworkIDs)", subscriberID)

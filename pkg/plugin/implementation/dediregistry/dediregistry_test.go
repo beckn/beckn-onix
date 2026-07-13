@@ -322,6 +322,49 @@ func TestLookup(t *testing.T) {
 		}
 	})
 
+	t.Run("catalog subscriber bypasses allowed network IDs mismatch", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response := map[string]interface{}{
+				"message": "Record retrieved from registry cache",
+				"data": map[string]interface{}{
+					"details": map[string]interface{}{
+						"url":                "http://fabric.nfh.global/beckn",
+						"type":               "BPP",
+						"domain":             "energy",
+						"subscriber_id":      "fabric.nfh.global",
+						"signing_public_key": "384qqkIIpxo71WaJPsWqQNWUDGAFnfnJPxuDmtuBiLo=",
+					},
+					"network_memberships": []string{"local-commerce.org/production"},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		config := &Config{
+			URL:               server.URL + "/dedi",
+			AllowedNetworkIDs: []string{"commerce-network/subscriber-references"},
+		}
+
+		client, closer, err := New(ctx, nil, config)
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		req := &model.Subscription{
+			Subscriber: model.Subscriber{
+				SubscriberID: "fabric.nfh.global",
+			},
+			KeyID: "test-key-id",
+		}
+		_, err = client.Lookup(ctx, req)
+		if err != nil {
+			t.Errorf("expected catalog subscriber to bypass allowedNetworkIDs check, got error: %v", err)
+		}
+	})
+
 	t.Run("allowed network IDs match with mixed network membership types", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			response := map[string]interface{}{
@@ -1085,6 +1128,38 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 		}
 	})
 
+	t.Run("cache hit allows catalog subscriber despite mismatched context.network_id", func(t *testing.T) {
+		cached := []model.Subscription{{
+			Subscriber:         model.Subscriber{SubscriberID: "fabric.nfh.global"},
+			SigningPublicKey:   "cached-key",
+			NetworkMemberships: []string{"commerce.org/prod"},
+		}}
+		cachedJSON, _ := json.Marshal(cached)
+
+		cache := &mockCache{
+			getFunc: func(ctx context.Context, key string) (string, error) {
+				return string(cachedJSON), nil
+			},
+		}
+		client, closer, err := New(ctx, cache, &Config{
+			URL:               "http://unused",
+			AllowedNetworkIDs: []string{"other.org/prod"},
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		catalogReq := &model.Subscription{
+			Subscriber: model.Subscriber{SubscriberID: "fabric.nfh.global"},
+			KeyID:      "key-1",
+		}
+		_, err = client.Lookup(makeStepCtx("other.org/prod"), catalogReq)
+		if err != nil {
+			t.Errorf("expected catalog subscriber to bypass context.network_id and allowedNetworkIDs checks, got: %v", err)
+		}
+	})
+
 	t.Run("cache hit blocks context.network_id not in allowlist (both guards active)", func(t *testing.T) {
 		// memberships=[net1,net2], allowlist=[net1], context.network_id=net2
 		// Static guard passes (net1 satisfies memberships∩allowlist), but
@@ -1336,6 +1411,61 @@ func TestContextNetworkIDValidation(t *testing.T) {
 				t.Errorf("Lookup() error = %v, wantErr = %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestIsNetworkAgnosticSubscriber(t *testing.T) {
+	tests := []struct {
+		name         string
+		subscriberID string
+		want         bool
+	}{
+		{"staging catalog subscriber", "staging.catalg.fabric.nfh.global", true},
+		{"prod catalog subscriber", "fabric.nfh.global", true},
+		{"unrelated subscriber", "np.example.com", false},
+		{"empty subscriber", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isNetworkAgnosticSubscriber(tt.subscriberID); got != tt.want {
+				t.Errorf("isNetworkAgnosticSubscriber(%q) = %v, want %v", tt.subscriberID, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestContextNetworkIDValidation_NetworkAgnosticSubscriberBypass(t *testing.T) {
+	const (
+		catalogSub = "fabric.nfh.global"
+		key        = "test-signing-key-base64="
+		net1       = "nfo1.com/retail"
+		net2       = "nfo2.com/retail"
+	)
+
+	req := &model.Subscription{
+		Subscriber: model.Subscriber{SubscriberID: catalogSub},
+		KeyID:      "key-001",
+	}
+
+	// Memberships and allowlist are deliberately disjoint from the requested
+	// context.network_id — this would fail for an ordinary subscriber, but the
+	// catalog subscriber must bypass the check entirely.
+	server := httptest.NewServer(registryHandlerWithMemberships(catalogSub, key, []string{net1}))
+	defer server.Close()
+
+	cfg := &Config{
+		URL:               server.URL + "/dedi",
+		AllowedNetworkIDs: []string{net2},
+	}
+	client, closer, err := New(context.Background(), nil, cfg)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer closer()
+
+	ctx := makeStepCtx(net2)
+	if _, err := client.Lookup(ctx, req); err != nil {
+		t.Errorf("expected catalog subscriber to bypass network-ID validation, got: %v", err)
 	}
 }
 
