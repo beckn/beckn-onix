@@ -111,15 +111,6 @@ else
     echo -e "${YELLOW}plugins directory already exists${NC}"
 fi
 
-# Compute build-time identity vars once, then export them so the plugin
-# build (Step 3) and the adapter build (Step 4) embed the exact same
-# version/commit/tree-state/build-date -- including the otelsetup plugin,
-# which otherwise silently ships with pkg/version's "dev"/"unknown"
-# defaults since it's compiled as a separate .so.
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-source "${SCRIPT_DIR}/scripts/version-vars.sh"
-export ONIX_VERSION GIT_COMMIT GIT_TREE_STATE BUILD_DATE
-
 # Step 3: Build adapter plugins
 echo -e "${YELLOW}Step 3: Building adapter plugins...${NC}"
 
@@ -141,6 +132,9 @@ fi
 echo -e "${YELLOW}Step 4: Building Beckn-ONIX adapter server...${NC}"
 
 if [ -f "go.mod" ]; then
+    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+    source "${SCRIPT_DIR}/scripts/version-vars.sh"
+
     go build -ldflags "${ONIX_LDFLAGS}" -o beckn-adapter cmd/adapter/main.go
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ Adapter server built successfully${NC}"

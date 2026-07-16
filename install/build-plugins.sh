@@ -7,10 +7,10 @@ mkdir -p plugins
 # identity embedded via -ldflags -X -- it's compiled as its own .so, a
 # separate link unit from the main adapter binary, so without this it would
 # silently keep pkg/version's "dev"/"unknown" defaults regardless of what
-# version the adapter binary itself was built with. ONIX_VERSION/GIT_COMMIT/
-# GIT_TREE_STATE/BUILD_DATE may already be set in the environment (e.g. by
-# install/setup.sh, or as Docker build-args) -- version-vars.sh keeps
-# whatever is already set and only computes from git for what's missing.
+# version the adapter binary itself was built with. version-vars.sh computes
+# these fresh from git when run locally; inside a Docker build stage (no
+# .git in the build context) it instead keeps whatever ONIX_VERSION/
+# GIT_COMMIT/GIT_TREE_STATE/BUILD_DATE were passed in as Docker build-args.
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "${SCRIPT_DIR}/scripts/version-vars.sh"
 
