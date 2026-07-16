@@ -111,6 +111,15 @@ else
     echo -e "${YELLOW}plugins directory already exists${NC}"
 fi
 
+# Compute build-time identity vars once, then export them so the plugin
+# build (Step 3) and the adapter build (Step 4) embed the exact same
+# version/commit/tree-state/build-date -- including the otelsetup plugin,
+# which otherwise silently ships with pkg/version's "dev"/"unknown"
+# defaults since it's compiled as a separate .so.
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+source "${SCRIPT_DIR}/scripts/version-vars.sh"
+export ONIX_VERSION GIT_COMMIT GIT_TREE_STATE BUILD_DATE
+
 # Step 3: Build adapter plugins
 echo -e "${YELLOW}Step 3: Building adapter plugins...${NC}"
 
@@ -132,18 +141,7 @@ fi
 echo -e "${YELLOW}Step 4: Building Beckn-ONIX adapter server...${NC}"
 
 if [ -f "go.mod" ]; then
-    ONIX_VERSION_PKG="github.com/beckn-one/beckn-onix/pkg/version"
-    GIT_VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
-    GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-    if git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null; then
-        GIT_TREE_STATE="clean"
-    else
-        GIT_TREE_STATE="dirty"
-    fi
-    BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    LDFLAGS="-X ${ONIX_VERSION_PKG}.Version=${GIT_VERSION} -X ${ONIX_VERSION_PKG}.GitCommit=${GIT_COMMIT} -X ${ONIX_VERSION_PKG}.GitTreeState=${GIT_TREE_STATE} -X ${ONIX_VERSION_PKG}.BuildDate=${BUILD_DATE}"
-
-    go build -ldflags "${LDFLAGS}" -o beckn-adapter cmd/adapter/main.go
+    go build -ldflags "${ONIX_LDFLAGS}" -o beckn-adapter cmd/adapter/main.go
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ Adapter server built successfully${NC}"
     else
