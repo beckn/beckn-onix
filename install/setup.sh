@@ -132,7 +132,18 @@ fi
 echo -e "${YELLOW}Step 4: Building Beckn-ONIX adapter server...${NC}"
 
 if [ -f "go.mod" ]; then
-    go build -o beckn-adapter cmd/adapter/main.go
+    ONIX_VERSION_PKG="github.com/beckn-one/beckn-onix/pkg/version"
+    GIT_VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
+    GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    if git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null; then
+        GIT_TREE_STATE="clean"
+    else
+        GIT_TREE_STATE="dirty"
+    fi
+    BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    LDFLAGS="-X ${ONIX_VERSION_PKG}.Version=${GIT_VERSION} -X ${ONIX_VERSION_PKG}.GitCommit=${GIT_COMMIT} -X ${ONIX_VERSION_PKG}.GitTreeState=${GIT_TREE_STATE} -X ${ONIX_VERSION_PKG}.BuildDate=${BUILD_DATE}"
+
+    go build -ldflags "${LDFLAGS}" -o beckn-adapter cmd/adapter/main.go
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ Adapter server built successfully${NC}"
     else

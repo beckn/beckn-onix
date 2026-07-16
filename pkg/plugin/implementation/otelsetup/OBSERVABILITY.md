@@ -156,12 +156,23 @@ Every OTLP signal carries these resource attributes. The `producer` and `produce
 | Attribute | Config field | Notes |
 |---|---|---|
 | `service.name` | `serviceName` | Required |
-| `service.version` | `serviceVersion` | |
+| `service.version` | `serviceVersion` | Defaults to the binary's build-time version (see below) when not set |
 | `environment` | `environment` | |
 | `domain` | `domain` | |
 | `device_id` | `deviceID` | |
 | `producer` | `producer` | Subscriber ID — enables network-level attribution |
 | `producerType` | `producerType` | `bap` or `bpp` |
+| `onix.build.commit` | — | Git commit short SHA the binary was built from; not operator-configurable |
+| `onix.build.tree_state` | — | `clean` or `dirty` — whether the build tree had uncommitted changes at build time |
+| `onix.build.date` | — | UTC build timestamp (RFC3339) |
+
+### Build identity: how and when it's emitted
+
+`service.version`, `onix.build.commit`, `onix.build.tree_state`, and `onix.build.date` come from `pkg/version`, populated via `-ldflags -X` at build time (see `install/setup.sh`, `Dockerfile.adapter`, `Dockerfile.adapter-with-plugins`). They are fixed at compile time — no config field can override the three `onix.build.*` attributes, since they describe the binary actually running, not operator intent.
+
+These attributes are set once, when the `otelsetup` plugin constructs the OTel `Resource` at startup — before any module is registered — and are then attached to *every* metric, trace, and log signal the adapter exports via OTLP for the remainder of the process's lifetime. This is not a one-time startup announcement: each export batch (every metrics collection interval, every trace/log flush) carries the same resource block, so any single trace, log line, or metric sample can be traced back to the exact build that produced it without a separate lookup.
+
+This gives the network observer a self-reported build identity per node — enough to detect stale, mismatched, or locally-patched deployments across the network. It is not a substitute for cryptographic attestation: an operator who controls their own build can set any values here. See [beckn/beckn-onix#872](https://github.com/beckn/beckn-onix/issues/872) for the follow-up on verifiable build provenance.
 
 ### Shutdown
 
