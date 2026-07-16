@@ -7,10 +7,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/stretchr/testify/assert"
 )
@@ -812,6 +814,65 @@ func TestValidateExtendedSchemas_MissingMessage(t *testing.T) {
 	err := v.validateExtendedSchemas(ctx, body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "missing 'message' field")
+}
+
+func TestPrefixSchemaErrorPaths(t *testing.T) {
+	tests := []struct {
+		name         string
+		schemaErrors []model.Error
+		objPath      string
+		want         []model.Error
+	}{
+		{
+			name:         "no existing details gets object path",
+			schemaErrors: []model.Error{{Message: "m1"}},
+			objPath:      "message.order",
+			want: []model.Error{
+				{Message: "m1", Details: &model.ErrorDetails{Path: "message.order"}},
+			},
+		},
+		{
+			name: "existing path is prefixed with object path",
+			schemaErrors: []model.Error{
+				{Message: "m1", Details: &model.ErrorDetails{Path: "items[0].id"}},
+			},
+			objPath: "message.order",
+			want: []model.Error{
+				{Message: "m1", Details: &model.ErrorDetails{Path: "message.order.items[0].id"}},
+			},
+		},
+		{
+			name: "existing cause is preserved after prefixing",
+			schemaErrors: []model.Error{
+				{
+					Message: "m1",
+					Details: &model.ErrorDetails{
+						Path:  "items[0].id",
+						Cause: &model.Error{Code: "NET_DOWNSTREAM_UNAVAILABLE", Message: "registry lookup failed"},
+					},
+				},
+			},
+			objPath: "message.order",
+			want: []model.Error{
+				{
+					Message: "m1",
+					Details: &model.ErrorDetails{
+						Path:  "message.order.items[0].id",
+						Cause: &model.Error{Code: "NET_DOWNSTREAM_UNAVAILABLE", Message: "registry lookup failed"},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prefixSchemaErrorPaths(tt.schemaErrors, tt.objPath)
+			if !reflect.DeepEqual(tt.schemaErrors, tt.want) {
+				t.Errorf("prefixSchemaErrorPaths() = %+v, want %+v", tt.schemaErrors, tt.want)
+			}
+		})
+	}
 }
 
 func TestIsSchemaVersionSegment(t *testing.T) {

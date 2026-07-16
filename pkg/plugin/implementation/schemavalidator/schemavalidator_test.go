@@ -2,12 +2,14 @@ package schemavalidator
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -145,6 +147,39 @@ func TestValidator_Validate_Failure(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestValidator_Validate_SchemaErrorDetails confirms Validate() attaches
+// Details with the JSON-schema cause's path through the real code path
+// (extractSchemaErrors is inlined here, not a separately-testable helper).
+// Note: an empty-path (root-level) cause isn't reachable through this
+// validator's public entrypoint — Domain/Version presence is checked before
+// schema.Validate() ever runs, so "context" is always already present by the
+// time a schema-level cause can occur.
+func TestValidator_Validate_SchemaErrorDetails(t *testing.T) {
+	schemaDir := setupTestSchema(t)
+	defer os.RemoveAll(schemaDir)
+
+	config := &Config{SchemaDir: schemaDir}
+	v, _, err := New(context.Background(), config)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	err = v.Validate(context.Background(), &url.URL{Path: "endpoint"}, []byte(`{"context": {"domain": "example", "version": "1.0"}}`))
+
+	var schemaErr *model.SchemaValidationErr
+	if !errors.As(err, &schemaErr) {
+		t.Fatalf("expected *model.SchemaValidationErr, got %T: %v", err, err)
+	}
+	if len(schemaErr.Errors) == 0 {
+		t.Fatal("expected at least one schema error")
+	}
+
+	got := schemaErr.Errors[0]
+	if got.Details == nil || got.Details.Path == "" {
+		t.Errorf("Details = %+v, want a non-nil Details with a non-empty Path", got.Details)
 	}
 }
 

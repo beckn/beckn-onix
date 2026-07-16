@@ -56,9 +56,12 @@ func (e *SchemaValidationErr) BecknError() *Error {
 		}
 	}
 
-	// Collect all error paths and messages, positionally aligned so a
-	// consumer splitting both joined strings can still correlate the Nth
-	// path with the Nth message even when some entries have no path.
+	// Collect all error paths, one entry per cause (an entry with no path
+	// contributes an empty string), so Details.Path preserves per-cause
+	// structure when split on ";" — path segments don't contain literal
+	// semicolons in practice. Message is a separate, human-readable
+	// concatenation only; it may itself contain either delimiter, so it
+	// is not safe to split back into per-cause text.
 	var paths []string
 	var messages []string
 	hasPath := false
