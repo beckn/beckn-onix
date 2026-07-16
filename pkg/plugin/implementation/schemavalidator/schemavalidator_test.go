@@ -153,10 +153,12 @@ func TestValidator_Validate_Failure(t *testing.T) {
 // TestValidator_Validate_SchemaErrorDetails confirms Validate() attaches
 // Details with the JSON-schema cause's path through the real code path
 // (extractSchemaErrors is inlined here, not a separately-testable helper).
-// Note: an empty-path (root-level) cause isn't reachable through this
-// validator's public entrypoint — Domain/Version presence is checked before
-// schema.Validate() ever runs, so "context" is always already present by the
-// time a schema-level cause can occur.
+// Note: setupTestSchema's schema only requires "context" at the root, so a
+// root-level (empty-path) cause never occurs for THIS test's schema — that is
+// not a general property of Validate() itself. Validate() never independently
+// checks for a top-level "message" field before calling schema.Validate(), so
+// a real schema requiring ["context", "message"] at root (as this plugin's
+// own README documents) could still produce a root-level cause with no path.
 func TestValidator_Validate_SchemaErrorDetails(t *testing.T) {
 	schemaDir := setupTestSchema(t)
 	defer os.RemoveAll(schemaDir)
@@ -177,9 +179,17 @@ func TestValidator_Validate_SchemaErrorDetails(t *testing.T) {
 		t.Fatal("expected at least one schema error")
 	}
 
-	got := schemaErr.Errors[0]
-	if got.Details == nil || got.Details.Path == "" {
-		t.Errorf("Details = %+v, want a non-nil Details with a non-empty Path", got.Details)
+	hasDetails := false
+	for _, got := range schemaErr.Errors {
+		if got.Details != nil && got.Details.Path == "" {
+			t.Errorf("Details = %+v, want either nil or a non-empty Path — never a non-nil Details with an empty Path", got.Details)
+		}
+		if got.Details != nil && got.Details.Path != "" {
+			hasDetails = true
+		}
+	}
+	if !hasDetails {
+		t.Error("expected at least one schema error with a non-nil Details and a non-empty Path, got none")
 	}
 }
 

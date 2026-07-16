@@ -863,6 +863,27 @@ func TestPrefixSchemaErrorPaths(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "existing details with no path yet gets object path, cause still preserved",
+			schemaErrors: []model.Error{
+				{
+					Message: "m1",
+					Details: &model.ErrorDetails{
+						Cause: &model.Error{Code: "NET_DOWNSTREAM_UNAVAILABLE", Message: "registry lookup failed"},
+					},
+				},
+			},
+			objPath: "message.order",
+			want: []model.Error{
+				{
+					Message: "m1",
+					Details: &model.ErrorDetails{
+						Path:  "message.order",
+						Cause: &model.Error{Code: "NET_DOWNSTREAM_UNAVAILABLE", Message: "registry lookup failed"},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {

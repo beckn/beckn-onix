@@ -292,11 +292,18 @@ func TestValidate_SchemaErrorDetails(t *testing.T) {
 		t.Fatal("expected at least one schema error")
 	}
 
+	hasDetails := false
 	for _, got := range schemaErr.Errors {
 		t.Logf("Details = %+v", got.Details)
 		if got.Details != nil && got.Details.Path == "" {
 			t.Errorf("Details = %+v, want either nil or a non-empty Path — never a non-nil Details with an empty Path", got.Details)
 		}
+		if got.Details != nil && got.Details.Path != "" {
+			hasDetails = true
+		}
+	}
+	if !hasDetails {
+		t.Error("expected at least one schema error with a non-nil Details and a non-empty Path, got none")
 	}
 }
 
