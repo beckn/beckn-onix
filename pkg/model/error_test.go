@@ -29,8 +29,8 @@ func NewBadReqErrf(format string, a ...any) *BadReqErr {
 func TestError_Error(t *testing.T) {
 	err := &Error{
 		Code:    "404",
-		Paths:   "/api/v1/user",
 		Message: "User not found",
+		Details: &ErrorDetails{Path: "/api/v1/user"},
 	}
 
 	expected := "Error: Code=404, Path=/api/v1/user, Message=User not found"
@@ -46,8 +46,8 @@ func TestError_Error(t *testing.T) {
 func TestSchemaValidationErr_Error(t *testing.T) {
 	schemaErr := &SchemaValidationErr{
 		Errors: []Error{
-			{Paths: "/user", Message: "Field required"},
-			{Paths: "/email", Message: "Invalid format"},
+			{Details: &ErrorDetails{Path: "/user"}, Message: "Field required"},
+			{Details: &ErrorDetails{Path: "/email"}, Message: "Invalid format"},
 		},
 	}
 
@@ -63,7 +63,7 @@ func TestSchemaValidationErr_Error(t *testing.T) {
 func TestSchemaValidationErr_BecknError(t *testing.T) {
 	schemaErr := &SchemaValidationErr{
 		Errors: []Error{
-			{Paths: "/user", Message: "Field required"},
+			{Details: &ErrorDetails{Path: "/user"}, Message: "Field required"},
 		},
 	}
 
@@ -72,6 +72,9 @@ func TestSchemaValidationErr_BecknError(t *testing.T) {
 	if beErr.Code != expected {
 		t.Errorf("err.Error() = %s, want %s",
 			beErr.Code, expected)
+	}
+	if beErr.Details == nil || beErr.Details.Path != "/user" {
+		t.Errorf("beErr.Details = %+v, want Path=/user", beErr.Details)
 	}
 }
 

@@ -561,7 +561,7 @@ func (v *schemav2Validator) extractSchemaErrors(err error, schemaErrors *[]model
 		}
 
 		*schemaErrors = append(*schemaErrors, model.Error{
-			Paths:   path,
+			Details: &model.ErrorDetails{Path: path},
 			Message: message,
 		})
 	} else if multiErr, ok := err.(openapi3.MultiError); ok {
@@ -572,7 +572,6 @@ func (v *schemav2Validator) extractSchemaErrors(err error, schemaErrors *[]model
 	} else {
 		// Generic error
 		*schemaErrors = append(*schemaErrors, model.Error{
-			Paths:   "",
 			Message: err.Error(),
 		})
 	}

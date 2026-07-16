@@ -195,11 +195,16 @@ func (v *schemav2Validator) validateExtendedSchemas(ctx context.Context, body in
 
 			// Prefix all paths with object path
 			for i := range schemaErrors {
-				if schemaErrors[i].Paths != "" {
-					schemaErrors[i].Paths = obj.Path + "." + schemaErrors[i].Paths
-				} else {
-					schemaErrors[i].Paths = obj.Path
+				existing := ""
+				if schemaErrors[i].Details != nil {
+					existing = schemaErrors[i].Details.Path
 				}
+				if existing != "" {
+					existing = obj.Path + "." + existing
+				} else {
+					existing = obj.Path
+				}
+				schemaErrors[i].Details = &model.ErrorDetails{Path: existing}
 			}
 
 			return &model.SchemaValidationErr{Errors: schemaErrors}

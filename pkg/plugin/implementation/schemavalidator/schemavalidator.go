@@ -105,7 +105,7 @@ func (v *schemaValidator) Validate(ctx context.Context, reqURL *url.URL, data []
 
 				// Append the error to the schemaErrors array
 				schemaErrors = append(schemaErrors, model.Error{
-					Paths:   path,
+					Details: &model.ErrorDetails{Path: path},
 					Message: message,
 				})
 			}

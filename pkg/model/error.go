@@ -8,14 +8,29 @@ import (
 
 // Error represents a standard error response.
 type Error struct {
-	Code    string `json:"code"`
-	Paths   string `json:"paths,omitempty"`
-	Message string `json:"message"`
+	Code    string        `json:"code"`
+	Message string        `json:"message"`
+	Details *ErrorDetails `json:"details,omitempty"`
+}
+
+// ErrorDetails carries optional structured context for an Error: a JSONPath to
+// the failing field, and/or a chained root-cause Error from a downstream layer.
+type ErrorDetails struct {
+	Path  string `json:"path,omitempty"`
+	Cause *Error `json:"cause,omitempty"`
+}
+
+// path returns the details path, or "" if Details is unset.
+func (e *Error) path() string {
+	if e.Details == nil {
+		return ""
+	}
+	return e.Details.Path
 }
 
 // This implements the error interface for the Error struct.
 func (e *Error) Error() string {
-	return fmt.Sprintf("Error: Code=%s, Path=%s, Message=%s", e.Code, e.Paths, e.Message)
+	return fmt.Sprintf("Error: Code=%s, Path=%s, Message=%s", e.Code, e.path(), e.Message)
 }
 
 // SchemaValidationErr occurs when schema validation errors are encountered.
@@ -27,7 +42,7 @@ type SchemaValidationErr struct {
 func (e *SchemaValidationErr) Error() string {
 	var errorMessages []string
 	for _, err := range e.Errors {
-		errorMessages = append(errorMessages, fmt.Sprintf("%s: %s", err.Paths, err.Message))
+		errorMessages = append(errorMessages, fmt.Sprintf("%s: %s", err.path(), err.Message))
 	}
 	return strings.Join(errorMessages, "; ")
 }
@@ -45,15 +60,20 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	var paths []string
 	var messages []string
 	for _, err := range e.Errors {
-		if err.Paths != "" {
-			paths = append(paths, err.Paths)
+		if p := err.path(); p != "" {
+			paths = append(paths, p)
 		}
 		messages = append(messages, err.Message)
 	}
 
+	var details *ErrorDetails
+	if len(paths) > 0 {
+		details = &ErrorDetails{Path: strings.Join(paths, ";")}
+	}
+
 	return &Error{
 		Code:    http.StatusText(http.StatusBadRequest),
-		Paths:   strings.Join(paths, ";"),
+		Details: details,
 		Message: strings.Join(messages, "; "),
 	}
 }
