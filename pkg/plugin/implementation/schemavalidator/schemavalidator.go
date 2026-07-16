@@ -104,10 +104,11 @@ func (v *schemaValidator) Validate(ctx context.Context, reqURL *url.URL, data []
 				message := cause.Error()                          // Validation error message
 
 				// Append the error to the schemaErrors array
-				schemaErrors = append(schemaErrors, model.Error{
-					Details: &model.ErrorDetails{Path: path},
-					Message: message,
-				})
+				errItem := model.Error{Message: message}
+				if path != "" {
+					errItem.Details = &model.ErrorDetails{Path: path}
+				}
+				schemaErrors = append(schemaErrors, errItem)
 			}
 			// Return the array of schema validation errors
 			return &model.SchemaValidationErr{Errors: schemaErrors}

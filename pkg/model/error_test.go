@@ -78,6 +78,47 @@ func TestSchemaValidationErr_BecknError(t *testing.T) {
 	}
 }
 
+func TestSchemaValidationErr_BecknError_NoPaths(t *testing.T) {
+	schemaErr := &SchemaValidationErr{
+		Errors: []Error{
+			{Message: "generic error one"},
+			{Message: "generic error two"},
+		},
+	}
+
+	beErr := schemaErr.BecknError()
+	if beErr.Details != nil {
+		t.Errorf("beErr.Details = %+v, want nil when no entry has a path", beErr.Details)
+	}
+	expectedMsg := "generic error one; generic error two"
+	if beErr.Message != expectedMsg {
+		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
+	}
+}
+
+func TestSchemaValidationErr_BecknError_MixedPaths(t *testing.T) {
+	schemaErr := &SchemaValidationErr{
+		Errors: []Error{
+			{Details: &ErrorDetails{Path: "/a"}, Message: "m1"},
+			{Message: "m2"},
+			{Details: &ErrorDetails{Path: "/c"}, Message: "m3"},
+		},
+	}
+
+	beErr := schemaErr.BecknError()
+	if beErr.Details == nil {
+		t.Fatal("beErr.Details = nil, want non-nil since at least one entry has a path")
+	}
+	expectedPath := "/a;;/c"
+	if beErr.Details.Path != expectedPath {
+		t.Errorf("beErr.Details.Path = %s, want %s (positionally aligned with Message)", beErr.Details.Path, expectedPath)
+	}
+	expectedMsg := "m1; m2; m3"
+	if beErr.Message != expectedMsg {
+		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
+	}
+}
+
 func TestSignValidationErr_BecknError(t *testing.T) {
 	signErr := NewSignValidationErr(errors.New("signature failed"))
 	beErr := signErr.BecknError()

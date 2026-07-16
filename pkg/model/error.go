@@ -56,18 +56,23 @@ func (e *SchemaValidationErr) BecknError() *Error {
 		}
 	}
 
-	// Collect all error paths and messages
+	// Collect all error paths and messages, positionally aligned so a
+	// consumer splitting both joined strings can still correlate the Nth
+	// path with the Nth message even when some entries have no path.
 	var paths []string
 	var messages []string
+	hasPath := false
 	for _, err := range e.Errors {
-		if p := err.path(); p != "" {
-			paths = append(paths, p)
+		p := err.path()
+		if p != "" {
+			hasPath = true
 		}
+		paths = append(paths, p)
 		messages = append(messages, err.Message)
 	}
 
 	var details *ErrorDetails
-	if len(paths) > 0 {
+	if hasPath {
 		details = &ErrorDetails{Path: strings.Join(paths, ";")}
 	}
 

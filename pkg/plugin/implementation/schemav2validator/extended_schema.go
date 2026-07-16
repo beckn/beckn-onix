@@ -195,16 +195,17 @@ func (v *schemav2Validator) validateExtendedSchemas(ctx context.Context, body in
 
 			// Prefix all paths with object path
 			for i := range schemaErrors {
-				existing := ""
+				prefixed := obj.Path
+				if schemaErrors[i].Details != nil && schemaErrors[i].Details.Path != "" {
+					prefixed = obj.Path + "." + schemaErrors[i].Details.Path
+				}
+				// Update Path in place when Details already exists so any
+				// other field (e.g. Cause) set upstream is preserved.
 				if schemaErrors[i].Details != nil {
-					existing = schemaErrors[i].Details.Path
-				}
-				if existing != "" {
-					existing = obj.Path + "." + existing
+					schemaErrors[i].Details.Path = prefixed
 				} else {
-					existing = obj.Path
+					schemaErrors[i].Details = &model.ErrorDetails{Path: prefixed}
 				}
-				schemaErrors[i].Details = &model.ErrorDetails{Path: existing}
 			}
 
 			return &model.SchemaValidationErr{Errors: schemaErrors}
