@@ -134,12 +134,12 @@ func TestSendNack(t *testing.T) {
 			name: "SchemaValidationErr",
 			err: &model.SchemaValidationErr{
 				Errors: []model.Error{
-					{Paths: "/path1", Message: "Error 1"},
-					{Paths: "/path2", Message: "Error 2"},
+					{Details: &model.ErrorDetails{Path: "/path1"}, Message: "Error 1"},
+					{Details: &model.ErrorDetails{Path: "/path2"}, Message: "Error 2"},
 				},
 			},
 			status:   http.StatusBadRequest,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"Bad Request","paths":"/path1;/path2","message":"Error 1; Error 2"}}}`,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"Bad Request","message":"Error 1; Error 2","details":{"path":"/path1;/path2"}}}}`,
 		},
 		{
 			name:     "SignValidationErr",
@@ -363,11 +363,11 @@ func TestNack_1(t *testing.T) {
 			name: "Schema Validation Error",
 			err: &model.Error{
 				Code:    "BAD_REQUEST",
-				Paths:   "/test/path",
 				Message: "Invalid schema",
+				Details: &model.ErrorDetails{Path: "/test/path"},
 			},
 			status:   http.StatusBadRequest,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"BAD_REQUEST","paths":"/test/path","message":"Invalid schema"}}}`,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"BAD_REQUEST","message":"Invalid schema","details":{"path":"/test/path"}}}}`,
 		},
 		{
 			name: "Internal Server Error",

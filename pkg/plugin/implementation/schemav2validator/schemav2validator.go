@@ -560,10 +560,11 @@ func (v *schemav2Validator) extractSchemaErrors(err error, schemaErrors *[]model
 			}
 		}
 
-		*schemaErrors = append(*schemaErrors, model.Error{
-			Paths:   path,
-			Message: message,
-		})
+		errItem := model.Error{Message: message}
+		if path != "" {
+			errItem.Details = &model.ErrorDetails{Path: path}
+		}
+		*schemaErrors = append(*schemaErrors, errItem)
 	} else if multiErr, ok := err.(openapi3.MultiError); ok {
 		// Nested MultiError
 		for _, e := range multiErr {
@@ -572,7 +573,6 @@ func (v *schemav2Validator) extractSchemaErrors(err error, schemaErrors *[]model
 	} else {
 		// Generic error
 		*schemaErrors = append(*schemaErrors, model.Error{
-			Paths:   "",
 			Message: err.Error(),
 		})
 	}

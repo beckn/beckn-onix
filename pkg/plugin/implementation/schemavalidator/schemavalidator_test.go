@@ -2,12 +2,14 @@ package schemavalidator
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -145,6 +147,49 @@ func TestValidator_Validate_Failure(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestValidator_Validate_SchemaErrorDetails confirms Validate() attaches
+// Details with the JSON-schema cause's path through the real code path
+// (extractSchemaErrors is inlined here, not a separately-testable helper).
+// Note: setupTestSchema's schema only requires "context" at the root, so a
+// root-level (empty-path) cause never occurs for THIS test's schema — that is
+// not a general property of Validate() itself. Validate() never independently
+// checks for a top-level "message" field before calling schema.Validate(), so
+// a real schema requiring ["context", "message"] at root (as this plugin's
+// own README documents) could still produce a root-level cause with no path.
+func TestValidator_Validate_SchemaErrorDetails(t *testing.T) {
+	schemaDir := setupTestSchema(t)
+	defer os.RemoveAll(schemaDir)
+
+	config := &Config{SchemaDir: schemaDir}
+	v, _, err := New(context.Background(), config)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	err = v.Validate(context.Background(), &url.URL{Path: "endpoint"}, []byte(`{"context": {"domain": "example", "version": "1.0"}}`))
+
+	var schemaErr *model.SchemaValidationErr
+	if !errors.As(err, &schemaErr) {
+		t.Fatalf("expected *model.SchemaValidationErr, got %T: %v", err, err)
+	}
+	if len(schemaErr.Errors) == 0 {
+		t.Fatal("expected at least one schema error")
+	}
+
+	hasDetails := false
+	for _, got := range schemaErr.Errors {
+		if got.Details != nil && got.Details.Path == "" {
+			t.Errorf("Details = %+v, want either nil or a non-empty Path — never a non-nil Details with an empty Path", got.Details)
+		}
+		if got.Details != nil && got.Details.Path != "" {
+			hasDetails = true
+		}
+	}
+	if !hasDetails {
+		t.Error("expected at least one schema error with a non-nil Details and a non-empty Path, got none")
 	}
 }
 

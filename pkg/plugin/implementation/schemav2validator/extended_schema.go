@@ -193,20 +193,30 @@ func (v *schemav2Validator) validateExtendedSchemas(ctx context.Context, body in
 			var schemaErrors []model.Error
 			v.extractSchemaErrors(err, &schemaErrors)
 
-			// Prefix all paths with object path
-			for i := range schemaErrors {
-				if schemaErrors[i].Paths != "" {
-					schemaErrors[i].Paths = obj.Path + "." + schemaErrors[i].Paths
-				} else {
-					schemaErrors[i].Paths = obj.Path
-				}
-			}
+			prefixSchemaErrorPaths(schemaErrors, obj.Path)
 
 			return &model.SchemaValidationErr{Errors: schemaErrors}
 		}
 	}
 
 	return nil
+}
+
+// prefixSchemaErrorPaths prefixes objPath onto each error's Details.Path,
+// updating it in place when Details already exists so any other field (e.g.
+// a chained Cause) set upstream is preserved rather than discarded.
+func prefixSchemaErrorPaths(schemaErrors []model.Error, objPath string) {
+	for i := range schemaErrors {
+		prefixed := objPath
+		if schemaErrors[i].Details != nil && schemaErrors[i].Details.Path != "" {
+			prefixed = objPath + "." + schemaErrors[i].Details.Path
+		}
+		if schemaErrors[i].Details != nil {
+			schemaErrors[i].Details.Path = prefixed
+		} else {
+			schemaErrors[i].Details = &model.ErrorDetails{Path: prefixed}
+		}
+	}
 }
 
 // newSchemaCache creates a new schema cache.
