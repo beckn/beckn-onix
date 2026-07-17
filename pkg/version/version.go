@@ -14,7 +14,8 @@ var (
 	GitCommit = "unknown"
 
 	// GitTreeState is "clean" if the working tree had no uncommitted
-	// changes at build time, "dirty" otherwise.
+	// changes at build time, "dirty" otherwise, or "unknown" for builds
+	// without -ldflags injection (go run, go test, plain go build).
 	GitTreeState = "unknown"
 
 	// BuildDate is the UTC build timestamp in RFC3339 format.

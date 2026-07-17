@@ -163,7 +163,7 @@ Every OTLP signal carries these resource attributes. The `producer` and `produce
 | `producer` | `producer` | Subscriber ID — enables network-level attribution |
 | `producerType` | `producerType` | `bap` or `bpp` |
 | `onix.build.commit` | — | Git commit short SHA the binary was built from; not operator-configurable |
-| `onix.build.tree_state` | — | `clean` or `dirty` — whether the build tree had uncommitted changes at build time |
+| `onix.build.tree_state` | — | `clean` or `dirty` if built with `-ldflags` injection, `unknown` otherwise |
 | `onix.build.date` | — | UTC build timestamp (RFC3339) |
 
 ### Build identity: how and when it's emitted
