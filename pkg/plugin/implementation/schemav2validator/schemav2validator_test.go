@@ -2,6 +2,7 @@ package schemav2validator
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -9,6 +10,8 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+
+	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
 // testSpecBodyless mirrors the Beckn 2.0 /catalog/subscription path which
@@ -262,6 +265,45 @@ func TestValidate_NestedValidation(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestValidate_SchemaErrorDetails confirms extractSchemaErrors only attaches
+// Details when the underlying validation cause has a non-empty path — never
+// a non-nil Details with an empty Path (the fix for issue #862's finding #5).
+func TestValidate_SchemaErrorDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testSpec))
+	}))
+	defer server.Close()
+
+	validator, _, err := New(context.Background(), &Config{Type: "url", Location: server.URL, CacheTTL: 3600})
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	err = validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"select"},"message":{}}`))
+
+	var schemaErr *model.SchemaValidationErr
+	if !errors.As(err, &schemaErr) {
+		t.Fatalf("expected *model.SchemaValidationErr, got %T: %v", err, err)
+	}
+	if len(schemaErr.Errors) == 0 {
+		t.Fatal("expected at least one schema error")
+	}
+
+	hasDetails := false
+	for _, got := range schemaErr.Errors {
+		t.Logf("Details = %+v", got.Details)
+		if got.Details != nil && got.Details.Path == "" {
+			t.Errorf("Details = %+v, want either nil or a non-empty Path — never a non-nil Details with an empty Path", got.Details)
+		}
+		if got.Details != nil && got.Details.Path != "" {
+			hasDetails = true
+		}
+	}
+	if !hasDetails {
+		t.Error("expected at least one schema error with a non-nil Details and a non-empty Path, got none")
 	}
 }
 

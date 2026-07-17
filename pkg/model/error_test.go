@@ -29,8 +29,8 @@ func NewBadReqErrf(format string, a ...any) *BadReqErr {
 func TestError_Error(t *testing.T) {
 	err := &Error{
 		Code:    "404",
-		Paths:   "/api/v1/user",
 		Message: "User not found",
+		Details: &ErrorDetails{Path: "/api/v1/user"},
 	}
 
 	expected := "Error: Code=404, Path=/api/v1/user, Message=User not found"
@@ -46,8 +46,8 @@ func TestError_Error(t *testing.T) {
 func TestSchemaValidationErr_Error(t *testing.T) {
 	schemaErr := &SchemaValidationErr{
 		Errors: []Error{
-			{Paths: "/user", Message: "Field required"},
-			{Paths: "/email", Message: "Invalid format"},
+			{Details: &ErrorDetails{Path: "/user"}, Message: "Field required"},
+			{Details: &ErrorDetails{Path: "/email"}, Message: "Invalid format"},
 		},
 	}
 
@@ -63,7 +63,7 @@ func TestSchemaValidationErr_Error(t *testing.T) {
 func TestSchemaValidationErr_BecknError(t *testing.T) {
 	schemaErr := &SchemaValidationErr{
 		Errors: []Error{
-			{Paths: "/user", Message: "Field required"},
+			{Details: &ErrorDetails{Path: "/user"}, Message: "Field required"},
 		},
 	}
 
@@ -72,6 +72,50 @@ func TestSchemaValidationErr_BecknError(t *testing.T) {
 	if beErr.Code != expected {
 		t.Errorf("err.Error() = %s, want %s",
 			beErr.Code, expected)
+	}
+	if beErr.Details == nil || beErr.Details.Path != "/user" {
+		t.Errorf("beErr.Details = %+v, want Path=/user", beErr.Details)
+	}
+}
+
+func TestSchemaValidationErr_BecknError_NoPaths(t *testing.T) {
+	schemaErr := &SchemaValidationErr{
+		Errors: []Error{
+			{Message: "generic error one"},
+			{Message: "generic error two"},
+		},
+	}
+
+	beErr := schemaErr.BecknError()
+	if beErr.Details != nil {
+		t.Errorf("beErr.Details = %+v, want nil when no entry has a path", beErr.Details)
+	}
+	expectedMsg := "generic error one; generic error two"
+	if beErr.Message != expectedMsg {
+		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
+	}
+}
+
+func TestSchemaValidationErr_BecknError_MixedPaths(t *testing.T) {
+	schemaErr := &SchemaValidationErr{
+		Errors: []Error{
+			{Details: &ErrorDetails{Path: "/a"}, Message: "m1"},
+			{Message: "m2"},
+			{Details: &ErrorDetails{Path: "/c"}, Message: "m3"},
+		},
+	}
+
+	beErr := schemaErr.BecknError()
+	if beErr.Details == nil {
+		t.Fatal("beErr.Details = nil, want non-nil since at least one entry has a path")
+	}
+	expectedPath := "/a;;/c"
+	if beErr.Details.Path != expectedPath {
+		t.Errorf("beErr.Details.Path = %s, want %s (positionally aligned with Message)", beErr.Details.Path, expectedPath)
+	}
+	expectedMsg := "m1; m2; m3"
+	if beErr.Message != expectedMsg {
+		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
 	}
 }
 
