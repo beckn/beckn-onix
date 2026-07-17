@@ -9,6 +9,7 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
+	"github.com/beckn-one/beckn-onix/pkg/version"
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -50,7 +51,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		ServiceName:    "beckn-onix",
-		ServiceVersion: "dev",
+		ServiceVersion: version.Version,
 		Environment:    "development",
 		Domain:         "",
 		DeviceID:       "beckn-onix-device",
@@ -114,15 +115,7 @@ func (Setup) New(ctx context.Context, cfg *Config) (*telemetry.Provider, error) 
 		}, nil
 	}
 
-	baseAttrs := []attribute.KeyValue{
-		attribute.String("service.name", cfg.ServiceName),
-		attribute.String("service.version", cfg.ServiceVersion),
-		attribute.String("environment", cfg.Environment),
-		attribute.String("domain", cfg.Domain),
-		attribute.String("device_id", cfg.DeviceID),
-		attribute.String("producerType", cfg.ProducerType),
-		attribute.String("producer", cfg.Producer),
-	}
+	baseAttrs := buildBaseAttrs(cfg)
 
 	var meterProvider *metric.MeterProvider
 	if cfg.EnableMetrics {
@@ -207,6 +200,28 @@ func (Setup) New(ctx context.Context, cfg *Config) (*telemetry.Provider, error) 
 			return nil
 		},
 	}, nil
+}
+
+// buildBaseAttrs constructs the resource attributes shared by every signal
+// type (metrics, traces, logs). Extracted as its own function so tests can
+// assert on the attribute set directly, without needing a getter into the
+// OTel SDK's Resource (sdk/metric.MeterProvider and sdk/trace.TracerProvider
+// don't expose one).
+func buildBaseAttrs(cfg *Config) []attribute.KeyValue {
+	return []attribute.KeyValue{
+		attribute.String("service.name", cfg.ServiceName),
+		attribute.String("service.version", cfg.ServiceVersion),
+		attribute.String("environment", cfg.Environment),
+		attribute.String("domain", cfg.Domain),
+		attribute.String("device_id", cfg.DeviceID),
+		attribute.String("producerType", cfg.ProducerType),
+		attribute.String("producer", cfg.Producer),
+		// Intrinsic to the binary, not operator-configurable — lets an
+		// observer spot stale/mismatched/locally-patched deployments.
+		attribute.String("onix.build.commit", version.GitCommit),
+		attribute.String("onix.build.tree_state", version.GitTreeState),
+		attribute.String("onix.build.date", version.BuildDate),
+	}
 }
 
 func buildAtts(base []attribute.KeyValue, eid string) []attribute.KeyValue {

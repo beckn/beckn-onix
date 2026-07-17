@@ -4,9 +4,52 @@ import (
 	"context"
 	"testing"
 
+	"github.com/beckn-one/beckn-onix/pkg/version"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 )
+
+// TestDefaultConfig_ServiceVersionFollowsPkgVersion asserts DefaultConfig's
+// ServiceVersion tracks pkg/version.Version rather than a fixed literal --
+// regression test for otelsetup.go defaulting to "dev" unconditionally.
+func TestDefaultConfig_ServiceVersionFollowsPkgVersion(t *testing.T) {
+	original := version.Version
+	defer func() { version.Version = original }()
+
+	version.Version = "v9.9.9-test"
+	assert.Equal(t, "v9.9.9-test", DefaultConfig().ServiceVersion,
+		"DefaultConfig().ServiceVersion should follow pkg/version.Version")
+}
+
+// TestBuildBaseAttrs_IncludesBuildIdentity asserts the onix.build.* resource
+// attributes are present and reflect pkg/version's current values -- these
+// are attached to every metric/trace/log Resource via buildAtts(), which has
+// no public getter to assert against directly on the OTel SDK providers.
+func TestBuildBaseAttrs_IncludesBuildIdentity(t *testing.T) {
+	origCommit, origTreeState, origDate := version.GitCommit, version.GitTreeState, version.BuildDate
+	defer func() {
+		version.GitCommit, version.GitTreeState, version.BuildDate = origCommit, origTreeState, origDate
+	}()
+
+	version.GitCommit = "abc1234"
+	version.GitTreeState = "dirty"
+	version.BuildDate = "2026-01-01T00:00:00Z"
+
+	cfg := &Config{
+		ServiceName:    "test-service",
+		ServiceVersion: "1.0.0",
+		Environment:    "test",
+	}
+
+	attrs := buildBaseAttrs(cfg)
+
+	assert.Contains(t, attrs, attribute.String("onix.build.commit", "abc1234"))
+	assert.Contains(t, attrs, attribute.String("onix.build.tree_state", "dirty"))
+	assert.Contains(t, attrs, attribute.String("onix.build.date", "2026-01-01T00:00:00Z"))
+	assert.Contains(t, attrs, attribute.String("service.name", "test-service"))
+	assert.Contains(t, attrs, attribute.String("service.version", "1.0.0"))
+}
 
 func TestSetup_New_Success(t *testing.T) {
 	setup := Setup{}

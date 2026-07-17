@@ -19,6 +19,7 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
+	"github.com/beckn-one/beckn-onix/pkg/version"
 	_ "go.uber.org/automaxprocs"
 )
 
@@ -57,6 +58,8 @@ func main() {
 	flag.Parse()
 
 	// Use custom log for initial setup messages.
+	log.Infof(context.Background(), "Starting Beckn-ONIX version=%s commit=%s tree=%s built=%s",
+		version.Version, version.GitCommit, version.GitTreeState, version.BuildDate)
 	log.Infof(context.Background(), "Starting application with config: %s", configPath)
 
 	// Run the application within a context.

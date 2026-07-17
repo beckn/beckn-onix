@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/beckn-one/beckn-onix/pkg/version"
 )
 
 // TestHealthHandler tests the successful GET request to the /health endpoint.
@@ -44,6 +46,22 @@ func TestHealthHandler(t *testing.T) {
 	if response.Service != expService {
 		t.Errorf("HealthHandler returned wrong service in JSON: got %v want %v",
 			response.Service, expService)
+	}
+	if response.Build.Version != version.Version {
+		t.Errorf("HealthHandler returned wrong build.version in JSON: got %v want %v",
+			response.Build.Version, version.Version)
+	}
+	if response.Build.GitCommit != version.GitCommit {
+		t.Errorf("HealthHandler returned wrong build.gitCommit in JSON: got %v want %v",
+			response.Build.GitCommit, version.GitCommit)
+	}
+	if response.Build.GitTreeState != version.GitTreeState {
+		t.Errorf("HealthHandler returned wrong build.gitTreeState in JSON: got %v want %v",
+			response.Build.GitTreeState, version.GitTreeState)
+	}
+	if response.Build.BuildDate != version.BuildDate {
+		t.Errorf("HealthHandler returned wrong build.buildDate in JSON: got %v want %v",
+			response.Build.BuildDate, version.BuildDate)
 	}
 }
 

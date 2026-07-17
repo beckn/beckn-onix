@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Resolve this script's own directory before any `cd` below changes the
+# working directory -- BASH_SOURCE[0] is relative to the CWD at invocation
+# time (this script is documented to be run as `cd install && ./setup.sh`),
+# so computing this later, after the `cd ..` further down, silently
+# resolves to the repo root instead of install/.
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -132,7 +139,12 @@ fi
 echo -e "${YELLOW}Step 4: Building Beckn-ONIX adapter server...${NC}"
 
 if [ -f "go.mod" ]; then
-    go build -o beckn-adapter cmd/adapter/main.go
+    if ! source "${SCRIPT_DIR}/scripts/version-vars.sh"; then
+        echo -e "${RED}Error: failed to source ${SCRIPT_DIR}/scripts/version-vars.sh${NC}"
+        exit 1
+    fi
+
+    go build -ldflags "${ONIX_LDFLAGS}" -o beckn-adapter cmd/adapter/main.go
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ Adapter server built successfully${NC}"
     else

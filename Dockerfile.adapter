@@ -8,7 +8,12 @@ COPY go.mod .
 COPY go.sum .
 RUN go mod download
 
-RUN go build -o server cmd/adapter/main.go
+ARG ONIX_VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG GIT_TREE_STATE=unknown
+ARG BUILD_DATE=unknown
+
+RUN go build -ldflags "-X github.com/beckn-one/beckn-onix/pkg/version.Version=${ONIX_VERSION} -X github.com/beckn-one/beckn-onix/pkg/version.GitCommit=${GIT_COMMIT} -X github.com/beckn-one/beckn-onix/pkg/version.GitTreeState=${GIT_TREE_STATE} -X github.com/beckn-one/beckn-onix/pkg/version.BuildDate=${BUILD_DATE}" -o server cmd/adapter/main.go
 
 # Create a minimal runtime image
 FROM cgr.dev/chainguard/wolfi-base:latest

@@ -12,6 +12,12 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v3
+      with:
+        # Full history + tags, so `git describe --tags` in version-vars.sh
+        # can actually resolve a release tag instead of always falling back
+        # to the bare commit SHA (the default shallow checkout fetches no
+        # tag refs at all).
+        fetch-depth: 0
 
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@v2
@@ -33,7 +39,13 @@ jobs:
     - name: Build Docker Image
       run: |
         IMAGE_NAME=${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.GCP_REPO }}/beckn-onix:${{ github.sha }}
-        docker build -f Dockerfile.adapter -t $IMAGE_NAME .
+        source install/scripts/version-vars.sh
+        docker build -f Dockerfile.adapter \
+          --build-arg ONIX_VERSION="$ONIX_VERSION" \
+          --build-arg GIT_COMMIT="$GIT_COMMIT" \
+          --build-arg GIT_TREE_STATE="$GIT_TREE_STATE" \
+          --build-arg BUILD_DATE="$BUILD_DATE" \
+          -t $IMAGE_NAME .
         docker push $IMAGE_NAME
 
     - name: Get GKE Credentials

@@ -7,16 +7,27 @@ COPY cmd/adapter/ ./cmd/adapter/
 COPY core/ ./core/
 COPY pkg/ ./pkg/
 COPY install/build-plugins.sh ./install/build-plugins.sh
+COPY install/scripts/version-vars.sh ./install/scripts/version-vars.sh
 COPY go.mod .
 COPY go.sum .
 
 RUN go mod download
 
-# Build main server
-RUN go build -o server cmd/adapter/main.go
+ARG ONIX_VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG GIT_TREE_STATE=unknown
+ARG BUILD_DATE=unknown
 
-# Make the build script executable and run it to build plugins
+# Build main server
+RUN go build -ldflags "-X github.com/beckn-one/beckn-onix/pkg/version.Version=${ONIX_VERSION} -X github.com/beckn-one/beckn-onix/pkg/version.GitCommit=${GIT_COMMIT} -X github.com/beckn-one/beckn-onix/pkg/version.GitTreeState=${GIT_TREE_STATE} -X github.com/beckn-one/beckn-onix/pkg/version.BuildDate=${BUILD_DATE}" -o server cmd/adapter/main.go
+
+# Make the build script executable and run it to build plugins. The version
+# ARGs are passed through as environment variables so the otelsetup plugin
+# (a separate .so, a separate link unit from the server binary above) gets
+# the same build identity instead of falling back to pkg/version's
+# "dev"/"unknown" defaults.
 RUN chmod +x install/build-plugins.sh && \
+    ONIX_VERSION="${ONIX_VERSION}" GIT_COMMIT="${GIT_COMMIT}" GIT_TREE_STATE="${GIT_TREE_STATE}" BUILD_DATE="${BUILD_DATE}" \
     ./install/build-plugins.sh
 
 # Create minimal runtime image
