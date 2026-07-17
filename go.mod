@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
-	golang.org/x/crypto v0.51.0
+	golang.org/x/crypto v0.54.0
 )
 
 require github.com/stretchr/testify v1.11.1
@@ -19,7 +19,7 @@ require (
 
 require github.com/zenazn/pkcs7pad v0.0.0-20170308005700-253a5b1f0e03
 
-require golang.org/x/text v0.37.0 // indirect
+require golang.org/x/text v0.40.0 // indirect
 
 require (
 	github.com/agnivade/levenshtein v1.2.1 // indirect
@@ -82,9 +82,9 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260427160629-7cedc36a6bc4 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260427160629-7cedc36a6bc4 // indirect
