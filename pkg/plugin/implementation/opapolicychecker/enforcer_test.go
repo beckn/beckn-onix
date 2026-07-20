@@ -257,6 +257,81 @@ violations contains msg if {
 	}
 }
 
+// TestEvaluator_BareSetResult_WithCodedViolations is a regression test for a
+// fail-open bug found in self-review: extractViolations' []interface{} case
+// (the bare-set query style used above in TestEvaluator_WithViolation, and
+// documented in README.md as a supported format) only accepted plain string
+// items, silently dropping a coded violation object entirely — meaning a
+// policy that denied via a coded violation under this query style would be
+// treated as compliant (violations == nil), and CheckPolicy would incorrectly
+// allow the request. This confirms the fix: coded violations now survive the
+// same code path as the structured {"valid",...} format.
+func TestEvaluator_BareSetResult_WithCodedViolations(t *testing.T) {
+	policy := `
+package policy
+import rego.v1
+violations contains {"code": "POL_GEO_RESTRICTED", "message": "delivery not offered in this region"} if {
+    input.context.action == "confirm"
+}
+`
+	dir := writePolicyDir(t, "test.rego", policy)
+	eval, err := NewEvaluator([]string{dir}, "data.policy.violations", nil, false, 0, nil)
+	if err != nil {
+		t.Fatalf("NewEvaluator failed: %v", err)
+	}
+
+	violations, err := eval.Evaluate(context.Background(), []byte(`{"context": {"action": "confirm"}}`))
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %v — a coded violation under the bare-set query style must not be silently dropped", len(violations), violations)
+	}
+	if violations[0].Code != "POL_GEO_RESTRICTED" {
+		t.Errorf("violations[0].Code = %q, want POL_GEO_RESTRICTED", violations[0].Code)
+	}
+	if violations[0].Message != "delivery not offered in this region" {
+		t.Errorf("violations[0].Message = %q, want %q", violations[0].Message, "delivery not offered in this region")
+	}
+}
+
+// TestEnforcer_BareSetResult_NonCompliant_PropagatesCode is the CheckPolicy
+// end-to-end counterpart: confirms a coded violation under the bare-set query
+// style correctly denies the request (not silently allows it) and the code
+// reaches the final NACK.
+func TestEnforcer_BareSetResult_NonCompliant_PropagatesCode(t *testing.T) {
+	policy := `
+package policy
+import rego.v1
+violations contains {"code": "POL_GEO_RESTRICTED", "message": "delivery not offered in this region"} if {
+    input.context.action == "confirm"
+}
+`
+	dir := writePolicyDir(t, "test.rego", policy)
+
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.violations\n")
+	enforcer, err := New(context.Background(), map[string]string{
+		"networkPolicyConfig": configPath,
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	ctx := makeStepCtx("confirm", `{"context": {"action": "confirm"}}`)
+	err = enforcer.CheckPolicy(ctx)
+	if err == nil {
+		t.Fatal("expected error (request must be denied), got nil — a coded violation under the bare-set query style must not be silently allowed")
+	}
+
+	badReqErr, ok := err.(*model.BadReqErr)
+	if !ok {
+		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+	}
+	if code := badReqErr.BecknError().Code; code != "POL_GEO_RESTRICTED" {
+		t.Errorf("BecknError().Code = %s, want POL_GEO_RESTRICTED", code)
+	}
+}
+
 func TestEvaluator_RuntimeConfig(t *testing.T) {
 	policy := `
 package policy
@@ -771,6 +846,37 @@ violations contains "blocked" if { input.context.action == "confirm" }
 	}
 	if code := badReqErr.BecknError().Code; code != "POL_GENERIC_ERROR" {
 		t.Errorf("BecknError().Code = %s, want POL_GENERIC_ERROR for an evaluation failure", code)
+	}
+}
+
+// TestEnforcer_UninitializedEvaluator_UsesGenericCode covers the defensive
+// "evaluator is not initialized" branch directly — an enabled policy whose
+// evaluator is nil should not normally occur via the real loading path
+// (loadPolicy only skips evaluator init for disabled policies), so this
+// constructs the PolicyEnforcer's internal state directly rather than trying
+// to race the real startup path. Confirms this branch is now classified with
+// POL_GENERIC_ERROR, consistent with the other two CheckPolicy failure modes.
+func TestEnforcer_UninitializedEvaluator_UsesGenericCode(t *testing.T) {
+	enforcer := &PolicyEnforcer{
+		config: &Config{Enabled: true},
+		defaultPolicy: &loadedPolicy{
+			config:    &PolicyConfig{Enabled: true},
+			evaluator: nil,
+		},
+	}
+
+	ctx := makeStepCtx("confirm", `{"context": {"action": "confirm"}}`)
+	err := enforcer.CheckPolicy(ctx)
+	if err == nil {
+		t.Fatal("expected error when evaluator is nil, got nil")
+	}
+
+	badReqErr, ok := err.(*model.BadReqErr)
+	if !ok {
+		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+	}
+	if code := badReqErr.BecknError().Code; code != "POL_GENERIC_ERROR" {
+		t.Errorf("BecknError().Code = %s, want POL_GENERIC_ERROR", code)
 	}
 }
 
@@ -1314,7 +1420,7 @@ func TestExtractStructuredViolations_ObjectItemEdgeCases(t *testing.T) {
 		},
 	}
 
-	got := extractStructuredViolations(m)
+	got := extractStructuredViolations(context.Background(), m)
 	want := []model.Error{
 		{Message: "plain string violation"},
 		{Code: "POL_CONSENT_REQUIRED", Message: "consent required"},
@@ -1328,6 +1434,82 @@ func TestExtractStructuredViolations_ObjectItemEdgeCases(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("violations[%d] = %+v, want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+func TestParseViolationItem(t *testing.T) {
+	tests := []struct {
+		name   string
+		item   interface{}
+		wantOK bool
+		want   model.Error
+	}{
+		{
+			name:   "plain string",
+			item:   "some violation",
+			wantOK: true,
+			want:   model.Error{Message: "some violation"},
+		},
+		{
+			name:   "empty string is dropped",
+			item:   "",
+			wantOK: false,
+		},
+		{
+			name:   "coded object",
+			item:   map[string]interface{}{"code": "POL_KYC_REQUIRED", "message": "KYC required"},
+			wantOK: true,
+			want:   model.Error{Code: "POL_KYC_REQUIRED", Message: "KYC required"},
+		},
+		{
+			name:   "code only falls back to code as message",
+			item:   map[string]interface{}{"code": "POL_SANCTIONED_PARTY"},
+			wantOK: true,
+			want:   model.Error{Code: "POL_SANCTIONED_PARTY", Message: "POL_SANCTIONED_PARTY"},
+		},
+		{
+			name:   "empty object is dropped",
+			item:   map[string]interface{}{},
+			wantOK: false,
+		},
+		{
+			name:   "non-string message is ignored, code alone survives",
+			item:   map[string]interface{}{"code": "POL_GEO_RESTRICTED", "message": 12345},
+			wantOK: true,
+			want:   model.Error{Code: "POL_GEO_RESTRICTED", Message: "POL_GEO_RESTRICTED"},
+		},
+		{
+			name:   "non-string code is ignored, message alone survives",
+			item:   map[string]interface{}{"code": 12345, "message": "some message"},
+			wantOK: true,
+			want:   model.Error{Message: "some message"},
+		},
+		{
+			name:   "both non-string is dropped",
+			item:   map[string]interface{}{"code": 12345, "message": true},
+			wantOK: false,
+		},
+		{
+			name:   "unsupported type (number) is dropped",
+			item:   42,
+			wantOK: false,
+		},
+		{
+			name:   "unsupported type (nested list) is dropped",
+			item:   []interface{}{"nested"},
+			wantOK: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseViolationItem(context.Background(), tt.item)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v (got=%+v)", ok, tt.wantOK, got)
+			}
+			if ok && got != tt.want {
+				t.Errorf("got = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }
 

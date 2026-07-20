@@ -175,6 +175,41 @@ func TestSchemaValidationErr_BecknError_CodeFromFirstNonEmpty(t *testing.T) {
 	}
 }
 
+func TestFirstNonEmptyCode(t *testing.T) {
+	tests := []struct {
+		name        string
+		errs        []Error
+		defaultCode string
+		want        string
+	}{
+		{
+			name:        "first non-empty code wins",
+			errs:        []Error{{Message: "m1"}, {Code: "POL_KYC_REQUIRED", Message: "m2"}, {Code: "POL_GEO_RESTRICTED", Message: "m3"}},
+			defaultCode: "POL_GENERIC_ERROR",
+			want:        "POL_KYC_REQUIRED",
+		},
+		{
+			name:        "no entry has a code falls back to default",
+			errs:        []Error{{Message: "m1"}, {Message: "m2"}},
+			defaultCode: "POL_GENERIC_ERROR",
+			want:        "POL_GENERIC_ERROR",
+		},
+		{
+			name:        "empty slice falls back to default",
+			errs:        nil,
+			defaultCode: "POL_GENERIC_ERROR",
+			want:        "POL_GENERIC_ERROR",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FirstNonEmptyCode(tt.errs, tt.defaultCode); got != tt.want {
+				t.Errorf("FirstNonEmptyCode() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSignValidationErr_BecknError(t *testing.T) {
 	signErr := NewSignValidationErr(errors.New("signature failed"))
 	beErr := signErr.BecknError()
@@ -241,7 +276,8 @@ func TestResolveCode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := resolveCode(tt.code, tt.defaultCode); got != tt.want {
+			e := &codedErr{Code: tt.code}
+			if got := e.resolveCode(tt.defaultCode); got != tt.want {
 				t.Errorf("resolveCode(%q, %q) = %s, want %s", tt.code, tt.defaultCode, got, tt.want)
 			}
 		})

@@ -25,6 +25,7 @@ import (
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/open-policy-agent/opa/v1/storage/inmem"
 
+	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/security/artifactverifier"
 )
@@ -424,7 +425,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, body []byte) ([]model.Error, e
 		return []model.Error{{Message: fmt.Sprintf("policy query %q returned no result (undefined)", e.query)}}, nil
 	}
 
-	return extractViolations(rs)
+	return extractViolations(ctx, rs)
 }
 
 // extractViolations pulls violations from the OPA result set.
@@ -432,11 +433,13 @@ func (e *Evaluator) Evaluate(ctx context.Context, body []byte) ([]model.Error, e
 //   - map with {"valid": bool, "violations": [...]}: structured policy_query_path
 //     result. Each violation entry may be a plain string (legacy, no code) or an
 //     object {"code": "POL_...", "message": "..."} (Code is preserved).
-//   - []string / set of strings: each string is a violation message, no code.
+//   - []interface{} / set: each item may be a plain string (legacy, no code) or
+//     an object {"code": "POL_...", "message": "..."} (Code is preserved) — the
+//     same two shapes accepted by the structured format above.
 //   - bool: false = denied ("policy denied the request"), true = allowed.
 //   - string: non-empty = violation message, no code.
 //   - empty/undefined: allowed (no violations).
-func extractViolations(rs rego.ResultSet) ([]model.Error, error) {
+func extractViolations(ctx context.Context, rs rego.ResultSet) ([]model.Error, error) {
 	if len(rs) == 0 {
 		return nil, nil
 	}
@@ -458,12 +461,12 @@ func extractViolations(rs rego.ResultSet) ([]model.Error, error) {
 			case []interface{}:
 				// Result is a list (from set)
 				for _, item := range v {
-					if s, ok := item.(string); ok {
-						violations = append(violations, model.Error{Message: s})
+					if e, ok := parseViolationItem(ctx, item); ok {
+						violations = append(violations, e)
 					}
 				}
 			case map[string]interface{}:
-				if vs := extractStructuredViolations(v); vs != nil {
+				if vs := extractStructuredViolations(ctx, v); vs != nil {
 					violations = append(violations, vs...)
 				}
 			}
@@ -473,13 +476,49 @@ func extractViolations(rs rego.ResultSet) ([]model.Error, error) {
 	return violations, nil
 }
 
+// parseViolationItem converts one item from a Rego violations list/set into a
+// model.Error. Supported shapes: a plain string (legacy, Code left empty), or
+// an object {"code": "POL_...", "message": "..."} (Code preserved). Returns
+// ok=false for anything else (wrong types, or both code and message empty),
+// logging a debug line so a malformed Rego policy's output isn't silently
+// invisible.
+func parseViolationItem(ctx context.Context, item interface{}) (model.Error, bool) {
+	switch v := item.(type) {
+	case string:
+		if v == "" {
+			return model.Error{}, false
+		}
+		return model.Error{Message: v}, true
+	case map[string]interface{}:
+		message, msgIsString := v["message"].(string)
+		code, codeIsString := v["code"].(string)
+		if rawMsg := v["message"]; rawMsg != nil && !msgIsString {
+			log.Debugf(ctx, "OPAPolicyChecker: violation item has a non-string \"message\" (%T); ignoring", rawMsg)
+		}
+		if rawCode := v["code"]; rawCode != nil && !codeIsString {
+			log.Debugf(ctx, "OPAPolicyChecker: violation item has a non-string \"code\" (%T); ignoring", rawCode)
+		}
+		if message == "" && code == "" {
+			log.Debugf(ctx, "OPAPolicyChecker: dropping violation item with no usable code or message: %+v", v)
+			return model.Error{}, false
+		}
+		if message == "" {
+			message = code
+		}
+		return model.Error{Code: code, Message: message}, true
+	default:
+		log.Debugf(ctx, "OPAPolicyChecker: dropping violation item of unsupported type %T", item)
+		return model.Error{}, false
+	}
+}
+
 // extractStructuredViolations handles the policy_query_path result format:
-// {"valid": bool, "violations": [...]}. Each item in "violations" is either a
-// plain string (legacy — Code left empty) or an object {"code": "POL_...",
-// "message": "..."} (Code preserved for the caller's classification).
-// Returns the parsed violations if the map matches this format, or nil if it
-// doesn't.
-func extractStructuredViolations(m map[string]interface{}) []model.Error {
+// {"valid": bool, "violations": [...]}. Each item in "violations" is parsed by
+// parseViolationItem — either a plain string (legacy — Code left empty) or an
+// object {"code": "POL_...", "message": "..."} (Code preserved for the
+// caller's classification). Returns the parsed violations if the map matches
+// this format, or nil if it doesn't.
+func extractStructuredViolations(ctx context.Context, m map[string]interface{}) []model.Error {
 	validRaw, hasValid := m["valid"]
 	violationsRaw, hasViolations := m["violations"]
 
@@ -504,19 +543,8 @@ func extractStructuredViolations(m map[string]interface{}) []model.Error {
 
 	var violations []model.Error
 	for _, item := range violationsList {
-		switch v := item.(type) {
-		case string:
-			violations = append(violations, model.Error{Message: v})
-		case map[string]interface{}:
-			message, _ := v["message"].(string)
-			code, _ := v["code"].(string)
-			if message == "" && code == "" {
-				continue
-			}
-			if message == "" {
-				message = code
-			}
-			violations = append(violations, model.Error{Code: code, Message: message})
+		if e, ok := parseViolationItem(ctx, item); ok {
+			violations = append(violations, e)
 		}
 	}
 

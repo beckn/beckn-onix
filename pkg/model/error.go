@@ -80,7 +80,6 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	var paths []string
 	var messages []string
 	hasPath := false
-	code := ""
 	for _, err := range e.Errors {
 		p := err.path()
 		if p != "" {
@@ -88,16 +87,6 @@ func (e *SchemaValidationErr) BecknError() *Error {
 		}
 		paths = append(paths, p)
 		messages = append(messages, err.Message)
-		// First non-empty per-cause code wins. The other causes' text is
-		// still fully present in Message/Details.Path — only their
-		// individual Code is not separately represented on the wire, since
-		// a single Error can only carry one code.
-		if code == "" && err.Code != "" {
-			code = err.Code
-		}
-	}
-	if code == "" {
-		code = http.StatusText(http.StatusBadRequest)
 	}
 
 	var details *ErrorDetails
@@ -106,10 +95,24 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	}
 
 	return &Error{
-		Code:    code,
+		Code:    FirstNonEmptyCode(e.Errors, http.StatusText(http.StatusBadRequest)),
 		Details: details,
 		Message: strings.Join(messages, "; "),
 	}
+}
+
+// FirstNonEmptyCode returns the first non-empty Code among errs, in order, or
+// defaultCode if none is set. Used when multiple causes must be reduced to
+// one representative Code for the wire — the other causes' text is still
+// carried in full elsewhere (e.g. a joined Message), only their Code is
+// dropped, since a single Error can only carry one code.
+func FirstNonEmptyCode(errs []Error, defaultCode string) string {
+	for _, e := range errs {
+		if e.Code != "" {
+			return e.Code
+		}
+	}
+	return defaultCode
 }
 
 // codedErr is the common shape shared by wrapper error types that carry one
@@ -133,11 +136,11 @@ func (e *codedErr) Unwrap() error {
 	return e.error
 }
 
-// resolveCode returns code if non-empty, else defaultCode. Shared by each
-// wrapper type's BecknError() to apply its own default fallback.
-func resolveCode(code, defaultCode string) string {
-	if code != "" {
-		return code
+// resolveCode returns Code if non-empty, else defaultCode. Called by each
+// embedding type's BecknError() to apply its own default fallback.
+func (e *codedErr) resolveCode(defaultCode string) string {
+	if e.Code != "" {
+		return e.Code
 	}
 	return defaultCode
 }
@@ -151,11 +154,13 @@ type SignValidationErr struct {
 	codedErr
 }
 
-// NewSignValidationErr creates a new instance of SignValidationErr from an error,
-// classified as AUT_SIGNATURE_INVALID (the generic bucket). Use
-// NewCodedSignValidationErr when the caller knows a more specific AUT_* cause.
+// NewSignValidationErr creates a new instance of SignValidationErr from an
+// error. Code is left unset, so BecknError() falls back to the generic
+// AUT_SIGNATURE_INVALID bucket — mirrors NewBadReqErr's lazy-default
+// convention. Use NewCodedSignValidationErr when the caller knows a more
+// specific AUT_* cause.
 func NewSignValidationErr(e error) *SignValidationErr {
-	return &SignValidationErr{codedErr{Code: defaultSignValidationCode, error: e}}
+	return &SignValidationErr{codedErr{error: e}}
 }
 
 // NewCodedSignValidationErr creates a SignValidationErr classified with an
@@ -167,7 +172,7 @@ func NewCodedSignValidationErr(code string, e error) *SignValidationErr {
 // BecknError converts the SignValidationErr to an instance of Error.
 func (e *SignValidationErr) BecknError() *Error {
 	return &Error{
-		Code:    resolveCode(e.Code, defaultSignValidationCode),
+		Code:    e.resolveCode(defaultSignValidationCode),
 		Message: "Signature Validation Error: " + e.Error(),
 	}
 }
@@ -196,7 +201,7 @@ func NewCodedBadReqErr(code string, err error) *BadReqErr {
 // BecknError converts the BadReqErr to an instance of Error.
 func (e *BadReqErr) BecknError() *Error {
 	return &Error{
-		Code:    resolveCode(e.Code, http.StatusText(http.StatusBadRequest)),
+		Code:    e.resolveCode(http.StatusText(http.StatusBadRequest)),
 		Message: "BAD Request: " + e.Error(),
 	}
 }
