@@ -594,11 +594,11 @@ func (v *schemav2Validator) extractSchemaErrors(err error, schemaErrors *[]model
 			}
 		}
 
-		errItem := model.Error{Code: schemaFieldToCode(schemaErr.SchemaField), Message: message}
+		errItem := model.NewCodedError(schemaFieldToCode(schemaErr.SchemaField), message)
 		if path != "" {
 			errItem.Details = &model.ErrorDetails{Path: path}
 		}
-		*schemaErrors = append(*schemaErrors, errItem)
+		*schemaErrors = append(*schemaErrors, *errItem)
 	} else if multiErr, ok := err.(openapi3.MultiError); ok {
 		// Nested MultiError
 		for _, e := range multiErr {
@@ -606,10 +606,7 @@ func (v *schemav2Validator) extractSchemaErrors(err error, schemaErrors *[]model
 		}
 	} else {
 		// Generic error — no schema keyword to classify against.
-		*schemaErrors = append(*schemaErrors, model.Error{
-			Code:    "SCH_SCHEMA_VALIDATION_FAILED",
-			Message: err.Error(),
-		})
+		*schemaErrors = append(*schemaErrors, *model.NewCodedError("SCH_SCHEMA_VALIDATION_FAILED", err.Error()))
 	}
 }
 

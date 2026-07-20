@@ -17,6 +17,13 @@ type Error struct {
 // message, for callers that already know a specific code to report (e.g. a
 // plugin classifying one of its own failure modes onto the Beckn v2.0.0
 // ErrorCode taxonomy).
+//
+// The returned *Error is a plain value, not a step error: nackBecknError
+// (core/module/handler/responsestep.go) only recognizes SchemaValidationErr,
+// SignValidationErr, BadReqErr, NotFoundErr, and AckNoCallbackErr. Callers
+// must wrap the result in one of those types before returning it from a
+// Step — returning it bare falls through to a generic 500 Internal Server
+// Error instead of the intended NACK code.
 func NewCodedError(code, message string) *Error {
 	return &Error{Code: code, Message: message}
 }
