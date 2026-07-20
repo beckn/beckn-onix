@@ -60,7 +60,20 @@ var (
 
 	// ErrInvalidConfig indicates that the configuration is invalid.
 	ErrInvalidConfig = errors.New("invalid configuration")
+
+	// ErrKeyExpiredOrRevoked indicates that the matched subscriber's key exists but
+	// is no longer usable (registry status EXPIRED, UNSUBSCRIBED, or INVALID_SSL).
+	ErrKeyExpiredOrRevoked = errors.New("subscriber key is expired or revoked")
 )
+
+// nonUsableKeyStatuses are the model.Subscription.Status values that indicate a
+// matched subscriber's key is no longer valid for signature verification, as
+// distinct from "no such subscriber/key" (zero results from Lookup).
+var nonUsableKeyStatuses = map[string]bool{
+	"EXPIRED":      true,
+	"UNSUBSCRIBED": true,
+	"INVALID_SSL":  true,
+}
 
 // ValidateCfg validates the SimpleKeyManager configuration.
 func ValidateCfg(cfg *Config) error {
@@ -230,6 +243,12 @@ func (skm *SimpleKeyMgr) Keyset(ctx context.Context, keyID string) (*model.Keyse
 }
 
 // LookupNPKeys retrieves the signing and encryption public keys for the given subscriber ID and unique key ID.
+//
+// A zero-result lookup and a matched-but-unusable-status subscriber are both
+// AUT_* authentication failures, so both are returned already classified as
+// *model.SignValidationErr — the caller (signvalidator's validateSignStep)
+// propagates this as-is; it does not need to know keymanager's own sentinel
+// errors to build the correct NACK code.
 func (skm *SimpleKeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueKeyID string) (string, string, error) {
 	if err := validateParams(subscriberID, uniqueKeyID); err != nil {
 		return "", "", err
@@ -266,7 +285,10 @@ func (skm *SimpleKeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueK
 			return "", "", fmt.Errorf("failed to lookup registry: %w", err)
 		}
 		if len(subscribers) == 0 {
-			return "", "", ErrSubscriberNotFound
+			return "", "", model.NewCodedSignValidationErr("AUT_SUBSCRIBER_NOT_FOUND", ErrSubscriberNotFound)
+		}
+		if nonUsableKeyStatuses[subscribers[0].Status] {
+			return "", "", model.NewCodedSignValidationErr("AUT_KEY_EXPIRED_OR_REVOKED", ErrKeyExpiredOrRevoked)
 		}
 	}
 

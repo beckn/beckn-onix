@@ -112,20 +112,44 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	}
 }
 
+// defaultSignValidationCode is used when a SignValidationErr carries no more
+// specific classification — the closest generic bucket in the AUT_* taxonomy.
+const defaultSignValidationCode = "AUT_SIGNATURE_INVALID"
+
 // SignValidationErr occurs when signature validation fails.
 type SignValidationErr struct {
+	// Code is the AUT_* taxonomy value for this failure's specific cause.
+	Code string
 	error
 }
 
-// NewSignValidationErr creates a new instance of SignValidationErr from an error.
+// NewSignValidationErr creates a new instance of SignValidationErr from an error,
+// classified as AUT_SIGNATURE_INVALID (the generic bucket). Use
+// NewCodedSignValidationErr when the caller knows a more specific AUT_* cause.
 func NewSignValidationErr(e error) *SignValidationErr {
-	return &SignValidationErr{e}
+	return &SignValidationErr{Code: defaultSignValidationCode, error: e}
+}
+
+// NewCodedSignValidationErr creates a SignValidationErr classified with an
+// explicit AUT_* code, for callers that already know the specific cause.
+func NewCodedSignValidationErr(code string, e error) *SignValidationErr {
+	return &SignValidationErr{Code: code, error: e}
+}
+
+// Unwrap exposes the wrapped cause so errors.Is/errors.As can reach it (e.g. a
+// plugin-defined sentinel error) in addition to matching *SignValidationErr itself.
+func (e *SignValidationErr) Unwrap() error {
+	return e.error
 }
 
 // BecknError converts the SignValidationErr to an instance of Error.
 func (e *SignValidationErr) BecknError() *Error {
+	code := e.Code
+	if code == "" {
+		code = defaultSignValidationCode
+	}
 	return &Error{
-		Code:    http.StatusText(http.StatusUnauthorized),
+		Code:    code,
 		Message: "Signature Validation Error: " + e.Error(),
 	}
 }

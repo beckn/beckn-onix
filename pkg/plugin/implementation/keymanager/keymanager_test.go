@@ -50,7 +50,6 @@ func (m *mockRegistry) Lookup(ctx context.Context, sub *model.Subscription) ([]m
 	}, nil
 }
 
-
 func TestValidateCfgSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -971,9 +970,9 @@ func TestLookupNPKeysSuccess(t *testing.T) {
 						Subscriber: model.Subscriber{
 							SubscriberID: sub.SubscriberID,
 						},
-						KeyID:           sub.KeyID,
+						KeyID:            sub.KeyID,
 						SigningPublicKey: "mock-signing-public-key",
-						EncrPublicKey:   "mock-encryption-public-key",
+						EncrPublicKey:    "mock-encryption-public-key",
 					},
 				}, nil
 			},
@@ -1009,6 +1008,8 @@ func TestLookupNPKeysFailure(t *testing.T) {
 		name               string
 		registryLookupFunc func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error)
 		expectedError      string
+		wantCode           string
+		wantSentinel       error
 	}{
 		{
 			name: "registry failure",
@@ -1023,6 +1024,35 @@ func TestLookupNPKeysFailure(t *testing.T) {
 				return nil, nil
 			},
 			expectedError: "no subscriber found with given credentials",
+			wantCode:      "AUT_SUBSCRIBER_NOT_FOUND",
+			wantSentinel:  ErrSubscriberNotFound,
+		},
+		{
+			name: "subscriber found but key EXPIRED",
+			registryLookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
+				return []model.Subscription{{Status: "EXPIRED"}}, nil
+			},
+			expectedError: "subscriber key is expired or revoked",
+			wantCode:      "AUT_KEY_EXPIRED_OR_REVOKED",
+			wantSentinel:  ErrKeyExpiredOrRevoked,
+		},
+		{
+			name: "subscriber found but UNSUBSCRIBED",
+			registryLookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
+				return []model.Subscription{{Status: "UNSUBSCRIBED"}}, nil
+			},
+			expectedError: "subscriber key is expired or revoked",
+			wantCode:      "AUT_KEY_EXPIRED_OR_REVOKED",
+			wantSentinel:  ErrKeyExpiredOrRevoked,
+		},
+		{
+			name: "subscriber found but INVALID_SSL",
+			registryLookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
+				return []model.Subscription{{Status: "INVALID_SSL"}}, nil
+			},
+			expectedError: "subscriber key is expired or revoked",
+			wantCode:      "AUT_KEY_EXPIRED_OR_REVOKED",
+			wantSentinel:  ErrKeyExpiredOrRevoked,
 		},
 	}
 
@@ -1039,6 +1069,18 @@ func TestLookupNPKeysFailure(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.expectedError) {
 				t.Errorf("expected error to contain %v, got %v", tt.expectedError, err.Error())
+			}
+			if tt.wantCode != "" {
+				var signErr *model.SignValidationErr
+				if !errors.As(err, &signErr) {
+					t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+				}
+				if signErr.Code != tt.wantCode {
+					t.Errorf("signErr.Code = %s, want %s", signErr.Code, tt.wantCode)
+				}
+				if !errors.Is(err, tt.wantSentinel) {
+					t.Errorf("expected errors.Is(err, %v) = true", tt.wantSentinel)
+				}
 			}
 		})
 	}

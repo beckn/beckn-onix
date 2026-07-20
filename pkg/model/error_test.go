@@ -13,7 +13,7 @@ import (
 
 // NewSignValidationErrf creates a new SignValidationErr with a formatted error message.
 func NewSignValidationErrf(format string, a ...any) *SignValidationErr {
-	return &SignValidationErr{fmt.Errorf(format, a...)}
+	return &SignValidationErr{Code: defaultSignValidationCode, error: fmt.Errorf(format, a...)}
 }
 
 // NewNotFoundErrf creates a new NotFoundErr with a formatted error message.
@@ -184,7 +184,49 @@ func TestSignValidationErr_BecknError(t *testing.T) {
 		t.Errorf("err.Error() = %s, want %s",
 			beErr.Message, expectedMsg)
 	}
+	if beErr.Code != "AUT_SIGNATURE_INVALID" {
+		t.Errorf("beErr.Code = %s, want AUT_SIGNATURE_INVALID (default classification)", beErr.Code)
+	}
+}
 
+func TestNewCodedSignValidationErr_BecknError(t *testing.T) {
+	signErr := NewCodedSignValidationErr("AUT_SIGNATURE_MISSING", errors.New("signature missing in header"))
+	beErr := signErr.BecknError()
+
+	if beErr.Code != "AUT_SIGNATURE_MISSING" {
+		t.Errorf("beErr.Code = %s, want AUT_SIGNATURE_MISSING", beErr.Code)
+	}
+	expectedMsg := "Signature Validation Error: signature missing in header"
+	if beErr.Message != expectedMsg {
+		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
+	}
+}
+
+func TestSignValidationErr_BecknError_EmptyCodeFallsBackToDefault(t *testing.T) {
+	signErr := &SignValidationErr{error: errors.New("signature failed")}
+	beErr := signErr.BecknError()
+
+	if beErr.Code != "AUT_SIGNATURE_INVALID" {
+		t.Errorf("beErr.Code = %s, want AUT_SIGNATURE_INVALID when Code is unset", beErr.Code)
+	}
+}
+
+func TestSignValidationErr_Unwrap(t *testing.T) {
+	sentinel := errors.New("sentinel cause")
+	signErr := NewCodedSignValidationErr("AUT_SUBSCRIBER_NOT_FOUND", sentinel)
+
+	if !errors.Is(signErr, sentinel) {
+		t.Errorf("errors.Is(signErr, sentinel) = false, want true via Unwrap()")
+	}
+
+	var target *SignValidationErr
+	wrapped := fmt.Errorf("wrapped: %w", signErr)
+	if !errors.As(wrapped, &target) {
+		t.Fatalf("errors.As(wrapped, &target) = false, want true")
+	}
+	if target.Code != "AUT_SUBSCRIBER_NOT_FOUND" {
+		t.Errorf("target.Code = %s, want AUT_SUBSCRIBER_NOT_FOUND", target.Code)
+	}
 }
 
 func TestNewSignValidationErrf(t *testing.T) {
