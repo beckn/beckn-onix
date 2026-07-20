@@ -529,11 +529,11 @@ func (c *schemaCache) validateReferencedObject(
 			u, err := url.Parse(obj.Context)
 			if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 				log.Warnf(ctx, "Invalid or disallowed scheme in @context: %s", obj.Context)
-				return fmt.Errorf("invalid scheme in @context: %s", obj.Context)
+				return model.NewCodedError("SCH_INVALID_JSONLD_CONTEXT", fmt.Sprintf("invalid scheme in @context: %s", obj.Context))
 			}
 			if !isAllowedDomain(u, allowedDomains) {
 				log.Warnf(ctx, "Domain not in whitelist: %s", obj.Context)
-				return fmt.Errorf("domain not allowed: %s", obj.Context)
+				return model.NewCodedError("SCH_INVALID_JSONLD_CONTEXT", fmt.Sprintf("domain not allowed: %s", obj.Context))
 			}
 		}
 		schemaPath := transformContextToSchemaURL(obj.Context)
@@ -541,7 +541,7 @@ func (c *schemaCache) validateReferencedObject(
 		var err error
 		doc, err = c.loadSchemaFromPath(ctx, schemaPath, ttl, timeout, false)
 		if err != nil {
-			return fmt.Errorf("at %s: %w", obj.Path, err)
+			return model.NewCodedError("SCH_SCHEMA_ADAPTATION_FAILED", err.Error())
 		}
 	}
 
@@ -549,7 +549,7 @@ func (c *schemaCache) validateReferencedObject(
 	schema, err := findSchemaByType(ctx, doc, obj.Type)
 	if err != nil {
 		log.Errorf(ctx, err, "Schema not found for @type: %s at path: %s", obj.Type, obj.Path)
-		return fmt.Errorf("at %s: %w", obj.Path, err)
+		return model.NewCodedError("SCH_INVALID_ENTITY_TYPE", err.Error())
 	}
 
 	// Strip JSON-LD metadata before validation

@@ -26,6 +26,19 @@ func NewBadReqErrf(format string, a ...any) *BadReqErr {
 	return &BadReqErr{fmt.Errorf(format, a...)}
 }
 
+func TestNewCodedError(t *testing.T) {
+	err := NewCodedError("SCH_INVALID_ENUM", "value must be one of the allowed options")
+	if err.Code != "SCH_INVALID_ENUM" {
+		t.Errorf("Code = %s, want SCH_INVALID_ENUM", err.Code)
+	}
+	if err.Message != "value must be one of the allowed options" {
+		t.Errorf("Message = %s, want %s", err.Message, "value must be one of the allowed options")
+	}
+	if err.Details != nil {
+		t.Errorf("Details = %+v, want nil", err.Details)
+	}
+}
+
 func TestError_Error(t *testing.T) {
 	err := &Error{
 		Code:    "404",
@@ -116,6 +129,49 @@ func TestSchemaValidationErr_BecknError_MixedPaths(t *testing.T) {
 	expectedMsg := "m1; m2; m3"
 	if beErr.Message != expectedMsg {
 		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
+	}
+}
+
+func TestSchemaValidationErr_BecknError_CodeFromFirstNonEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		errs []Error
+		want string
+	}{
+		{
+			name: "first entry's code wins over a later different code",
+			errs: []Error{
+				{Code: "SCH_REQUIRED_FIELD_MISSING", Message: "m1"},
+				{Code: "SCH_INVALID_ENUM", Message: "m2"},
+			},
+			want: "SCH_REQUIRED_FIELD_MISSING",
+		},
+		{
+			name: "leading entries with no code are skipped",
+			errs: []Error{
+				{Message: "m1"},
+				{Code: "SCH_INVALID_ENUM", Message: "m2"},
+			},
+			want: "SCH_INVALID_ENUM",
+		},
+		{
+			name: "no entry has a code falls back to the legacy default",
+			errs: []Error{
+				{Message: "m1"},
+				{Message: "m2"},
+			},
+			want: "Bad Request",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schemaErr := &SchemaValidationErr{Errors: tt.errs}
+			beErr := schemaErr.BecknError()
+			if beErr.Code != tt.want {
+				t.Errorf("Code = %s, want %s", beErr.Code, tt.want)
+			}
+		})
 	}
 }
 
