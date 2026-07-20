@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
 // generateDummyRules creates a .rego policy file with N rules.
@@ -116,7 +118,7 @@ func BenchmarkEvaluate_MostlyInactive(b *testing.B) {
 			if err != nil {
 				b.Fatalf("correctness check failed: %v", err)
 			}
-			if len(violations) != 1 || violations[0] != "real_violation" {
+			if len(violations) != 1 || violations[0].Message != "real_violation" {
 				b.Fatalf("expected [real_violation], got %v", violations)
 			}
 
@@ -238,7 +240,7 @@ func TestBenchmarkReport(t *testing.T) {
 
 		ctx := context.Background()
 		durations := make([]time.Duration, iterations)
-		var lastViolations []string
+		var lastViolations []model.Error
 
 		for i := 0; i < iterations; i++ {
 			start := time.Now()
@@ -274,7 +276,7 @@ func TestBenchmarkReport(t *testing.T) {
 
 		ctx := context.Background()
 		durations := make([]time.Duration, iterations)
-		var lastViolations []string
+		var lastViolations []model.Error
 
 		for i := 0; i < iterations; i++ {
 			start := time.Now()

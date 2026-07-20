@@ -13,7 +13,7 @@ import (
 
 // NewSignValidationErrf creates a new SignValidationErr with a formatted error message.
 func NewSignValidationErrf(format string, a ...any) *SignValidationErr {
-	return &SignValidationErr{Code: defaultSignValidationCode, error: fmt.Errorf(format, a...)}
+	return &SignValidationErr{codedErr{Code: defaultSignValidationCode, error: fmt.Errorf(format, a...)}}
 }
 
 // NewNotFoundErrf creates a new NotFoundErr with a formatted error message.
@@ -23,7 +23,7 @@ func NewNotFoundErrf(format string, a ...any) *NotFoundErr {
 
 // NewBadReqErrf creates a new BadReqErr with a formatted error message.
 func NewBadReqErrf(format string, a ...any) *BadReqErr {
-	return &BadReqErr{fmt.Errorf(format, a...)}
+	return &BadReqErr{codedErr{error: fmt.Errorf(format, a...)}}
 }
 
 func TestNewCodedError(t *testing.T) {
@@ -203,7 +203,7 @@ func TestNewCodedSignValidationErr_BecknError(t *testing.T) {
 }
 
 func TestSignValidationErr_BecknError_EmptyCodeFallsBackToDefault(t *testing.T) {
-	signErr := &SignValidationErr{error: errors.New("signature failed")}
+	signErr := &SignValidationErr{codedErr{error: errors.New("signature failed")}}
 	beErr := signErr.BecknError()
 
 	if beErr.Code != "AUT_SIGNATURE_INVALID" {
@@ -226,6 +226,25 @@ func TestSignValidationErr_Unwrap(t *testing.T) {
 	}
 	if target.Code != "AUT_SUBSCRIBER_NOT_FOUND" {
 		t.Errorf("target.Code = %s, want AUT_SUBSCRIBER_NOT_FOUND", target.Code)
+	}
+}
+
+func TestResolveCode(t *testing.T) {
+	tests := []struct {
+		name        string
+		code        string
+		defaultCode string
+		want        string
+	}{
+		{"explicit code wins", "AUT_KEY_EXPIRED_OR_REVOKED", "AUT_SIGNATURE_INVALID", "AUT_KEY_EXPIRED_OR_REVOKED"},
+		{"empty code falls back to default", "", "Bad Request", "Bad Request"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveCode(tt.code, tt.defaultCode); got != tt.want {
+				t.Errorf("resolveCode(%q, %q) = %s, want %s", tt.code, tt.defaultCode, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -256,6 +275,40 @@ func TestBadReqErr_BecknError(t *testing.T) {
 	if beErr.Message != expectedMsg {
 		t.Errorf("err.Error() = %s, want %s",
 			beErr.Message, expectedMsg)
+	}
+	if beErr.Code != "Bad Request" {
+		t.Errorf("beErr.Code = %s, want the legacy \"Bad Request\" default unchanged for NewBadReqErr callers", beErr.Code)
+	}
+}
+
+func TestNewCodedBadReqErr_BecknError(t *testing.T) {
+	badReqErr := NewCodedBadReqErr("POL_GEO_RESTRICTED", errors.New("delivery not offered in this region"))
+	beErr := badReqErr.BecknError()
+
+	if beErr.Code != "POL_GEO_RESTRICTED" {
+		t.Errorf("beErr.Code = %s, want POL_GEO_RESTRICTED", beErr.Code)
+	}
+	expectedMsg := "BAD Request: delivery not offered in this region"
+	if beErr.Message != expectedMsg {
+		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
+	}
+}
+
+func TestBadReqErr_BecknError_EmptyCodeFallsBackToDefault(t *testing.T) {
+	badReqErr := &BadReqErr{codedErr{error: errors.New("invalid input")}}
+	beErr := badReqErr.BecknError()
+
+	if beErr.Code != "Bad Request" {
+		t.Errorf("beErr.Code = %s, want the legacy \"Bad Request\" default when Code is unset", beErr.Code)
+	}
+}
+
+func TestBadReqErr_Unwrap(t *testing.T) {
+	sentinel := errors.New("sentinel cause")
+	badReqErr := NewCodedBadReqErr("POL_GENERIC_ERROR", sentinel)
+
+	if !errors.Is(badReqErr, sentinel) {
+		t.Errorf("errors.Is(badReqErr, sentinel) = false, want true via Unwrap()")
 	}
 }
 

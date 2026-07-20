@@ -252,8 +252,8 @@ violations contains msg if {
 	if len(violations) != 1 {
 		t.Fatalf("expected 1 violation, got %d: %v", len(violations), violations)
 	}
-	if violations[0] != "value is negative" {
-		t.Errorf("unexpected violation: %q", violations[0])
+	if violations[0].Message != "value is negative" {
+		t.Errorf("unexpected violation: %q", violations[0].Message)
 	}
 }
 
@@ -457,7 +457,7 @@ violations contains "from_file" if { input.bad }
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
-	if len(violations) != 1 || violations[0] != "from_file" {
+	if len(violations) != 1 || violations[0].Message != "from_file" {
 		t.Errorf("expected [from_file], got %v", violations)
 	}
 }
@@ -497,7 +497,7 @@ violations contains "order too large" if { is_high_value }
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
-	if len(violations) != 1 || violations[0] != "order too large" {
+	if len(violations) != 1 || violations[0].Message != "order too large" {
 		t.Errorf("expected [order too large], got %v", violations)
 	}
 
@@ -672,8 +672,148 @@ violations contains "blocked" if { input.context.action == "confirm" }
 	}
 
 	// Should be a BadReqErr
-	if _, ok := err.(*model.BadReqErr); !ok {
-		t.Errorf("expected *model.BadReqErr, got %T: %v", err, err)
+	badReqErr, ok := err.(*model.BadReqErr)
+	if !ok {
+		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+	}
+
+	// The Rego policy above only emits a plain violation string, so the
+	// aggregate code falls back to the generic bucket.
+	if code := badReqErr.BecknError().Code; code != "POL_GENERIC_ERROR" {
+		t.Errorf("BecknError().Code = %s, want POL_GENERIC_ERROR for an unclassified plain-string violation", code)
+	}
+}
+
+// TestEnforcer_NonCompliant_PropagatesCode confirms a Rego policy emitting a
+// coded violation ({"code": "POL_...", "message": "..."}) has that code
+// survive all the way to CheckPolicy's returned NACK — not just extracted by
+// the Evaluator in isolation.
+func TestEnforcer_NonCompliant_PropagatesCode(t *testing.T) {
+	policy := `
+package policy
+
+import rego.v1
+
+default result := {
+  "valid": true,
+  "violations": []
+}
+
+result := {
+  "valid": count(violations) == 0,
+  "violations": violations
+}
+
+violations contains {"code": "POL_GEO_RESTRICTED", "message": "delivery not offered in this region"} if {
+  input.context.action == "confirm"
+}
+`
+	dir := writePolicyDir(t, "test.rego", policy)
+
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.result\n")
+	enforcer, err := New(context.Background(), map[string]string{
+		"networkPolicyConfig": configPath,
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	ctx := makeStepCtx("confirm", `{"context": {"action": "confirm"}}`)
+	err = enforcer.CheckPolicy(ctx)
+	if err == nil {
+		t.Fatal("expected error for non-compliant message, got nil")
+	}
+
+	badReqErr, ok := err.(*model.BadReqErr)
+	if !ok {
+		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+	}
+	beErr := badReqErr.BecknError()
+	if beErr.Code != "POL_GEO_RESTRICTED" {
+		t.Errorf("BecknError().Code = %s, want POL_GEO_RESTRICTED", beErr.Code)
+	}
+	if !strings.Contains(beErr.Message, "delivery not offered in this region") {
+		t.Errorf("BecknError().Message = %q, want it to contain the violation text", beErr.Message)
+	}
+}
+
+// TestEnforcer_EvaluationError_UsesGenericCode confirms a failure to evaluate
+// the policy at all (as opposed to a clean deny decision) is classified as
+// POL_GENERIC_ERROR — it's an evaluation failure, not a policy denial, so no
+// more specific POL_* code applies.
+func TestEnforcer_EvaluationError_UsesGenericCode(t *testing.T) {
+	policy := `
+package policy
+import rego.v1
+violations contains "blocked" if { input.context.action == "confirm" }
+`
+	dir := writePolicyDir(t, "test.rego", policy)
+
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.violations\n")
+	enforcer, err := New(context.Background(), map[string]string{
+		"networkPolicyConfig": configPath,
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	// Malformed JSON body reaches ev.Evaluate (parseRequestContext degrades
+	// gracefully on invalid JSON, so CheckPolicy still selects this policy).
+	ctx := makeStepCtx("confirm", `not valid json`)
+	err = enforcer.CheckPolicy(ctx)
+	if err == nil {
+		t.Fatal("expected error for malformed body, got nil")
+	}
+
+	badReqErr, ok := err.(*model.BadReqErr)
+	if !ok {
+		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+	}
+	if code := badReqErr.BecknError().Code; code != "POL_GENERIC_ERROR" {
+		t.Errorf("BecknError().Code = %s, want POL_GENERIC_ERROR for an evaluation failure", code)
+	}
+}
+
+func TestViolationCode(t *testing.T) {
+	tests := []struct {
+		name       string
+		violations []model.Error
+		want       string
+	}{
+		{
+			name:       "first non-empty code wins",
+			violations: []model.Error{{Message: "m1"}, {Code: "POL_KYC_REQUIRED", Message: "m2"}, {Code: "POL_GEO_RESTRICTED", Message: "m3"}},
+			want:       "POL_KYC_REQUIRED",
+		},
+		{
+			name:       "no violation has a code falls back to generic",
+			violations: []model.Error{{Message: "m1"}, {Message: "m2"}},
+			want:       "POL_GENERIC_ERROR",
+		},
+		{
+			name:       "empty slice falls back to generic",
+			violations: nil,
+			want:       "POL_GENERIC_ERROR",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := violationCode(tt.violations); got != tt.want {
+				t.Errorf("violationCode() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestViolationMessages(t *testing.T) {
+	violations := []model.Error{
+		{Code: "POL_KYC_REQUIRED", Message: "m1"},
+		{Message: "m2"},
+	}
+	got := violationMessages(violations)
+	want := []string{"m1", "m2"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("violationMessages() = %v, want %v", got, want)
 	}
 }
 
@@ -1017,8 +1157,8 @@ violations contains msg if {
 	if len(violations) != 1 {
 		t.Fatalf("expected 1 violation, got %d: %v", len(violations), violations)
 	}
-	if violations[0] != "item item1: quantity must be > 0" {
-		t.Errorf("unexpected violation: %q", violations[0])
+	if violations[0].Message != "item item1: quantity must be > 0" {
+		t.Errorf("unexpected violation: %q", violations[0].Message)
 	}
 
 	// Compliant input
@@ -1037,6 +1177,98 @@ violations contains msg if {
 	}
 	if len(violations) != 0 {
 		t.Errorf("expected 0 violations for compliant input, got %v", violations)
+	}
+}
+
+// TestEvaluator_StructuredResult_WithCodedViolations exercises the additive
+// violation shape: a Rego policy MAY emit {"code": "POL_...", "message": "..."}
+// objects instead of plain strings, and extractStructuredViolations preserves
+// the Code. Existing policies that only emit plain strings are unaffected —
+// verified by the "message" fallback and mixed-shape cases below.
+func TestEvaluator_StructuredResult_WithCodedViolations(t *testing.T) {
+	policy := `
+package retail.policy
+
+import rego.v1
+
+default result := {
+  "valid": true,
+  "violations": []
+}
+
+result := {
+  "valid": count(violations) == 0,
+  "violations": violations
+}
+
+violations contains {"code": "POL_GEO_RESTRICTED", "message": "delivery not offered in this region"} if {
+  input.message.fulfillment.region == "restricted-zone"
+}
+`
+	dir := writePolicyDir(t, "policy.rego", policy)
+	eval, err := NewEvaluator([]string{dir}, "data.retail.policy.result", nil, false, 0, nil)
+	if err != nil {
+		t.Fatalf("NewEvaluator failed: %v", err)
+	}
+
+	violations, err := eval.Evaluate(context.Background(), []byte(`{"message": {"fulfillment": {"region": "restricted-zone"}}}`))
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %v", len(violations), violations)
+	}
+	if violations[0].Code != "POL_GEO_RESTRICTED" {
+		t.Errorf("violations[0].Code = %q, want POL_GEO_RESTRICTED", violations[0].Code)
+	}
+	if violations[0].Message != "delivery not offered in this region" {
+		t.Errorf("violations[0].Message = %q, want %q", violations[0].Message, "delivery not offered in this region")
+	}
+}
+
+// TestEvaluator_StructuredResult_MixedCodedAndPlainViolations confirms a
+// policy can mix legacy plain-string violations with coded ones in the same
+// result — the plain one gets no Code (left for the caller's generic
+// fallback), the coded one keeps its classification.
+func TestEvaluator_StructuredResult_MixedCodedAndPlainViolations(t *testing.T) {
+	policy := `
+package retail.policy
+
+import rego.v1
+
+default result := {
+  "valid": true,
+  "violations": []
+}
+
+result := {
+  "valid": count(violations) == 0,
+  "violations": violations
+}
+
+violations contains "unclassified legacy violation" if {
+  input.trigger == "legacy"
+}
+
+violations contains {"code": "POL_KYC_REQUIRED", "message": "KYC verification required"} if {
+  input.trigger == "coded"
+}
+`
+	dir := writePolicyDir(t, "policy.rego", policy)
+	eval, err := NewEvaluator([]string{dir}, "data.retail.policy.result", nil, false, 0, nil)
+	if err != nil {
+		t.Fatalf("NewEvaluator failed: %v", err)
+	}
+
+	violations, err := eval.Evaluate(context.Background(), []byte(`{"trigger": "coded"}`))
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %v", len(violations), violations)
+	}
+	if violations[0].Code != "POL_KYC_REQUIRED" || violations[0].Message != "KYC verification required" {
+		t.Errorf("unexpected violation: %+v", violations[0])
 	}
 }
 
@@ -1062,8 +1294,40 @@ result := {
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
-	if len(violations) != 1 || violations[0] != "policy denied the request" {
+	if len(violations) != 1 || violations[0].Message != "policy denied the request" {
 		t.Errorf("expected ['policy denied the request'], got %v", violations)
+	}
+}
+
+// TestExtractStructuredViolations_ObjectItemEdgeCases unit-tests the
+// object-shaped violation item parsing directly, without needing a real Rego
+// policy — covering the code-only fallback and empty-item-skip branches that
+// the Rego-driven tests above don't exercise.
+func TestExtractStructuredViolations_ObjectItemEdgeCases(t *testing.T) {
+	m := map[string]interface{}{
+		"valid": false,
+		"violations": []interface{}{
+			"plain string violation",
+			map[string]interface{}{"code": "POL_CONSENT_REQUIRED", "message": "consent required"},
+			map[string]interface{}{"code": "POL_SANCTIONED_PARTY"}, // no message: falls back to code
+			map[string]interface{}{},                               // neither code nor message: skipped
+		},
+	}
+
+	got := extractStructuredViolations(m)
+	want := []model.Error{
+		{Message: "plain string violation"},
+		{Code: "POL_CONSENT_REQUIRED", Message: "consent required"},
+		{Code: "POL_SANCTIONED_PARTY", Message: "POL_SANCTIONED_PARTY"},
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d violations, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("violations[%d] = %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }
 

@@ -642,7 +642,11 @@ func (e *PolicyEnforcer) selectedPolicy(networkID string) *loadedPolicy {
 }
 
 // CheckPolicy evaluates the message body against loaded OPA policies.
-// Returns a BadReqErr (causing NACK) if violations are found.
+// Returns a BadReqErr (causing NACK) if violations are found, classified with
+// the first non-empty per-violation POL_* code (falling back to
+// POL_GENERIC_ERROR when the policy only emits plain violation strings — see
+// evaluator.go's extractStructuredViolations for the structured/coded shape a
+// Rego policy can opt into).
 // Returns an error on evaluation failure (fail closed).
 func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	if !e.config.Enabled {
@@ -678,7 +682,7 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	violations, err := ev.Evaluate(ctx, ctx.Body)
 	if err != nil {
 		log.Errorf(ctx, err, "OPAPolicyChecker: policy evaluation failed for networkID=%q%s: %v", reqCtx.NetworkID, requestLogCtx, err)
-		return model.NewBadReqErr(fmt.Errorf("policy evaluation error: %w", err))
+		return model.NewCodedBadReqErr("POL_GENERIC_ERROR", fmt.Errorf("policy evaluation error: %w", err))
 	}
 
 	if len(violations) == 0 {
@@ -688,9 +692,33 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 		return nil
 	}
 
-	msg := fmt.Sprintf("policy violation(s): %s", strings.Join(violations, "; "))
+	msg := fmt.Sprintf("policy violation(s): %s", strings.Join(violationMessages(violations), "; "))
 	log.Warnf(ctx, "OPAPolicyChecker: networkID=%q%s %s", reqCtx.NetworkID, requestLogCtx, msg)
-	return model.NewBadReqErr(fmt.Errorf("%s", msg))
+	return model.NewCodedBadReqErr(violationCode(violations), fmt.Errorf("%s", msg))
+}
+
+// violationMessages extracts each violation's human-readable message, in order.
+func violationMessages(violations []model.Error) []string {
+	messages := make([]string, len(violations))
+	for i, v := range violations {
+		messages[i] = v.Message
+	}
+	return messages
+}
+
+// violationCode picks the first non-empty per-violation code, falling back to
+// POL_GENERIC_ERROR when no violation carries a specific classification (e.g.
+// every violation came from a policy that only emits plain violation strings,
+// per today's OPA result contract). The other violations' text is still fully
+// present in the joined message — only their individual Code, if any, doesn't
+// separately reach the wire, since a single Error can only carry one code.
+func violationCode(violations []model.Error) string {
+	for _, v := range violations {
+		if v.Code != "" {
+			return v.Code
+		}
+	}
+	return "POL_GENERIC_ERROR"
 }
 
 func (e *PolicyEnforcer) Close() {
