@@ -8,10 +8,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/getkin/kin-openapi/openapi3"
 )
 
 // testSpecBodyless mirrors the Beckn 2.0 /catalog/subscription path which
@@ -294,7 +296,7 @@ func TestValidate_SchemaErrorDetails(t *testing.T) {
 
 	hasDetails := false
 	for _, got := range schemaErr.Errors {
-		t.Logf("Details = %+v", got.Details)
+		t.Logf("Code = %s, Details = %+v", got.Code, got.Details)
 		if got.Details != nil && got.Details.Path == "" {
 			t.Errorf("Details = %+v, want either nil or a non-empty Path — never a non-nil Details with an empty Path", got.Details)
 		}
@@ -304,6 +306,156 @@ func TestValidate_SchemaErrorDetails(t *testing.T) {
 	}
 	if !hasDetails {
 		t.Error("expected at least one schema error with a non-nil Details and a non-empty Path, got none")
+	}
+
+	// "message.order" is required and missing — SchemaField "required" must
+	// map to SCH_REQUIRED_FIELD_MISSING.
+	if schemaErr.Errors[0].Code != "SCH_REQUIRED_FIELD_MISSING" {
+		t.Errorf("Code = %s, want SCH_REQUIRED_FIELD_MISSING", schemaErr.Errors[0].Code)
+	}
+
+	beErr := schemaErr.BecknError()
+	if beErr.Code != "SCH_REQUIRED_FIELD_MISSING" {
+		t.Errorf("aggregate Code = %s, want SCH_REQUIRED_FIELD_MISSING (first non-empty per-cause code)", beErr.Code)
+	}
+}
+
+func TestSchemaFieldToCode(t *testing.T) {
+	tests := []struct {
+		field string
+		want  string
+	}{
+		{"required", "SCH_REQUIRED_FIELD_MISSING"},
+		{"properties", "SCH_FIELD_NOT_ALLOWED"},
+		{"enum", "SCH_INVALID_ENUM"},
+		{"format", "SCH_INVALID_FORMAT"},
+		{"type", "SCH_TYPE_NOT_SUPPORTED"},
+		{"allOf", "SCH_SCHEMA_VALIDATION_FAILED"},
+		{"oneOf", "SCH_SCHEMA_VALIDATION_FAILED"},
+		{"anyOf", "SCH_SCHEMA_VALIDATION_FAILED"},
+		{"pattern", "SCH_SCHEMA_VALIDATION_FAILED"},
+		{"", "SCH_SCHEMA_VALIDATION_FAILED"},
+		{"unknown-keyword", "SCH_SCHEMA_VALIDATION_FAILED"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			if got := schemaFieldToCode(tt.field); got != tt.want {
+				t.Errorf("schemaFieldToCode(%q) = %s, want %s", tt.field, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidate_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testSpec))
+	}))
+	defer server.Close()
+
+	validator, _, err := New(context.Background(), &Config{Type: "url", Location: server.URL, CacheTTL: 3600})
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	err = validator.Validate(context.Background(), nil, []byte(`{"context":`))
+
+	var schemaErr *model.SchemaValidationErr
+	if !errors.As(err, &schemaErr) {
+		t.Fatalf("expected *model.SchemaValidationErr, got %T: %v", err, err)
+	}
+	if len(schemaErr.Errors) != 1 || schemaErr.Errors[0].Code != "SCH_INVALID_JSON" {
+		t.Errorf("Errors = %+v, want one entry with Code=SCH_INVALID_JSON", schemaErr.Errors)
+	}
+
+	beErr := schemaErr.BecknError()
+	if beErr.Code != "SCH_INVALID_JSON" {
+		t.Errorf("aggregate Code = %s, want SCH_INVALID_JSON", beErr.Code)
+	}
+}
+
+// TestExtractSchemaErrors_CompositeOriginFallsBackToGeneric exercises the
+// Origin != nil branch (oneOf/anyOf/allOf composite failures), previously
+// uncovered by any test. Since kin-openapi attributes the failure to the
+// composite keyword itself (not the nested cause), classification correctly
+// falls back to the generic SCH_SCHEMA_VALIDATION_FAILED rather than
+// guessing at whichever nested branch failed.
+func TestExtractSchemaErrors_CompositeOriginFallsBackToGeneric(t *testing.T) {
+	sub := openapi3.NewObjectSchema().WithProperty("name", openapi3.NewStringSchema())
+	sub.Required = []string{"name"}
+
+	parent := openapi3.NewObjectSchema()
+	parent.AllOf = openapi3.SchemaRefs{openapi3.NewSchemaRef("", sub)}
+
+	err := parent.VisitJSON(map[string]interface{}{})
+	if err == nil {
+		t.Fatal("expected a validation error")
+	}
+	schemaErr, ok := err.(*openapi3.SchemaError)
+	if !ok {
+		t.Fatalf("expected *openapi3.SchemaError, got %T: %v", err, err)
+	}
+	if schemaErr.SchemaField != "allOf" || schemaErr.Origin == nil {
+		t.Fatalf("expected SchemaField=allOf with a non-nil Origin, got SchemaField=%s, Origin=%v", schemaErr.SchemaField, schemaErr.Origin)
+	}
+
+	v := &schemav2Validator{}
+	var schemaErrors []model.Error
+	v.extractSchemaErrors(err, &schemaErrors)
+
+	if len(schemaErrors) != 1 {
+		t.Fatalf("expected exactly one extracted error, got %d: %+v", len(schemaErrors), schemaErrors)
+	}
+	got := schemaErrors[0]
+	t.Logf("extracted = %+v", got)
+	if got.Code != "SCH_SCHEMA_VALIDATION_FAILED" {
+		t.Errorf("Code = %s, want SCH_SCHEMA_VALIDATION_FAILED", got.Code)
+	}
+	if got.Message == "" {
+		t.Error("Message = \"\", want a non-empty message describing the nested cause")
+	}
+}
+
+// TestExtractSchemaErrors_CompositeOriginParsesNestedFieldPath exercises the
+// "Error at \"/path\": reason" string-parsing branch specifically — triggered
+// when the nested cause inside an allOf/oneOf failure occurred on a property
+// deep enough to have a tagged reversePath. Previously uncovered by any test.
+func TestExtractSchemaErrors_CompositeOriginParsesNestedFieldPath(t *testing.T) {
+	innerSub := openapi3.NewObjectSchema().WithProperty("name", openapi3.NewStringSchema())
+	innerSub.Required = []string{"name"}
+	sub := openapi3.NewObjectSchema().WithProperty("nested", innerSub)
+
+	parent := openapi3.NewObjectSchema()
+	parent.AllOf = openapi3.SchemaRefs{openapi3.NewSchemaRef("", sub)}
+
+	err := parent.VisitJSON(map[string]interface{}{"nested": map[string]interface{}{}})
+	if err == nil {
+		t.Fatal("expected a validation error")
+	}
+	schemaErr, ok := err.(*openapi3.SchemaError)
+	if !ok {
+		t.Fatalf("expected *openapi3.SchemaError, got %T: %v", err, err)
+	}
+	if schemaErr.Origin == nil || !strings.Contains(schemaErr.Origin.Error(), `Error at "`) {
+		t.Fatalf(`expected Origin.Error() to contain 'Error at "', got: %v`, schemaErr.Origin)
+	}
+
+	v := &schemav2Validator{}
+	var schemaErrors []model.Error
+	v.extractSchemaErrors(err, &schemaErrors)
+
+	if len(schemaErrors) != 1 {
+		t.Fatalf("expected exactly one extracted error, got %d: %+v", len(schemaErrors), schemaErrors)
+	}
+	got := schemaErrors[0]
+	t.Logf("extracted = %+v", got)
+	if got.Details == nil || got.Details.Path != "nested/name" {
+		t.Errorf("Details = %+v, want Path=nested/name", got.Details)
+	}
+	// kin-openapi's SchemaError.Error() appends a verbose schema/value dump
+	// after the reason — check the extracted reason is the prefix, not an
+	// exact match against that library-formatted tail.
+	if !strings.HasPrefix(got.Message, `property "name" is missing`) {
+		t.Errorf("Message = %q, want it to start with %q", got.Message, `property "name" is missing`)
 	}
 }
 

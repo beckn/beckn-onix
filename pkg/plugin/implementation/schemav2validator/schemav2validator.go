@@ -161,7 +161,9 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 	var payloadData payload
 	err := json.Unmarshal(data, &payloadData)
 	if err != nil {
-		return model.NewBadReqErr(fmt.Errorf("failed to parse JSON payload: %v", err))
+		return &model.SchemaValidationErr{Errors: []model.Error{
+			{Code: "SCH_INVALID_JSON", Message: fmt.Sprintf("failed to parse JSON payload: %v", err)},
+		}}
 	}
 
 	if payloadData.Context.Action == "" {
@@ -528,9 +530,37 @@ func (v *schemav2Validator) formatValidationError(err error) error {
 	return &model.SchemaValidationErr{Errors: schemaErrors}
 }
 
+// schemaFieldToCode maps an openapi3.SchemaError's SchemaField (the JSON-schema
+// keyword that failed, e.g. "required", "enum", "format") to the corresponding
+// Beckn v2.0.0 SCH_* code. Composite keywords (oneOf/anyOf/allOf) and any
+// constraint without a dedicated code fall back to SCH_SCHEMA_VALIDATION_FAILED,
+// since kin-openapi doesn't attribute those to one single underlying cause.
+func schemaFieldToCode(schemaField string) string {
+	switch schemaField {
+	case "required":
+		return "SCH_REQUIRED_FIELD_MISSING"
+	case "properties":
+		// kin-openapi uses SchemaField "properties" specifically for the
+		// additionalProperties-disallowed case ("property %q is unsupported").
+		return "SCH_FIELD_NOT_ALLOWED"
+	case "enum":
+		return "SCH_INVALID_ENUM"
+	case "format":
+		return "SCH_INVALID_FORMAT"
+	case "type":
+		return "SCH_TYPE_NOT_SUPPORTED"
+	default:
+		return "SCH_SCHEMA_VALIDATION_FAILED"
+	}
+}
+
 // extractSchemaErrors recursively extracts detailed error information from SchemaError.
 func (v *schemav2Validator) extractSchemaErrors(err error, schemaErrors *[]model.Error) {
-	if schemaErr, ok := err.(*openapi3.SchemaError); ok {
+	if becknErr, ok := err.(*model.Error); ok {
+		// Already a fully-classified error (e.g. from validateReferencedObject's
+		// domain/JSON-LD checks) — pass it through as-is.
+		*schemaErrors = append(*schemaErrors, *becknErr)
+	} else if schemaErr, ok := err.(*openapi3.SchemaError); ok {
 		// Extract path from current error and message from Origin if available
 		pathParts := schemaErr.JSONPointer()
 		path := strings.Join(pathParts, "/")
@@ -560,7 +590,7 @@ func (v *schemav2Validator) extractSchemaErrors(err error, schemaErrors *[]model
 			}
 		}
 
-		errItem := model.Error{Message: message}
+		errItem := model.Error{Code: schemaFieldToCode(schemaErr.SchemaField), Message: message}
 		if path != "" {
 			errItem.Details = &model.ErrorDetails{Path: path}
 		}
@@ -571,8 +601,9 @@ func (v *schemav2Validator) extractSchemaErrors(err error, schemaErrors *[]model
 			v.extractSchemaErrors(e, schemaErrors)
 		}
 	} else {
-		// Generic error
+		// Generic error — no schema keyword to classify against.
 		*schemaErrors = append(*schemaErrors, model.Error{
+			Code:    "SCH_SCHEMA_VALIDATION_FAILED",
 			Message: err.Error(),
 		})
 	}

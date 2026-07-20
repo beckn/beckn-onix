@@ -65,6 +65,7 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	var paths []string
 	var messages []string
 	hasPath := false
+	code := ""
 	for _, err := range e.Errors {
 		p := err.path()
 		if p != "" {
@@ -72,6 +73,16 @@ func (e *SchemaValidationErr) BecknError() *Error {
 		}
 		paths = append(paths, p)
 		messages = append(messages, err.Message)
+		// First non-empty per-cause code wins. The other causes' text is
+		// still fully present in Message/Details.Path — only their
+		// individual Code is not separately represented on the wire, since
+		// a single Error can only carry one code.
+		if code == "" && err.Code != "" {
+			code = err.Code
+		}
+	}
+	if code == "" {
+		code = http.StatusText(http.StatusBadRequest)
 	}
 
 	var details *ErrorDetails
@@ -80,7 +91,7 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	}
 
 	return &Error{
-		Code:    http.StatusText(http.StatusBadRequest),
+		Code:    code,
 		Details: details,
 		Message: strings.Join(messages, "; "),
 	}

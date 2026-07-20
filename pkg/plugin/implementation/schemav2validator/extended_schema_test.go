@@ -661,24 +661,94 @@ components:
 	
 	err = cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, nil, false)
 	assert.Error(t, err)
+
+	schemaErrors := []model.Error{}
+	(&schemav2Validator{}).extractSchemaErrors(err, &schemaErrors)
+	if len(schemaErrors) == 0 || schemaErrors[0].Code != "SCH_REQUIRED_FIELD_MISSING" {
+		t.Errorf("Code = %+v, want SCH_REQUIRED_FIELD_MISSING", schemaErrors)
+	}
 }
 
 func TestValidateReferencedObject_DomainNotAllowed(t *testing.T) {
 	cache := newSchemaCache(10)
 	ctx := context.Background()
-	
+
 	obj := referencedObject{
 		Path:    "message.test",
 		Context: "https://malicious.com/schema.yaml",
 		Type:    "TestType",
 		Data:    map[string]interface{}{},
 	}
-	
+
 	allowedDomains := []string{"trusted.com"}
-	
+
 	err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, allowedDomains, false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "domain not allowed")
+
+	becknErr, ok := err.(*model.Error)
+	if !ok || becknErr.Code != "SCH_INVALID_JSONLD_CONTEXT" {
+		t.Errorf("err = %+v (%T), want *model.Error with Code=SCH_INVALID_JSONLD_CONTEXT", err, err)
+	}
+}
+
+func TestValidateReferencedObject_EntityTypeNotFound(t *testing.T) {
+	cache := newSchemaCache(10)
+	ctx := context.Background()
+
+	tmpFile, err := os.CreateTemp("", "test-schema-*.yaml")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+
+	schemaContent := `openapi: 3.1.0
+info:
+  title: Test Schema
+  version: 1.0.0
+components:
+  schemas:
+    TestType:
+      type: object`
+
+	tmpFile.Write([]byte(schemaContent))
+	tmpFile.Close()
+
+	obj := referencedObject{
+		Path:    "message.test",
+		Context: tmpFile.Name(),
+		Type:    "NonExistentType",
+		Data: map[string]interface{}{
+			"@context": tmpFile.Name(),
+			"@type":    "NonExistentType",
+		},
+	}
+
+	err = cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, nil, false)
+	assert.Error(t, err)
+
+	becknErr, ok := err.(*model.Error)
+	if !ok || becknErr.Code != "SCH_INVALID_ENTITY_TYPE" {
+		t.Errorf("err = %+v (%T), want *model.Error with Code=SCH_INVALID_ENTITY_TYPE", err, err)
+	}
+}
+
+func TestValidateReferencedObject_SchemaLoadFailure(t *testing.T) {
+	cache := newSchemaCache(10)
+	ctx := context.Background()
+
+	obj := referencedObject{
+		Path:    "message.test",
+		Context: "/nonexistent/schema.yaml",
+		Type:    "TestType",
+		Data:    map[string]interface{}{},
+	}
+
+	err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, nil, false)
+	assert.Error(t, err)
+
+	becknErr, ok := err.(*model.Error)
+	if !ok || becknErr.Code != "SCH_SCHEMA_ADAPTATION_FAILED" {
+		t.Errorf("err = %+v (%T), want *model.Error with Code=SCH_SCHEMA_ADAPTATION_FAILED", err, err)
+	}
 }
 
 func TestValidateReferencedObject_NonHttpSchemeRejectedWhenAllowlistSet(t *testing.T) {
@@ -718,6 +788,11 @@ func TestValidateReferencedObject_NonHttpSchemeRejectedWhenAllowlistSet(t *testi
 			err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, allowedDomains, false)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "invalid scheme in @context")
+
+			becknErr, ok := err.(*model.Error)
+			if !ok || becknErr.Code != "SCH_INVALID_JSONLD_CONTEXT" {
+				t.Errorf("err = %+v (%T), want *model.Error with Code=SCH_INVALID_JSONLD_CONTEXT", err, err)
+			}
 		})
 	}
 }

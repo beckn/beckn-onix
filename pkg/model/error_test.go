@@ -119,6 +119,49 @@ func TestSchemaValidationErr_BecknError_MixedPaths(t *testing.T) {
 	}
 }
 
+func TestSchemaValidationErr_BecknError_CodeFromFirstNonEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		errs []Error
+		want string
+	}{
+		{
+			name: "first entry's code wins over a later different code",
+			errs: []Error{
+				{Code: "SCH_REQUIRED_FIELD_MISSING", Message: "m1"},
+				{Code: "SCH_INVALID_ENUM", Message: "m2"},
+			},
+			want: "SCH_REQUIRED_FIELD_MISSING",
+		},
+		{
+			name: "leading entries with no code are skipped",
+			errs: []Error{
+				{Message: "m1"},
+				{Code: "SCH_INVALID_ENUM", Message: "m2"},
+			},
+			want: "SCH_INVALID_ENUM",
+		},
+		{
+			name: "no entry has a code falls back to the legacy default",
+			errs: []Error{
+				{Message: "m1"},
+				{Message: "m2"},
+			},
+			want: "Bad Request",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schemaErr := &SchemaValidationErr{Errors: tt.errs}
+			beErr := schemaErr.BecknError()
+			if beErr.Code != tt.want {
+				t.Errorf("Code = %s, want %s", beErr.Code, tt.want)
+			}
+		})
+	}
+}
+
 func TestSignValidationErr_BecknError(t *testing.T) {
 	signErr := NewSignValidationErr(errors.New("signature failed"))
 	beErr := signErr.BecknError()
