@@ -145,7 +145,13 @@ func TestSendNack(t *testing.T) {
 			name:     "SignValidationErr",
 			err:      model.NewSignValidationErr(errors.New("signature invalid")),
 			status:   http.StatusUnauthorized,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"Unauthorized","message":"Signature Validation Error: signature invalid"}}}`,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"AUT_SIGNATURE_INVALID","message":"Signature Validation Error: signature invalid"}}}`,
+		},
+		{
+			name:     "Coded SignValidationErr",
+			err:      model.NewCodedSignValidationErr("AUT_SUBSCRIBER_NOT_FOUND", errors.New("no subscriber found with given credentials")),
+			status:   http.StatusUnauthorized,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"AUT_SUBSCRIBER_NOT_FOUND","message":"Signature Validation Error: no subscriber found with given credentials"}}}`,
 		},
 		{
 			name:     "BadReqErr",
@@ -181,9 +187,15 @@ func TestSendNack(t *testing.T) {
 		},
 		{
 			name:     "v2 SignValidationErr",
-			err:      model.NewSignValidationErr(errors.New("signature expired")),
+			err:      model.NewCodedSignValidationErr("AUT_SIGNATURE_INVALID", errors.New("signature expired")),
 			status:   http.StatusUnauthorized,
-			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"Unauthorized","message":"Signature Validation Error: signature expired"}}}`,
+			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"AUT_SIGNATURE_INVALID","message":"Signature Validation Error: signature expired"}}}`,
+		},
+		{
+			name:     "v2 Coded SignValidationErr key expired",
+			err:      model.NewCodedSignValidationErr("AUT_KEY_EXPIRED_OR_REVOKED", errors.New("subscriber key is expired or revoked")),
+			status:   http.StatusUnauthorized,
+			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"AUT_KEY_EXPIRED_OR_REVOKED","message":"Signature Validation Error: subscriber key is expired or revoked"}}}`,
 		},
 		{
 			name: "v2 AckNoCallbackErr ACK status",
@@ -476,10 +488,12 @@ type mockKM struct {
 	err    error
 }
 
-func (m *mockKM) GenerateKeyset() (*model.Keyset, error)                               { return nil, nil }
-func (m *mockKM) InsertKeyset(_ context.Context, _ string, _ *model.Keyset) error     { return nil }
-func (m *mockKM) DeleteKeyset(_ context.Context, _ string) error                      { return nil }
-func (m *mockKM) LookupNPKeys(_ context.Context, _, _ string) (string, string, error) { return "", "", nil }
+func (m *mockKM) GenerateKeyset() (*model.Keyset, error)                          { return nil, nil }
+func (m *mockKM) InsertKeyset(_ context.Context, _ string, _ *model.Keyset) error { return nil }
+func (m *mockKM) DeleteKeyset(_ context.Context, _ string) error                  { return nil }
+func (m *mockKM) LookupNPKeys(_ context.Context, _, _ string) (string, string, error) {
+	return "", "", nil
+}
 func (m *mockKM) Keyset(_ context.Context, _ string) (*model.Keyset, error) {
 	return m.keyset, m.err
 }
@@ -916,7 +930,7 @@ func TestValidateAckSignatureStep_MissingSignature_AllStatusCodes_Degrades(t *te
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
 		http.StatusNotFound,
-		http.StatusAccepted,        // 202 AckNoCallback
+		http.StatusAccepted, // 202 AckNoCallback
 		http.StatusInternalServerError,
 	}
 	for _, code := range codes {
