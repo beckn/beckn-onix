@@ -448,6 +448,9 @@ const genericDenialMessage = "policy denied the request"
 //   - bool: false = denied ("policy denied the request"), true = allowed.
 //   - string: non-empty = violation message, no code.
 //   - empty/undefined: allowed (no violations).
+//   - any other type (e.g. a bare number, or an explicit Rego null): not a
+//     recognized decision shape, so treated the same as a malformed result —
+//     one generic violation, rather than being silently ignored.
 func extractViolations(ctx context.Context, rs rego.ResultSet) ([]model.Error, error) {
 	if len(rs) == 0 {
 		return nil, nil
@@ -485,6 +488,9 @@ func extractViolations(ctx context.Context, rs rego.ResultSet) ([]model.Error, e
 				if vs := extractStructuredViolations(ctx, v); vs != nil {
 					violations = append(violations, vs...)
 				}
+			default:
+				log.Debugf(ctx, "OPAPolicyChecker: policy result has unsupported type %T (%+v); treating as a denial", v, v)
+				violations = append(violations, model.Error{Message: genericDenialMessage})
 			}
 		}
 	}
@@ -549,7 +555,10 @@ func extractStructuredViolations(ctx context.Context, m map[string]interface{}) 
 	valid, validOK := validRaw.(bool)
 	violationsList, violationsOK := violationsRaw.([]interface{})
 
-	if !hasValid || !hasViolations || !validOK || !violationsOK {
+	// A missing key always type-asserts to !OK too, so checking just the OK
+	// results (rather than also hasValid/hasViolations) already covers both
+	// "key absent" and "key present with the wrong type".
+	if !validOK || !violationsOK {
 		log.Debugf(ctx, "OPAPolicyChecker: malformed structured policy result (expected {\"valid\": bool, \"violations\": [...]}), got %+v; treating as a denial", m)
 		return []model.Error{{Message: genericDenialMessage}}
 	}

@@ -459,6 +459,37 @@ deny_reason := "" if {
 	}
 }
 
+// TestEvaluator_UnsupportedResultType_FallsBackToGenericViolation is a
+// regression test for a fail-open bug found in self-review: extractViolations'
+// type switch had no default case, so a query result of any type other than
+// the four documented shapes (bool, string, []interface{}, map[string]interface{})
+// — e.g. a bare number from a policy authoring mistake — matched nothing and
+// was silently dropped with zero violations. This confirms the fix: an
+// unrecognized result type now falls back to one generic violation instead of
+// being silently treated as compliant.
+func TestEvaluator_UnsupportedResultType_FallsBackToGenericViolation(t *testing.T) {
+	policy := `
+package policy
+import rego.v1
+violation_count := 1 if {
+    input.value > 1000
+}
+`
+	dir := writePolicyDir(t, "test.rego", policy)
+	eval, err := NewEvaluator([]string{dir}, "data.policy.violation_count", nil, false, 0, nil)
+	if err != nil {
+		t.Fatalf("NewEvaluator failed: %v", err)
+	}
+
+	violations, err := eval.Evaluate(context.Background(), []byte(`{"value": 2000}`))
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if len(violations) != 1 || violations[0].Message != genericDenialMessage {
+		t.Errorf("expected 1 generic denial violation for an unsupported result type, got %v — a policy result of an unrecognized type must not be silently allowed", violations)
+	}
+}
+
 func TestEvaluator_RuntimeConfig(t *testing.T) {
 	policy := `
 package policy
@@ -1578,7 +1609,7 @@ func TestExtractStructuredViolations_MalformedShape_FallsBackToGenericViolation(
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := extractStructuredViolations(context.Background(), tt.m)
-			if len(got) != 1 || got[0].Message != "policy denied the request" {
+			if len(got) != 1 || got[0].Message != genericDenialMessage {
 				t.Errorf("extractStructuredViolations(%+v) = %v, want a single generic denial violation — a malformed structured result must not be silently treated as compliant", tt.m, got)
 			}
 		})
