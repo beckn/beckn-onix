@@ -13,6 +13,21 @@ type Error struct {
 	Details *ErrorDetails `json:"details,omitempty"`
 }
 
+// NewCodedError constructs an Error carrying an explicit ErrorCode value and
+// message, for callers that already know a specific code to report (e.g. a
+// plugin classifying one of its own failure modes onto the Beckn v2.0.0
+// ErrorCode taxonomy).
+//
+// The returned *Error is a plain value, not a step error: nackBecknError
+// (core/module/handler/responsestep.go) only recognizes SchemaValidationErr,
+// SignValidationErr, BadReqErr, NotFoundErr, and AckNoCallbackErr. Callers
+// must wrap the result in one of those types before returning it from a
+// Step — returning it bare falls through to a generic 500 Internal Server
+// Error instead of the intended NACK code.
+func NewCodedError(code, message string) *Error {
+	return &Error{Code: code, Message: message}
+}
+
 // ErrorDetails carries optional structured context for an Error: a JSONPath to
 // the failing field, and/or a chained root-cause Error from a downstream layer.
 type ErrorDetails struct {
@@ -65,6 +80,7 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	var paths []string
 	var messages []string
 	hasPath := false
+	code := ""
 	for _, err := range e.Errors {
 		p := err.path()
 		if p != "" {
@@ -72,6 +88,16 @@ func (e *SchemaValidationErr) BecknError() *Error {
 		}
 		paths = append(paths, p)
 		messages = append(messages, err.Message)
+		// First non-empty per-cause code wins. The other causes' text is
+		// still fully present in Message/Details.Path — only their
+		// individual Code is not separately represented on the wire, since
+		// a single Error can only carry one code.
+		if code == "" && err.Code != "" {
+			code = err.Code
+		}
+	}
+	if code == "" {
+		code = http.StatusText(http.StatusBadRequest)
 	}
 
 	var details *ErrorDetails
@@ -80,7 +106,7 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	}
 
 	return &Error{
-		Code:    http.StatusText(http.StatusBadRequest),
+		Code:    code,
 		Details: details,
 		Message: strings.Join(messages, "; "),
 	}
