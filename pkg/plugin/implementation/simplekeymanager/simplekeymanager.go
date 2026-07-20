@@ -66,14 +66,14 @@ var (
 	ErrKeyExpiredOrRevoked = errors.New("subscriber key is expired or revoked")
 )
 
-// nonUsableKeyStatuses are the model.Subscription.Status values that indicate a
-// matched subscriber's key is no longer valid for signature verification, as
-// distinct from "no such subscriber/key" (zero results from Lookup).
-var nonUsableKeyStatuses = map[string]bool{
-	"EXPIRED":      true,
-	"UNSUBSCRIBED": true,
-	"INVALID_SSL":  true,
-}
+// AUT_* codes reachable from LookupNPKeys.
+const (
+	// codeSubscriberNotFound is used when the registry lookup returns zero results.
+	codeSubscriberNotFound = "AUT_SUBSCRIBER_NOT_FOUND"
+	// codeKeyExpiredOrRevoked is used when a matched subscriber's key is no
+	// longer usable per model.IsKeyStatusUsable.
+	codeKeyExpiredOrRevoked = "AUT_KEY_EXPIRED_OR_REVOKED"
+)
 
 // ValidateCfg validates the SimpleKeyManager configuration.
 func ValidateCfg(cfg *Config) error {
@@ -285,10 +285,10 @@ func (skm *SimpleKeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueK
 			return "", "", fmt.Errorf("failed to lookup registry: %w", err)
 		}
 		if len(subscribers) == 0 {
-			return "", "", model.NewCodedSignValidationErr("AUT_SUBSCRIBER_NOT_FOUND", ErrSubscriberNotFound)
+			return "", "", model.NewCodedSignValidationErr(codeSubscriberNotFound, ErrSubscriberNotFound)
 		}
-		if nonUsableKeyStatuses[subscribers[0].Status] {
-			return "", "", model.NewCodedSignValidationErr("AUT_KEY_EXPIRED_OR_REVOKED", ErrKeyExpiredOrRevoked)
+		if !model.IsKeyStatusUsable(subscribers[0].Status) {
+			return "", "", model.NewCodedSignValidationErr(codeKeyExpiredOrRevoked, ErrKeyExpiredOrRevoked)
 		}
 	}
 

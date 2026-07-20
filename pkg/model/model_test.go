@@ -2,6 +2,29 @@ package model
 
 import "testing"
 
+func TestIsKeyStatusUsable(t *testing.T) {
+	tests := []struct {
+		status string
+		want   bool
+	}{
+		{status: "SUBSCRIBED", want: true},
+		{status: "INITIATED", want: true},
+		{status: "UNDER_SUBSCRIPTION", want: true},
+		{status: "", want: true},
+		{status: "EXPIRED", want: false},
+		{status: "UNSUBSCRIBED", want: false},
+		{status: "INVALID_SSL", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			if got := IsKeyStatusUsable(tt.status); got != tt.want {
+				t.Errorf("IsKeyStatusUsable(%q) = %v, want %v", tt.status, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveCallerID(t *testing.T) {
 	tests := []struct {
 		name string
