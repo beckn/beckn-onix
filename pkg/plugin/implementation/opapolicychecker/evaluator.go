@@ -428,11 +428,18 @@ func (e *Evaluator) Evaluate(ctx context.Context, body []byte) ([]model.Error, e
 	return extractViolations(ctx, rs)
 }
 
+// genericDenialMessage is used whenever a policy result clearly signals a
+// denial (a non-empty deny-shaped value, or a malformed attempt at one) but
+// its content can't be parsed into a more specific violation.
+const genericDenialMessage = "policy denied the request"
+
 // extractViolations pulls violations from the OPA result set.
 // Supported query output formats:
 //   - map with {"valid": bool, "violations": [...]}: structured policy_query_path
 //     result. Each violation entry may be a plain string (legacy, no code) or an
-//     object {"code": "POL_...", "message": "..."} (Code is preserved).
+//     object {"code": "POL_...", "message": "..."} (Code is preserved). A map
+//     that doesn't fully match this shape (a missing or wrong-typed key) still
+//     produces one generic violation rather than being silently ignored.
 //   - []interface{} / set: each item may be a plain string (legacy, no code) or
 //     an object {"code": "POL_...", "message": "..."} (Code is preserved) — the
 //     same two shapes accepted by the structured format above. A non-empty set
@@ -453,7 +460,7 @@ func extractViolations(ctx context.Context, rs rego.ResultSet) ([]model.Error, e
 			case bool:
 				// allow/deny pattern: false = denied
 				if !v {
-					violations = append(violations, model.Error{Message: "policy denied the request"})
+					violations = append(violations, model.Error{Message: genericDenialMessage})
 				}
 			case string:
 				// single violation string
@@ -462,19 +469,18 @@ func extractViolations(ctx context.Context, rs rego.ResultSet) ([]model.Error, e
 				}
 			case []interface{}:
 				// Result is a list (from set)
-				var itemViolations []model.Error
+				lenBefore := len(violations)
 				for _, item := range v {
 					if e, ok := parseViolationItem(ctx, item); ok {
-						itemViolations = append(itemViolations, e)
+						violations = append(violations, e)
 					}
 				}
 				// A non-empty set is itself a deny signal — don't let every item
 				// failing to parse (e.g. an empty string, or a malformed/unsupported
 				// item) silently flip the result to compliant.
-				if len(v) > 0 && len(itemViolations) == 0 {
-					itemViolations = append(itemViolations, model.Error{Message: "policy denied the request"})
+				if len(v) > 0 && len(violations) == lenBefore {
+					violations = append(violations, model.Error{Message: genericDenialMessage})
 				}
-				violations = append(violations, itemViolations...)
 			case map[string]interface{}:
 				if vs := extractStructuredViolations(ctx, v); vs != nil {
 					violations = append(violations, vs...)
@@ -527,23 +533,25 @@ func parseViolationItem(ctx context.Context, item interface{}) (model.Error, boo
 // parseViolationItem — either a plain string (legacy — Code left empty) or an
 // object {"code": "POL_...", "message": "..."} (Code preserved for the
 // caller's classification). Returns the parsed violations if the map matches
-// this format, or nil if it doesn't.
+// this format; nil if the map has neither key (not an attempt at this format
+// at all — some other, unrelated map result); or one generic denial if the
+// map has only one of the two keys, or either key has the wrong type (a
+// malformed attempt at this format must not be silently treated as
+// compliant).
 func extractStructuredViolations(ctx context.Context, m map[string]interface{}) []model.Error {
 	validRaw, hasValid := m["valid"]
 	violationsRaw, hasViolations := m["violations"]
 
-	if !hasValid || !hasViolations {
+	if !hasValid && !hasViolations {
 		return nil
 	}
 
-	valid, ok := validRaw.(bool)
-	if !ok {
-		return nil
-	}
+	valid, validOK := validRaw.(bool)
+	violationsList, violationsOK := violationsRaw.([]interface{})
 
-	violationsList, ok := violationsRaw.([]interface{})
-	if !ok {
-		return nil
+	if !hasValid || !hasViolations || !validOK || !violationsOK {
+		log.Debugf(ctx, "OPAPolicyChecker: malformed structured policy result (expected {\"valid\": bool, \"violations\": [...]}), got %+v; treating as a denial", m)
+		return []model.Error{{Message: genericDenialMessage}}
 	}
 
 	// If valid is true and violations is empty, no violations
@@ -560,7 +568,7 @@ func extractStructuredViolations(ctx context.Context, m map[string]interface{}) 
 
 	// If valid is false but violations is empty, report a generic violation
 	if !valid && len(violations) == 0 {
-		violations = append(violations, model.Error{Message: "policy denied the request"})
+		violations = append(violations, model.Error{Message: genericDenialMessage})
 	}
 
 	return violations

@@ -405,6 +405,60 @@ violations contains msg if {
 	}
 }
 
+// TestEvaluator_BareStringResult_WithViolation and
+// TestEvaluator_BareStringResult_EmptyStringIsCompliant cover extractViolations'
+// top-level `case string:` branch (a bare single-string Rego result, not a
+// set) — the branch commit 0c496d6 routed through parseViolationItem but that
+// left it with 0% test coverage, flagged in self-review.
+func TestEvaluator_BareStringResult_WithViolation(t *testing.T) {
+	policy := `
+package policy
+import rego.v1
+deny_reason := "order value exceeds limit" if {
+    input.value > 1000
+}
+`
+	dir := writePolicyDir(t, "test.rego", policy)
+	eval, err := NewEvaluator([]string{dir}, "data.policy.deny_reason", nil, false, 0, nil)
+	if err != nil {
+		t.Fatalf("NewEvaluator failed: %v", err)
+	}
+
+	violations, err := eval.Evaluate(context.Background(), []byte(`{"value": 2000}`))
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %v", len(violations), violations)
+	}
+	if violations[0].Message != "order value exceeds limit" {
+		t.Errorf("unexpected violation: %q", violations[0].Message)
+	}
+}
+
+func TestEvaluator_BareStringResult_EmptyStringIsCompliant(t *testing.T) {
+	policy := `
+package policy
+import rego.v1
+deny_reason := "" if {
+    input.value > 1000
+}
+`
+	dir := writePolicyDir(t, "test.rego", policy)
+	eval, err := NewEvaluator([]string{dir}, "data.policy.deny_reason", nil, false, 0, nil)
+	if err != nil {
+		t.Fatalf("NewEvaluator failed: %v", err)
+	}
+
+	violations, err := eval.Evaluate(context.Background(), []byte(`{"value": 2000}`))
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Errorf("expected 0 violations for empty string result, got %v", violations)
+	}
+}
+
 func TestEvaluator_RuntimeConfig(t *testing.T) {
 	policy := `
 package policy
@@ -1476,6 +1530,108 @@ func TestExtractStructuredViolations_ObjectItemEdgeCases(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("violations[%d] = %+v, want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+// TestExtractStructuredViolations_MalformedShape_FallsBackToGenericViolation is
+// a regression test for a fail-open bug found in self-review: a map with only
+// one of "valid"/"violations", or either key present with the wrong JSON type,
+// was silently returned as nil — discarding any populated violations the map
+// carried and letting a request the policy clearly denied through as
+// compliant. This confirms the fix: any map that looks like an attempted
+// structured result but doesn't fully match the expected shape now falls back
+// to a generic denial instead of nil.
+func TestExtractStructuredViolations_MalformedShape_FallsBackToGenericViolation(t *testing.T) {
+	tests := []struct {
+		name string
+		m    map[string]interface{}
+	}{
+		{
+			name: "violations present without valid",
+			m: map[string]interface{}{
+				"violations": []interface{}{
+					map[string]interface{}{"code": "POL_KYC_REQUIRED", "message": "kyc required"},
+				},
+			},
+		},
+		{
+			name: "valid present without violations",
+			m: map[string]interface{}{
+				"valid": false,
+			},
+		},
+		{
+			name: "valid has wrong type",
+			m: map[string]interface{}{
+				"valid":      "false",
+				"violations": []interface{}{"some violation"},
+			},
+		},
+		{
+			name: "violations has wrong type",
+			m: map[string]interface{}{
+				"valid":      false,
+				"violations": "some violation",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractStructuredViolations(context.Background(), tt.m)
+			if len(got) != 1 || got[0].Message != "policy denied the request" {
+				t.Errorf("extractStructuredViolations(%+v) = %v, want a single generic denial violation — a malformed structured result must not be silently treated as compliant", tt.m, got)
+			}
+		})
+	}
+}
+
+// TestExtractStructuredViolations_NeitherKeyPresent_ReturnsNil confirms the
+// boundary the fix above must not cross: a map with neither "valid" nor
+// "violations" isn't an attempt at this format at all (some other, unrelated
+// map result at this query path) and should still be ignored, not treated as
+// a denial.
+func TestExtractStructuredViolations_NeitherKeyPresent_ReturnsNil(t *testing.T) {
+	got := extractStructuredViolations(context.Background(), map[string]interface{}{"foo": "bar"})
+	if got != nil {
+		t.Errorf("expected nil for a map with neither valid nor violations key, got %v", got)
+	}
+}
+
+// TestEnforcer_StructuredResult_MissingValidKey_StillDenies is the CheckPolicy
+// end-to-end counterpart: confirms a structured result missing "valid" (e.g.
+// an incomplete migration to the structured shape) still denies the request
+// and the violation's code survives to the final NACK, rather than being
+// silently allowed.
+func TestEnforcer_StructuredResult_MissingValidKey_StillDenies(t *testing.T) {
+	policy := `
+package policy
+import rego.v1
+result := {"violations": [{"code": "POL_KYC_REQUIRED", "message": "kyc required"}]} if {
+    input.context.action == "confirm"
+}
+`
+	dir := writePolicyDir(t, "test.rego", policy)
+
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.result\n")
+	enforcer, err := New(context.Background(), map[string]string{
+		"networkPolicyConfig": configPath,
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	ctx := makeStepCtx("confirm", `{"context": {"action": "confirm"}}`)
+	err = enforcer.CheckPolicy(ctx)
+	if err == nil {
+		t.Fatal("expected error (request must be denied), got nil — a structured result missing the \"valid\" key must not be silently allowed")
+	}
+
+	badReqErr, ok := err.(*model.BadReqErr)
+	if !ok {
+		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+	}
+	if code := badReqErr.BecknError().Code; code != "POL_GENERIC_ERROR" {
+		t.Errorf("BecknError().Code = %s, want POL_GENERIC_ERROR", code)
 	}
 }
 

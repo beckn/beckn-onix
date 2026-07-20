@@ -696,7 +696,8 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 
 	msg := fmt.Sprintf("policy violation(s): %s", strings.Join(violationMessages(violations), "; "))
 	log.Warnf(ctx, "OPAPolicyChecker: networkID=%q%s %s", reqCtx.NetworkID, requestLogCtx, msg)
-	return model.NewCodedBadReqErr(model.FirstNonEmptyCode(violations, "POL_GENERIC_ERROR"), fmt.Errorf("%s", msg))
+	code := model.FirstNonEmptyCode(violations, "POL_GENERIC_ERROR")
+	return model.NewCodedBadReqErr(code, fmt.Errorf("%s", msg))
 }
 
 // violationMessages extracts each violation's human-readable message, in order.
