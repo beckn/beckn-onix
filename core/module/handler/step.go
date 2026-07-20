@@ -194,10 +194,13 @@ func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 		log.Debugf(ctx, "Validating %v Header", model.AuthHeaderGateway)
 		if err := s.validate(ctx, headerValue, "", false); err != nil {
 			ctx.RespHeader.Set(model.UnaAuthorizedHeaderGateway, unauthHeader)
-			// s.validate always returns an already-classified *model.SignValidationErr;
-			// wrap with plain fmt.Errorf (not model.NewSignValidationErr) so errors.As
-			// still finds that inner classification instead of shadowing it with a new,
-			// default-coded wrapper.
+			// s.validate returns an already-classified *model.SignValidationErr for
+			// most failure paths (keymanager lookup, signvalidator crypto/timestamp
+			// checks) — wrap with plain fmt.Errorf (not model.NewSignValidationErr)
+			// so errors.As still finds that inner classification instead of
+			// shadowing it with a new, default-coded wrapper. Its own header-parse
+			// and algorithm-mismatch checks still return unclassified errors that
+			// fall through to a generic 500 either way; see #864 follow-up.
 			return fmt.Errorf("failed to validate %s: %w", model.AuthHeaderGateway, err)
 		}
 	}
