@@ -332,6 +332,79 @@ violations contains {"code": "POL_GEO_RESTRICTED", "message": "delivery not offe
 	}
 }
 
+// TestEvaluator_BareSetResult_UnparseableItem_FallsBackToGenericViolation is a
+// regression test for a fail-open bug found in self-review: once
+// parseViolationItem started dropping empty-string items (to correctly reject
+// malformed coded objects), a bare-set violation whose only item was an empty
+// string would parse to zero violations with no fallback — unlike the
+// structured {"valid",...} format, which falls back to a generic violation
+// when valid=false but the violations list is empty. This confirms the fix:
+// a non-empty set that yields zero parseable items still produces one
+// generic violation.
+func TestEvaluator_BareSetResult_UnparseableItem_FallsBackToGenericViolation(t *testing.T) {
+	policy := `
+package policy
+import rego.v1
+violations contains msg if {
+    input.context.action == "confirm"
+    msg := ""
+}
+`
+	dir := writePolicyDir(t, "test.rego", policy)
+	eval, err := NewEvaluator([]string{dir}, "data.policy.violations", nil, false, 0, nil)
+	if err != nil {
+		t.Fatalf("NewEvaluator failed: %v", err)
+	}
+
+	violations, err := eval.Evaluate(context.Background(), []byte(`{"context": {"action": "confirm"}}`))
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 fallback violation, got %d: %v — a non-empty violations set must not be silently dropped just because its item didn't parse", len(violations), violations)
+	}
+	if violations[0].Message == "" {
+		t.Errorf("expected a non-empty fallback message, got empty")
+	}
+}
+
+// TestEnforcer_BareSetResult_UnparseableItem_StillDenies is the CheckPolicy
+// end-to-end counterpart: confirms a bare-set violation with an unparseable
+// item still denies the request (not silently allows it).
+func TestEnforcer_BareSetResult_UnparseableItem_StillDenies(t *testing.T) {
+	policy := `
+package policy
+import rego.v1
+violations contains msg if {
+    input.context.action == "confirm"
+    msg := ""
+}
+`
+	dir := writePolicyDir(t, "test.rego", policy)
+
+	configPath := writeDefaultOnlyNetworkPolicyConfig(t, "type: dir\nlocation: "+dir+"\nquery: data.policy.violations\n")
+	enforcer, err := New(context.Background(), map[string]string{
+		"networkPolicyConfig": configPath,
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	ctx := makeStepCtx("confirm", `{"context": {"action": "confirm"}}`)
+	err = enforcer.CheckPolicy(ctx)
+	if err == nil {
+		t.Fatal("expected error (request must be denied), got nil — a non-empty violations set must not be silently allowed just because its item didn't parse")
+	}
+
+	badReqErr, ok := err.(*model.BadReqErr)
+	if !ok {
+		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+	}
+	if code := badReqErr.BecknError().Code; code != "POL_GENERIC_ERROR" {
+		t.Errorf("BecknError().Code = %s, want POL_GENERIC_ERROR", code)
+	}
+}
+
 func TestEvaluator_RuntimeConfig(t *testing.T) {
 	policy := `
 package policy
@@ -877,37 +950,6 @@ func TestEnforcer_UninitializedEvaluator_UsesGenericCode(t *testing.T) {
 	}
 	if code := badReqErr.BecknError().Code; code != "POL_GENERIC_ERROR" {
 		t.Errorf("BecknError().Code = %s, want POL_GENERIC_ERROR", code)
-	}
-}
-
-func TestViolationCode(t *testing.T) {
-	tests := []struct {
-		name       string
-		violations []model.Error
-		want       string
-	}{
-		{
-			name:       "first non-empty code wins",
-			violations: []model.Error{{Message: "m1"}, {Code: "POL_KYC_REQUIRED", Message: "m2"}, {Code: "POL_GEO_RESTRICTED", Message: "m3"}},
-			want:       "POL_KYC_REQUIRED",
-		},
-		{
-			name:       "no violation has a code falls back to generic",
-			violations: []model.Error{{Message: "m1"}, {Message: "m2"}},
-			want:       "POL_GENERIC_ERROR",
-		},
-		{
-			name:       "empty slice falls back to generic",
-			violations: nil,
-			want:       "POL_GENERIC_ERROR",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := violationCode(tt.violations); got != tt.want {
-				t.Errorf("violationCode() = %s, want %s", got, tt.want)
-			}
-		})
 	}
 }
 

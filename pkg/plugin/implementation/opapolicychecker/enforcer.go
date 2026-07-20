@@ -696,7 +696,7 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 
 	msg := fmt.Sprintf("policy violation(s): %s", strings.Join(violationMessages(violations), "; "))
 	log.Warnf(ctx, "OPAPolicyChecker: networkID=%q%s %s", reqCtx.NetworkID, requestLogCtx, msg)
-	return model.NewCodedBadReqErr(violationCode(violations), fmt.Errorf("%s", msg))
+	return model.NewCodedBadReqErr(model.FirstNonEmptyCode(violations, "POL_GENERIC_ERROR"), fmt.Errorf("%s", msg))
 }
 
 // violationMessages extracts each violation's human-readable message, in order.
@@ -706,16 +706,6 @@ func violationMessages(violations []model.Error) []string {
 		messages[i] = v.Message
 	}
 	return messages
-}
-
-// violationCode picks the first non-empty per-violation code, falling back to
-// POL_GENERIC_ERROR when no violation carries a specific classification (e.g.
-// every violation came from a policy that only emits plain violation strings,
-// per today's OPA result contract). The other violations' text is still fully
-// present in the joined message — only their individual Code, if any, doesn't
-// separately reach the wire, since a single Error can only carry one code.
-func violationCode(violations []model.Error) string {
-	return model.FirstNonEmptyCode(violations, "POL_GENERIC_ERROR")
 }
 
 func (e *PolicyEnforcer) Close() {

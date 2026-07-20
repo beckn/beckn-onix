@@ -435,7 +435,9 @@ func (e *Evaluator) Evaluate(ctx context.Context, body []byte) ([]model.Error, e
 //     object {"code": "POL_...", "message": "..."} (Code is preserved).
 //   - []interface{} / set: each item may be a plain string (legacy, no code) or
 //     an object {"code": "POL_...", "message": "..."} (Code is preserved) — the
-//     same two shapes accepted by the structured format above.
+//     same two shapes accepted by the structured format above. A non-empty set
+//     that yields zero parseable items still produces one generic violation,
+//     mirroring the structured format's invalid-with-no-violations fallback.
 //   - bool: false = denied ("policy denied the request"), true = allowed.
 //   - string: non-empty = violation message, no code.
 //   - empty/undefined: allowed (no violations).
@@ -455,16 +457,24 @@ func extractViolations(ctx context.Context, rs rego.ResultSet) ([]model.Error, e
 				}
 			case string:
 				// single violation string
-				if v != "" {
-					violations = append(violations, model.Error{Message: v})
+				if e, ok := parseViolationItem(ctx, v); ok {
+					violations = append(violations, e)
 				}
 			case []interface{}:
 				// Result is a list (from set)
+				var itemViolations []model.Error
 				for _, item := range v {
 					if e, ok := parseViolationItem(ctx, item); ok {
-						violations = append(violations, e)
+						itemViolations = append(itemViolations, e)
 					}
 				}
+				// A non-empty set is itself a deny signal — don't let every item
+				// failing to parse (e.g. an empty string, or a malformed/unsupported
+				// item) silently flip the result to compliant.
+				if len(v) > 0 && len(itemViolations) == 0 {
+					itemViolations = append(itemViolations, model.Error{Message: "policy denied the request"})
+				}
+				violations = append(violations, itemViolations...)
 			case map[string]interface{}:
 				if vs := extractStructuredViolations(ctx, v); vs != nil {
 					violations = append(violations, vs...)
