@@ -222,7 +222,7 @@ func TestValidateSignStep_InitSteps_WithPayloadStore(t *testing.T) {
 // verify real signatures in unit tests.
 func testKeyset() *model.Keyset {
 	return &model.Keyset{
-		UniqueKeyID:   "key-1",
+		UniqueKeyID:    "key-1",
 		SigningPrivate: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 	}
 }
@@ -423,6 +423,55 @@ func TestValidateHeaders_SolicitedCallback_PreV2_FallsBackToValidate(t *testing.
 	}
 	if !sv.validateCalled {
 		t.Error("expected Validate to be called for pre-v2 version")
+	}
+}
+
+// TestValidateHeaders_PreservesClassifiedCode verifies that validateHeaders
+// propagates the AUT_* code a lower layer already classified (signvalidator's
+// Validate/ValidateAck or keymanager's LookupNPKeys) instead of shadowing it
+// with a fresh, default-coded model.NewSignValidationErr wrapper.
+func TestValidateHeaders_PreservesClassifiedCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		sv       *mockSignValidatorBasic
+		km       *mockKMBasic
+		wantCode string
+	}{
+		{
+			name:     "Validate returns a classified error",
+			sv:       &mockSignValidatorBasic{validateErr: model.NewCodedSignValidationErr("AUT_UNAUTHORIZED_ACTION", errors.New("identity mismatch"))},
+			km:       &mockKMBasic{publicKey: "pubKey=="},
+			wantCode: "AUT_UNAUTHORIZED_ACTION",
+		},
+		{
+			name:     "LookupNPKeys returns a classified error",
+			sv:       &mockSignValidatorBasic{},
+			km:       &mockKMBasic{lookupErr: model.NewCodedSignValidationErr("AUT_SUBSCRIBER_NOT_FOUND", errors.New("no subscriber found with given credentials"))},
+			wantCode: "AUT_SUBSCRIBER_NOT_FOUND",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			step, _ := newValidateSignStep(tt.sv, tt.km, nil)
+			vStep := step.(*validateSignStep)
+
+			ctx := makeValidateStepCtx("2.0.0", "msg-vh-code", "bap.example.com",
+				providerInitiatedAuthHeader("bpp.example.com"),
+				`{"context":{"action":"on_search","messageId":"msg-vh-code","version":"2.0.0"}}`)
+
+			err := vStep.validateHeaders(ctx)
+			if err == nil {
+				t.Fatal("expected an error but got none")
+			}
+			var signErr *model.SignValidationErr
+			if !errors.As(err, &signErr) {
+				t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+			}
+			if signErr.Code != tt.wantCode {
+				t.Errorf("signErr.Code = %s, want %s (validateHeaders must not shadow the inner classification)", signErr.Code, tt.wantCode)
+			}
+		})
 	}
 }
 

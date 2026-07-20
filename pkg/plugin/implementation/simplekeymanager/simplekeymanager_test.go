@@ -3,15 +3,23 @@ package simplekeymanager
 import (
 	"context"
 	"encoding/base64"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
 // Mock implementations for testing
-type mockRegistry struct{}
+type mockRegistry struct {
+	// LookupFunc overrides the default lookup behavior when set.
+	LookupFunc func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error)
+}
 
 func (m *mockRegistry) Lookup(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
+	if m.LookupFunc != nil {
+		return m.LookupFunc(ctx, sub)
+	}
 	return []model.Subscription{
 		{
 			Subscriber: model.Subscriber{
@@ -43,12 +51,12 @@ func TestValidateCfg(t *testing.T) {
 		{
 			name: "valid config with all keys",
 			cfg: &Config{
-				SubscriberID: "test-np",
-				KeyID:        "test-key",
-				SigningPrivateKey:  "dGVzdC1zaWduaW5nLXByaXZhdGU=",
-				SigningPublicKey:   "dGVzdC1zaWduaW5nLXB1YmxpYw==",
-				EncrPrivateKey:     "dGVzdC1lbmNyLXByaXZhdGU=",
-				EncrPublicKey:      "dGVzdC1lbmNyLXB1YmxpYw==",
+				SubscriberID:      "test-np",
+				KeyID:             "test-key",
+				SigningPrivateKey: "dGVzdC1zaWduaW5nLXByaXZhdGU=",
+				SigningPublicKey:  "dGVzdC1zaWduaW5nLXB1YmxpYw==",
+				EncrPrivateKey:    "dGVzdC1lbmNyLXByaXZhdGU=",
+				EncrPublicKey:     "dGVzdC1lbmNyLXB1YmxpYw==",
 			},
 			wantErr: false,
 		},
@@ -95,12 +103,12 @@ func TestNew(t *testing.T) {
 		{
 			name: "valid config with keys",
 			cfg: &Config{
-				SubscriberID:     "test-np",
-				KeyID:            "test-key",
+				SubscriberID:      "test-np",
+				KeyID:             "test-key",
 				SigningPrivateKey: "dGVzdC1zaWduaW5nLXByaXZhdGU=",
 				SigningPublicKey:  "dGVzdC1zaWduaW5nLXB1YmxpYw==",
-				EncrPrivateKey:   "dGVzdC1lbmNyLXByaXZhdGU=",
-				EncrPublicKey:    "dGVzdC1lbmNyLXB1YmxpYw==",
+				EncrPrivateKey:    "dGVzdC1lbmNyLXByaXZhdGU=",
+				EncrPublicKey:     "dGVzdC1lbmNyLXB1YmxpYw==",
 			},
 			wantErr: false,
 		},
@@ -333,6 +341,75 @@ func TestLookupNPKeys(t *testing.T) {
 	}
 }
 
+func TestLookupNPKeys_SubscriberNotFound(t *testing.T) {
+	skm := &SimpleKeyMgr{
+		Registry: &mockRegistry{
+			LookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
+				return nil, nil
+			},
+		},
+	}
+
+	_, _, err := skm.LookupNPKeys(context.Background(), "test-subscriber", "test-key")
+	if err == nil {
+		t.Fatal("expected an error but got none")
+	}
+	if !strings.Contains(err.Error(), "no subscriber found with given credentials") {
+		t.Errorf("err = %v, want message to contain 'no subscriber found with given credentials'", err)
+	}
+	var signErr *model.SignValidationErr
+	if !errors.As(err, &signErr) {
+		t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+	}
+	if signErr.Code != "AUT_SUBSCRIBER_NOT_FOUND" {
+		t.Errorf("signErr.Code = %s, want AUT_SUBSCRIBER_NOT_FOUND", signErr.Code)
+	}
+	if !errors.Is(err, ErrSubscriberNotFound) {
+		t.Error("expected errors.Is(err, ErrSubscriberNotFound) = true")
+	}
+}
+
+func TestLookupNPKeys_KeyExpiredOrRevoked(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+	}{
+		{name: "EXPIRED", status: "EXPIRED"},
+		{name: "UNSUBSCRIBED", status: "UNSUBSCRIBED"},
+		{name: "INVALID_SSL", status: "INVALID_SSL"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			skm := &SimpleKeyMgr{
+				Registry: &mockRegistry{
+					LookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
+						return []model.Subscription{{Status: tt.status}}, nil
+					},
+				},
+			}
+
+			_, _, err := skm.LookupNPKeys(context.Background(), "test-subscriber", "test-key")
+			if err == nil {
+				t.Fatal("expected an error but got none")
+			}
+			if !strings.Contains(err.Error(), "subscriber key is expired or revoked") {
+				t.Errorf("err = %v, want message to contain 'subscriber key is expired or revoked'", err)
+			}
+			var signErr *model.SignValidationErr
+			if !errors.As(err, &signErr) {
+				t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+			}
+			if signErr.Code != "AUT_KEY_EXPIRED_OR_REVOKED" {
+				t.Errorf("signErr.Code = %s, want AUT_KEY_EXPIRED_OR_REVOKED", signErr.Code)
+			}
+			if !errors.Is(err, ErrKeyExpiredOrRevoked) {
+				t.Error("expected errors.Is(err, ErrKeyExpiredOrRevoked) = true")
+			}
+		})
+	}
+}
+
 func TestParseKey(t *testing.T) {
 	skm := &SimpleKeyMgr{}
 
@@ -370,12 +447,12 @@ func TestLoadKeysFromConfig(t *testing.T) {
 
 	// Test with valid config
 	cfg := &Config{
-		SubscriberID: "test-np",
-		KeyID:        "test-key",
-		SigningPrivateKey:  base64.StdEncoding.EncodeToString([]byte("signing-private")),
-		SigningPublicKey:   base64.StdEncoding.EncodeToString([]byte("signing-public")),
-		EncrPrivateKey:     base64.StdEncoding.EncodeToString([]byte("encr-private")),
-		EncrPublicKey:      base64.StdEncoding.EncodeToString([]byte("encr-public")),
+		SubscriberID:      "test-np",
+		KeyID:             "test-key",
+		SigningPrivateKey: base64.StdEncoding.EncodeToString([]byte("signing-private")),
+		SigningPublicKey:  base64.StdEncoding.EncodeToString([]byte("signing-public")),
+		EncrPrivateKey:    base64.StdEncoding.EncodeToString([]byte("encr-private")),
+		EncrPublicKey:     base64.StdEncoding.EncodeToString([]byte("encr-public")),
 	}
 
 	err := skm.loadKeysFromConfig(ctx, cfg)

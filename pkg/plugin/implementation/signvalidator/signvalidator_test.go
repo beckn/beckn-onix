@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -214,18 +215,21 @@ func TestVerifyFailure(t *testing.T) {
 		header      string
 		pubKey      string
 		errContains string
+		wantCode    string
 	}{
 		{
-			name:   "Missing Authorization Header",
-			body:   []byte("Test Payload"),
-			header: "",
-			pubKey: publicKeyBase64,
+			name:     "Missing Authorization Header",
+			body:     []byte("Test Payload"),
+			header:   "",
+			pubKey:   publicKeyBase64,
+			wantCode: codeSignatureInvalid,
 		},
 		{
-			name:   "Malformed Header",
-			body:   []byte("Test Payload"),
-			header: `InvalidSignature created="wrong"`,
-			pubKey: publicKeyBase64,
+			name:     "Malformed Header",
+			body:     []byte("Test Payload"),
+			header:   `InvalidSignature created="wrong"`,
+			pubKey:   publicKeyBase64,
+			wantCode: codeSignatureInvalid,
 		},
 		{
 			name: "Unsupported Algorithm",
@@ -233,7 +237,8 @@ func TestVerifyFailure(t *testing.T) {
 			header: `Signature algorithm="rsa", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
 				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) +
 				`", signature="somesig=="`,
-			pubKey: publicKeyBase64,
+			pubKey:   publicKeyBase64,
+			wantCode: codeSignatureInvalid,
 		},
 		{
 			name: "Missing Algorithm",
@@ -241,7 +246,8 @@ func TestVerifyFailure(t *testing.T) {
 			header: `Signature created="` + strconv.FormatInt(time.Now().Unix(), 10) +
 				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) +
 				`", signature="somesig=="`,
-			pubKey: publicKeyBase64,
+			pubKey:   publicKeyBase64,
+			wantCode: codeSignatureInvalid,
 		},
 		{
 			name: "Invalid Base64 Signature",
@@ -249,7 +255,8 @@ func TestVerifyFailure(t *testing.T) {
 			header: `Signature algorithm="ed25519", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
 				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) +
 				`", signature="!!INVALIDBASE64!!"`,
-			pubKey: publicKeyBase64,
+			pubKey:   publicKeyBase64,
+			wantCode: codeSignatureInvalid,
 		},
 		{
 			name: "Expired Signature",
@@ -259,6 +266,7 @@ func TestVerifyFailure(t *testing.T) {
 				`", signature="` + signTestData(privateKeyBase64, []byte("Test Payload"), time.Now().Unix()-7200, time.Now().Unix()-3600) + `"`,
 			pubKey:      publicKeyBase64,
 			errContains: "expired_by=",
+			wantCode:    codeSignatureInvalid,
 		},
 		{
 			name: "Invalid Public Key",
@@ -266,21 +274,24 @@ func TestVerifyFailure(t *testing.T) {
 			header: `Signature algorithm="ed25519", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
 				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) +
 				`", signature="` + signTestData(privateKeyBase64, []byte("Test Payload"), time.Now().Unix(), time.Now().Unix()+3600) + `"`,
-			pubKey: wrongPublicKeyBase64,
+			pubKey:   wrongPublicKeyBase64,
+			wantCode: codeSignatureInvalid,
 		},
 		{
 			name: "Invalid Expires Timestamp",
 			body: []byte("Test Payload"),
 			header: `Signature algorithm="ed25519", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
 				`", expires="invalid_timestamp"`,
-			pubKey: publicKeyBase64,
+			pubKey:   publicKeyBase64,
+			wantCode: codeSignatureInvalid,
 		},
 		{
 			name: "Signature Missing in Headers",
 			body: []byte("Test Payload"),
 			header: `Signature algorithm="ed25519", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
 				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) + `"`,
-			pubKey: publicKeyBase64,
+			pubKey:   publicKeyBase64,
+			wantCode: codeSignatureMissing,
 		},
 	}
 
@@ -294,6 +305,13 @@ func TestVerifyFailure(t *testing.T) {
 			}
 			if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 				t.Fatalf("Expected error to contain %q, got: %v", tt.errContains, err)
+			}
+			var signErr *model.SignValidationErr
+			if !errors.As(err, &signErr) {
+				t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+			}
+			if signErr.Code != tt.wantCode {
+				t.Errorf("signErr.Code = %s, want %s", signErr.Code, tt.wantCode)
 			}
 			if close != nil {
 				if err := close(); err != nil {
@@ -329,8 +347,16 @@ func TestValidate_SubIdentity_FromContext_Mismatch(t *testing.T) {
 
 	verifier, _, _ := New(context.Background(), &Config{})
 	ctx := makeCtxWithCallerID(body, model.RoleBPP, "bap.example.com")
-	if err := verifier.Validate(ctx, header, publicKey, true); err == nil {
+	err := verifier.Validate(ctx, header, publicKey, true)
+	if err == nil {
 		t.Fatal("expected error: signer evil.com does not match callerID bap.example.com")
+	}
+	var signErr *model.SignValidationErr
+	if !errors.As(err, &signErr) {
+		t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+	}
+	if signErr.Code != codeUnauthorizedAction {
+		t.Errorf("signErr.Code = %s, want %s", signErr.Code, codeUnauthorizedAction)
 	}
 }
 
@@ -448,8 +474,16 @@ func TestValidateAck_SubIdentity_FromContext_Mismatch(t *testing.T) {
 
 	verifier, _, _ := New(context.Background(), &Config{})
 	ctx := makeCtxWithCallerID(body, model.RoleBPP, "bap.example.com")
-	if err := verifier.ValidateAck(ctx, body, header, outboundAuth, publicKey, true); err == nil {
+	err := verifier.ValidateAck(ctx, body, header, outboundAuth, publicKey, true)
+	if err == nil {
 		t.Fatal("expected error: signer evil.com does not match callerID bap.example.com")
+	}
+	var signErr *model.SignValidationErr
+	if !errors.As(err, &signErr) {
+		t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+	}
+	if signErr.Code != codeUnauthorizedAction {
+		t.Errorf("signErr.Code = %s, want %s", signErr.Code, codeUnauthorizedAction)
 	}
 }
 
