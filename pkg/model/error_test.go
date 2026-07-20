@@ -26,6 +26,19 @@ func NewBadReqErrf(format string, a ...any) *BadReqErr {
 	return &BadReqErr{fmt.Errorf(format, a...)}
 }
 
+func TestNewCodedError(t *testing.T) {
+	err := NewCodedError("SCH_INVALID_ENUM", "value must be one of the allowed options")
+	if err.Code != "SCH_INVALID_ENUM" {
+		t.Errorf("Code = %s, want SCH_INVALID_ENUM", err.Code)
+	}
+	if err.Message != "value must be one of the allowed options" {
+		t.Errorf("Message = %s, want %s", err.Message, "value must be one of the allowed options")
+	}
+	if err.Details != nil {
+		t.Errorf("Details = %+v, want nil", err.Details)
+	}
+}
+
 func TestError_Error(t *testing.T) {
 	err := &Error{
 		Code:    "404",

@@ -328,6 +328,7 @@ func TestSchemaFieldToCode(t *testing.T) {
 		{"required", "SCH_REQUIRED_FIELD_MISSING"},
 		{"properties", "SCH_FIELD_NOT_ALLOWED"},
 		{"enum", "SCH_INVALID_ENUM"},
+		{"const", "SCH_INVALID_ENUM"},
 		{"format", "SCH_INVALID_FORMAT"},
 		{"type", "SCH_TYPE_NOT_SUPPORTED"},
 		{"allOf", "SCH_SCHEMA_VALIDATION_FAILED"},
@@ -370,6 +371,34 @@ func TestValidate_InvalidJSON(t *testing.T) {
 	beErr := schemaErr.BecknError()
 	if beErr.Code != "SCH_INVALID_JSON" {
 		t.Errorf("aggregate Code = %s, want SCH_INVALID_JSON", beErr.Code)
+	}
+}
+
+// TestValidate_NumericOverflowFailsSecondUnmarshal exercises Validate()'s
+// second json.Unmarshal call (into `any`, for schema validation) failing
+// independently of the first (into the narrow `payload` struct, used only to
+// extract context.action). A numeric literal outside float64 range decodes
+// fine into `payload` — which ignores unrelated fields — but fails when
+// decoded into `any`, which must convert every value.
+func TestValidate_NumericOverflowFailsSecondUnmarshal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(testSpec))
+	}))
+	defer server.Close()
+
+	validator, _, err := New(context.Background(), &Config{Type: "url", Location: server.URL, CacheTTL: 3600})
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	err = validator.Validate(context.Background(), nil, []byte(`{"context":{"action":"select"},"message":{"order":{}},"extra":1e400}`))
+
+	var schemaErr *model.SchemaValidationErr
+	if !errors.As(err, &schemaErr) {
+		t.Fatalf("expected *model.SchemaValidationErr, got %T: %v", err, err)
+	}
+	if len(schemaErr.Errors) != 1 || schemaErr.Errors[0].Code != "SCH_INVALID_JSON" {
+		t.Errorf("Errors = %+v, want one entry with Code=SCH_INVALID_JSON", schemaErr.Errors)
 	}
 }
 
@@ -456,6 +485,56 @@ func TestExtractSchemaErrors_CompositeOriginParsesNestedFieldPath(t *testing.T) 
 	// exact match against that library-formatted tail.
 	if !strings.HasPrefix(got.Message, `property "name" is missing`) {
 		t.Errorf("Message = %q, want it to start with %q", got.Message, `property "name" is missing`)
+	}
+}
+
+// TestExtractSchemaErrors_ConstViolation confirms a JSON-schema "const"
+// violation — SchemaField "const", no dedicated SCH_* code in the taxonomy —
+// classifies as SCH_INVALID_ENUM, since const is enum-of-one.
+func TestExtractSchemaErrors_ConstViolation(t *testing.T) {
+	sub := openapi3.NewStringSchema()
+	sub.Const = "search"
+
+	err := sub.VisitJSON("select")
+	if err == nil {
+		t.Fatal("expected a validation error")
+	}
+	schemaErr, ok := err.(*openapi3.SchemaError)
+	if !ok {
+		t.Fatalf("expected *openapi3.SchemaError, got %T: %v", err, err)
+	}
+	if schemaErr.SchemaField != "const" {
+		t.Fatalf("expected SchemaField=const, got %s", schemaErr.SchemaField)
+	}
+
+	v := &schemav2Validator{}
+	var schemaErrors []model.Error
+	v.extractSchemaErrors(err, &schemaErrors)
+
+	if len(schemaErrors) != 1 {
+		t.Fatalf("expected exactly one extracted error, got %d: %+v", len(schemaErrors), schemaErrors)
+	}
+	if got := schemaErrors[0].Code; got != "SCH_INVALID_ENUM" {
+		t.Errorf("Code = %s, want SCH_INVALID_ENUM", got)
+	}
+}
+
+// TestExtractSchemaErrors_BecknErrorPassthrough closes the coverage gap on
+// extractSchemaErrors' *model.Error passthrough branch (used to carry
+// validateReferencedObject's already-classified domain/JSON-LD/@type errors
+// into the aggregate SchemaValidationErr) — previously exercised by no test.
+func TestExtractSchemaErrors_BecknErrorPassthrough(t *testing.T) {
+	original := model.NewCodedError("SCH_INVALID_JSONLD_CONTEXT", "domain not allowed: malicious.com")
+
+	v := &schemav2Validator{}
+	var schemaErrors []model.Error
+	v.extractSchemaErrors(original, &schemaErrors)
+
+	if len(schemaErrors) != 1 {
+		t.Fatalf("expected exactly one extracted error, got %d: %+v", len(schemaErrors), schemaErrors)
+	}
+	if schemaErrors[0] != *original {
+		t.Errorf("extractSchemaErrors did not pass through *model.Error as-is: got %+v, want %+v", schemaErrors[0], *original)
 	}
 }
 

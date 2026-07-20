@@ -2,6 +2,7 @@ package schemav2validator
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -889,6 +890,50 @@ func TestValidateExtendedSchemas_MissingMessage(t *testing.T) {
 	err := v.validateExtendedSchemas(ctx, body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "missing 'message' field")
+}
+
+// TestValidateExtendedSchemas_DomainNotAllowed_PropagatesCode drives a real
+// domain-object validation failure through the full production path
+// (validateExtendedSchemas -> validateReferencedObject -> extractSchemaErrors'
+// *model.Error passthrough branch -> prefixSchemaErrorPaths), confirming the
+// classified code and path both survive end-to-end — not just at the unit
+// level of validateReferencedObject or extractSchemaErrors individually.
+func TestValidateExtendedSchemas_DomainNotAllowed_PropagatesCode(t *testing.T) {
+	v := &schemav2Validator{
+		config: &Config{
+			EnableExtendedSchema: true,
+			ExtendedSchemaConfig: ExtendedSchemaConfig{
+				AllowedDomains: []string{"trusted.com"},
+			},
+		},
+		schemaCache: newSchemaCache(10),
+	}
+
+	ctx := context.Background()
+	body := map[string]interface{}{
+		"message": map[string]interface{}{
+			"order": map[string]interface{}{
+				"@context": "https://malicious.com/schema.yaml",
+				"@type":    "SomeType",
+			},
+		},
+	}
+
+	err := v.validateExtendedSchemas(ctx, body)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+
+	var schemaErr *model.SchemaValidationErr
+	if !errors.As(err, &schemaErr) {
+		t.Fatalf("expected *model.SchemaValidationErr, got %T: %v", err, err)
+	}
+	if len(schemaErr.Errors) != 1 || schemaErr.Errors[0].Code != "SCH_INVALID_JSONLD_CONTEXT" {
+		t.Errorf("Errors = %+v, want one entry with Code=SCH_INVALID_JSONLD_CONTEXT", schemaErr.Errors)
+	}
+	if schemaErr.Errors[0].Details == nil || schemaErr.Errors[0].Details.Path == "" {
+		t.Errorf("Details = %+v, want a non-empty Path from prefixSchemaErrorPaths", schemaErr.Errors[0].Details)
+	}
 }
 
 func TestPrefixSchemaErrorPaths(t *testing.T) {

@@ -13,6 +13,14 @@ type Error struct {
 	Details *ErrorDetails `json:"details,omitempty"`
 }
 
+// NewCodedError constructs an Error carrying an explicit ErrorCode value and
+// message, for callers that already know a specific code to report (e.g. a
+// plugin classifying one of its own failure modes onto the Beckn v2.0.0
+// ErrorCode taxonomy).
+func NewCodedError(code, message string) *Error {
+	return &Error{Code: code, Message: message}
+}
+
 // ErrorDetails carries optional structured context for an Error: a JSONPath to
 // the failing field, and/or a chained root-cause Error from a downstream layer.
 type ErrorDetails struct {
