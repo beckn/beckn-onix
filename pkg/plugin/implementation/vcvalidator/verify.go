@@ -46,16 +46,56 @@ const (
 	failIssuer     failClass = "ISSUER_MISMATCH"
 )
 
-// vcError is a credential validation failure with a machine-readable class.
+// Beckn v2.0.0 ErrorCode values this package classifies its failures onto.
+// Named locally (rather than inlined at each of the ~20 call sites below,
+// unlike the single-use-per-plugin convention elsewhere in this codebase)
+// since several codes here are reused across many sites and a typo in a
+// string literal wouldn't be caught by the compiler.
+const (
+	codeSchInvalidJSON          = "SCH_INVALID_JSON"
+	codeSchRequiredFieldMissing = "SCH_REQUIRED_FIELD_MISSING"
+	codeSchSchemaValidation     = "SCH_SCHEMA_VALIDATION_FAILED"
+	codeAutSignatureMissing     = "AUT_SIGNATURE_MISSING"
+	codeAutSignatureInvalid     = "AUT_SIGNATURE_INVALID"
+	codeAutUnauthorizedAction   = "AUT_UNAUTHORIZED_ACTION"
+	// No dedicated credential-expiry/revocation code exists in the v2.0.0
+	// taxonomy (CTX_TTL_EXPIRED is the beckn message TTL, a different
+	// concept) — this is the closest existing bucket, reusing the pattern
+	// keymanager/simplekeymanager already established for key lifecycle
+	// expiry. Flagged in the PR description as a taxonomy-completeness gap.
+	codeAutKeyExpiredOrRevoked = "AUT_KEY_EXPIRED_OR_REVOKED"
+	codeAutKeyNotFound         = "AUT_KEY_NOT_FOUND"
+	codeNetTimeout             = "NET_TIMEOUT"
+	codeNetDownstreamUnavailable = "NET_DOWNSTREAM_UNAVAILABLE"
+)
+
+// vcError is a credential validation failure with a machine-readable class
+// and the Beckn v2.0.0 ErrorCode nackErr carries to the wire.
 type vcError struct {
 	class failClass
+	code  string
 	msg   string
 }
 
 func (e *vcError) Error() string { return string(e.class) + ": " + e.msg }
 
-func failf(class failClass, format string, a ...any) *vcError {
-	return &vcError{class: class, msg: fmt.Sprintf(format, a...)}
+func failf(class failClass, code, format string, a ...any) *vcError {
+	return &vcError{class: class, code: code, msg: fmt.Sprintf(format, a...)}
+}
+
+// resolutionCode picks the ErrorCode for a failResolution failure: a
+// network-caused resolution failure (detected via the same isNetErr
+// heuristic already used for FailOpen decisions) gets a NET_* code, anything
+// else (unsupported/disallowed DID method, malformed key material, no
+// matching verification method) means the key genuinely couldn't be found.
+func resolutionCode(err error) string {
+	if !isNetErr(err) {
+		return codeAutKeyNotFound
+	}
+	if strings.Contains(err.Error(), "timeout") {
+		return codeNetTimeout
+	}
+	return codeNetDownstreamUnavailable
 }
 
 // ---------------------------------------------------------------------------
@@ -85,7 +125,7 @@ type proof struct {
 // object with an "id" field.
 func (c *credential) issuerDID() (string, error) {
 	if len(c.Issuer) == 0 {
-		return "", failf(failStructure, "credential has no issuer")
+		return "", failf(failStructure, codeSchRequiredFieldMissing, "credential has no issuer")
 	}
 	var s string
 	if err := json.Unmarshal(c.Issuer, &s); err == nil && s != "" {
@@ -97,7 +137,7 @@ func (c *credential) issuerDID() (string, error) {
 	if err := json.Unmarshal(c.Issuer, &obj); err == nil && obj.ID != "" {
 		return obj.ID, nil
 	}
-	return "", failf(failStructure, "credential issuer has no id")
+	return "", failf(failStructure, codeSchRequiredFieldMissing, "credential issuer has no id")
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +166,7 @@ func newVerifier(cfg *Config, fetch fetcher) *verifier {
 func (v *verifier) verify(ctx context.Context, raw json.RawMessage) error {
 	var cred credential
 	if err := json.Unmarshal(raw, &cred); err != nil {
-		return failf(failStructure, "cannot parse credential: %v", err)
+		return failf(failStructure, codeSchInvalidJSON, "cannot parse credential: %v", err)
 	}
 	issuer, err := cred.issuerDID()
 	if err != nil {
@@ -142,7 +182,7 @@ func (v *verifier) verify(ctx context.Context, raw json.RawMessage) error {
 
 	// 2. Proof.
 	if cred.Proof == nil {
-		return failf(failProof, "credential has no proof")
+		return failf(failProof, codeAutSignatureMissing, "credential has no proof")
 	}
 	if cred.Proof.JWT != "" {
 		if err := v.verifyJWTProof(ctx, &cred, issuer); err != nil {
@@ -153,7 +193,7 @@ func (v *verifier) verify(ctx context.Context, raw json.RawMessage) error {
 		// it requires RDF canonicalisation (URDNA2015), which this plugin does
 		// not implement.
 		if v.cfg.RequireProof {
-			return failf(failProof,
+			return failf(failProof, codeAutSignatureInvalid,
 				"proof type %q requires JSON-LD canonicalisation which is not supported; "+
 					"set requireProof=false to accept on expiry/revocation only",
 				cred.Proof.Type)
@@ -162,12 +202,12 @@ func (v *verifier) verify(ctx context.Context, raw json.RawMessage) error {
 		if vm := cred.Proof.VerificationMethod; vm != "" {
 			if _, err := resolveDID(ctx, vm, "", v.cfg, v.fetch); err != nil {
 				if !v.cfg.FailOpen {
-					return failf(failResolution, "verificationMethod %q did not resolve: %v", vm, err)
+					return failf(failResolution, resolutionCode(err), "verificationMethod %q did not resolve: %v", vm, err)
 				}
 			}
 		}
 	} else {
-		return failf(failProof, "proof has neither jwt nor proofValue")
+		return failf(failProof, codeAutSignatureInvalid, "proof has neither jwt nor proofValue")
 	}
 
 	// 3. Revocation.
@@ -186,7 +226,7 @@ func (v *verifier) verifyJWTProof(ctx context.Context, cred *credential, issuer 
 	token := cred.Proof.JWT
 	header, err := decodeJWTHeader(token)
 	if err != nil {
-		return failf(failProof, "%v", err)
+		return failf(failProof, codeAutSignatureInvalid, "%v", err)
 	}
 
 	// The signing key DID comes from the JWT `kid` (its controller). It MUST
@@ -197,7 +237,7 @@ func (v *verifier) verifyJWTProof(ctx context.Context, cred *credential, issuer 
 		signerDID = issuer
 	}
 	if base(signerDID) != base(issuer) {
-		return failf(failIssuer,
+		return failf(failIssuer, codeAutUnauthorizedAction,
 			"proof signer %q does not match issuer %q", signerDID, issuer)
 	}
 
@@ -206,18 +246,18 @@ func (v *verifier) verifyJWTProof(ctx context.Context, cred *credential, issuer 
 		if isNetErr(err) && v.cfg.FailOpen {
 			return nil
 		}
-		return failf(failResolution, "resolve %q: %v", header.Kid, err)
+		return failf(failResolution, resolutionCode(err), "resolve %q: %v", header.Kid, err)
 	}
 
 	// Alg-confusion protection: the header alg must match the resolved key.
 	if header.Alg != key.alg.String() {
-		return failf(failProof,
+		return failf(failProof, codeAutSignatureInvalid,
 			"header alg %q does not match issuer key algorithm %q", header.Alg, key.alg.String())
 	}
 
 	payload, err := jws.Verify([]byte(token), jws.WithKey(key.alg, key.pub))
 	if err != nil {
-		return failf(failProof, "signature verification failed: %v", err)
+		return failf(failProof, codeAutSignatureInvalid, "signature verification failed: %v", err)
 	}
 
 	// Validate JWT temporal claims (nbf/exp) too.
@@ -264,10 +304,10 @@ func (v *verifier) checkJWTClaims(payload []byte) error {
 	}
 	now := v.now().Unix()
 	if claims.Nbf != 0 && now < claims.Nbf {
-		return failf(failExpired, "credential not yet valid (nbf=%d, now=%d)", claims.Nbf, now)
+		return failf(failExpired, codeAutKeyExpiredOrRevoked, "credential not yet valid (nbf=%d, now=%d)", claims.Nbf, now)
 	}
 	if claims.Exp != 0 && now > claims.Exp {
-		return failf(failExpired, "credential expired (exp=%d, now=%d)", claims.Exp, now)
+		return failf(failExpired, codeAutKeyExpiredOrRevoked, "credential expired (exp=%d, now=%d)", claims.Exp, now)
 	}
 	return nil
 }
@@ -278,13 +318,13 @@ func (v *verifier) checkWindow(validFrom, validUntil string) error {
 	if validFrom != "" {
 		t, err := time.Parse(time.RFC3339, validFrom)
 		if err == nil && now.Before(t) {
-			return failf(failExpired, "credential not yet valid (validFrom=%s)", validFrom)
+			return failf(failExpired, codeAutKeyExpiredOrRevoked, "credential not yet valid (validFrom=%s)", validFrom)
 		}
 	}
 	if validUntil != "" {
 		t, err := time.Parse(time.RFC3339, validUntil)
 		if err == nil && now.After(t) {
-			return failf(failExpired, "credential expired (validUntil=%s)", validUntil)
+			return failf(failExpired, codeAutKeyExpiredOrRevoked, "credential expired (validUntil=%s)", validUntil)
 		}
 	}
 	return nil
@@ -663,7 +703,7 @@ type statusEntry struct {
 func (v *verifier) checkRevocation(ctx context.Context, raw json.RawMessage) error {
 	entries, err := parseStatusEntries(raw)
 	if err != nil {
-		return failf(failStructure, "credentialStatus: %v", err)
+		return failf(failStructure, codeSchInvalidJSON, "credentialStatus: %v", err)
 	}
 	for _, e := range entries {
 		// Only revocation-purpose entries gate acceptance. Empty purpose is
@@ -676,10 +716,10 @@ func (v *verifier) checkRevocation(ctx context.Context, raw json.RawMessage) err
 			if v.cfg.FailOpen {
 				continue
 			}
-			return failf(failResolution, "revocation check: %v", err)
+			return failf(failResolution, resolutionCode(err), "revocation check: %v", err)
 		}
 		if revoked {
-			return failf(failRevoked, "credential revoked via %s", e.statusURL())
+			return failf(failRevoked, codeAutKeyExpiredOrRevoked, "credential revoked via %s", e.statusURL())
 		}
 	}
 	return nil

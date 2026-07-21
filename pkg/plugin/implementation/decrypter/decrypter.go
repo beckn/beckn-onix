@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/ecdh"
 	"encoding/base64"
+	"errors"
 	"fmt"
 
 	"github.com/zenazn/pkcs7pad"
@@ -37,7 +38,7 @@ func (d *decrypter) Decrypt(ctx context.Context, encryptedData, privateKeyBase64
 	// Decode the Base64 encoded encrypted data.
 	messageByte, err := base64.StdEncoding.DecodeString(encryptedData)
 	if err != nil {
-		return "", model.NewBadReqErr(fmt.Errorf("failed to decode encrypted data: %w", err))
+		return "", model.NewCodedBadReqErr("AUT_SIGNATURE_INVALID", fmt.Errorf("failed to decode encrypted data: %w", err))
 	}
 
 	aesCipher, err := createAESCipher(privateKeyBytes, publicKeyBytes)
@@ -47,7 +48,7 @@ func (d *decrypter) Decrypt(ctx context.Context, encryptedData, privateKeyBase64
 
 	blocksize := aesCipher.BlockSize()
 	if len(messageByte)%blocksize != 0 {
-		return "", fmt.Errorf("ciphertext is not a multiple of the blocksize")
+		return "", model.NewCodedBadReqErr("AUT_SIGNATURE_INVALID", errors.New("ciphertext is not a multiple of the blocksize"))
 	}
 
 	for i := 0; i < len(messageByte); i += aesCipher.BlockSize() {

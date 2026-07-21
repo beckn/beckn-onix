@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/zenazn/pkcs7pad"
+
+	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
 // Helper function to generate valid test keys.
@@ -131,6 +133,12 @@ func TestDecrypterFailure(t *testing.T) {
 		privateKey    string
 		publicKey     string
 		expectedErr   string
+		// wantCode is checked via requireBadReqCode when non-empty. Key-material
+		// validity failures (private/public key format or size) are left blank
+		// for now — #870 flagged these as needing confirmation they're ever
+		// wire-derived before assigning a code, since decrypter has no
+		// production caller in this codebase today.
+		wantCode string
 	}{
 		{
 			name:          "Invalid private key format",
@@ -152,6 +160,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    receiverPrivateKeyB64,
 			publicKey:     senderPublicKeyB64,
 			expectedErr:   "failed to decode encrypted data",
+			wantCode:      "AUT_SIGNATURE_INVALID",
 		},
 		{
 			name:          "Empty private key",
@@ -173,6 +182,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    receiverPrivateKeyB64,
 			publicKey:     senderPublicKeyB64,
 			expectedErr:   "failed to decode encrypted data",
+			wantCode:      "AUT_SIGNATURE_INVALID",
 		},
 		{
 			name:          "Invalid private key size",
@@ -194,6 +204,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    receiverPrivateKeyB64,
 			publicKey:     senderPublicKeyB64,
 			expectedErr:   "ciphertext is not a multiple of the blocksize",
+			wantCode:      "AUT_SIGNATURE_INVALID",
 		},
 	}
 
@@ -214,7 +225,23 @@ func TestDecrypterFailure(t *testing.T) {
 					t.Errorf("Expected error containing %q, got %q", tt.expectedErr, err.Error())
 				}
 			}
+			if tt.wantCode != "" {
+				requireBadReqCode(t, err, tt.wantCode)
+			}
 		})
+	}
+}
+
+// requireBadReqCode asserts err is a *model.BadReqErr carrying wantCode.
+func requireBadReqCode(t *testing.T, err error, wantCode string) {
+	t.Helper()
+
+	badReqErr, ok := err.(*model.BadReqErr)
+	if !ok {
+		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+	}
+	if code := badReqErr.BecknError().Code; code != wantCode {
+		t.Errorf("BecknError().Code = %s, want %s", code, wantCode)
 	}
 }
 

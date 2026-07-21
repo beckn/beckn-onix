@@ -5,8 +5,11 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
 // Helper function to generate a test X25519 key pair.
@@ -156,7 +159,29 @@ func TestEncryptFailure(t *testing.T) {
 			if err != nil && !strings.Contains(err.Error(), tt.errorContains) {
 				t.Errorf("Encrypt() error = %v, want error containing %q", err, tt.errorContains)
 			}
+			// All malformed-key-material failures above are classified as
+			// SCH_INVALID_FORMAT (a base64 or X25519 key-decode failure is a
+			// format problem, not a schema/missing-field/network one).
+			requireBadReqCode(t, err, "SCH_INVALID_FORMAT")
 		})
+	}
+}
+
+// requireBadReqCode asserts err unwraps (via errors.As, matching how
+// nackBecknError itself classifies errors) to a *model.BadReqErr carrying
+// wantCode. createAESCipher's callers re-wrap its errors in an outer
+// fmt.Errorf, so a raw type assertion would miss the coded error even though
+// production code (core/module/handler/responsestep.go's nackBecknError)
+// finds it fine via errors.As.
+func requireBadReqCode(t *testing.T, err error, wantCode string) {
+	t.Helper()
+
+	var badReqErr *model.BadReqErr
+	if !errors.As(err, &badReqErr) {
+		t.Fatalf("expected errors.As to find a *model.BadReqErr in %v (%T)", err, err)
+	}
+	if code := badReqErr.BecknError().Code; code != wantCode {
+		t.Errorf("BecknError().Code = %s, want %s", code, wantCode)
 	}
 }
 
