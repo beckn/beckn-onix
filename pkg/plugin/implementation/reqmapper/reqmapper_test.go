@@ -189,29 +189,48 @@ func TestReqMapperStepRun_EmptyBody(t *testing.T) {
 		Body:    nil,
 	}
 
-	require.Error(t, step.Run(ctx))
+	err = step.Run(ctx)
+	require.Error(t, err)
+	requireBadReqCode(t, err, "SCH_INVALID_JSON")
 }
 
 func TestParseRequestBody(t *testing.T) {
 	t.Run("malformed json", func(t *testing.T) {
 		_, err := parseRequestBody([]byte("{"))
 		require.Error(t, err)
+		requireBadReqCode(t, err, "SCH_INVALID_JSON")
 	})
 
 	t.Run("missing context", func(t *testing.T) {
 		_, err := parseRequestBody([]byte(`{"message":{}}`))
 		require.EqualError(t, err, "context field not found or invalid")
+		requireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
 	})
 
 	t.Run("missing action", func(t *testing.T) {
 		_, err := parseRequestBody([]byte(`{"context":{},"message":{}}`))
 		require.EqualError(t, err, "action field not found or invalid")
+		requireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
 	})
 
 	t.Run("empty action", func(t *testing.T) {
 		_, err := parseRequestBody([]byte(`{"context":{"action":""},"message":{}}`))
 		require.EqualError(t, err, "action field not found or invalid")
+		requireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
 	})
+}
+
+// requireBadReqCode confirms err is a *model.BadReqErr classified with wantCode.
+func requireBadReqCode(t *testing.T, err error, wantCode string) {
+	t.Helper()
+
+	badReqErr, ok := err.(*model.BadReqErr)
+	if !ok {
+		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+	}
+	if code := badReqErr.BecknError().Code; code != wantCode {
+		t.Errorf("BecknError().Code = %s, want %s", code, wantCode)
+	}
 }
 
 func TestMappingEngineTransform(t *testing.T) {
