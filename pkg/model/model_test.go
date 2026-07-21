@@ -215,3 +215,51 @@ func TestResolveNetworkID(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractContext(t *testing.T) {
+	t.Run("malformed json", func(t *testing.T) {
+		_, _, becknErr := ExtractContext([]byte("{"))
+		if becknErr == nil {
+			t.Fatal("expected an error for malformed JSON, got nil")
+		}
+		if becknErr.Code != "SCH_INVALID_JSON" {
+			t.Errorf("Code = %s, want SCH_INVALID_JSON", becknErr.Code)
+		}
+	})
+
+	t.Run("missing context", func(t *testing.T) {
+		_, _, becknErr := ExtractContext([]byte(`{"message":{}}`))
+		if becknErr == nil {
+			t.Fatal("expected an error for missing context, got nil")
+		}
+		if becknErr.Code != "SCH_REQUIRED_FIELD_MISSING" {
+			t.Errorf("Code = %s, want SCH_REQUIRED_FIELD_MISSING", becknErr.Code)
+		}
+		if becknErr.Message != "context field not found or invalid" {
+			t.Errorf("Message = %q, want %q", becknErr.Message, "context field not found or invalid")
+		}
+	})
+
+	t.Run("context is not an object", func(t *testing.T) {
+		_, _, becknErr := ExtractContext([]byte(`{"context":"not-a-map"}`))
+		if becknErr == nil {
+			t.Fatal("expected an error for non-object context, got nil")
+		}
+		if becknErr.Code != "SCH_REQUIRED_FIELD_MISSING" {
+			t.Errorf("Code = %s, want SCH_REQUIRED_FIELD_MISSING", becknErr.Code)
+		}
+	})
+
+	t.Run("valid body returns both the full body and its context", func(t *testing.T) {
+		req, reqContext, becknErr := ExtractContext([]byte(`{"context":{"bap_id":"bap-123"},"message":{"key":"value"}}`))
+		if becknErr != nil {
+			t.Fatalf("unexpected error: %+v", becknErr)
+		}
+		if req["message"] == nil {
+			t.Errorf("expected req to include the full decoded body, got %+v", req)
+		}
+		if reqContext["bap_id"] != "bap-123" {
+			t.Errorf("reqContext[\"bap_id\"] = %v, want bap-123", reqContext["bap_id"])
+		}
+	})
+}

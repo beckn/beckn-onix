@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -203,6 +204,24 @@ func (r *Role) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 	*r = role
 	return nil
+}
+
+// ExtractContext decodes body as JSON and returns both the full decoded body
+// and its "context" field as a map[string]interface{}, classifying the
+// failure onto the Beckn v2.0.0 ErrorCode taxonomy (SCH_INVALID_JSON if body
+// isn't valid JSON, SCH_REQUIRED_FIELD_MISSING if "context" is missing or not
+// an object) so callers can reuse the same Code/Message regardless of how
+// each formats its own response (e.g. wrapping in NewCodedBadReqErr, or
+// writing a bare JSON body directly). req and reqContext are nil on failure.
+func ExtractContext(body []byte) (req map[string]interface{}, reqContext map[string]interface{}, becknErr *Error) {
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, nil, NewCodedError("SCH_INVALID_JSON", fmt.Sprintf("failed to decode request body: %v", err))
+	}
+	reqContext, ok := req["context"].(map[string]interface{})
+	if !ok {
+		return nil, nil, NewCodedError("SCH_REQUIRED_FIELD_MISSING", "context field not found or invalid")
+	}
+	return req, reqContext, nil
 }
 
 // ResolveNetworkID returns context.network_id from a parsed Beckn context map,

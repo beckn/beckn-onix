@@ -2,6 +2,7 @@ package reqpreprocessor
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -288,6 +289,40 @@ func TestNewPreProcessor_BodyReadFailure(t *testing.T) {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 	requireCodedErrorBody(t, rec, "SCH_INVALID_JSON")
+}
+
+// failOnceWriteRecorder wraps httptest.ResponseRecorder but fails the first
+// Write, then passes subsequent writes through — used to exercise
+// writeCodedError's write-failure fallback path and observe its effect.
+type failOnceWriteRecorder struct {
+	*httptest.ResponseRecorder
+	failed bool
+}
+
+func (r *failOnceWriteRecorder) Write(b []byte) (int, error) {
+	if !r.failed {
+		r.failed = true
+		return 0, errors.New("simulated write failure")
+	}
+	return r.ResponseRecorder.Write(b)
+}
+
+func TestWriteCodedError_WriteFailureFallsBackToHTTPError(t *testing.T) {
+	rec := &failOnceWriteRecorder{ResponseRecorder: httptest.NewRecorder()}
+
+	writeCodedError(context.Background(), rec, http.StatusBadRequest, "SCH_INVALID_JSON", "failed to decode")
+
+	// The initial WriteHeader(400) already committed the status line before the
+	// write failed; a superfluous second WriteHeader call from http.Error's
+	// fallback is a no-op (matches real net/http.ResponseWriter semantics, same
+	// as nack()'s established pattern), so the status stays 400 — but the
+	// fallback's plain-text body still lands via the second (successful) write.
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if got := rec.Body.String(); !strings.Contains(got, "failed to decode") {
+		t.Errorf("body = %q, want it to contain the fallback http.Error message", got)
+	}
 }
 
 // TestSnakeToCamel tests the snakeToCamel conversion helper.

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -21,18 +20,25 @@ type Config struct {
 	ParentID    string
 }
 
-const contextKey = "context"
-
 // writeCodedError writes a Beckn v2.0.0 ErrorCode-aligned JSON error body.
 // reqpreprocessor runs as HTTP middleware ahead of the standard step/NACK
 // pipeline (see core/module/handler/stdHandler.go's step loop), so this is a
 // correctly-coded but unsigned JSON body, not the full Beckn NACK envelope
 // nack() produces elsewhere — wiring this plugin into that pipeline (with the
-// signing/telemetry implications that carries) is tracked separately.
-func writeCodedError(w http.ResponseWriter, status int, code, message string) {
+// signing/telemetry implications that carries) is tracked separately in #868.
+func writeCodedError(ctx context.Context, w http.ResponseWriter, status int, code, message string) {
+	data, err := json.Marshal(model.NewCodedError(code, message))
+	if err != nil {
+		log.Debugf(ctx, "failed to marshal coded error response: %v", err)
+		http.Error(w, message, status)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(model.Error{Code: code, Message: message})
+	if _, werr := w.Write(data); werr != nil {
+		log.Debugf(ctx, "failed to write coded error response: %v", werr)
+		http.Error(w, message, http.StatusInternalServerError)
+	}
 }
 
 // snakeToCamel converts a snake_case string to camelCase.
@@ -61,7 +67,7 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
-				writeCodedError(w, http.StatusBadRequest, "SCH_INVALID_JSON", "Failed to read request body")
+				writeCodedError(r.Context(), w, http.StatusBadRequest, "SCH_INVALID_JSON", "Failed to read request body")
 				return
 			}
 			ctx := r.Context()
@@ -82,16 +88,11 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				return
 			}
 
-			var req map[string]interface{}
-			if err := json.Unmarshal(body, &req); err != nil {
-				writeCodedError(w, http.StatusBadRequest, "SCH_INVALID_JSON", "Failed to decode request body")
-				return
-			}
-
-			// Extract context from request.
-			reqContext, ok := req["context"].(map[string]interface{})
-			if !ok {
-				writeCodedError(w, http.StatusBadRequest, "SCH_REQUIRED_FIELD_MISSING", fmt.Sprintf("%s field not found or invalid.", contextKey))
+			// Decode the body and extract its context field using the same
+			// classification reqmapper (#867) relies on for the identical check.
+			_, reqContext, becknErr := model.ExtractContext(body)
+			if becknErr != nil {
+				writeCodedError(ctx, w, http.StatusBadRequest, becknErr.Code, becknErr.Message)
 				return
 			}
 
