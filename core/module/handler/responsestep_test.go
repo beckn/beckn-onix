@@ -139,7 +139,7 @@ func TestSendNack(t *testing.T) {
 				},
 			},
 			status:   http.StatusBadRequest,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"Bad Request","message":"Error 1; Error 2","details":{"path":"/path1;/path2"}}}}`,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"SCH_INVALID_FORMAT","message":"Error 1; Error 2","details":{"path":"/path1;/path2"}}}}`,
 		},
 		{
 			name:     "SignValidationErr",
@@ -157,19 +157,19 @@ func TestSendNack(t *testing.T) {
 			name:     "BadReqErr",
 			err:      model.NewBadReqErr(errors.New("bad request error")),
 			status:   http.StatusBadRequest,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"Bad Request","message":"BAD Request: bad request error"}}}`,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"SCH_INVALID_FORMAT","message":"BAD Request: bad request error"}}}`,
 		},
 		{
 			name:     "NotFoundErr",
 			err:      model.NewNotFoundErr(errors.New("endpoint not found")),
 			status:   http.StatusNotFound,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"Not Found","message":"Endpoint not found: endpoint not found"}}}`,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"NET_ENTITY_NOT_FOUND","message":"Endpoint not found: endpoint not found"}}}`,
 		},
 		{
 			name:     "InternalServerError",
 			err:      errors.New("unexpected error"),
 			status:   http.StatusInternalServerError,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"Internal Server Error","message":"Internal server error, MessageID: 123456"}}}`,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"NET_INTERNAL_ERROR","message":"Internal server error, MessageID: 123456"}}}`,
 		},
 	}
 
@@ -183,7 +183,7 @@ func TestSendNack(t *testing.T) {
 			name:     "v2 SchemaValidationErr",
 			err:      model.NewBadReqErr(errors.New("field missing")),
 			status:   http.StatusBadRequest,
-			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"Bad Request","message":"BAD Request: field missing"}}}`,
+			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"SCH_INVALID_FORMAT","message":"BAD Request: field missing"}}}`,
 		},
 		{
 			name:     "v2 SignValidationErr",

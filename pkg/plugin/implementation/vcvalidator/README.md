@@ -89,7 +89,7 @@ The NACK body matches beckn-onix's v2 shape and is signed by the handler
 (`Signature` response header) like every other pipeline NACK:
 
 ```json
-{"message":{"status":"NACK","messageId":"…","error":{"code":"Unauthorized","message":"Signature Validation Error: CREDENTIAL_REVOKED: …"}}}
+{"message":{"status":"NACK","messageId":"…","error":{"code":"AUT_KEY_EXPIRED_OR_REVOKED","message":"Signature Validation Error: CREDENTIAL_REVOKED: …"}}}
 ```
 
 ## Configuration

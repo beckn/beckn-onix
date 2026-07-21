@@ -173,7 +173,7 @@ func msgID(ctx context.Context) string {
 // internalServerError generates a Beckn internal-server-error payload.
 func internalServerError(ctx context.Context) *model.Error {
 	return &model.Error{
-		Code:    http.StatusText(http.StatusInternalServerError),
+		Code:    "NET_INTERNAL_ERROR",
 		Message: fmt.Sprintf("Internal server error, MessageID: %s", ctx.Value(model.ContextKeyMsgID)),
 	}
 }

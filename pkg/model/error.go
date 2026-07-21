@@ -2,7 +2,6 @@ package model
 
 import (
 	"fmt"
-	"net/http"
 	"strings"
 )
 
@@ -62,11 +61,17 @@ func (e *SchemaValidationErr) Error() string {
 	return strings.Join(errorMessages, "; ")
 }
 
+// defaultSchemaValidationCode is used when a SchemaValidationErr (or one of
+// its underlying Errors) carries no more specific classification — the
+// closest generic bucket in the SCH_* taxonomy. Shared by both schemavalidator
+// (legacy, retiring) and schemav2validator, since both construct this type.
+const defaultSchemaValidationCode = "SCH_INVALID_FORMAT"
+
 // BecknError converts the SchemaValidationErr to an instance of Error.
 func (e *SchemaValidationErr) BecknError() *Error {
 	if len(e.Errors) == 0 {
 		return &Error{
-			Code:    http.StatusText(http.StatusBadRequest),
+			Code:    defaultSchemaValidationCode,
 			Message: "Schema validation error.",
 		}
 	}
@@ -95,7 +100,7 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	}
 
 	return &Error{
-		Code:    FirstNonEmptyCode(e.Errors, http.StatusText(http.StatusBadRequest)),
+		Code:    FirstNonEmptyCode(e.Errors, defaultSchemaValidationCode),
 		Details: details,
 		Message: strings.Join(messages, "; "),
 	}
@@ -193,11 +198,17 @@ type BadReqErr struct {
 	codedErr
 }
 
+// defaultBadReqCode is used when a BadReqErr carries no more specific
+// classification — the closest generic bucket in the SCH_* taxonomy. Reused
+// across many callers rather than a dedicated bucket, since this fallback is
+// rarely hit once a caller adopts NewCodedBadReqErr.
+const defaultBadReqCode = "SCH_INVALID_FORMAT"
+
 // NewBadReqErr creates a new instance of BadReqErr from an error. Code is left
-// unset, so BecknError() falls back to the legacy "Bad Request" string — the
-// many existing callers of this constructor across the codebase keep that
-// behavior unchanged. Use NewCodedBadReqErr when the caller knows a more
-// specific taxonomy code.
+// unset, so BecknError() falls back to defaultBadReqCode — the many existing
+// callers of this constructor across the codebase keep that behavior
+// unchanged. Use NewCodedBadReqErr when the caller knows a more specific
+// taxonomy code.
 func NewBadReqErr(err error) *BadReqErr {
 	return &BadReqErr{codedErr{error: err}}
 }
@@ -212,25 +223,37 @@ func NewCodedBadReqErr(code string, err error) *BadReqErr {
 // BecknError converts the BadReqErr to an instance of Error.
 func (e *BadReqErr) BecknError() *Error {
 	return &Error{
-		Code:    e.resolveCode(http.StatusText(http.StatusBadRequest)),
+		Code:    e.resolveCode(defaultBadReqCode),
 		Message: "BAD Request: " + e.Error(),
 	}
 }
 
+// defaultNotFoundCode is used when a NotFoundErr carries no more specific
+// classification — the closest generic bucket in the NET_* taxonomy.
+const defaultNotFoundCode = "NET_ENTITY_NOT_FOUND"
+
 // NotFoundErr occurs when a requested endpoint is not found.
 type NotFoundErr struct {
-	error
+	codedErr
 }
 
-// NewNotFoundErr creates a new instance of NotFoundErr from an error.
+// NewNotFoundErr creates a new instance of NotFoundErr from an error. Code is
+// left unset, so BecknError() falls back to defaultNotFoundCode. Use
+// NewCodedNotFoundErr when the caller knows a more specific taxonomy code.
 func NewNotFoundErr(err error) *NotFoundErr {
-	return &NotFoundErr{err}
+	return &NotFoundErr{codedErr{error: err}}
+}
+
+// NewCodedNotFoundErr creates a NotFoundErr classified with an explicit
+// taxonomy code, for callers that already know the specific cause.
+func NewCodedNotFoundErr(code string, err error) *NotFoundErr {
+	return &NotFoundErr{codedErr{Code: code, error: err}}
 }
 
 // BecknError converts the NotFoundErr to an instance of Error.
 func (e *NotFoundErr) BecknError() *Error {
 	return &Error{
-		Code:    http.StatusText(http.StatusNotFound),
+		Code:    e.resolveCode(defaultNotFoundCode),
 		Message: "Endpoint not found: " + e.Error(),
 	}
 }
