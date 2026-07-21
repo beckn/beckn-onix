@@ -199,11 +199,20 @@ func TestParseRequestBody(t *testing.T) {
 		_, err := parseRequestBody([]byte("{"))
 		require.Error(t, err)
 		requireBadReqCode(t, err, "SCH_INVALID_JSON")
+
+		// Regression test: the decode failure must still unwrap to the
+		// underlying json error via errors.As, matching the wrapping this
+		// function did before model.ExtractContext was extracted (self-review
+		// of #882 found this had silently regressed, then fixed it).
+		var syntaxErr *json.SyntaxError
+		require.ErrorAs(t, err, &syntaxErr, "expected errors.As to still reach the underlying *json.SyntaxError")
 	})
 
 	t.Run("missing context", func(t *testing.T) {
+		// The exact message text for this classification is model.ExtractContext's
+		// concern and is already verified directly in pkg/model/model_test.go;
+		// this only needs to confirm parseRequestBody forwards the Code correctly.
 		_, err := parseRequestBody([]byte(`{"message":{}}`))
-		require.EqualError(t, err, "context field not found or invalid")
 		requireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
 	})
 

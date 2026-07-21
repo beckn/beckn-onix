@@ -110,14 +110,15 @@ func (s *reqMapperStep) transformBody(ctx context.Context, body []byte) ([]byte,
 // ErrorCode taxonomy at the point each cause is known, rather than being
 // wrapped in a single generic code by the caller.
 func parseRequestBody(body []byte) (*parsedRequest, error) {
-	var req map[string]interface{}
-	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, model.NewCodedBadReqErr("SCH_INVALID_JSON", fmt.Errorf("failed to decode request body: %w", err))
-	}
-
-	reqContext, ok := req["context"].(map[string]interface{})
-	if !ok {
-		return nil, model.NewCodedBadReqErr("SCH_REQUIRED_FIELD_MISSING", errors.New("context field not found or invalid"))
+	req, reqContext, becknErr, cause := model.ExtractContext(body)
+	if becknErr != nil {
+		if cause != nil {
+			// Preserve the underlying decode error in the wrap chain so
+			// errors.Is/errors.As can still reach it, same as before ExtractContext
+			// was extracted.
+			return nil, model.NewCodedBadReqErr(becknErr.Code, fmt.Errorf("failed to decode request body: %w", cause))
+		}
+		return nil, model.NewCodedBadReqErr(becknErr.Code, errors.New(becknErr.Message))
 	}
 
 	action, ok := reqContext["action"].(string)
