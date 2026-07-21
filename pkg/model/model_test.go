@@ -1,6 +1,11 @@
 package model
 
-import "testing"
+import (
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+)
 
 func TestIsKeyStatusUsable(t *testing.T) {
 	tests := []struct {
@@ -269,6 +274,36 @@ func TestExtractContext(t *testing.T) {
 		}
 		if reqContext["bap_id"] != "bap-123" {
 			t.Errorf("reqContext[\"bap_id\"] = %v, want bap-123", reqContext["bap_id"])
+		}
+	})
+}
+
+func TestWrapExtractContextErr(t *testing.T) {
+	t.Run("with cause, wraps prefix and preserves errors.As reachability", func(t *testing.T) {
+		_, _, becknErr, cause := ExtractContext([]byte("{"))
+		err := WrapExtractContextErr("error parsing request body", becknErr, cause)
+
+		if err.Code != "SCH_INVALID_JSON" {
+			t.Errorf("Code = %s, want SCH_INVALID_JSON", err.Code)
+		}
+		if !strings.Contains(err.Error(), "error parsing request body") {
+			t.Errorf("Error() = %q, want it to contain the given prefix", err.Error())
+		}
+		var syntaxErr *json.SyntaxError
+		if !errors.As(err, &syntaxErr) {
+			t.Error("expected errors.As to reach the underlying *json.SyntaxError")
+		}
+	})
+
+	t.Run("without cause, uses becknErr.Message directly", func(t *testing.T) {
+		_, _, becknErr, cause := ExtractContext([]byte(`{"message":{}}`))
+		err := WrapExtractContextErr("unused prefix", becknErr, cause)
+
+		if err.Code != "SCH_REQUIRED_FIELD_MISSING" {
+			t.Errorf("Code = %s, want SCH_REQUIRED_FIELD_MISSING", err.Code)
+		}
+		if !strings.Contains(err.Error(), "context field not found or invalid") {
+			t.Errorf("Error() = %q, want it to contain becknErr.Message", err.Error())
 		}
 	})
 }

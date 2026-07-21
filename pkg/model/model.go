@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -227,6 +228,20 @@ func ExtractContext(body []byte) (req map[string]interface{}, reqContext map[str
 		return nil, nil, NewCodedError("SCH_REQUIRED_FIELD_MISSING", "context field not found or invalid"), nil
 	}
 	return req, reqContext, nil, nil
+}
+
+// WrapExtractContextErr converts an ExtractContext failure (becknErr, cause)
+// into a *BadReqErr carrying becknErr's Code, for callers that need an error
+// value rather than the bare *Error ExtractContext returns. When cause is
+// non-nil (the SCH_INVALID_JSON case), it's wrapped with prefix via %w so
+// errors.Is/errors.As still reach it; the SCH_REQUIRED_FIELD_MISSING case has
+// no cause of its own, so becknErr.Message is used directly. Only call this
+// when becknErr is non-nil.
+func WrapExtractContextErr(prefix string, becknErr *Error, cause error) *BadReqErr {
+	if cause != nil {
+		return NewCodedBadReqErr(becknErr.Code, fmt.Errorf("%s: %w", prefix, cause))
+	}
+	return NewCodedBadReqErr(becknErr.Code, errors.New(becknErr.Message))
 }
 
 // ResolveNetworkID returns context.network_id from a parsed Beckn context map,

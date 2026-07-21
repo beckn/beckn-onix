@@ -533,6 +533,12 @@ func TestRouteFailure(t *testing.T) {
 		endpointAction string
 		body           string
 		wantErr        string
+		// wantCode is checked via requireBadReqCode when non-empty. Failure
+		// modes that remain unclassified (plain fmt.Errorf, no model.Error)
+		// leave this blank — see #869's scope note on why domain/version/
+		// endpoint config-lookup misses and missing-URI-with-no-fallback are
+		// deliberately left out of this ticket's SCH_* realignment.
+		wantCode string
 	}{
 		{
 			name:           "Unsupported endpoint",
@@ -568,6 +574,15 @@ func TestRouteFailure(t *testing.T) {
 			endpointAction: "select",
 			body:           `{"context": {"domain": "ONDC:TRV10", "version": "1.1.0", "bpp_uri": "htp:// invalid-url"}}`,
 			wantErr:        `invalid BPP URI - htp:// invalid-url in request body for select: parse "htp:// invalid-url": invalid character " " in host name`,
+			wantCode:       "SCH_INVALID_FORMAT",
+		},
+		{
+			name:           "Malformed JSON body",
+			configFile:     "bap_caller.yaml",
+			endpointAction: "select",
+			body:           `{"context": {`,
+			wantErr:        "error parsing request body",
+			wantCode:       "SCH_INVALID_JSON",
 		},
 	}
 
@@ -580,7 +595,24 @@ func TestRouteFailure(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Errorf("Route(%q, %q) = %v, want error containing %q", tt.endpointAction, tt.body, err, tt.wantErr)
 			}
+			if tt.wantCode != "" {
+				requireBadReqCode(t, err, tt.wantCode)
+			}
 		})
+	}
+}
+
+// requireBadReqCode asserts err is a *model.BadReqErr carrying wantCode,
+// mirroring reqmapper_test.go's helper of the same name for the same check.
+func requireBadReqCode(t *testing.T, err error, wantCode string) {
+	t.Helper()
+
+	badReqErr, ok := err.(*model.BadReqErr)
+	if !ok {
+		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+	}
+	if code := badReqErr.BecknError().Code; code != wantCode {
+		t.Errorf("BecknError().Code = %s, want %s", code, wantCode)
 	}
 }
 
@@ -873,6 +905,7 @@ func TestRouteNilContext(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "context field not found or invalid") {
 		t.Errorf("Route() with missing context = %v, want error containing 'context field not found or invalid'", err)
 	}
+	requireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
 }
 
 // TestV1DomainRequired tests that domain is required for v1 configs
