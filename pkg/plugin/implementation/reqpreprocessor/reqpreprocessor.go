@@ -23,6 +23,18 @@ type Config struct {
 
 const contextKey = "context"
 
+// writeCodedError writes a Beckn v2.0.0 ErrorCode-aligned JSON error body.
+// reqpreprocessor runs as HTTP middleware ahead of the standard step/NACK
+// pipeline (see core/module/handler/stdHandler.go's step loop), so this is a
+// correctly-coded but unsigned JSON body, not the full Beckn NACK envelope
+// nack() produces elsewhere — wiring this plugin into that pipeline (with the
+// signing/telemetry implications that carries) is tracked separately.
+func writeCodedError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(model.Error{Code: code, Message: message})
+}
+
 // snakeToCamel converts a snake_case string to camelCase.
 // For example: "transaction_id" -> "transactionId".
 // Returns the input unchanged if it contains no underscores.
@@ -49,7 +61,7 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
-				http.Error(w, "Failed to read request body", http.StatusBadRequest)
+				writeCodedError(w, http.StatusBadRequest, "SCH_INVALID_JSON", "Failed to read request body")
 				return
 			}
 			ctx := r.Context()
@@ -72,14 +84,14 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 
 			var req map[string]interface{}
 			if err := json.Unmarshal(body, &req); err != nil {
-				http.Error(w, "Failed to decode request body", http.StatusBadRequest)
+				writeCodedError(w, http.StatusBadRequest, "SCH_INVALID_JSON", "Failed to decode request body")
 				return
 			}
 
 			// Extract context from request.
 			reqContext, ok := req["context"].(map[string]interface{})
 			if !ok {
-				http.Error(w, fmt.Sprintf("%s field not found or invalid.", contextKey), http.StatusBadRequest)
+				writeCodedError(w, http.StatusBadRequest, "SCH_REQUIRED_FIELD_MISSING", fmt.Sprintf("%s field not found or invalid.", contextKey))
 				return
 			}
 

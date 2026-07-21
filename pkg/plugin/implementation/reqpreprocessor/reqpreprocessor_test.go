@@ -3,6 +3,7 @@ package reqpreprocessor
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -130,6 +131,7 @@ func TestNewPreProcessorErrorCases(t *testing.T) {
 		expectedCode int
 		expectErr    bool
 		errMsg       string
+		wantBeckn    string // expected model.Error.Code in the response body, if expectedCode is a per-request failure
 	}{
 		{
 			name: "Missing context",
@@ -142,6 +144,7 @@ func TestNewPreProcessorErrorCases(t *testing.T) {
 			expectedCode: http.StatusBadRequest,
 			expectErr:    false,
 			errMsg:       "context field not found or invalid",
+			wantBeckn:    "SCH_REQUIRED_FIELD_MISSING",
 		},
 		{
 			name: "Invalid context type",
@@ -154,6 +157,7 @@ func TestNewPreProcessorErrorCases(t *testing.T) {
 			expectedCode: http.StatusBadRequest,
 			expectErr:    false,
 			errMsg:       "context field not found or invalid",
+			wantBeckn:    "SCH_REQUIRED_FIELD_MISSING",
 		},
 		{
 			name:         "Nil config",
@@ -199,6 +203,7 @@ func TestNewPreProcessorErrorCases(t *testing.T) {
 			expectedCode: http.StatusBadRequest,
 			expectErr:    false,
 			errMsg:       "failed to decode request body",
+			wantBeckn:    "SCH_INVALID_JSON",
 		},
 	}
 
@@ -231,8 +236,58 @@ func TestNewPreProcessorErrorCases(t *testing.T) {
 			if rec.Code != tt.expectedCode {
 				t.Errorf("Expected status code %d, but got %d", tt.expectedCode, rec.Code)
 			}
+
+			if tt.wantBeckn != "" {
+				requireCodedErrorBody(t, rec, tt.wantBeckn)
+			}
 		})
 	}
+}
+
+// requireCodedErrorBody confirms rec's body is a JSON model.Error with the
+// given Code, and that Content-Type reflects that.
+func requireCodedErrorBody(t *testing.T, rec *httptest.ResponseRecorder, wantCode string) {
+	t.Helper()
+
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+
+	var got model.Error
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("response body is not valid JSON model.Error: %v (body: %s)", err, rec.Body.String())
+	}
+	if got.Code != wantCode {
+		t.Errorf("response body Code = %s, want %s", got.Code, wantCode)
+	}
+}
+
+// errReader is an io.Reader that always fails, used to exercise the
+// io.ReadAll(r.Body) failure path in NewPreProcessor's middleware.
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) {
+	return 0, errors.New("simulated read failure")
+}
+
+func TestNewPreProcessor_BodyReadFailure(t *testing.T) {
+	cfg := &Config{Role: "bap"}
+	middleware, err := NewPreProcessor(cfg)
+	if err != nil {
+		t.Fatalf("NewPreProcessor() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/test", errReader{})
+	rec := httptest.NewRecorder()
+
+	middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("next handler must not be called when the body can't be read")
+	})).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	requireCodedErrorBody(t, rec, "SCH_INVALID_JSON")
 }
 
 // TestSnakeToCamel tests the snakeToCamel conversion helper.
