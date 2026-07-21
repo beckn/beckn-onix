@@ -314,15 +314,34 @@ func TestDataIntegrityProofRejectedWhenRequired(t *testing.T) {
 // heuristic) is NET_DOWNSTREAM_UNAVAILABLE, and anything else — the key
 // genuinely couldn't be found rather than an unreachable network — is
 // AUT_KEY_NOT_FOUND.
+// fakeTimeoutErr implements the timeouter interface (Timeout() bool) the way
+// *url.Error/net.Error do — its message text deliberately contains no
+// "timeout" substring, so a test built on it only passes if isTimeoutErr
+// actually uses the interface rather than falling back to string matching.
+type fakeTimeoutErr struct{ msg string }
+
+func (e *fakeTimeoutErr) Error() string { return e.msg }
+func (e *fakeTimeoutErr) Timeout() bool { return true }
+
 func TestResolutionCode(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
 		want string
 	}{
-		{"network timeout", fmt.Errorf("did:web fetch https://x: dial tcp: i/o timeout"), codeNetTimeout},
+		{"network timeout (string fallback)", fmt.Errorf("did:web fetch https://x: dial tcp: i/o timeout"), codeNetTimeout},
 		{"network, not a timeout", fmt.Errorf("did:web fetch https://x: dial tcp: no such host"), codeNetDownstreamUnavailable},
 		{"non-network", fmt.Errorf("did method %q not allowed (allowed: [key jwk web])", "example"), codeAutKeyNotFound},
+		{
+			"real Go http.Client timeout, detected via Timeout() interface not message text",
+			fmt.Errorf("did:web fetch https://x: %w", &fakeTimeoutErr{msg: "context deadline exceeded (Client.Timeout exceeded while awaiting headers)"}),
+			codeNetTimeout,
+		},
+		{
+			"ordinary non-2xx HTTP status is not a network failure",
+			fmt.Errorf("did:web fetch https://x: http 404 for https://x"),
+			codeAutKeyNotFound,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -340,6 +359,21 @@ func TestNoProof(t *testing.T) {
 	vc := map[string]any{
 		"issuer":            "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
 		"credentialSubject": map[string]any{"id": "x"},
+	}
+	v := testVerifier(nil)
+	err := v.verify(context.Background(), vcBytes(t, vc))
+	assertClassCode(t, err, failProof, codeAutSignatureMissing)
+}
+
+// TestProofPresentButEmpty asserts a credential whose proof object exists but
+// has neither jwt nor proofValue is classified the same as no proof at all
+// (AUT_SIGNATURE_MISSING) — both mean there's no usable proof content, so
+// they shouldn't be split across two different codes.
+func TestProofPresentButEmpty(t *testing.T) {
+	vc := map[string]any{
+		"issuer":            "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+		"credentialSubject": map[string]any{"id": "x"},
+		"proof":             map[string]any{"type": "SomeProofType"},
 	}
 	v := testVerifier(nil)
 	err := v.verify(context.Background(), vcBytes(t, vc))
@@ -655,11 +689,6 @@ func TestRedirectCap(t *testing.T) {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────
-
-func assertClass(t *testing.T, err error, want failClass) {
-	t.Helper()
-	assertClassCode(t, err, want, "")
-}
 
 // assertClassCode asserts err is a *vcError with the given class, and — when
 // wantCode is non-empty — the given Beckn v2.0.0 ErrorCode too.

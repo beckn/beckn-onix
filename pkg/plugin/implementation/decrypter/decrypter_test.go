@@ -6,6 +6,7 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 
@@ -133,11 +134,7 @@ func TestDecrypterFailure(t *testing.T) {
 		privateKey    string
 		publicKey     string
 		expectedErr   string
-		// wantCode is checked via requireBadReqCode when non-empty. Key-material
-		// validity failures (private/public key format or size) are left blank
-		// for now — #870 flagged these as needing confirmation they're ever
-		// wire-derived before assigning a code, since decrypter has no
-		// production caller in this codebase today.
+		// wantCode is checked via requireBadReqCode when non-empty.
 		wantCode string
 	}{
 		{
@@ -146,6 +143,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    "invalid-base64!@#$",
 			publicKey:     senderPublicKeyB64,
 			expectedErr:   "invalid private key",
+			wantCode:      "SCH_INVALID_FORMAT",
 		},
 		{
 			name:          "Invalid public key format",
@@ -153,6 +151,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    receiverPrivateKeyB64,
 			publicKey:     "invalid-base64!@#$",
 			expectedErr:   "invalid public key",
+			wantCode:      "SCH_INVALID_FORMAT",
 		},
 		{
 			name:          "Invalid encrypted data format",
@@ -168,6 +167,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    "",
 			publicKey:     senderPublicKeyB64,
 			expectedErr:   "invalid private key",
+			wantCode:      "SCH_INVALID_FORMAT",
 		},
 		{
 			name:          "Empty public key",
@@ -175,6 +175,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    receiverPrivateKeyB64,
 			publicKey:     "",
 			expectedErr:   "invalid public key",
+			wantCode:      "SCH_INVALID_FORMAT",
 		},
 		{
 			name:          "Invalid base64 data",
@@ -190,6 +191,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    base64.StdEncoding.EncodeToString([]byte("short")),
 			publicKey:     senderPublicKeyB64,
 			expectedErr:   "failed to create private key",
+			wantCode:      "SCH_INVALID_FORMAT",
 		},
 		{
 			name:          "Invalid public key size",
@@ -197,6 +199,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    receiverPrivateKeyB64,
 			publicKey:     base64.StdEncoding.EncodeToString([]byte("short")),
 			expectedErr:   "failed to create public key",
+			wantCode:      "SCH_INVALID_FORMAT",
 		},
 		{
 			name:          "Invalid block size",
@@ -233,12 +236,19 @@ func TestDecrypterFailure(t *testing.T) {
 }
 
 // requireBadReqCode asserts err is a *model.BadReqErr carrying wantCode.
+// requireBadReqCode asserts err unwraps (via errors.As, matching how
+// nackBecknError itself classifies errors) to a *model.BadReqErr carrying
+// wantCode. createAESCipher's callers re-wrap its errors in an outer
+// fmt.Errorf, so a raw type assertion would miss a coded error returned from
+// there even though production code (nackBecknError) finds it fine via
+// errors.As — mirrors encrypter_test.go's helper of the same name, which
+// needed this for the identical reason.
 func requireBadReqCode(t *testing.T, err error, wantCode string) {
 	t.Helper()
 
-	badReqErr, ok := err.(*model.BadReqErr)
-	if !ok {
-		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+	var badReqErr *model.BadReqErr
+	if !errors.As(err, &badReqErr) {
+		t.Fatalf("expected errors.As to find a *model.BadReqErr in %v (%T)", err, err)
 	}
 	if code := badReqErr.BecknError().Code; code != wantCode {
 		t.Errorf("BecknError().Code = %s, want %s", code, wantCode)

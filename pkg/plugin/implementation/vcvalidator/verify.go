@@ -13,6 +13,7 @@ import (
 	"crypto/elliptic"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -63,9 +64,9 @@ const (
 	// concept) — this is the closest existing bucket, reusing the pattern
 	// keymanager/simplekeymanager already established for key lifecycle
 	// expiry. Flagged in the PR description as a taxonomy-completeness gap.
-	codeAutKeyExpiredOrRevoked = "AUT_KEY_EXPIRED_OR_REVOKED"
-	codeAutKeyNotFound         = "AUT_KEY_NOT_FOUND"
-	codeNetTimeout             = "NET_TIMEOUT"
+	codeAutKeyExpiredOrRevoked   = "AUT_KEY_EXPIRED_OR_REVOKED"
+	codeAutKeyNotFound           = "AUT_KEY_NOT_FOUND"
+	codeNetTimeout               = "NET_TIMEOUT"
 	codeNetDownstreamUnavailable = "NET_DOWNSTREAM_UNAVAILABLE"
 )
 
@@ -92,10 +93,33 @@ func resolutionCode(err error) string {
 	if !isNetErr(err) {
 		return codeAutKeyNotFound
 	}
-	if strings.Contains(err.Error(), "timeout") {
+	return netFailureCode(err)
+}
+
+// netFailureCode picks between the two network-failure codes. Call only
+// when isNetErr(err) is already known true.
+func netFailureCode(err error) string {
+	if isTimeoutErr(err) {
 		return codeNetTimeout
 	}
 	return codeNetDownstreamUnavailable
+}
+
+// timeouter is implemented by *url.Error (returned from http.Client.Do,
+// including for did:web/DEDI fetches) and other stdlib network errors — a
+// reliable signal independent of the wrapped error's message text or
+// casing, reachable through %w-wrapping via errors.As.
+type timeouter interface{ Timeout() bool }
+
+// isTimeoutErr reports whether err is a timeout, preferring the standard
+// Timeout() bool interface and falling back to a case-insensitive substring
+// match for errors that don't implement it (e.g. synthetic/test errors).
+func isTimeoutErr(err error) bool {
+	var te timeouter
+	if errors.As(err, &te) {
+		return te.Timeout()
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "timeout")
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +231,9 @@ func (v *verifier) verify(ctx context.Context, raw json.RawMessage) error {
 			}
 		}
 	} else {
-		return failf(failProof, codeAutSignatureInvalid, "proof has neither jwt nor proofValue")
+		// No jwt and no proofValue means no usable proof content at all — the
+		// same defect as cred.Proof == nil above, just one level deeper.
+		return failf(failProof, codeAutSignatureMissing, "proof has neither jwt nor proofValue")
 	}
 
 	// 3. Revocation.
@@ -243,10 +269,13 @@ func (v *verifier) verifyJWTProof(ctx context.Context, cred *credential, issuer 
 
 	key, err := resolveDID(ctx, header.Kid, header.Alg, v.cfg, v.fetch)
 	if err != nil {
-		if isNetErr(err) && v.cfg.FailOpen {
-			return nil
+		if netErr := isNetErr(err); netErr {
+			if v.cfg.FailOpen {
+				return nil
+			}
+			return failf(failResolution, netFailureCode(err), "resolve %q: %v", header.Kid, err)
 		}
-		return failf(failResolution, resolutionCode(err), "resolve %q: %v", header.Kid, err)
+		return failf(failResolution, codeAutKeyNotFound, "resolve %q: %v", header.Kid, err)
 	}
 
 	// Alg-confusion protection: the header alg must match the resolved key.
@@ -353,10 +382,20 @@ func isNetErr(err error) bool {
 	if err == nil {
 		return false
 	}
+	if isTimeoutErr(err) {
+		return true
+	}
+	// Deliberately excludes "http " (httpFetcher's own non-2xx-status message,
+	// "http %d for %s") and "fetch" (resolveDIDWeb's static "did:web fetch %s: "
+	// wrap prefix, added unconditionally around whatever fetch() returns —
+	// including that same non-2xx message, so it carries no real signal about
+	// the underlying cause). A completed round trip that returned a bad status
+	// code is not a network failure; it means the resource genuinely wasn't
+	// found or the server rejected it, which resolutionCode maps to
+	// AUT_KEY_NOT_FOUND rather than a NET_* code.
 	s := err.Error()
-	return strings.Contains(s, "fetch") || strings.Contains(s, "http ") ||
-		strings.Contains(s, "dial") || strings.Contains(s, "timeout") ||
-		strings.Contains(s, "no such host") || strings.Contains(s, "connection")
+	return strings.Contains(s, "dial") || strings.Contains(s, "no such host") ||
+		strings.Contains(s, "connection")
 }
 
 // ---------------------------------------------------------------------------
