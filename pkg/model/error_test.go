@@ -3,7 +3,6 @@ package model
 import (
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"testing"
 
@@ -18,7 +17,7 @@ func NewSignValidationErrf(format string, a ...any) *SignValidationErr {
 
 // NewNotFoundErrf creates a new NotFoundErr with a formatted error message.
 func NewNotFoundErrf(format string, a ...any) *NotFoundErr {
-	return &NotFoundErr{fmt.Errorf(format, a...)}
+	return &NotFoundErr{codedErr{error: fmt.Errorf(format, a...)}}
 }
 
 // NewBadReqErrf creates a new BadReqErr with a formatted error message.
@@ -81,7 +80,7 @@ func TestSchemaValidationErr_BecknError(t *testing.T) {
 	}
 
 	beErr := schemaErr.BecknError()
-	expected := "Bad Request"
+	expected := "SCH_INVALID_FORMAT"
 	if beErr.Code != expected {
 		t.Errorf("err.Error() = %s, want %s",
 			beErr.Code, expected)
@@ -155,12 +154,12 @@ func TestSchemaValidationErr_BecknError_CodeFromFirstNonEmpty(t *testing.T) {
 			want: "SCH_INVALID_ENUM",
 		},
 		{
-			name: "no entry has a code falls back to the legacy default",
+			name: "no entry has a code falls back to the default",
 			errs: []Error{
 				{Message: "m1"},
 				{Message: "m2"},
 			},
-			want: "Bad Request",
+			want: "SCH_INVALID_FORMAT",
 		},
 	}
 
@@ -272,7 +271,7 @@ func TestResolveCode(t *testing.T) {
 		want        string
 	}{
 		{"explicit code wins", "AUT_KEY_EXPIRED_OR_REVOKED", "AUT_SIGNATURE_INVALID", "AUT_KEY_EXPIRED_OR_REVOKED"},
-		{"empty code falls back to default", "", "Bad Request", "Bad Request"},
+		{"empty code falls back to default", "", "AUT_SIGNATURE_INVALID", "AUT_SIGNATURE_INVALID"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -312,8 +311,8 @@ func TestBadReqErr_BecknError(t *testing.T) {
 		t.Errorf("err.Error() = %s, want %s",
 			beErr.Message, expectedMsg)
 	}
-	if beErr.Code != "Bad Request" {
-		t.Errorf("beErr.Code = %s, want the legacy \"Bad Request\" default unchanged for NewBadReqErr callers", beErr.Code)
+	if beErr.Code != "SCH_INVALID_FORMAT" {
+		t.Errorf("beErr.Code = %s, want the SCH_INVALID_FORMAT default unchanged for NewBadReqErr callers", beErr.Code)
 	}
 }
 
@@ -334,8 +333,8 @@ func TestBadReqErr_BecknError_EmptyCodeFallsBackToDefault(t *testing.T) {
 	badReqErr := &BadReqErr{codedErr{error: errors.New("invalid input")}}
 	beErr := badReqErr.BecknError()
 
-	if beErr.Code != "Bad Request" {
-		t.Errorf("beErr.Code = %s, want the legacy \"Bad Request\" default when Code is unset", beErr.Code)
+	if beErr.Code != "SCH_INVALID_FORMAT" {
+		t.Errorf("beErr.Code = %s, want the SCH_INVALID_FORMAT default when Code is unset", beErr.Code)
 	}
 }
 
@@ -376,6 +375,31 @@ func TestNotFoundErr_BecknError(t *testing.T) {
 	if beErr.Message != expectedMsg {
 		t.Errorf("err.Error() = %s, want %s",
 			beErr.Message, expectedMsg)
+	}
+	if beErr.Code != "NET_ENTITY_NOT_FOUND" {
+		t.Errorf("beErr.Code = %s, want NET_ENTITY_NOT_FOUND (default classification)", beErr.Code)
+	}
+}
+
+func TestNewCodedNotFoundErr_BecknError(t *testing.T) {
+	notFoundErr := NewCodedNotFoundErr("NET_ENTITY_NOT_FOUND", errors.New("subscriber not registered"))
+	beErr := notFoundErr.BecknError()
+
+	if beErr.Code != "NET_ENTITY_NOT_FOUND" {
+		t.Errorf("beErr.Code = %s, want NET_ENTITY_NOT_FOUND", beErr.Code)
+	}
+	expectedMsg := "Endpoint not found: subscriber not registered"
+	if beErr.Message != expectedMsg {
+		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
+	}
+}
+
+func TestNotFoundErr_Unwrap(t *testing.T) {
+	sentinel := errors.New("sentinel cause")
+	notFoundErr := NewCodedNotFoundErr("NET_ENTITY_NOT_FOUND", sentinel)
+
+	if !errors.Is(notFoundErr, sentinel) {
+		t.Errorf("errors.Is(notFoundErr, sentinel) = false, want true via Unwrap()")
 	}
 }
 
@@ -421,7 +445,7 @@ func TestSchemaValidationErr_BecknError_NoErrors(t *testing.T) {
 	beErr := schemaValidationErr.BecknError()
 
 	expectedMsg := "Schema validation error."
-	expectedCode := http.StatusText(http.StatusBadRequest)
+	expectedCode := "SCH_INVALID_FORMAT"
 
 	if beErr.Message != expectedMsg {
 		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)

@@ -1321,8 +1321,8 @@ func TestMediate_NotOnboarded(t *testing.T) {
 	if !errors.As(err, &me) {
 		t.Fatalf("expected MediationError, got %T: %v", err, err)
 	}
-	if me.Code != "subscriberNotOnboarded" {
-		t.Errorf("expected subscriberNotOnboarded, got %q", me.Code)
+	if me.Code != "SCH_SUBSCRIBER_NOT_FOUND" {
+		t.Errorf("expected SCH_SUBSCRIBER_NOT_FOUND, got %q", me.Code)
 	}
 }
 
@@ -1350,8 +1350,8 @@ func TestMediate_CounterpartyManifestUnavailable_Reject(t *testing.T) {
 	if !errors.As(err, &me) {
 		t.Fatalf("expected MediationError, got %T: %v", err, err)
 	}
-	if me.Code != "schemaIncompatible" {
-		t.Errorf("expected schemaIncompatible, got %q", me.Code)
+	if me.Code != "SCH_ADAPTATION_FAILED" {
+		t.Errorf("expected SCH_ADAPTATION_FAILED, got %q", me.Code)
 	}
 }
 
@@ -1405,8 +1405,8 @@ func TestMediate_ActionReject_OnIncompatible(t *testing.T) {
 	if !errors.As(err, &me) {
 		t.Fatalf("expected MediationError, got %T: %v", err, err)
 	}
-	if me.Code != "schemaIncompatible" {
-		t.Errorf("expected schemaIncompatible, got %q", me.Code)
+	if me.Code != "SCH_ADAPTATION_FAILED" {
+		t.Errorf("expected SCH_ADAPTATION_FAILED, got %q", me.Code)
 	}
 }
 
@@ -1434,8 +1434,8 @@ func TestMediate_ArtifactNotFound_Reject(t *testing.T) {
 	if !errors.As(err, &me) {
 		t.Fatalf("expected MediationError, got %T: %v", err, err)
 	}
-	if me.Code != "schemaIncompatible" {
-		t.Errorf("expected schemaIncompatible, got %q", me.Code)
+	if me.Code != "SCH_ADAPTATION_FAILED" {
+		t.Errorf("expected SCH_ADAPTATION_FAILED, got %q", me.Code)
 	}
 }
 

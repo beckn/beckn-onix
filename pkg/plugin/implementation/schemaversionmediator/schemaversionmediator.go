@@ -430,7 +430,7 @@ func (p *provider) New(ctx context.Context, loader definition.ManifestLoader, cf
 func (m *mediator) Mediate(ctx *model.StepContext) error {
 	if m.notOnboarded {
 		return &MediationError{
-			Code:    "subscriberNotOnboarded",
+			Code:    "SCH_SUBSCRIBER_NOT_FOUND",
 			Message: "Local node manifest is missing or has no schemaObjects. Publish your manifest to DeDi before going live.",
 		}
 	}
@@ -480,7 +480,7 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 
 	if m.policy.Action == PolicyActionReject {
 		return &MediationError{
-			Code:    "schemaIncompatible",
+			Code:    "SCH_ADAPTATION_FAILED",
 			Message: fmt.Sprintf("payload contains %d incompatible schema object(s) and policy is reject", len(needs)),
 		}
 	}
@@ -586,7 +586,7 @@ func (m *mediator) applyOnFailure(cause error) error {
 		return nil
 	}
 	return &MediationError{
-		Code:    "schemaIncompatible",
+		Code:    "SCH_ADAPTATION_FAILED",
 		Message: "schema version mediation failed; check adapter logs for details",
 		cause:   cause,
 	}
@@ -646,7 +646,7 @@ func patchMessageSubtree(body, translated []byte) ([]byte, error) {
 type MediationError struct {
 	Code          string
 	Message       string
-	DroppedFields []string // non-nil only for schemaTranslationDataLoss
+	DroppedFields []string // non-nil only for SCH_ADAPTATION_FAILED (data-loss variant)
 	cause         error    // internal; use errors.Unwrap to access
 }
 
