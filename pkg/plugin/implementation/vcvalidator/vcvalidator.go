@@ -81,7 +81,7 @@ func (s *step) Run(ctx *model.StepContext) error {
 	// revocation fetch, so an unbounded count would let a single request tie up
 	// a handler goroutine indefinitely.
 	if len(creds) > s.cfg.MaxCredentials {
-		ve := failf(failStructure, "request carries %d credentials, exceeding maxCredentials=%d",
+		ve := failf(failStructure, codeSchSchemaValidation, "request carries %d credentials, exceeding maxCredentials=%d",
 			len(creds), s.cfg.MaxCredentials)
 		log.Errorf(ctx, ve, "validateVC: action=%s rejected", action)
 		return nackErr(ve)
@@ -103,20 +103,31 @@ func (s *step) Run(ctx *model.StepContext) error {
 // NACK mapping understands: a structurally broken credential is a Bad
 // Request, while every other failure (proof, issuer, expiry, revocation,
 // resolution) means the credential's authenticity could not be established,
-// which maps to Unauthorized. The machine-readable failure class stays at the
-// start of the NACK error message (e.g. "CREDENTIAL_REVOKED: …").
+// which maps to Unauthorized. Either way the specific Beckn v2.0.0 ErrorCode
+// ve carries (set at the failf call site) rides along on the wire. The
+// machine-readable failure class also stays at the start of the NACK error
+// message (e.g. "CREDENTIAL_REVOKED: …").
+//
+// Known limitation (see #870/#884): every non-failStructure class routes to
+// SignValidationErr, which core/module/handler/responsestep.go always maps
+// to HTTP 401 — including failResolution's NET_TIMEOUT/NET_DOWNSTREAM_UNAVAILABLE
+// codes, which then surface under a 401 rather than a network-appropriate
+// status. Splitting the HTTP-status mapping by Code family (not just Go
+// type) would fix this but is a nackBecknError-level change affecting every
+// plugin that returns SignValidationErr, deferred rather than folded into
+// #870/#884's classification-only scope.
 func nackErr(ve *vcError) error {
 	if ve.class == failStructure {
-		return model.NewBadReqErr(ve)
+		return model.NewCodedBadReqErr(ve.code, ve)
 	}
-	return model.NewSignValidationErr(ve)
+	return model.NewCodedSignValidationErr(ve.code, ve)
 }
 
 func asVCError(err error) *vcError {
 	if ve, ok := err.(*vcError); ok {
 		return ve
 	}
-	return &vcError{class: failStructure, msg: err.Error()}
+	return &vcError{class: failStructure, code: codeSchSchemaValidation, msg: err.Error()}
 }
 
 // ---------------------------------------------------------------------------

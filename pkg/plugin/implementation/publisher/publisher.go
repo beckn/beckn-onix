@@ -118,7 +118,7 @@ func (p *Publisher) Publish(ctx context.Context, routingKey string, msg []byte) 
 
 	if err != nil {
 		log.Errorf(ctx, err, "Publish failed for Exchange: %s, RoutingKey: %s", p.Config.Exchange, routingKey)
-		return model.NewBadReqErr(fmt.Errorf("publish message failed: %w", err))
+		return model.NewCodedBadReqErr("NET_DOWNSTREAM_UNAVAILABLE", fmt.Errorf("publish message failed: %w", err))
 	}
 
 	log.Infof(ctx, "Message published successfully to Exchange: %s, RoutingKey: %s", p.Config.Exchange, routingKey)
