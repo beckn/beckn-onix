@@ -25,6 +25,8 @@ import (
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/open-policy-agent/opa/v1/storage/inmem"
 
+	"github.com/beckn-one/beckn-onix/pkg/log"
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/security/artifactverifier"
 )
 
@@ -402,8 +404,11 @@ func fetchPolicy(rawURL string, fetchTimeout time.Duration) (string, string, err
 }
 
 // Evaluate runs the compiled policy against a JSON message body.
-// Returns a list of violation strings (empty = compliant).
-func (e *Evaluator) Evaluate(ctx context.Context, body []byte) ([]string, error) {
+// Returns a list of violations (empty = compliant). Each violation's Code is
+// set only when the Rego result explicitly provided one (see
+// extractStructuredViolations) — otherwise it's left empty for the caller to
+// fall back to a generic classification.
+func (e *Evaluator) Evaluate(ctx context.Context, body []byte) ([]model.Error, error) {
 	var input interface{}
 	if err := json.Unmarshal(body, &input); err != nil {
 		return nil, fmt.Errorf("failed to parse message body as JSON: %w", err)
@@ -417,49 +422,75 @@ func (e *Evaluator) Evaluate(ctx context.Context, body []byte) ([]string, error)
 	// Fail-closed for bundles: if the query returned no result, the policy_query_path
 	// is likely misconfigured or the rule doesn't exist in the bundle.
 	if e.failOnUndefined && len(rs) == 0 {
-		return []string{fmt.Sprintf("policy query %q returned no result (undefined)", e.query)}, nil
+		return []model.Error{{Message: fmt.Sprintf("policy query %q returned no result (undefined)", e.query)}}, nil
 	}
 
-	return extractViolations(rs)
+	return extractViolations(ctx, rs)
 }
+
+// genericDenialMessage is used whenever a policy result clearly signals a
+// denial (a non-empty deny-shaped value, or a malformed attempt at one) but
+// its content can't be parsed into a more specific violation.
+const genericDenialMessage = "policy denied the request"
 
 // extractViolations pulls violations from the OPA result set.
 // Supported query output formats:
-//   - map with {"valid": bool, "violations": []string}: structured policy_query_path result
-//   - []string / set of strings: each string is a violation message
-//   - bool: false = denied ("policy denied the request"), true = allowed
-//   - string: non-empty = violation message
-//   - empty/undefined: allowed (no violations)
-func extractViolations(rs rego.ResultSet) ([]string, error) {
+//   - map with {"valid": bool, "violations": [...]}: structured policy_query_path
+//     result. Each violation entry may be a plain string (legacy, no code) or an
+//     object {"code": "POL_...", "message": "..."} (Code is preserved). A map
+//     that doesn't fully match this shape (a missing or wrong-typed key) still
+//     produces one generic violation rather than being silently ignored.
+//   - []interface{} / set: each item may be a plain string (legacy, no code) or
+//     an object {"code": "POL_...", "message": "..."} (Code is preserved) — the
+//     same two shapes accepted by the structured format above. A non-empty set
+//     that yields zero parseable items still produces one generic violation,
+//     mirroring the structured format's invalid-with-no-violations fallback.
+//   - bool: false = denied ("policy denied the request"), true = allowed.
+//   - string: non-empty = violation message, no code.
+//   - empty/undefined: allowed (no violations).
+//   - any other type (e.g. a bare number, or an explicit Rego null): not a
+//     recognized decision shape, so treated the same as a malformed result —
+//     one generic violation, rather than being silently ignored.
+func extractViolations(ctx context.Context, rs rego.ResultSet) ([]model.Error, error) {
 	if len(rs) == 0 {
 		return nil, nil
 	}
 
-	var violations []string
+	var violations []model.Error
 	for _, result := range rs {
 		for _, expr := range result.Expressions {
 			switch v := expr.Value.(type) {
 			case bool:
 				// allow/deny pattern: false = denied
 				if !v {
-					violations = append(violations, "policy denied the request")
+					violations = append(violations, model.Error{Message: genericDenialMessage})
 				}
 			case string:
 				// single violation string
-				if v != "" {
-					violations = append(violations, v)
+				if e, ok := parseViolationItem(ctx, v); ok {
+					violations = append(violations, e)
 				}
 			case []interface{}:
 				// Result is a list (from set)
+				lenBefore := len(violations)
 				for _, item := range v {
-					if s, ok := item.(string); ok {
-						violations = append(violations, s)
+					if e, ok := parseViolationItem(ctx, item); ok {
+						violations = append(violations, e)
 					}
 				}
+				// A non-empty set is itself a deny signal — don't let every item
+				// failing to parse (e.g. an empty string, or a malformed/unsupported
+				// item) silently flip the result to compliant.
+				if len(v) > 0 && len(violations) == lenBefore {
+					violations = append(violations, model.Error{Message: genericDenialMessage})
+				}
 			case map[string]interface{}:
-				if vs := extractStructuredViolations(v); vs != nil {
+				if vs := extractStructuredViolations(ctx, v); vs != nil {
 					violations = append(violations, vs...)
 				}
+			default:
+				log.Debugf(ctx, "OPAPolicyChecker: policy result has unsupported type %T (%+v); treating as a denial", v, v)
+				violations = append(violations, model.Error{Message: genericDenialMessage})
 			}
 		}
 	}
@@ -467,42 +498,86 @@ func extractViolations(rs rego.ResultSet) ([]string, error) {
 	return violations, nil
 }
 
+// parseViolationItem converts one item from a Rego violations list/set into a
+// model.Error. Supported shapes: a plain string (legacy, Code left empty), or
+// an object {"code": "POL_...", "message": "..."} (Code preserved). Returns
+// ok=false for anything else (wrong types, or both code and message empty),
+// logging a debug line so a malformed Rego policy's output isn't silently
+// invisible.
+func parseViolationItem(ctx context.Context, item interface{}) (model.Error, bool) {
+	switch v := item.(type) {
+	case string:
+		if v == "" {
+			return model.Error{}, false
+		}
+		return model.Error{Message: v}, true
+	case map[string]interface{}:
+		message, msgIsString := v["message"].(string)
+		code, codeIsString := v["code"].(string)
+		if rawMsg := v["message"]; rawMsg != nil && !msgIsString {
+			log.Debugf(ctx, "OPAPolicyChecker: violation item has a non-string \"message\" (%T); ignoring", rawMsg)
+		}
+		if rawCode := v["code"]; rawCode != nil && !codeIsString {
+			log.Debugf(ctx, "OPAPolicyChecker: violation item has a non-string \"code\" (%T); ignoring", rawCode)
+		}
+		if message == "" && code == "" {
+			log.Debugf(ctx, "OPAPolicyChecker: dropping violation item with no usable code or message: %+v", v)
+			return model.Error{}, false
+		}
+		if message == "" {
+			message = code
+		}
+		return model.Error{Code: code, Message: message}, true
+	default:
+		log.Debugf(ctx, "OPAPolicyChecker: dropping violation item of unsupported type %T", item)
+		return model.Error{}, false
+	}
+}
+
 // extractStructuredViolations handles the policy_query_path result format:
-// {"valid": bool, "violations": []string}
-// Returns the violation strings if the map matches this format, or nil if it doesn't.
-func extractStructuredViolations(m map[string]interface{}) []string {
+// {"valid": bool, "violations": [...]}. Each item in "violations" is parsed by
+// parseViolationItem — either a plain string (legacy — Code left empty) or an
+// object {"code": "POL_...", "message": "..."} (Code preserved for the
+// caller's classification). Returns the parsed violations if the map matches
+// this format; nil if the map has neither key (not an attempt at this format
+// at all — some other, unrelated map result); or one generic denial if the
+// map has only one of the two keys, or either key has the wrong type (a
+// malformed attempt at this format must not be silently treated as
+// compliant).
+func extractStructuredViolations(ctx context.Context, m map[string]interface{}) []model.Error {
 	validRaw, hasValid := m["valid"]
 	violationsRaw, hasViolations := m["violations"]
 
-	if !hasValid || !hasViolations {
+	if !hasValid && !hasViolations {
 		return nil
 	}
 
-	valid, ok := validRaw.(bool)
-	if !ok {
-		return nil
-	}
+	valid, validOK := validRaw.(bool)
+	violationsList, violationsOK := violationsRaw.([]interface{})
 
-	violationsList, ok := violationsRaw.([]interface{})
-	if !ok {
-		return nil
+	// A missing key always type-asserts to !OK too, so checking just the OK
+	// results (rather than also hasValid/hasViolations) already covers both
+	// "key absent" and "key present with the wrong type".
+	if !validOK || !violationsOK {
+		log.Debugf(ctx, "OPAPolicyChecker: malformed structured policy result (expected {\"valid\": bool, \"violations\": [...]}), got %+v; treating as a denial", m)
+		return []model.Error{{Message: genericDenialMessage}}
 	}
 
 	// If valid is true and violations is empty, no violations
 	if valid && len(violationsList) == 0 {
-		return []string{}
+		return []model.Error{}
 	}
 
-	var violations []string
+	var violations []model.Error
 	for _, item := range violationsList {
-		if s, ok := item.(string); ok {
-			violations = append(violations, s)
+		if e, ok := parseViolationItem(ctx, item); ok {
+			violations = append(violations, e)
 		}
 	}
 
 	// If valid is false but violations is empty, report a generic violation
 	if !valid && len(violations) == 0 {
-		violations = append(violations, "policy denied the request")
+		violations = append(violations, model.Error{Message: genericDenialMessage})
 	}
 
 	return violations

@@ -80,7 +80,6 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	var paths []string
 	var messages []string
 	hasPath := false
-	code := ""
 	for _, err := range e.Errors {
 		p := err.path()
 		if p != "" {
@@ -88,16 +87,6 @@ func (e *SchemaValidationErr) BecknError() *Error {
 		}
 		paths = append(paths, p)
 		messages = append(messages, err.Message)
-		// First non-empty per-cause code wins. The other causes' text is
-		// still fully present in Message/Details.Path — only their
-		// individual Code is not separately represented on the wire, since
-		// a single Error can only carry one code.
-		if code == "" && err.Code != "" {
-			code = err.Code
-		}
-	}
-	if code == "" {
-		code = http.StatusText(http.StatusBadRequest)
 	}
 
 	var details *ErrorDetails
@@ -106,10 +95,54 @@ func (e *SchemaValidationErr) BecknError() *Error {
 	}
 
 	return &Error{
-		Code:    code,
+		Code:    FirstNonEmptyCode(e.Errors, http.StatusText(http.StatusBadRequest)),
 		Details: details,
 		Message: strings.Join(messages, "; "),
 	}
+}
+
+// FirstNonEmptyCode returns the first non-empty Code among errs, in order, or
+// defaultCode if none is set. Used when multiple causes must be reduced to
+// one representative Code for the wire — the other causes' text is still
+// carried in full elsewhere (e.g. a joined Message), only their Code is
+// dropped, since a single Error can only carry one code.
+func FirstNonEmptyCode(errs []Error, defaultCode string) string {
+	for _, e := range errs {
+		if e.Code != "" {
+			return e.Code
+		}
+	}
+	return defaultCode
+}
+
+// codedErr is the common shape shared by wrapper error types that carry one
+// opaque cause plus an optional explicit taxonomy code, falling back to a
+// type-specific default when Code is empty. Embed it in a named type (e.g.
+// SignValidationErr, BadReqErr) to get Code storage and Unwrap() without
+// duplicating them — the embedding type still defines its own constructors
+// and BecknError(), since message-prefix formatting and the default code
+// genuinely differ per type.
+type codedErr struct {
+	// Code is the taxonomy value for this failure's specific cause, or ""
+	// if unclassified — the embedding type's BecknError() should apply its
+	// own default via resolveCode in that case.
+	Code string
+	error
+}
+
+// Unwrap exposes the wrapped cause so errors.Is/errors.As can reach it (e.g. a
+// plugin-defined sentinel error) in addition to matching the embedding type.
+func (e *codedErr) Unwrap() error {
+	return e.error
+}
+
+// resolveCode returns Code if non-empty, else defaultCode. Called by each
+// embedding type's BecknError() to apply its own default fallback.
+func (e *codedErr) resolveCode(defaultCode string) string {
+	if e.Code != "" {
+		return e.Code
+	}
+	return defaultCode
 }
 
 // defaultSignValidationCode is used when a SignValidationErr carries no more
@@ -118,56 +151,57 @@ const defaultSignValidationCode = "AUT_SIGNATURE_INVALID"
 
 // SignValidationErr occurs when signature validation fails.
 type SignValidationErr struct {
-	// Code is the AUT_* taxonomy value for this failure's specific cause.
-	Code string
-	error
+	codedErr
 }
 
-// NewSignValidationErr creates a new instance of SignValidationErr from an error,
-// classified as AUT_SIGNATURE_INVALID (the generic bucket). Use
-// NewCodedSignValidationErr when the caller knows a more specific AUT_* cause.
+// NewSignValidationErr creates a new instance of SignValidationErr from an
+// error. Code is left unset, so BecknError() falls back to the generic
+// AUT_SIGNATURE_INVALID bucket — mirrors NewBadReqErr's lazy-default
+// convention. Use NewCodedSignValidationErr when the caller knows a more
+// specific AUT_* cause.
 func NewSignValidationErr(e error) *SignValidationErr {
-	return &SignValidationErr{Code: defaultSignValidationCode, error: e}
+	return &SignValidationErr{codedErr{error: e}}
 }
 
 // NewCodedSignValidationErr creates a SignValidationErr classified with an
 // explicit AUT_* code, for callers that already know the specific cause.
 func NewCodedSignValidationErr(code string, e error) *SignValidationErr {
-	return &SignValidationErr{Code: code, error: e}
-}
-
-// Unwrap exposes the wrapped cause so errors.Is/errors.As can reach it (e.g. a
-// plugin-defined sentinel error) in addition to matching *SignValidationErr itself.
-func (e *SignValidationErr) Unwrap() error {
-	return e.error
+	return &SignValidationErr{codedErr{Code: code, error: e}}
 }
 
 // BecknError converts the SignValidationErr to an instance of Error.
 func (e *SignValidationErr) BecknError() *Error {
-	code := e.Code
-	if code == "" {
-		code = defaultSignValidationCode
-	}
 	return &Error{
-		Code:    code,
+		Code:    e.resolveCode(defaultSignValidationCode),
 		Message: "Signature Validation Error: " + e.Error(),
 	}
 }
 
 // BadReqErr occurs when a bad request is encountered.
 type BadReqErr struct {
-	error
+	codedErr
 }
 
-// NewBadReqErr creates a new instance of BadReqErr from an error.
+// NewBadReqErr creates a new instance of BadReqErr from an error. Code is left
+// unset, so BecknError() falls back to the legacy "Bad Request" string — the
+// many existing callers of this constructor across the codebase keep that
+// behavior unchanged. Use NewCodedBadReqErr when the caller knows a more
+// specific taxonomy code.
 func NewBadReqErr(err error) *BadReqErr {
-	return &BadReqErr{err}
+	return &BadReqErr{codedErr{error: err}}
+}
+
+// NewCodedBadReqErr creates a BadReqErr classified with an explicit taxonomy
+// code, for callers that already know the specific cause (e.g. a policy
+// checker classifying a denial onto the Beckn v2.0.0 POL_* codes).
+func NewCodedBadReqErr(code string, err error) *BadReqErr {
+	return &BadReqErr{codedErr{Code: code, error: err}}
 }
 
 // BecknError converts the BadReqErr to an instance of Error.
 func (e *BadReqErr) BecknError() *Error {
 	return &Error{
-		Code:    http.StatusText(http.StatusBadRequest),
+		Code:    e.resolveCode(http.StatusText(http.StatusBadRequest)),
 		Message: "BAD Request: " + e.Error(),
 	}
 }
