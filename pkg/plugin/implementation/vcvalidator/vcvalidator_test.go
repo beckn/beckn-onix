@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,13 +82,14 @@ func TestVectors(t *testing.T) {
 	cases := []struct {
 		file      string
 		wantClass failClass // "" => must be accepted
+		wantCode  string    // checked when wantClass is non-empty
 	}{
-		{"didkey-unrevoked.json", ""},
-		{"didkey-revoked.json", failRevoked},
-		{"didjwk-unrevoked.json", ""},
-		{"didjwk-revoked.json", failRevoked},
-		{"didweb-unrevoked.json", ""},
-		{"didweb-revoked.json", failRevoked},
+		{"didkey-unrevoked.json", "", ""},
+		{"didkey-revoked.json", failRevoked, codeAutKeyExpiredOrRevoked},
+		{"didjwk-unrevoked.json", "", ""},
+		{"didjwk-revoked.json", failRevoked, codeAutKeyExpiredOrRevoked},
+		{"didweb-unrevoked.json", "", ""},
+		{"didweb-revoked.json", failRevoked, codeAutKeyExpiredOrRevoked},
 	}
 
 	for _, tc := range cases {
@@ -108,7 +110,7 @@ func TestVectors(t *testing.T) {
 				}
 				return
 			}
-			assertClass(t, err, tc.wantClass)
+			assertClassCode(t, err, tc.wantClass, tc.wantCode)
 		})
 	}
 }
@@ -156,21 +158,21 @@ func TestTamperedSignature(t *testing.T) {
 
 	v := testVerifier(nil)
 	err := v.verify(context.Background(), vcBytes(t, vc))
-	assertClass(t, err, failProof)
+	assertClassCode(t, err, failProof, codeAutSignatureInvalid)
 }
 
 func TestExpired(t *testing.T) {
 	v := testVerifier(nil)
 	v.now = func() time.Time { return time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC) }
 	err := v.verify(context.Background(), vcBytes(t, loadVC(t)))
-	assertClass(t, err, failExpired)
+	assertClassCode(t, err, failExpired, codeAutKeyExpiredOrRevoked)
 }
 
 func TestNotYetValid(t *testing.T) {
 	v := testVerifier(nil)
 	v.now = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	err := v.verify(context.Background(), vcBytes(t, loadVC(t)))
-	assertClass(t, err, failExpired)
+	assertClassCode(t, err, failExpired, codeAutKeyExpiredOrRevoked)
 }
 
 func TestIssuerMismatch(t *testing.T) {
@@ -179,7 +181,7 @@ func TestIssuerMismatch(t *testing.T) {
 	vc["issuer"] = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"
 	v := testVerifier(nil)
 	err := v.verify(context.Background(), vcBytes(t, vc))
-	assertClass(t, err, failIssuer)
+	assertClassCode(t, err, failIssuer, codeAutUnauthorizedAction)
 }
 
 // TestDIDWebHappyPath builds a VC-JWT signed by an ed25519 key, publishes the
@@ -231,7 +233,9 @@ func TestDIDWebUnreachableFailsClosed(t *testing.T) {
 	})
 	v.now = fixedNow
 	err := v.verify(context.Background(), vcBytes(t, vc))
-	assertClass(t, err, failResolution)
+	// "dial tcp: no such host" is network-caused (isNetErr) but not a timeout,
+	// so it lands on NET_DOWNSTREAM_UNAVAILABLE rather than NET_TIMEOUT.
+	assertClassCode(t, err, failResolution, codeNetDownstreamUnavailable)
 
 	// fail-open should let it through.
 	cfg.FailOpen = true
@@ -281,7 +285,7 @@ func dediVC(t *testing.T, statusCode int) (*verifier, json.RawMessage) {
 
 func TestDEDIRevoked(t *testing.T) {
 	v, raw := dediVC(t, 200) // DEDI record exists → revoked
-	assertClass(t, v.verify(context.Background(), raw), failRevoked)
+	assertClassCode(t, v.verify(context.Background(), raw), failRevoked, codeAutKeyExpiredOrRevoked)
 }
 
 func TestDEDINotRevoked(t *testing.T) {
@@ -303,7 +307,135 @@ func TestDataIntegrityProofRejectedWhenRequired(t *testing.T) {
 	}
 	v := testVerifier(nil)
 	err := v.verify(context.Background(), vcBytes(t, vc))
-	assertClass(t, err, failProof)
+	assertClassCode(t, err, failProof, codeAutSignatureInvalid)
+}
+
+// TestResolutionCode exercises resolutionCode's three-way split directly: a
+// timeout is NET_TIMEOUT, another network cause (matched by the same isNetErr
+// heuristic) is NET_DOWNSTREAM_UNAVAILABLE, and anything else — the key
+// genuinely couldn't be found rather than an unreachable network — is
+// AUT_KEY_NOT_FOUND.
+// fakeTimeoutErr implements the timeouter interface (Timeout() bool) the way
+// *url.Error/net.Error do — its message text deliberately contains no
+// "timeout" substring, so a test built on it only passes if isTimeoutErr
+// actually uses the interface rather than falling back to string matching.
+type fakeTimeoutErr struct{ msg string }
+
+func (e *fakeTimeoutErr) Error() string { return e.msg }
+func (e *fakeTimeoutErr) Timeout() bool { return true }
+
+func TestResolutionCode(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"network timeout (string fallback)", fmt.Errorf("did:web fetch https://x: dial tcp: i/o timeout"), codeNetTimeout},
+		{"network, not a timeout", fmt.Errorf("did:web fetch https://x: dial tcp: no such host"), codeNetDownstreamUnavailable},
+		{"non-network", fmt.Errorf("did method %q not allowed (allowed: [key jwk web])", "example"), codeAutKeyNotFound},
+		{
+			// msg deliberately contains no "timeout" substring anywhere, so
+			// this only passes if isTimeoutErr actually consults the
+			// Timeout() interface rather than falling back to string
+			// matching.
+			"timeout detected via Timeout() interface, not message text",
+			fmt.Errorf("did:web fetch https://x: %w", &fakeTimeoutErr{msg: "context deadline exceeded (no server response)"}),
+			codeNetTimeout,
+		},
+		{
+			"ordinary non-2xx HTTP status is not a network failure",
+			fmt.Errorf("did:web fetch https://x: http 404 for https://x"),
+			codeAutKeyNotFound,
+		},
+		{
+			// A real *url.Error (what http.Client.Do returns) wrapping a TLS
+			// failure — message text contains none of "dial"/"no such
+			// host"/"connection"/"timeout", so this only passes if isNetErr's
+			// errors.As(*url.Error) type check is actually working.
+			"real *url.Error (TLS failure) is a network failure despite no recognizable substring",
+			fmt.Errorf("did:web fetch https://x: %w", &url.Error{Op: "Get", URL: "https://x", Err: errors.New("tls: failed to verify certificate: x509: certificate signed by unknown authority")}),
+			codeNetDownstreamUnavailable,
+		},
+		{
+			"real *url.Error wrapping a genuine timeout",
+			fmt.Errorf("did:web fetch https://x: %w", &url.Error{Op: "Get", URL: "https://x", Err: &fakeTimeoutErr{msg: "context deadline exceeded (no server response)"}}),
+			codeNetTimeout,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolutionCode(tt.err); got != tt.want {
+				t.Errorf("resolutionCode(%v) = %s, want %s", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNoProof asserts a credential with no proof block at all is distinguished
+// from every other proof failure: AUT_SIGNATURE_MISSING, not
+// AUT_SIGNATURE_INVALID.
+func TestNoProof(t *testing.T) {
+	vc := map[string]any{
+		"issuer":            "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+		"credentialSubject": map[string]any{"id": "x"},
+	}
+	v := testVerifier(nil)
+	err := v.verify(context.Background(), vcBytes(t, vc))
+	assertClassCode(t, err, failProof, codeAutSignatureMissing)
+}
+
+// TestProofPresentButEmpty asserts a credential whose proof object exists but
+// has neither jwt nor proofValue is classified the same as no proof at all
+// (AUT_SIGNATURE_MISSING) — both mean there's no usable proof content, so
+// they shouldn't be split across two different codes.
+func TestProofPresentButEmpty(t *testing.T) {
+	vc := map[string]any{
+		"issuer":            "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+		"credentialSubject": map[string]any{"id": "x"},
+		"proof":             map[string]any{"type": "SomeProofType"},
+	}
+	v := testVerifier(nil)
+	err := v.verify(context.Background(), vcBytes(t, vc))
+	assertClassCode(t, err, failProof, codeAutSignatureMissing)
+}
+
+// TestUnsupportedDIDMethodIsKeyNotFound asserts a resolution failure caused by
+// a disallowed/unsupported DID method (not a network problem) is classified
+// AUT_KEY_NOT_FOUND rather than a NET_* code.
+func TestUnsupportedDIDMethodIsKeyNotFound(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	did := "did:example:abc"
+	kid := did + "#key-1"
+	jwt := signVCJWT(t, priv, kid, did, "did:key:z6MkSubject", fixedNow())
+	vc := map[string]any{
+		"issuer":            did,
+		"credentialSubject": map[string]any{"id": "did:key:z6MkSubject"},
+		"proof":             map[string]any{"type": "JsonWebSignature2020", "jwt": jwt},
+	}
+	v := testVerifier(nil)
+	v.now = fixedNow
+	err := v.verify(context.Background(), vcBytes(t, vc))
+	assertClassCode(t, err, failResolution, codeAutKeyNotFound)
+}
+
+// TestMalformedCredentialJSON asserts a credential body that isn't valid JSON
+// at all is classified SCH_INVALID_JSON, distinct from a well-formed-but-
+// incomplete credential (SCH_REQUIRED_FIELD_MISSING).
+func TestMalformedCredentialJSON(t *testing.T) {
+	v := testVerifier(nil)
+	err := v.verify(context.Background(), json.RawMessage(`{"issuer": "x", "credentialSubject": {`))
+	assertClassCode(t, err, failStructure, codeSchInvalidJSON)
+}
+
+// TestMalformedCredentialStatus asserts an unparseable credentialStatus is
+// classified SCH_INVALID_JSON, same as any other malformed-JSON structural
+// failure.
+func TestMalformedCredentialStatus(t *testing.T) {
+	vc := loadVC(t)
+	vc["credentialStatus"] = 123 // neither an object nor an array
+	v := testVerifier(nil)
+	err := v.verify(context.Background(), vcBytes(t, vc))
+	assertClassCode(t, err, failStructure, codeSchInvalidJSON)
 }
 
 func TestConfigRequiresActions(t *testing.T) {
@@ -433,6 +565,9 @@ func TestStepNackErrorTypes(t *testing.T) {
 		if !strings.Contains(err.Error(), string(failIssuer)) {
 			t.Fatalf("failure class missing from error: %v", err)
 		}
+		if code := signErr.BecknError().Code; code != codeAutUnauthorizedAction {
+			t.Fatalf("BecknError().Code = %s, want %s", code, codeAutUnauthorizedAction)
+		}
 	})
 	t.Run("structural failure is BadReqErr", func(t *testing.T) {
 		vc := map[string]any{ // no issuer → failStructure
@@ -446,6 +581,9 @@ func TestStepNackErrorTypes(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), string(failStructure)) {
 			t.Fatalf("failure class missing from error: %v", err)
+		}
+		if code := badReq.BecknError().Code; code != codeSchRequiredFieldMissing {
+			t.Fatalf("BecknError().Code = %s, want %s", code, codeSchRequiredFieldMissing)
 		}
 	})
 }
@@ -480,6 +618,9 @@ func TestStepMaxCredentials(t *testing.T) {
 	}
 	if !strings.Contains(runErr.Error(), "maxCredentials") {
 		t.Fatalf("expected cap rejection, got: %v", runErr)
+	}
+	if code := badReq.BecknError().Code; code != codeSchSchemaValidation {
+		t.Fatalf("BecknError().Code = %s, want %s", code, codeSchSchemaValidation)
 	}
 
 	// At the cap it must fall through to per-credential verification.
@@ -568,7 +709,9 @@ func TestRedirectCap(t *testing.T) {
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
-func assertClass(t *testing.T, err error, want failClass) {
+// assertClassCode asserts err is a *vcError with the given class, and — when
+// wantCode is non-empty — the given Beckn v2.0.0 ErrorCode too.
+func assertClassCode(t *testing.T, err error, want failClass, wantCode string) {
 	t.Helper()
 	if err == nil {
 		t.Fatalf("expected error of class %s, got nil", want)
@@ -579,6 +722,9 @@ func assertClass(t *testing.T, err error, want failClass) {
 	}
 	if ve.class != want {
 		t.Fatalf("expected class %s, got %s (%s)", want, ve.class, ve.msg)
+	}
+	if wantCode != "" && ve.code != wantCode {
+		t.Fatalf("expected code %s, got %s (%s)", wantCode, ve.code, ve.msg)
 	}
 }
 

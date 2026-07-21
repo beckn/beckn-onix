@@ -170,6 +170,17 @@ func NewCodedSignValidationErr(code string, e error) *SignValidationErr {
 }
 
 // BecknError converts the SignValidationErr to an instance of Error.
+//
+// The "Signature Validation Error: " message prefix was accurate for this
+// type's original sole caller (signvalidator.go, exclusively real signature
+// failures). vcvalidator (see #870/#884) also constructs SignValidationErr
+// for non-signature causes — expiry, revocation, DID-resolution failures,
+// issuer mismatch — via NewCodedSignValidationErr, so the human-readable
+// message can now read e.g. "Signature Validation Error: CREDENTIAL_EXPIRED:
+// ...". The structured Code field is correct either way; only this message
+// text is misleading for those causes. Deliberately left as-is: fixing it is
+// a cross-cutting change affecting every caller of this type, deferred
+// rather than folded into #884's scope.
 func (e *SignValidationErr) BecknError() *Error {
 	return &Error{
 		Code:    e.resolveCode(defaultSignValidationCode),

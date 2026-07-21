@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/rabbitmq/amqp091-go"
+
+	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
 func TestGetConnURLSuccess(t *testing.T) {
@@ -232,6 +234,16 @@ func TestPublishFailure(t *testing.T) {
 	err := p.Publish(context.Background(), "", []byte(`{"test": true}`))
 	if err == nil {
 		t.Error("expected error from failed publish, got nil")
+	}
+
+	// A RabbitMQ publish failure is a downstream-infrastructure problem, not
+	// a caller bad-request — classified as NET_DOWNSTREAM_UNAVAILABLE.
+	badReqErr, ok := err.(*model.BadReqErr)
+	if !ok {
+		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+	}
+	if code := badReqErr.BecknError().Code; code != "NET_DOWNSTREAM_UNAVAILABLE" {
+		t.Errorf("BecknError().Code = %s, want NET_DOWNSTREAM_UNAVAILABLE", code)
 	}
 }
 
