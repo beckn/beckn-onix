@@ -2,7 +2,6 @@ package router
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -238,10 +237,7 @@ func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*mode
 	// map decodes of the same body.
 	_, reqContext, becknErr, cause := model.ExtractContext(body)
 	if becknErr != nil {
-		if cause != nil {
-			return nil, model.NewCodedBadReqErr(becknErr.Code, fmt.Errorf("error parsing request body: %w", cause))
-		}
-		return nil, model.NewCodedBadReqErr(becknErr.Code, errors.New(becknErr.Message))
+		return nil, model.WrapExtractContextErr("error parsing request body", becknErr, cause)
 	}
 
 	// Checks legacy snake_case (bpp_uri, bap_uri), then camelCase (bppUri,
