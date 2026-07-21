@@ -160,9 +160,11 @@ func TestEncryptFailure(t *testing.T) {
 				t.Errorf("Encrypt() error = %v, want error containing %q", err, tt.errorContains)
 			}
 			// All malformed-key-material failures above are classified as
-			// SCH_INVALID_FORMAT (a base64 or X25519 key-decode failure is a
-			// format problem, not a schema/missing-field/network one).
-			requireBadReqCode(t, err, "SCH_INVALID_FORMAT")
+			// AUT_SIGNATURE_INVALID, matching signvalidator.go's precedent for
+			// undecodable signature/key material: verification-relevant key
+			// material is inherently an AUT_* concern even when the proximate
+			// cause is bad encoding, not a request-schema problem.
+			requireBadReqCode(t, err, "AUT_SIGNATURE_INVALID")
 		})
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"syscall"
@@ -93,12 +94,6 @@ func resolutionCode(err error) string {
 	if !isNetErr(err) {
 		return codeAutKeyNotFound
 	}
-	return netFailureCode(err)
-}
-
-// netFailureCode picks between the two network-failure codes. Call only
-// when isNetErr(err) is already known true.
-func netFailureCode(err error) string {
 	if isTimeoutErr(err) {
 		return codeNetTimeout
 	}
@@ -108,7 +103,10 @@ func netFailureCode(err error) string {
 // timeouter is implemented by *url.Error (returned from http.Client.Do,
 // including for did:web/DEDI fetches) and other stdlib network errors — a
 // reliable signal independent of the wrapped error's message text or
-// casing, reachable through %w-wrapping via errors.As.
+// casing, reachable through %w-wrapping via errors.As. Duck-typed by design
+// (any Timeout() bool method matches); no conflicting implementation exists
+// in this codebase today, but a future unrelated type defining the same
+// method name would be silently treated as a network-timeout signal.
 type timeouter interface{ Timeout() bool }
 
 // isTimeoutErr reports whether err is a timeout, preferring the standard
@@ -269,13 +267,10 @@ func (v *verifier) verifyJWTProof(ctx context.Context, cred *credential, issuer 
 
 	key, err := resolveDID(ctx, header.Kid, header.Alg, v.cfg, v.fetch)
 	if err != nil {
-		if netErr := isNetErr(err); netErr {
-			if v.cfg.FailOpen {
-				return nil
-			}
-			return failf(failResolution, netFailureCode(err), "resolve %q: %v", header.Kid, err)
+		if isNetErr(err) && v.cfg.FailOpen {
+			return nil
 		}
-		return failf(failResolution, codeAutKeyNotFound, "resolve %q: %v", header.Kid, err)
+		return failf(failResolution, resolutionCode(err), "resolve %q: %v", header.Kid, err)
 	}
 
 	// Alg-confusion protection: the header alg must match the resolved key.
@@ -382,17 +377,26 @@ func isNetErr(err error) bool {
 	if err == nil {
 		return false
 	}
+	// *url.Error is what http.Client.Do returns for ANY failure to complete
+	// the round trip — dial, DNS, TLS handshake, connection reset, timeout,
+	// context cancellation — regardless of message text. It's a reliable
+	// type-based signal, reachable through %w-wrapping (e.g. resolveDIDWeb's
+	// "did:web fetch %s: %w") via errors.As. Deliberately does NOT match on
+	// message substrings like "fetch" or "http " (httpFetcher's own non-2xx-
+	// status message, "http %d for %s") — those appeared unconditionally
+	// regardless of cause and previously caused a completed round trip that
+	// merely returned a bad status to be misclassified as a network failure;
+	// that case correctly falls through to AUT_KEY_NOT_FOUND below, since a
+	// non-2xx response is never itself a *url.Error.
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return true
+	}
 	if isTimeoutErr(err) {
 		return true
 	}
-	// Deliberately excludes "http " (httpFetcher's own non-2xx-status message,
-	// "http %d for %s") and "fetch" (resolveDIDWeb's static "did:web fetch %s: "
-	// wrap prefix, added unconditionally around whatever fetch() returns —
-	// including that same non-2xx message, so it carries no real signal about
-	// the underlying cause). A completed round trip that returned a bad status
-	// code is not a network failure; it means the resource genuinely wasn't
-	// found or the server rejected it, which resolutionCode maps to
-	// AUT_KEY_NOT_FOUND rather than a NET_* code.
+	// Fallback for synthetic/test errors with no real *url.Error in their
+	// chain (e.g. hand-built fmt.Errorf strings used in unit tests).
 	s := err.Error()
 	return strings.Contains(s, "dial") || strings.Contains(s, "no such host") ||
 		strings.Contains(s, "connection")

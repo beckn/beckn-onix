@@ -143,7 +143,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    "invalid-base64!@#$",
 			publicKey:     senderPublicKeyB64,
 			expectedErr:   "invalid private key",
-			wantCode:      "SCH_INVALID_FORMAT",
+			wantCode:      "AUT_SIGNATURE_INVALID",
 		},
 		{
 			name:          "Invalid public key format",
@@ -151,7 +151,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    receiverPrivateKeyB64,
 			publicKey:     "invalid-base64!@#$",
 			expectedErr:   "invalid public key",
-			wantCode:      "SCH_INVALID_FORMAT",
+			wantCode:      "AUT_SIGNATURE_INVALID",
 		},
 		{
 			name:          "Invalid encrypted data format",
@@ -167,7 +167,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    "",
 			publicKey:     senderPublicKeyB64,
 			expectedErr:   "invalid private key",
-			wantCode:      "SCH_INVALID_FORMAT",
+			wantCode:      "AUT_SIGNATURE_INVALID",
 		},
 		{
 			name:          "Empty public key",
@@ -175,7 +175,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    receiverPrivateKeyB64,
 			publicKey:     "",
 			expectedErr:   "invalid public key",
-			wantCode:      "SCH_INVALID_FORMAT",
+			wantCode:      "AUT_SIGNATURE_INVALID",
 		},
 		{
 			name:          "Invalid base64 data",
@@ -191,7 +191,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    base64.StdEncoding.EncodeToString([]byte("short")),
 			publicKey:     senderPublicKeyB64,
 			expectedErr:   "failed to create private key",
-			wantCode:      "SCH_INVALID_FORMAT",
+			wantCode:      "AUT_SIGNATURE_INVALID",
 		},
 		{
 			name:          "Invalid public key size",
@@ -199,7 +199,7 @@ func TestDecrypterFailure(t *testing.T) {
 			privateKey:    receiverPrivateKeyB64,
 			publicKey:     base64.StdEncoding.EncodeToString([]byte("short")),
 			expectedErr:   "failed to create public key",
-			wantCode:      "SCH_INVALID_FORMAT",
+			wantCode:      "AUT_SIGNATURE_INVALID",
 		},
 		{
 			name:          "Invalid block size",
@@ -235,7 +235,6 @@ func TestDecrypterFailure(t *testing.T) {
 	}
 }
 
-// requireBadReqCode asserts err is a *model.BadReqErr carrying wantCode.
 // requireBadReqCode asserts err unwraps (via errors.As, matching how
 // nackBecknError itself classifies errors) to a *model.BadReqErr carrying
 // wantCode. createAESCipher's callers re-wrap its errors in an outer

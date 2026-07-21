@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -333,14 +334,32 @@ func TestResolutionCode(t *testing.T) {
 		{"network, not a timeout", fmt.Errorf("did:web fetch https://x: dial tcp: no such host"), codeNetDownstreamUnavailable},
 		{"non-network", fmt.Errorf("did method %q not allowed (allowed: [key jwk web])", "example"), codeAutKeyNotFound},
 		{
-			"real Go http.Client timeout, detected via Timeout() interface not message text",
-			fmt.Errorf("did:web fetch https://x: %w", &fakeTimeoutErr{msg: "context deadline exceeded (Client.Timeout exceeded while awaiting headers)"}),
+			// msg deliberately contains no "timeout" substring anywhere, so
+			// this only passes if isTimeoutErr actually consults the
+			// Timeout() interface rather than falling back to string
+			// matching.
+			"timeout detected via Timeout() interface, not message text",
+			fmt.Errorf("did:web fetch https://x: %w", &fakeTimeoutErr{msg: "context deadline exceeded (no server response)"}),
 			codeNetTimeout,
 		},
 		{
 			"ordinary non-2xx HTTP status is not a network failure",
 			fmt.Errorf("did:web fetch https://x: http 404 for https://x"),
 			codeAutKeyNotFound,
+		},
+		{
+			// A real *url.Error (what http.Client.Do returns) wrapping a TLS
+			// failure — message text contains none of "dial"/"no such
+			// host"/"connection"/"timeout", so this only passes if isNetErr's
+			// errors.As(*url.Error) type check is actually working.
+			"real *url.Error (TLS failure) is a network failure despite no recognizable substring",
+			fmt.Errorf("did:web fetch https://x: %w", &url.Error{Op: "Get", URL: "https://x", Err: errors.New("tls: failed to verify certificate: x509: certificate signed by unknown authority")}),
+			codeNetDownstreamUnavailable,
+		},
+		{
+			"real *url.Error wrapping a genuine timeout",
+			fmt.Errorf("did:web fetch https://x: %w", &url.Error{Op: "Get", URL: "https://x", Err: &fakeTimeoutErr{msg: "context deadline exceeded (no server response)"}}),
+			codeNetTimeout,
 		},
 	}
 	for _, tt := range tests {

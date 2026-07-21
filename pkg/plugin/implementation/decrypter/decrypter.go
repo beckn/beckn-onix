@@ -27,12 +27,12 @@ func New(ctx context.Context) (*decrypter, func() error, error) {
 func (d *decrypter) Decrypt(ctx context.Context, encryptedData, privateKeyBase64, publicKeyBase64 string) (string, error) {
 	privateKeyBytes, err := base64.StdEncoding.DecodeString(privateKeyBase64)
 	if err != nil {
-		return "", model.NewCodedBadReqErr("SCH_INVALID_FORMAT", fmt.Errorf("invalid private key: %w", err))
+		return "", model.NewCodedBadReqErr("AUT_SIGNATURE_INVALID", fmt.Errorf("invalid private key: %w", err))
 	}
 
 	publicKeyBytes, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 	if err != nil {
-		return "", model.NewCodedBadReqErr("SCH_INVALID_FORMAT", fmt.Errorf("invalid public key: %w", err))
+		return "", model.NewCodedBadReqErr("AUT_SIGNATURE_INVALID", fmt.Errorf("invalid public key: %w", err))
 	}
 
 	// Decode the Base64 encoded encrypted data.
@@ -68,11 +68,11 @@ func createAESCipher(privateKey, publicKey []byte) (cipher.Block, error) {
 	x25519Curve := ecdh.X25519()
 	x25519PrivateKey, err := x25519Curve.NewPrivateKey(privateKey)
 	if err != nil {
-		return nil, model.NewCodedBadReqErr("SCH_INVALID_FORMAT", fmt.Errorf("failed to create private key: %w", err))
+		return nil, model.NewCodedBadReqErr("AUT_SIGNATURE_INVALID", fmt.Errorf("failed to create private key: %w", err))
 	}
 	x25519PublicKey, err := x25519Curve.NewPublicKey(publicKey)
 	if err != nil {
-		return nil, model.NewCodedBadReqErr("SCH_INVALID_FORMAT", fmt.Errorf("failed to create public key: %w", err))
+		return nil, model.NewCodedBadReqErr("AUT_SIGNATURE_INVALID", fmt.Errorf("failed to create public key: %w", err))
 	}
 	sharedSecret, err := x25519PrivateKey.ECDH(x25519PublicKey)
 	if err != nil {
