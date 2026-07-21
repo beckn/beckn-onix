@@ -213,15 +213,20 @@ func (r *Role) UnmarshalYAML(unmarshal func(interface{}) error) error {
 // an object) so callers can reuse the same Code/Message regardless of how
 // each formats its own response (e.g. wrapping in NewCodedBadReqErr, or
 // writing a bare JSON body directly). req and reqContext are nil on failure.
-func ExtractContext(body []byte) (req map[string]interface{}, reqContext map[string]interface{}, becknErr *Error) {
+// cause is the underlying json.Unmarshal error for the SCH_INVALID_JSON case
+// (nil otherwise, since the missing-context case has no wrapped cause of its
+// own) — callers that want errors.Is/errors.As to keep reaching it (e.g. via
+// fmt.Errorf("...: %w", cause)) can use it directly instead of losing that
+// chain through becknErr's already-flattened Message string.
+func ExtractContext(body []byte) (req map[string]interface{}, reqContext map[string]interface{}, becknErr *Error, cause error) {
 	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, nil, NewCodedError("SCH_INVALID_JSON", fmt.Sprintf("failed to decode request body: %v", err))
+		return nil, nil, NewCodedError("SCH_INVALID_JSON", fmt.Sprintf("failed to decode request body: %v", err)), err
 	}
 	reqContext, ok := req["context"].(map[string]interface{})
 	if !ok {
-		return nil, nil, NewCodedError("SCH_REQUIRED_FIELD_MISSING", "context field not found or invalid")
+		return nil, nil, NewCodedError("SCH_REQUIRED_FIELD_MISSING", "context field not found or invalid"), nil
 	}
-	return req, reqContext, nil
+	return req, reqContext, nil, nil
 }
 
 // ResolveNetworkID returns context.network_id from a parsed Beckn context map,

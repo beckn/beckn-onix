@@ -110,8 +110,14 @@ func (s *reqMapperStep) transformBody(ctx context.Context, body []byte) ([]byte,
 // ErrorCode taxonomy at the point each cause is known, rather than being
 // wrapped in a single generic code by the caller.
 func parseRequestBody(body []byte) (*parsedRequest, error) {
-	req, reqContext, becknErr := model.ExtractContext(body)
+	req, reqContext, becknErr, cause := model.ExtractContext(body)
 	if becknErr != nil {
+		if cause != nil {
+			// Preserve the underlying decode error in the wrap chain so
+			// errors.Is/errors.As can still reach it, same as before ExtractContext
+			// was extracted.
+			return nil, model.NewCodedBadReqErr(becknErr.Code, fmt.Errorf("failed to decode request body: %w", cause))
+		}
 		return nil, model.NewCodedBadReqErr(becknErr.Code, errors.New(becknErr.Message))
 	}
 

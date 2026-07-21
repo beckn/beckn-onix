@@ -27,12 +27,10 @@ type Config struct {
 // nack() produces elsewhere — wiring this plugin into that pipeline (with the
 // signing/telemetry implications that carries) is tracked separately in #868.
 func writeCodedError(ctx context.Context, w http.ResponseWriter, status int, code, message string) {
-	data, err := json.Marshal(model.NewCodedError(code, message))
-	if err != nil {
-		log.Debugf(ctx, "failed to marshal coded error response: %v", err)
-		http.Error(w, message, status)
-		return
-	}
+	// model.NewCodedError's result is a two-string-field struct that cannot
+	// realistically fail to marshal — matching nack()'s own established
+	// convention (core/module/handler/responsestep.go) of not guarding this.
+	data, _ := json.Marshal(model.NewCodedError(code, message))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if _, werr := w.Write(data); werr != nil {
@@ -65,12 +63,12 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
-				writeCodedError(r.Context(), w, http.StatusBadRequest, "SCH_INVALID_JSON", "Failed to read request body")
+				writeCodedError(ctx, w, http.StatusBadRequest, "SCH_INVALID_JSON", "Failed to read request body")
 				return
 			}
-			ctx := r.Context()
 
 			// Bodyless requests (GET/DELETE) carry no JSON body and no context
 			// fields — skip body extraction and pass through directly.
@@ -90,7 +88,7 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 
 			// Decode the body and extract its context field using the same
 			// classification reqmapper (#867) relies on for the identical check.
-			_, reqContext, becknErr := model.ExtractContext(body)
+			_, reqContext, becknErr, _ := model.ExtractContext(body)
 			if becknErr != nil {
 				writeCodedError(ctx, w, http.StatusBadRequest, becknErr.Code, becknErr.Message)
 				return

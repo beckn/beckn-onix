@@ -218,17 +218,20 @@ func TestResolveNetworkID(t *testing.T) {
 
 func TestExtractContext(t *testing.T) {
 	t.Run("malformed json", func(t *testing.T) {
-		_, _, becknErr := ExtractContext([]byte("{"))
+		_, _, becknErr, cause := ExtractContext([]byte("{"))
 		if becknErr == nil {
 			t.Fatal("expected an error for malformed JSON, got nil")
 		}
 		if becknErr.Code != "SCH_INVALID_JSON" {
 			t.Errorf("Code = %s, want SCH_INVALID_JSON", becknErr.Code)
 		}
+		if cause == nil {
+			t.Error("expected a non-nil cause for a JSON decode failure, so callers can still errors.Is/errors.As through it")
+		}
 	})
 
 	t.Run("missing context", func(t *testing.T) {
-		_, _, becknErr := ExtractContext([]byte(`{"message":{}}`))
+		_, _, becknErr, cause := ExtractContext([]byte(`{"message":{}}`))
 		if becknErr == nil {
 			t.Fatal("expected an error for missing context, got nil")
 		}
@@ -238,10 +241,13 @@ func TestExtractContext(t *testing.T) {
 		if becknErr.Message != "context field not found or invalid" {
 			t.Errorf("Message = %q, want %q", becknErr.Message, "context field not found or invalid")
 		}
+		if cause != nil {
+			t.Errorf("expected a nil cause for a missing-context failure (no wrapped error of its own), got %v", cause)
+		}
 	})
 
 	t.Run("context is not an object", func(t *testing.T) {
-		_, _, becknErr := ExtractContext([]byte(`{"context":"not-a-map"}`))
+		_, _, becknErr, _ := ExtractContext([]byte(`{"context":"not-a-map"}`))
 		if becknErr == nil {
 			t.Fatal("expected an error for non-object context, got nil")
 		}
@@ -251,9 +257,12 @@ func TestExtractContext(t *testing.T) {
 	})
 
 	t.Run("valid body returns both the full body and its context", func(t *testing.T) {
-		req, reqContext, becknErr := ExtractContext([]byte(`{"context":{"bap_id":"bap-123"},"message":{"key":"value"}}`))
+		req, reqContext, becknErr, cause := ExtractContext([]byte(`{"context":{"bap_id":"bap-123"},"message":{"key":"value"}}`))
 		if becknErr != nil {
 			t.Fatalf("unexpected error: %+v", becknErr)
+		}
+		if cause != nil {
+			t.Errorf("expected a nil cause on success, got %v", cause)
 		}
 		if req["message"] == nil {
 			t.Errorf("expected req to include the full decoded body, got %+v", req)
