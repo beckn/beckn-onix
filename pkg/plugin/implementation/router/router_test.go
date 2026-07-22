@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/testutil"
 )
 
 //go:embed testData/*
@@ -533,7 +534,7 @@ func TestRouteFailure(t *testing.T) {
 		endpointAction string
 		body           string
 		wantErr        string
-		// wantCode is checked via requireBadReqCode when non-empty. Failure
+		// wantCode is checked via testutil.RequireBadReqCode when non-empty. Failure
 		// modes that remain unclassified (plain fmt.Errorf, no model.Error)
 		// leave this blank — see #869's scope note on why domain/version/
 		// endpoint config-lookup misses and missing-URI-with-no-fallback are
@@ -596,23 +597,9 @@ func TestRouteFailure(t *testing.T) {
 				t.Errorf("Route(%q, %q) = %v, want error containing %q", tt.endpointAction, tt.body, err, tt.wantErr)
 			}
 			if tt.wantCode != "" {
-				requireBadReqCode(t, err, tt.wantCode)
+				testutil.RequireBadReqCode(t, err, tt.wantCode)
 			}
 		})
-	}
-}
-
-// requireBadReqCode asserts err is a *model.BadReqErr carrying wantCode,
-// mirroring reqmapper_test.go's helper of the same name for the same check.
-func requireBadReqCode(t *testing.T, err error, wantCode string) {
-	t.Helper()
-
-	badReqErr, ok := err.(*model.BadReqErr)
-	if !ok {
-		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
-	}
-	if code := badReqErr.BecknError().Code; code != wantCode {
-		t.Errorf("BecknError().Code = %s, want %s", code, wantCode)
 	}
 }
 
@@ -905,7 +892,7 @@ func TestRouteNilContext(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "context field not found or invalid") {
 		t.Errorf("Route() with missing context = %v, want error containing 'context field not found or invalid'", err)
 	}
-	requireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
+	testutil.RequireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
 }
 
 // TestV1DomainRequired tests that domain is required for v1 configs

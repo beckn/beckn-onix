@@ -541,7 +541,7 @@ func (c *schemaCache) validateReferencedObject(
 		var err error
 		doc, err = c.loadSchemaFromPath(ctx, schemaPath, ttl, timeout, false)
 		if err != nil {
-			return model.NewCodedError("SCH_SCHEMA_ADAPTATION_FAILED", err.Error())
+			return model.NewCodedErrorWithCause("SCH_SCHEMA_ADAPTATION_FAILED", err.Error(), obj.Path, err)
 		}
 	}
 
@@ -549,7 +549,7 @@ func (c *schemaCache) validateReferencedObject(
 	schema, err := findSchemaByType(ctx, doc, obj.Type)
 	if err != nil {
 		log.Errorf(ctx, err, "Schema not found for @type: %s at path: %s", obj.Type, obj.Path)
-		return model.NewCodedError("SCH_INVALID_ENTITY_TYPE", err.Error())
+		return model.NewCodedErrorWithCause("SCH_INVALID_ENTITY_TYPE", err.Error(), obj.Path, err)
 	}
 
 	// Strip JSON-LD metadata before validation

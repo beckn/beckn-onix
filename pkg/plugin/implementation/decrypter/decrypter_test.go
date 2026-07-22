@@ -6,13 +6,12 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/zenazn/pkcs7pad"
 
-	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/testutil"
 )
 
 // Helper function to generate valid test keys.
@@ -134,7 +133,7 @@ func TestDecrypterFailure(t *testing.T) {
 		privateKey    string
 		publicKey     string
 		expectedErr   string
-		// wantCode is checked via requireBadReqCode when non-empty.
+		// wantCode is checked via testutil.RequireBadReqCode when non-empty.
 		wantCode string
 	}{
 		{
@@ -229,28 +228,9 @@ func TestDecrypterFailure(t *testing.T) {
 				}
 			}
 			if tt.wantCode != "" {
-				requireBadReqCode(t, err, tt.wantCode)
+				testutil.RequireBadReqCode(t, err, tt.wantCode)
 			}
 		})
-	}
-}
-
-// requireBadReqCode asserts err unwraps (via errors.As, matching how
-// nackBecknError itself classifies errors) to a *model.BadReqErr carrying
-// wantCode. createAESCipher's callers re-wrap its errors in an outer
-// fmt.Errorf, so a raw type assertion would miss a coded error returned from
-// there even though production code (nackBecknError) finds it fine via
-// errors.As — mirrors encrypter_test.go's helper of the same name, which
-// needed this for the identical reason.
-func requireBadReqCode(t *testing.T, err error, wantCode string) {
-	t.Helper()
-
-	var badReqErr *model.BadReqErr
-	if !errors.As(err, &badReqErr) {
-		t.Fatalf("expected errors.As to find a *model.BadReqErr in %v (%T)", err, err)
-	}
-	if code := badReqErr.BecknError().Code; code != wantCode {
-		t.Errorf("BecknError().Code = %s, want %s", code, wantCode)
 	}
 }
 

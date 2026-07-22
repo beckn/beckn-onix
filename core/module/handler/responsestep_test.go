@@ -14,6 +14,20 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
+// testBecknErrorer is a minimal model.BecknErrorer implementation, standing
+// in for any plugin-defined error type (e.g. schemaversionmediator's
+// MediationError) that classifies itself onto the taxonomy without being one
+// of nackBecknError's explicitly-named types.
+type testBecknErrorer struct {
+	code    string
+	message string
+}
+
+func (e *testBecknErrorer) Error() string { return e.message }
+func (e *testBecknErrorer) BecknError() *model.Error {
+	return &model.Error{Code: e.code, Message: e.message}
+}
+
 // ---------------------------------------------------------------------------
 // Response writer helpers
 // ---------------------------------------------------------------------------
@@ -170,6 +184,12 @@ func TestSendNack(t *testing.T) {
 			err:      errors.New("unexpected error"),
 			status:   http.StatusInternalServerError,
 			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"NET_INTERNAL_ERROR","message":"Internal server error, MessageID: 123456"}}}`,
+		},
+		{
+			name:     "BecknErrorer fallback (e.g. schemaversionmediator.MediationError)",
+			err:      &testBecknErrorer{code: "SCH_SUBSCRIBER_NOT_FOUND", message: "no manifest published"},
+			status:   http.StatusBadRequest,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"SCH_SUBSCRIBER_NOT_FOUND","message":"no manifest published"}}}`,
 		},
 	}
 

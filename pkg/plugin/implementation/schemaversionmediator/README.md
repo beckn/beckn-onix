@@ -32,7 +32,7 @@ On every inbound request, `Mediate` runs the following sequence:
 4. **Compatibility check** — walks the payload for `@context`+`@type` pairs and compares them against the target manifest's `schemaObjects`. If all objects are at a supported version, the payload passes through unchanged.
 5. **Artifact fetch** — for each incompatible schema object, derives the artifact URL from the target manifest's `baseUrl`, canonical version, and the source version, then fetches it over HTTP.
 6. **Translation** — composes the fetched artifacts into a single JSONata expression (`$merge([$, patch1, patch2, ...])`) and executes it against the `message` subtree of the payload in one pass.
-7. **Data-loss detection** — compares flattened key paths of the source and translated message. If any source keys are absent in the output, the request is rejected with `SCH_ADAPTATION_FAILED`.
+7. **Data-loss detection** — compares flattened key paths of the source and translated message. If any source keys are absent in the output, the request is rejected with `SCH_SCHEMA_ADAPTATION_FAILED`.
 8. **Patch** — replaces the `message` field in `ctx.Body` with the translated output.
 
 ---
@@ -78,11 +78,11 @@ plugins:
 **`action` values:**
 
 - `translate` — attempt translation for each incompatible schema object; apply `onFailure` if any artifact is unavailable.
-- `reject` — return `SCH_ADAPTATION_FAILED` immediately without attempting translation.
+- `reject` — return `SCH_SCHEMA_ADAPTATION_FAILED` immediately without attempting translation.
 
 **`onFailure` values (only evaluated when `action=translate`):**
 
-- `reject` — return `SCH_ADAPTATION_FAILED` when an artifact cannot be fetched.
+- `reject` — return `SCH_SCHEMA_ADAPTATION_FAILED` when an artifact cannot be fetched.
 - `passThrough` — forward the untranslated payload. Operator escape hatch for false-mismatch situations (e.g. stale local manifest during rollout). Not recommended for production.
 
 ---
@@ -214,13 +214,12 @@ The artifact at that URL must contain a JSONata expression that transforms a `v2
 
 ## Error Codes
 
-All errors returned by `Mediate` are of type `*MediationError`, which carries a `Code` field aligned with the Beckn v2.0.0 `ErrorCode` taxonomy's `SCH_*` prefix. Note: `MediationError` is not yet wired into the handler's NACK-building dispatch (`nackBecknError`) — today these codes are not surfaced on the wire; a `MediationError` currently falls through to a generic internal-error NACK.
+All errors returned by `Mediate` are of type `*MediationError`, which carries a `Code` field aligned with the Beckn v2.0.0 `ErrorCode` taxonomy's `SCH_*` prefix. `MediationError` implements `model.BecknErrorer`, so the handler's NACK-building dispatch (`nackBecknError`) recognizes it and surfaces its Code/Message as a proper NACK response, at HTTP 400 Bad Request.
 
 | Code | Cause | Resolution |
 |---|---|---|
 | `SCH_SUBSCRIBER_NOT_FOUND` | Local node manifest absent or has no `schemaObjects` at startup | Publish node manifest to DeDi and restart the adapter |
-| `SCH_ADAPTATION_FAILED` | Incompatible schema objects found and `action=reject`, or artifact fetch failed and `onFailure=reject` | Check counterparty manifest in DeDi; verify artifact URLs are reachable |
-| `SCH_ADAPTATION_FAILED` | Translation dropped fields present in the source payload (not yet implemented — no code path currently constructs this case) | Review translation artifact — it must not remove fields from the source |
+| `SCH_SCHEMA_ADAPTATION_FAILED` | Two causes share this code: (1) incompatible schema objects found and `action=reject`, or artifact fetch failed and `onFailure=reject`; (2) translation dropped fields present in the source payload (not yet implemented — no code path currently constructs this case) | Check counterparty manifest in DeDi and verify artifact URLs are reachable; for (2), review the translation artifact — it must not remove fields from the source |
 
 Plain (non-`MediationError`) errors may also be returned for malformed payloads (e.g. missing `message` field). The handler treats these as HTTP 400 Bad Request with a generic error body — distinct from the structured NACK produced by `MediationError`.
 
@@ -240,7 +239,7 @@ Artifacts are cached in memory with configurable positive and negative TTLs. The
 
 After translation, the plugin compares the flattened dot-notation key paths of the source `message` subtree against the translated output. Any key present in the source but absent in the output is considered a dropped field.
 
-**Current behaviour:** data loss always causes rejection with `SCH_ADAPTATION_FAILED`, listing the dropped field paths. There is no configurable policy — this is intentional. A partially translated payload is as harmful as an incompatible one.
+**Current behaviour:** data loss always causes rejection with `SCH_SCHEMA_ADAPTATION_FAILED`, listing the dropped field paths. There is no configurable policy — this is intentional. A partially translated payload is as harmful as an incompatible one.
 
 **Array handling:** array elements are treated as opaque leaf values. Element-level drops within an array are not detected — only object key presence is compared.
 

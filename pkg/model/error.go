@@ -10,6 +10,12 @@ type Error struct {
 	Code    string        `json:"code"`
 	Message string        `json:"message"`
 	Details *ErrorDetails `json:"details,omitempty"`
+	// cause is the underlying error this Error was derived from, if any. It is
+	// unexported (never appears on the wire) and exists purely so
+	// errors.Is/errors.As can keep reaching the original cause through Unwrap,
+	// instead of a caller having to thread a separate cause value alongside
+	// the *Error return.
+	cause error
 }
 
 // NewCodedError constructs an Error carrying an explicit ErrorCode value and
@@ -19,12 +25,45 @@ type Error struct {
 //
 // The returned *Error is a plain value, not a step error: nackBecknError
 // (core/module/handler/responsestep.go) only recognizes SchemaValidationErr,
-// SignValidationErr, BadReqErr, NotFoundErr, and AckNoCallbackErr. Callers
-// must wrap the result in one of those types before returning it from a
-// Step — returning it bare falls through to a generic 500 Internal Server
-// Error instead of the intended NACK code.
+// SignValidationErr, BadReqErr, NotFoundErr, AckNoCallbackErr, and any type
+// implementing BecknErrorer. Callers must wrap the result in one of those
+// types (or implement BecknErrorer) before returning it from a Step —
+// returning it bare falls through to a generic 500 Internal Server Error
+// instead of the intended NACK code.
 func NewCodedError(code, message string) *Error {
 	return &Error{Code: code, Message: message}
+}
+
+// NewCodedErrorWithCause is like NewCodedError but also records the JSONPath
+// to the failing field (path, may be "") and the underlying cause, so callers
+// don't have to flatten both into the message string to preserve them —
+// Details.Path carries the path and Unwrap() keeps the cause reachable via
+// errors.Is/errors.As.
+func NewCodedErrorWithCause(code, message, path string, cause error) *Error {
+	e := &Error{Code: code, Message: message, cause: cause}
+	if path != "" {
+		e.Details = &ErrorDetails{Path: path}
+	}
+	return e
+}
+
+// Unwrap exposes the wrapped cause (if any) so errors.Is/errors.As can reach
+// it in addition to matching *Error itself.
+func (e *Error) Unwrap() error {
+	return e.cause
+}
+
+// BecknErrorer is implemented by any error type that can produce its own
+// *Error NACK representation. nackBecknError (core/module/handler/responsestep.go)
+// dispatches on a fixed list of concrete types first (SchemaValidationErr,
+// SignValidationErr, BadReqErr, NotFoundErr, AckNoCallbackErr) for their
+// type-specific HTTP status codes, then falls back to this interface for any
+// other type — so a new error type can be wired into NACK dispatch by
+// implementing BecknError() *Error alone, without core importing the
+// plugin package that defines it.
+type BecknErrorer interface {
+	error
+	BecknError() *Error
 }
 
 // ErrorDetails carries optional structured context for an Error: a JSONPath to

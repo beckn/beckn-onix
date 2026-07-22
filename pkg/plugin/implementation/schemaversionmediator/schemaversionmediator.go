@@ -480,7 +480,7 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 
 	if m.policy.Action == PolicyActionReject {
 		return &MediationError{
-			Code:    "SCH_ADAPTATION_FAILED",
+			Code:    "SCH_SCHEMA_ADAPTATION_FAILED",
 			Message: fmt.Sprintf("payload contains %d incompatible schema object(s) and policy is reject", len(needs)),
 		}
 	}
@@ -586,7 +586,7 @@ func (m *mediator) applyOnFailure(cause error) error {
 		return nil
 	}
 	return &MediationError{
-		Code:    "SCH_ADAPTATION_FAILED",
+		Code:    "SCH_SCHEMA_ADAPTATION_FAILED",
 		Message: "schema version mediation failed; check adapter logs for details",
 		cause:   cause,
 	}
@@ -646,7 +646,7 @@ func patchMessageSubtree(body, translated []byte) ([]byte, error) {
 type MediationError struct {
 	Code          string
 	Message       string
-	DroppedFields []string // non-nil only for SCH_ADAPTATION_FAILED (data-loss variant)
+	DroppedFields []string // non-nil only for SCH_SCHEMA_ADAPTATION_FAILED (data-loss variant)
 	cause         error    // internal; use errors.Unwrap to access
 }
 
@@ -658,6 +658,14 @@ func (e *MediationError) Error() string {
 }
 
 func (e *MediationError) Unwrap() error { return e.cause }
+
+// BecknError converts the MediationError into the shared *model.Error NACK
+// payload, implementing model.BecknErrorer so nackBecknError
+// (core/module/handler/responsestep.go) surfaces this Code/Message on the
+// wire instead of falling through to a generic 500 Internal Server Error.
+func (e *MediationError) BecknError() *model.Error {
+	return &model.Error{Code: e.Code, Message: e.Error()}
+}
 
 // droppedFields returns the sorted set of dot-notation key paths that are
 // present in src but absent in dst. Both must be JSON object bytes.

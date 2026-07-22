@@ -235,9 +235,9 @@ func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*mode
 	// classification reqmapper (#867) and reqpreprocessor (#868) rely on for
 	// the identical check, instead of router's own separate typed-struct and
 	// map decodes of the same body.
-	_, reqContext, becknErr, cause := model.ExtractContext(body)
+	_, reqContext, becknErr := model.ExtractContext(body)
 	if becknErr != nil {
-		return nil, model.WrapExtractContextErr("error parsing request body", becknErr, cause)
+		return nil, model.WrapExtractContextErr("error parsing request body", becknErr)
 	}
 
 	// Checks legacy snake_case (bpp_uri, bap_uri), then camelCase (bppUri,

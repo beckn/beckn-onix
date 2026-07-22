@@ -88,7 +88,7 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 
 			// Decode the body and extract its context field using the same
 			// classification reqmapper (#867) relies on for the identical check.
-			_, reqContext, becknErr, _ := model.ExtractContext(body)
+			_, reqContext, becknErr := model.ExtractContext(body)
 			if becknErr != nil {
 				writeCodedError(ctx, w, http.StatusBadRequest, becknErr.Code, becknErr.Message)
 				return

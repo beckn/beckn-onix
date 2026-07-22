@@ -223,20 +223,21 @@ func TestResolveNetworkID(t *testing.T) {
 
 func TestExtractContext(t *testing.T) {
 	t.Run("malformed json", func(t *testing.T) {
-		_, _, becknErr, cause := ExtractContext([]byte("{"))
+		_, _, becknErr := ExtractContext([]byte("{"))
 		if becknErr == nil {
 			t.Fatal("expected an error for malformed JSON, got nil")
 		}
 		if becknErr.Code != "SCH_INVALID_JSON" {
 			t.Errorf("Code = %s, want SCH_INVALID_JSON", becknErr.Code)
 		}
-		if cause == nil {
-			t.Error("expected a non-nil cause for a JSON decode failure, so callers can still errors.Is/errors.As through it")
+		var syntaxErr *json.SyntaxError
+		if !errors.As(becknErr, &syntaxErr) {
+			t.Error("expected errors.As on becknErr to reach the underlying *json.SyntaxError via Unwrap")
 		}
 	})
 
 	t.Run("missing context", func(t *testing.T) {
-		_, _, becknErr, cause := ExtractContext([]byte(`{"message":{}}`))
+		_, _, becknErr := ExtractContext([]byte(`{"message":{}}`))
 		if becknErr == nil {
 			t.Fatal("expected an error for missing context, got nil")
 		}
@@ -246,13 +247,13 @@ func TestExtractContext(t *testing.T) {
 		if becknErr.Message != "context field not found or invalid" {
 			t.Errorf("Message = %q, want %q", becknErr.Message, "context field not found or invalid")
 		}
-		if cause != nil {
-			t.Errorf("expected a nil cause for a missing-context failure (no wrapped error of its own), got %v", cause)
+		if becknErr.Unwrap() != nil {
+			t.Errorf("expected a nil Unwrap() for a missing-context failure (no wrapped error of its own), got %v", becknErr.Unwrap())
 		}
 	})
 
 	t.Run("context is not an object", func(t *testing.T) {
-		_, _, becknErr, _ := ExtractContext([]byte(`{"context":"not-a-map"}`))
+		_, _, becknErr := ExtractContext([]byte(`{"context":"not-a-map"}`))
 		if becknErr == nil {
 			t.Fatal("expected an error for non-object context, got nil")
 		}
@@ -262,12 +263,9 @@ func TestExtractContext(t *testing.T) {
 	})
 
 	t.Run("valid body returns both the full body and its context", func(t *testing.T) {
-		req, reqContext, becknErr, cause := ExtractContext([]byte(`{"context":{"bap_id":"bap-123"},"message":{"key":"value"}}`))
+		req, reqContext, becknErr := ExtractContext([]byte(`{"context":{"bap_id":"bap-123"},"message":{"key":"value"}}`))
 		if becknErr != nil {
 			t.Fatalf("unexpected error: %+v", becknErr)
-		}
-		if cause != nil {
-			t.Errorf("expected a nil cause on success, got %v", cause)
 		}
 		if req["message"] == nil {
 			t.Errorf("expected req to include the full decoded body, got %+v", req)
@@ -280,8 +278,8 @@ func TestExtractContext(t *testing.T) {
 
 func TestWrapExtractContextErr(t *testing.T) {
 	t.Run("with cause, wraps prefix and preserves errors.As reachability", func(t *testing.T) {
-		_, _, becknErr, cause := ExtractContext([]byte("{"))
-		err := WrapExtractContextErr("error parsing request body", becknErr, cause)
+		_, _, becknErr := ExtractContext([]byte("{"))
+		err := WrapExtractContextErr("error parsing request body", becknErr)
 
 		if err.Code != "SCH_INVALID_JSON" {
 			t.Errorf("Code = %s, want SCH_INVALID_JSON", err.Code)
@@ -296,8 +294,8 @@ func TestWrapExtractContextErr(t *testing.T) {
 	})
 
 	t.Run("without cause, uses becknErr.Message directly", func(t *testing.T) {
-		_, _, becknErr, cause := ExtractContext([]byte(`{"message":{}}`))
-		err := WrapExtractContextErr("unused prefix", becknErr, cause)
+		_, _, becknErr := ExtractContext([]byte(`{"message":{}}`))
+		err := WrapExtractContextErr("unused prefix", becknErr)
 
 		if err.Code != "SCH_REQUIRED_FIELD_MISSING" {
 			t.Errorf("Code = %s, want SCH_REQUIRED_FIELD_MISSING", err.Code)

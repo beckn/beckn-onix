@@ -79,6 +79,7 @@ func nackBecknError(ctx context.Context, err error) (*model.Error, int, model.St
 	var badReqErr *model.BadReqErr
 	var notFoundErr *model.NotFoundErr
 	var ackNoCallbackErr *model.AckNoCallbackErr
+	var becknErrorer model.BecknErrorer
 
 	switch {
 	case errors.As(err, &schemaErr):
@@ -94,6 +95,11 @@ func nackBecknError(ctx context.Context, err error) (*model.Error, int, model.St
 			return internalServerError(ctx), http.StatusInternalServerError, model.StatusNACK
 		}
 		return ackNoCallbackErr.BecknError(), http.StatusAccepted, ackNoCallbackErr.Status
+	case errors.As(err, &becknErrorer):
+		// Any other error type that implements BecknErrorer (e.g.
+		// schemaversionmediator's MediationError) — classified onto the
+		// taxonomy by its own package without core needing to import it.
+		return becknErrorer.BecknError(), http.StatusBadRequest, model.StatusNACK
 	default:
 		return internalServerError(ctx), http.StatusInternalServerError, model.StatusNACK
 	}

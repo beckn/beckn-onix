@@ -730,6 +730,12 @@ components:
 	if !ok || becknErr.Code != "SCH_INVALID_ENTITY_TYPE" {
 		t.Errorf("err = %+v (%T), want *model.Error with Code=SCH_INVALID_ENTITY_TYPE", err, err)
 	}
+	if becknErr.Details == nil || becknErr.Details.Path != obj.Path {
+		t.Errorf("Details.Path = %+v, want %q", becknErr.Details, obj.Path)
+	}
+	if becknErr.Unwrap() == nil {
+		t.Error("expected Unwrap() to reach the underlying findSchemaByType error, got nil")
+	}
 }
 
 func TestValidateReferencedObject_SchemaLoadFailure(t *testing.T) {
@@ -749,6 +755,12 @@ func TestValidateReferencedObject_SchemaLoadFailure(t *testing.T) {
 	becknErr, ok := err.(*model.Error)
 	if !ok || becknErr.Code != "SCH_SCHEMA_ADAPTATION_FAILED" {
 		t.Errorf("err = %+v (%T), want *model.Error with Code=SCH_SCHEMA_ADAPTATION_FAILED", err, err)
+	}
+	if becknErr.Details == nil || becknErr.Details.Path != obj.Path {
+		t.Errorf("Details.Path = %+v, want %q", becknErr.Details, obj.Path)
+	}
+	if becknErr.Unwrap() == nil {
+		t.Error("expected Unwrap() to reach the underlying loadSchemaFromPath error, got nil")
 	}
 }
 

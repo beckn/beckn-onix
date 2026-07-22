@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/testutil"
 	"github.com/jsonata-go/jsonata"
 	"github.com/stretchr/testify/require"
 )
@@ -191,14 +192,14 @@ func TestReqMapperStepRun_EmptyBody(t *testing.T) {
 
 	err = step.Run(ctx)
 	require.Error(t, err)
-	requireBadReqCode(t, err, "SCH_INVALID_JSON")
+	testutil.RequireBadReqCode(t, err, "SCH_INVALID_JSON")
 }
 
 func TestParseRequestBody(t *testing.T) {
 	t.Run("malformed json", func(t *testing.T) {
 		_, err := parseRequestBody([]byte("{"))
 		require.Error(t, err)
-		requireBadReqCode(t, err, "SCH_INVALID_JSON")
+		testutil.RequireBadReqCode(t, err, "SCH_INVALID_JSON")
 
 		// Regression test: the decode failure must still unwrap to the
 		// underlying json error via errors.As, matching the wrapping this
@@ -213,33 +214,20 @@ func TestParseRequestBody(t *testing.T) {
 		// concern and is already verified directly in pkg/model/model_test.go;
 		// this only needs to confirm parseRequestBody forwards the Code correctly.
 		_, err := parseRequestBody([]byte(`{"message":{}}`))
-		requireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
+		testutil.RequireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
 	})
 
 	t.Run("missing action", func(t *testing.T) {
 		_, err := parseRequestBody([]byte(`{"context":{},"message":{}}`))
 		require.EqualError(t, err, "action field not found or invalid")
-		requireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
+		testutil.RequireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
 	})
 
 	t.Run("empty action", func(t *testing.T) {
 		_, err := parseRequestBody([]byte(`{"context":{"action":""},"message":{}}`))
 		require.EqualError(t, err, "action field not found or invalid")
-		requireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
+		testutil.RequireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
 	})
-}
-
-// requireBadReqCode confirms err is a *model.BadReqErr classified with wantCode.
-func requireBadReqCode(t *testing.T, err error, wantCode string) {
-	t.Helper()
-
-	badReqErr, ok := err.(*model.BadReqErr)
-	if !ok {
-		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
-	}
-	if code := badReqErr.BecknError().Code; code != wantCode {
-		t.Errorf("BecknError().Code = %s, want %s", code, wantCode)
-	}
 }
 
 func TestMappingEngineTransform(t *testing.T) {

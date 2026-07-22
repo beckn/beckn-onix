@@ -3,7 +3,6 @@ package model
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -214,34 +213,29 @@ func (r *Role) UnmarshalYAML(unmarshal func(interface{}) error) error {
 // an object) so callers can reuse the same Code/Message regardless of how
 // each formats its own response (e.g. wrapping in NewCodedBadReqErr, or
 // writing a bare JSON body directly). req and reqContext are nil on failure.
-// cause is the underlying json.Unmarshal error for the SCH_INVALID_JSON case
-// (nil otherwise, since the missing-context case has no wrapped cause of its
-// own) — callers that want errors.Is/errors.As to keep reaching it (e.g. via
-// fmt.Errorf("...: %w", cause)) can use it directly instead of losing that
-// chain through becknErr's already-flattened Message string.
-func ExtractContext(body []byte) (req map[string]interface{}, reqContext map[string]interface{}, becknErr *Error, cause error) {
+// becknErr wraps the underlying json.Unmarshal error for the SCH_INVALID_JSON
+// case (via Error.Unwrap; nil for the missing-context case, which has no
+// cause of its own) — callers that want errors.Is/errors.As to keep reaching
+// it can call errors.As/errors.Is on becknErr directly.
+func ExtractContext(body []byte) (req map[string]interface{}, reqContext map[string]interface{}, becknErr *Error) {
 	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, nil, NewCodedError("SCH_INVALID_JSON", fmt.Sprintf("failed to decode request body: %v", err)), err
+		return nil, nil, NewCodedErrorWithCause("SCH_INVALID_JSON", fmt.Sprintf("failed to decode request body: %v", err), "", err)
 	}
 	reqContext, ok := req["context"].(map[string]interface{})
 	if !ok {
-		return nil, nil, NewCodedError("SCH_REQUIRED_FIELD_MISSING", "context field not found or invalid"), nil
+		return nil, nil, NewCodedError("SCH_REQUIRED_FIELD_MISSING", "context field not found or invalid")
 	}
-	return req, reqContext, nil, nil
+	return req, reqContext, nil
 }
 
-// WrapExtractContextErr converts an ExtractContext failure (becknErr, cause)
-// into a *BadReqErr carrying becknErr's Code, for callers that need an error
-// value rather than the bare *Error ExtractContext returns. When cause is
-// non-nil (the SCH_INVALID_JSON case), it's wrapped with prefix via %w so
-// errors.Is/errors.As still reach it; the SCH_REQUIRED_FIELD_MISSING case has
-// no cause of its own, so becknErr.Message is used directly. Only call this
-// when becknErr is non-nil.
-func WrapExtractContextErr(prefix string, becknErr *Error, cause error) *BadReqErr {
-	if cause != nil {
-		return NewCodedBadReqErr(becknErr.Code, fmt.Errorf("%s: %w", prefix, cause))
-	}
-	return NewCodedBadReqErr(becknErr.Code, errors.New(becknErr.Message))
+// WrapExtractContextErr converts an ExtractContext failure into a *BadReqErr
+// carrying becknErr's Code, for callers that need an error value rather than
+// the bare *Error ExtractContext returns. becknErr is wrapped with prefix via
+// %w, so errors.Is/errors.As still reach any cause set on it (via
+// Error.Unwrap) as well as becknErr itself. Only call this when becknErr is
+// non-nil.
+func WrapExtractContextErr(prefix string, becknErr *Error) *BadReqErr {
+	return NewCodedBadReqErr(becknErr.Code, fmt.Errorf("%s: %w", prefix, becknErr))
 }
 
 // ResolveNetworkID returns context.network_id from a parsed Beckn context map,
