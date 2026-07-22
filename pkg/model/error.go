@@ -180,13 +180,28 @@ func (e *codedErr) Unwrap() error {
 	return e.error
 }
 
-// resolveCode returns Code if non-empty, else defaultCode. Called by each
-// embedding type's BecknError() to apply its own default fallback.
+// resolveCode returns Code if non-empty, else defaultCode. Called by
+// becknError to apply the embedding type's own default fallback.
 func (e *codedErr) resolveCode(defaultCode string) string {
 	if e.Code != "" {
 		return e.Code
 	}
 	return defaultCode
+}
+
+// becknError builds the *Error NACK payload shared by every codedErr embedder:
+// resolveCode's Code/default fallback, plus prefix prepended to the wrapped
+// error's text. New plugin-specific error types that only need "a code with
+// a default, plus a fixed message prefix" (the common case) should embed
+// codedErr and implement BecknError() as a one-line call to this — see
+// BadReqErr/SignValidationErr/NotFoundErr below. Only reach for a fully
+// custom BecknError() (like SchemaValidationErr's multi-cause aggregation or
+// AckNoCallbackErr's pass-through) when the shape genuinely doesn't fit.
+func (e *codedErr) becknError(prefix, defaultCode string) *Error {
+	return &Error{
+		Code:    e.resolveCode(defaultCode),
+		Message: prefix + e.Error(),
+	}
 }
 
 // defaultSignValidationCode is used when a SignValidationErr carries no more
@@ -226,10 +241,7 @@ func NewCodedSignValidationErr(code string, e error) *SignValidationErr {
 // a cross-cutting change affecting every caller of this type, deferred
 // rather than folded into #884's scope.
 func (e *SignValidationErr) BecknError() *Error {
-	return &Error{
-		Code:    e.resolveCode(defaultSignValidationCode),
-		Message: "Signature Validation Error: " + e.Error(),
-	}
+	return e.becknError("Signature Validation Error: ", defaultSignValidationCode)
 }
 
 // BadReqErr occurs when a bad request is encountered.
@@ -261,10 +273,7 @@ func NewCodedBadReqErr(code string, err error) *BadReqErr {
 
 // BecknError converts the BadReqErr to an instance of Error.
 func (e *BadReqErr) BecknError() *Error {
-	return &Error{
-		Code:    e.resolveCode(defaultBadReqCode),
-		Message: "BAD Request: " + e.Error(),
-	}
+	return e.becknError("BAD Request: ", defaultBadReqCode)
 }
 
 // defaultNotFoundCode is used when a NotFoundErr carries no more specific
@@ -291,10 +300,7 @@ func NewCodedNotFoundErr(code string, err error) *NotFoundErr {
 
 // BecknError converts the NotFoundErr to an instance of Error.
 func (e *NotFoundErr) BecknError() *Error {
-	return &Error{
-		Code:    e.resolveCode(defaultNotFoundCode),
-		Message: "Endpoint not found: " + e.Error(),
-	}
+	return e.becknError("Endpoint not found: ", defaultNotFoundCode)
 }
 
 // AckNoCallbackErr is returned by a step when the receiver has authenticated and
