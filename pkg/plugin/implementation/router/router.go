@@ -2,7 +2,6 @@ package router
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -232,35 +231,24 @@ func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*mode
 		return r.routeBodyless(endpoint, rawQuery)
 	}
 
-	// Parse domain and version via typed struct.
-	var requestBody struct {
-		Context struct {
-			Domain  string `json:"domain"`
-			Version string `json:"version"`
-		} `json:"context"`
-	}
-	if err := json.Unmarshal(body, &requestBody); err != nil {
-		return nil, fmt.Errorf("error parsing request body: %w", err)
+	// Decode the body and extract its context field using the same
+	// classification reqmapper (#867) and reqpreprocessor (#868) rely on for
+	// the identical check, instead of router's own separate typed-struct and
+	// map decodes of the same body.
+	_, reqContext, becknErr := model.ExtractContext(body)
+	if becknErr != nil {
+		return nil, model.WrapExtractContextErr("error parsing request body", becknErr)
 	}
 
-	// Parse context as a map solely to resolve URI fields. Checks legacy
-	// snake_case (bpp_uri, bap_uri), then camelCase (bppUri, bapUri), then
-	// the new Beckn spec v2 names (receiverUri, senderUri).
-	var uriBody struct {
-		Context map[string]interface{} `json:"context"`
-	}
-	if err := json.Unmarshal(body, &uriBody); err != nil {
-		return nil, fmt.Errorf("error parsing request body: %w", err)
-	}
-	if uriBody.Context == nil {
-		return nil, fmt.Errorf("context field not found or invalid in request body")
-	}
-	bppURI := getContextString(uriBody.Context, "bpp_uri", "bppUri", "receiverUri")
-	bapURI := getContextString(uriBody.Context, "bap_uri", "bapUri", "senderUri")
+	// Checks legacy snake_case (bpp_uri, bap_uri), then camelCase (bppUri,
+	// bapUri), then the new Beckn spec v2 names (receiverUri, senderUri).
+	bppURI := getContextString(reqContext, "bpp_uri", "bppUri", "receiverUri")
+	bapURI := getContextString(reqContext, "bap_uri", "bapUri", "senderUri")
+	version := getContextString(reqContext, "version")
 
 	// For v2.x.x, ignore domain and use wildcard; for v1.x.x, use actual domain
-	domain := requestBody.Context.Domain
-	if isV2Version(requestBody.Context.Version) {
+	domain := getContextString(reqContext, "domain")
+	if isV2Version(version) {
 		domain = "*"
 	}
 
@@ -268,26 +256,26 @@ func (r *Router) Route(ctx context.Context, reqURL *url.URL, body []byte) (*mode
 	domainRules, ok := r.rules[domain]
 	if !ok {
 		if domain == "*" {
-			return nil, fmt.Errorf("no routing rules found for version %s", requestBody.Context.Version)
+			return nil, fmt.Errorf("no routing rules found for version %s", version)
 		}
-		return nil, fmt.Errorf("no routing rules found for domain %s", requestBody.Context.Domain)
+		return nil, fmt.Errorf("no routing rules found for domain %s", domain)
 	}
 
-	versionRules, ok := domainRules[requestBody.Context.Version]
+	versionRules, ok := domainRules[version]
 	if !ok {
 		if domain == "*" {
-			return nil, fmt.Errorf("no routing rules found for version %s", requestBody.Context.Version)
+			return nil, fmt.Errorf("no routing rules found for version %s", version)
 		}
-		return nil, fmt.Errorf("no routing rules found for domain %s version %s", requestBody.Context.Domain, requestBody.Context.Version)
+		return nil, fmt.Errorf("no routing rules found for domain %s version %s", domain, version)
 	}
 
 	route, ok := versionRules[endpoint]
 	if !ok {
 		if domain == "*" {
-			return nil, fmt.Errorf("endpoint '%s' is not supported for version %s in routing config", endpoint, requestBody.Context.Version)
+			return nil, fmt.Errorf("endpoint '%s' is not supported for version %s in routing config", endpoint, version)
 		}
 		return nil, fmt.Errorf("endpoint '%s' is not supported for domain %s and version %s in routing config",
-			endpoint, requestBody.Context.Domain, requestBody.Context.Version)
+			endpoint, domain, version)
 	}
 	// Handle BPP/BAP routing with request URIs.
 	// Both legacy ("bpp"/"bap") and new spec v2 ("receiver"/"sender") values are accepted.
@@ -381,7 +369,8 @@ func handleProtocolMapping(route *model.Route, npURI, endpoint, rawQuery string)
 	}
 	targetURL, err := url.Parse(target)
 	if err != nil {
-		return nil, fmt.Errorf("invalid %s URI - %s in request body for %s: %w", role, target, endpoint, err)
+		return nil, model.NewCodedBadReqErr("SCH_INVALID_FORMAT",
+			fmt.Errorf("invalid %s URI - %s in request body for %s: %w", role, target, endpoint, err))
 	}
 	targetURL.Path = joinPath(targetURL, endpoint)
 	if rawQuery != "" {

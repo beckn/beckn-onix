@@ -194,11 +194,15 @@ networkPolicies:
 |---|---|
 | `{"valid": true, "violations": []}` | Allowed — recommended structured format |
 | `{"valid": false, "violations": ["msg1", "msg2"]}` | Rejected — violation messages returned to caller |
+| `{"valid": false, "violations": [{"code": "POL_...", "message": "..."}]}` | Rejected — each violation may optionally carry a Beckn v2.0.0 `POL_*` error code alongside its message, instead of a plain string. Coded and plain-string entries can be mixed in the same list; codes not provided fall back to `POL_GENERIC_ERROR` |
 | `set()` / `[]string` | Each string is a violation message |
+| `set()` of `{"code": "POL_...", "message": "..."}` objects | Same coded-violation shape as the structured format above — also supported directly under the simpler `set()`/direct-query style |
 | `bool` `true` | Allowed |
 | `bool` `false` | Rejected |
 | `string` (non-empty) | Rejected — the string is the violation message |
 | Empty / undefined | **Rejected** — fail-closed; indicates a misconfigured query path |
+
+A violation's `code`, when provided, should be one of the `POL_*` values in the Beckn v2.0.0 `ErrorCode` taxonomy (e.g. `POL_GEO_RESTRICTED`, `POL_KYC_REQUIRED`, `POL_ELIGIBILITY_NOT_MET`) — see `pkg/plugin/implementation/opapolicychecker/evaluator.go`'s `parseViolationItem` for the exact parsing rules.
 
 ---
 

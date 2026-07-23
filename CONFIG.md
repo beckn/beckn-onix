@@ -1039,7 +1039,7 @@ schemaVersionMediator:
 | Key | Values | Default | Description |
 |---|---|---|---|
 | `nodeId` | string | — | **Required.** Three-part DeDi subscriber identity for this node (`namespace/registry/recordId`). Used at startup to load the local node manifest. |
-| `action` | `translate` \| `reject` | `translate` | What to do when schema objects are incompatible. `translate` fetches and applies an artifact; `reject` returns `schemaIncompatible` immediately. |
+| `action` | `translate` \| `reject` | `translate` | What to do when schema objects are incompatible. `translate` fetches and applies an artifact; `reject` returns `SCH_SCHEMA_ADAPTATION_FAILED` immediately. |
 | `onFailure` | `reject` \| `passThrough` | `reject` | Applied when `action=translate` but no artifact can be fetched. `passThrough` forwards the untranslated payload — operator escape hatch only, not for production. |
 | `fetchTimeout` | duration string | `"30s"` | HTTP timeout for each artifact fetch (e.g. `"10s"`, `"1m"`). |
 | `artifactCacheTTL` | duration string | `"24h"` | How long to cache successfully fetched translation artifacts. |
@@ -1101,9 +1101,8 @@ modules:
 
 | Code | Cause |
 |---|---|
-| `subscriberNotOnboarded` | Local node manifest absent or has no `schemaObjects` at startup. Restart after publishing the manifest to DeDi. |
-| `schemaIncompatible` | Incompatible schema objects and `action=reject`, or artifact fetch failed and `onFailure=reject`. |
-| `schemaTranslationDataLoss` | Translation artifact dropped fields present in the source payload. Review the artifact. |
+| `SCH_SUBSCRIBER_NOT_FOUND` | Local node manifest absent or has no `schemaObjects` at startup. Restart after publishing the manifest to DeDi. |
+| `SCH_SCHEMA_ADAPTATION_FAILED` | Two causes share this code: (1) incompatible schema objects and `action=reject`, or artifact fetch failed and `onFailure=reject`; (2) translation artifact dropped fields present in the source payload — review the artifact. |
 
 ---
 

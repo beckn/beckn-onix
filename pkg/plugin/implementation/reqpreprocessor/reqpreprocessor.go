@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -21,7 +20,24 @@ type Config struct {
 	ParentID    string
 }
 
-const contextKey = "context"
+// writeCodedError writes a Beckn v2.0.0 ErrorCode-aligned JSON error body.
+// reqpreprocessor runs as HTTP middleware ahead of the standard step/NACK
+// pipeline (see core/module/handler/stdHandler.go's step loop), so this is a
+// correctly-coded but unsigned JSON body, not the full Beckn NACK envelope
+// nack() produces elsewhere — wiring this plugin into that pipeline (with the
+// signing/telemetry implications that carries) is tracked separately in #868.
+func writeCodedError(ctx context.Context, w http.ResponseWriter, status int, code, message string) {
+	// model.NewCodedError's result is a two-string-field struct that cannot
+	// realistically fail to marshal — matching nack()'s own established
+	// convention (core/module/handler/responsestep.go) of not guarding this.
+	data, _ := json.Marshal(model.NewCodedError(code, message))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if _, werr := w.Write(data); werr != nil {
+		log.Debugf(ctx, "failed to write coded error response: %v", werr)
+		http.Error(w, message, http.StatusInternalServerError)
+	}
+}
 
 // snakeToCamel converts a snake_case string to camelCase.
 // For example: "transaction_id" -> "transactionId".
@@ -47,12 +63,12 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
-				http.Error(w, "Failed to read request body", http.StatusBadRequest)
+				writeCodedError(ctx, w, http.StatusBadRequest, "SCH_INVALID_JSON", "Failed to read request body")
 				return
 			}
-			ctx := r.Context()
 
 			// Bodyless requests (GET/DELETE) carry no JSON body and no context
 			// fields — skip body extraction and pass through directly.
@@ -70,16 +86,11 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 				return
 			}
 
-			var req map[string]interface{}
-			if err := json.Unmarshal(body, &req); err != nil {
-				http.Error(w, "Failed to decode request body", http.StatusBadRequest)
-				return
-			}
-
-			// Extract context from request.
-			reqContext, ok := req["context"].(map[string]interface{})
-			if !ok {
-				http.Error(w, fmt.Sprintf("%s field not found or invalid.", contextKey), http.StatusBadRequest)
+			// Decode the body and extract its context field using the same
+			// classification reqmapper (#867) relies on for the identical check.
+			_, reqContext, becknErr := model.ExtractContext(body)
+			if becknErr != nil {
+				writeCodedError(ctx, w, http.StatusBadRequest, becknErr.Code, becknErr.Message)
 				return
 			}
 

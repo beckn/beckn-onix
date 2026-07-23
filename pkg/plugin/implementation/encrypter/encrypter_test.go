@@ -7,6 +7,8 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+
+	"github.com/beckn-one/beckn-onix/pkg/testutil"
 )
 
 // Helper function to generate a test X25519 key pair.
@@ -156,6 +158,12 @@ func TestEncryptFailure(t *testing.T) {
 			if err != nil && !strings.Contains(err.Error(), tt.errorContains) {
 				t.Errorf("Encrypt() error = %v, want error containing %q", err, tt.errorContains)
 			}
+			// All malformed-key-material failures above are classified as
+			// AUT_SIGNATURE_INVALID, matching signvalidator.go's precedent for
+			// undecodable signature/key material: verification-relevant key
+			// material is inherently an AUT_* concern even when the proximate
+			// cause is bad encoding, not a request-schema problem.
+			testutil.RequireBadReqCode(t, err, "AUT_SIGNATURE_INVALID")
 		})
 	}
 }

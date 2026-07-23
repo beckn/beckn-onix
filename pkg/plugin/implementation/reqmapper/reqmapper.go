@@ -93,7 +93,7 @@ func (s *reqMapperStep) Run(ctx *model.StepContext) error {
 func (s *reqMapperStep) transformBody(ctx context.Context, body []byte) ([]byte, error) {
 	parsed, err := parseRequestBody(body)
 	if err != nil {
-		return nil, model.NewBadReqErr(err)
+		return nil, err
 	}
 
 	mappedBody, err := s.engine.Transform(ctx, parsed.action, parsed.req, s.role)
@@ -105,20 +105,19 @@ func (s *reqMapperStep) transformBody(ctx context.Context, body []byte) ([]byte,
 	return mappedBody, nil
 }
 
+// parseRequestBody parses the incoming request body and extracts the fields
+// the mapping engine needs. Failures are classified onto the Beckn v2.0.0
+// ErrorCode taxonomy at the point each cause is known, rather than being
+// wrapped in a single generic code by the caller.
 func parseRequestBody(body []byte) (*parsedRequest, error) {
-	var req map[string]interface{}
-	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, fmt.Errorf("failed to decode request body: %w", err)
-	}
-
-	reqContext, ok := req["context"].(map[string]interface{})
-	if !ok {
-		return nil, errors.New("context field not found or invalid")
+	req, reqContext, becknErr := model.ExtractContext(body)
+	if becknErr != nil {
+		return nil, model.WrapExtractContextErr("failed to decode request body", becknErr)
 	}
 
 	action, ok := reqContext["action"].(string)
 	if !ok || action == "" {
-		return nil, errors.New("action field not found or invalid")
+		return nil, model.NewCodedBadReqErr("SCH_REQUIRED_FIELD_MISSING", errors.New("action field not found or invalid"))
 	}
 
 	return &parsedRequest{

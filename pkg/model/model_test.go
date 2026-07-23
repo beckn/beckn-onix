@@ -1,6 +1,34 @@
 package model
 
-import "testing"
+import (
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+)
+
+func TestIsKeyStatusUsable(t *testing.T) {
+	tests := []struct {
+		status string
+		want   bool
+	}{
+		{status: "SUBSCRIBED", want: true},
+		{status: "INITIATED", want: true},
+		{status: "UNDER_SUBSCRIPTION", want: true},
+		{status: "", want: true},
+		{status: "EXPIRED", want: false},
+		{status: "UNSUBSCRIBED", want: false},
+		{status: "INVALID_SSL", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			if got := IsKeyStatusUsable(tt.status); got != tt.want {
+				t.Errorf("IsKeyStatusUsable(%q) = %v, want %v", tt.status, got, tt.want)
+			}
+		})
+	}
+}
 
 func TestResolveCallerID(t *testing.T) {
 	tests := []struct {
@@ -191,4 +219,89 @@ func TestResolveNetworkID(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExtractContext(t *testing.T) {
+	t.Run("malformed json", func(t *testing.T) {
+		_, _, becknErr := ExtractContext([]byte("{"))
+		if becknErr == nil {
+			t.Fatal("expected an error for malformed JSON, got nil")
+		}
+		if becknErr.Code != "SCH_INVALID_JSON" {
+			t.Errorf("Code = %s, want SCH_INVALID_JSON", becknErr.Code)
+		}
+		var syntaxErr *json.SyntaxError
+		if !errors.As(becknErr, &syntaxErr) {
+			t.Error("expected errors.As on becknErr to reach the underlying *json.SyntaxError via Unwrap")
+		}
+	})
+
+	t.Run("missing context", func(t *testing.T) {
+		_, _, becknErr := ExtractContext([]byte(`{"message":{}}`))
+		if becknErr == nil {
+			t.Fatal("expected an error for missing context, got nil")
+		}
+		if becknErr.Code != "SCH_REQUIRED_FIELD_MISSING" {
+			t.Errorf("Code = %s, want SCH_REQUIRED_FIELD_MISSING", becknErr.Code)
+		}
+		if becknErr.Message != "context field not found or invalid" {
+			t.Errorf("Message = %q, want %q", becknErr.Message, "context field not found or invalid")
+		}
+		if becknErr.Unwrap() != nil {
+			t.Errorf("expected a nil Unwrap() for a missing-context failure (no wrapped error of its own), got %v", becknErr.Unwrap())
+		}
+	})
+
+	t.Run("context is not an object", func(t *testing.T) {
+		_, _, becknErr := ExtractContext([]byte(`{"context":"not-a-map"}`))
+		if becknErr == nil {
+			t.Fatal("expected an error for non-object context, got nil")
+		}
+		if becknErr.Code != "SCH_REQUIRED_FIELD_MISSING" {
+			t.Errorf("Code = %s, want SCH_REQUIRED_FIELD_MISSING", becknErr.Code)
+		}
+	})
+
+	t.Run("valid body returns both the full body and its context", func(t *testing.T) {
+		req, reqContext, becknErr := ExtractContext([]byte(`{"context":{"bap_id":"bap-123"},"message":{"key":"value"}}`))
+		if becknErr != nil {
+			t.Fatalf("unexpected error: %+v", becknErr)
+		}
+		if req["message"] == nil {
+			t.Errorf("expected req to include the full decoded body, got %+v", req)
+		}
+		if reqContext["bap_id"] != "bap-123" {
+			t.Errorf("reqContext[\"bap_id\"] = %v, want bap-123", reqContext["bap_id"])
+		}
+	})
+}
+
+func TestWrapExtractContextErr(t *testing.T) {
+	t.Run("with cause, wraps prefix and preserves errors.As reachability", func(t *testing.T) {
+		_, _, becknErr := ExtractContext([]byte("{"))
+		err := WrapExtractContextErr("error parsing request body", becknErr)
+
+		if err.Code != "SCH_INVALID_JSON" {
+			t.Errorf("Code = %s, want SCH_INVALID_JSON", err.Code)
+		}
+		if !strings.Contains(err.Error(), "error parsing request body") {
+			t.Errorf("Error() = %q, want it to contain the given prefix", err.Error())
+		}
+		var syntaxErr *json.SyntaxError
+		if !errors.As(err, &syntaxErr) {
+			t.Error("expected errors.As to reach the underlying *json.SyntaxError")
+		}
+	})
+
+	t.Run("without cause, uses becknErr.Message directly", func(t *testing.T) {
+		_, _, becknErr := ExtractContext([]byte(`{"message":{}}`))
+		err := WrapExtractContextErr("unused prefix", becknErr)
+
+		if err.Code != "SCH_REQUIRED_FIELD_MISSING" {
+			t.Errorf("Code = %s, want SCH_REQUIRED_FIELD_MISSING", err.Code)
+		}
+		if !strings.Contains(err.Error(), "context field not found or invalid") {
+			t.Errorf("Error() = %q, want it to contain becknErr.Message", err.Error())
+		}
+	})
 }

@@ -193,20 +193,30 @@ func (v *schemav2Validator) validateExtendedSchemas(ctx context.Context, body in
 			var schemaErrors []model.Error
 			v.extractSchemaErrors(err, &schemaErrors)
 
-			// Prefix all paths with object path
-			for i := range schemaErrors {
-				if schemaErrors[i].Paths != "" {
-					schemaErrors[i].Paths = obj.Path + "." + schemaErrors[i].Paths
-				} else {
-					schemaErrors[i].Paths = obj.Path
-				}
-			}
+			prefixSchemaErrorPaths(schemaErrors, obj.Path)
 
 			return &model.SchemaValidationErr{Errors: schemaErrors}
 		}
 	}
 
 	return nil
+}
+
+// prefixSchemaErrorPaths prefixes objPath onto each error's Details.Path,
+// updating it in place when Details already exists so any other field (e.g.
+// a chained Cause) set upstream is preserved rather than discarded.
+func prefixSchemaErrorPaths(schemaErrors []model.Error, objPath string) {
+	for i := range schemaErrors {
+		prefixed := objPath
+		if schemaErrors[i].Details != nil && schemaErrors[i].Details.Path != "" {
+			prefixed = objPath + "." + schemaErrors[i].Details.Path
+		}
+		if schemaErrors[i].Details != nil {
+			schemaErrors[i].Details.Path = prefixed
+		} else {
+			schemaErrors[i].Details = &model.ErrorDetails{Path: prefixed}
+		}
+	}
 }
 
 // newSchemaCache creates a new schema cache.
@@ -519,11 +529,11 @@ func (c *schemaCache) validateReferencedObject(
 			u, err := url.Parse(obj.Context)
 			if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 				log.Warnf(ctx, "Invalid or disallowed scheme in @context: %s", obj.Context)
-				return fmt.Errorf("invalid scheme in @context: %s", obj.Context)
+				return model.NewCodedError("SCH_INVALID_JSONLD_CONTEXT", fmt.Sprintf("invalid scheme in @context: %s", obj.Context))
 			}
 			if !isAllowedDomain(u, allowedDomains) {
 				log.Warnf(ctx, "Domain not in whitelist: %s", obj.Context)
-				return fmt.Errorf("domain not allowed: %s", obj.Context)
+				return model.NewCodedError("SCH_INVALID_JSONLD_CONTEXT", fmt.Sprintf("domain not allowed: %s", obj.Context))
 			}
 		}
 		schemaPath := transformContextToSchemaURL(obj.Context)
@@ -531,7 +541,7 @@ func (c *schemaCache) validateReferencedObject(
 		var err error
 		doc, err = c.loadSchemaFromPath(ctx, schemaPath, ttl, timeout, false)
 		if err != nil {
-			return fmt.Errorf("at %s: %w", obj.Path, err)
+			return model.NewCodedErrorWithCause("SCH_SCHEMA_ADAPTATION_FAILED", err.Error(), obj.Path, err)
 		}
 	}
 
@@ -539,7 +549,7 @@ func (c *schemaCache) validateReferencedObject(
 	schema, err := findSchemaByType(ctx, doc, obj.Type)
 	if err != nil {
 		log.Errorf(ctx, err, "Schema not found for @type: %s at path: %s", obj.Type, obj.Path)
-		return fmt.Errorf("at %s: %w", obj.Path, err)
+		return model.NewCodedErrorWithCause("SCH_INVALID_ENTITY_TYPE", err.Error(), obj.Path, err)
 	}
 
 	// Strip JSON-LD metadata before validation

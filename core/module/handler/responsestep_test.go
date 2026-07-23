@@ -14,6 +14,20 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
+// testBecknErrorer is a minimal model.BecknErrorer implementation, standing
+// in for any plugin-defined error type (e.g. schemaversionmediator's
+// MediationError) that classifies itself onto the taxonomy without being one
+// of nackBecknError's explicitly-named types.
+type testBecknErrorer struct {
+	code    string
+	message string
+}
+
+func (e *testBecknErrorer) Error() string { return e.message }
+func (e *testBecknErrorer) BecknError() *model.Error {
+	return &model.Error{Code: e.code, Message: e.message}
+}
+
 // ---------------------------------------------------------------------------
 // Response writer helpers
 // ---------------------------------------------------------------------------
@@ -134,36 +148,48 @@ func TestSendNack(t *testing.T) {
 			name: "SchemaValidationErr",
 			err: &model.SchemaValidationErr{
 				Errors: []model.Error{
-					{Paths: "/path1", Message: "Error 1"},
-					{Paths: "/path2", Message: "Error 2"},
+					{Details: &model.ErrorDetails{Path: "/path1"}, Message: "Error 1"},
+					{Details: &model.ErrorDetails{Path: "/path2"}, Message: "Error 2"},
 				},
 			},
 			status:   http.StatusBadRequest,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"Bad Request","paths":"/path1;/path2","message":"Error 1; Error 2"}}}`,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"SCH_INVALID_FORMAT","message":"Error 1; Error 2","details":{"path":"/path1;/path2"}}}}`,
 		},
 		{
 			name:     "SignValidationErr",
 			err:      model.NewSignValidationErr(errors.New("signature invalid")),
 			status:   http.StatusUnauthorized,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"Unauthorized","message":"Signature Validation Error: signature invalid"}}}`,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"AUT_SIGNATURE_INVALID","message":"Signature Validation Error: signature invalid"}}}`,
+		},
+		{
+			name:     "Coded SignValidationErr",
+			err:      model.NewCodedSignValidationErr("AUT_SUBSCRIBER_NOT_FOUND", errors.New("no subscriber found with given credentials")),
+			status:   http.StatusUnauthorized,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"AUT_SUBSCRIBER_NOT_FOUND","message":"Signature Validation Error: no subscriber found with given credentials"}}}`,
 		},
 		{
 			name:     "BadReqErr",
 			err:      model.NewBadReqErr(errors.New("bad request error")),
 			status:   http.StatusBadRequest,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"Bad Request","message":"BAD Request: bad request error"}}}`,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"SCH_INVALID_FORMAT","message":"BAD Request: bad request error"}}}`,
 		},
 		{
 			name:     "NotFoundErr",
 			err:      model.NewNotFoundErr(errors.New("endpoint not found")),
 			status:   http.StatusNotFound,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"Not Found","message":"Endpoint not found: endpoint not found"}}}`,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"NET_ENTITY_NOT_FOUND","message":"Endpoint not found: endpoint not found"}}}`,
 		},
 		{
 			name:     "InternalServerError",
 			err:      errors.New("unexpected error"),
 			status:   http.StatusInternalServerError,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"Internal Server Error","message":"Internal server error, MessageID: 123456"}}}`,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"NET_INTERNAL_ERROR","message":"Internal server error, MessageID: 123456"}}}`,
+		},
+		{
+			name:     "BecknErrorer fallback (e.g. schemaversionmediator.MediationError)",
+			err:      &testBecknErrorer{code: "SCH_SUBSCRIBER_NOT_FOUND", message: "no manifest published"},
+			status:   http.StatusBadRequest,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"SCH_SUBSCRIBER_NOT_FOUND","message":"no manifest published"}}}`,
 		},
 	}
 
@@ -177,13 +203,19 @@ func TestSendNack(t *testing.T) {
 			name:     "v2 SchemaValidationErr",
 			err:      model.NewBadReqErr(errors.New("field missing")),
 			status:   http.StatusBadRequest,
-			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"Bad Request","message":"BAD Request: field missing"}}}`,
+			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"SCH_INVALID_FORMAT","message":"BAD Request: field missing"}}}`,
 		},
 		{
 			name:     "v2 SignValidationErr",
-			err:      model.NewSignValidationErr(errors.New("signature expired")),
+			err:      model.NewCodedSignValidationErr("AUT_SIGNATURE_INVALID", errors.New("signature expired")),
 			status:   http.StatusUnauthorized,
-			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"Unauthorized","message":"Signature Validation Error: signature expired"}}}`,
+			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"AUT_SIGNATURE_INVALID","message":"Signature Validation Error: signature expired"}}}`,
+		},
+		{
+			name:     "v2 Coded SignValidationErr key expired",
+			err:      model.NewCodedSignValidationErr("AUT_KEY_EXPIRED_OR_REVOKED", errors.New("subscriber key is expired or revoked")),
+			status:   http.StatusUnauthorized,
+			expected: `{"message":{"status":"NACK","messageId":"msg-v2-1","error":{"code":"AUT_KEY_EXPIRED_OR_REVOKED","message":"Signature Validation Error: subscriber key is expired or revoked"}}}`,
 		},
 		{
 			name: "v2 AckNoCallbackErr ACK status",
@@ -363,11 +395,11 @@ func TestNack_1(t *testing.T) {
 			name: "Schema Validation Error",
 			err: &model.Error{
 				Code:    "BAD_REQUEST",
-				Paths:   "/test/path",
 				Message: "Invalid schema",
+				Details: &model.ErrorDetails{Path: "/test/path"},
 			},
 			status:   http.StatusBadRequest,
-			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"BAD_REQUEST","paths":"/test/path","message":"Invalid schema"}}}`,
+			expected: `{"message":{"ack":{"status":"NACK"},"error":{"code":"BAD_REQUEST","message":"Invalid schema","details":{"path":"/test/path"}}}}`,
 		},
 		{
 			name: "Internal Server Error",
@@ -476,10 +508,12 @@ type mockKM struct {
 	err    error
 }
 
-func (m *mockKM) GenerateKeyset() (*model.Keyset, error)                               { return nil, nil }
-func (m *mockKM) InsertKeyset(_ context.Context, _ string, _ *model.Keyset) error     { return nil }
-func (m *mockKM) DeleteKeyset(_ context.Context, _ string) error                      { return nil }
-func (m *mockKM) LookupNPKeys(_ context.Context, _, _ string) (string, string, error) { return "", "", nil }
+func (m *mockKM) GenerateKeyset() (*model.Keyset, error)                          { return nil, nil }
+func (m *mockKM) InsertKeyset(_ context.Context, _ string, _ *model.Keyset) error { return nil }
+func (m *mockKM) DeleteKeyset(_ context.Context, _ string) error                  { return nil }
+func (m *mockKM) LookupNPKeys(_ context.Context, _, _ string) (string, string, error) {
+	return "", "", nil
+}
 func (m *mockKM) Keyset(_ context.Context, _ string) (*model.Keyset, error) {
 	return m.keyset, m.err
 }
@@ -916,7 +950,7 @@ func TestValidateAckSignatureStep_MissingSignature_AllStatusCodes_Degrades(t *te
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
 		http.StatusNotFound,
-		http.StatusAccepted,        // 202 AckNoCallback
+		http.StatusAccepted, // 202 AckNoCallback
 		http.StatusInternalServerError,
 	}
 	for _, code := range codes {

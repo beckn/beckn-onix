@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -33,6 +34,26 @@ type Subscription struct {
 	NetworkMemberships []string  `json:"network_memberships,omitempty"`
 }
 
+// nonUsableKeySubscriptionStatuses are the Subscription.Status values that mean a
+// matched subscriber's key is no longer usable for signature verification.
+// INITIATED and UNDER_SUBSCRIPTION are intentionally absent — this function
+// distinguishes revocation/expiry from good standing only; it does not gate on
+// subscription completeness. A subscriber that has registered a key but not yet
+// finished onboarding is still treated as usable here. If pre-subscription
+// participants should be rejected too, that is a separate authorization
+// decision for a caller (or a future ticket) to make, not part of this check.
+var nonUsableKeySubscriptionStatuses = map[string]bool{
+	"EXPIRED":      true,
+	"UNSUBSCRIBED": true,
+	"INVALID_SSL":  true,
+}
+
+// IsKeyStatusUsable reports whether a subscriber's registry Status still
+// permits its key to be used for signature verification.
+func IsKeyStatusUsable(status string) bool {
+	return !nonUsableKeySubscriptionStatuses[status]
+}
+
 // RegistryMetadata represents metadata configured on a registry itself rather than on a specific record.
 type RegistryMetadata struct {
 	NamespaceIdentifier string
@@ -45,8 +66,8 @@ type RegistryMetadata struct {
 // node-level manifest metadata (from the registry meta block) in a single response,
 // since both come from the same DeDi endpoint call.
 type SubscriberRecord struct {
-	Subscription        // identity, URL, signing/encryption keys — from data["details"]
-	Meta map[string]string // node manifest metadata — from data["meta"]; may be empty
+	Subscription                   // identity, URL, signing/encryption keys — from data["details"]
+	Meta         map[string]string // node manifest metadata — from data["meta"]; may be empty
 }
 
 // Authorization-related constants for headers.
@@ -183,6 +204,38 @@ func (r *Role) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 	*r = role
 	return nil
+}
+
+// ExtractContext decodes body as JSON and returns both the full decoded body
+// and its "context" field as a map[string]interface{}, classifying the
+// failure onto the Beckn v2.0.0 ErrorCode taxonomy (SCH_INVALID_JSON if body
+// isn't valid JSON, SCH_REQUIRED_FIELD_MISSING if "context" is missing or not
+// an object) so callers can reuse the same Code/Message regardless of how
+// each formats its own response (e.g. wrapping in NewCodedBadReqErr, or
+// writing a bare JSON body directly). req and reqContext are nil on failure.
+// becknErr wraps the underlying json.Unmarshal error for the SCH_INVALID_JSON
+// case (via Error.Unwrap; nil for the missing-context case, which has no
+// cause of its own) — callers that want errors.Is/errors.As to keep reaching
+// it can call errors.As/errors.Is on becknErr directly.
+func ExtractContext(body []byte) (req map[string]interface{}, reqContext map[string]interface{}, becknErr *Error) {
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, nil, NewCodedErrorWithCause("SCH_INVALID_JSON", fmt.Sprintf("failed to decode request body: %v", err), "", err)
+	}
+	reqContext, ok := req["context"].(map[string]interface{})
+	if !ok {
+		return nil, nil, NewCodedError("SCH_REQUIRED_FIELD_MISSING", "context field not found or invalid")
+	}
+	return req, reqContext, nil
+}
+
+// WrapExtractContextErr converts an ExtractContext failure into a *BadReqErr
+// carrying becknErr's Code, for callers that need an error value rather than
+// the bare *Error ExtractContext returns. becknErr is wrapped with prefix via
+// %w, so errors.Is/errors.As still reach any cause set on it (via
+// Error.Unwrap) as well as becknErr itself. Only call this when becknErr is
+// non-nil.
+func WrapExtractContextErr(prefix string, becknErr *Error) *BadReqErr {
+	return NewCodedBadReqErr(becknErr.Code, fmt.Errorf("%s: %w", prefix, becknErr))
 }
 
 // ResolveNetworkID returns context.network_id from a parsed Beckn context map,

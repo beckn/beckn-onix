@@ -3,7 +3,6 @@ package model
 import (
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"testing"
 
@@ -13,24 +12,37 @@ import (
 
 // NewSignValidationErrf creates a new SignValidationErr with a formatted error message.
 func NewSignValidationErrf(format string, a ...any) *SignValidationErr {
-	return &SignValidationErr{fmt.Errorf(format, a...)}
+	return &SignValidationErr{codedErr{Code: defaultSignValidationCode, error: fmt.Errorf(format, a...)}}
 }
 
 // NewNotFoundErrf creates a new NotFoundErr with a formatted error message.
 func NewNotFoundErrf(format string, a ...any) *NotFoundErr {
-	return &NotFoundErr{fmt.Errorf(format, a...)}
+	return &NotFoundErr{codedErr{error: fmt.Errorf(format, a...)}}
 }
 
 // NewBadReqErrf creates a new BadReqErr with a formatted error message.
 func NewBadReqErrf(format string, a ...any) *BadReqErr {
-	return &BadReqErr{fmt.Errorf(format, a...)}
+	return &BadReqErr{codedErr{error: fmt.Errorf(format, a...)}}
+}
+
+func TestNewCodedError(t *testing.T) {
+	err := NewCodedError("SCH_INVALID_ENUM", "value must be one of the allowed options")
+	if err.Code != "SCH_INVALID_ENUM" {
+		t.Errorf("Code = %s, want SCH_INVALID_ENUM", err.Code)
+	}
+	if err.Message != "value must be one of the allowed options" {
+		t.Errorf("Message = %s, want %s", err.Message, "value must be one of the allowed options")
+	}
+	if err.Details != nil {
+		t.Errorf("Details = %+v, want nil", err.Details)
+	}
 }
 
 func TestError_Error(t *testing.T) {
 	err := &Error{
 		Code:    "404",
-		Paths:   "/api/v1/user",
 		Message: "User not found",
+		Details: &ErrorDetails{Path: "/api/v1/user"},
 	}
 
 	expected := "Error: Code=404, Path=/api/v1/user, Message=User not found"
@@ -46,8 +58,8 @@ func TestError_Error(t *testing.T) {
 func TestSchemaValidationErr_Error(t *testing.T) {
 	schemaErr := &SchemaValidationErr{
 		Errors: []Error{
-			{Paths: "/user", Message: "Field required"},
-			{Paths: "/email", Message: "Invalid format"},
+			{Details: &ErrorDetails{Path: "/user"}, Message: "Field required"},
+			{Details: &ErrorDetails{Path: "/email"}, Message: "Invalid format"},
 		},
 	}
 
@@ -63,15 +75,137 @@ func TestSchemaValidationErr_Error(t *testing.T) {
 func TestSchemaValidationErr_BecknError(t *testing.T) {
 	schemaErr := &SchemaValidationErr{
 		Errors: []Error{
-			{Paths: "/user", Message: "Field required"},
+			{Details: &ErrorDetails{Path: "/user"}, Message: "Field required"},
 		},
 	}
 
 	beErr := schemaErr.BecknError()
-	expected := "Bad Request"
+	expected := "SCH_INVALID_FORMAT"
 	if beErr.Code != expected {
 		t.Errorf("err.Error() = %s, want %s",
 			beErr.Code, expected)
+	}
+	if beErr.Details == nil || beErr.Details.Path != "/user" {
+		t.Errorf("beErr.Details = %+v, want Path=/user", beErr.Details)
+	}
+}
+
+func TestSchemaValidationErr_BecknError_NoPaths(t *testing.T) {
+	schemaErr := &SchemaValidationErr{
+		Errors: []Error{
+			{Message: "generic error one"},
+			{Message: "generic error two"},
+		},
+	}
+
+	beErr := schemaErr.BecknError()
+	if beErr.Details != nil {
+		t.Errorf("beErr.Details = %+v, want nil when no entry has a path", beErr.Details)
+	}
+	expectedMsg := "generic error one; generic error two"
+	if beErr.Message != expectedMsg {
+		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
+	}
+}
+
+func TestSchemaValidationErr_BecknError_MixedPaths(t *testing.T) {
+	schemaErr := &SchemaValidationErr{
+		Errors: []Error{
+			{Details: &ErrorDetails{Path: "/a"}, Message: "m1"},
+			{Message: "m2"},
+			{Details: &ErrorDetails{Path: "/c"}, Message: "m3"},
+		},
+	}
+
+	beErr := schemaErr.BecknError()
+	if beErr.Details == nil {
+		t.Fatal("beErr.Details = nil, want non-nil since at least one entry has a path")
+	}
+	expectedPath := "/a;;/c"
+	if beErr.Details.Path != expectedPath {
+		t.Errorf("beErr.Details.Path = %s, want %s (positionally aligned with Message)", beErr.Details.Path, expectedPath)
+	}
+	expectedMsg := "m1; m2; m3"
+	if beErr.Message != expectedMsg {
+		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
+	}
+}
+
+func TestSchemaValidationErr_BecknError_CodeFromFirstNonEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		errs []Error
+		want string
+	}{
+		{
+			name: "first entry's code wins over a later different code",
+			errs: []Error{
+				{Code: "SCH_REQUIRED_FIELD_MISSING", Message: "m1"},
+				{Code: "SCH_INVALID_ENUM", Message: "m2"},
+			},
+			want: "SCH_REQUIRED_FIELD_MISSING",
+		},
+		{
+			name: "leading entries with no code are skipped",
+			errs: []Error{
+				{Message: "m1"},
+				{Code: "SCH_INVALID_ENUM", Message: "m2"},
+			},
+			want: "SCH_INVALID_ENUM",
+		},
+		{
+			name: "no entry has a code falls back to the default",
+			errs: []Error{
+				{Message: "m1"},
+				{Message: "m2"},
+			},
+			want: "SCH_INVALID_FORMAT",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schemaErr := &SchemaValidationErr{Errors: tt.errs}
+			beErr := schemaErr.BecknError()
+			if beErr.Code != tt.want {
+				t.Errorf("Code = %s, want %s", beErr.Code, tt.want)
+			}
+		})
+	}
+}
+
+func TestFirstNonEmptyCode(t *testing.T) {
+	tests := []struct {
+		name        string
+		errs        []Error
+		defaultCode string
+		want        string
+	}{
+		{
+			name:        "first non-empty code wins",
+			errs:        []Error{{Message: "m1"}, {Code: "POL_KYC_REQUIRED", Message: "m2"}, {Code: "POL_GEO_RESTRICTED", Message: "m3"}},
+			defaultCode: "POL_GENERIC_ERROR",
+			want:        "POL_KYC_REQUIRED",
+		},
+		{
+			name:        "no entry has a code falls back to default",
+			errs:        []Error{{Message: "m1"}, {Message: "m2"}},
+			defaultCode: "POL_GENERIC_ERROR",
+			want:        "POL_GENERIC_ERROR",
+		},
+		{
+			name:        "empty slice falls back to default",
+			errs:        nil,
+			defaultCode: "POL_GENERIC_ERROR",
+			want:        "POL_GENERIC_ERROR",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FirstNonEmptyCode(tt.errs, tt.defaultCode); got != tt.want {
+				t.Errorf("FirstNonEmptyCode() = %s, want %s", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -84,7 +218,69 @@ func TestSignValidationErr_BecknError(t *testing.T) {
 		t.Errorf("err.Error() = %s, want %s",
 			beErr.Message, expectedMsg)
 	}
+	if beErr.Code != "AUT_SIGNATURE_INVALID" {
+		t.Errorf("beErr.Code = %s, want AUT_SIGNATURE_INVALID (default classification)", beErr.Code)
+	}
+}
 
+func TestNewCodedSignValidationErr_BecknError(t *testing.T) {
+	signErr := NewCodedSignValidationErr("AUT_SIGNATURE_MISSING", errors.New("signature missing in header"))
+	beErr := signErr.BecknError()
+
+	if beErr.Code != "AUT_SIGNATURE_MISSING" {
+		t.Errorf("beErr.Code = %s, want AUT_SIGNATURE_MISSING", beErr.Code)
+	}
+	expectedMsg := "Signature Validation Error: signature missing in header"
+	if beErr.Message != expectedMsg {
+		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
+	}
+}
+
+func TestSignValidationErr_BecknError_EmptyCodeFallsBackToDefault(t *testing.T) {
+	signErr := &SignValidationErr{codedErr{error: errors.New("signature failed")}}
+	beErr := signErr.BecknError()
+
+	if beErr.Code != "AUT_SIGNATURE_INVALID" {
+		t.Errorf("beErr.Code = %s, want AUT_SIGNATURE_INVALID when Code is unset", beErr.Code)
+	}
+}
+
+func TestSignValidationErr_Unwrap(t *testing.T) {
+	sentinel := errors.New("sentinel cause")
+	signErr := NewCodedSignValidationErr("AUT_SUBSCRIBER_NOT_FOUND", sentinel)
+
+	if !errors.Is(signErr, sentinel) {
+		t.Errorf("errors.Is(signErr, sentinel) = false, want true via Unwrap()")
+	}
+
+	var target *SignValidationErr
+	wrapped := fmt.Errorf("wrapped: %w", signErr)
+	if !errors.As(wrapped, &target) {
+		t.Fatalf("errors.As(wrapped, &target) = false, want true")
+	}
+	if target.Code != "AUT_SUBSCRIBER_NOT_FOUND" {
+		t.Errorf("target.Code = %s, want AUT_SUBSCRIBER_NOT_FOUND", target.Code)
+	}
+}
+
+func TestResolveCode(t *testing.T) {
+	tests := []struct {
+		name        string
+		code        string
+		defaultCode string
+		want        string
+	}{
+		{"explicit code wins", "AUT_KEY_EXPIRED_OR_REVOKED", "AUT_SIGNATURE_INVALID", "AUT_KEY_EXPIRED_OR_REVOKED"},
+		{"empty code falls back to default", "", "AUT_SIGNATURE_INVALID", "AUT_SIGNATURE_INVALID"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := &codedErr{Code: tt.code}
+			if got := e.resolveCode(tt.defaultCode); got != tt.want {
+				t.Errorf("resolveCode(%q, %q) = %s, want %s", tt.code, tt.defaultCode, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestNewSignValidationErrf(t *testing.T) {
@@ -114,6 +310,40 @@ func TestBadReqErr_BecknError(t *testing.T) {
 	if beErr.Message != expectedMsg {
 		t.Errorf("err.Error() = %s, want %s",
 			beErr.Message, expectedMsg)
+	}
+	if beErr.Code != "SCH_INVALID_FORMAT" {
+		t.Errorf("beErr.Code = %s, want the SCH_INVALID_FORMAT default unchanged for NewBadReqErr callers", beErr.Code)
+	}
+}
+
+func TestNewCodedBadReqErr_BecknError(t *testing.T) {
+	badReqErr := NewCodedBadReqErr("POL_GEO_RESTRICTED", errors.New("delivery not offered in this region"))
+	beErr := badReqErr.BecknError()
+
+	if beErr.Code != "POL_GEO_RESTRICTED" {
+		t.Errorf("beErr.Code = %s, want POL_GEO_RESTRICTED", beErr.Code)
+	}
+	expectedMsg := "BAD Request: delivery not offered in this region"
+	if beErr.Message != expectedMsg {
+		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
+	}
+}
+
+func TestBadReqErr_BecknError_EmptyCodeFallsBackToDefault(t *testing.T) {
+	badReqErr := &BadReqErr{codedErr{error: errors.New("invalid input")}}
+	beErr := badReqErr.BecknError()
+
+	if beErr.Code != "SCH_INVALID_FORMAT" {
+		t.Errorf("beErr.Code = %s, want the SCH_INVALID_FORMAT default when Code is unset", beErr.Code)
+	}
+}
+
+func TestBadReqErr_Unwrap(t *testing.T) {
+	sentinel := errors.New("sentinel cause")
+	badReqErr := NewCodedBadReqErr("POL_GENERIC_ERROR", sentinel)
+
+	if !errors.Is(badReqErr, sentinel) {
+		t.Errorf("errors.Is(badReqErr, sentinel) = false, want true via Unwrap()")
 	}
 }
 
@@ -145,6 +375,31 @@ func TestNotFoundErr_BecknError(t *testing.T) {
 	if beErr.Message != expectedMsg {
 		t.Errorf("err.Error() = %s, want %s",
 			beErr.Message, expectedMsg)
+	}
+	if beErr.Code != "NET_ENTITY_NOT_FOUND" {
+		t.Errorf("beErr.Code = %s, want NET_ENTITY_NOT_FOUND (default classification)", beErr.Code)
+	}
+}
+
+func TestNewCodedNotFoundErr_BecknError(t *testing.T) {
+	notFoundErr := NewCodedNotFoundErr("NET_ENTITY_NOT_FOUND", errors.New("subscriber not registered"))
+	beErr := notFoundErr.BecknError()
+
+	if beErr.Code != "NET_ENTITY_NOT_FOUND" {
+		t.Errorf("beErr.Code = %s, want NET_ENTITY_NOT_FOUND", beErr.Code)
+	}
+	expectedMsg := "Endpoint not found: subscriber not registered"
+	if beErr.Message != expectedMsg {
+		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
+	}
+}
+
+func TestNotFoundErr_Unwrap(t *testing.T) {
+	sentinel := errors.New("sentinel cause")
+	notFoundErr := NewCodedNotFoundErr("NET_ENTITY_NOT_FOUND", sentinel)
+
+	if !errors.Is(notFoundErr, sentinel) {
+		t.Errorf("errors.Is(notFoundErr, sentinel) = false, want true via Unwrap()")
 	}
 }
 
@@ -190,7 +445,7 @@ func TestSchemaValidationErr_BecknError_NoErrors(t *testing.T) {
 	beErr := schemaValidationErr.BecknError()
 
 	expectedMsg := "Schema validation error."
-	expectedCode := http.StatusText(http.StatusBadRequest)
+	expectedCode := "SCH_INVALID_FORMAT"
 
 	if beErr.Message != expectedMsg {
 		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)

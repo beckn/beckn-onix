@@ -2,15 +2,18 @@ package schemav2validator
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/stretchr/testify/assert"
 )
@@ -659,24 +662,106 @@ components:
 	
 	err = cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, nil, false)
 	assert.Error(t, err)
+
+	schemaErrors := []model.Error{}
+	(&schemav2Validator{}).extractSchemaErrors(err, &schemaErrors)
+	if len(schemaErrors) == 0 || schemaErrors[0].Code != "SCH_REQUIRED_FIELD_MISSING" {
+		t.Errorf("Code = %+v, want SCH_REQUIRED_FIELD_MISSING", schemaErrors)
+	}
 }
 
 func TestValidateReferencedObject_DomainNotAllowed(t *testing.T) {
 	cache := newSchemaCache(10)
 	ctx := context.Background()
-	
+
 	obj := referencedObject{
 		Path:    "message.test",
 		Context: "https://malicious.com/schema.yaml",
 		Type:    "TestType",
 		Data:    map[string]interface{}{},
 	}
-	
+
 	allowedDomains := []string{"trusted.com"}
-	
+
 	err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, allowedDomains, false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "domain not allowed")
+
+	becknErr, ok := err.(*model.Error)
+	if !ok || becknErr.Code != "SCH_INVALID_JSONLD_CONTEXT" {
+		t.Errorf("err = %+v (%T), want *model.Error with Code=SCH_INVALID_JSONLD_CONTEXT", err, err)
+	}
+}
+
+func TestValidateReferencedObject_EntityTypeNotFound(t *testing.T) {
+	cache := newSchemaCache(10)
+	ctx := context.Background()
+
+	tmpFile, err := os.CreateTemp("", "test-schema-*.yaml")
+	assert.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+
+	schemaContent := `openapi: 3.1.0
+info:
+  title: Test Schema
+  version: 1.0.0
+components:
+  schemas:
+    TestType:
+      type: object`
+
+	tmpFile.Write([]byte(schemaContent))
+	tmpFile.Close()
+
+	obj := referencedObject{
+		Path:    "message.test",
+		Context: tmpFile.Name(),
+		Type:    "NonExistentType",
+		Data: map[string]interface{}{
+			"@context": tmpFile.Name(),
+			"@type":    "NonExistentType",
+		},
+	}
+
+	err = cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, nil, false)
+	assert.Error(t, err)
+
+	becknErr, ok := err.(*model.Error)
+	if !ok || becknErr.Code != "SCH_INVALID_ENTITY_TYPE" {
+		t.Errorf("err = %+v (%T), want *model.Error with Code=SCH_INVALID_ENTITY_TYPE", err, err)
+	}
+	if becknErr.Details == nil || becknErr.Details.Path != obj.Path {
+		t.Errorf("Details.Path = %+v, want %q", becknErr.Details, obj.Path)
+	}
+	if becknErr.Unwrap() == nil {
+		t.Error("expected Unwrap() to reach the underlying findSchemaByType error, got nil")
+	}
+}
+
+func TestValidateReferencedObject_SchemaLoadFailure(t *testing.T) {
+	cache := newSchemaCache(10)
+	ctx := context.Background()
+
+	obj := referencedObject{
+		Path:    "message.test",
+		Context: "/nonexistent/schema.yaml",
+		Type:    "TestType",
+		Data:    map[string]interface{}{},
+	}
+
+	err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, nil, false)
+	assert.Error(t, err)
+
+	becknErr, ok := err.(*model.Error)
+	if !ok || becknErr.Code != "SCH_SCHEMA_ADAPTATION_FAILED" {
+		t.Errorf("err = %+v (%T), want *model.Error with Code=SCH_SCHEMA_ADAPTATION_FAILED", err, err)
+	}
+	if becknErr.Details == nil || becknErr.Details.Path != obj.Path {
+		t.Errorf("Details.Path = %+v, want %q", becknErr.Details, obj.Path)
+	}
+	if becknErr.Unwrap() == nil {
+		t.Error("expected Unwrap() to reach the underlying loadSchemaFromPath error, got nil")
+	}
 }
 
 func TestValidateReferencedObject_NonHttpSchemeRejectedWhenAllowlistSet(t *testing.T) {
@@ -716,6 +801,11 @@ func TestValidateReferencedObject_NonHttpSchemeRejectedWhenAllowlistSet(t *testi
 			err := cache.validateReferencedObject(ctx, obj, 1*time.Hour, 30*time.Second, allowedDomains, false)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "invalid scheme in @context")
+
+			becknErr, ok := err.(*model.Error)
+			if !ok || becknErr.Code != "SCH_INVALID_JSONLD_CONTEXT" {
+				t.Errorf("err = %+v (%T), want *model.Error with Code=SCH_INVALID_JSONLD_CONTEXT", err, err)
+			}
 		})
 	}
 }
@@ -812,6 +902,130 @@ func TestValidateExtendedSchemas_MissingMessage(t *testing.T) {
 	err := v.validateExtendedSchemas(ctx, body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "missing 'message' field")
+}
+
+// TestValidateExtendedSchemas_DomainNotAllowed_PropagatesCode drives a real
+// domain-object validation failure through the full production path
+// (validateExtendedSchemas -> validateReferencedObject -> extractSchemaErrors'
+// *model.Error passthrough branch -> prefixSchemaErrorPaths), confirming the
+// classified code and path both survive end-to-end — not just at the unit
+// level of validateReferencedObject or extractSchemaErrors individually.
+func TestValidateExtendedSchemas_DomainNotAllowed_PropagatesCode(t *testing.T) {
+	v := &schemav2Validator{
+		config: &Config{
+			EnableExtendedSchema: true,
+			ExtendedSchemaConfig: ExtendedSchemaConfig{
+				AllowedDomains: []string{"trusted.com"},
+			},
+		},
+		schemaCache: newSchemaCache(10),
+	}
+
+	ctx := context.Background()
+	body := map[string]interface{}{
+		"message": map[string]interface{}{
+			"order": map[string]interface{}{
+				"@context": "https://malicious.com/schema.yaml",
+				"@type":    "SomeType",
+			},
+		},
+	}
+
+	err := v.validateExtendedSchemas(ctx, body)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+
+	var schemaErr *model.SchemaValidationErr
+	if !errors.As(err, &schemaErr) {
+		t.Fatalf("expected *model.SchemaValidationErr, got %T: %v", err, err)
+	}
+	if len(schemaErr.Errors) != 1 || schemaErr.Errors[0].Code != "SCH_INVALID_JSONLD_CONTEXT" {
+		t.Errorf("Errors = %+v, want one entry with Code=SCH_INVALID_JSONLD_CONTEXT", schemaErr.Errors)
+	}
+	if schemaErr.Errors[0].Details == nil || schemaErr.Errors[0].Details.Path == "" {
+		t.Errorf("Details = %+v, want a non-empty Path from prefixSchemaErrorPaths", schemaErr.Errors[0].Details)
+	}
+}
+
+func TestPrefixSchemaErrorPaths(t *testing.T) {
+	tests := []struct {
+		name         string
+		schemaErrors []model.Error
+		objPath      string
+		want         []model.Error
+	}{
+		{
+			name:         "no existing details gets object path",
+			schemaErrors: []model.Error{{Message: "m1"}},
+			objPath:      "message.order",
+			want: []model.Error{
+				{Message: "m1", Details: &model.ErrorDetails{Path: "message.order"}},
+			},
+		},
+		{
+			name: "existing path is prefixed with object path",
+			schemaErrors: []model.Error{
+				{Message: "m1", Details: &model.ErrorDetails{Path: "items[0].id"}},
+			},
+			objPath: "message.order",
+			want: []model.Error{
+				{Message: "m1", Details: &model.ErrorDetails{Path: "message.order.items[0].id"}},
+			},
+		},
+		{
+			name: "existing cause is preserved after prefixing",
+			schemaErrors: []model.Error{
+				{
+					Message: "m1",
+					Details: &model.ErrorDetails{
+						Path:  "items[0].id",
+						Cause: &model.Error{Code: "NET_DOWNSTREAM_UNAVAILABLE", Message: "registry lookup failed"},
+					},
+				},
+			},
+			objPath: "message.order",
+			want: []model.Error{
+				{
+					Message: "m1",
+					Details: &model.ErrorDetails{
+						Path:  "message.order.items[0].id",
+						Cause: &model.Error{Code: "NET_DOWNSTREAM_UNAVAILABLE", Message: "registry lookup failed"},
+					},
+				},
+			},
+		},
+		{
+			name: "existing details with no path yet gets object path, cause still preserved",
+			schemaErrors: []model.Error{
+				{
+					Message: "m1",
+					Details: &model.ErrorDetails{
+						Cause: &model.Error{Code: "NET_DOWNSTREAM_UNAVAILABLE", Message: "registry lookup failed"},
+					},
+				},
+			},
+			objPath: "message.order",
+			want: []model.Error{
+				{
+					Message: "m1",
+					Details: &model.ErrorDetails{
+						Path:  "message.order",
+						Cause: &model.Error{Code: "NET_DOWNSTREAM_UNAVAILABLE", Message: "registry lookup failed"},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prefixSchemaErrorPaths(tt.schemaErrors, tt.objPath)
+			if !reflect.DeepEqual(tt.schemaErrors, tt.want) {
+				t.Errorf("prefixSchemaErrorPaths() = %+v, want %+v", tt.schemaErrors, tt.want)
+			}
+		})
+	}
 }
 
 func TestIsSchemaVersionSegment(t *testing.T) {

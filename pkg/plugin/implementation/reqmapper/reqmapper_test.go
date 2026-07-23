@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/testutil"
 	"github.com/jsonata-go/jsonata"
 	"github.com/stretchr/testify/require"
 )
@@ -189,28 +190,43 @@ func TestReqMapperStepRun_EmptyBody(t *testing.T) {
 		Body:    nil,
 	}
 
-	require.Error(t, step.Run(ctx))
+	err = step.Run(ctx)
+	require.Error(t, err)
+	testutil.RequireBadReqCode(t, err, "SCH_INVALID_JSON")
 }
 
 func TestParseRequestBody(t *testing.T) {
 	t.Run("malformed json", func(t *testing.T) {
 		_, err := parseRequestBody([]byte("{"))
 		require.Error(t, err)
+		testutil.RequireBadReqCode(t, err, "SCH_INVALID_JSON")
+
+		// Regression test: the decode failure must still unwrap to the
+		// underlying json error via errors.As, matching the wrapping this
+		// function did before model.ExtractContext was extracted (self-review
+		// of #882 found this had silently regressed, then fixed it).
+		var syntaxErr *json.SyntaxError
+		require.ErrorAs(t, err, &syntaxErr, "expected errors.As to still reach the underlying *json.SyntaxError")
 	})
 
 	t.Run("missing context", func(t *testing.T) {
+		// The exact message text for this classification is model.ExtractContext's
+		// concern and is already verified directly in pkg/model/model_test.go;
+		// this only needs to confirm parseRequestBody forwards the Code correctly.
 		_, err := parseRequestBody([]byte(`{"message":{}}`))
-		require.EqualError(t, err, "context field not found or invalid")
+		testutil.RequireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
 	})
 
 	t.Run("missing action", func(t *testing.T) {
 		_, err := parseRequestBody([]byte(`{"context":{},"message":{}}`))
 		require.EqualError(t, err, "action field not found or invalid")
+		testutil.RequireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
 	})
 
 	t.Run("empty action", func(t *testing.T) {
 		_, err := parseRequestBody([]byte(`{"context":{"action":""},"message":{}}`))
 		require.EqualError(t, err, "action field not found or invalid")
+		testutil.RequireBadReqCode(t, err, "SCH_REQUIRED_FIELD_MISSING")
 	})
 }
 

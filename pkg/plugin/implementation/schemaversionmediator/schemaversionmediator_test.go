@@ -401,11 +401,11 @@ func TestIsVersionSegment(t *testing.T) {
 		{"retail", false},
 		{"", false},
 		{"v", false},
-		{"2", false},    // bare number with no dot must not match
-		{"v2", false},   // bare number with v prefix, no dot
-		{"v.", false},   // dot but no digits
-		{"v1.", false},  // trailing dot — digits only before dot
-		{"1.", false},   // trailing dot without v prefix
+		{"2", false},   // bare number with no dot must not match
+		{"v2", false},  // bare number with v prefix, no dot
+		{"v.", false},  // dot but no digits
+		{"v1.", false}, // trailing dot — digits only before dot
+		{"1.", false},  // trailing dot without v prefix
 		{"vX.Y", false},
 		{"order.jsonld", false},
 	}
@@ -1321,8 +1321,8 @@ func TestMediate_NotOnboarded(t *testing.T) {
 	if !errors.As(err, &me) {
 		t.Fatalf("expected MediationError, got %T: %v", err, err)
 	}
-	if me.Code != "subscriberNotOnboarded" {
-		t.Errorf("expected subscriberNotOnboarded, got %q", me.Code)
+	if me.Code != "SCH_SUBSCRIBER_NOT_FOUND" {
+		t.Errorf("expected SCH_SUBSCRIBER_NOT_FOUND, got %q", me.Code)
 	}
 }
 
@@ -1350,8 +1350,8 @@ func TestMediate_CounterpartyManifestUnavailable_Reject(t *testing.T) {
 	if !errors.As(err, &me) {
 		t.Fatalf("expected MediationError, got %T: %v", err, err)
 	}
-	if me.Code != "schemaIncompatible" {
-		t.Errorf("expected schemaIncompatible, got %q", me.Code)
+	if me.Code != "SCH_SCHEMA_ADAPTATION_FAILED" {
+		t.Errorf("expected SCH_SCHEMA_ADAPTATION_FAILED, got %q", me.Code)
 	}
 }
 
@@ -1405,8 +1405,8 @@ func TestMediate_ActionReject_OnIncompatible(t *testing.T) {
 	if !errors.As(err, &me) {
 		t.Fatalf("expected MediationError, got %T: %v", err, err)
 	}
-	if me.Code != "schemaIncompatible" {
-		t.Errorf("expected schemaIncompatible, got %q", me.Code)
+	if me.Code != "SCH_SCHEMA_ADAPTATION_FAILED" {
+		t.Errorf("expected SCH_SCHEMA_ADAPTATION_FAILED, got %q", me.Code)
 	}
 }
 
@@ -1434,8 +1434,8 @@ func TestMediate_ArtifactNotFound_Reject(t *testing.T) {
 	if !errors.As(err, &me) {
 		t.Fatalf("expected MediationError, got %T: %v", err, err)
 	}
-	if me.Code != "schemaIncompatible" {
-		t.Errorf("expected schemaIncompatible, got %q", me.Code)
+	if me.Code != "SCH_SCHEMA_ADAPTATION_FAILED" {
+		t.Errorf("expected SCH_SCHEMA_ADAPTATION_FAILED, got %q", me.Code)
 	}
 }
 
@@ -1728,7 +1728,7 @@ func TestMediate_TranslationApplied_MultipleObjectsDifferentPaths(t *testing.T) 
 	// Verifies each artifact is scoped to its own path and both are applied.
 	srv := artifactServer(t, map[string]string{
 		"/retail/v2.0/Offer_from_v1.0.jsonata":    `{"offerState": offerStatus}`,
-		"/retail/v2.0/Resource_from_v1.0.jsonata":  `{"resourceLabel": resourceName}`,
+		"/retail/v2.0/Resource_from_v1.0.jsonata": `{"resourceLabel": resourceName}`,
 	})
 	defer srv.Close()
 
@@ -1938,5 +1938,20 @@ func TestDroppedFields_NoneDropped_Nested(t *testing.T) {
 	}
 	if len(dropped) != 0 {
 		t.Errorf("expected no dropped fields, got %v", dropped)
+	}
+}
+
+func TestMediationError_BecknError(t *testing.T) {
+	var be model.BecknErrorer = &MediationError{
+		Code:    "SCH_SUBSCRIBER_NOT_FOUND",
+		Message: "no manifest published",
+	}
+
+	got := be.BecknError()
+	if got.Code != "SCH_SUBSCRIBER_NOT_FOUND" {
+		t.Errorf("Code = %s, want SCH_SUBSCRIBER_NOT_FOUND", got.Code)
+	}
+	if got.Message != be.Error() {
+		t.Errorf("Message = %q, want it to match Error(): %q", got.Message, be.Error())
 	}
 }

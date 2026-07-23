@@ -194,7 +194,14 @@ func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 		log.Debugf(ctx, "Validating %v Header", model.AuthHeaderGateway)
 		if err := s.validate(ctx, headerValue, "", false); err != nil {
 			ctx.RespHeader.Set(model.UnaAuthorizedHeaderGateway, unauthHeader)
-			return model.NewSignValidationErr(fmt.Errorf("failed to validate %s: %w", model.AuthHeaderGateway, err))
+			// s.validate returns an already-classified *model.SignValidationErr for
+			// most failure paths (keymanager lookup, signvalidator crypto/timestamp
+			// checks) — wrap with plain fmt.Errorf (not model.NewSignValidationErr)
+			// so errors.As still finds that inner classification instead of
+			// shadowing it with a new, default-coded wrapper. Its own header-parse
+			// and algorithm-mismatch checks still return unclassified errors that
+			// fall through to a generic 500 either way; see #864 follow-up.
+			return fmt.Errorf("failed to validate %s: %w", model.AuthHeaderGateway, err)
 		}
 	}
 
@@ -202,7 +209,7 @@ func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 	headerValue = ctx.Request.Header.Get(model.AuthHeaderSubscriber)
 	if len(headerValue) == 0 {
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
-		return model.NewSignValidationErr(fmt.Errorf("%s missing", model.UnaAuthorizedHeaderSubscriber))
+		return model.NewCodedSignValidationErr("AUT_SIGNATURE_MISSING", fmt.Errorf("%s missing", model.UnaAuthorizedHeaderSubscriber))
 	}
 	reqSig, err := s.lookupCallbackRequestSig(ctx, headerValue)
 	if err != nil {
@@ -211,7 +218,9 @@ func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 	}
 	if err := s.validate(ctx, headerValue, reqSig, true); err != nil {
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
-		return model.NewSignValidationErr(fmt.Errorf("failed to validate %s: %w", model.AuthHeaderSubscriber, err))
+		// Same reasoning as the gateway-header branch above: preserve s.validate's
+		// classification instead of shadowing it.
+		return fmt.Errorf("failed to validate %s: %w", model.AuthHeaderSubscriber, err)
 	}
 	return nil
 }

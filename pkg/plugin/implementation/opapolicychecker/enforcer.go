@@ -642,8 +642,14 @@ func (e *PolicyEnforcer) selectedPolicy(networkID string) *loadedPolicy {
 }
 
 // CheckPolicy evaluates the message body against loaded OPA policies.
-// Returns a BadReqErr (causing NACK) if violations are found.
-// Returns an error on evaluation failure (fail closed).
+// Returns a BadReqErr (causing NACK) for every failure mode — an
+// uninitialized evaluator, an evaluation failure, or actual violations —
+// each classified with a POL_* code. Violations use the first non-empty
+// per-violation code (falling back to POL_GENERIC_ERROR when the policy only
+// emits plain violation strings — see evaluator.go's parseViolationItem for
+// the structured/coded shape a Rego policy can opt into); the other two
+// failure modes always use POL_GENERIC_ERROR, since they're evaluation-layer
+// failures rather than a specific policy decision.
 func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	if !e.config.Enabled {
 		log.Debug(ctx, "OPAPolicyChecker: plugin disabled, skipping")
@@ -666,7 +672,7 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	// Disabled policies intentionally do not initialize an evaluator in loadPolicy.
 	ev := policy.evaluator
 	if ev == nil {
-		return model.NewBadReqErr(fmt.Errorf("policy evaluator is not initialized"))
+		return model.NewCodedBadReqErr("POL_GENERIC_ERROR", fmt.Errorf("policy evaluator is not initialized"))
 	}
 
 	if e.config.DebugLogging {
@@ -678,7 +684,7 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 	violations, err := ev.Evaluate(ctx, ctx.Body)
 	if err != nil {
 		log.Errorf(ctx, err, "OPAPolicyChecker: policy evaluation failed for networkID=%q%s: %v", reqCtx.NetworkID, requestLogCtx, err)
-		return model.NewBadReqErr(fmt.Errorf("policy evaluation error: %w", err))
+		return model.NewCodedBadReqErr("POL_GENERIC_ERROR", fmt.Errorf("policy evaluation error: %w", err))
 	}
 
 	if len(violations) == 0 {
@@ -688,9 +694,19 @@ func (e *PolicyEnforcer) CheckPolicy(ctx *model.StepContext) error {
 		return nil
 	}
 
-	msg := fmt.Sprintf("policy violation(s): %s", strings.Join(violations, "; "))
+	msg := fmt.Sprintf("policy violation(s): %s", strings.Join(violationMessages(violations), "; "))
 	log.Warnf(ctx, "OPAPolicyChecker: networkID=%q%s %s", reqCtx.NetworkID, requestLogCtx, msg)
-	return model.NewBadReqErr(fmt.Errorf("%s", msg))
+	code := model.FirstNonEmptyCode(violations, "POL_GENERIC_ERROR")
+	return model.NewCodedBadReqErr(code, fmt.Errorf("%s", msg))
+}
+
+// violationMessages extracts each violation's human-readable message, in order.
+func violationMessages(violations []model.Error) []string {
+	messages := make([]string, len(violations))
+	for i, v := range violations {
+		messages[i] = v.Message
+	}
+	return messages
 }
 
 func (e *PolicyEnforcer) Close() {
