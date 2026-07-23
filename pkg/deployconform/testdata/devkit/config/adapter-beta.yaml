@@ -1,0 +1,17 @@
+# Adapter config for the beta participant (list-form environment entrypoint).
+appName: onix-test
+http:
+  port: 8082
+modules:
+  - name: txnCaller
+    handler:
+      plugins:
+        keyManager:
+          config:
+            networkParticipant: beta.example.com
+            keyId: beta-key-1
+            signingPrivateKey: BETA-PRIVATE-KEY
+      steps:
+        - validateSchema
+        - checkPolicy
+        - sign

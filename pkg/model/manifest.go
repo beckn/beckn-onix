@@ -46,13 +46,15 @@ const (
 
 // NetworkManifest is the typed YAML schema for a network-manifest document.
 type NetworkManifest struct {
-	ManifestVersion string                    `yaml:"manifestVersion"`
-	ManifestType    string                    `yaml:"manifestType"`
-	NetworkID       string                    `yaml:"networkId"`
-	ReleaseID       any                       `yaml:"releaseId"`
-	Publisher       NetworkManifestPublisher  `yaml:"publisher"`
-	Policies        *NetworkManifestPolicies  `yaml:"policies"`
-	Governance      NetworkManifestGovernance `yaml:"governance"`
+	ManifestVersion string                        `yaml:"manifestVersion"`
+	ManifestType    string                        `yaml:"manifestType"`
+	NetworkID       string                        `yaml:"networkId"`
+	ReleaseID       any                           `yaml:"releaseId"`
+	Publisher       NetworkManifestPublisher      `yaml:"publisher"`
+	Policies        *NetworkManifestPolicies      `yaml:"policies"`
+	Deployment      *NetworkManifestDeployment    `yaml:"deployment"`
+	Observability   *NetworkManifestObservability `yaml:"observability"`
+	Governance      NetworkManifestGovernance     `yaml:"governance"`
 }
 
 // NetworkManifestPublisher identifies the organization publishing the manifest.
@@ -71,21 +73,56 @@ type NetworkManifestPolicies struct {
 
 // NetworkManifestBundle describes an OPA bundle policy artifact.
 type NetworkManifestBundle struct {
-	ID                       string `yaml:"id"`
-	URL                      string `yaml:"url"`
-	PolicyQueryPath          string `yaml:"policyQueryPath"`
-	Signed                   bool   `yaml:"signed"`
+	ID                        string `yaml:"id"`
+	URL                       string `yaml:"url"`
+	PolicyQueryPath           string `yaml:"policyQueryPath"`
+	Signed                    bool   `yaml:"signed"`
 	SigningPublicKeyLookupURL string `yaml:"signingPublicKeyLookupUrl"`
 }
 
 // NetworkManifestFile describes a single Rego policy artifact.
 type NetworkManifestFile struct {
-	ID                       string `yaml:"id"`
-	URL                      string `yaml:"url"`
-	PolicyQueryPath          string `yaml:"policyQueryPath"`
-	Signed                   bool   `yaml:"signed"`
-	SignatureURL             string `yaml:"signatureUrl"`
+	ID                        string `yaml:"id"`
+	URL                       string `yaml:"url"`
+	PolicyQueryPath           string `yaml:"policyQueryPath"`
+	Signed                    bool   `yaml:"signed"`
+	SignatureURL              string `yaml:"signatureUrl"`
 	SigningPublicKeyLookupURL string `yaml:"signingPublicKeyLookupUrl"`
+}
+
+// NetworkManifestArtifactRef references a single published artifact that may
+// carry a detached signature. It is the shared shape for non-policy artifacts
+// referenced from a manifest (deployment baselines, observability configs).
+type NetworkManifestArtifactRef struct {
+	ID                        string `yaml:"id"`
+	URL                       string `yaml:"url"`
+	Signed                    bool   `yaml:"signed"`
+	SignatureURL              string `yaml:"signatureUrl"`
+	SigningPublicKeyLookupURL string `yaml:"signingPublicKeyLookupUrl"`
+}
+
+// NetworkManifestDeployment describes the deployment-conformance release for a
+// network: the signed baseline document participants verify their deployed
+// configuration against, and an optional Rego policy evaluated over the
+// discovered configuration tree.
+type NetworkManifestDeployment struct {
+	DevkitID string                      `yaml:"devkitId"`
+	Baseline *NetworkManifestArtifactRef `yaml:"baseline"`
+	Policy   *NetworkManifestPolicies    `yaml:"policy"`
+}
+
+// NetworkManifestObservability describes network-level telemetry settings: an
+// optional signed observability config document and the collector endpoint
+// that receives network telemetry events.
+type NetworkManifestObservability struct {
+	Enabled   bool                        `yaml:"enabled"`
+	Config    *NetworkManifestArtifactRef `yaml:"config"`
+	Collector *NetworkManifestCollector   `yaml:"collector"`
+}
+
+// NetworkManifestCollector identifies the endpoint receiving telemetry events.
+type NetworkManifestCollector struct {
+	URL string `yaml:"url"`
 }
 
 // NetworkManifestGovernance describes validity and signature metadata.
@@ -130,8 +167,14 @@ func (m *NetworkManifest) Validate(expectedNetworkID string, now time.Time) erro
 	if m.Policies == nil {
 		return fmt.Errorf("manifest for network %q is missing policies section", expectedNetworkID)
 	}
-	if m.Policies.Type != PolicyTypeRego {
-		return fmt.Errorf("manifest for network %q must have policies.type=\"rego\"", expectedNetworkID)
+	if err := validatePolicySection(m.Policies, expectedNetworkID, "policies"); err != nil {
+		return err
+	}
+	if err := validateDeploymentSection(m.Deployment, expectedNetworkID); err != nil {
+		return err
+	}
+	if err := validateObservabilitySection(m.Observability, expectedNetworkID); err != nil {
+		return err
 	}
 	if m.Governance.Signed == nil {
 		return fmt.Errorf("manifest for network %q is missing governance.signed", expectedNetworkID)
@@ -158,46 +201,113 @@ func (m *NetworkManifest) Validate(expectedNetworkID string, now time.Time) erro
 		}
 	}
 
-	switch m.Policies.Source {
+	return nil
+}
+
+// validatePolicySection checks the type/source/bundle/file invariants of a
+// policies-shaped section. section names the YAML location being validated
+// ("policies" or "deployment.policy") so errors point at the exact field.
+func validatePolicySection(p *NetworkManifestPolicies, networkID, section string) error {
+	if p.Type != PolicyTypeRego {
+		return fmt.Errorf("manifest for network %q must have %s.type=\"rego\"", networkID, section)
+	}
+	switch p.Source {
 	case PolicySourceBundle:
-		if m.Policies.Bundle == nil {
-			return fmt.Errorf("manifest for network %q must include policies.bundle when policies.source=\"bundle\"", expectedNetworkID)
+		if p.Bundle == nil {
+			return fmt.Errorf("manifest for network %q must include %s.bundle when %s.source=\"bundle\"", networkID, section, section)
 		}
-		if m.Policies.File != nil {
-			return fmt.Errorf("manifest for network %q must not include policies.file when policies.source=\"bundle\"", expectedNetworkID)
+		if p.File != nil {
+			return fmt.Errorf("manifest for network %q must not include %s.file when %s.source=\"bundle\"", networkID, section, section)
 		}
-		if strings.TrimSpace(m.Policies.Bundle.ID) == "" ||
-			strings.TrimSpace(m.Policies.Bundle.URL) == "" ||
-			strings.TrimSpace(m.Policies.Bundle.PolicyQueryPath) == "" {
-			return fmt.Errorf("manifest for network %q is missing required policies.bundle fields", expectedNetworkID)
+		if strings.TrimSpace(p.Bundle.ID) == "" ||
+			strings.TrimSpace(p.Bundle.URL) == "" ||
+			strings.TrimSpace(p.Bundle.PolicyQueryPath) == "" {
+			return fmt.Errorf("manifest for network %q is missing required %s.bundle fields", networkID, section)
 		}
-		if m.Policies.Bundle.Signed && strings.TrimSpace(m.Policies.Bundle.SigningPublicKeyLookupURL) == "" {
-			return fmt.Errorf("manifest for network %q requires policies.bundle.signingPublicKeyLookupUrl when policies.bundle.signed=true", expectedNetworkID)
+		if p.Bundle.Signed && strings.TrimSpace(p.Bundle.SigningPublicKeyLookupURL) == "" {
+			return fmt.Errorf("manifest for network %q requires %s.bundle.signingPublicKeyLookupUrl when %s.bundle.signed=true", networkID, section, section)
 		}
 	case PolicySourceFile:
-		if m.Policies.File == nil {
-			return fmt.Errorf("manifest for network %q must include policies.file when policies.source=\"file\"", expectedNetworkID)
+		if p.File == nil {
+			return fmt.Errorf("manifest for network %q must include %s.file when %s.source=\"file\"", networkID, section, section)
 		}
-		if m.Policies.Bundle != nil {
-			return fmt.Errorf("manifest for network %q must not include policies.bundle when policies.source=\"file\"", expectedNetworkID)
+		if p.Bundle != nil {
+			return fmt.Errorf("manifest for network %q must not include %s.bundle when %s.source=\"file\"", networkID, section, section)
 		}
-		if strings.TrimSpace(m.Policies.File.ID) == "" ||
-			strings.TrimSpace(m.Policies.File.URL) == "" ||
-			strings.TrimSpace(m.Policies.File.PolicyQueryPath) == "" {
-			return fmt.Errorf("manifest for network %q is missing required policies.file fields", expectedNetworkID)
+		if strings.TrimSpace(p.File.ID) == "" ||
+			strings.TrimSpace(p.File.URL) == "" ||
+			strings.TrimSpace(p.File.PolicyQueryPath) == "" {
+			return fmt.Errorf("manifest for network %q is missing required %s.file fields", networkID, section)
 		}
-		if m.Policies.File.Signed {
-			if strings.TrimSpace(m.Policies.File.SignatureURL) == "" {
-				return fmt.Errorf("manifest for network %q requires policies.file.signatureUrl when policies.file.signed=true", expectedNetworkID)
+		if p.File.Signed {
+			if strings.TrimSpace(p.File.SignatureURL) == "" {
+				return fmt.Errorf("manifest for network %q requires %s.file.signatureUrl when %s.file.signed=true", networkID, section, section)
 			}
-			if strings.TrimSpace(m.Policies.File.SigningPublicKeyLookupURL) == "" {
-				return fmt.Errorf("manifest for network %q requires policies.file.signingPublicKeyLookupUrl when policies.file.signed=true", expectedNetworkID)
+			if strings.TrimSpace(p.File.SigningPublicKeyLookupURL) == "" {
+				return fmt.Errorf("manifest for network %q requires %s.file.signingPublicKeyLookupUrl when %s.file.signed=true", networkID, section, section)
 			}
 		}
 	default:
-		return fmt.Errorf("manifest for network %q uses unsupported policies.source %q", expectedNetworkID, m.Policies.Source)
+		return fmt.Errorf("manifest for network %q uses unsupported %s.source %q", networkID, section, p.Source)
 	}
+	return nil
+}
 
+// validateArtifactRef checks that an artifact reference names a URL and, when
+// marked signed, carries the detached-signature and key-lookup URLs needed to
+// verify it. section names the YAML location for error messages.
+func validateArtifactRef(ref *NetworkManifestArtifactRef, networkID, section string) error {
+	if strings.TrimSpace(ref.ID) == "" || strings.TrimSpace(ref.URL) == "" {
+		return fmt.Errorf("manifest for network %q is missing required %s.id or %s.url", networkID, section, section)
+	}
+	if ref.Signed {
+		if strings.TrimSpace(ref.SignatureURL) == "" {
+			return fmt.Errorf("manifest for network %q requires %s.signatureUrl when %s.signed=true", networkID, section, section)
+		}
+		if strings.TrimSpace(ref.SigningPublicKeyLookupURL) == "" {
+			return fmt.Errorf("manifest for network %q requires %s.signingPublicKeyLookupUrl when %s.signed=true", networkID, section, section)
+		}
+	}
+	return nil
+}
+
+// validateDeploymentSection checks the optional deployment section: a devkit
+// identifier and baseline reference are required, the config-tree policy is
+// optional and shares the policies-section schema.
+func validateDeploymentSection(d *NetworkManifestDeployment, networkID string) error {
+	if d == nil {
+		return nil
+	}
+	if strings.TrimSpace(d.DevkitID) == "" {
+		return fmt.Errorf("manifest for network %q is missing deployment.devkitId", networkID)
+	}
+	if d.Baseline == nil {
+		return fmt.Errorf("manifest for network %q is missing deployment.baseline", networkID)
+	}
+	if err := validateArtifactRef(d.Baseline, networkID, "deployment.baseline"); err != nil {
+		return err
+	}
+	if d.Policy != nil {
+		return validatePolicySection(d.Policy, networkID, "deployment.policy")
+	}
+	return nil
+}
+
+// validateObservabilitySection checks the optional observability section: when
+// enabled, any config document reference must be well formed and a collector,
+// if declared, must name its endpoint URL.
+func validateObservabilitySection(o *NetworkManifestObservability, networkID string) error {
+	if o == nil {
+		return nil
+	}
+	if o.Config != nil {
+		if err := validateArtifactRef(o.Config, networkID, "observability.config"); err != nil {
+			return err
+		}
+	}
+	if o.Collector != nil && strings.TrimSpace(o.Collector.URL) == "" {
+		return fmt.Errorf("manifest for network %q is missing observability.collector.url", networkID)
+	}
 	return nil
 }
 

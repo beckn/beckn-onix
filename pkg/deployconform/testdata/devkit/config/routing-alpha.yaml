@@ -1,0 +1,7 @@
+# Routing config for alpha; content is participant-specific in the tests'
+# variance rules (whole-artifact variance).
+routingRules:
+  - domain: energy
+    targetType: url
+    target:
+      url: https://alpha.example.com/receiver
