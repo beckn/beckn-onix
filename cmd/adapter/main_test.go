@@ -102,6 +102,11 @@ func (m *MockPluginManager) PayloadStore(_ context.Context, _ definition.Cache, 
 	return nil, nil
 }
 
+// Crawler returns a mock implementation of the Crawler interface.
+func (m *MockPluginManager) Crawler(_ context.Context, _ definition.Signer, _ definition.KeyManager, _ *plugin.Config) (definition.Crawler, error) {
+	return nil, nil
+}
+
 // PolicyChecker returns a mock implementation of the PolicyChecker interface.
 func (m *MockPluginManager) PolicyChecker(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
 	if m.policyCheckerFunc != nil {

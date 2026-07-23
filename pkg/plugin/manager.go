@@ -513,6 +513,27 @@ func (m *Manager) KeyManager(ctx context.Context, rClient definition.RegistryLoo
 	return km, nil
 }
 
+// Crawler returns a Crawler instance based on the provided configuration.
+// It reuses the loaded provider.
+func (m *Manager) Crawler(ctx context.Context, signer definition.Signer, km definition.KeyManager, cfg *Config) (definition.Crawler, error) {
+	cp, err := provider[definition.CrawlerProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	c, closer, err := cp.New(ctx, signer, km, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.closers = append(m.closers, func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return c, nil
+}
+
 // SimpleKeyManager returns a KeyManager instance based on the provided configuration.
 // It reuses the loaded provider.
 func (m *Manager) SimpleKeyManager(ctx context.Context, rClient definition.RegistryLookup, cfg *Config) (definition.KeyManager, error) {

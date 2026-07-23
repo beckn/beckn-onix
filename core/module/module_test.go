@@ -89,6 +89,10 @@ func (m *mockPluginManager) PayloadStore(_ context.Context, _ definition.Cache, 
 	return nil, nil
 }
 
+func (m *mockPluginManager) Crawler(_ context.Context, _ definition.Signer, _ definition.KeyManager, _ *plugin.Config) (definition.Crawler, error) {
+	return nil, nil
+}
+
 func (m *mockPluginManager) SchemaVersionMediator(_ context.Context, _ definition.ManifestLoader, _ *plugin.Config) (definition.SchemaVersionMediator, error) {
 	return nil, nil
 }

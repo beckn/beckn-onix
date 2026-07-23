@@ -29,6 +29,7 @@ type PluginManager interface {
 	TransportWrapper(ctx context.Context, cfg *plugin.Config) (definition.TransportWrapper, error)
 	SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)
 	PayloadStore(ctx context.Context, cache definition.Cache, namespace string, cfg *plugin.Config) (definition.PayloadStore, error)
+	Crawler(ctx context.Context, signer definition.Signer, km definition.KeyManager, cfg *plugin.Config) (definition.Crawler, error)
 }
 
 // Type defines different handler types for processing requests.
@@ -37,6 +38,11 @@ type Type string
 const (
 	// HandlerTypeStd represents the standard handler type used for general request processing.
 	HandlerTypeStd Type = "std"
+	// HandlerTypeCatalogPull handles DS-internal, unsigned catalog/pull
+	// triggers: it invokes a Crawler synchronously and returns its result,
+	// bypassing validateSign/signAck since the caller is DS's own backend,
+	// not another network participant.
+	HandlerTypeCatalogPull Type = "catalogPull"
 )
 
 // PluginCfg holds the configuration for various plugins.
@@ -55,6 +61,7 @@ type PluginCfg struct {
 	SchemaVersionMediator *plugin.Config `yaml:"schemaVersionMediator,omitempty"`
 	TransportWrapper      *plugin.Config `yaml:"transportWrapper,omitempty"`
 	PayloadStore     *plugin.Config  `yaml:"payloadStore,omitempty"`
+	Crawler          *plugin.Config  `yaml:"crawler,omitempty"`
 	Middleware       []plugin.Config `yaml:"middleware,omitempty"`
 	Steps            []plugin.Config
 }
