@@ -67,7 +67,7 @@ modules:
         cache:
           id: cache
           config:
-            addr: redis:6379
+            addr: localhost:6379
         payloadStore:
           id: payloadstore
           config:
@@ -142,7 +142,7 @@ modules:
         cache:
           id: cache
           config:
-            addr: redis:6379
+            addr: localhost:6379
         payloadStore:
           id: payloadstore
           config:
@@ -167,6 +167,8 @@ modules:
             routingConfig: ./config/local-beckn-one-routing-BAPCaller.yaml
         signer:
           id: signer
+        signValidator:
+          id: signvalidator
         middleware:
           - id: reqpreprocessor
             config:
@@ -184,4 +186,50 @@ modules:
         - validateSchema
         - storePayload
         - validateAckSign
-  
+
+  # catalog/pull: DS-internal trigger (see pkg/plugin/implementation/catalogcrawler/README.md).
+  # Unsigned, same-operator call -- no validateSign/addRoute/signAck; the
+  # handler itself calls Crawler.CrawlSubscriber and returns the result.
+  - name: catalogPull
+    path: /catalog/pull
+    handler:
+      type: catalogPull
+      role: bap
+      httpClientConfig:
+        maxIdleConns: 1000
+        maxIdleConnsPerHost: 200
+        idleConnTimeout: 300s
+        responseHeaderTimeout: 5s
+      plugins:
+        # registry+cache exist only to satisfy keyManager's constructor
+        # (KeyManagerProvider.New always requires a RegistryLookup); the
+        # crawler itself never calls either -- it resolves the PN domain
+        # directly from the DS-supplied receiverId (no registry lookup).
+        registry:
+          id: dediregistry
+          config:
+            timeout: 10
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
+        cache:
+          id: cache
+          config:
+            addr: localhost:6379
+        keyManager:
+          id: simplekeymanager
+          config:
+            subscriberId: ds.local.dev
+            keyId: 76EU7LZ7gfqj13dWDKR1Uitnim11mCoxWBPdzLxUpAMBPVdANKgyFM
+            signingPrivateKey: TTQMAEy0xJcoRXRNofZAwZq1c3VH6j98UUaHP7budQQ=
+            signingPublicKey: g/3swjI93IhZ0SScrVZapeLjU+W0AeiSid3LViYZJFo=
+            encrPrivateKey: TTQMAEy0xJcoRXRNofZAwZq1c3VH6j98UUaHP7budQQ=
+            encrPublicKey: g/3swjI93IhZ0SScrVZapeLjU+W0AeiSid3LViYZJFo=
+        signer:
+          id: signer
+        crawler:
+          id: catalogcrawler
+          config:
+            maxArtifactSize: "10485760"
+            fetchTimeout: "15s"
+            retryMax: "2"
