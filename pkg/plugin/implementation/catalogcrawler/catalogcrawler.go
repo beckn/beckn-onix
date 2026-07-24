@@ -216,20 +216,19 @@ func (c *Crawler) fetchManifest(ctx context.Context, domain string) (dediManifes
 	}, nil
 }
 
-// verifyDediProof verifies content's detached proof.jws against the given
-// keys[], matched by proof.verification_method (kid). Used for the
-// manifest's keys[] and an index's single publisher.key -- the only two
-// artifact levels that carry a proof at all; catalog parts, by design, do
-// not (see the dediIndex doc comment). Returns false (not fatal, see
-// FR6/§9) when there's no proof, no matching key, or the signature doesn't
-// verify -- as is the case for the reference fixture's placeholder jws
-// value.
+// verifyDediProof verifies content's compact detached-JWS proof.jws
+// (header_b64..signature_b64, per §7.3) against the given keys[], matched
+// by proof.verification_method (kid). Used for the manifest's keys[] and an
+// index's single publisher.key -- the only two artifact levels that carry a
+// proof at all; catalog parts, by design, do not (see the dediIndex doc
+// comment). The signing input is reconstructed from content with its own
+// "proof" field stripped (§7.2) -- content is never verified against a
+// signing input that includes the signature itself. Returns false (not
+// fatal, see FR6/§9) when there's no proof, no matching key, or the
+// signature doesn't verify -- as is the case for the reference fixture's
+// placeholder jws value.
 func verifyDediProof(content []byte, keys []dediKey, proof *dediProof) bool {
 	if proof == nil || proof.Jws == "" {
-		return false
-	}
-	sig, err := decodeJWSValue(proof.Jws)
-	if err != nil {
 		return false
 	}
 	for _, k := range keys {
@@ -240,7 +239,7 @@ func verifyDediProof(content []byte, keys []dediKey, proof *dediProof) bool {
 		if err != nil {
 			continue
 		}
-		if err := artifactverifier.VerifyDetached(content, sig, pub); err == nil {
+		if err := artifactverifier.VerifyDetachedJWS(content, proof.Jws, pub); err == nil {
 			return true
 		}
 	}
@@ -261,16 +260,6 @@ func decodeOKPPublicKey(k dediKey) (ed25519.PublicKey, error) {
 		return nil, fmt.Errorf("invalid ed25519 public key length %d", len(raw))
 	}
 	return ed25519.PublicKey(raw), nil
-}
-
-// decodeJWSValue accepts either standard or URL-safe base64; the reference
-// fixture's placeholder value ("UNSIGNED_LOCAL_TEST_DATA...") decodes as
-// neither, which is the expected, non-fatal outcome (§9).
-func decodeJWSValue(jws string) ([]byte, error) {
-	if b, err := base64.RawURLEncoding.DecodeString(jws); err == nil {
-		return b, nil
-	}
-	return base64.StdEncoding.DecodeString(jws)
 }
 
 // stripDigestPrefix removes a leading "sha-256:" (or "sha256:") from a
