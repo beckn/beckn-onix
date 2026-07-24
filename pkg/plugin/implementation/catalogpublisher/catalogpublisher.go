@@ -1,22 +1,30 @@
 // Package catalogpublisher implements definition.CatalogPublisher: given a
 // publisher's catalog submissions, it produces a signed DeDi manifest and a
-// signed catalog index whose wire shape matches exactly what
-// pkg/plugin/implementation/catalogcrawler consumes (see
-// onix-catalog-crawler-plugin-requirements.md §2 for the three-level
-// chain). This is the producing side of that same chain.
+// catalog index whose wire shape matches "Decentralized Catalog file
+// spec.md" (the file-spec doc supersedes the earlier DeDi-wrapper-shaped
+// index this package originally produced -- see git history for that
+// version; catalogcrawler has not yet been updated to match this shape,
+// tracked as the immediate next step).
 //
 // Publish diffs each submission against caller-supplied PriorState (added/
-// updated/removed items in the catalog's "resources" array) and emits
-// either a fresh baseline (no prior state, or ForceBaseline) or a change
-// file (prior state present and the diff is non-empty); an empty diff is a
-// no-op. Publish holds no storage-backed state of its own -- see
+// updated/removed items in the catalog's "resources" and "offers" arrays)
+// and emits either a fresh baseline (no prior state, or ForceBaseline) or a
+// change file (prior state present and the diff is non-empty); an empty
+// diff is a no-op. Publish holds no storage-backed state of its own -- see
 // definition.PriorCatalogState's doc comment -- callers (a CLI, a handler)
 // own reconstructing "what was last published" and pass it back in.
-// Compaction is not implemented yet (see the package README's phased
-// plan). Signing uses the real detached-JWS scheme
-// (pkg/security/artifactsigner), the counterpart to catalogcrawler's fixed
-// verifyDediProof. Output is JSON only; where these bytes get written and
-// served is a separate concern (ArtifactStore, not yet built).
+// Compaction beyond ForceBaseline-as-manual-trigger is not implemented yet
+// (see the package README's phased plan).
+//
+// Signing is two different schemes for two different documents, per the
+// file spec: the manifest carries one whole-document detached JWS
+// (pkg/security/artifactsigner, JCS canonicalization per RFC 8785, RFC 7515
+// detached JWS); the catalog index is not signed as a whole -- instead,
+// every baseline/change file entry carries its own signature, a plain
+// Ed25519 signature over the JCS-canonicalized tuple
+// {catalogId, version, url, digest, validUntil}, binding that signature to
+// exactly one file in one role (file spec, "The signed entry is a tuple,
+// not a bare hash").
 package catalogpublisher
 
 import (
@@ -37,32 +45,86 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/security/artifactsigner"
 )
 
-// catalogIndexRegistry must match catalogcrawler's isCatalogIndexFile
-// convention -- it's how a crawler recognizes which manifest files[] entry
-// is the catalog index.
-const catalogIndexRegistry = "beckn-catalogs"
+// dediVersion matches the file spec's manifest example byte for byte.
+const dediVersion = "0.1"
+
+// catalogIndexFileName is the manifest files[].name value identifying the
+// catalog-index file (file spec's "becknCatalogs" -- the Beckn extension
+// replacing DeDi's registry-name convention with a plain name key, since
+// this entry references a Beckn file, not a DeDi registry).
+const catalogIndexFileName = "becknCatalogs"
 
 // Config controls publish behavior.
 type Config struct {
-	// KeyID is both the JWK "kid" embedded in the manifest/index and the
-	// key identifier passed to KeyManager.Keyset to load the signing
-	// keypair.
+	// KeyID is both the JWK "kid" embedded in the manifest and the
+	// signature.keyId on every catalog-index file entry, and the key
+	// identifier passed to KeyManager.Keyset to load the signing keypair.
+	// The file spec uses one key for both roles throughout its examples;
+	// nothing requires they differ.
 	KeyID string
 
-	// Domain is the publisher's own domain, embedded as the index's
-	// publisher.domain.
+	// Domain is the publisher's own domain, embedded as the manifest's
+	// top-level "domain" and the catalog index's "participantId" (file
+	// spec: identity is the domain).
 	Domain string
 
-	// IndexURL is where the index will be reachable once published. A
-	// placeholder ("pending-artifact-store://...") is used when unset --
-	// there is no ArtifactStore yet to ask for a real location.
+	// IndexSchemaURL is the JSON-Schema URL describing the catalog-index
+	// document shape, embedded as the manifest's files[].schema.
+	IndexSchemaURL string
+
+	// IndexNetworkIds scopes the catalog index itself (not any one
+	// catalog) to specific networks; embedded as the manifest's
+	// files[].networkIds. Empty/nil means public.
+	IndexNetworkIds []string
+
+	// IndexAuthMethods is only meaningful when IndexNetworkIds is
+	// non-empty (file spec: "A restricted index adds authMethods beside
+	// networkIds").
+	IndexAuthMethods []definition.AuthMethod
+
+	// NextUpdateIn sets how far in the future the manifest's and index's
+	// "next_update" freshness window extends from the moment of
+	// publishing. Zero omits next_update entirely.
+	NextUpdateIn time.Duration
+
+	// FileValidityIn sets how far in the future each catalog file's
+	// signature.validUntil extends. Falls back to NextUpdateIn when zero.
+	FileValidityIn time.Duration
+
+	// IndexURL is where the catalog index will be reachable once
+	// published. A placeholder ("pending-artifact-store://...") is used
+	// when unset -- there is no ArtifactStore yet to ask for a real
+	// location.
 	IndexURL string
 
 	// CatalogBaseURL, if set, is used as the URL prefix for catalog part
 	// files; parts are addressed as
-	// {CatalogBaseURL}/{catalogId}/{baseline.json | change-<version>.json}.
-	// Same placeholder fallback as IndexURL when unset.
+	// {CatalogBaseURL}/{localName}.v{version}.json (baseline) or
+	// {CatalogBaseURL}/{localName}.v{version}.changes.json (change file),
+	// where localName is CatalogID with any "domain/" prefix stripped
+	// (file spec's example: catalogId
+	// "open-economy.nfh.global/electronics-2026" -> file
+	// "electronics-2026.v40.json"). Same placeholder fallback as IndexURL
+	// when unset.
 	CatalogBaseURL string
+
+	// ExtraManifestFiles are additional manifest files[] entries appended
+	// after the catalog-index entry (the manifest's files[] is a list of
+	// every registry/file the domain offers, of which the catalog index
+	// is only one). These are pass-through references the caller
+	// supplies as-is; Publish never computes a digest for them (the file
+	// spec's manifest file entries never carry one at all).
+	ExtraManifestFiles []ManifestFileRef
+}
+
+// ManifestFileRef is one additional manifest files[] entry, supplied
+// verbatim by the caller (see Config.ExtraManifestFiles).
+type ManifestFileRef struct {
+	Name        string
+	URL         string
+	Schema      string
+	NetworkIds  []string
+	AuthMethods []definition.AuthMethod
 }
 
 // Publisher implements definition.CatalogPublisher.
@@ -83,18 +145,22 @@ func New(ctx context.Context, keyManager definition.KeyManager, cfg *Config) (*P
 	return p, func() error { return nil }, nil
 }
 
-// --- DeDi wire types -------------------------------------------------
+// --- Manifest wire types -----------------------------------------------
 //
-// Field-for-field identical (json tags) to catalogcrawler's private
-// dedi* types, so the JSON this package emits is exactly what that
-// package parses. Kept as separate, private types here rather than a
-// shared package because this is a wire-format contract, not a Go type
-// two packages should share code over.
+// DeDi's manifest format (file spec: "keys as JWKs, a files list naming
+// each registry the domain offers, freshness fields, and a proof block"),
+// with the file spec's three Beckn extensions on the file entry: no
+// digest, networkIds added, and "name" in place of DeDi's "registry".
 
 type dediManifest struct {
-	Keys  []dediKey  `json:"keys"`
-	Files []dediFile `json:"files"`
-	Proof *dediProof `json:"proof,omitempty"`
+	DediVersion string     `json:"dedi_version"`
+	Type        string     `json:"type"` // "dedi-manifest"
+	Domain      string     `json:"domain"`
+	Keys        []dediKey  `json:"keys"`
+	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
+	NextUpdate  *time.Time `json:"next_update,omitempty"`
+	Files       []dediFile `json:"files"`
+	Proof       *dediProof `json:"proof,omitempty"`
 }
 
 type dediKey struct {
@@ -106,73 +172,112 @@ type dediKey struct {
 
 type dediProof struct {
 	VerificationMethod string `json:"verification_method"`
+	Canonicalization   string `json:"canonicalization"` // always "JCS" here, per file spec
 	Jws                string `json:"jws"`
 }
 
 type dediFile struct {
-	Registry string `json:"registry"`
-	URL      string `json:"url"`
-	Digest   string `json:"digest,omitempty"`
-	Schema   string `json:"schema,omitempty"`
+	Name        string           `json:"name"`
+	URL         string           `json:"url"`
+	Schema      string           `json:"schema,omitempty"`
+	NetworkIds  []string         `json:"networkIds,omitempty"`
+	AuthMethods []authMethodWire `json:"authMethods,omitempty"`
 }
 
-type dediIndex struct {
-	Publisher dediIndexPublisher `json:"publisher"`
-	Records   []dediIndexRecord  `json:"records"`
-	Proof     *dediProof         `json:"proof,omitempty"`
+type authMethodWire struct {
+	Method           string   `json:"method"`
+	Algorithm        string   `json:"algorithm"`
+	Header           string   `json:"header"`
+	Challenge        []string `json:"challenge,omitempty"`
+	FreshnessSeconds int      `json:"freshnessSeconds,omitempty"`
 }
 
-type dediIndexPublisher struct {
-	Domain string  `json:"domain"`
-	Key    dediKey `json:"key"`
+func toAuthMethodWire(methods []definition.AuthMethod) []authMethodWire {
+	if len(methods) == 0 {
+		return nil
+	}
+	out := make([]authMethodWire, len(methods))
+	for i, m := range methods {
+		out[i] = authMethodWire{
+			Method:           m.Method,
+			Algorithm:        m.Algorithm,
+			Header:           m.Header,
+			Challenge:        m.Challenge,
+			FreshnessSeconds: m.FreshnessSeconds,
+		}
+	}
+	return out
 }
 
-type dediIndexRecord struct {
-	Details dediCatalogPointer `json:"details"`
+// --- Catalog index wire types -------------------------------------------
+//
+// A plain Beckn file; DeDi never reads it, and it is not required to be
+// signed as a whole -- trust rides on each file entry's own signature
+// tuple (file spec, "The catalog index").
+
+type catalogIndexDoc struct {
+	ParticipantID string            `json:"participantId"`
+	Version       int               `json:"version"`
+	NextUpdate    *time.Time        `json:"next_update,omitempty"`
+	Catalogs      []json.RawMessage `json:"catalogs"`
 }
 
-type dediCatalogPointer struct {
-	CatalogID   string     `json:"catalogId"`
-	Version     int        `json:"version"`
-	Status      string     `json:"status"`
-	Visibility  string     `json:"visibility"`
-	SchemaTypes []string   `json:"schemaTypes"`
-	Baseline    dediPart   `json:"baseline"`
-	Changes     []dediPart `json:"changes,omitempty"`
-
-	// Parts flattens Baseline+Changes into one list for crawlers that
-	// don't yet understand baseline/change semantics -- catalogcrawler
-	// today fetches every Parts[] entry independently and validates each
-	// against digest+shallow-schema (delta-file support is an explicit
-	// open item there). Keeping this flattened view means a baseline-only
-	// publish (this catalog's first) is still exactly what the crawler's
-	// existing round-trip test expects.
-	Parts []dediPart `json:"parts"`
+type catalogEntry struct {
+	CatalogID   string           `json:"catalogId"`
+	CatalogType string           `json:"catalogType,omitempty"`
+	Status      string           `json:"status"`
+	NetworkIds  []string         `json:"networkIds,omitempty"`
+	AuthMethods []authMethodWire `json:"authMethods,omitempty"`
+	SchemaTypes []string         `json:"schemaTypes,omitempty"`
+	Baseline    *fileEntry       `json:"baseline,omitempty"`
+	Changes     []fileEntry      `json:"changes,omitempty"`
+	RetiredAt   *time.Time       `json:"retiredAt,omitempty"`
 }
 
-type dediPart struct {
-	URL    string `json:"url"`
-	Digest string `json:"digest"` // "sha-256:<hex>"
+type fileEntry struct {
+	Version   int           `json:"version"`
+	URL       string        `json:"url"`
+	Size      int64         `json:"size"`
+	Digest    string        `json:"digest"` // "sha-256:<hex>"
+	Signature signatureWire `json:"signature"`
 }
 
-// changeFileDoc is the change-file shape for one publish: just the added
-// or updated items and the ids of removed ones (design doc, "Incremental
-// updates"). Version records which catalog version this change corresponds
-// to, purely for readability when a file is opened directly.
+type signatureWire struct {
+	KeyID      string    `json:"keyId"`
+	Value      string    `json:"value"`
+	ValidUntil time.Time `json:"validUntil"`
+}
+
+// changeFileDoc is the change-file shape for one publish, keyed by id never
+// by position (file spec, "Catalog files and change files"). Upserts merge
+// added and updated items into one list -- the receiver replaces by id
+// either way -- and Removals names ids only.
 type changeFileDoc struct {
-	Version int               `json:"version"`
-	Added   []json.RawMessage `json:"added,omitempty"`
-	Updated []json.RawMessage `json:"updated,omitempty"`
-	Removed []string          `json:"removed,omitempty"`
+	CatalogID   string          `json:"catalogId"`
+	FromVersion int             `json:"fromVersion"`
+	ToVersion   int             `json:"toVersion"`
+	Resources   diffBlock       `json:"resources"`
+	Offers      diffBlock       `json:"offers"`
+	Catalog     json.RawMessage `json:"catalog,omitempty"`
 }
+
+type diffBlock struct {
+	Upserts  []json.RawMessage `json:"upserts,omitempty"`
+	Removals []string          `json:"removals,omitempty"`
+}
+
+func (b diffBlock) isEmpty() bool { return len(b.Upserts) == 0 && len(b.Removals) == 0 }
 
 // Publish validates each submission, diffs it against any PriorState for
-// its catalogId, builds the resulting catalog-index entry (baseline or
-// change file), and signs the index and manifest. A submission that fails
-// validation or diffing is reported as a non-fatal definition.PublishError
-// and skipped; it does not fail the rest of the batch.
+// its catalogId, builds the resulting catalog-index entry (baseline,
+// change file, or a carried-forward no-op), folds in retirements and
+// carried-forward untouched entries, and signs the manifest (the index
+// itself is not signed as a whole). A submission that fails validation or
+// diffing is reported as a non-fatal definition.PublishError and skipped;
+// it does not fail the rest of the batch.
 func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) (definition.PublishResult, error) {
-	result := definition.PublishResult{PublishedAt: time.Now()}
+	now := time.Now()
+	result := definition.PublishResult{PublishedAt: now}
 
 	keyset, err := p.keyManager.Keyset(ctx, p.config.KeyID)
 	if err != nil {
@@ -183,8 +288,29 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 		return result, fmt.Errorf("catalogpublisher: decoding keyset %q: %w", p.config.KeyID, err)
 	}
 
-	var records []dediIndexRecord
+	var nextUpdate *time.Time
+	if p.config.NextUpdateIn > 0 {
+		t := now.Add(p.config.NextUpdateIn)
+		nextUpdate = &t
+	}
+
+	fileValidityIn := p.config.FileValidityIn
+	if fileValidityIn <= 0 {
+		fileValidityIn = p.config.NextUpdateIn
+	}
+	validUntil := now.Add(fileValidityIn)
+
+	submitted := make(map[string]bool, len(req.Catalogs))
+	retireSet := make(map[string]bool, len(req.Retire))
+	for _, id := range req.Retire {
+		retireSet[id] = true
+	}
+
+	anyChanged := false
+	var entries []json.RawMessage
+
 	for _, sub := range req.Catalogs {
+		submitted[sub.CatalogID] = true
 		if err := validateSubmission(sub); err != nil {
 			result.Errors = append(result.Errors, definition.PublishError{
 				CatalogID: sub.CatalogID, Stage: "validate", Reason: err.Error(), Fatal: false,
@@ -192,7 +318,7 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 			continue
 		}
 
-		outcome, record, err := p.publishOne(sub, req.PriorState[sub.CatalogID], req.ForceBaseline)
+		outcome, entry, changed, err := p.publishOne(sub, req.PriorState[sub.CatalogID], req.ForceBaseline, now, validUntil, priv)
 		if err != nil {
 			result.Errors = append(result.Errors, definition.PublishError{
 				CatalogID: sub.CatalogID, Stage: "diff", Reason: err.Error(), Fatal: false,
@@ -200,27 +326,87 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 			continue
 		}
 
-		records = append(records, record)
+		raw, err := json.Marshal(entry)
+		if err != nil {
+			return result, fmt.Errorf("catalogpublisher: marshaling catalog entry %q: %w", sub.CatalogID, err)
+		}
+		entries = append(entries, raw)
 		result.Catalogs = append(result.Catalogs, outcome)
+		if changed {
+			anyChanged = true
+		}
 	}
+
+	for id := range retireSet {
+		if submitted[id] {
+			continue // submitting and retiring the same catalogId in one call: submission wins
+		}
+		tomb := catalogEntry{CatalogID: id, Status: "RETIRED", RetiredAt: &now}
+		raw, err := json.Marshal(tomb)
+		if err != nil {
+			return result, fmt.Errorf("catalogpublisher: marshaling tombstone %q: %w", id, err)
+		}
+		entries = append(entries, raw)
+		anyChanged = true
+	}
+
+	for _, raw := range req.CarryForward {
+		var probe struct {
+			CatalogID string `json:"catalogId"`
+		}
+		if json.Unmarshal(raw, &probe) == nil && (submitted[probe.CatalogID] || retireSet[probe.CatalogID]) {
+			continue
+		}
+		entries = append(entries, raw)
+	}
+
+	indexVersion := req.PriorIndexVersion
+	if anyChanged || indexVersion == 0 {
+		indexVersion = req.PriorIndexVersion + 1
+	}
+	result.IndexVersion = indexVersion
+
+	indexBytes, err := json.Marshal(catalogIndexDoc{
+		ParticipantID: p.config.Domain,
+		Version:       indexVersion,
+		NextUpdate:    nextUpdate,
+		Catalogs:      entries,
+	})
+	if err != nil {
+		return result, fmt.Errorf("catalogpublisher: marshaling catalog index: %w", err)
+	}
+	result.Index = indexBytes
 
 	jwk := dediKey{KID: p.config.KeyID, Kty: "OKP", Crv: "Ed25519", X: base64.RawURLEncoding.EncodeToString(pub)}
 
-	signedIndex, err := p.signDocument(dediIndex{
-		Publisher: dediIndexPublisher{Domain: p.config.Domain, Key: jwk},
-		Records:   records,
-	}, priv, p.config.KeyID)
-	if err != nil {
-		return result, fmt.Errorf("catalogpublisher: signing index: %w", err)
+	files := []dediFile{{
+		Name:        catalogIndexFileName,
+		URL:         p.indexURL(),
+		Schema:      p.config.IndexSchemaURL,
+		NetworkIds:  p.config.IndexNetworkIds,
+		AuthMethods: toAuthMethodWire(p.config.IndexAuthMethods),
+	}}
+	for _, extra := range p.config.ExtraManifestFiles {
+		files = append(files, dediFile{
+			Name:        extra.Name,
+			URL:         extra.URL,
+			Schema:      extra.Schema,
+			NetworkIds:  extra.NetworkIds,
+			AuthMethods: toAuthMethodWire(extra.AuthMethods),
+		})
 	}
-	result.Index = signedIndex
 
-	// Per the design doc, the manifest references the index by URL alone,
-	// with no whole-file digest -- integrity for the index itself comes
-	// from its own signature, not a manifest-declared hash.
-	signedManifest, err := p.signDocument(dediManifest{
-		Keys:  []dediKey{jwk},
-		Files: []dediFile{{Registry: catalogIndexRegistry, URL: p.indexURL()}},
+	// Per the file spec, the manifest file entry carries no whole-file
+	// digest: index churn never touches the domain root, and integrity
+	// comes from the per-entry signatures inside the index instead.
+	signedManifest, err := p.signManifest(dediManifest{
+		DediVersion: dediVersion,
+		Type:        "dedi-manifest",
+		Domain:      p.config.Domain,
+		Keys:        []dediKey{jwk},
+		UpdatedAt:   &now,
+		NextUpdate:  nextUpdate,
+		Files:       files,
 	}, priv, p.config.KeyID)
 	if err != nil {
 		return result, fmt.Errorf("catalogpublisher: signing manifest: %w", err)
@@ -230,188 +416,323 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 	return result, nil
 }
 
-// publishOne decides baseline vs. change-file for one submission and
-// builds both its definition.CatalogPublishOutcome and its index record.
-// hasPrior is implicit in prior being the zero value only when the
-// catalogId truly has no entry in req.PriorState -- callers distinguish
-// via the map's ok-form before calling this, so a zero-value
-// PriorCatalogState here always means "no prior state".
-func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definition.PriorCatalogState, forceBaseline bool) (definition.CatalogPublishOutcome, dediIndexRecord, error) {
-	hasPrior := prior.Catalog != nil
+// currentVersion returns a catalog's implicit current version: the last
+// change file's version, or the baseline's version if there are no change
+// files yet. Zero if there is no prior state at all.
+func currentVersion(prior definition.PriorCatalogState) int {
+	if n := len(prior.ChangeFiles); n > 0 {
+		return prior.ChangeFiles[n-1].Version
+	}
+	if prior.BaselineFile != nil {
+		return prior.BaselineFile.Version
+	}
+	return 0
+}
 
-	var (
-		version      int
-		mode         string
-		content      json.RawMessage
-		digestHex    string
-		changed      bool
-		baselinePart dediPart
-		changeParts  []dediPart
-	)
+// publishOne decides baseline vs. change-file vs. no-op for one submission
+// and builds both its definition.CatalogPublishOutcome and its
+// catalogEntry.
+func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definition.PriorCatalogState, forceBaseline bool, now, validUntil time.Time, priv ed25519.PrivateKey) (definition.CatalogPublishOutcome, catalogEntry, bool, error) {
+	hasPrior := prior.Catalog != nil
+	catalogType := sub.CatalogType
+	if catalogType == "" {
+		catalogType = "REGULAR"
+	}
+
+	entry := catalogEntry{
+		CatalogID:   sub.CatalogID,
+		CatalogType: catalogType,
+		Status:      "ACTIVE",
+		NetworkIds:  sub.NetworkIds,
+		AuthMethods: toAuthMethodWire(sub.AuthMethods),
+		SchemaTypes: sub.SchemaTypes,
+	}
+
+	if hasPrior {
+		entry.Baseline = fileRefToWire(prior.BaselineFile)
+		entry.Changes = fileRefsToWire(prior.ChangeFiles)
+	}
 
 	if !hasPrior || forceBaseline {
-		version = 1
-		mode = "baseline"
-		changed = true
-		content = sub.Catalog
-		digestHex = "sha-256:" + digestOf(content)
-		baselinePart = dediPart{URL: p.catalogPartURL(sub.CatalogID, "baseline.json"), Digest: digestHex}
-	} else {
-		diff, err := diffCatalogs(prior.Catalog, sub.Catalog)
+		version := currentVersion(prior) + 1 // 0+1 == 1 for a brand-new catalog
+		fe, err := p.buildFileEntry(sub.CatalogID, version, "json", sub.Catalog, now, validUntil, priv)
 		if err != nil {
-			return definition.CatalogPublishOutcome{}, dediIndexRecord{}, err
+			return definition.CatalogPublishOutcome{}, catalogEntry{}, false, err
 		}
-		baselinePart = toDediPart(prior.BaselinePart)
-		changeParts = toDediParts(prior.ChangeParts)
+		entry.Baseline = &fe
+		entry.Changes = nil // a fresh baseline (first publish, or a forced compaction) resets the change list
 
-		if diff.isEmpty() {
-			version = prior.Version
-			mode = "unchanged"
-			changed = false
-		} else {
-			version = prior.Version + 1
-			mode = "change"
-			changed = true
-			change := changeFileDoc{Version: version, Added: diff.Added, Updated: diff.Updated, Removed: diff.Removed}
-			var err error
-			content, err = json.Marshal(change)
-			if err != nil {
-				return definition.CatalogPublishOutcome{}, dediIndexRecord{}, fmt.Errorf("marshaling change file: %w", err)
-			}
-			digestHex = "sha-256:" + digestOf(content)
-			changeParts = append(changeParts, dediPart{
-				URL:    p.catalogPartURL(sub.CatalogID, fmt.Sprintf("change-%d.json", version)),
-				Digest: digestHex,
-			})
+		outcome := definition.CatalogPublishOutcome{
+			CatalogID: sub.CatalogID, Version: version, Changed: true, Digest: fe.Digest, Mode: "baseline", Content: sub.Catalog,
 		}
+		return outcome, entry, true, nil
 	}
 
-	allParts := append([]dediPart{baselinePart}, changeParts...)
-	record := dediIndexRecord{Details: dediCatalogPointer{
-		CatalogID:   sub.CatalogID,
-		Version:     version,
-		Status:      "ACTIVE",
-		Visibility:  encodeVisibility(sub.Visibility),
-		SchemaTypes: sub.SchemaTypes,
-		Baseline:    baselinePart,
-		Changes:     changeParts,
-		Parts:       allParts,
-	}}
+	diff, changeCatalog, err := diffCatalogs(prior.Catalog, sub.Catalog)
+	if err != nil {
+		return definition.CatalogPublishOutcome{}, catalogEntry{}, false, err
+	}
+
+	if diff.Resources.isEmpty() && diff.Offers.isEmpty() && changeCatalog == nil {
+		version := currentVersion(prior)
+		outcome := definition.CatalogPublishOutcome{CatalogID: sub.CatalogID, Version: version, Changed: false, Mode: "unchanged"}
+		return outcome, entry, false, nil
+	}
+
+	fromVersion := currentVersion(prior)
+	toVersion := fromVersion + 1
+	changeDoc := changeFileDoc{
+		CatalogID: sub.CatalogID, FromVersion: fromVersion, ToVersion: toVersion,
+		Resources: diff.Resources, Offers: diff.Offers, Catalog: changeCatalog,
+	}
+	content, err := json.Marshal(changeDoc)
+	if err != nil {
+		return definition.CatalogPublishOutcome{}, catalogEntry{}, false, fmt.Errorf("marshaling change file: %w", err)
+	}
+
+	fe, err := p.buildFileEntry(sub.CatalogID, toVersion, "changes.json", content, now, validUntil, priv)
+	if err != nil {
+		return definition.CatalogPublishOutcome{}, catalogEntry{}, false, err
+	}
+	entry.Changes = append(entry.Changes, fe)
 
 	outcome := definition.CatalogPublishOutcome{
-		CatalogID: sub.CatalogID,
-		Version:   version,
-		Changed:   changed,
-		Digest:    digestHex,
-		Mode:      mode,
-		Content:   content,
+		CatalogID: sub.CatalogID, Version: toVersion, Changed: true, Digest: fe.Digest, Mode: "change", Content: content,
 	}
-	return outcome, record, nil
+	return outcome, entry, true, nil
 }
 
-func toDediPart(pr *definition.PartRef) dediPart {
-	if pr == nil {
-		return dediPart{}
+// buildFileEntry computes a versioned URL, digest, size, and per-entry
+// signature tuple for one catalog file (baseline or change), per the file
+// spec's rules: immutable, versioned URLs, and a signature over
+// {catalogId, version, url, digest, validUntil}.
+func (p *Publisher) buildFileEntry(catalogID string, version int, suffix string, content []byte, now, validUntil time.Time, priv ed25519.PrivateKey) (fileEntry, error) {
+	filename := fmt.Sprintf("%s.v%d.%s", localCatalogName(catalogID), version, suffix)
+	url := p.catalogPartURL(filename)
+	digest := "sha-256:" + digestOf(content)
+
+	sigValue, err := signFileTuple(catalogID, version, url, digest, validUntil, priv)
+	if err != nil {
+		return fileEntry{}, fmt.Errorf("signing file entry for %q v%d: %w", catalogID, version, err)
 	}
-	return dediPart{URL: pr.URL, Digest: pr.Digest}
+
+	return fileEntry{
+		Version: version,
+		URL:     url,
+		Size:    int64(len(content)),
+		Digest:  digest,
+		Signature: signatureWire{
+			KeyID:      p.keyID(),
+			Value:      sigValue,
+			ValidUntil: validUntil,
+		},
+	}, nil
 }
 
-func toDediParts(prs []definition.PartRef) []dediPart {
-	if len(prs) == 0 {
+func (p *Publisher) keyID() string { return p.config.KeyID }
+
+// signFileTuple signs the JCS-canonicalized tuple
+// {catalogId, version, url, digest, validUntil} with Ed25519 and returns
+// the base64-standard-encoded signature (file spec: "signature.value is
+// Ed25519 over the JCS canonicalization of {...}"; the doc explicitly
+// allows this to equally be encoded as a detached JWS instead -- a plain
+// signature was chosen here as the simpler of the two allowed encodings).
+// A map[string]any is used (rather than a struct) because Go's
+// encoding/json already sorts map keys and uses compact separators,
+// satisfying JCS for the string/int/timestamp-only fields this tuple
+// carries (same reasoning as artifactverifier.CanonicalizeJCS's doc
+// comment).
+func signFileTuple(catalogID string, version int, url, digest string, validUntil time.Time, priv ed25519.PrivateKey) (string, error) {
+	tuple := map[string]any{
+		"catalogId":  catalogID,
+		"version":    version,
+		"url":        url,
+		"digest":     digest,
+		"validUntil": validUntil,
+	}
+	canonical, err := json.Marshal(tuple)
+	if err != nil {
+		return "", fmt.Errorf("canonicalizing signature tuple: %w", err)
+	}
+	sig := ed25519.Sign(priv, canonical)
+	return base64.StdEncoding.EncodeToString(sig), nil
+}
+
+// localCatalogName returns catalogID with any "domain/" prefix stripped,
+// matching the file spec's example filenames (catalogId
+// "open-economy.nfh.global/electronics-2026" -> "electronics-2026.v40.json").
+func localCatalogName(catalogID string) string {
+	if i := strings.LastIndex(catalogID, "/"); i != -1 {
+		return catalogID[i+1:]
+	}
+	return catalogID
+}
+
+func fileRefToWire(fr *definition.FileRef) *fileEntry {
+	if fr == nil {
 		return nil
 	}
-	out := make([]dediPart, len(prs))
-	for i, pr := range prs {
-		out[i] = dediPart{URL: pr.URL, Digest: pr.Digest}
+	fe := fileRefValueToWire(*fr)
+	return &fe
+}
+
+func fileRefValueToWire(fr definition.FileRef) fileEntry {
+	return fileEntry{
+		Version: fr.Version,
+		URL:     fr.URL,
+		Size:    fr.Size,
+		Digest:  fr.Digest,
+		Signature: signatureWire{
+			KeyID:      fr.SignatureKeyID,
+			Value:      fr.SignatureValue,
+			ValidUntil: fr.SignatureValidUntil,
+		},
+	}
+}
+
+func fileRefsToWire(frs []definition.FileRef) []fileEntry {
+	if len(frs) == 0 {
+		return nil
+	}
+	out := make([]fileEntry, len(frs))
+	for i, fr := range frs {
+		out[i] = fileRefValueToWire(fr)
 	}
 	return out
 }
 
-// catalogDiff is the result of comparing two catalogs' "resources" arrays
-// by item id.
+// catalogDiff is the result of comparing two catalogs' "resources" and
+// "offers" arrays by item id.
 type catalogDiff struct {
-	Added   []json.RawMessage
-	Updated []json.RawMessage
-	Removed []string
+	Resources diffBlock
+	Offers    diffBlock
 }
 
-func (d catalogDiff) isEmpty() bool {
-	return len(d.Added) == 0 && len(d.Updated) == 0 && len(d.Removed) == 0
+// diffCatalogs compares prior and next by their top-level "resources" and
+// "offers" arrays, matched by each item's "id" field, and separately
+// detects catalog-level attribute changes (currently: "descriptor",
+// "provider" -- the file spec names "name, validity window" as examples
+// without pinning an exact shape, so this is a best-effort subset, not a
+// complete implementation of that field; tracked as an open item).
+// changeCatalog is nil when no catalog-level attributes changed.
+func diffCatalogs(prior, next json.RawMessage) (catalogDiff, json.RawMessage, error) {
+	resourcesDiff, err := diffArrayField(prior, next, "resources")
+	if err != nil {
+		return catalogDiff{}, nil, fmt.Errorf("diffing resources: %w", err)
+	}
+	offersDiff, err := diffArrayField(prior, next, "offers")
+	if err != nil {
+		return catalogDiff{}, nil, fmt.Errorf("diffing offers: %w", err)
+	}
+	changeCatalog, err := diffCatalogAttributes(prior, next)
+	if err != nil {
+		return catalogDiff{}, nil, fmt.Errorf("diffing catalog attributes: %w", err)
+	}
+	return catalogDiff{Resources: resourcesDiff, Offers: offersDiff}, changeCatalog, nil
 }
 
-// diffCatalogs compares prior and next by their top-level "resources"
-// array, matched by each resource's "id" field -- the only structure the
-// design doc's change-file model assumes (added/updated items plus
-// removed ids). id/descriptor/provider are not diffed: change files only
-// ever carry resource-level deltas.
-func diffCatalogs(prior, next json.RawMessage) (catalogDiff, error) {
-	priorItems, err := resourcesByID(prior)
+// diffArrayField diffs prior[field] against next[field] (each a
+// json.RawMessage array, defaulting to empty when the field is absent),
+// matched by item id, merging added+updated into one Upserts list.
+func diffArrayField(prior, next json.RawMessage, field string) (diffBlock, error) {
+	priorItems, err := itemsByID(prior, field)
 	if err != nil {
-		return catalogDiff{}, fmt.Errorf("prior catalog: %w", err)
+		return diffBlock{}, fmt.Errorf("prior catalog: %w", err)
 	}
-	nextItems, nextIDs, err := resourcesByIDOrdered(next)
+	nextItems, nextIDs, err := itemsByIDOrdered(next, field)
 	if err != nil {
-		return catalogDiff{}, fmt.Errorf("submitted catalog: %w", err)
+		return diffBlock{}, fmt.Errorf("submitted catalog: %w", err)
 	}
 
-	var diff catalogDiff
+	var block diffBlock
 	for _, id := range nextIDs {
 		item := nextItems[id]
-		if old, ok := priorItems[id]; !ok {
-			diff.Added = append(diff.Added, item)
-		} else if !jsonEqual(old, item) {
-			diff.Updated = append(diff.Updated, item)
+		if old, ok := priorItems[id]; !ok || !jsonEqual(old, item) {
+			block.Upserts = append(block.Upserts, item)
 		}
 	}
 	for id := range priorItems {
 		if _, ok := nextItems[id]; !ok {
-			diff.Removed = append(diff.Removed, id)
+			block.Removals = append(block.Removals, id)
 		}
 	}
-	sort.Strings(diff.Removed)
-	return diff, nil
+	sort.Strings(block.Removals)
+	return block, nil
 }
 
-// resourcesByID parses a catalog's "resources" array into an id-keyed map.
-func resourcesByID(catalog json.RawMessage) (map[string]json.RawMessage, error) {
-	m, _, err := resourcesByIDOrdered(catalog)
+func itemsByID(catalog json.RawMessage, field string) (map[string]json.RawMessage, error) {
+	m, _, err := itemsByIDOrdered(catalog, field)
 	return m, err
 }
 
-// resourcesByIDOrdered is resourcesByID plus the ids in their original
-// array order, so diff output (Added/Updated) is deterministic rather than
-// depending on Go's randomized map iteration order.
-func resourcesByIDOrdered(catalog json.RawMessage) (map[string]json.RawMessage, []string, error) {
-	var shape struct {
-		Resources []json.RawMessage `json:"resources"`
-	}
+// itemsByIDOrdered is itemsByID plus the ids in their original array
+// order, so diff output (Upserts) is deterministic rather than depending
+// on Go's randomized map iteration order.
+func itemsByIDOrdered(catalog json.RawMessage, field string) (map[string]json.RawMessage, []string, error) {
+	var shape map[string]json.RawMessage
 	if err := json.Unmarshal(catalog, &shape); err != nil {
-		return nil, nil, fmt.Errorf("parsing resources: %w", err)
+		return nil, nil, fmt.Errorf("parsing catalog: %w", err)
 	}
-	m := make(map[string]json.RawMessage, len(shape.Resources))
-	ids := make([]string, 0, len(shape.Resources))
-	for _, r := range shape.Resources {
-		id, err := resourceID(r)
+	raw, ok := shape[field]
+	if !ok || len(raw) == 0 {
+		return map[string]json.RawMessage{}, nil, nil
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, nil, fmt.Errorf("parsing %s: %w", field, err)
+	}
+	m := make(map[string]json.RawMessage, len(items))
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		id, err := itemID(item)
 		if err != nil {
 			return nil, nil, err
 		}
-		m[id] = r
+		m[id] = item
 		ids = append(ids, id)
 	}
 	return m, ids, nil
 }
 
-func resourceID(raw json.RawMessage) (string, error) {
+func itemID(raw json.RawMessage) (string, error) {
 	var withID struct {
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(raw, &withID); err != nil {
-		return "", fmt.Errorf("parsing resource: %w", err)
+		return "", fmt.Errorf("parsing item: %w", err)
 	}
 	if withID.ID == "" {
-		return "", fmt.Errorf("resource missing id")
+		return "", fmt.Errorf("item missing id")
 	}
 	return withID.ID, nil
+}
+
+// diffCatalogAttributes returns a non-nil json.RawMessage carrying only
+// the catalog-level fields (currently: descriptor, provider) that changed
+// between prior and next, or nil if none did.
+func diffCatalogAttributes(prior, next json.RawMessage) (json.RawMessage, error) {
+	var priorFields, nextFields map[string]json.RawMessage
+	if err := json.Unmarshal(prior, &priorFields); err != nil {
+		return nil, fmt.Errorf("parsing prior catalog: %w", err)
+	}
+	if err := json.Unmarshal(next, &nextFields); err != nil {
+		return nil, fmt.Errorf("parsing submitted catalog: %w", err)
+	}
+
+	changed := map[string]json.RawMessage{}
+	for _, field := range []string{"descriptor", "provider"} {
+		nv, ok := nextFields[field]
+		if !ok {
+			continue
+		}
+		if pv, ok := priorFields[field]; !ok || !jsonEqual(pv, nv) {
+			changed[field] = nv
+		}
+	}
+	if len(changed) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(changed)
 }
 
 // jsonEqual compares two JSON values semantically (decoded structure, not
@@ -425,33 +746,20 @@ func jsonEqual(a, b json.RawMessage) bool {
 	return reflect.DeepEqual(av, bv)
 }
 
-// signDocument marshals doc, signs the result (per §7: JCS-canonicalize
-// with "proof" absent/removed, detached JWS), then re-marshals with the
-// proof attached. doc is passed by value as an "any" because dediManifest
-// and dediIndex share no common signable interface; both are simple
-// structs with an optional trailing *dediProof field the caller sets after
-// the first marshal.
-func (p *Publisher) signDocument(doc any, priv ed25519.PrivateKey, kid string) (json.RawMessage, error) {
+// signManifest marshals doc, signs the result (JCS-canonicalize with
+// "proof" absent/removed, detached JWS per RFC 7515), then re-marshals
+// with the proof attached.
+func (p *Publisher) signManifest(doc dediManifest, priv ed25519.PrivateKey, kid string) (json.RawMessage, error) {
 	unsigned, err := json.Marshal(doc)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling document: %w", err)
+		return nil, fmt.Errorf("marshaling manifest: %w", err)
 	}
 	jws, err := artifactsigner.SignDetachedJWS(unsigned, priv)
 	if err != nil {
-		return nil, fmt.Errorf("signing: %w", err)
+		return nil, fmt.Errorf("signing manifest: %w", err)
 	}
-	proof := &dediProof{VerificationMethod: kid, Jws: jws}
-
-	switch d := doc.(type) {
-	case dediManifest:
-		d.Proof = proof
-		return json.Marshal(d)
-	case dediIndex:
-		d.Proof = proof
-		return json.Marshal(d)
-	default:
-		return nil, fmt.Errorf("signDocument: unsupported document type %T", doc)
-	}
+	doc.Proof = &dediProof{VerificationMethod: kid, Canonicalization: "JCS", Jws: jws}
+	return json.Marshal(doc)
 }
 
 // decodeKeyset decodes a model.Keyset's base64-encoded signing keypair into
@@ -485,20 +793,20 @@ func decodeKeyset(keyset *model.Keyset) (ed25519.PrivateKey, ed25519.PublicKey, 
 
 // digestOf returns the hex-encoded SHA-256 of body, matching
 // artifactfetcher's digest convention (plain hex, no prefix -- the
-// "sha-256:" prefix is added by the caller when building a dediPart/dediFile
-// digest field, matching the reference fixture's convention).
+// "sha-256:" prefix is added by the caller when building a fileEntry
+// digest field, matching the file spec's convention).
 func digestOf(body []byte) string {
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])
 }
 
 // validateSubmission applies the same shallow structural check
-// catalogcrawler applies on the way in (looksLikeBecknCatalog): a Beckn
-// Catalog object has no context/message envelope, just {id, descriptor,
-// ...}. Keeping this duplicated rather than shared avoids a cross-package
-// dependency between the two plugins for a few lines of logic; it should
-// be lifted into a shared validator once a real schemaValidator plugin call
-// replaces both inline checks (tracked as an open item on both sides).
+// catalogcrawler applies on the way in: a Beckn Catalog object has no
+// context/message envelope, just {id, descriptor, ...}. Keeping this
+// duplicated rather than shared avoids a cross-package dependency between
+// the two plugins for a few lines of logic; it should be lifted into a
+// shared validator once a real schemaValidator plugin call replaces both
+// inline checks (tracked as an open item on both sides).
 func validateSubmission(sub definition.CatalogSubmission) error {
 	if sub.CatalogID == "" {
 		return fmt.Errorf("missing catalogId")
@@ -516,33 +824,21 @@ func validateSubmission(sub definition.CatalogSubmission) error {
 	return nil
 }
 
-// encodeVisibility is a best-effort, not-yet-standardized string encoding
-// of definition.PublishVisibility (see the type's doc comment: the real
-// wire convention for restricted-catalog visibility is an open design
-// item). catalogcrawler currently only passes this string through
-// (CatalogResult.Visibility); it does not parse or filter on it yet.
-func encodeVisibility(v definition.PublishVisibility) string {
-	if v.Public || len(v.Networks) == 0 {
-		return "public"
-	}
-	return "networks:" + strings.Join(v.Networks, ",")
-}
-
 // indexURL returns the configured index location, or a placeholder when
 // no ArtifactStore-assigned location exists yet.
 func (p *Publisher) indexURL() string {
 	if p.config.IndexURL != "" {
 		return p.config.IndexURL
 	}
-	return "pending-artifact-store://index.json"
+	return "pending-artifact-store://catalog-index.json"
 }
 
 // catalogPartURL returns the configured location for one of a catalog's
-// part files (baseline.json, change-<version>.json, ...), or a placeholder
-// when no ArtifactStore-assigned location exists yet.
-func (p *Publisher) catalogPartURL(catalogID, filename string) string {
+// versioned file names (see buildFileEntry), or a placeholder when no
+// ArtifactStore-assigned location exists yet.
+func (p *Publisher) catalogPartURL(filename string) string {
 	if p.config.CatalogBaseURL != "" {
-		return strings.TrimRight(p.config.CatalogBaseURL, "/") + "/" + catalogID + "/" + filename
+		return strings.TrimRight(p.config.CatalogBaseURL, "/") + "/" + filename
 	}
-	return "pending-artifact-store://catalog/" + catalogID + "/" + filename
+	return "pending-artifact-store://catalog/" + filename
 }
