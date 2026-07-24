@@ -1,15 +1,37 @@
 // Package catalogcrawler implements definition.Crawler: it walks a
-// subscriber's published manifest -> index -> catalog chain (see
-// onix-catalog-crawler-plugin-requirements.md), verifying the manifest's
-// and index's own detached signatures (each carries its own proof.jws and
-// publisher key) and checking each catalog part's digest against what its
-// index declared -- catalog parts carry no signature of their own by
-// design. Outbound GETs to the index/catalog endpoints are currently
-// unsigned (see fetchOpts) pending a PN in the test setup that expects
+// participant's published manifest -> catalog-index -> catalog-file chain
+// per "Decentralized Catalog file spec.md" (the file-spec doc supersedes
+// the earlier DeDi-wrapper-shaped index this package originally consumed
+// -- see git history for that version, and catalogpublisher's own history
+// for the producing side of the same change).
+//
+// Verification per the file spec's "Crawler verification rules":
+//  1. Fetch the manifest at the fixed well-known path, verify its
+//     document-level detached-JWS proof against its own embedded keys[]
+//     (the manifest is the trust anchor -- a key not present in it is
+//     invalid, and so is everything signed with it).
+//  2. Fetch the catalog index it points to (the "becknCatalogs" files[]
+//     entry). The index itself is a plain Beckn file and is NOT signed as
+//     a whole -- trust rides on each catalog file's own signature.
+//  3. For each catalog entry: a RETIRED entry is a tombstone, no files to
+//     fetch. Otherwise, fetch the baseline, verify its digest, size, and
+//     per-file signature tuple ({catalogId, version, url, digest,
+//     validUntil}, verified against the manifest's keys[] by
+//     signature.keyId), and check validUntil hasn't passed. Then fetch
+//     every changes[] entry the same way, in order, applying each onto
+//     the running content (pkg/catalogfile) to produce the catalog's
+//     current effective content. Any failed check drops the whole catalog
+//     (a non-fatal definition.CrawlError), never a partial, unverified
+//     composition.
+//
+// Outbound GETs to the index/catalog endpoints are currently unsigned
+// (see fetchOpts) pending a participant in the test setup that expects
 // signed requests; the capability is wired through and is a one-line
-// change to re-enable. This first phase does not use caching, checkPolicy,
-// or schemaValidator -- every call re-fetches and re-verifies from
-// scratch.
+// change to re-enable. This phase does not use caching, checkPolicy, or
+// schemaValidator -- every call re-fetches and re-verifies from scratch,
+// and version-rollback detection is not implemented yet (VerificationOutcome.VersionOK
+// is always true) -- both explicit open items, matching this package's
+// original phased plan.
 package catalogcrawler
 
 import (
@@ -22,6 +44,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/catalogfile"
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/security/artifactfetcher"
@@ -35,7 +58,8 @@ type Config struct {
 	RetryMax        int
 }
 
-// Crawler fetches, verifies, and returns a subscriber's published catalogs.
+// Crawler fetches, verifies, and returns a participant's published
+// catalogs.
 type Crawler struct {
 	signer     definition.Signer
 	keyManager definition.KeyManager
@@ -57,19 +81,20 @@ func New(ctx context.Context, signer definition.Signer, keyManager definition.Ke
 	return c, func() error { return nil }, nil
 }
 
+// --- Manifest wire types -------------------------------------------------
+
 // dediManifest is the subset of a DeDi manifest (type: dedi-manifest) this
-// crawler reads: the trust anchor keys, the pointer to the index file(s),
-// and the manifest's own detached-signature proof. Field names/shapes here
-// match the reference fixture (JWK-style OKP keys, "sha-256:<hex>" digests)
-// rather than a guessed convention.
+// crawler reads: the trust anchor keys, the pointer(s) to registries the
+// domain offers, and the manifest's own detached-signature proof.
 type dediManifest struct {
-	Keys  []dediKey  `json:"keys"`
-	Files []dediFile `json:"files"`
-	Proof *dediProof `json:"proof,omitempty"`
+	Domain string     `json:"domain"`
+	Keys   []dediKey  `json:"keys"`
+	Files  []dediFile `json:"files"`
+	Proof  *dediProof `json:"proof,omitempty"`
 }
 
 // dediKey is a JWK-shaped Ed25519 (OKP) public key, as published in a
-// manifest's keys[] or an index's publisher.key.
+// manifest's keys[].
 type dediKey struct {
 	KID string `json:"kid"`
 	Kty string `json:"kty"`
@@ -81,70 +106,80 @@ type dediKey struct {
 // signed the document by kid.
 type dediProof struct {
 	VerificationMethod string `json:"verification_method"`
-	Jws                 string `json:"jws"`
+	Jws                string `json:"jws"`
 }
 
+// dediFile is one manifest files[] entry -- per the file spec's Beckn
+// extensions to DeDi's manifest format: "name" replaces DeDi's "registry"
+// (this entry references a Beckn file, not a DeDi registry), and there is
+// no whole-file digest (integrity comes from the index's own per-entry
+// signatures instead).
 type dediFile struct {
-	Registry string `json:"registry"`
-	URL      string `json:"url"`
-	Digest   string `json:"digest"` // "sha-256:<hex>"
-	Schema   string `json:"schema"`
+	Name       string   `json:"name"`
+	URL        string   `json:"url"`
+	Schema     string   `json:"schema"`
+	NetworkIds []string `json:"networkIds"`
 }
 
-// dediIndex is the subset of a DeDi file (type: dedi-file) whose
-// records[].details are catalog pointers, not catalog content. Like the
-// manifest, the index carries its own publisher key and detached-signature
-// proof. Catalog parts, by design, carry neither -- a part's integrity is
-// inherited entirely from the digest the index declares for it (FR6), not
-// from a signature of its own.
-type dediIndex struct {
-	Publisher dediIndexPublisher `json:"publisher"`
-	Records   []dediIndexRecord `json:"records"`
-	Proof     *dediProof        `json:"proof,omitempty"`
-}
-
-type dediIndexPublisher struct {
-	Domain string  `json:"domain"`
-	Key    dediKey `json:"key"`
-}
-
-type dediIndexRecord struct {
-	Details dediCatalogPointer `json:"details"`
-}
-
-type dediCatalogPointer struct {
-	CatalogID   string     `json:"catalogId"`
-	Version     int        `json:"version"`
-	Status      string     `json:"status"`
-	Visibility  string     `json:"visibility"`
-	SchemaTypes []string   `json:"schemaTypes"`
-	NextUpdate  *time.Time `json:"next_update,omitempty"`
-	Parts       []dediPart `json:"parts"`
-}
-
-type dediPart struct {
-	URL    string `json:"url"`
-	Digest string `json:"digest"` // "sha-256:<hex>"
-}
-
-// catalogIndexRegistry is the manifest files[].registry value identifying
-// the catalog-index file (FR3). Matching on the schema URL was tried first,
-// but the reference fixture's schema has since been renamed without any
-// "CatalogIndexRecord" marker, and a manifest can carry other files[]
-// entries (e.g. "beckn-subscriber") with unrelated schemas -- registry is
-// the stable identifier the provider actually commits to.
-const catalogIndexRegistry = "beckn-catalogs"
+// catalogIndexFileName is the manifest files[].name value identifying the
+// catalog-index file (file spec's "becknCatalogs"), matching
+// catalogpublisher's catalogIndexFileName constant.
+const catalogIndexFileName = "becknCatalogs"
 
 // isCatalogIndexFile reports whether a manifest files[] entry is the
-// catalog-index file (FR3).
+// catalog-index file.
 func isCatalogIndexFile(f dediFile) bool {
-	return f.Registry == catalogIndexRegistry
+	return f.Name == catalogIndexFileName
 }
 
-// CrawlSubscriber fetches and verifies the manifest, every index it
-// references, and every catalog part each index references, in that order.
-// A single bad index or catalog part is reported as a non-fatal
-// definition.CrawlError rather than failing the whole call (FR11).
+// --- Catalog index wire types --------------------------------------------
+
+// catalogIndexDoc is the catalog index: a plain Beckn file, not a DeDi
+// file, and not signed as a whole -- trust rides on each catalog file's
+// own signature (file spec, "The catalog index").
+type catalogIndexDoc struct {
+	ParticipantID string            `json:"participantId"`
+	Version       int               `json:"version"`
+	NextUpdate    *time.Time        `json:"next_update,omitempty"`
+	Catalogs      []json.RawMessage `json:"catalogs"`
+}
+
+// catalogEntryProbe is the minimal shape read from every catalogs[] entry
+// before deciding whether it's a tombstone or needs full parsing.
+type catalogEntryProbe struct {
+	CatalogID string `json:"catalogId"`
+	Status    string `json:"status"`
+}
+
+type catalogEntry struct {
+	CatalogID   string      `json:"catalogId"`
+	CatalogType string      `json:"catalogType"`
+	Status      string      `json:"status"`
+	NetworkIds  []string    `json:"networkIds"`
+	SchemaTypes []string    `json:"schemaTypes"`
+	Baseline    *fileEntry  `json:"baseline"`
+	Changes     []fileEntry `json:"changes"`
+	RetiredAt   *time.Time  `json:"retiredAt"`
+}
+
+type fileEntry struct {
+	Version   int           `json:"version"`
+	URL       string        `json:"url"`
+	Size      int64         `json:"size"`
+	Digest    string        `json:"digest"` // "sha-256:<hex>"
+	Signature signatureWire `json:"signature"`
+}
+
+type signatureWire struct {
+	KeyID      string    `json:"keyId"`
+	Value      string    `json:"value"`
+	ValidUntil time.Time `json:"validUntil"`
+}
+
+// CrawlSubscriber fetches and verifies the manifest, the catalog index it
+// points to, and every catalog's baseline+changes files, composing each
+// catalog's current effective content. A single bad catalog is reported
+// as a non-fatal definition.CrawlError rather than failing the whole call.
 func (c *Crawler) CrawlSubscriber(ctx context.Context, req definition.CrawlRequest) (definition.CrawlResult, error) {
 	result := definition.CrawlResult{
 		SubscriberID: req.SubscriberID,
@@ -170,7 +205,7 @@ func (c *Crawler) CrawlSubscriber(ctx context.Context, req definition.CrawlReque
 		if !isCatalogIndexFile(file) {
 			continue
 		}
-		catalogs, errs := c.fetchIndex(ctx, req.SubscriberID, file)
+		catalogs, errs := c.fetchIndex(ctx, req.SubscriberID, manifest.Keys, file)
 		result.Catalogs = append(result.Catalogs, catalogs...)
 		result.Errors = append(result.Errors, errs...)
 	}
@@ -179,7 +214,7 @@ func (c *Crawler) CrawlSubscriber(ctx context.Context, req definition.CrawlReque
 }
 
 // domainFromSubscriberID extracts a base URL (scheme+host) from the DS-
-// supplied subscriber URI. No registry lookup is performed -- the DS
+// supplied participant URI. No registry lookup is performed -- the DS
 // supplies this URI directly.
 func domainFromSubscriberID(subscriberID string) (string, error) {
 	raw := subscriberID
@@ -193,10 +228,11 @@ func domainFromSubscriberID(subscriberID string) (string, error) {
 	return u.Scheme + "://" + u.Host, nil
 }
 
-// fetchManifest fetches the public, unsigned .well-known manifest and
-// verifies it against its own embedded keys.
+// fetchManifest fetches the public, unsigned well-known manifest and
+// verifies it against its own embedded keys. Per the file spec, the
+// manifest lives at /.well-known/dedi.index.json.
 func (c *Crawler) fetchManifest(ctx context.Context, domain string) (dediManifest, definition.ManifestResult, error) {
-	manifestURL := domain + "/.well-known/dedi.json"
+	manifestURL := domain + "/.well-known/dedi.index.json"
 	res, err := artifactfetcher.Fetch(ctx, manifestURL, c.fetchOpts(""))
 	if err != nil {
 		return dediManifest{}, definition.ManifestResult{URL: manifestURL}, fmt.Errorf("catalogcrawler: fetching manifest: %w", err)
@@ -207,7 +243,7 @@ func (c *Crawler) fetchManifest(ctx context.Context, domain string) (dediManifes
 		return dediManifest{}, definition.ManifestResult{URL: manifestURL, Digest: res.Digest}, fmt.Errorf("catalogcrawler: parsing manifest: %w", err)
 	}
 
-	verified := verifyDediProof(res.Body, manifest.Keys, manifest.Proof)
+	verified := verifyManifestProof(res.Body, manifest.Keys, manifest.Proof)
 	return manifest, definition.ManifestResult{
 		URL:        manifestURL,
 		Digest:     res.Digest,
@@ -216,18 +252,14 @@ func (c *Crawler) fetchManifest(ctx context.Context, domain string) (dediManifes
 	}, nil
 }
 
-// verifyDediProof verifies content's compact detached-JWS proof.jws
-// (header_b64..signature_b64, per §7.3) against the given keys[], matched
-// by proof.verification_method (kid). Used for the manifest's keys[] and an
-// index's single publisher.key -- the only two artifact levels that carry a
-// proof at all; catalog parts, by design, do not (see the dediIndex doc
-// comment). The signing input is reconstructed from content with its own
-// "proof" field stripped (§7.2) -- content is never verified against a
-// signing input that includes the signature itself. Returns false (not
-// fatal, see FR6/§9) when there's no proof, no matching key, or the
-// signature doesn't verify -- as is the case for the reference fixture's
-// placeholder jws value.
-func verifyDediProof(content []byte, keys []dediKey, proof *dediProof) bool {
+// verifyManifestProof verifies content's compact detached-JWS proof.jws
+// against the given keys[], matched by proof.verification_method (kid).
+// This is the manifest's own document-level proof -- the only remaining
+// whole-document signature in this chain; the catalog index carries none,
+// and individual catalog files carry their own per-entry signature
+// instead (see verifyFileEntry). Returns false (not fatal) when there's no
+// proof, no matching key, or the signature doesn't verify.
+func verifyManifestProof(content []byte, keys []dediKey, proof *dediProof) bool {
 	if proof == nil || proof.Jws == "" {
 		return false
 	}
@@ -262,6 +294,19 @@ func decodeOKPPublicKey(k dediKey) (ed25519.PublicKey, error) {
 	return ed25519.PublicKey(raw), nil
 }
 
+// keyByID returns the manifest key matching kid, per the manifest's role
+// as the trust anchor for every signature downstream (file spec: "A key
+// not present in the current manifest is invalid, and so is everything
+// signed with it").
+func keyByID(keys []dediKey, kid string) (ed25519.PublicKey, error) {
+	for _, k := range keys {
+		if k.KID == kid {
+			return decodeOKPPublicKey(k)
+		}
+	}
+	return nil, fmt.Errorf("key %q not found in manifest", kid)
+}
+
 // stripDigestPrefix removes a leading "sha-256:" (or "sha256:") from a
 // declared digest, matching the plain hex digest artifactfetcher computes.
 func stripDigestPrefix(digest string) string {
@@ -271,116 +316,182 @@ func stripDigestPrefix(digest string) string {
 	return digest
 }
 
-// fetchIndex signs and fetches one manifest-referenced index file, then
-// fetches every catalog part it points to.
-func (c *Crawler) fetchIndex(ctx context.Context, subscriberID string, file dediFile) ([]definition.CatalogResult, []definition.CrawlError) {
+// fetchIndex fetches one manifest-referenced catalog index, then processes
+// every catalog it lists.
+func (c *Crawler) fetchIndex(ctx context.Context, subscriberID string, manifestKeys []dediKey, file dediFile) ([]definition.CatalogResult, []definition.CrawlError) {
 	res, err := artifactfetcher.Fetch(ctx, file.URL, c.fetchOpts(subscriberID))
 	if err != nil {
 		return nil, []definition.CrawlError{{Stage: "index_fetch", Reason: err.Error(), Fatal: false}}
 	}
-	if declared := stripDigestPrefix(file.Digest); declared != "" && declared != res.Digest {
-		return nil, []definition.CrawlError{{Stage: "index_verify", Reason: fmt.Sprintf("index digest mismatch: manifest declared %s, fetched %s", declared, res.Digest), Fatal: false}}
-	}
 
-	var index dediIndex
+	var index catalogIndexDoc
 	if err := json.Unmarshal(res.Body, &index); err != nil {
 		return nil, []definition.CrawlError{{Stage: "index_fetch", Reason: fmt.Sprintf("parsing index: %v", err), Fatal: false}}
 	}
 
-	indexVerified := verifyDediProof(res.Body, []dediKey{index.Publisher.Key}, index.Proof)
-	log.Debugf(ctx, "catalogcrawler: index %s signature verified=%t", file.URL, indexVerified)
+	indexStale := index.NextUpdate != nil && time.Now().After(*index.NextUpdate)
 
 	var catalogs []definition.CatalogResult
 	var errs []definition.CrawlError
-	for _, record := range index.Records {
-		details := record.Details
-		if err := validatePointer(details); err != nil {
-			errs = append(errs, definition.CrawlError{CatalogID: details.CatalogID, Stage: "index_verify", Reason: err.Error(), Fatal: false})
+	for _, raw := range index.Catalogs {
+		var probe catalogEntryProbe
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			errs = append(errs, definition.CrawlError{Stage: "index_verify", Reason: fmt.Sprintf("parsing catalog entry: %v", err), Fatal: false})
 			continue
 		}
-		for _, part := range details.Parts {
-			cr, err := c.fetchCatalogPart(ctx, subscriberID, details, part)
-			if err != nil {
-				errs = append(errs, definition.CrawlError{CatalogID: details.CatalogID, Stage: "part_fetch", Reason: err.Error(), Fatal: false})
+		if probe.CatalogID == "" {
+			errs = append(errs, definition.CrawlError{Stage: "index_verify", Reason: "catalog entry missing catalogId", Fatal: false})
+			continue
+		}
+
+		if strings.EqualFold(probe.Status, "RETIRED") {
+			var entry catalogEntry
+			if err := json.Unmarshal(raw, &entry); err != nil {
+				errs = append(errs, definition.CrawlError{CatalogID: probe.CatalogID, Stage: "index_verify", Reason: fmt.Sprintf("parsing retired entry: %v", err), Fatal: false})
 				continue
 			}
-			catalogs = append(catalogs, cr)
+			catalogs = append(catalogs, definition.CatalogResult{
+				CatalogID: entry.CatalogID,
+				Status:    "RETIRED",
+				RetiredAt: entry.RetiredAt,
+				Changed:   true,
+			})
+			continue
 		}
+
+		if indexStale {
+			log.Debugf(ctx, "catalogcrawler: index %s is stale (next_update %s has passed)", file.URL, index.NextUpdate)
+		}
+
+		var entry catalogEntry
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			errs = append(errs, definition.CrawlError{CatalogID: probe.CatalogID, Stage: "index_verify", Reason: fmt.Sprintf("parsing entry: %v", err), Fatal: false})
+			continue
+		}
+		if err := validateEntry(entry); err != nil {
+			errs = append(errs, definition.CrawlError{CatalogID: entry.CatalogID, Stage: "index_verify", Reason: err.Error(), Fatal: false})
+			continue
+		}
+
+		cr, err := c.processCatalog(ctx, subscriberID, manifestKeys, entry)
+		if err != nil {
+			errs = append(errs, definition.CrawlError{CatalogID: entry.CatalogID, Stage: "part_fetch", Reason: err.Error(), Fatal: false})
+			continue
+		}
+		catalogs = append(catalogs, cr)
 	}
 	return catalogs, errs
 }
 
-// validatePointer checks the minimum shape FR4 requires of an index record.
-func validatePointer(d dediCatalogPointer) error {
-	if d.CatalogID == "" {
-		return fmt.Errorf("index record missing catalogId")
-	}
-	if len(d.Parts) == 0 {
-		return fmt.Errorf("catalog %s has no parts", d.CatalogID)
+// validateEntry checks the minimum shape a non-retired index entry needs.
+func validateEntry(e catalogEntry) error {
+	if e.Baseline == nil {
+		return fmt.Errorf("catalog %s has no baseline", e.CatalogID)
 	}
 	return nil
 }
 
-// fetchCatalogPart signs and fetches one catalog part, then applies the
-// inline freshness/status/digest/signature checks FR6 requires. Caching and
-// version-rollback comparison are no-ops in this phase (nothing is cached
-// yet to compare against), so Changed is always true and VersionOK is always
-// true.
-func (c *Crawler) fetchCatalogPart(ctx context.Context, subscriberID string, details dediCatalogPointer, part dediPart) (definition.CatalogResult, error) {
-	res, err := artifactfetcher.Fetch(ctx, part.URL, c.fetchOpts(subscriberID))
+// processCatalog fetches and verifies a catalog's baseline, then every
+// changes[] entry in order, applying each onto the running content
+// (pkg/catalogfile) to produce the catalog's current effective content.
+// Any failed check (digest, signature, expired validUntil) drops the
+// whole catalog rather than composing from partially-verified data (file
+// spec's crawler rule 5: "Verify every fetched file's bytes against its
+// digest before use").
+func (c *Crawler) processCatalog(ctx context.Context, subscriberID string, manifestKeys []dediKey, entry catalogEntry) (definition.CatalogResult, error) {
+	baselineBody, baselineOK, err := c.fetchAndVerifyFile(ctx, subscriberID, entry.CatalogID, manifestKeys, *entry.Baseline)
 	if err != nil {
-		return definition.CatalogResult{}, err
+		return definition.CatalogResult{}, fmt.Errorf("baseline: %w", err)
 	}
 
-	declaredDigest := stripDigestPrefix(part.Digest)
-	// Catalog parts carry no proof.jws of their own by design -- their
-	// integrity is inherited entirely from the digest the index declared
-	// for them (checked below), not from a signature. There is no
-	// SignatureValid check here because there is no signature to check.
+	content := baselineBody
+	version := entry.Baseline.Version
+	allVerified := baselineOK
+
+	for _, change := range entry.Changes {
+		changeBody, ok, err := c.fetchAndVerifyFile(ctx, subscriberID, entry.CatalogID, manifestKeys, change)
+		if err != nil {
+			return definition.CatalogResult{}, fmt.Errorf("change v%d: %w", change.Version, err)
+		}
+		allVerified = allVerified && ok
+
+		content, err = catalogfile.Apply(content, changeBody)
+		if err != nil {
+			return definition.CatalogResult{}, fmt.Errorf("applying change v%d: %w", change.Version, err)
+		}
+		version = change.Version
+	}
+
 	outcome := definition.VerificationOutcome{
-		DigestMatch: declaredDigest == "" || declaredDigest == res.Digest,
-		SchemaValid: looksLikeBecknCatalog(res.Body),
-		VersionOK:   true,
-	}
-
-	if !isLive(details.Status) {
-		return definition.CatalogResult{}, fmt.Errorf("catalog %s has non-live status %q", details.CatalogID, details.Status)
-	}
-	if details.NextUpdate != nil && time.Now().After(*details.NextUpdate) {
-		return definition.CatalogResult{}, fmt.Errorf("catalog %s is stale (next_update %s has passed)", details.CatalogID, details.NextUpdate)
+		DigestMatch:    true, // fetchAndVerifyFile already aborted the whole catalog on a mismatch
+		SchemaValid:    looksLikeBecknCatalog(content),
+		SignatureValid: allVerified,
+		VersionOK:      true, // rollback detection not implemented yet -- open item
 	}
 
 	return definition.CatalogResult{
-		CatalogID:   details.CatalogID,
-		Version:     details.Version,
-		Status:      details.Status,
-		Visibility:  details.Visibility,
-		SchemaTypes: details.SchemaTypes,
+		CatalogID:   entry.CatalogID,
+		Version:     version,
+		Status:      entry.Status,
+		CatalogType: entry.CatalogType,
+		NetworkIds:  entry.NetworkIds,
+		SchemaTypes: entry.SchemaTypes,
 		Source: definition.PartRef{
-			URL:    part.URL,
-			Digest: res.Digest,
+			URL:    entry.Baseline.URL,
+			Digest: entry.Baseline.Digest,
+			Size:   entry.Baseline.Size,
 		},
 		Changed:      true,
 		Verification: outcome,
-		Catalog:      json.RawMessage(res.Body),
+		Catalog:      json.RawMessage(content),
 	}, nil
 }
 
-// isLive reports whether status represents an active/live catalog entry.
-func isLive(status string) bool {
-	switch strings.ToUpper(status) {
-	case "ACTIVE", "LIVE":
-		return true
-	default:
-		return false
+// fetchAndVerifyFile fetches one catalog file (baseline or a change),
+// verifies its digest, declared size, and per-file signature tuple
+// (verified against the manifest's keys[] by signature.keyId), and checks
+// validUntil hasn't passed. Returns the verified body and whether its
+// signature check passed. A digest mismatch, missing key, or expired
+// validUntil is a hard error -- the caller aborts the whole catalog rather
+// than using unverified content.
+func (c *Crawler) fetchAndVerifyFile(ctx context.Context, subscriberID, catalogID string, manifestKeys []dediKey, fe fileEntry) ([]byte, bool, error) {
+	res, err := artifactfetcher.Fetch(ctx, fe.URL, c.fetchOpts(subscriberID))
+	if err != nil {
+		return nil, false, err
 	}
+
+	declaredDigest := stripDigestPrefix(fe.Digest)
+	if declaredDigest != "" && declaredDigest != res.Digest {
+		return nil, false, fmt.Errorf("digest mismatch: declared %s, fetched %s", declaredDigest, res.Digest)
+	}
+	if fe.Size > 0 && fe.Size != int64(len(res.Body)) {
+		return nil, false, fmt.Errorf("size mismatch: declared %d, fetched %d", fe.Size, int64(len(res.Body)))
+	}
+	if !fe.ValidUntil().IsZero() && time.Now().After(fe.ValidUntil()) {
+		return nil, false, fmt.Errorf("signature validUntil %s has passed", fe.ValidUntil())
+	}
+
+	pub, err := keyByID(manifestKeys, fe.Signature.KeyID)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolving signing key: %w", err)
+	}
+	verifyErr := artifactverifier.VerifyFileTuple(catalogID, fe.Version, fe.URL, fe.Digest, fe.Signature.ValidUntil, fe.Signature.Value, pub)
+	if verifyErr != nil {
+		log.Debugf(ctx, "catalogcrawler: file %s signature verification failed: %v", fe.URL, verifyErr)
+	}
+
+	return res.Body, verifyErr == nil, nil
 }
 
-// looksLikeBecknCatalog is a shallow structural check -- it does not perform
-// full JSON-Schema validation (no schemaValidator plugin in this phase). A
-// Beckn Catalog object (unlike a request/response action) carries no
-// context/message envelope; it's the bare {id, descriptor, provider,
-// resources} shape the reference fixture's catalog part uses.
+// ValidUntil is a convenience accessor so fetchAndVerifyFile reads
+// uniformly regardless of struct nesting.
+func (fe fileEntry) ValidUntil() time.Time { return fe.Signature.ValidUntil }
+
+// looksLikeBecknCatalog is a shallow structural check -- it does not
+// perform full JSON-Schema validation (no schemaValidator plugin in this
+// phase). A Beckn Catalog object (unlike a request/response action)
+// carries no context/message envelope; it's the bare
+// {id, descriptor, provider, resources} shape the file spec uses.
 func looksLikeBecknCatalog(body []byte) bool {
 	var catalog struct {
 		ID         string          `json:"id"`
@@ -393,12 +504,12 @@ func looksLikeBecknCatalog(body []byte) bool {
 }
 
 // fetchOpts builds fetch options for index/catalog GETs. Signing is
-// currently disabled: the reference test setup hosts index/catalog files as
-// public, unsigned artifacts, so there's nothing on the PN side yet that
-// would check a signed request. c.signer/c.keyManager are still
-// constructor-required and wired through so re-enabling this is a one-line
-// change once a PN in the test setup actually expects signed GETs --
-// tracked as an open item to revisit, not dropped.
+// currently disabled: the reference test setup hosts index/catalog files
+// as public, unsigned artifacts, so there's nothing on the PN side yet
+// that would check a signed request. c.signer/c.keyManager are still
+// constructor-required and wired through so re-enabling this is a
+// one-line change once a participant in the test setup actually expects
+// signed GETs -- tracked as an open item to revisit, not dropped.
 func (c *Crawler) fetchOpts(subscriberID string) artifactfetcher.Options {
 	return artifactfetcher.Options{
 		MaxSize:  c.config.MaxArtifactSize,
@@ -409,4 +520,3 @@ func (c *Crawler) fetchOpts(subscriberID string) artifactfetcher.Options {
 		// SubscriberID: subscriberID,
 	}
 }
-
