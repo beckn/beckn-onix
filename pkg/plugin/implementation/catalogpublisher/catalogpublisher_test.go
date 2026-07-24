@@ -235,6 +235,33 @@ func TestPublish_InvalidSubmissionIsNonFatal(t *testing.T) {
 	}
 }
 
+func TestPublish_NoValidityConfigured_FallsBackToDefault_NotAlreadyExpired(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	p, _, err := New(context.Background(), km, &Config{KeyID: "k1"}) // no NextUpdateIn/FileValidityIn set
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{{CatalogID: "CAT-1", Catalog: validCatalogJSON("CAT-1")}},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	var index catalogIndexDoc
+	if err := json.Unmarshal(result.Index, &index); err != nil {
+		t.Fatalf("parsing index: %v", err)
+	}
+	var entry catalogEntry
+	if err := json.Unmarshal(index.Catalogs[0], &entry); err != nil {
+		t.Fatalf("parsing entry: %v", err)
+	}
+	if !entry.Baseline.Signature.ValidUntil.After(time.Now()) {
+		t.Errorf("expected validUntil (%s) to still be in the future, got a value that's already passed", entry.Baseline.Signature.ValidUntil)
+	}
+}
+
 func TestPublish_UnknownKeyIDFails(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	p, _, err := New(context.Background(), km, &Config{KeyID: "wrong-key"})
