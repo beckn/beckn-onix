@@ -1,0 +1,17 @@
+{
+  "id": "CAT-DEMO-1",
+  "descriptor": { "name": "Demo Retail Catalog" },
+  "provider": { "id": "demo-provider" },
+  "resources": [
+    {
+      "id": "ITEM-1",
+      "descriptor": { "name": "Basmati Rice 1kg" },
+      "price": { "value": "120", "currency": "INR" }
+    },
+    {
+      "id": "ITEM-2",
+      "descriptor": { "name": "Toor Dal 1kg" },
+      "price": { "value": "95", "currency": "INR" }
+    }
+  ]
+}

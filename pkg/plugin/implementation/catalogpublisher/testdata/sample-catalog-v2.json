@@ -1,0 +1,17 @@
+{
+  "id": "CAT-DEMO-1",
+  "descriptor": { "name": "Demo Retail Catalog" },
+  "provider": { "id": "demo-provider" },
+  "resources": [
+    {
+      "id": "ITEM-1",
+      "descriptor": { "name": "Basmati Rice 1kg" },
+      "price": { "value": "135", "currency": "INR" }
+    },
+    {
+      "id": "ITEM-3",
+      "descriptor": { "name": "Sunflower Oil 1L" },
+      "price": { "value": "180", "currency": "INR" }
+    }
+  ]
+}
