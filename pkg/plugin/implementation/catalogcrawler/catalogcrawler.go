@@ -127,13 +127,18 @@ type dediPart struct {
 	Digest string `json:"digest"` // "sha-256:<hex>"
 }
 
-// isCatalogIndexFile reports whether a manifest files[] entry is a
-// catalog-index file (FR3). The convention isn't a fixed registry-name
-// literal (the reference fixture uses "beckn-catalogs", which is provider-
-// chosen), so this matches on the schema URL identifying a
-// BecknCatalogIndexRecord instead.
+// catalogIndexRegistry is the manifest files[].registry value identifying
+// the catalog-index file (FR3). Matching on the schema URL was tried first,
+// but the reference fixture's schema has since been renamed without any
+// "CatalogIndexRecord" marker, and a manifest can carry other files[]
+// entries (e.g. "beckn-subscriber") with unrelated schemas -- registry is
+// the stable identifier the provider actually commits to.
+const catalogIndexRegistry = "beckn-catalogs"
+
+// isCatalogIndexFile reports whether a manifest files[] entry is the
+// catalog-index file (FR3).
 func isCatalogIndexFile(f dediFile) bool {
-	return strings.Contains(f.Schema, "CatalogIndexRecord")
+	return f.Registry == catalogIndexRegistry
 }
 
 // CrawlSubscriber fetches and verifies the manifest, every index it
