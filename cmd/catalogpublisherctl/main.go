@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/catalogfile"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher"
@@ -77,6 +78,7 @@ func main() {
 	fileValidityDays := flag.Int("fileValidityDays", 14, "days until each catalog file's signature.validUntil expires (0 falls back to -nextUpdateDays)")
 	retire := flag.String("retire", "", "comma-separated catalogIds to mark RETIRED this run (works with or without -catalog)")
 	forceBaseline := flag.Bool("forceBaseline", false, "publish a fresh baseline for -catalog, discarding its change history (also how to trigger compaction)")
+	publicBaseURL := flag.String("publicBaseURL", "", "if set, embed URLs under this base instead of file:// (e.g. http://localhost:8000 when serving -out with `python3 -m http.server` from within it) -- must match wherever -out is actually served from; the manifest itself is still always written under .well-known/ relative to -out, matching the fixed well-known path a crawler expects")
 	flag.Parse()
 
 	var retireIDs []string
@@ -84,7 +86,7 @@ func main() {
 		retireIDs = strings.Split(*retire, ",")
 	}
 	if *catalogPath == "" && len(retireIDs) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: catalogpublisherctl -catalog <path> [-catalogId id] [-out dir] [-keyID id] [-domain domain] [-indexSchemaURL url] [-nextUpdateDays n] [-fileValidityDays n] [-retire id1,id2] [-forceBaseline]")
+		fmt.Fprintln(os.Stderr, "usage: catalogpublisherctl -catalog <path> [-catalogId id] [-out dir] [-keyID id] [-domain domain] [-indexSchemaURL url] [-nextUpdateDays n] [-fileValidityDays n] [-retire id1,id2] [-forceBaseline] [-publicBaseURL url]")
 		os.Exit(2)
 	}
 
@@ -95,7 +97,14 @@ func main() {
 	must(os.MkdirAll(dediDir, 0o755))
 	catalogsDir := filepath.Join(*outDir, catalogsDirName)
 	must(os.MkdirAll(catalogsDir, 0o755))
+
+	indexURL := "file://" + mustAbs(filepath.Join(dediDir, catalogIndexFilename))
 	catalogBaseURL := "file://" + mustAbs(catalogsDir)
+	if *publicBaseURL != "" {
+		base := strings.TrimRight(*publicBaseURL, "/")
+		indexURL = base + "/dedi/" + catalogIndexFilename
+		catalogBaseURL = base + "/" + catalogsDirName
+	}
 
 	km, err := newFileKeyManager(*outDir, *keyID)
 	must(err)
@@ -116,7 +125,7 @@ func main() {
 		IndexSchemaURL: *indexSchemaURL,
 		NextUpdateIn:   nextUpdateIn,
 		FileValidityIn: fileValidityIn,
-		IndexURL:       "file://" + mustAbs(filepath.Join(dediDir, catalogIndexFilename)),
+		IndexURL:       indexURL,
 		CatalogBaseURL: catalogBaseURL,
 	})
 	must(err)
@@ -189,8 +198,8 @@ func main() {
 
 func printChangeSummary(content json.RawMessage) {
 	var change struct {
-		Resources diffBlock `json:"resources"`
-		Offers    diffBlock `json:"offers"`
+		Resources catalogfile.DiffBlock `json:"resources"`
+		Offers    catalogfile.DiffBlock `json:"offers"`
 	}
 	if json.Unmarshal(content, &change) != nil {
 		return
@@ -304,7 +313,7 @@ func reconstructState(outDir, localName string, entry indexEntry) (*definition.P
 		if err != nil {
 			return nil, fmt.Errorf("reading %s: %w", path, err)
 		}
-		effective, err = applyChangeFile(effective, raw)
+		effective, err = catalogfile.Apply(effective, raw)
 		if err != nil {
 			return nil, fmt.Errorf("applying %s: %w", path, err)
 		}
@@ -333,129 +342,6 @@ func toFileRef(fe wireFileEntry) definition.FileRef {
 
 func localFilePath(outDir, localName string, version int, suffix string) string {
 	return filepath.Join(outDir, catalogsDirName, fmt.Sprintf("%s.v%d.%s", localName, version, suffix))
-}
-
-// --- Change-file application ----------------------------------------------
-//
-// catalogDoc is the fixed top-level shape a Beckn Catalog carries (file
-// spec: "the plain Beckn catalog JSON, exactly the schema used today").
-
-type catalogDoc struct {
-	ID         json.RawMessage   `json:"id"`
-	Descriptor json.RawMessage   `json:"descriptor"`
-	Provider   json.RawMessage   `json:"provider"`
-	Resources  []json.RawMessage `json:"resources"`
-	Offers     []json.RawMessage `json:"offers,omitempty"`
-}
-
-type diffBlock struct {
-	Upserts  []json.RawMessage `json:"upserts,omitempty"`
-	Removals []string          `json:"removals,omitempty"`
-}
-
-type changeFileDoc struct {
-	CatalogID   string          `json:"catalogId"`
-	FromVersion int             `json:"fromVersion"`
-	ToVersion   int             `json:"toVersion"`
-	Resources   diffBlock       `json:"resources"`
-	Offers      diffBlock       `json:"offers"`
-	Catalog     json.RawMessage `json:"catalog,omitempty"`
-}
-
-// applyChangeFile folds one change file onto catalog's resources/offers
-// arrays (upserts replace by id or append; removals drop by id) and
-// overlays any catalog-level attribute changes.
-func applyChangeFile(catalog []byte, changeRaw []byte) ([]byte, error) {
-	var doc catalogDoc
-	if err := json.Unmarshal(catalog, &doc); err != nil {
-		return nil, fmt.Errorf("parsing catalog: %w", err)
-	}
-	var change changeFileDoc
-	if err := json.Unmarshal(changeRaw, &change); err != nil {
-		return nil, fmt.Errorf("parsing change file: %w", err)
-	}
-
-	resources, err := applyDiffBlock(doc.Resources, change.Resources)
-	if err != nil {
-		return nil, fmt.Errorf("applying resources: %w", err)
-	}
-	doc.Resources = resources
-
-	offers, err := applyDiffBlock(doc.Offers, change.Offers)
-	if err != nil {
-		return nil, fmt.Errorf("applying offers: %w", err)
-	}
-	doc.Offers = offers
-
-	if len(change.Catalog) > 0 {
-		var attrs map[string]json.RawMessage
-		if err := json.Unmarshal(change.Catalog, &attrs); err != nil {
-			return nil, fmt.Errorf("parsing catalog attribute changes: %w", err)
-		}
-		if v, ok := attrs["descriptor"]; ok {
-			doc.Descriptor = v
-		}
-		if v, ok := attrs["provider"]; ok {
-			doc.Provider = v
-		}
-	}
-
-	return json.Marshal(doc)
-}
-
-// applyDiffBlock applies one diffBlock (upserts by id, replacing existing
-// or appending new; removals by id) to items.
-func applyDiffBlock(items []json.RawMessage, block diffBlock) ([]json.RawMessage, error) {
-	removed := make(map[string]bool, len(block.Removals))
-	for _, id := range block.Removals {
-		removed[id] = true
-	}
-	upserts := make(map[string]json.RawMessage, len(block.Upserts))
-	for _, u := range block.Upserts {
-		id, err := resourceID(u)
-		if err != nil {
-			return nil, err
-		}
-		upserts[id] = u
-	}
-
-	next := make([]json.RawMessage, 0, len(items)+len(block.Upserts))
-	seen := make(map[string]bool, len(items))
-	for _, item := range items {
-		id, err := resourceID(item)
-		if err != nil {
-			return nil, err
-		}
-		seen[id] = true
-		if removed[id] {
-			continue
-		}
-		if u, ok := upserts[id]; ok {
-			next = append(next, u)
-			continue
-		}
-		next = append(next, item)
-	}
-	for _, u := range block.Upserts {
-		id, _ := resourceID(u) // already validated above
-		if !seen[id] {
-			next = append(next, u)
-		}
-	}
-	return next, nil
-}
-
-func resourceID(raw json.RawMessage) (string, error) {
-	var withID struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(raw, &withID); err != nil {
-		return "", fmt.Errorf("parsing resource: %w", err)
-	}
-	if withID.ID == "" {
-		return "", fmt.Errorf("resource missing id")
-	}
-	return withID.ID, nil
 }
 
 // --- Demo-only local key manager ------------------------------------------

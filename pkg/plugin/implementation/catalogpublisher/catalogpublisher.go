@@ -54,6 +54,12 @@ const dediVersion = "0.1"
 // this entry references a Beckn file, not a DeDi registry).
 const catalogIndexFileName = "becknCatalogs"
 
+// defaultFileValidity is the fallback used when neither Config.FileValidityIn
+// nor Config.NextUpdateIn is set -- see its use in Publish for why zero is
+// unsafe here (unlike next_update, a file's validUntil can't just be
+// omitted).
+const defaultFileValidity = 24 * time.Hour
+
 // Config controls publish behavior.
 type Config struct {
 	// KeyID is both the JWK "kid" embedded in the manifest and the
@@ -298,6 +304,13 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 	if fileValidityIn <= 0 {
 		fileValidityIn = p.config.NextUpdateIn
 	}
+	if fileValidityIn <= 0 {
+		// Every file entry's signature.validUntil is a mandatory part of
+		// the signed tuple (unlike next_update, it cannot simply be
+		// omitted) -- silently falling back to now+0 would sign a file
+		// that is already expired the instant a crawler checks it.
+		fileValidityIn = defaultFileValidity
+	}
 	validUntil := now.Add(fileValidityIn)
 
 	submitted := make(map[string]bool, len(req.Catalogs))
@@ -511,7 +524,7 @@ func (p *Publisher) buildFileEntry(catalogID string, version int, suffix string,
 	url := p.catalogPartURL(filename)
 	digest := "sha-256:" + digestOf(content)
 
-	sigValue, err := signFileTuple(catalogID, version, url, digest, validUntil, priv)
+	sigValue, err := artifactsigner.SignFileTuple(catalogID, version, url, digest, validUntil, priv)
 	if err != nil {
 		return fileEntry{}, fmt.Errorf("signing file entry for %q v%d: %w", catalogID, version, err)
 	}
@@ -530,33 +543,6 @@ func (p *Publisher) buildFileEntry(catalogID string, version int, suffix string,
 }
 
 func (p *Publisher) keyID() string { return p.config.KeyID }
-
-// signFileTuple signs the JCS-canonicalized tuple
-// {catalogId, version, url, digest, validUntil} with Ed25519 and returns
-// the base64-standard-encoded signature (file spec: "signature.value is
-// Ed25519 over the JCS canonicalization of {...}"; the doc explicitly
-// allows this to equally be encoded as a detached JWS instead -- a plain
-// signature was chosen here as the simpler of the two allowed encodings).
-// A map[string]any is used (rather than a struct) because Go's
-// encoding/json already sorts map keys and uses compact separators,
-// satisfying JCS for the string/int/timestamp-only fields this tuple
-// carries (same reasoning as artifactverifier.CanonicalizeJCS's doc
-// comment).
-func signFileTuple(catalogID string, version int, url, digest string, validUntil time.Time, priv ed25519.PrivateKey) (string, error) {
-	tuple := map[string]any{
-		"catalogId":  catalogID,
-		"version":    version,
-		"url":        url,
-		"digest":     digest,
-		"validUntil": validUntil,
-	}
-	canonical, err := json.Marshal(tuple)
-	if err != nil {
-		return "", fmt.Errorf("canonicalizing signature tuple: %w", err)
-	}
-	sig := ed25519.Sign(priv, canonical)
-	return base64.StdEncoding.EncodeToString(sig), nil
-}
 
 // localCatalogName returns catalogID with any "domain/" prefix stripped,
 // matching the file spec's example filenames (catalogId
