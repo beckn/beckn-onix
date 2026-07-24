@@ -38,39 +38,52 @@ type ManifestResult struct {
 	VerifiedAt time.Time
 }
 
-// PartRef identifies a fetched catalog part.
+// PartRef identifies a fetched catalog file.
 type PartRef struct {
 	URL          string
 	Digest       string
+	Size         int64
 	LastModified time.Time
 }
 
-// VerificationOutcome captures the individual checks performed on a fetched
-// catalog part. There is no signature check here: catalog parts carry no
-// proof.jws of their own by design -- their integrity is inherited entirely
-// from the digest the index declared for them (DigestMatch), not from a
-// signature. The manifest and index each have their own signature verified
-// separately (ManifestResult.Verified, and the index's own proof checked
-// internally by the crawler).
+// VerificationOutcome captures the individual checks performed on a
+// catalog's fetched files. Per the file spec, each baseline/change file
+// carries its own signature tuple ({catalogId, version, url, digest,
+// validUntil}) -- unlike the earlier DeDi-wrapper model, where catalog
+// parts carried no signature at all and only the whole index did.
+// SignatureValid is true only when every one of this catalog's fetched
+// files (baseline and every changes[] entry) verified.
 type VerificationOutcome struct {
-	DigestMatch bool
-	SchemaValid bool
+	DigestMatch    bool
+	SchemaValid    bool
+	SignatureValid bool
 	// VersionOK is false only when a version rollback was detected.
 	VersionOK bool
 }
 
-// CatalogResult is the outcome of fetching one catalog part referenced by an
-// index.
+// CatalogResult is the outcome of processing one catalog entry from the
+// index: its baseline, fetched and verified, with every changes[] entry
+// fetched, verified, and applied in order (file spec's upsert/removal
+// model, by id) to produce the catalog's current effective content.
 type CatalogResult struct {
-	CatalogID    string
-	Version      int
-	Status       string
-	Visibility   string
-	SchemaTypes  []string
+	CatalogID   string
+	Version     int
+	Status      string // "ACTIVE" | "RETIRED"
+	CatalogType string
+	NetworkIds  []string
+	SchemaTypes []string
+	// Source identifies the baseline file only, for diagnostic reference
+	// -- a catalog's current content may be composed from several files
+	// (baseline + N change files), not just one.
 	Source       PartRef
 	Changed      bool
 	Verification VerificationOutcome
-	// Catalog is omitted when Changed is false, unless the crawl ran in full mode.
+	// RetiredAt is set only when Status == "RETIRED"; Catalog and Source
+	// are then both zero (a tombstone carries no files).
+	RetiredAt *time.Time
+	// Catalog is the fully composed current content (baseline with every
+	// change file applied); omitted when Changed is false, unless the
+	// crawl ran in full mode.
 	Catalog json.RawMessage
 }
 

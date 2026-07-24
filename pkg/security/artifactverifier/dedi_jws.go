@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // dediJWSHeader is the fixed, unprotected-b64 detached-JWS header used by
@@ -86,6 +87,37 @@ func VerifyDetachedJWS(doc []byte, jws string, pub ed25519.PublicKey) error {
 
 	if !ed25519.Verify(pub, input, sig) {
 		return fmt.Errorf("Ed25519 detached-JWS verification failed")
+	}
+	return nil
+}
+
+// VerifyFileTuple verifies a catalog-index file entry's per-entry
+// signature: a plain Ed25519 signature over the JCS-canonicalized tuple
+// {catalogId, version, url, digest, validUntil} (file spec, "The signed
+// entry is a tuple, not a bare hash"). This is the matching counterpart to
+// artifactsigner.SignFileTuple and must stay byte-for-byte in sync with
+// it -- duplicated rather than shared to avoid a circular import
+// (artifactsigner already imports this package for CanonicalizeJCS),
+// matching the existing dediJWSHeader duplication between the two
+// packages.
+func VerifyFileTuple(catalogID string, version int, url, digest string, validUntil time.Time, sigValueB64 string, pub ed25519.PublicKey) error {
+	sig, err := base64.StdEncoding.DecodeString(sigValueB64)
+	if err != nil {
+		return fmt.Errorf("decoding file signature: %w", err)
+	}
+	tuple := map[string]any{
+		"catalogId":  catalogID,
+		"version":    version,
+		"url":        url,
+		"digest":     digest,
+		"validUntil": validUntil,
+	}
+	canonical, err := json.Marshal(tuple)
+	if err != nil {
+		return fmt.Errorf("canonicalizing signature tuple: %w", err)
+	}
+	if !ed25519.Verify(pub, canonical, sig) {
+		return fmt.Errorf("Ed25519 file-tuple signature verification failed")
 	}
 	return nil
 }
