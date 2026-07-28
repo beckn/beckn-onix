@@ -10,18 +10,19 @@ import (
 // Settings is the fully-resolved crawler configuration. Both the standalone
 // driver (from env) and the onix plugin (from its config block) build one.
 type Settings struct {
-	DBDSN            string
-	PushEndpoint     string
-	IndexURLs        []string
-	NetworkIDs       []string
-	RegistryURL      string
-	IndexInterval    time.Duration
-	CatalogInterval  time.Duration
-	FetchTimeout     time.Duration
-	MaxArtifactBytes int64
-	MaxAttempts      int
-	PushBatchSize    int
-	BppURI           string
+	DBDSN                string
+	PushEndpoint         string
+	IndexURLs            []string
+	NetworkIDs           []string
+	RegistryURL          string
+	IndexInterval        time.Duration
+	CatalogInterval      time.Duration
+	FetchTimeout         time.Duration
+	MaxArtifactBytes     int64
+	MaxDecompressedBytes int64
+	MaxAttempts          int
+	PushBatchSize        int
+	BppURI               string
 }
 
 // LoadSettings resolves settings from a getenv function (injected so it is
@@ -30,18 +31,28 @@ type Settings struct {
 // default — nothing is hardcoded at a call site.
 func LoadSettings(getenv func(string) string) (Settings, error) {
 	s := Settings{
-		DBDSN:            getenv("CRAWLER_DB_DSN"),
-		PushEndpoint:     getenv("CRAWLER_PUSH_ENDPOINT"),
-		IndexURLs:        splitCSV(getenv("CRAWLER_INDEX_URLS")),
-		NetworkIDs:       splitCSV(getenv("CRAWLER_NETWORK_IDS")),
-		RegistryURL:      strings.TrimSpace(getenv("CRAWLER_REGISTRY_URL")),
-		BppURI:           strings.TrimSpace(getenv("CRAWLER_BPP_URI")),
-		IndexInterval:    durOr(getenv("CRAWLER_INDEX_INTERVAL"), 5*time.Minute),
-		CatalogInterval:  durOr(getenv("CRAWLER_CATALOG_INTERVAL"), 30*time.Second),
-		FetchTimeout:     durOr(getenv("CRAWLER_FETCH_TIMEOUT"), 30*time.Second),
-		MaxArtifactBytes: int64Or(getenv("CRAWLER_MAX_ARTIFACT_BYTES"), 10<<20),
-		MaxAttempts:      intOr(getenv("CRAWLER_MAX_ATTEMPTS"), 5),
-		PushBatchSize:    intOr(getenv("CRAWLER_PUSH_BATCH_SIZE"), 1000),
+		DBDSN:                getenv("CRAWLER_DB_DSN"),
+		PushEndpoint:         getenv("CRAWLER_PUSH_ENDPOINT"),
+		IndexURLs:            splitCSV(getenv("CRAWLER_INDEX_URLS")),
+		NetworkIDs:           splitCSV(getenv("CRAWLER_NETWORK_IDS")),
+		RegistryURL:          strings.TrimSpace(getenv("CRAWLER_REGISTRY_URL")),
+		BppURI:               strings.TrimSpace(getenv("CRAWLER_BPP_URI")),
+		IndexInterval:        durOr(getenv("CRAWLER_INDEX_INTERVAL"), 5*time.Minute),
+		CatalogInterval:      durOr(getenv("CRAWLER_CATALOG_INTERVAL"), 30*time.Second),
+		FetchTimeout:         durOr(getenv("CRAWLER_FETCH_TIMEOUT"), 30*time.Second),
+		MaxArtifactBytes:     int64Or(getenv("CRAWLER_MAX_ARTIFACT_BYTES"), 10<<20),
+		MaxDecompressedBytes: int64Or(getenv("CRAWLER_MAX_DECOMPRESSED_BYTES"), 100<<20),
+		MaxAttempts:          intOr(getenv("CRAWLER_MAX_ATTEMPTS"), 5),
+		PushBatchSize:        intOr(getenv("CRAWLER_PUSH_BATCH_SIZE"), 1000),
+	}
+
+	// Clamp <= 0 to the default: a literal "0" parses fine (not a parse error),
+	// so without this a "0" cap would silently reject everything.
+	if s.MaxArtifactBytes <= 0 {
+		s.MaxArtifactBytes = 10 << 20
+	}
+	if s.MaxDecompressedBytes <= 0 {
+		s.MaxDecompressedBytes = 100 << 20
 	}
 
 	var missing []string

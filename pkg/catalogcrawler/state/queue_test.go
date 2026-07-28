@@ -96,6 +96,48 @@ func TestFailAndRetry(t *testing.T) {
 	}
 }
 
+// A permanently-failed item is parked (status 'failed', next_attempt_at =
+// infinity): the row survives but is never re-claimed on its own, and a
+// version bump (coalescing Enqueue) re-activates it so a re-published catalog
+// recovers automatically.
+func TestParkAndRecover(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	must(t, s.Enqueue(ctx, QueueItem{CatalogID: "p/c", IndexURL: "i", ToVersion: 1}))
+
+	it, err := s.ClaimNext(ctx)
+	must(t, err)
+
+	// A park with the wrong claim_id is a no-op (row stays claimed by us).
+	must(t, s.ParkQueueItem(ctx, it.ID, "00000000-0000-0000-0000-000000000000"))
+	if got, err := s.ClaimNext(ctx); err != nil {
+		t.Fatal(err)
+	} else if got != nil {
+		t.Fatal("park with wrong claim_id must not release the row")
+	}
+
+	// Park with the holder's claim_id: row survives but is never re-claimable.
+	must(t, s.ParkQueueItem(ctx, it.ID, it.ClaimID))
+	if depth, err := s.QueueDepth(ctx); err != nil {
+		t.Fatal(err)
+	} else if depth != 1 {
+		t.Fatalf("depth = %d, want 1 (parked, not deleted)", depth)
+	}
+	if got, err := s.ClaimNext(ctx); err != nil {
+		t.Fatal(err)
+	} else if got != nil {
+		t.Fatalf("parked item must not be re-claimed on its own, got %+v", got)
+	}
+
+	// A version bump re-activates the parked row (fresh, ready, attempts reset).
+	must(t, s.Enqueue(ctx, QueueItem{CatalogID: "p/c", IndexURL: "i", ToVersion: 2}))
+	rec, err := s.ClaimNext(ctx)
+	must(t, err)
+	if rec == nil || rec.ToVersion != 2 || rec.Attempts != 0 {
+		t.Fatalf("recovered = %+v, want ToVersion 2 attempts 0", rec)
+	}
+}
+
 func TestComplete(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

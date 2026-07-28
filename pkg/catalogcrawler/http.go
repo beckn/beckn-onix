@@ -19,17 +19,21 @@ import (
 // index, fetches + digest-verifies catalog files (SSRF-guarded, size-
 // capped), and POSTs push bodies to Discovery. Framework-agnostic.
 type HTTPClient struct {
-	hc           *http.Client
-	maxBytes     int64
-	allowPrivate bool // allow loopback/private hosts (tests only)
+	hc              *http.Client
+	maxBytes        int64 // cap on the fetched (compressed, at-rest) artifact
+	maxDecompressed int64 // cap on the decoded output (decompression-bomb guard)
+	allowPrivate    bool  // allow loopback/private hosts (tests only)
 }
 
 // NewHTTPClient builds a client. allowPrivate must be false in production so
 // fetches of publisher URLs can't be pointed at internal addresses (SSRF).
-func NewHTTPClient(timeout time.Duration, maxBytes int64, allowPrivate bool) *HTTPClient {
-	c := &HTTPClient{maxBytes: maxBytes, allowPrivate: allowPrivate}
+// Transport compression is disabled so resp.Body is always the exact artifact
+// bytes we hash and decode ourselves (no digest-over-decompressed ambiguity).
+func NewHTTPClient(timeout time.Duration, maxBytes, maxDecompressed int64, allowPrivate bool) *HTTPClient {
+	c := &HTTPClient{maxBytes: maxBytes, maxDecompressed: maxDecompressed, allowPrivate: allowPrivate}
 	c.hc = &http.Client{
-		Timeout: timeout,
+		Timeout:   timeout,
+		Transport: &http.Transport{DisableCompression: true},
 		// Re-run the SSRF guard on every redirect hop; a public host must not be
 		// able to bounce us to an internal address via 3xx Location.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -45,14 +49,19 @@ func NewHTTPClient(timeout time.Duration, maxBytes int64, allowPrivate bool) *HT
 	return c
 }
 
-// FetchIndex GETs and parses a publisher's catalog index.
+// FetchIndex GETs, decodes (the index itself may be compressed — encoding is
+// inferred from the URL suffix), and parses a publisher's catalog index.
 func (c *HTTPClient) FetchIndex(ctx context.Context, indexURL string) (Index, error) {
 	b, err := c.get(ctx, indexURL)
 	if err != nil {
 		return Index{}, err
 	}
+	decoded, err := decode(encodingFor("", indexURL), b, c.maxDecompressed)
+	if err != nil {
+		return Index{}, err
+	}
 	var idx Index
-	if err := json.Unmarshal(b, &idx); err != nil {
+	if err := json.Unmarshal(decoded, &idx); err != nil {
 		return Index{}, fmt.Errorf("catalogcrawler: parsing index %s: %w", indexURL, err)
 	}
 	return idx, nil
@@ -64,16 +73,19 @@ func (c *HTTPClient) FetchIndex(ctx context.Context, indexURL string) (Index, er
 // letting unverified bytes through.
 func (c *HTTPClient) FetchFile(ctx context.Context, f FileEntry) ([]byte, error) {
 	if f.Digest == "" {
-		return nil, fmt.Errorf("catalogcrawler: %s has no digest (integrity check required)", f.URL)
+		return nil, permanentf("catalogcrawler: %s has no digest (integrity check required)", f.URL)
 	}
 	b, err := c.get(ctx, f.URL)
 	if err != nil {
 		return nil, err
 	}
+	// Digest covers the artifact at rest (the compressed bytes) — verify BEFORE
+	// spending CPU/memory inflating, so a tampered or bomb file is rejected on a
+	// cheap hash. Only authenticated bytes are ever decoded.
 	if !digestMatches(b, f.Digest) {
 		return nil, fmt.Errorf("catalogcrawler: digest mismatch for %s", f.URL)
 	}
-	return b, nil
+	return decode(encodingFor(f.Encoding, f.URL), b, c.maxDecompressed)
 }
 
 // Push POSTs a /push body to the (trusted, operator-configured) Discovery

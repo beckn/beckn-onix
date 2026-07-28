@@ -27,7 +27,7 @@ func TestHTTPClient_FetchIndexAndFile(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	c := NewHTTPClient(5*time.Second, 1<<20, true) // allowPrivate for httptest (127.0.0.1)
+	c := NewHTTPClient(5*time.Second, 1<<20, 1<<20, true) // allowPrivate for httptest (127.0.0.1)
 	ctx := context.Background()
 
 	idx, err := c.FetchIndex(ctx, srv.URL+"/index")
@@ -51,6 +51,41 @@ func TestHTTPClient_FetchIndexAndFile(t *testing.T) {
 	}
 }
 
+func TestHTTPClient_FetchGzipFile(t *testing.T) {
+	catalog := `{"id":"p/c","resources":[{"id":"r1"}]}`
+	compressed := gz(t, []byte(catalog))
+	// The digest covers the artifact AT REST — the compressed bytes we hash
+	// before spending CPU inflating.
+	digest := sha256Prefixed(string(compressed))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/c.json.gzip", func(w http.ResponseWriter, _ *http.Request) { w.Write(compressed) })
+	mux.HandleFunc("/c", func(w http.ResponseWriter, _ *http.Request) { w.Write(compressed) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewHTTPClient(5*time.Second, 1<<20, 1<<20, true)
+	ctx := context.Background()
+
+	// Encoding inferred from the .json.gzip suffix.
+	body, err := c.FetchFile(ctx, FileEntry{URL: srv.URL + "/c.json.gzip", Digest: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != catalog {
+		t.Fatalf("suffix-decoded = %q, want %q", body, catalog)
+	}
+
+	// Encoding taken from the explicit FileEntry.Encoding on a plain URL.
+	body, err = c.FetchFile(ctx, FileEntry{URL: srv.URL + "/c", Encoding: "gzip", Digest: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != catalog {
+		t.Fatalf("explicit-encoding decoded = %q, want %q", body, catalog)
+	}
+}
+
 func TestHTTPClient_Push(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ok", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
@@ -61,7 +96,7 @@ func TestHTTPClient_Push(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	c := NewHTTPClient(5*time.Second, 1<<20, true)
+	c := NewHTTPClient(5*time.Second, 1<<20, 1<<20, true)
 	ctx := context.Background()
 
 	if out, err := c.Push(ctx, srv.URL+"/ok", []byte(`{}`)); err != nil || !out.Acked || out.HTTPStatus != 200 {

@@ -21,10 +21,14 @@ type Signature struct {
 // FileEntry is one baseline or change file listed in the index: an
 // immutable, versioned URL with its size, digest, and signed tuple.
 type FileEntry struct {
-	Version   int64     `json:"version"`
-	URL       string    `json:"url"`
-	Size      int64     `json:"size"`
-	Digest    string    `json:"digest"`
+	Version int64  `json:"version"`
+	URL     string `json:"url"`
+	Size    int64  `json:"size"`
+	Digest  string `json:"digest"`
+	// Encoding names the artifact packaging: "" / "json" = plain JSON, "gzip"
+	// = gzipped JSON (and future codecs). Falls back to the URL suffix when
+	// absent. It is a lookup key into the decode codec registry.
+	Encoding  string    `json:"encoding,omitempty"`
 	Signature Signature `json:"signature"`
 }
 

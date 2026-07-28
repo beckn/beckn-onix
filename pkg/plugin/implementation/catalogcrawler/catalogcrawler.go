@@ -45,7 +45,7 @@ func New(ctx context.Context, validator definition.SchemaValidator, config map[s
 		return nil, nil, fmt.Errorf("catalogcrawler: migrate: %w", err)
 	}
 
-	httpc := engine.NewHTTPClient(settings.FetchTimeout, settings.MaxArtifactBytes, false)
+	httpc := engine.NewHTTPClient(settings.FetchTimeout, settings.MaxArtifactBytes, settings.MaxDecompressedBytes, false)
 
 	var validate engine.Validator
 	if validator != nil {

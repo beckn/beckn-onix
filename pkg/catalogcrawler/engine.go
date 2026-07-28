@@ -300,19 +300,19 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 
 	idx, err := e.deps.FetchIndex(ctx, item.IndexURL)
 	if err != nil {
-		e.failItem(ctx, item, 0, "index_fetch: "+err.Error())
+		e.fail(ctx, item, 0, "index_fetch: "+err.Error(), err)
 		return
 	}
 	entry, ok := findCatalog(idx, item.CatalogID)
 	if !ok {
-		e.failItem(ctx, item, 0, "catalog_absent_from_index")
+		e.failPermanent(ctx, item, 0, "catalog_absent_from_index")
 		return
 	}
 
 	fetch := func(f FileEntry) ([]byte, error) { return e.deps.FetchFile(ctx, f) }
 	catalog, cs, err := ResolveWithChangeset(entry, item.FromVersion, item.FromVersion > 0, item.ToVersion, fetch)
 	if err != nil {
-		e.failItem(ctx, item, 0, "resolve: "+err.Error())
+		e.fail(ctx, item, 0, "resolve: "+err.Error(), err)
 		return
 	}
 
@@ -326,7 +326,7 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 	} else {
 		pushDoc, err = filterCatalog(catalog, cs.UpsertedResources, cs.UpsertedOffers)
 		if err != nil {
-			e.failItem(ctx, item, 0, "filter: "+err.Error())
+			e.failPermanent(ctx, item, 0, "filter: "+err.Error())
 			return
 		}
 	}
@@ -334,7 +334,7 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 	_, visibleTo := Select(entry, e.cfg.Networks)
 	batches, err := BatchCatalog(pushDoc, e.cfg.PushBatchSize, mode)
 	if err != nil {
-		e.failItem(ctx, item, 0, "batch: "+err.Error())
+		e.failPermanent(ctx, item, 0, "batch: "+err.Error())
 		return
 	}
 
@@ -348,12 +348,12 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 			UpdateMode: batch.UpdateMode, VisibleTo: visibleTo,
 		}, batch.Doc)
 		if err != nil {
-			e.failItem(ctx, item, 0, "build_push: "+err.Error())
+			e.failPermanent(ctx, item, 0, "build_push: "+err.Error())
 			return
 		}
 		if e.deps.Validate != nil {
 			if err := e.deps.Validate(ctx, body); err != nil {
-				e.failItem(ctx, item, 0, "schema: "+err.Error())
+				e.failPermanent(ctx, item, 0, "schema: "+err.Error())
 				return
 			}
 		}
@@ -373,7 +373,7 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 		if len(failed) > 0 {
 			httpStatus, reason = failed[0].HTTPStatus, failed[0].Reason
 		}
-		e.failItem(ctx, item, httpStatus, "push: "+reason)
+		e.fail(ctx, item, httpStatus, "push: "+reason, nil)
 		return
 	}
 
@@ -389,9 +389,38 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 	e.deps.Log.Info("crawler.catalog.pushed", "catalogId", item.CatalogID, "version", item.ToVersion, "batches", len(outcomes))
 }
 
-// failItem retries with backoff, or gives up after MaxAttempts — recording
-// the failure and advancing the cursor so it isn't re-enqueued until the
-// catalog's version advances again (no hot loop).
+// fail routes a failure: permanent (won't fix on retry) errors and 4xx
+// rejections are parked; everything else is a transient retry.
+func (e *Engine) fail(ctx context.Context, item *state.ClaimedItem, httpStatus int, reason string, err error) {
+	if IsPermanent(err) || (httpStatus >= 400 && httpStatus < 500) {
+		e.failPermanent(ctx, item, httpStatus, reason)
+		return
+	}
+	e.failItem(ctx, item, httpStatus, reason)
+}
+
+// failPermanent parks a permanently-failed item (no hot retry; re-activates on
+// a version bump), records the failure WITHOUT advancing the cursor, counts
+// it, and logs at error level (the operator alert). "Too big" / "corrupt" /
+// "unsupported encoding" becomes visible and actionable, never silently lost.
+func (e *Engine) failPermanent(ctx context.Context, item *state.ClaimedItem, httpStatus int, reason string) {
+	if err := e.deps.Store.ParkQueueItem(ctx, item.ID, item.ClaimID); err != nil {
+		e.deps.Log.Error("crawler.park_failed", "catalogId", item.CatalogID, "err", err)
+	}
+	pushStatus := "failed"
+	if httpStatus >= 400 && httpStatus < 500 {
+		pushStatus = "rejected"
+	}
+	if err := e.deps.Store.RecordFailure(ctx, item.CatalogID, item.IndexURL, "", pushStatus, reason, httpStatus); err != nil {
+		e.deps.Log.Error("crawler.recordfailure_failed", "catalogId", item.CatalogID, "err", err)
+	}
+	e.deps.Metrics.CatalogFailed(reasonCategory(reason))
+	e.deps.Log.Error("crawler.catalog.permanent_failure", "catalogId", item.CatalogID, "reason", reason, "httpStatus", httpStatus)
+}
+
+// failItem retries with capped backoff, and records the failure once
+// MaxAttempts is reached. The cursor is NEVER advanced on failure (only
+// Complete advances it), so the item keeps retrying until it succeeds.
 func (e *Engine) failItem(ctx context.Context, item *state.ClaimedItem, httpStatus int, reason string) {
 	attempts := item.Attempts + 1
 	// The cursor is NEVER advanced on failure (only Complete advances it), so a

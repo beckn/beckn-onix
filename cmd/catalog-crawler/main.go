@@ -44,7 +44,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	httpc := cc.NewHTTPClient(s.FetchTimeout, s.MaxArtifactBytes, false)
+	httpc := cc.NewHTTPClient(s.FetchTimeout, s.MaxArtifactBytes, s.MaxDecompressedBytes, false)
 	metrics, err := cc.NewOTelMetrics(otel.Meter("catalogcrawler"))
 	if err != nil {
 		metrics = cc.NopMetrics{}

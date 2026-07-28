@@ -108,6 +108,24 @@ func (s *Store) FailQueueItem(ctx context.Context, id, claimID string, nextAttem
 	return nil
 }
 
+// ParkQueueItem releases and parks an item that failed permanently (bad
+// encoding, decompression bomb, corrupt/oversize artifact): status 'failed',
+// next_attempt_at set to infinity so it is never re-claimed on its own. It
+// stays parked until a version bump re-enqueues it (a coalescing Enqueue on a
+// not-in-progress row resets it to ready), so a fixed/re-published catalog
+// recovers automatically without hot-retrying a hopeless one.
+func (s *Store) ParkQueueItem(ctx context.Context, id, claimID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE crawler_queue
+		    SET attempts = attempts + 1, claimed_at = NULL, claim_id = NULL, status = 'failed', next_attempt_at = 'infinity'
+		  WHERE id = $1 AND claim_id = $2`,
+		id, claimID)
+	if err != nil {
+		return fmt.Errorf("state: ParkQueueItem: %w", err)
+	}
+	return nil
+}
+
 // Complete records the catalog's settled state (advancing the cursor to the
 // version this worker actually pushed) and removes the queue row — but only if
 // the row hasn't been superseded by a newer to_version while we worked. If it
