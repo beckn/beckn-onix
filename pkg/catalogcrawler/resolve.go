@@ -62,19 +62,20 @@ func ResolveWithChangeset(entry CatalogEntry, cursor int64, seen bool, toVersion
 		}
 		var cf catalogfile.ChangeFileDoc
 		if err := json.Unmarshal(b, &cf); err != nil {
-			return nil, cs, fmt.Errorf("catalogcrawler: parsing change v%d: %w", c.Version, err)
+			return nil, cs, permanentf("catalogcrawler: parsing change v%d: %v", c.Version, err)
 		}
 		// Continuity: each change must start where the previous one ended, or
-		// the fold silently mis-composes (a gap => a wrong catalog).
+		// the fold silently mis-composes (a gap => a wrong catalog). A gap is a
+		// publisher-side data problem — it won't fix on retry, so it's permanent.
 		if int64(cf.FromVersion) != running {
-			return nil, cs, fmt.Errorf("catalogcrawler: change v%d fromVersion=%d, expected %d (gap in change files)", c.Version, cf.FromVersion, running)
+			return nil, cs, permanentf("catalogcrawler: change v%d fromVersion=%d, expected %d (gap in change files)", c.Version, cf.FromVersion, running)
 		}
 		if c.Version > cursor { // accumulate the changeset only past our cursor
 			accumulateChangeset(&cs, cf)
 		}
 		current, err = catalogfile.Apply(current, b)
 		if err != nil {
-			return nil, cs, fmt.Errorf("catalogcrawler: folding change v%d: %w", c.Version, err)
+			return nil, cs, permanentf("catalogcrawler: folding change v%d: %v", c.Version, err)
 		}
 		running = int64(cf.ToVersion)
 	}
@@ -102,7 +103,7 @@ func accumulateChangeset(cs *Changeset, cf catalogfile.ChangeFileDoc) {
 func filterCatalog(catalog []byte, keepResources, keepOffers map[string]bool) ([]byte, error) {
 	var doc catalogfile.Doc
 	if err := json.Unmarshal(catalog, &doc); err != nil {
-		return nil, fmt.Errorf("catalogcrawler: reading catalog for filter: %w", err)
+		return nil, permanentf("catalogcrawler: reading catalog for filter: %v", err)
 	}
 	doc.Resources = filterByID(doc.Resources, keepResources)
 	doc.Offers = filterByID(doc.Offers, keepOffers)
