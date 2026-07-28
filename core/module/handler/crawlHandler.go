@@ -74,12 +74,14 @@ func (h *crawlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Run detached from the request so the fetch doesn't block the response.
-	go func() {
-		if err := h.crawler.CrawlNow(context.Background(), req.IndexURL); err != nil {
-			log.Errorf(context.Background(), err, "crawl: on-demand trigger failed for %s", req.IndexURL)
-		}
-	}()
+	// CrawlNow returns immediately, launching a tracked goroutine on the
+	// engine's own context (drained by Stop) — so we don't run a detached crawl
+	// on a context the shutdown path can't reach (avoids DB use-after-close).
+	if err := h.crawler.CrawlNow(r.Context(), req.IndexURL); err != nil {
+		log.Errorf(r.Context(), err, "crawl: trigger failed for %s", req.IndexURL)
+		http.Error(w, "crawl trigger unavailable", http.StatusServiceUnavailable)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)

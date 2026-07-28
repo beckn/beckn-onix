@@ -20,9 +20,9 @@ func TestQueueCoalesce(t *testing.T) {
 	must(t, s.Enqueue(ctx, QueueItem{CatalogID: "p/c", IndexURL: "i", ToVersion: 42, Op: "sync"}))
 	must(t, s.Enqueue(ctx, QueueItem{CatalogID: "p/c", IndexURL: "i", ToVersion: 43, Op: "sync"}))
 
-	depth, err := s.QueueDepth(ctx)
-	must(t, err)
-	if depth != 1 {
+	if depth, err := s.QueueDepth(ctx); err != nil {
+		t.Fatal(err)
+	} else if depth != 1 {
 		t.Fatalf("depth = %d, want 1 (coalesced by catalog_id)", depth)
 	}
 	it, err := s.ClaimNext(ctx)
@@ -67,19 +67,32 @@ func TestFailAndRetry(t *testing.T) {
 	}
 
 	// Fail with a future backoff -> not claimable yet.
-	must(t, s.FailQueueItem(ctx, it.ID, time.Now().Add(time.Hour)))
+	must(t, s.FailQueueItem(ctx, it.ID, it.ClaimID, time.Now().Add(time.Hour)))
 	if got, err := s.ClaimNext(ctx); err != nil {
 		t.Fatal(err)
 	} else if got != nil {
 		t.Fatal("item should be gated by backoff")
 	}
 
-	// Fail again with a past backoff -> claimable, attempts incremented.
-	must(t, s.FailQueueItem(ctx, it.ID, time.Now().Add(-time.Second)))
+	// Past the backoff -> re-claim; attempts incremented, fresh claim_id.
+	if _, err := s.db.ExecContext(ctx, "UPDATE crawler_queue SET next_attempt_at = now() - interval '1 second' WHERE id=$1", it.ID); err != nil {
+		t.Fatal(err)
+	}
 	it2, err := s.ClaimNext(ctx)
 	must(t, err)
-	if it2 == nil || it2.Attempts != 2 {
-		t.Fatalf("reclaim = %+v, want attempts 2", it2)
+	if it2 == nil || it2.Attempts != 1 {
+		t.Fatalf("reclaim = %+v, want attempts 1", it2)
+	}
+	if it2.ClaimID == it.ClaimID {
+		t.Fatal("reclaim must carry a fresh claim_id")
+	}
+
+	// A fail with the wrong claim_id must be a no-op (row stays claimed).
+	must(t, s.FailQueueItem(ctx, it2.ID, "00000000-0000-0000-0000-000000000000", time.Now().Add(-time.Second)))
+	if got, err := s.ClaimNext(ctx); err != nil {
+		t.Fatal(err)
+	} else if got != nil {
+		t.Fatal("fail with wrong claim_id should not release the row")
 	}
 }
 
@@ -90,7 +103,7 @@ func TestComplete(t *testing.T) {
 
 	it, err := s.ClaimNext(ctx)
 	must(t, err)
-	must(t, s.Complete(ctx, it.ID, CatalogState{
+	must(t, s.Complete(ctx, it.ID, it.ClaimID, it.ToVersion, CatalogState{
 		CatalogID: "p/c", IndexURL: "i", Version: 42, Status: "active", PushStatus: "pushed",
 	}))
 
@@ -103,5 +116,73 @@ func TestComplete(t *testing.T) {
 	must(t, err)
 	if !seen || v != 42 {
 		t.Fatalf("cursor = %d seen=%v, want 42 true", v, seen)
+	}
+}
+
+// A coalescing enqueue that lands while a row is in progress must not un-claim
+// it, and completing the version actually processed must not drop the newer
+// work (no lost update, no double-push).
+func TestEnqueue_PreservesInProgressClaim(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	must(t, s.Enqueue(ctx, QueueItem{CatalogID: "p/c", IndexURL: "i", ToVersion: 5}))
+
+	it, err := s.ClaimNext(ctx)
+	must(t, err)
+	if it == nil {
+		t.Fatal("expected claim")
+	}
+
+	// Newer version arrives while v5 is being processed.
+	must(t, s.Enqueue(ctx, QueueItem{CatalogID: "p/c", IndexURL: "i", ToVersion: 7}))
+	if got, err := s.ClaimNext(ctx); err != nil {
+		t.Fatal(err)
+	} else if got != nil {
+		t.Fatal("in-progress row was re-claimable after a coalescing enqueue")
+	}
+
+	// Completing v5 advances the cursor but must NOT delete the v7 work.
+	must(t, s.Complete(ctx, it.ID, it.ClaimID, 5, CatalogState{
+		CatalogID: "p/c", IndexURL: "i", Version: 5, Status: "active", PushStatus: "pushed",
+	}))
+	if v, seen, _ := s.GetCatalogVersion(ctx, "p/c"); !seen || v != 5 {
+		t.Fatalf("cursor = %d seen=%v, want 5", v, seen)
+	}
+	if d, _ := s.QueueDepth(ctx); d != 1 {
+		t.Fatalf("depth = %d, want 1 (v7 still queued)", d)
+	}
+	it2, err := s.ClaimNext(ctx)
+	must(t, err)
+	if it2 == nil || it2.ToVersion != 7 {
+		t.Fatalf("reclaim = %+v, want ToVersion 7", it2)
+	}
+}
+
+// A claim older than the lease is reclaimable (crash/OOM recovery).
+func TestClaimLease_ReclaimsStale(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	must(t, s.Enqueue(ctx, QueueItem{CatalogID: "p/c", IndexURL: "i", ToVersion: 1}))
+
+	it, err := s.ClaimNext(ctx)
+	must(t, err)
+	if it == nil {
+		t.Fatal("expected claim")
+	}
+	if got, _ := s.ClaimNext(ctx); got != nil {
+		t.Fatal("a fresh claim should not be reclaimable")
+	}
+
+	// Simulate a crashed worker: backdate the claim beyond the lease.
+	if _, err := s.db.ExecContext(ctx, "UPDATE crawler_queue SET claimed_at = now() - interval '1 hour' WHERE id=$1", it.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ClaimNext(ctx)
+	must(t, err)
+	if got == nil {
+		t.Fatal("a stale claim should be reclaimable after the lease")
+	}
+	if got.ClaimID == it.ClaimID {
+		t.Fatal("reclaim should carry a fresh claim_id")
 	}
 }

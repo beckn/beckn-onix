@@ -163,6 +163,28 @@ func (s *Store) UpsertCatalog(ctx context.Context, c CatalogState) error {
 	return upsertCatalog(ctx, s.db, c)
 }
 
+// RecordFailure records a push failure WITHOUT advancing the version cursor,
+// so a failed catalog is never treated as applied (it keeps retrying via the
+// queue). On a first-ever failure the row is inserted with a NULL version.
+func (s *Store) RecordFailure(ctx context.Context, catalogID, indexURL, participantID, pushStatus, reason string, httpStatus int) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO crawler_catalog
+		   (catalog_id, index_url, participant_id, status, push_status, reason, http_status, updated_at)
+		 VALUES ($1,$2,$3,'active',$4,$5,$6, now())
+		 ON CONFLICT (catalog_id) DO UPDATE SET
+		   index_url      = EXCLUDED.index_url,
+		   participant_id = EXCLUDED.participant_id,
+		   push_status    = EXCLUDED.push_status,
+		   reason         = EXCLUDED.reason,
+		   http_status    = EXCLUDED.http_status,
+		   updated_at     = now()`, // version deliberately not touched
+		catalogID, nullStr(indexURL), nullStr(participantID), nullStr(pushStatus), nullStr(reason), nullIntZero(httpStatus))
+	if err != nil {
+		return fmt.Errorf("state: RecordFailure: %w", err)
+	}
+	return nil
+}
+
 // --- null helpers: map Go zero values to SQL NULL ---
 
 func nullStr(s string) any {
