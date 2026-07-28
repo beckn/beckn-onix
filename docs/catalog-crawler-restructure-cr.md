@@ -148,7 +148,7 @@ pkg/catalogcrawler/
 │   └── open.go  queue.go  cursor.go  indexstate.go  schema/  telemetry.go
 ├── runner/                  # orchestration only                             (was engine.go, 576→split)
 │   └── runner.go  indexpass.go  syncpass.go  backoff.go  ports.go  telemetry.go
-│                            #   + lifecycle.go ★ — ORCHESTRATION-ONLY states (§6b): DaemonState, PassState, PassKind, CatalogPhase (used by no layer below runner)
+│                            #   + lifecycle.go ★ — ORCHESTRATION-ONLY states (§6b): SyncPhase, IndexOutcome, DaemonState (used by no layer below runner)
 ├── config/                  # settings.go                                     (was config.go)
 └── telemetry/                     # ★ thin plumbing only
     └── otel.go              #   meter/tracer/provider construction, exemplars
@@ -226,6 +226,30 @@ Acceptance check for PR-A: no file contains a symbol that belongs to another fil
 
 **Problem.** The crawler describes "what is happening" with hand-typed strings scattered across the package, in four disconnected vocabularies — two as typed constants, two as bare literals — with a casing collision and the same rule copy-pasted three times. There is no one place a reader can look to see the states the crawler can be in. This is a root cause of the confusing, inconsistent logs.
 
+And more fundamentally: **the lifecycle had the wrong subject.** "Crawler started / running / completed" is meaningless — a crawler *process* is a long-running supervisor that never "completes," and "completed" alone never says *for what* or *ending as what*. A lifecycle is always the lifecycle **of a unit of work**.
+
+### The subject of the lifecycle: a **Catalog Sync**
+
+The unit of work that genuinely has a `started → running → done` life is **one catalog moving one version jump**. Everything else is a supporting actor.
+
+```
+CATALOG SYNC   subject = catalog_id + (fromVersion → toVersion)     ← the "for what"
+
+  started ─► running ─────────────────────────────────► done AS a terminal outcome
+            ├ resolving   (download baseline + changes)   │
+            ├ verifying   (digest)                        │   ✅ pushed    landed in Discovery
+            ├ validating  (schema of the content)         │   ⏭  skipped   nothing new to send
+            ├ scoping     (member? in approved scope?)     ├─► 🚫 dropped   not a member / out of scope
+            └ publishing  (push to Discovery)             │   🪦 retired   catalog tombstoned
+                                                          │   ❌ faulted   + FaultClass (why)
+```
+
+Every state answers both operator questions: **for what** (the catalog + version jump) and **ended as what** (a *named* terminal outcome — never a bare "completed").
+
+**Supporting actors — NOT this lifecycle:**
+- **The crawler process** is the *supervisor* (the "driver"): `ready → stopping → stopped`. It has **no "completed"** — it just launches many Catalog Syncs until stopped.
+- **An Index crawl** *feeds* the queue — "which of a participant's catalogs changed?" — and finishes as `unchanged | enqueued(N) | failed`. It decides *what to sync*; the Catalog Sync *does* the sync.
+
 ### Evidence — four vocabularies today
 
 | # | Vocabulary | Values | Defined as | Where |
@@ -233,39 +257,47 @@ Acceptance check for PR-A: no file contains a symbol that belongs to another fil
 | 1 | sync status | `ok` / `partial` / `failed` | ✅ constants | `retry.go:9-11` (`SyncOK`…) |
 | 2 | index entry status (ION wire) | `ACTIVE` / `RETIRED` | ✅ constants | `model.go:70-71` (`StatusActive`…) |
 | 3 | stored catalog status | `active` / `retired` | ❌ **bare literals** | `engine.go:374,387,505`; `state/state.go:178` (comment only) |
-| 4 | pass outcome | `pushed`/`partial`/`failed`/`rejected`/`skipped` | ❌ **bare literals** | `engine.go:370,390,487-491,511,536-538`; `state/state.go:165` (comment only) |
+| 4 | catalog-sync outcome | `pushed`/`partial`/`failed`/`rejected`/`skipped` | ❌ **bare literals** | `engine.go:370,390,487-491,511,536-538`; `state/state.go:165` (comment only) |
 
 Smells this produces:
 - **Casing collision:** `StatusActive = "ACTIVE"` (#2) vs the `"active"` written to the DB (#3) — same concept, two spellings, a latent bug the moment they're compared.
 - **Rule duplicated 3×:** "4xx ⇒ `rejected`, else `failed`" is hand-rolled at `engine.go:487-491`, `536-538`, and in the `fail` router (`engine.go:526`).
 - **Enum defined only in a comment** (`state/state.go:165`) — nothing typed, so the compiler can't catch `"reject"`.
-- **The two lifecycles that matter operationally — daemon (`starting→ready→stopping→stopped`) and pass (`started→running→completed→failed`) — have no representation at all.** The daemon is a lone `stopped bool` (`engine.go:98`); a pass is just a function the ticker calls, with no id and no state.
+- **The Catalog Sync lifecycle — the unit of work above — has no representation at all.** There is no sync object, no `run_id`/`pass_id`, no running sub-state, and "done" is a bare status string with no *subject* attached. The crawler process is a lone `stopped bool` (`engine.go:98`); a sync is just control flow inside `processItem` (`engine.go:383`, 138 lines) with no state you can name, log, or trace.
 
 ### Target — typed enums, placed by layer
 
-The vocabulary is defined **once per layer that owns it** (a single root file is impossible — the pure `catalog/` core imports nothing internal, so a root `lifecycle.go` would force an import cycle). Placement rule: **each enum lives at or below its lowest-layer consumer.**
+The vocabulary is defined **once per layer that owns it** (a single root file is impossible — the pure `catalog/` core imports nothing internal, so a root `lifecycle.go` would force an import cycle). Placement rule: **each enum lives at or below its lowest-layer consumer.** The enums are grouped by *whose* lifecycle they describe — the Catalog Sync (the subject), the crawler process, and the index crawl.
 
-| Enum | Consumers | Home |
-| :--- | :--- | :--- |
-| `FaultClass` (ssrf, oversize, digest_mismatch, decode, content_invalid, push_schema, push_rejected, gap, absent, store) | catalog, fetch, decode, publish, store, runner, telemetry | `catalog/fault.go` |
-| `Outcome` (pushed, partial, failed, rejected, skipped, retired) | store (persists), runner (sets) | `catalog/lifecycle.go` |
-| `CatalogStatus` (active, retired) | catalog, store, runner | `catalog/lifecycle.go` |
-| `Decision` (sync, skip_unchanged, retire, rollback) | produced by `catalog/decide.go`, consumed by runner | `catalog/lifecycle.go` |
-| `DropReason` (not_a_member, scope_not_approved) | produced by `catalog/eligibility.go`, consumed by runner | `catalog/lifecycle.go` |
-| `DaemonState` (starting, ready, stopping, stopped, start_failed) | runner only | `runner/lifecycle.go` |
-| `PassState` (started, running, completed, failed) + `PassKind` (index, sync) | runner only | `runner/lifecycle.go` |
-| `CatalogPhase` (selected, resolved, verified, scoped, pushed, dropped, faulted) | runner only | `runner/lifecycle.go` |
+| Enum | Belongs to | Values | Consumers | Home |
+| :--- | :--- | :--- | :--- | :--- |
+| **`SyncOutcome`** | Catalog Sync — terminal | `pushed`, `partial`, `skipped`, `dropped`, `retired`, `faulted` | store (persists), runner (sets) | `catalog/lifecycle.go` |
+| **`FaultClass`** | Catalog Sync — *why* `faulted` | ssrf, oversize, digest_mismatch, decode, content_invalid, push_schema, push_rejected, gap, absent, store | catalog, fetch, decode, publish, store, runner, telemetry | `catalog/fault.go` |
+| **`DropReason`** | Catalog Sync — *why* `dropped` | not_a_member, scope_not_approved | produced by `catalog/eligibility.go`, consumed by runner | `catalog/lifecycle.go` |
+| `CatalogStatus` | Catalog Sync — persisted status | active, retired | catalog, store, runner | `catalog/lifecycle.go` |
+| **`SyncPhase`** | Catalog Sync — *running* sub-state | resolving, verifying, validating, scoping, publishing | runner only (transient — traces/logs, not persisted) | `runner/lifecycle.go` |
+| `Decision` | Index crawl — per-catalog verdict | sync, skip_unchanged, retire, rollback | produced by `catalog/decide.go`, consumed by runner | `catalog/lifecycle.go` |
+| `IndexOutcome` | Index crawl — terminal | unchanged, enqueued, failed | runner only | `runner/lifecycle.go` |
+| `DaemonState` | Crawler process (supervisor) | ready, stopping, stopped, start_failed | runner only | `runner/lifecycle.go` |
 
-`store/` may not import `runner/` (§7) — which is precisely why `Outcome`/`CatalogStatus` sit in `catalog/` (the shared bottom), not `runner/`. Each enum carries a `String()` returning the **stable wire value** used for DB persistence and log/metric rendering.
+Two deliberate consequences of the subject-centric model:
+- **There is no `PassState{started,running,completed,failed}`** — that was the subject-less mistake. `started`/`running` are the Catalog Sync's own states (`SyncPhase`); `completed` is replaced by a *named* `SyncOutcome`; and the crawler process (`DaemonState`) deliberately has **no `completed`** because a supervisor never completes.
+- **`store/` may not import `runner/`** (§7) — which is precisely why `SyncOutcome`/`CatalogStatus` sit in `catalog/` (the shared bottom), not `runner/`. Each enum carries a `String()` returning the **stable wire value** used for DB persistence and log/metric rendering.
 
 ### The two decision helpers that consolidate the duplication
 
-- `classifyOutcome(httpStatus int, ackedBatches int, err error) Outcome` — the **one** place the "4xx ⇒ rejected, else failed/partial" rule lives (replaces `engine.go:487-491,536-538`).
-- `func (FaultClass) Permanent() bool` — replaces `IsPermanent` + the inline 4xx-is-permanent check in the `fail` router; drives the park-vs-retry branch.
+- `classifyOutcome(httpStatus int, ackedBatches int, err error) SyncOutcome` — the **one** place the "4xx ⇒ rejected, else failed/partial" rule lives (replaces `engine.go:487-491,536-538`); a 4xx push maps to `faulted` with `FaultClass=push_rejected`.
+- `func (FaultClass) Permanent() bool` — replaces `IsPermanent` + the inline 4xx-is-permanent check in the `fail` router; drives the park-vs-retry branch for a `faulted` sync.
 
 ### Legal transitions are declared, not implied
 
-`runner/lifecycle.go` declares the allowed moves (e.g. `CatalogPhase`: `selected→{resolved,dropped,faulted}`, `resolved→{verified,faulted}`, `verified→{scoped,faulted}`, `scoped→{pushed,dropped,faulted}`) so "clearly defined" is literal and testable — an illegal transition is a bug the state machine rejects, not a silently-wrong string.
+`runner/lifecycle.go` declares the allowed moves of a Catalog Sync so "clearly defined" is literal and testable — an illegal transition is a bug the state machine rejects, not a silently-wrong string:
+
+```
+started → resolving → verifying → validating → scoping → publishing → SyncOutcome{pushed|partial}
+   any running sub-state → faulted (with FaultClass)     scoping → dropped     (retire path) → retired
+   publishing with nothing to send → skipped
+```
 
 ### Two-layer principle (and what is explicitly rejected)
 
@@ -273,7 +305,7 @@ The vocabulary is defined **once per layer that owns it** (a single root file is
 - **Keep the step logic organized by concern** (`fetch`/`decode`/`compose`/`publish`) — the reusable verbs the lifecycle calls into.
 - **Rejected: packages named after lifecycle phases** (`started/`, `running/`, `completed/`). That groups by *when code runs* instead of *what changes together* — `running/` would hold ~90% of the code, `resolve` is shared across passes, and phases don't change together. Cohesion beats temporal grouping.
 
-**Sequencing:** land `catalog/lifecycle.go` + the `classifyOutcome`/`Permanent` consolidation in **PR-A** (behavior-preserving — same wire values, now typed). The daemon/pass/phase states in `runner/lifecycle.go` land with the `runner/` split and are consumed by the observability work in **PR-B** (§9, §9b).
+**Sequencing:** land `catalog/lifecycle.go` (`SyncOutcome`, `CatalogStatus`, `Decision`, `DropReason`) + the `classifyOutcome`/`Permanent` consolidation in **PR-A** (behavior-preserving — same wire values, now typed). The `SyncPhase`/`IndexOutcome`/`DaemonState` runtime states in `runner/lifecycle.go` land with the `runner/` split and are consumed by the observability work in **PR-B** (§9, §9b).
 
 ## 7. Dependency rules
 
@@ -304,16 +336,18 @@ ClickStack is OpenTelemetry-native (OTel collector → ClickHouse → HyperDX). 
 - **Typed `FaultClass` taxonomy** in `catalog/fault.go` (`ssrf`, `too_large`, `digest_mismatch`, `unsupported_encoding`, `decode`, `content_invalid`, `push_schema`, `push_rejected`, `push_transient`, `index_fetch`, `absent`). Adapters return typed faults; the runner switches on the class. **One source of truth** feeding: the metric `outcome=` label, the log `event` key, and the retire/retry decision — replacing the fragile `reasonCategory` string-split (`engine.go:562`). Note the two distinct schema faults: `content_invalid` (fetched file data fails its `schemaTypes` — §9a) vs `push_schema` (the outbound push body fails `catalog/publish`); both are **permanent** (don't advance the cursor; alert).
 - **Correlation:** a `RunID` (per pass tick) and `PassID` (per catalog item) minted in `runner/`, carried in `context.Context`, stamped on spans, attached to every log line (`LoggerFrom(ctx)`), and used as histogram exemplars. This is what makes the HyperDX "failed span → its logs → the metric spike" pivot work; it does not exist today (`Log` calls take loose `kv` with no id).
 
-**Traces (span tree):**
+**Traces (span tree)** — one span tree per lifecycle (§6b); the `crawler.sync` root **is** a Catalog Sync, its child spans are the `SyncPhase` running sub-states:
 ```
-crawler.index_pass {source, run_id}
-└─ crawler.crawl_index {index_url, index_version, result}
+crawler.index_pass {run_id, source}
+└─ crawler.index_crawl {participant_id, index_url, index_version, outcome=unchanged|enqueued|failed}
    └─ crawler.fetch {kind, encoding, bytes; status=ssrf|digest_mismatch on failure}
-crawler.catalog_job {run_id}
-└─ crawler.process_item {catalog_id, to_version, pass_id}
-   ├─ crawler.resolve {baseline_v, change_count}
-   ├─ crawler.decode  {encoding, in_bytes, out_bytes}
-   └─ crawler.publish {mode, batches, body_bytes, http_status}
+crawler.sync_pass {run_id}
+└─ crawler.sync {catalog_id, from_version, to_version, pass_id, sync_outcome}   ← the subject
+   ├─ crawler.sync.resolving  {baseline_v, change_count}
+   ├─ crawler.sync.verifying  {digest}
+   ├─ crawler.sync.validating {schema}
+   ├─ crawler.sync.scoping    {kept, drop_reason}
+   └─ crawler.sync.publishing {mode, batches, body_bytes, http_status}
 ```
 
 **Metrics** — bounded-cardinality attributes only (never `catalog_id`/`url` as a label):
@@ -321,17 +355,17 @@ crawler.catalog_job {run_id}
 | Metric | Type | Attributes |
 | :--- | :--- | :--- |
 | `crawler.index.checked` | counter | `result` (changed/not_modified/error), `source` |
-| `crawler.catalog.decision` | counter | `action` |
+| `crawler.index.decision` | counter | `decision` (sync/skip_unchanged/retire/rollback) |
 | `crawler.queue.depth` | observable gauge | — |
 | `crawler.queue.claim_reclaimed` | counter | — (lease-race signal) |
 | `crawler.queue.superseded` | counter | — (concurrency-visibility) |
-| `crawler.process.duration` | histogram | `outcome` (= FaultClass or `ok`) |
+| `crawler.sync.duration` | histogram | `sync_outcome` (pushed/partial/skipped/dropped/retired/faulted) |
 | `crawler.fetch.bytes` | histogram | `kind`, `encoding` |
 | `crawler.decode.in_bytes` / `.out_bytes` | histogram | `encoding` (ratio = bomb signal) |
 | `crawler.fetch.result` | counter | `outcome`, `status_class` |
 | `crawler.publish.result` | counter | `mode`, `outcome`, `status_class` |
 | `crawler.publish.batches` | histogram | `mode` |
-| `crawler.catalog.failed` | counter | `class` (permanent/transient) |
+| `crawler.sync.faulted` | counter | `fault_class`, `permanent` (true/false) |
 
 **Metric migration:** the existing names (`crawler_catalogs_pushed_total`, `crawler_queue_depth`, `crawler_push_latency_seconds`, …, `metrics.go:44-63`) are **live**. Migrate via **dual-emit** — emit old + new for one release, cut dashboards over, then drop old. Never rename live metrics inside PR-A.
 
@@ -343,7 +377,7 @@ Today only the **outbound push body** is schema-validated (the `Validator` port 
 - **What to validate — open design question (flag for the owner):**
   - A **baseline** file is a full catalog → validate against the catalog `schemaTypes`.
   - A **change file** is a *diff* (upserts/removals), **not** a full catalog, so it can't be validated as one. ION says each upsert is "the complete, schema-valid object" — so validate **each upsert item** against the resource/offer schema, and/or validate the **composed** catalog after the fold. Recommendation: validate the **composed result** against `schemaTypes` (covers baseline + all applied changes in one check) and treat a malformed upsert as surfacing there; validate individual upserts only if per-item error attribution is needed.
-- **Failure handling:** a schema failure is a **`content_invalid`** fault — **permanent** (a malformed file won't fix itself on retry), so fail fast, **do not advance the cursor**, emit `crawler.catalog.failed{class=content_invalid}` + alert. Same discipline as too-large/decode faults.
+- **Failure handling:** a schema failure is a **`content_invalid`** fault — the sync ends `faulted`, **permanent** (a malformed file won't fix itself on retry), so fail fast, **do not advance the cursor**, emit `crawler.sync.faulted{fault_class=content_invalid}` + alert. Same discipline as too-large/decode faults.
 - **Config:** gate it behind a flag (e.g. `CRAWLER_VALIDATE_CONTENT`) and make the schema source explicit (from `schemaTypes`); default posture (strict-reject vs log-only-warn) is a policy call for the owner — recommend **log-only-warn** at first rollout, then flip to strict once false-positive rate is known.
 
 This reuses the same schema plumbing as the push-body validation, so `validate/` serves **both** validation points (inbound content, outbound body) behind one adapter.
@@ -352,69 +386,94 @@ This reuses the same schema plumbing as the push-body validation, so `validate/`
 
 This is the exact log contract an implementer builds to. **The rule: success is a trace, health is a metric, only exceptions and lifecycle boundaries are logs.** That is what keeps the log stream small — everything else in §9 (per-file fetch, per-batch push, "index unchanged") is a span or a metric, not a log line.
 
+Logs are organized around the **Catalog Sync** lifecycle (§6b) — the subject. Every line names *which lifecycle* it belongs to and *what state* it is in, so the lifecycle is legible on the line itself, not buried in the event key.
+
 ### Conventions (apply to every line)
 
 1. **Sink:** the injected `Logger` interface (`Info/Warn/Error(event string, kv ...any)`, `engine.go:17`) — no process-global logger. Backed by slog.
-2. **Event key:** lowercase dotted `crawler.<phase>.<event>` (e.g. `crawler.sync_pass.completed`). The key is a **stable identifier** — never interpolate values into it; values go in fields.
-3. **Level = required operator action:** `ERROR` = broken, act now · `WARN` = degraded, act if it persists · `INFO` = lifecycle boundary + per-pass heartbeat · `DEBUG` = per-item detail, off by default.
-4. **Base fields on every line:** `component` (`daemon`\|`index_pass`\|`sync_pass`\|`catalog`\|`store`); `run_id` on every line emitted inside a pass; `pass_id` **and** `catalog_id` on every per-catalog line. (`ts`/`level` come from slog.)
-5. **Typed values, not prose:** `fault_class`, `drop_reason`, `outcome`, `decision`, `status` are always the enum `String()` from §6b — never a free-text sentence. Errors go in a separate `error` field.
+2. **Two mandatory fields make the lifecycle visible:**
+   - `lifecycle` — whose lifecycle this is: `sync` (a Catalog Sync — the subject) · `index_crawl` (the feeder) · `daemon` (the supervisor process) · `store`. Batch ticks use `sync_pass` / `index_pass`.
+   - `state` — the current state/terminal, always a §6b enum `String()`: `ready`/`stopping`/`stopped` · `resolving`…`publishing` · `pushed`/`skipped`/`dropped`/`retired`/`faulted` · `completed`.
+   - The **event key** is just `crawler.<lifecycle>.<state>` (a stable id) — you never parse it; you filter on the `lifecycle`/`state` fields.
+3. **Level = required operator action:** `ERROR` = broken, act now · `WARN` = degraded, act if it persists · `INFO` = lifecycle boundary + per-tick heartbeat · `DEBUG` = a sync's interior states, off by default.
+4. **Subject + correlation on every line:** `run_id` (the tick that owns it); for `lifecycle=sync` → `catalog_id` + `from_version`/`to_version` + `pass_id` (**the "for what"**); for `lifecycle=index_crawl` → `participant_id` + `index_url`. (`ts`/`level` from slog.)
+5. **Typed values, not prose:** `sync_outcome`, `fault_class`, `drop_reason`, `decision` are always the §6b enum `String()` — never a free-text sentence. Errors go in a separate `error` field.
 6. **Endpoints/URLs:** log **host only** for the push endpoint (no query/secrets); publisher URLs (`index_url`, `file_url`) log in full (they're public).
 
-Reference emit:
+Reference emit (a Catalog Sync that faulted):
 ```go
-log.Error("crawler.catalog.faulted",
-    "component", "catalog", "run_id", runID, "pass_id", passID,
+log.Error("crawler.sync.faulted",
+    "lifecycle", "sync", "state", "faulted",
+    "run_id", runID, "pass_id", passID,
     "catalog_id", item.CatalogID, "from_version", item.FromVersion, "to_version", item.ToVersion,
     "fault_class", fault.Class.String(), "permanent", fault.Class.Permanent(),
     "file_url", fault.URL, "error", fault.Err)
 ```
 
+### Reading the lifecycle in the log stream
+
+At **INFO** (default) you see supervisor boundaries, per-tick heartbeats, and only the *exception* terminals of a sync — because a healthy sync is a trace, not a log:
+```
+lifecycle=daemon      state=ready       source_mode=static sources=3 push_host=discovery.local
+lifecycle=index_pass  state=completed   run_id=r1 indexes_changed=1 catalogs_enqueued=2 dur=40ms
+lifecycle=sync        state=faulted     run_id=r2 pass_id=p9 catalog_id=…/electronics v1→v2 fault_class=digest_mismatch
+lifecycle=sync        state=dropped     run_id=r2 pass_id=pA catalog_id=…/mobility     drop_reason=not_a_member
+lifecycle=sync_pass   state=completed   run_id=r2 synced=1 skipped=0 dropped=1 faulted=1 queue_depth_after=0 dur=1.2s
+```
+Turn **DEBUG** on and one Catalog Sync shows its whole life — `started → running(sub-states) → done AS outcome`:
+```
+lifecycle=sync  state=started     run_id=r2 pass_id=p3 catalog_id=…/electronics v1→v2
+lifecycle=sync  state=resolving   run_id=r2 pass_id=p3 catalog_id=…/electronics
+lifecycle=sync  state=verifying   run_id=r2 pass_id=p3 catalog_id=…/electronics digest=ok
+lifecycle=sync  state=scoping     run_id=r2 pass_id=p3 catalog_id=…/electronics kept=true
+lifecycle=sync  state=publishing  run_id=r2 pass_id=p3 catalog_id=…/electronics mode=FULL batches=1
+lifecycle=sync  state=pushed      run_id=r2 pass_id=p3 catalog_id=…/electronics resources=2 dur=180ms
+```
+
 ### The log catalog
 
-Grouped by lifecycle (§6b). **These are the only log lines the crawler emits at INFO/WARN/ERROR.**
+Grouped by whose lifecycle it is. **These are the only lines emitted at INFO/WARN/ERROR;** a sync's `started`/running sub-states/`pushed`/`skipped`/`retired` are DEBUG (trace).
 
-**Daemon lifecycle**
+**Catalog Sync — the subject (only exception terminals are logged; success is a trace)**
 
-| Event | Level | Fires when | Required fields |
+| Event (`lifecycle`.`state`) | Level | Fires when | Required fields |
 | :--- | :--- | :--- | :--- |
-| `crawler.daemon.ready` | INFO | boot done: config + DB open + migrate + first source resolve all OK | `source_mode`(static\|registry), `sources_count`, `networks`, `push_host`, `index_interval`, `catalog_interval`, `max_artifact_bytes`, `max_decompressed_bytes`, `max_attempts` |
-| `crawler.daemon.start_failed` | ERROR | boot aborts (then process exits) | `stage`(config\|db_open\|db_migrate\|source_resolve), `error` |
-| `crawler.daemon.stopping` | INFO | SIGINT/SIGTERM received | `signal` |
-| `crawler.daemon.stopped` | INFO | jobs drained, safe to close DB | `uptime_seconds` |
+| `crawler.sync.faulted` | ERROR | sync ends `faulted` with a **permanent** fault; item parked, cursor NOT advanced | `run_id`, `pass_id`, `catalog_id`, `from_version`, `to_version`, `fault_class`, `permanent`(true), `file_url`(if fetch), `http_status`(if push), `error` |
+| `crawler.sync.dropped` | WARN | sync ends `dropped` — scope/membership excludes it ("membership wins over declaration") | `run_id`, `pass_id`, `catalog_id`, `participant_id`, `drop_reason`(not_a_member\|scope_not_approved), `network`, `schema_types` |
+| `crawler.sync.retry_exhausted` | WARN | a **transient** fault still failing after `max_attempts` (stays queued) | `run_id`, `pass_id`, `catalog_id`, `attempts`, `fault_class`, `error` |
 
-`crawler.daemon.ready` is the "what happened at startup" line — one line showing the crawler's **entire effective config**.
+`crawler.sync.dropped` is the #1 "why isn't my catalog in Discovery?" answer — it must be explicit. A 4xx push ends the sync as `faulted` with `fault_class=push_rejected`; a *systemic* "Discovery is down" is detected from the `crawler.publish.result` **metric** + alert (§9), not one log per catalog.
 
-**Index pass lifecycle**
-
-| Event | Level | Fires when | Required fields |
-| :--- | :--- | :--- | :--- |
-| `crawler.index_pass.started` | INFO | a pass tick begins | `run_id`, `trigger`(schedule\|on_demand), `sources_count` |
-| `crawler.index_pass.completed` | INFO | pass ran to the end | `run_id`, `indexes_checked`, `indexes_changed`, `catalogs_enqueued`, `duration_ms` |
-| `crawler.index_pass.failed` | ERROR | the pass itself couldn't run | `run_id`, `stage`(source_resolve), `error` |
-| `crawler.index.fetch_failed` | WARN | one publisher index can't be fetched | `run_id`, `index_url`, `participant_id`, `fault_class`(unreachable\|ssrf\|oversize\|decode), `consecutive_failures`, `error` |
-
-**Sync pass lifecycle**
+**Sync batch (the catalog-job tick — the heartbeat)**
 
 | Event | Level | Fires when | Required fields |
 | :--- | :--- | :--- | :--- |
 | `crawler.sync_pass.started` | INFO | catalog-job tick begins with work | `run_id`, `trigger`, `queue_depth` |
 | `crawler.sync_pass.completed` | INFO | queue drained for this tick | `run_id`, `synced`, `skipped`, `dropped`, `faulted`, `queue_depth_after`, `duration_ms` |
 
-`crawler.sync_pass.completed` **replaces the meaningless "crawler passed"** — a verifiable tally; drill into any `catalog_id` from the per-catalog lines below.
+`crawler.sync_pass.completed` **replaces the meaningless "crawler passed"** — a verifiable tally; drill into any `catalog_id` from the `sync.*` lines above.
 
-**Per-catalog — exceptions only (a successful push is a trace span, NOT a log)**
+**Index crawl — the feeder (decides *what* to sync)**
 
 | Event | Level | Fires when | Required fields |
 | :--- | :--- | :--- | :--- |
-| `crawler.catalog.dropped` | WARN | scope/membership excludes the catalog ("membership wins over declaration") | `run_id`, `pass_id`, `catalog_id`, `participant_id`, `drop_reason`(not_a_member\|scope_not_approved), `network`, `schema_types` |
-| `crawler.catalog.rollback` | WARN | index version < stored cursor (not applied) | `run_id`, `pass_id`, `catalog_id`, `cursor_version`, `index_version` |
-| `crawler.catalog.faulted` | ERROR | a **permanent** fault; item parked, cursor NOT advanced | `run_id`, `pass_id`, `catalog_id`, `from_version`, `to_version`, `fault_class`, `permanent`(true), `file_url`(if fetch), `http_status`(if push), `error` |
-| `crawler.catalog.retry_exhausted` | WARN | a **transient** fault still failing after `max_attempts` (stays queued) | `run_id`, `pass_id`, `catalog_id`, `attempts`, `fault_class`, `error` |
+| `crawler.index_pass.completed` | INFO | an index tick ran to the end | `run_id`, `indexes_checked`, `indexes_changed`, `catalogs_enqueued`, `duration_ms` |
+| `crawler.index_pass.failed` | ERROR | the tick itself couldn't run | `run_id`, `stage`(source_resolve), `error` |
+| `crawler.index_crawl.fetch_failed` | WARN | one publisher index can't be fetched | `run_id`, `participant_id`, `index_url`, `fault_class`(unreachable\|ssrf\|oversize\|decode), `consecutive_failures`, `error` |
+| `crawler.index_crawl.rollback` | WARN | index version < stored cursor for a catalog (not applied) | `run_id`, `participant_id`, `catalog_id`, `cursor_version`, `index_version` |
 
-`crawler.catalog.dropped` is the #1 "why isn't my catalog in Discovery?" answer — it must be explicit. Push rejections surface as `crawler.catalog.faulted{fault_class=push_rejected}`; a *systemic* "Discovery is down" is detected from the `crawler.publish.result` **metric** + alert (§9), not from one log per catalog.
+**Crawler process — the supervisor (never "completes")**
 
-**Infrastructure**
+| Event | Level | Fires when | Required fields |
+| :--- | :--- | :--- | :--- |
+| `crawler.daemon.ready` | INFO | boot done: config + DB open + migrate + first source resolve all OK | `source_mode`(static\|registry), `sources_count`, `networks`, `push_host`, `index_interval`, `catalog_interval`, `max_artifact_bytes`, `max_decompressed_bytes`, `max_attempts` |
+| `crawler.daemon.start_failed` | ERROR | boot aborts (then process exits) | `stage`(config\|db_open\|db_migrate\|source_resolve), `error` |
+| `crawler.daemon.stopping` | INFO | SIGINT/SIGTERM received | `signal` |
+| `crawler.daemon.stopped` | INFO | ticks drained, safe to close DB | `uptime_seconds` |
+
+`crawler.daemon.ready` is the "what happened at startup" line — one line showing the crawler's **entire effective config**.
+
+**Store — infrastructure**
 
 | Event | Level | Fires when | Required fields |
 | :--- | :--- | :--- | :--- |
@@ -424,13 +483,13 @@ This **single** event collapses today's ~10 separate `*_failed` DB-op logs (`sta
 
 ### Must be DEBUG (implement, but off by default)
 
-Per-index `checked`/`unchanged`/`304`; per-catalog `decided`(sync/skip); per-file fetch + digest-ok; per-batch push; each transient retry **attempt** (only the final `retry_exhausted` is WARN). These are the interior of a pass — they belong to the **trace** (§9 span tree) and **metrics**, and would drown the operator if logged at INFO.
+A Catalog Sync's `started` and its running sub-states (`resolving`/`verifying`/`validating`/`scoping`/`publishing`) and its *success* terminals (`pushed`/`skipped`/`retired`); the index crawl's per-catalog `decided`(sync/skip) and `unchanged`/`304`; per-file fetch + digest-ok; per-batch push; each transient retry **attempt** (only the final `retry_exhausted` is WARN). These are the interior of a lifecycle — they belong to the **trace** (§9 span tree) and **metrics**, and would drown the operator at INFO.
 
 ### Count
 
-**~15 INFO/WARN/ERROR event types total** (4 daemon + 4 index-pass + 2 sync-pass + 4 per-catalog + 1 store), down from the ~25 emitted today — and every remaining line is either a lifecycle boundary, a per-pass tally, or a typed exception, each cross-linked to its trace by `run_id`/`pass_id`.
+**~13 INFO/WARN/ERROR event types total** — 3 Catalog Sync (the exception terminals) + 2 sync-batch + 4 index-crawl + 4 daemon + 1 store — down from the ~25 emitted today. Every remaining line names its `lifecycle` and `state`, and is either a supervisor boundary, a per-tick tally, or a typed exception terminal of a Catalog Sync, each cross-linked to its trace by `run_id`/`pass_id`.
 
-**Sequencing:** the event keys, levels, and field sets above are part of **PR-B** (they depend on `run_id`/`pass_id` correlation and the §6b `FaultClass`/`Outcome` enums). Implement against this table verbatim so the log contract is identical across the standalone driver and the onix plugin.
+**Sequencing:** the event keys, levels, and field sets above are part of **PR-B** (they depend on `run_id`/`pass_id` correlation and the §6b `SyncOutcome`/`FaultClass` enums). Implement against this table verbatim so the log contract is identical across the standalone driver and the onix plugin.
 
 ## 10. Migration plan (two PRs)
 
@@ -494,8 +553,8 @@ Tests live **next to the code, per package** (Go convention). The restructure ma
 - [ ] `RunID`/`PassID` in context, on spans, logs, and exemplars.
 - [ ] Telemetry names co-located per adapter; `telemetry/` is plumbing only.
 - [ ] Metric migration is dual-emit; no live dashboard breaks on deploy.
-- [ ] **Lifecycle enums (§6b):** `catalog/lifecycle.go` (Outcome, CatalogStatus, Decision, DropReason) + `runner/lifecycle.go` (DaemonState, PassState, PassKind, CatalogPhase); the `ACTIVE`/`active` casing collision and the 3× "4xx ⇒ rejected" duplication removed (`classifyOutcome`); illegal transitions rejected.
-- [ ] **Log catalog (§9b):** exactly the ~15 INFO/WARN/ERROR events implemented with the specified keys, levels, and required fields; success paths carry no log (trace only); the ~10 `*_failed` DB logs collapsed to `crawler.store.unhealthy`; every in-pass line carries `run_id` (+ `pass_id`/`catalog_id` per-catalog).
+- [ ] **Lifecycle enums (§6b):** `catalog/lifecycle.go` (SyncOutcome, CatalogStatus, Decision, DropReason) + `runner/lifecycle.go` (SyncPhase, IndexOutcome, DaemonState); the `ACTIVE`/`active` casing collision and the 3× "4xx ⇒ rejected" duplication removed (`classifyOutcome`); illegal transitions rejected. **The lifecycle's subject is a Catalog Sync (catalog_id + version jump), not "the crawler."**
+- [ ] **Log catalog (§9b):** exactly the ~13 INFO/WARN/ERROR events implemented with the specified keys, levels, and required fields; every line carries `lifecycle` + `state`; a Catalog Sync's success terminals (`pushed`/`skipped`/`retired`) and running sub-states carry no log (trace only); the ~10 `*_failed` DB logs collapsed to `crawler.store.unhealthy`; every in-pass line carries `run_id` (+ `pass_id`/`catalog_id` for `lifecycle=sync`).
 
 ## 13. Out of scope (tracked elsewhere)
 
