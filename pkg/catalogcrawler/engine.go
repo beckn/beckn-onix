@@ -278,13 +278,29 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 	}
 
 	fetch := func(f FileEntry) ([]byte, error) { return e.deps.FetchFile(ctx, f) }
-	catalog, err := Resolve(entry, item.ToVersion, fetch)
+	catalog, cs, err := ResolveWithChangeset(entry, item.FromVersion, item.FromVersion > 0, item.ToVersion, fetch)
 	if err != nil {
 		e.failItem(ctx, item, 0, "resolve: "+err.Error())
 		return
 	}
+
+	// Mode by changeset: only-upserts -> MERGE (push just the changed
+	// resources); any removal, or a new / re-baselined catalog -> FULL
+	// (push the complete catalog, the only mode Discovery deletes in).
+	mode := UpdateModeMerge
+	pushDoc := catalog
+	if cs.FromBaseline || cs.HasRemovals {
+		mode = UpdateModeFull
+	} else {
+		pushDoc, err = filterCatalog(catalog, cs.UpsertedResources, cs.UpsertedOffers)
+		if err != nil {
+			e.failItem(ctx, item, 0, "filter: "+err.Error())
+			return
+		}
+	}
+
 	_, visibleTo := Select(entry, e.cfg.Networks)
-	batches, err := BatchCatalog(catalog, e.cfg.PushBatchSize)
+	batches, err := BatchCatalog(pushDoc, e.cfg.PushBatchSize, mode)
 	if err != nil {
 		e.failItem(ctx, item, 0, "batch: "+err.Error())
 		return
