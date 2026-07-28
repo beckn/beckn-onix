@@ -1,10 +1,15 @@
 package runner
 
-// sync.go — the catalog job: drain the queue, and for each claimed item run
-// the Catalog Sync (resolve → verify → scope → publish → settle) or a retire.
-// It owns the retry/park routing (routeFailure → parkPermanently / scheduleRetry)
-// and drives the SyncPhase breadcrumbs + terminal SyncOutcome. The log
-// vocabulary itself lives in telemetry.go.
+// sync.go — the SYNC job: drain the work queue, and for each claimed catalog
+// run the Catalog Sync as a pipeline of named stages
+// (resolve → pull+unpack → verify → scope → batch → push → settle), or a
+// retire. It owns the retry/park routing (routeFailure → parkPermanently /
+// scheduleRetry) and drives the SyncPhase breadcrumbs + terminal SyncOutcome.
+// The log vocabulary itself lives in telemetry.go.
+//
+// The whole per-catalog recipe is the list in syncCatalog — read it top to
+// bottom. Each stage is a method with the same signature, so a new step is one
+// line in that list.
 
 import (
 	"context"
@@ -89,6 +94,244 @@ func (e *Engine) handleQueueItem(ctx context.Context, item *store.ClaimedItem, r
 	return e.syncCatalog(ctx, item, runID, passID)
 }
 
+// syncState carries the values a Catalog Sync accumulates as it moves through
+// the pipeline stages, so each stage has one shared object to read from and
+// write to instead of threading a dozen return values. Populated left-to-right:
+// resolveEntry sets entry/participantID, fetchContent sets pushDoc/mode/cs, etc.
+type syncState struct {
+	item          *store.ClaimedItem
+	runID, passID string
+	phase         SyncPhase // current running sub-state (drives the breadcrumb)
+
+	entry         catalog.CatalogEntry
+	participantID string
+	pushDoc       []byte
+	mode          string
+	cs            catalog.Changeset
+	resCount      int
+	offCount      int
+	visibleTo     []string
+	batches       []publish.CatalogBatch
+	outcomes      []publish.BatchOutcome
+	acked         int
+}
+
+// syncStage is one step in the Catalog Sync pipeline. run does the step against
+// the shared state and returns (outcome, stop): stop=true ends the sync here —
+// either a terminal success/skip, or a failure the step already routed
+// (park/retry). phase is the running sub-state this step belongs to.
+type syncStage struct {
+	phase SyncPhase
+	what  string
+	run   func(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool)
+}
+
+// syncCatalog runs ONE claimed catalog through the sync pipeline and returns its
+// terminal SyncOutcome. This list is the whole per-catalog recipe — read it top
+// to bottom. To add a step (e.g. §9a content-schema validation, which would be
+// {SyncValidating, "validate content schema", e.validateContent}), insert one
+// line; the runner drives the phase breadcrumb from each stage's phase.
+func (e *Engine) syncCatalog(ctx context.Context, item *store.ClaimedItem, runID, passID string) catalog.SyncOutcome {
+	s := &syncState{item: item, runID: runID, passID: passID}
+
+	pipeline := []syncStage{
+		{SyncResolving, "fetch index & find catalog", e.resolveEntry},
+		{SyncResolving, "pull & unpack files", e.fetchContent},
+		{SyncVerifying, "verify digests & decide upserts", e.verifyContent},
+		{SyncScoping, "resolve who may see it (visibleTo)", e.scope},
+		{SyncScoping, "batch by size cap", e.batch},
+		{SyncPublishing, "push each batch to Discovery", e.publish},
+		{SyncPublishing, "record & advance cursor", e.complete},
+	}
+	return e.runPipeline(ctx, s, pipeline)
+}
+
+// runPipeline walks the stages in order. Before each stage it enters that
+// stage's phase (emitting the breadcrumb once per phase); a stage returning
+// stop=true ends the sync with its outcome.
+func (e *Engine) runPipeline(ctx context.Context, s *syncState, stages []syncStage) catalog.SyncOutcome {
+	for _, st := range stages {
+		e.enterPhase(s, st.phase)
+		if outcome, stop := st.run(ctx, s); stop {
+			return outcome
+		}
+	}
+	return catalog.OutcomePushed
+}
+
+// enterPhase moves the sync to a running sub-state and emits the DEBUG
+// breadcrumb once per phase: it no-ops when the phase is unchanged (so adjacent
+// same-phase stages don't re-log) and ignores an illegal jump (ValidSyncPhase),
+// exactly as the old advancePhase did — the first phase (from "") always logs.
+func (e *Engine) enterPhase(s *syncState, to SyncPhase) {
+	if s.phase == to {
+		return
+	}
+	if s.phase != "" && !ValidSyncPhase(s.phase, to) {
+		return // defensive: don't record an illegal transition
+	}
+	s.phase = to
+	e.logSyncPhase(to, s.runID, s.passID, s.item)
+}
+
+// --- the pipeline stages ----------------------------------------------------
+
+// resolveEntry (resolving): fetch the index and find this catalog's entry. The
+// sync always needs the body to resolve the entry, so it fetches unconditionally
+// (empty cond) rather than risking a 304.
+func (e *Engine) resolveEntry(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
+	res, err := e.deps.FetchIndex(ctx, s.item.IndexURL, catalog.IndexConditions{})
+	if err != nil {
+		e.routeFailure(ctx, s.item, e.newFailureReport(s.item, 0, "index_fetch: "+err.Error()), err, s.runID, s.passID)
+		return catalog.OutcomeFaulted, true
+	}
+	entry, ok := catalog.FindCatalog(res.Index, s.item.CatalogID)
+	if !ok {
+		e.parkPermanently(ctx, s.item, e.newFailureReport(s.item, 0, "catalog_absent_from_index"), catalog.FaultAbsent, s.runID, s.passID)
+		return catalog.OutcomeFaulted, true
+	}
+	s.entry = entry
+	s.participantID = res.Index.ParticipantID
+	return "", false
+}
+
+// fetchContent (resolving): pull the baseline/change files and unpack them into
+// the push doc + updateMode. Each file's digest is verified inside FetchFile as
+// it is pulled.
+func (e *Engine) fetchContent(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
+	fetch := func(f catalog.FileEntry) ([]byte, error) { return e.deps.FetchFile(ctx, f) }
+	pushDoc, mode, cs, err := e.resolvePush(s.entry, s.item, fetch)
+	if err != nil {
+		e.routeFailure(ctx, s.item, e.newFailureReport(s.item, 0, "resolve: "+err.Error()), err, s.runID, s.passID)
+		return catalog.OutcomeFaulted, true
+	}
+	s.pushDoc, s.mode, s.cs = pushDoc, mode, cs
+	return "", false
+}
+
+// verifyContent (verifying): digests were already checked during the pull; this
+// stage records deferred removals and decides whether there is anything to push.
+// Nothing to upsert (e.g. a removal-only change while removals are deferred) is a
+// clean skip — the cursor still advances so it isn't re-processed.
+func (e *Engine) verifyContent(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
+	if e.cfg.MergeOnly && s.cs.HasRemovals {
+		e.logCatalogRemovalsSkipped(s.runID, s.item.CatalogID, s.cs.RemovedResources, s.cs.RemovedOffers)
+	}
+	s.resCount, s.offCount = publish.DocCounts(s.pushDoc)
+	if s.resCount == 0 && s.offCount == 0 {
+		e.completeSkipped(ctx, s.item, s.participantID, s.mode, "no upserts (removals deferred)", s.runID, s.passID)
+		return catalog.OutcomeSkipped, true
+	}
+	return "", false
+}
+
+// scope (scoping): decide the network membership + who this catalog is visible
+// to (handed to Discovery as visibleTo).
+func (e *Engine) scope(_ context.Context, s *syncState) (catalog.SyncOutcome, bool) {
+	_, visibleTo := catalog.ResolveScope(s.entry, e.cfg.Networks)
+	s.visibleTo = visibleTo
+	return "", false
+}
+
+// batch (scoping): split the push doc by serialized SIZE so no /push body
+// exceeds Discovery's cap. The doc budget is the body cap minus headroom for the
+// envelope (context + directive + visibleTo) that BuildPushBody wraps around
+// each batch's doc.
+func (e *Engine) batch(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
+	docBudget := e.cfg.MaxPushBytes - pushEnvelopeReserve
+	if vb, err := json.Marshal(s.visibleTo); err == nil {
+		docBudget -= int64(len(vb))
+	}
+	if docBudget < 1 {
+		docBudget = 1 // still emit ≥1 resource per batch; an oversize single resource is unavoidable
+	}
+	batches, err := publish.BatchCatalog(s.pushDoc, docBudget, s.mode)
+	if err != nil {
+		e.parkPermanently(ctx, s.item, e.newFailureReport(s.item, 0, "batch: "+err.Error()), catalog.FaultOversize, s.runID, s.passID)
+		return catalog.OutcomeFaulted, true
+	}
+	s.batches = batches
+	return "", false
+}
+
+// publish (publishing): build, validate and push each batch to Discovery,
+// stopping at the first un-acked batch (don't send later MERGE batches after a
+// failed FULL). A non-OK rollup is routed as a failure.
+func (e *Engine) publish(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
+	start := e.deps.Now()
+	var outcomes []publish.BatchOutcome
+	for _, b := range s.batches {
+		body, err := publish.BuildPushBody(publish.PushMeta{
+			ParticipantID: s.participantID, BppURI: e.cfg.BppURI,
+			MessageID: e.newID(), TransactionID: e.newID(),
+			Timestamp:  e.deps.Now().UTC().Format(time.RFC3339),
+			UpdateMode: b.UpdateMode, CatalogType: s.entry.CatalogType,
+			VisibleTo: s.visibleTo,
+		}, b.Doc)
+		if err != nil {
+			e.parkPermanently(ctx, s.item, e.newFailureReport(s.item, 0, "build_push: "+err.Error()), catalog.FaultContentInvalid, s.runID, s.passID)
+			return catalog.OutcomeFaulted, true
+		}
+		if e.deps.Validate != nil {
+			if err := e.deps.Validate(ctx, body); err != nil {
+				e.parkPermanently(ctx, s.item, e.newFailureReport(s.item, 0, "schema: "+err.Error()), catalog.FaultPushSchema, s.runID, s.passID)
+				return catalog.OutcomeFaulted, true
+			}
+		}
+		out, err := e.deps.Push(ctx, body)
+		if err != nil {
+			out = publish.BatchOutcome{HTTPStatus: out.HTTPStatus, Reason: err.Error()}
+		}
+		outcomes = append(outcomes, out)
+		if !out.Acked {
+			break
+		}
+	}
+	e.deps.Metrics.ObservePushSeconds(e.deps.Now().Sub(start).Seconds())
+
+	s.outcomes = outcomes
+	s.acked = publish.AckedCount(outcomes)
+	if status, failed := publish.Rollup(outcomes); status != publish.SyncOK {
+		httpStatus, reason := 0, "push failed"
+		if len(failed) > 0 {
+			httpStatus, reason = failed[0].HTTPStatus, failed[0].Reason
+		}
+		e.routeFailure(ctx, s.item, store.PassReport{
+			At: e.deps.Now().UTC(), FromVersion: s.item.FromVersion, ToVersion: s.item.ToVersion,
+			Mode: s.mode, Resources: s.resCount, Offers: s.offCount,
+			Removals:     s.cs.RemovedResources + s.cs.RemovedOffers,
+			BatchesAcked: s.acked, BatchesTotal: len(s.batches),
+			Outcome: string(classifyOutcome(httpStatus, s.acked, nil)), HTTPStatus: httpStatus, Reason: "push: " + reason,
+		}, nil, s.runID, s.passID)
+		return classifyOutcome(httpStatus, s.acked, nil), true
+	}
+	return "", false
+}
+
+// complete (publishing): settle a fully-acked sync — advance the cursor, record
+// the pushed pass report, and emit the success terminal.
+func (e *Engine) complete(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
+	if err := e.deps.Store.Complete(ctx, s.item.ID, s.item.ClaimID, s.item.ToVersion, store.CatalogState{
+		CatalogID: s.item.CatalogID, IndexURL: s.item.IndexURL, ParticipantID: s.participantID,
+		Version: s.item.ToVersion, Status: string(catalog.CatalogActive),
+		Report: store.PassReport{
+			At: e.deps.Now().UTC(), FromVersion: s.item.FromVersion, ToVersion: s.item.ToVersion,
+			Mode: s.mode, Resources: s.resCount, Offers: s.offCount,
+			Removals:     s.cs.RemovedResources + s.cs.RemovedOffers,
+			BatchesAcked: s.acked, BatchesTotal: len(s.batches),
+			Outcome: string(catalog.OutcomePushed), HTTPStatus: s.outcomes[len(s.outcomes)-1].HTTPStatus,
+		},
+	}); err != nil {
+		e.storeUnhealthy(s.runID, "complete", s.item.CatalogID, err)
+		return catalog.OutcomeFaulted, true
+	}
+	e.deps.Metrics.CatalogPushed()
+	e.logSyncPushed(s.runID, s.passID, s.item, s.mode, s.resCount, s.offCount, len(s.outcomes))
+	return catalog.OutcomePushed, true
+}
+
+// --- shared helpers used by the stages --------------------------------------
+
 // resolvePush produces the push doc + updateMode for a claimed catalog.
 //
 // This version (MergeOnly) always MERGEs: an incremental update is built as a
@@ -145,146 +388,6 @@ func (e *Engine) completeSkipped(ctx context.Context, item *store.ClaimedItem, p
 		return
 	}
 	e.logSyncSkipped(runID, passID, item, mode, reason)
-}
-
-// syncCatalog resolves + pushes one claimed catalog, then settles it. It walks
-// the SyncPhase breadcrumbs (resolving → verifying → scoping → publishing) as
-// each real step lands and returns the terminal SyncOutcome.
-func (e *Engine) syncCatalog(ctx context.Context, item *store.ClaimedItem, runID, passID string) catalog.SyncOutcome {
-	// resolving: the catalog job always needs the body to resolve the entry, so
-	// it fetches unconditionally (empty cond) rather than risking a 304.
-	phase := SyncResolving
-	e.logSyncPhase(phase, runID, passID, item)
-	res, err := e.deps.FetchIndex(ctx, item.IndexURL, catalog.IndexConditions{})
-	if err != nil {
-		e.routeFailure(ctx, item, e.newFailureReport(item, 0, "index_fetch: "+err.Error()), err, runID, passID)
-		return catalog.OutcomeFaulted
-	}
-	entry, ok := catalog.FindCatalog(res.Index, item.CatalogID)
-	if !ok {
-		e.parkPermanently(ctx, item, e.newFailureReport(item, 0, "catalog_absent_from_index"), catalog.FaultAbsent, runID, passID)
-		return catalog.OutcomeFaulted
-	}
-
-	fetch := func(f catalog.FileEntry) ([]byte, error) { return e.deps.FetchFile(ctx, f) }
-	pushDoc, mode, cs, err := e.resolvePush(entry, item, fetch)
-	if err != nil {
-		e.routeFailure(ctx, item, e.newFailureReport(item, 0, "resolve: "+err.Error()), err, runID, passID)
-		return catalog.OutcomeFaulted
-	}
-	// verifying: the resolve succeeded and each file's digest was checked inside
-	// FetchFile as it was pulled. (validating/§9a is skipped — not implemented.)
-	phase = e.advancePhase(phase, SyncVerifying, runID, passID, item)
-
-	// This version applies upserts only; removals are recorded but deferred.
-	if e.cfg.MergeOnly && cs.HasRemovals {
-		e.logCatalogRemovalsSkipped(runID, item.CatalogID, cs.RemovedResources, cs.RemovedOffers)
-	}
-
-	resCount, offCount := publish.DocCounts(pushDoc) // what this pass actually pushes
-	// Nothing to upsert (e.g. a removal-only change while removals are deferred):
-	// skip the push, still advance the cursor, and record a skipped pass.
-	if resCount == 0 && offCount == 0 {
-		e.completeSkipped(ctx, item, res.Index.ParticipantID, mode, "no upserts (removals deferred)", runID, passID)
-		return catalog.OutcomeSkipped
-	}
-
-	// scoping: decide membership + who this catalog is visible to.
-	phase = e.advancePhase(phase, SyncScoping, runID, passID, item)
-	_, visibleTo := catalog.ResolveScope(entry, e.cfg.Networks)
-	// Batch by serialized SIZE so no /push body exceeds Discovery's cap. The doc
-	// budget is the body cap minus headroom for the envelope (context + directive
-	// + visibleTo) that BuildPushBody wraps around each batch's doc.
-	docBudget := e.cfg.MaxPushBytes - pushEnvelopeReserve
-	if vb, err := json.Marshal(visibleTo); err == nil {
-		docBudget -= int64(len(vb))
-	}
-	if docBudget < 1 {
-		docBudget = 1 // still emit ≥1 resource per batch; an oversize single resource is unavoidable
-	}
-	batches, err := publish.BatchCatalog(pushDoc, docBudget, mode)
-	if err != nil {
-		e.parkPermanently(ctx, item, e.newFailureReport(item, 0, "batch: "+err.Error()), catalog.FaultOversize, runID, passID)
-		return catalog.OutcomeFaulted
-	}
-
-	// publishing: push each batch to Discovery.
-	phase = e.advancePhase(phase, SyncPublishing, runID, passID, item)
-	start := e.deps.Now()
-	var outcomes []publish.BatchOutcome
-	for _, batch := range batches {
-		body, err := publish.BuildPushBody(publish.PushMeta{
-			ParticipantID: res.Index.ParticipantID, BppURI: e.cfg.BppURI,
-			MessageID: e.newID(), TransactionID: e.newID(),
-			Timestamp:  e.deps.Now().UTC().Format(time.RFC3339),
-			UpdateMode: batch.UpdateMode, CatalogType: entry.CatalogType,
-			VisibleTo: visibleTo,
-		}, batch.Doc)
-		if err != nil {
-			e.parkPermanently(ctx, item, e.newFailureReport(item, 0, "build_push: "+err.Error()), catalog.FaultContentInvalid, runID, passID)
-			return catalog.OutcomeFaulted
-		}
-		if e.deps.Validate != nil {
-			if err := e.deps.Validate(ctx, body); err != nil {
-				e.parkPermanently(ctx, item, e.newFailureReport(item, 0, "schema: "+err.Error()), catalog.FaultPushSchema, runID, passID)
-				return catalog.OutcomeFaulted
-			}
-		}
-		out, err := e.deps.Push(ctx, body)
-		if err != nil {
-			out = publish.BatchOutcome{HTTPStatus: out.HTTPStatus, Reason: err.Error()}
-		}
-		outcomes = append(outcomes, out)
-		if !out.Acked {
-			break // don't send later MERGE batches after a failed FULL
-		}
-	}
-	e.deps.Metrics.ObservePushSeconds(e.deps.Now().Sub(start).Seconds())
-
-	acked := publish.AckedCount(outcomes)
-	if status, failed := publish.Rollup(outcomes); status != publish.SyncOK {
-		httpStatus, reason := 0, "push failed"
-		if len(failed) > 0 {
-			httpStatus, reason = failed[0].HTTPStatus, failed[0].Reason
-		}
-		e.routeFailure(ctx, item, store.PassReport{
-			At: e.deps.Now().UTC(), FromVersion: item.FromVersion, ToVersion: item.ToVersion,
-			Mode: mode, Resources: resCount, Offers: offCount,
-			Removals:     cs.RemovedResources + cs.RemovedOffers,
-			BatchesAcked: acked, BatchesTotal: len(batches),
-			Outcome: string(classifyOutcome(httpStatus, acked, nil)), HTTPStatus: httpStatus, Reason: "push: " + reason,
-		}, nil, runID, passID)
-		return classifyOutcome(httpStatus, acked, nil)
-	}
-
-	if err := e.deps.Store.Complete(ctx, item.ID, item.ClaimID, item.ToVersion, store.CatalogState{
-		CatalogID: item.CatalogID, IndexURL: item.IndexURL, ParticipantID: res.Index.ParticipantID,
-		Version: item.ToVersion, Status: string(catalog.CatalogActive),
-		Report: store.PassReport{
-			At: e.deps.Now().UTC(), FromVersion: item.FromVersion, ToVersion: item.ToVersion,
-			Mode: mode, Resources: resCount, Offers: offCount,
-			Removals:     cs.RemovedResources + cs.RemovedOffers,
-			BatchesAcked: acked, BatchesTotal: len(batches),
-			Outcome: string(catalog.OutcomePushed), HTTPStatus: outcomes[len(outcomes)-1].HTTPStatus,
-		},
-	}); err != nil {
-		e.storeUnhealthy(runID, "complete", item.CatalogID, err)
-		return catalog.OutcomeFaulted
-	}
-	e.deps.Metrics.CatalogPushed()
-	e.logSyncPushed(runID, passID, item, mode, resCount, offCount, len(outcomes))
-	return catalog.OutcomePushed
-}
-
-// advancePhase moves the Catalog Sync to its next running sub-state, emitting
-// the DEBUG breadcrumb only when the transition is a declared one (ValidSyncPhase
-// guards against emitting a phase that doesn't follow the machine).
-func (e *Engine) advancePhase(from, to SyncPhase, runID, passID string, item *store.ClaimedItem) SyncPhase {
-	if !ValidSyncPhase(from, to) {
-		return from // defensive: don't record an illegal jump
-	}
-	e.logSyncPhase(to, runID, passID, item)
-	return to
 }
 
 // routeFailure routes a failure: permanent (won't fix on retry) faults and 4xx

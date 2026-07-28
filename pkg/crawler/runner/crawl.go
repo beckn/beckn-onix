@@ -1,8 +1,12 @@
 package runner
 
-// crawl.go — the index job: resolve every configured source, crawl each
-// index, and (when the index version advanced) decide + enqueue per catalog.
-// An index crawl *feeds* the queue; the Catalog Sync (sync.go) drains it.
+// crawl.go — the CRAWL job: resolve every configured source, crawl each index,
+// and (when the index version advanced) decide + enqueue per catalog. A crawl
+// *feeds* the work queue; the sync job (sync.go) drains it, one catalog per item.
+//
+// Two levels read top to bottom: crawlIndex is the per-index recipe (load state
+// → cadence gate → conditional fetch → process → record); decideCatalog is the
+// per-catalog decision (scope → cursor → detect change → route).
 
 import (
 	"context"
@@ -61,7 +65,10 @@ func (e *Engine) indexPass(ctx context.Context) {
 	e.logIndexPassCompleted(runID, checked, changed, enqueued, e.deps.Now().Sub(start))
 }
 
-// crawlIndex fetches one index and, for each catalog, decides + enqueues.
+// crawlIndex crawls one publisher index. The steps read top to bottom:
+//
+//	load stored state → cadence gate → conditional fetch → (304? done)
+//	→ process (decide + enqueue if the version advanced) → record new state
 func (e *Engine) crawlIndex(ctx context.Context, ref source.IndexRef, trig trigger, runID string) crawlResult {
 	prev, err := e.deps.Store.GetIndex(ctx, ref.IndexURL)
 	if err != nil {
@@ -69,50 +76,81 @@ func (e *Engine) crawlIndex(ctx context.Context, ref source.IndexRef, trig trigg
 		return crawlResult{outcome: IndexFailed}
 	}
 	now := e.deps.Now()
-	if trig != onDemand && prev != nil && !prev.NextCrawlAt.IsZero() && prev.NextCrawlAt.After(now) {
+	if !e.dueForCrawl(prev, trig, now) {
 		return crawlResult{} // not due yet (per-index cadence via next_crawl_at)
 	}
 
-	cond := catalog.IndexConditions{}
-	if prev != nil {
-		cond = catalog.IndexConditions{ETag: prev.ETag, LastModified: prev.LastModified}
-	}
-	res, err := e.deps.FetchIndex(ctx, ref.IndexURL, cond)
+	res, err := e.deps.FetchIndex(ctx, ref.IndexURL, conditionsFrom(prev))
 	if err != nil {
 		e.logIndexFetchFailed(runID, ref.IndexURL, catalog.ClassifyFault(0, err), err)
 		return crawlResult{outcome: IndexFailed}
 	}
 	if res.NotModified {
-		// 304 Not Modified: the host confirmed nothing changed — no body
-		// downloaded, no parse. Just advance the crawl cadence.
-		e.logIndexNotModified(runID, ref.IndexURL)
-		if err := e.deps.Store.AdvanceIndexCadence(ctx, ref.IndexURL, e.nextIndexCrawl()); err != nil {
-			e.storeUnhealthy(runID, "advance_cadence", "", err)
-		}
-		e.deps.Metrics.ObserveIndexSeconds(e.deps.Now().Sub(now).Seconds())
-		return crawlResult{outcome: IndexUnchanged, checked: true}
+		return e.indexUnchanged(ctx, ref, runID, now)
 	}
-	idx := res.Index
-	e.logIndexChecked(runID, ref.IndexURL, idx.Version)
 
+	out := e.processIndex(ctx, ref, prev, res.Index, runID)
+	e.recordIndex(ctx, ref, res, runID, now)
+	return out
+}
+
+// dueForCrawl reports whether this index should be crawled now: an on-demand
+// trigger always is; a scheduled one honours the per-index next_crawl_at gate.
+func (e *Engine) dueForCrawl(prev *store.IndexState, trig trigger, now time.Time) bool {
+	if trig == onDemand || prev == nil || prev.NextCrawlAt.IsZero() {
+		return true
+	}
+	return !prev.NextCrawlAt.After(now)
+}
+
+// conditionsFrom builds the conditional-GET validators from the last stored
+// crawl — both empty (an unconditional GET) when we've never fetched this index.
+func conditionsFrom(prev *store.IndexState) catalog.IndexConditions {
+	if prev == nil {
+		return catalog.IndexConditions{}
+	}
+	return catalog.IndexConditions{ETag: prev.ETag, LastModified: prev.LastModified}
+}
+
+// indexUnchanged handles a 304 Not Modified: the host confirmed nothing changed
+// — no body downloaded, no parse. Just advance the crawl cadence and record the
+// (cheap) crawl duration.
+func (e *Engine) indexUnchanged(ctx context.Context, ref source.IndexRef, runID string, since time.Time) crawlResult {
+	e.logIndexNotModified(runID, ref.IndexURL)
+	if err := e.deps.Store.AdvanceIndexCadence(ctx, ref.IndexURL, e.nextIndexCrawl()); err != nil {
+		e.storeUnhealthy(runID, "advance_cadence", "", err)
+	}
+	e.deps.Metrics.ObserveIndexSeconds(e.deps.Now().Sub(since).Seconds())
+	return crawlResult{outcome: IndexUnchanged, checked: true}
+}
+
+// processIndex handles a freshly-fetched index body: it always counts as
+// checked, and when the version advanced it decides + enqueues per catalog.
+// A same-version index is logged and left for the per-catalog cursors + queue.
+func (e *Engine) processIndex(ctx context.Context, ref source.IndexRef, prev *store.IndexState, idx catalog.Index, runID string) crawlResult {
+	e.logIndexChecked(runID, ref.IndexURL, idx.Version)
 	out := crawlResult{outcome: IndexUnchanged, checked: true}
-	// Process only when the index version advanced; per-catalog cursors + the
-	// queue handle any still-pending work independently.
 	if prev != nil && prev.IndexVersion == idx.Version {
 		e.logIndexUnchanged(runID, ref.IndexURL, idx.Version)
-	} else {
-		out.changed = true
-		out.enqueued = e.decideCatalogs(ctx, ref, idx, runID)
-		if out.enqueued > 0 {
-			out.outcome = IndexEnqueued
-		}
+		return out
 	}
+	out.changed = true
+	out.enqueued = e.decideCatalogs(ctx, ref, idx, runID)
+	if out.enqueued > 0 {
+		out.outcome = IndexEnqueued
+	}
+	return out
+}
 
+// recordIndex persists the crawled index's new state — version, participant,
+// conditional-GET validators, and the next crawl time — and records the crawl
+// duration.
+func (e *Engine) recordIndex(ctx context.Context, ref source.IndexRef, res catalog.IndexResult, runID string, since time.Time) {
+	idx := res.Index
 	if err := e.deps.Store.UpsertIndex(ctx, ref.IndexURL, idx.ParticipantID, ref.Source, idx.Version, publish.SyncOK, e.nextIndexCrawl(), res.ETag, res.LastModified); err != nil {
 		e.storeUnhealthy(runID, "upsert_index", "", err)
 	}
-	e.deps.Metrics.ObserveIndexSeconds(e.deps.Now().Sub(now).Seconds())
-	return out
+	e.deps.Metrics.ObserveIndexSeconds(e.deps.Now().Sub(since).Seconds())
 }
 
 // decideCatalogs walks an advanced index and, per catalog, decides + enqueues.
@@ -120,47 +158,58 @@ func (e *Engine) crawlIndex(ctx context.Context, ref source.IndexRef, trig trigg
 func (e *Engine) decideCatalogs(ctx context.Context, ref source.IndexRef, idx catalog.Index, runID string) int {
 	enqueued := 0
 	for _, entry := range idx.Catalogs {
-		take, _ := catalog.ResolveScope(entry, e.cfg.Networks)
-		cursor, seen, err := e.deps.Store.GetCatalogVersion(ctx, entry.CatalogID)
-		if err != nil {
-			e.storeUnhealthy(runID, "read_cursor", entry.CatalogID, err)
-			continue
-		}
-		d := catalog.DetectChange(entry, cursor, seen)
-		e.logCatalogDecided(runID, entry.CatalogID, string(d.Action), cursor, d.ToVersion)
-		switch d.Action {
-		case catalog.ActionSync:
-			if !take {
-				continue // not for this crawler's networks
-			}
-			if err := e.deps.Store.Enqueue(ctx, store.QueueItem{
-				CatalogID: entry.CatalogID, IndexURL: ref.IndexURL,
-				FromVersion: cursor, ToVersion: d.ToVersion, Op: "sync",
-			}); err != nil {
-				e.storeUnhealthy(runID, "enqueue", entry.CatalogID, err)
-				continue
-			}
+		if e.decideCatalog(ctx, ref, entry, runID) {
 			enqueued++
-			e.logCatalogEnqueued(runID, entry.CatalogID, d.ToVersion)
-		case catalog.ActionRetire:
-			if !seen {
-				continue // never had it; nothing to retire
-			}
-			if err := e.deps.Store.Enqueue(ctx, store.QueueItem{
-				CatalogID: entry.CatalogID, IndexURL: ref.IndexURL, ToVersion: cursor, Op: "retire",
-			}); err != nil {
-				e.storeUnhealthy(runID, "enqueue", entry.CatalogID, err)
-				continue
-			}
-			enqueued++
-			e.logCatalogRetireEnqueued(runID, entry.CatalogID)
-		case catalog.ActionRollback:
-			e.logIndexRollback(runID, entry.CatalogID, cursor, d.ToVersion)
-		case catalog.ActionSkipUnchanged:
-			// nothing to do
 		}
 	}
 	return enqueued
+}
+
+// decideCatalog decides what to do with ONE catalog in an advanced index and
+// acts on it: scope it, read its cursor, detect the change, then route — enqueue
+// a sync (if in this crawler's networks), enqueue a retire (if we ever had it),
+// flag a rollback, or skip. It reports whether it enqueued work.
+func (e *Engine) decideCatalog(ctx context.Context, ref source.IndexRef, entry catalog.CatalogEntry, runID string) bool {
+	take, _ := catalog.ResolveScope(entry, e.cfg.Networks)
+	cursor, seen, err := e.deps.Store.GetCatalogVersion(ctx, entry.CatalogID)
+	if err != nil {
+		e.storeUnhealthy(runID, "read_cursor", entry.CatalogID, err)
+		return false
+	}
+	d := catalog.DetectChange(entry, cursor, seen)
+	e.logCatalogDecided(runID, entry.CatalogID, string(d.Action), cursor, d.ToVersion)
+	switch d.Action {
+	case catalog.ActionSync:
+		if !take {
+			return false // not for this crawler's networks
+		}
+		if err := e.deps.Store.Enqueue(ctx, store.QueueItem{
+			CatalogID: entry.CatalogID, IndexURL: ref.IndexURL,
+			FromVersion: cursor, ToVersion: d.ToVersion, Op: "sync",
+		}); err != nil {
+			e.storeUnhealthy(runID, "enqueue", entry.CatalogID, err)
+			return false
+		}
+		e.logCatalogEnqueued(runID, entry.CatalogID, d.ToVersion)
+		return true
+	case catalog.ActionRetire:
+		if !seen {
+			return false // never had it; nothing to retire
+		}
+		if err := e.deps.Store.Enqueue(ctx, store.QueueItem{
+			CatalogID: entry.CatalogID, IndexURL: ref.IndexURL, ToVersion: cursor, Op: "retire",
+		}); err != nil {
+			e.storeUnhealthy(runID, "enqueue", entry.CatalogID, err)
+			return false
+		}
+		e.logCatalogRetireEnqueued(runID, entry.CatalogID)
+		return true
+	case catalog.ActionRollback:
+		e.logIndexRollback(runID, entry.CatalogID, cursor, d.ToVersion)
+	case catalog.ActionSkipUnchanged:
+		// nothing to do
+	}
+	return false
 }
 
 func (e *Engine) nextIndexCrawl() time.Time {
