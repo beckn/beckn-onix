@@ -1,5 +1,9 @@
 package store
 
+// indexstate.go — per-index state: the change gate + crawl cadence, the
+// conditional-GET validators (ETag / Last-Modified), and the 304-Not-Modified
+// path (AdvanceIndexCadence) that bumps only the cadence.
+
 import (
 	"context"
 	"database/sql"

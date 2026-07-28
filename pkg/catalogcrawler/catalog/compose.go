@@ -1,5 +1,11 @@
 package catalog
 
+// compose.go — baseline + change-file composition: folds a catalog to its
+// content at a target version, records what changed since the cursor
+// (Changeset), and builds MERGE delta / filtered payloads. The only file in
+// this package that fetches bytes (via an injected FetchFunc); the fold logic
+// itself stays pure.
+
 import (
 	"encoding/json"
 	"fmt"

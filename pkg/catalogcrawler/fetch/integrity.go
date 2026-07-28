@@ -1,5 +1,8 @@
 package fetch
 
+// integrity.go — the digest check: compares a fetched artifact's SHA-256 to the
+// index-declared "sha-256:<hex>" digest, the only integrity gate in Phase 1.
+
 import (
 	"crypto/sha256"
 	"encoding/hex"

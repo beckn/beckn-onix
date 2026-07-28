@@ -1,5 +1,9 @@
 package fetch
 
+// client_test.go — covers the retrieval client end-to-end against httptest
+// servers: index/file fetch, gzip decode, digest-mismatch rejection,
+// conditional-GET (200-then-304) round-trips, and the SSRF guard.
+
 import (
 	"bytes"
 	"compress/gzip"

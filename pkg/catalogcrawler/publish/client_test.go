@@ -1,5 +1,8 @@
 package publish
 
+// client_test.go — exercises the /push transport against an httptest server:
+// a 200 is an ack, a non-200 is a non-ack carrying the response body as reason.
+
 import (
 	"context"
 	"net/http"

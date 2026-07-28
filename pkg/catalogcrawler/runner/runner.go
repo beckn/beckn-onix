@@ -1,5 +1,10 @@
 package runner
 
+// runner.go — the Engine type and its process supervisor: New (defaults), Start
+// / Stop (launch + drain the two scheduled jobs), CrawlNow (the on-demand /crawl
+// trigger), the ticker loop, and the correlation-id minter. The per-pass logic
+// lives in indexpass.go / syncpass.go; the log vocabulary in telemetry.go.
+
 import (
 	"context"
 	"fmt"
@@ -93,7 +98,9 @@ func (e *Engine) CrawlNow(_ context.Context, indexURL string) error {
 
 	go func() {
 		defer e.wg.Done()
-		e.crawlIndex(ctx, source.IndexRef{IndexURL: indexURL, Source: source.KindOnDemand}, onDemand)
+		// An on-demand crawl is its own single-index run; mint a run_id so its
+		// log lines correlate just like a scheduled pass.
+		e.crawlIndex(ctx, source.IndexRef{IndexURL: indexURL, Source: source.KindOnDemand}, onDemand, e.newID())
 	}()
 	return nil
 }

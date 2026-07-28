@@ -1,5 +1,9 @@
 package publish
 
+// publish_test.go — covers push-body assembly (BuildPushBody context/message
+// shape, visibleTo omission), byte-size batching (BatchCatalog), and outcome
+// rollup (Rollup) for the publish package.
+
 import (
 	"encoding/json"
 	"reflect"
@@ -65,8 +69,8 @@ func TestBuildPushBody(t *testing.T) {
 		t.Fatalf("unmarshal push body: %v", err)
 	}
 
-	if got.Context.Action != "catalog/publish" {
-		t.Errorf("action = %q, want catalog/publish", got.Context.Action)
+	if got.Context.Action != "catalog/push" {
+		t.Errorf("action = %q, want catalog/push", got.Context.Action)
 	}
 	if got.Context.BppID != meta.ParticipantID {
 		t.Errorf("bppId = %q, want %q", got.Context.BppID, meta.ParticipantID)

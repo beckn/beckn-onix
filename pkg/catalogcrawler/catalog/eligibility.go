@@ -1,5 +1,8 @@
 package catalog
 
+// eligibility.go — network-scope eligibility: decides whether the crawler
+// should carry a catalog and the visibleTo network set handed to Discovery.
+
 // Select decides whether the crawler should carry this catalog and, if so, the
 // visibleTo network set to hand to Discovery.
 //

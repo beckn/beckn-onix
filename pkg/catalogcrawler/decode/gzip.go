@@ -1,5 +1,9 @@
 package decode
 
+// gzip.go — the gzip codec: opens a gzip reader over verified bytes (a bad
+// header is a permanent error). The shared Decode wrapper, not this decoder,
+// enforces the decompressed-size cap.
+
 import (
 	"bytes"
 	"compress/gzip"

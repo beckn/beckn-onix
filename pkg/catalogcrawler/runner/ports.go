@@ -31,8 +31,10 @@ type Validator func(ctx context.Context, pushBody []byte) error
 type Pusher func(ctx context.Context, body []byte) (publish.BatchOutcome, error)
 
 // Logger is the minimal structured-log sink the runner needs. It is injected
-// (no process-global logger), so an onix plugin passes its own.
+// (no process-global logger), so an onix plugin passes its own. Debug carries
+// the interior/success/trace vocabulary (§9b) — off by default at INFO.
 type Logger interface {
+	Debug(event string, kv ...any)
 	Info(event string, kv ...any)
 	Warn(event string, kv ...any)
 	Error(event string, kv ...any)
@@ -41,6 +43,7 @@ type Logger interface {
 // NopLogger discards all events (handy default / for tests).
 type NopLogger struct{}
 
+func (NopLogger) Debug(string, ...any) {}
 func (NopLogger) Info(string, ...any)  {}
 func (NopLogger) Warn(string, ...any)  {}
 func (NopLogger) Error(string, ...any) {}

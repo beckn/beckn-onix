@@ -1,5 +1,8 @@
 package source
 
+// source_test.go — covers both Source implementations: the config source maps a
+// fixed URL list, and the registry source dedups providers by index URL.
+
 import (
 	"context"
 	"testing"

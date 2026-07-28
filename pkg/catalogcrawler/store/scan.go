@@ -1,5 +1,8 @@
 package store
 
+// scan.go — small helpers that map Go zero values to SQL NULL so the
+// insert/upsert statements store NULL instead of empty strings / zeroes.
+
 import "time"
 
 // null helpers: map Go zero values to SQL NULL.

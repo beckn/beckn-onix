@@ -1,5 +1,10 @@
 package store
 
+// state_test.go — Postgres-backed tests for index/catalog state plus the shared
+// test harness (schema-scoped DSN, migrate + truncate): index upsert and the
+// 304 cadence-only advance, the capped pass-report history, partial-failure
+// recording, and cursor behavior. Skips when CRAWLER_TEST_DB_DSN is unset.
+
 import (
 	"context"
 	"os"

@@ -48,6 +48,15 @@ func TestSyncPhaseTransitions(t *testing.T) {
 	if ValidSyncPhase(SyncPublishing, SyncResolving) {
 		t.Error("a Catalog Sync must not run backwards")
 	}
+	// validating (§9a) is not implemented yet, so the live sync skips it:
+	// verifying → scoping must be a legal shortcut while validating stays
+	// reachable (verifying → validating) for when §9a lands.
+	if !ValidSyncPhase(SyncVerifying, SyncScoping) {
+		t.Error("verifying -> scoping must be legal while validating (§9a) is unimplemented")
+	}
+	if !ValidSyncPhase(SyncVerifying, SyncValidating) {
+		t.Error("verifying -> validating must stay reachable for §9a")
+	}
 }
 
 // Any running sub-state may fault; scoping may drop; publishing settles as

@@ -1,5 +1,10 @@
 package store
 
+// queue_test.go — Postgres-backed tests for the work queue: coalescing by
+// catalog_id, one-claim-per-ready-row, fail/backoff + wrong-claim-token no-ops,
+// park + version-bump recovery, Complete, superseded-version handling, and
+// stale-lease reclaim. Skips when CRAWLER_TEST_DB_DSN is unset.
+
 import (
 	"context"
 	"testing"

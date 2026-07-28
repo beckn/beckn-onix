@@ -1,5 +1,9 @@
 package catalog
 
+// fault.go — fault taxonomy: PermanentError, the FaultClass enum whose
+// Permanent() drives the park-vs-retry decision, and ClassifyFault which maps
+// an HTTP status + error onto that vocabulary.
+
 import (
 	"errors"
 	"fmt"
@@ -63,8 +67,15 @@ func (f FaultClass) Permanent() bool {
 // ClassifyFault maps an HTTP status + error into a FaultClass, reproducing the
 // crawler's park-vs-retry rule: a 4xx push rejection or any PermanentError is
 // permanent; everything else is transient.
+//
+// Exception: 408 (Request Timeout), 425 (Too Early) and 429 (Too Many Requests)
+// are 4xx statuses the server itself says to retry — parking them permanently
+// would strand a catalog on a transient rate-limit/timeout. They classify as
+// transient so the backoff/retry path handles them.
 func ClassifyFault(httpStatus int, err error) FaultClass {
 	switch {
+	case httpStatus == 408 || httpStatus == 425 || httpStatus == 429:
+		return FaultTransient
 	case httpStatus >= 400 && httpStatus < 500:
 		return FaultPushRejected
 	case IsPermanent(err):

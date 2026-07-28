@@ -30,13 +30,19 @@ func (p SyncPhase) String() string { return string(p) }
 
 // syncPhaseTransitions declares the happy-path progression of a Catalog Sync:
 //
-//	started → resolving → verifying → validating → scoping → publishing → SyncOutcome
+//	started → resolving → verifying → [validating] → scoping → publishing → SyncOutcome
 //
 // "started" is the sync's birth (entry at resolving); the terminal SyncOutcome
 // leaves the SyncPhase space (see syncPhaseOutcomes).
+//
+// validating (inbound content-validation, §9a) is not implemented yet, so the
+// runner skips straight from verifying → scoping. The transition table keeps
+// validating REACHABLE (verifying may still go there) so re-enabling §9a needs
+// no vocabulary change — but the live sync only emits phases backed by a real
+// step, so verifying → scoping is the path taken today.
 var syncPhaseTransitions = map[SyncPhase][]SyncPhase{
 	SyncResolving:  {SyncVerifying},
-	SyncVerifying:  {SyncValidating},
+	SyncVerifying:  {SyncValidating, SyncScoping},
 	SyncValidating: {SyncScoping},
 	SyncScoping:    {SyncPublishing},
 	SyncPublishing: {},

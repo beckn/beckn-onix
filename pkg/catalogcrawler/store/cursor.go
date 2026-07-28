@@ -1,5 +1,10 @@
 package store
 
+// cursor.go — the per-catalog version cursor and pass-report history:
+// GetCatalogVersion, the append-and-trim push_status upsert (upsertCatalog,
+// shared with Complete's transaction), RecordFailure (which deliberately never
+// advances the cursor), and report readback.
+
 import (
 	"context"
 	"database/sql"

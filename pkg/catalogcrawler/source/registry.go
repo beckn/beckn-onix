@@ -1,5 +1,9 @@
 package source
 
+// registry.go — the registry-backed Source: resolves index refs by asking a
+// RegistryClient for the providers of each configured networkId, deduped by
+// index URL so a provider in multiple networks is crawled once.
+
 import (
 	"context"
 	"fmt"

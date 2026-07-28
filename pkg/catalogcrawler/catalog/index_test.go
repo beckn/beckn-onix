@@ -1,5 +1,8 @@
 package catalog
 
+// index_test.go — tests that the index model parses the spec-example index and
+// that LatestVersion / IsPublic / Select / Decide behave correctly on it.
+
 import (
 	"encoding/json"
 	"testing"

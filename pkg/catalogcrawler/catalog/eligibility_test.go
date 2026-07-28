@@ -1,5 +1,8 @@
 package catalog
 
+// eligibility_test.go — tests for Select (network-scope eligibility): public,
+// matching, and non-matching network cases.
+
 import (
 	"reflect"
 	"testing"

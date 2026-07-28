@@ -1,5 +1,9 @@
 package config
 
+// settings_test.go — verifies LoadSettings: required-field validation
+// (DSN, push endpoint, at-least-one-source), CSV splitting/trimming, env
+// overrides, and that defaults are applied when env vars are absent.
+
 import (
 	"testing"
 	"time"

@@ -26,7 +26,10 @@ func main() {
 
 	s, err := config.LoadSettings(os.Getenv)
 	if err != nil {
-		logger.Error("crawler.config.failed", "err", err)
+		// crawler.New owns the rest of the daemon lifecycle; config load happens
+		// before it, so this is the one start_failed the driver still emits.
+		logger.Error("crawler.daemon.start_failed",
+			"lifecycle", "daemon", "state", "start_failed", "stage", "config", "error", err.Error())
 		os.Exit(1)
 	}
 
@@ -38,23 +41,23 @@ func main() {
 		metrics = runner.NopMetrics{}
 	}
 
+	// New logs crawler.daemon.ready on success / crawler.daemon.start_failed on
+	// db open/migrate failure, so the driver just exits on error.
 	eng, closer, err := crawler.New(ctx, s, crawler.Options{
 		Logger:  crawler.NewSlogLogger(logger),
 		Metrics: metrics,
 		NewID:   func() string { return uuid.NewString() },
 	})
 	if err != nil {
-		logger.Error("crawler.init_failed", "err", err)
 		os.Exit(1)
 	}
-	defer closer() //nolint:errcheck // best-effort stop + db close on shutdown
+	defer closer() //nolint:errcheck // best-effort stop + db close on shutdown (logs daemon.stopping/stopped)
 
 	if err := eng.Start(ctx); err != nil {
-		logger.Error("crawler.start_failed", "err", err)
+		logger.Error("crawler.daemon.start_failed",
+			"lifecycle", "daemon", "state", "start_failed", "stage", "start", "error", err.Error())
 		os.Exit(1)
 	}
-	logger.Info("crawler.started", "indexUrls", len(s.IndexURLs), "networks", s.NetworkIDs)
 
 	<-ctx.Done()
-	logger.Info("crawler.stopping")
 }
