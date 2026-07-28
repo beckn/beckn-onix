@@ -215,7 +215,7 @@ modules:
             extendedSchema_cacheTTL: "86400"
             extendedSchema_maxCacheSize: "100"
         crawler:
-          id: catalogcrawler
+          id: crawler
           config:
             # DB DSN + push endpoint come from env (secrets / deploy-specific):
             #   CRAWLER_DB_DSN=postgres://user:pass@host:5432/db?sslmode=disable

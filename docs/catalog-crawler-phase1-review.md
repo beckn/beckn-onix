@@ -28,7 +28,7 @@ Plus **lower-severity / by-design** notes and **what's correct** at the end.
 
 ## 1. Coalescing `Enqueue` races the claim lifecycle → lost update / double-push  — **High**
 
-**Where:** `pkg/catalogcrawler/state/queue.go:34-57` (`Enqueue`), `:61-84` (`ClaimNext`), `:102-115` (`Complete`); driven from `engine.go` (`indexPass` and `catalogPass` run as **two separate goroutines**, plus `CrawlNow`).
+**Where:** `pkg/crawler/state/queue.go:34-57` (`Enqueue`), `:61-84` (`ClaimNext`), `:102-115` (`Complete`); driven from `engine.go` (`indexPass` and `catalogPass` run as **two separate goroutines**, plus `CrawlNow`).
 
 **Root cause:** the queue holds **one row per catalog** (`UNIQUE(catalog_id)`) and a claim carries **no lease token**. `Enqueue`'s `ON CONFLICT (catalog_id) DO UPDATE` resets `status='queued', attempts=0, claimed_at=NULL` on whatever row exists — *including a row a worker has already claimed and is actively processing*. `Complete`/`FailQueueItem` then settle by `id`, and the `id` is unchanged by the upsert.
 
@@ -44,7 +44,7 @@ This is reachable **without** `/crawl` because the index and catalog jobs are in
 
 ## 2. Give-up advances the version cursor → silent permanent data loss  — **High**
 
-**Where:** `pkg/catalogcrawler/engine.go:308-324` (`failItem` give-up branch) → `state/state.go:136` (`upsertCatalog` sets `version = EXCLUDED.version`).
+**Where:** `pkg/crawler/engine.go:308-324` (`failItem` give-up branch) → `state/state.go:136` (`upsertCatalog` sets `version = EXCLUDED.version`).
 
 After `MaxAttempts`, `failItem` calls `Store.Complete(..., CatalogState{Version: item.ToVersion, Status:"active", PushStatus:"failed"})`. That writes `crawler_catalog.version = ToVersion` **even though the push never succeeded**. On the next index pass, `GetCatalogVersion` returns that cursor, `Decide` sees `latest <= cursor` → `ActionSkipUnchanged`, and the catalog is **never re-enqueued** until the publisher advances the version beyond it.
 
@@ -56,7 +56,7 @@ The code comment frames this as intentional ("advancing the cursor so it isn't r
 
 ## 3. Orphaned claim — no lease/reaper → in-flight work stranded on crash  — **High**
 
-**Where:** `pkg/catalogcrawler/state/queue.go:61-84` (`ClaimNext`).
+**Where:** `pkg/crawler/state/queue.go:61-84` (`ClaimNext`).
 
 `ClaimNext` sets `claimed_at=now(), status='in_progress'`. Nothing ever resets `claimed_at` except a normal `FailQueueItem`/`Complete` or a coalescing `Enqueue`. If the process is killed, panics inside `processItem`, or the context is cancelled between claim and settle, the row stays `in_progress` with a non-NULL `claimed_at` forever. `ClaimNext`'s `WHERE claimed_at IS NULL` will never select it again, and the partial index in `0001_init.sql` (ready rows) excludes it too.
 
@@ -68,7 +68,7 @@ The code comment frames this as intentional ("advancing the cursor so it isn't r
 
 ## 4. `CrawlNow` runs detached → DB use-after-close on shutdown  — **High**
 
-**Where:** `core/module/handler/crawlHandler.go:78` (`go h.crawler.CrawlNow(context.Background(), ...)`) + `engine.go:105-108` (`CrawlNow` not tracked by `e.wg`, uses the caller's ctx) + `catalogcrawler.go:91-97` (closer does `eng.Stop()` then `db.Close()`).
+**Where:** `core/module/handler/crawlHandler.go:78` (`go h.crawler.CrawlNow(context.Background(), ...)`) + `engine.go:105-108` (`CrawlNow` not tracked by `e.wg`, uses the caller's ctx) + `crawler.go:91-97` (closer does `eng.Stop()` then `db.Close()`).
 
 The `/crawl` handler launches `CrawlNow` in a **detached goroutine on `context.Background()`**. `CrawlNow` is *not* registered in `e.wg` (only the two `loop` goroutines are — `engine.go:112`), and because it uses `context.Background()`, `Stop()`'s `e.stop()` cancel doesn't reach it either. On shutdown, the plugin closer runs `eng.Stop()` (waits only for the two loops) then `db.Close()`. An in-flight `CrawlNow` keeps issuing `GetIndex`/`Enqueue`/`UpsertIndex` against a **closed `*sql.DB`** → `sql: database is closed`.
 
@@ -80,7 +80,7 @@ Secondary: the detached goroutine means `/crawl` errors surface only in logs, ne
 
 ## 5. A `0` interval panics the process  — **Medium**
 
-**Where:** `pkg/catalogcrawler/engine.go:111-127` (`loop` → `time.NewTicker(interval)`); `config.go:75-80` (`durOr`).
+**Where:** `pkg/crawler/engine.go:111-127` (`loop` → `time.NewTicker(interval)`); `config.go:75-80` (`durOr`).
 
 `durOr` uses `time.ParseDuration`, and `ParseDuration("0")` / `("0s")` returns `0, nil` — so a config value of `0` is accepted verbatim (the default only applies on a *parse error*). `New` clamps only `MaxAttempts`, never the intervals. `time.NewTicker(0)` panics with *"non-positive interval for NewTicker"* inside the `loop` goroutine, which has no `recover` → the whole crawler process/plugin host crashes.
 
@@ -92,7 +92,7 @@ Secondary: the detached goroutine means `/crawl` errors surface only in logs, ne
 
 ## 6. SSRF guard bypassed by redirects + DNS-rebinding TOCTOU  — **Medium**
 
-**Where:** `pkg/catalogcrawler/http.go:29-31` (`NewHTTPClient` builds `&http.Client{Timeout: timeout}` with **no `CheckRedirect`**), `:81-107` (`get` runs `checkPublicURL` only on the **original** URL).
+**Where:** `pkg/crawler/http.go:29-31` (`NewHTTPClient` builds `&http.Client{Timeout: timeout}` with **no `CheckRedirect`**), `:81-107` (`get` runs `checkPublicURL` only on the **original** URL).
 
 `checkPublicURL` (`:123-151`) resolves and rejects loopback/private/link-local hosts — but only for the URL passed in. The stdlib client then follows redirects with no per-hop re-check, and dials by re-resolving the hostname independently of the guard's `LookupIP`.
 
@@ -104,7 +104,7 @@ Secondary: the detached goroutine means `/crawl` errors surface only in logs, ne
 
 ## 7. Digest verification fails open on an empty digest  — **Medium**
 
-**Where:** `pkg/catalogcrawler/http.go:52` — `if f.Digest != "" && !digestMatches(b, f.Digest)`.
+**Where:** `pkg/crawler/http.go:52` — `if f.Digest != "" && !digestMatches(b, f.Digest)`.
 
 A missing/blank `digest` on a `FileEntry` is treated as success, so `FetchFile` returns unverified bytes. Since **signature verification is deferred to Phase 2** (the engine `Deps` has no verifier — `engine.go:51-61`), the digest is the *only* integrity check on fetched catalog content — and this makes it optional.
 
@@ -116,7 +116,7 @@ A missing/blank `digest` on a `FileEntry` is treated as success, so `FetchFile` 
 
 ## 8. No change-file continuity check (`fromVersion` ignored) → a gap composes a wrong catalog  — **Medium**
 
-**Where:** `pkg/catalogcrawler/resolve.go:18-41` (fold loop) + `pkg/catalogfile/catalogfile.go:44-92` (`ChangeFileDoc.FromVersion` is parsed at `:46` but **never used** by `Apply`).
+**Where:** `pkg/crawler/resolve.go:18-41` (fold loop) + `pkg/catalogfile/catalogfile.go:44-92` (`ChangeFileDoc.FromVersion` is parsed at `:46` but **never used** by `Apply`).
 
 `Resolve` sorts changes by version and folds each whose version is in `(baseline, toVersion]`, skipping entries with an empty URL (`resolve.go:28`). It never verifies that each change's `fromVersion` equals the running composed version — i.e. that the change files are **contiguous**.
 
@@ -128,7 +128,7 @@ A missing/blank `digest` on a `FileEntry` is treated as success, so `FetchFile` 
 
 ## 9. `http.go` re-implements `pkg/security/artifactfetcher`  — **Medium** (reuse / security-drift)
 
-**Where:** `pkg/catalogcrawler/http.go` (whole file) vs `pkg/security/artifactfetcher/artifactfetcher.go` — **both added in this PR**, neither used by the other.
+**Where:** `pkg/crawler/http.go` (whole file) vs `pkg/security/artifactfetcher/artifactfetcher.go` — **both added in this PR**, neither used by the other.
 
 Both do size-capped GET + SHA-256 digest + SSRF host-guard. They have **already diverged**: `http.go:checkPublicURL` DNS-resolves the host and checks every IP, while `artifactfetcher.rejectPrivateHost` only inspects literal IPs and admits DNS-based SSRF isn't implemented. Two copies of security-critical fetch logic means a fix or CVE to one leaves the other exposed.
 
@@ -151,8 +151,8 @@ This violates the method's **own doc-comment rule** (`:71-72`):
 
 ## Lower-severity / by-design notes
 
-- **Eager engine start at module registration** (`catalogcrawler.go:33-89`): the engine is built + `Start`ed inside plugin `New`, and `LoadSettings` hard-requires `CRAWLER_DB_DSN`/`CRAWLER_PUSH_ENDPOINT` (env-only). A crawler misconfig (missing env, wrong DSN) makes `New` error → `NewCrawlHandler` error → **the whole BAP adapter fails to register**, taking down the unrelated `bapTxnReceiver`/`bapTxnCaller` modules with it. Consider degrading `/crawl` alone instead of aborting startup.
-- **Validator invoked via a fabricated `url.URL{Path: action}`** (`catalogcrawler.go:57`): the crawler has no request URL, so it synthesizes one purely to satisfy `schemav2validator`'s path-keyed dispatch. Fragile coupling to that validator's path-parsing; a schema-name-keyed validation entry point would be the proper altitude.
+- **Eager engine start at module registration** (`crawler.go:33-89`): the engine is built + `Start`ed inside plugin `New`, and `LoadSettings` hard-requires `CRAWLER_DB_DSN`/`CRAWLER_PUSH_ENDPOINT` (env-only). A crawler misconfig (missing env, wrong DSN) makes `New` error → `NewCrawlHandler` error → **the whole BAP adapter fails to register**, taking down the unrelated `bapTxnReceiver`/`bapTxnCaller` modules with it. Consider degrading `/crawl` alone instead of aborting startup.
+- **Validator invoked via a fabricated `url.URL{Path: action}`** (`crawler.go:57`): the crawler has no request URL, so it synthesizes one purely to satisfy `schemav2validator`'s path-keyed dispatch. Fragile coupling to that validator's path-parsing; a schema-name-keyed validation entry point would be the proper altitude.
 - **Redundant per-item index re-fetch** (`engine.go:249`): `processItem` re-`FetchIndex`es (and linearly `findCatalog`-scans) the full index for every claimed catalog, on top of the fetch the index job already did. N changed catalogs ⇒ N extra full-index downloads/parses per cycle. Carry the `CatalogEntry` (or file URLs) on the queue item, or cache the index per pass.
 - **O(history) resolve** (`resolve.go:18`): every sync re-fetches baseline + all change files and re-folds them, even for a single-version bump. Documented as intentional Phase-1 ("no composed state locally"), but cost grows with catalog age — worth revisiting when caching lands.
 - **Sequential index crawl and single-row serial queue drain** (`engine.go:133`, `queue.go:61`): independent publisher fetches run in a plain loop and the queue drains one row at a time; one slow/hung publisher stalls the whole pass. `FOR UPDATE SKIP LOCKED` was chosen to enable concurrency that isn't yet used. Add per-item timeouts and a bounded worker pool.

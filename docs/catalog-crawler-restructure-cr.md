@@ -1,11 +1,11 @@
-# Change Request: Restructure `pkg/catalogcrawler` + Observability Foundation
+# Change Request: Restructure `pkg/crawler` + Observability Foundation
 
 | | |
 | :--- | :--- |
 | **CR ID** | CC-RESTRUCTURE-001 |
 | **Status** | Proposed |
 | **Type** | **PR-A**: structural refactor (behavior-preserving) · **PR-B**: observability foundation (real change) |
-| **Component** | `pkg/catalogcrawler` (+ `pkg/plugin/implementation/catalogcrawler`, `cmd/catalog-crawler`) |
+| **Component** | `pkg/crawler` (+ `pkg/plugin/implementation/crawler`, `cmd/crawler`) |
 | **Author** | — |
 | **Reviewers** | — |
 | **Related** | `docs/catalog-crawler-phase1-review.md`, `docs/catalog-crawler-gzip-support-review.md`, ION reference ("Decentralized Catalog: Example (ION)") |
@@ -22,7 +22,7 @@ This design is the synthesis of a three-lens architecture review (§3). It unblo
 
 The package is a single flat namespace that is hard to navigate, debug, and extend:
 
-- **24 `.go` files, ~2,783 lines, one `package catalogcrawler`, 115 exported symbols.**
+- **24 `.go` files, ~2,783 lines, one `package crawler`, 115 exported symbols.**
 - **`engine.go` is 576 lines** and does three jobs (lifecycle + index pass + catalog pass) plus push helpers and a string-splitting error classifier (`reasonCategory`, `engine.go:562`). Every named failure mode — claim/lease races, push nacks, decode bombs, SSRF — surfaces inside two God-functions (`crawlIndex`, `processItem`), so triage means grepping one giant file.
 - Pure rules (`change`, `select`, `resolve`) already import nothing internal, but sit beside I/O (`http`, `push`, `source`), config, codec, and orchestration, with **no expressed dependency direction**.
 - Names describe *mechanism* (`http`), *layer* (`model`), or are vague (`engine`, `state`, `select`).
@@ -120,8 +120,8 @@ After the rename the flow reads correctly: `routeFailure` sends a fault to eithe
 ## 6. Target structure (~6–7 packages)
 
 ```
-pkg/catalogcrawler/
-├── catalogcrawler.go        # composition root — New(Config, Deps); only file naming every concrete type
+pkg/crawler/
+├── crawler.go        # composition root — New(Config, Deps); only file naming every concrete type
 
 ├── catalog/                 # pure domain — imports nothing internal (importing telemetry/ is FORBIDDEN)
 │   ├── index.go             #   Index, Entry, FileRef                         (was model.go)
@@ -313,7 +313,7 @@ started → resolving → verifying → validating → scoping → publishing �
 - `runner/` **defines the interfaces it consumes** (`Fetcher`, `Pusher`, `Source`, `Validator`, `Membership`, `Verifier`) next to its constructor; it imports no concrete adapter.
 - Adapters (`fetch`,`decode`,`publish`,`source`,`store`) import `catalog/` + `telemetry/` and **structurally satisfy** the runner's ports; they never import `runner/`.
 - `telemetry/` and `config/` are leaves.
-- `catalogcrawler.go` is the **only** composition root that names concrete types.
+- `crawler.go` is the **only** composition root that names concrete types.
 
 Enforcement: document these in `doc.go` now. Add `depguard` **only if/when** the graph grows enough to actually drift — with two rules the compiler can't give for free: `catalog → telemetry` forbidden, and (later) `source/registry` as the sole importer of raw registry wire types (the anti-corruption boundary).
 
@@ -332,7 +332,7 @@ Enforcement: document these in `doc.go` now. Add `depguard` **only if/when** the
 
 ClickStack is OpenTelemetry-native (OTel collector → ClickHouse → HyperDX). Design:
 
-- **`telemetry/` = plumbing only:** OTel meter/tracer/provider construction (today inline at `catalogcrawler.go:65`) and the correlation types. **Telemetry *names* live co-located** with the code they describe (`fetch/telemetry.go`, `publish/telemetry.go`, …) so on-call opens the failing adapter and finds its metrics/spans/events together — not a central `telemetry/events.go` junk drawer.
+- **`telemetry/` = plumbing only:** OTel meter/tracer/provider construction (today inline at `crawler.go:65`) and the correlation types. **Telemetry *names* live co-located** with the code they describe (`fetch/telemetry.go`, `publish/telemetry.go`, …) so on-call opens the failing adapter and finds its metrics/spans/events together — not a central `telemetry/events.go` junk drawer.
 - **Typed `FaultClass` taxonomy** in `catalog/fault.go` (`ssrf`, `too_large`, `digest_mismatch`, `unsupported_encoding`, `decode`, `content_invalid`, `push_schema`, `push_rejected`, `push_transient`, `index_fetch`, `absent`). Adapters return typed faults; the runner switches on the class. **One source of truth** feeding: the metric `outcome=` label, the log `event` key, and the retire/retry decision — replacing the fragile `reasonCategory` string-split (`engine.go:562`). Note the two distinct schema faults: `content_invalid` (fetched file data fails its `schemaTypes` — §9a) vs `push_schema` (the outbound push body fails `catalog/push`); both are **permanent** (don't advance the cursor; alert).
 - **Correlation:** a `RunID` (per pass tick) and `PassID` (per catalog item) minted in `runner/`, carried in `context.Context`, stamped on spans, attached to every log line (`LoggerFrom(ctx)`), and used as histogram exemplars. This is what makes the HyperDX "failed span → its logs → the metric spike" pivot work; it does not exist today (`Log` calls take loose `kv` with no id).
 
@@ -498,14 +498,14 @@ A Catalog Sync's `started` and its running sub-states (`resolving`/`verifying`/`
 2. `store/` — rename `state/`, split by aggregate (`cursor.go`, `indexstate.go`), **keep one package** (tx sharing).
 3. Adapters — `fetch/` (split guard/integrity/conditional), `decode/`, `publish/`, `source/`.
 4. `runner/` — carve `engine.go` into `runner`/`indexpass`/`syncpass`/`backoff`/`ports`; move push helpers here.
-5. `config/`; thin `catalogcrawler.go` composition root; update the plugin + `cmd/catalog-crawler` imports (highest blast radius — last).
+5. `config/`; thin `crawler.go` composition root; update the plugin + `cmd/crawler` imports (highest blast radius — last).
 
 **Verification for PR-A (make zero-drift mechanical, not aspirational):** `go build ./... && go vet ./... && go test ./...`, and a gofmt-normalized `git diff` that shows **only** package clauses, import paths, and file moves. Anything else is a red flag.
 
 **PR-B — observability (a real change, reviewed as such):**
 6. `telemetry/` plumbing (OTel wiring + `RunID`/`PassID` correlation); `catalog/fault.go` taxonomy replacing `reasonCategory`; adapters return typed faults; co-located `*/telemetry.go` names; dual-emit metric migration; new instruments (`fetch.result`, `decode.*`, `queue.claim_reclaimed`, `queue.superseded`).
 
-**Honest caveat (from the pragmatic-Go review):** tests currently live in-package (`package catalogcrawler`, reaching unexported `filterCatalog`, `docCounts`, …). Moving code into subpackages **will** require moving those tests and, in places, exporting a symbol or switching to `_test` package — that is more than "import-path edits." Budget for it in PR-A; it does not change behavior, but it is not free.
+**Honest caveat (from the pragmatic-Go review):** tests currently live in-package (`package crawler`, reaching unexported `filterCatalog`, `docCounts`, …). Moving code into subpackages **will** require moving those tests and, in places, exporting a symbol or switching to `_test` package — that is more than "import-path edits." Budget for it in PR-A; it does not change behavior, but it is not free.
 
 ## 10a. Test-suite organization
 
@@ -524,7 +524,7 @@ Tests live **next to the code, per package** (Go convention). The restructure ma
 
 **White-box vs black-box:** default to **black-box** (`package foo_test`) to test each package through its public surface — this also validates that the public surface is sufficient. Use white-box (`package foo`) only where a test must reach an internal (mainly `catalog/` rules and `store/` helpers). Where a black-box test needs one internal, expose it via an `export_test.go` rather than widening the real API.
 
-**Migration caveat (repeated from §10):** current tests are in-package (`package catalogcrawler`) and reach unexported symbols (`filterCatalog`, `docCounts`, …). As their code moves to `catalog/`, `runner/`, etc., the tests move with it and some flip from white-box-in-flat-package to black-box-with-`export_test.go`. This is mechanical but **not** a zero-touch "import path only" change — budget it in PR-A.
+**Migration caveat (repeated from §10):** current tests are in-package (`package crawler`) and reach unexported symbols (`filterCatalog`, `docCounts`, …). As their code moves to `catalog/`, `runner/`, etc., the tests move with it and some flip from white-box-in-flat-package to black-box-with-`export_test.go`. This is mechanical but **not** a zero-touch "import path only" change — budget it in PR-A.
 
 ## 11. Risks & mitigations
 
@@ -546,7 +546,7 @@ Tests live **next to the code, per package** (Go convention). The restructure ma
 - [ ] Public surface reduced to constructor + `Config` + ports + boundary types.
 - [ ] **File cohesion (§6a):** every file contains only symbols matching its name; no `helpers.go`/`util.go`/`misc.go`; the known violations are relocated (`Push`→`publish/client.go`, `PermanentError`→`catalog/fault.go`, `findCatalog`→`catalog/`, `docCounts`/`ackedCount`→`publish/`).
 - [ ] **Names (§5a):** the misleading `fail*` cluster renamed (`failItem`→`scheduleRetry`, `failPermanent`→`parkPermanently`, `fail`→`routeFailure`, `failReport`→`newFailureReport`, `FailQueueItem`→`RescheduleQueueItem`); `Source.IndexURLs`→`IndexRefs`; type names (`PartOutcome`→`BatchOutcome`, engine `Config`→`EngineConfig`, `IndexCond`→`IndexConditions`); `crawlIndex`'s `force bool` replaced by a named type.
-- [ ] Diff is moves + import/package/rename edits only; `build`/`vet`/`test` green; onix plugin + `cmd/catalog-crawler` behave identically.
+- [ ] Diff is moves + import/package/rename edits only; `build`/`vet`/`test` green; onix plugin + `cmd/crawler` behave identically.
 
 **PR-B**
 - [ ] `FaultClass` taxonomy in `catalog/`; `reasonCategory` removed; one source drives metric label + log event + retry decision.
