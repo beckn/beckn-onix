@@ -1,8 +1,8 @@
 package runner
 
-// indexpass.go — the index job: resolve every configured source, crawl each
+// crawl.go — the index job: resolve every configured source, crawl each
 // index, and (when the index version advanced) decide + enqueue per catalog.
-// An index crawl *feeds* the queue; the Catalog Sync (syncpass.go) drains it.
+// An index crawl *feeds* the queue; the Catalog Sync (sync.go) drains it.
 
 import (
 	"context"
@@ -120,13 +120,13 @@ func (e *Engine) crawlIndex(ctx context.Context, ref source.IndexRef, trig trigg
 func (e *Engine) decideCatalogs(ctx context.Context, ref source.IndexRef, idx catalog.Index, runID string) int {
 	enqueued := 0
 	for _, entry := range idx.Catalogs {
-		take, _ := catalog.Select(entry, e.cfg.Networks)
+		take, _ := catalog.ResolveScope(entry, e.cfg.Networks)
 		cursor, seen, err := e.deps.Store.GetCatalogVersion(ctx, entry.CatalogID)
 		if err != nil {
 			e.storeUnhealthy(runID, "read_cursor", entry.CatalogID, err)
 			continue
 		}
-		d := catalog.Decide(entry, cursor, seen)
+		d := catalog.DetectChange(entry, cursor, seen)
 		e.logCatalogDecided(runID, entry.CatalogID, string(d.Action), cursor, d.ToVersion)
 		switch d.Action {
 		case catalog.ActionSync:

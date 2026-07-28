@@ -1,6 +1,6 @@
 package catalog
 
-// eligibility_test.go — tests for Select (network-scope eligibility): public,
+// scope_test.go — tests for ResolveScope (network-scope resolution): public,
 // matching, and non-matching network cases.
 
 import (
@@ -25,7 +25,7 @@ func TestSelect(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := CatalogEntry{CatalogID: "p/c", Status: StatusActive, NetworkIDs: tt.networkIDs}
-			take, visible := Select(e, crawler)
+			take, visible := ResolveScope(e, crawler)
 			if take != tt.wantTake {
 				t.Fatalf("take = %v, want %v", take, tt.wantTake)
 			}

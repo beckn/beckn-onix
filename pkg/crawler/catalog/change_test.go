@@ -1,6 +1,6 @@
 package catalog
 
-// decide_test.go — tests for Decide (change detection): the sync / skip /
+// change_test.go — tests for DetectChange (change detection): the sync / skip /
 // retire / rollback decisions and placeholder-change (no-URL) handling.
 
 import "testing"
@@ -38,7 +38,7 @@ func TestDecide(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Decide(tt.entry, tt.cursor, tt.seen)
+			got := DetectChange(tt.entry, tt.cursor, tt.seen)
 			if got.Action != tt.want {
 				t.Fatalf("Action = %q, want %q", got.Action, tt.want)
 			}
