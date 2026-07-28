@@ -398,7 +398,8 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 			ParticipantID: res.Index.ParticipantID, BppURI: e.cfg.BppURI,
 			MessageID: e.newID(), TransactionID: e.newID(),
 			Timestamp:  e.deps.Now().UTC().Format(time.RFC3339),
-			UpdateMode: batch.UpdateMode, VisibleTo: visibleTo,
+			UpdateMode: batch.UpdateMode, CatalogType: entry.CatalogType,
+			VisibleTo: visibleTo,
 		}, batch.Doc)
 		if err != nil {
 			e.failPermanent(ctx, item, e.failReport(item, 0, "build_push: "+err.Error()))
