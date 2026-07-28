@@ -23,8 +23,8 @@ type Provider func(ctx context.Context, mgr handler.PluginManager, cfg *handler.
 
 // handlerProviders maintains a mapping of handler types to their respective providers.
 var handlerProviders = map[handler.Type]Provider{
-	handler.HandlerTypeStd:         handler.NewStdHandler,
-	handler.HandlerTypeCatalogPull: handler.NewCatalogPullHandler,
+	handler.HandlerTypeStd:   handler.NewStdHandler,
+	handler.HandlerTypeCrawl: handler.NewCrawlHandler,
 }
 
 // Register initializes and registers handlers based on the provided configuration.

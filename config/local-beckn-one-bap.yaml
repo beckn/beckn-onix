@@ -187,13 +187,17 @@ modules:
         - storePayload
         - validateAckSign
 
-  # catalog/pull: DS-internal trigger (see pkg/plugin/implementation/catalogcrawler/README.md).
-  # Unsigned, same-operator call -- no validateSign/addRoute/signAck; the
-  # handler itself calls Crawler.CrawlSubscriber and returns the result.
-  - name: catalogPull
-    path: /catalog/pull
+  # /crawl: DS-internal, unsigned on-demand trigger to re-crawl one provider's
+  # index now. The crawler's scheduled index + catalog jobs run in the
+  # background from plugin init: they resolve each catalog (baseline + change
+  # files), schema-validate the /push body, and push to Discovery with
+  # publishDirectives updateMode=FULL + visibleTo. Secrets + deploy-specific
+  # values come from env (CRAWLER_DB_DSN, CRAWLER_PUSH_ENDPOINT); non-secret
+  # config lives here. Env always overrides these keys.
+  - name: crawl
+    path: /crawl
     handler:
-      type: catalogPull
+      type: crawl
       role: bap
       httpClientConfig:
         maxIdleConns: 1000
@@ -201,35 +205,25 @@ modules:
         idleConnTimeout: 300s
         responseHeaderTimeout: 5s
       plugins:
-        # registry+cache exist only to satisfy keyManager's constructor
-        # (KeyManagerProvider.New always requires a RegistryLookup); the
-        # crawler itself never calls either -- it resolves the PN domain
-        # directly from the DS-supplied receiverId (no registry lookup).
-        registry:
-          id: dediregistry
+        # Phase-1 catalog schema validation before push (validates the
+        # /push body against the catalog/publish action).
+        schemaValidator:
+          id: schemav2validator
           config:
-            timeout: 10
-            retry_max: 3
-            retry_wait_min: 100ms
-            retry_wait_max: 500ms
-        cache:
-          id: cache
-          config:
-            addr: localhost:6379
-        keyManager:
-          id: simplekeymanager
-          config:
-            subscriberId: ds.local.dev
-            keyId: 76EU7LZ7gfqj13dWDKR1Uitnim11mCoxWBPdzLxUpAMBPVdANKgyFM
-            signingPrivateKey: TTQMAEy0xJcoRXRNofZAwZq1c3VH6j98UUaHP7budQQ=
-            signingPublicKey: g/3swjI93IhZ0SScrVZapeLjU+W0AeiSid3LViYZJFo=
-            encrPrivateKey: TTQMAEy0xJcoRXRNofZAwZq1c3VH6j98UUaHP7budQQ=
-            encrPublicKey: g/3swjI93IhZ0SScrVZapeLjU+W0AeiSid3LViYZJFo=
-        signer:
-          id: signer
+            cacheTTL: "3600"
+            extendedSchema_enabled: "true"
+            extendedSchema_cacheTTL: "86400"
+            extendedSchema_maxCacheSize: "100"
         crawler:
           id: catalogcrawler
           config:
-            maxArtifactSize: "10485760"
-            fetchTimeout: "15s"
-            retryMax: "2"
+            # DB DSN + push endpoint come from env (secrets / deploy-specific):
+            #   CRAWLER_DB_DSN=postgres://user:pass@host:5432/db?sslmode=disable
+            #   CRAWLER_PUSH_ENDPOINT=https://discovery.local/beckn/catalog/push
+            CRAWLER_INDEX_URLS: "https://cdn.publisher.example.com/beckn/catalog-index.json"
+            CRAWLER_NETWORK_IDS: ""
+            CRAWLER_INDEX_INTERVAL: "5m"
+            CRAWLER_CATALOG_INTERVAL: "30s"
+            CRAWLER_FETCH_TIMEOUT: "15s"
+            CRAWLER_MAX_ARTIFACT_BYTES: "10485760"
+            CRAWLER_MAX_ATTEMPTS: "5"

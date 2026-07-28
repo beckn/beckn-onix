@@ -515,12 +515,12 @@ func (m *Manager) KeyManager(ctx context.Context, rClient definition.RegistryLoo
 
 // Crawler returns a Crawler instance based on the provided configuration.
 // It reuses the loaded provider.
-func (m *Manager) Crawler(ctx context.Context, signer definition.Signer, km definition.KeyManager, cfg *Config) (definition.Crawler, error) {
+func (m *Manager) Crawler(ctx context.Context, validator definition.SchemaValidator, cfg *Config) (definition.Crawler, error) {
 	cp, err := provider[definition.CrawlerProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	c, closer, err := cp.New(ctx, signer, km, cfg.Config)
+	c, closer, err := cp.New(ctx, validator, cfg.Config)
 	if err != nil {
 		return nil, err
 	}

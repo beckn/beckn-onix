@@ -165,7 +165,7 @@ func (noopPluginManager) PayloadStore(_ context.Context, _ definition.Cache, _ s
 	return nil, nil
 }
 
-func (noopPluginManager) Crawler(_ context.Context, _ definition.Signer, _ definition.KeyManager, _ *plugin.Config) (definition.Crawler, error) {
+func (noopPluginManager) Crawler(_ context.Context, _ definition.SchemaValidator, _ *plugin.Config) (definition.Crawler, error) {
 	return nil, nil
 }
 
