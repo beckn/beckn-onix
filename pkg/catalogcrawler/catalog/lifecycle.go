@@ -1,0 +1,59 @@
+package catalog
+
+// This file is the single source of truth for the Catalog Sync's shared state
+// vocabulary (§6b). The subject of the lifecycle is a Catalog Sync — one
+// catalog moving one version jump — and these are the terminal + persisted
+// states that both the store (persists) and the runner (sets) speak. Each
+// enum's String() is the STABLE WIRE VALUE used for DB persistence and
+// log/metric rendering.
+//
+// The Catalog Sync's *running* sub-states (SyncPhase), the index crawl's
+// terminal (IndexOutcome), and the crawler process supervisor (DaemonState)
+// live in runner/lifecycle.go — they never reach a layer below the runner.
+
+// SyncOutcome is how a Catalog Sync ends — a NAMED terminal outcome, never a
+// bare "completed". Persisted in a catalog's push_status history.
+//
+//	pushed   landed in Discovery
+//	partial  some batches acked, some not (retried; cursor not advanced)
+//	skipped  nothing new to send
+//	dropped  not a member / out of approved scope (P2 — scope enforcement)
+//	retired  catalog tombstoned
+//	faulted  failed with a FaultClass explaining why (see fault.go)
+type SyncOutcome string
+
+const (
+	OutcomePushed  SyncOutcome = "pushed"
+	OutcomePartial SyncOutcome = "partial"
+	OutcomeSkipped SyncOutcome = "skipped"
+	OutcomeDropped SyncOutcome = "dropped"
+	OutcomeRetired SyncOutcome = "retired"
+	OutcomeFaulted SyncOutcome = "faulted"
+)
+
+func (o SyncOutcome) String() string { return string(o) }
+
+// CatalogStatus is a catalog's stored lifecycle status (crawler_catalog.status)
+// — lowercase, distinct from the index/ION wire status (StatusActive/Retired in
+// index.go).
+type CatalogStatus string
+
+const (
+	CatalogActive  CatalogStatus = "active"
+	CatalogRetired CatalogStatus = "retired"
+)
+
+func (c CatalogStatus) String() string { return string(c) }
+
+// DropReason says why an eligible-looking catalog was excluded from a sync
+// (membership / scope) — the *why* behind a `dropped` outcome. Reserved for
+// scope enforcement (P2): produced by eligibility, consumed by the runner.
+// Defined now; nothing produces it yet (no scope code).
+type DropReason string
+
+const (
+	DropNotAMember       DropReason = "not_a_member"
+	DropScopeNotApproved DropReason = "scope_not_approved"
+)
+
+func (d DropReason) String() string { return string(d) }

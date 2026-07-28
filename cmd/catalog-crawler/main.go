@@ -1,8 +1,8 @@
-// Command catalog-crawler runs the crawler engine as a standalone,
-// config-driven worker — the framework-agnostic "second driver" over the
-// same pkg/catalogcrawler module the onix plugin uses. All config comes
-// from CRAWLER_* env vars; nothing is hardcoded, and it never targets a
-// real cluster on its own.
+// Command catalog-crawler runs the crawler as a standalone, config-driven
+// worker — the framework-agnostic "second driver" over the same
+// pkg/catalogcrawler module the onix plugin uses. All config comes from
+// CRAWLER_* env vars; nothing is hardcoded, and it never targets a real
+// cluster on its own.
 package main
 
 import (
@@ -15,60 +15,39 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 
-	cc "github.com/beckn-one/beckn-onix/pkg/catalogcrawler"
-	"github.com/beckn-one/beckn-onix/pkg/catalogcrawler/state"
+	crawler "github.com/beckn-one/beckn-onix/pkg/catalogcrawler"
+	"github.com/beckn-one/beckn-onix/pkg/catalogcrawler/config"
+	"github.com/beckn-one/beckn-onix/pkg/catalogcrawler/runner"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
-	s, err := cc.LoadSettings(os.Getenv)
+	s, err := config.LoadSettings(os.Getenv)
 	if err != nil {
 		logger.Error("crawler.config.failed", "err", err)
 		os.Exit(1)
 	}
 
-	db, err := state.Open(s.DBDSN)
-	if err != nil {
-		logger.Error("crawler.db.open_failed", "err", err)
-		os.Exit(1)
-	}
-	defer db.Close()
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := state.Migrate(ctx, db); err != nil {
-		logger.Error("crawler.db.migrate_failed", "err", err)
-		os.Exit(1)
+	metrics, err := crawler.NewOTelMetrics(otel.Meter("catalogcrawler"))
+	if err != nil {
+		metrics = runner.NopMetrics{}
 	}
 
-	httpc := cc.NewHTTPClient(s.FetchTimeout, s.MaxArtifactBytes, s.MaxDecompressedBytes, false)
-	metrics, err := cc.NewOTelMetrics(otel.Meter("catalogcrawler"))
-	if err != nil {
-		metrics = cc.NopMetrics{}
-	}
-	eng := cc.New(cc.Config{
-		Networks:        s.NetworkIDs,
-		BppURI:          s.BppURI,
-		IndexInterval:   s.IndexInterval,
-		CatalogInterval: s.CatalogInterval,
-		MaxAttempts:     s.MaxAttempts,
-		MaxPushBytes:    s.MaxPushBytes,
-		MergeOnly:       s.MergeOnly,
-	}, cc.Deps{
-		Store:      state.New(db),
-		Source:     cc.NewConfigSource(s.IndexURLs),
-		FetchIndex: httpc.FetchIndex,
-		FetchFile:  httpc.FetchFile,
-		Push: func(ctx context.Context, body []byte) (cc.PartOutcome, error) {
-			return httpc.Push(ctx, s.PushEndpoint, body)
-		},
-		Log:     cc.NewSlogLogger(logger),
+	eng, closer, err := crawler.New(ctx, s, crawler.Options{
+		Logger:  crawler.NewSlogLogger(logger),
 		Metrics: metrics,
 		NewID:   func() string { return uuid.NewString() },
 	})
+	if err != nil {
+		logger.Error("crawler.init_failed", "err", err)
+		os.Exit(1)
+	}
+	defer closer() //nolint:errcheck // best-effort stop + db close on shutdown
 
 	if err := eng.Start(ctx); err != nil {
 		logger.Error("crawler.start_failed", "err", err)
@@ -78,6 +57,4 @@ func main() {
 
 	<-ctx.Done()
 	logger.Info("crawler.stopping")
-	eng.Stop()
-	logger.Info("crawler.stopped")
 }
