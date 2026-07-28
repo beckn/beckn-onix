@@ -50,21 +50,28 @@ func NewHTTPClient(timeout time.Duration, maxBytes, maxDecompressed int64, allow
 }
 
 // FetchIndex GETs, decodes (the index itself may be compressed — encoding is
-// inferred from the URL suffix), and parses a publisher's catalog index.
-func (c *HTTPClient) FetchIndex(ctx context.Context, indexURL string) (Index, error) {
-	b, err := c.get(ctx, indexURL)
+// inferred from the URL suffix), and parses a publisher's catalog index. cond's
+// validators are sent as If-None-Match / If-Modified-Since; a host that honours
+// them can answer 304 (NotModified, no body). A host that sends no validators
+// simply returns 200 and the caller falls back to its version-based gate.
+func (c *HTTPClient) FetchIndex(ctx context.Context, indexURL string, cond IndexCond) (IndexResult, error) {
+	b, meta, err := c.getCond(ctx, indexURL, cond)
 	if err != nil {
-		return Index{}, err
+		return IndexResult{}, err
+	}
+	if meta.notModified {
+		// Echo the validators we sent so they stay stored for next time.
+		return IndexResult{NotModified: true, ETag: cond.ETag, LastModified: cond.LastModified}, nil
 	}
 	decoded, err := decode(encodingFor("", indexURL), b, c.maxDecompressed)
 	if err != nil {
-		return Index{}, err
+		return IndexResult{}, err
 	}
 	var idx Index
 	if err := json.Unmarshal(decoded, &idx); err != nil {
-		return Index{}, fmt.Errorf("catalogcrawler: parsing index %s: %w", indexURL, err)
+		return IndexResult{}, fmt.Errorf("catalogcrawler: parsing index %s: %w", indexURL, err)
 	}
-	return idx, nil
+	return IndexResult{Index: idx, ETag: meta.etag, LastModified: meta.lastModified}, nil
 }
 
 // FetchFile GETs one file and verifies its bytes against the declared digest.
@@ -110,33 +117,59 @@ func (c *HTTPClient) Push(ctx context.Context, endpoint string, body []byte) (Pa
 	return out, nil
 }
 
-// get performs a size-capped GET after the SSRF guard.
+// respMeta carries conditional-GET response metadata.
+type respMeta struct {
+	notModified  bool
+	etag         string
+	lastModified string
+}
+
+// get performs a size-capped GET after the SSRF guard (unconditional).
 func (c *HTTPClient) get(ctx context.Context, raw string) ([]byte, error) {
+	b, _, err := c.getCond(ctx, raw, IndexCond{})
+	return b, err
+}
+
+// getCond is get with optional conditional-GET validators: it sends
+// If-None-Match / If-Modified-Since when cond is set and reports a 304 via
+// respMeta.notModified (no body), so the caller can skip the download. On a
+// 200 it returns the host's ETag / Last-Modified for the caller to store.
+func (c *HTTPClient) getCond(ctx context.Context, raw string, cond IndexCond) ([]byte, respMeta, error) {
 	if !c.allowPrivate {
 		if err := checkPublicURL(raw); err != nil {
-			return nil, err
+			return nil, respMeta{}, err
 		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
-		return nil, err
+		return nil, respMeta{}, err
+	}
+	if cond.ETag != "" {
+		req.Header.Set("If-None-Match", cond.ETag)
+	}
+	if cond.LastModified != "" {
+		req.Header.Set("If-Modified-Since", cond.LastModified)
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, respMeta{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotModified {
+		return nil, respMeta{notModified: true}, nil
+	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("catalogcrawler: GET %s: status %d", raw, resp.StatusCode)
+		return nil, respMeta{}, fmt.Errorf("catalogcrawler: GET %s: status %d", raw, resp.StatusCode)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, c.maxBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("catalogcrawler: reading %s: %w", raw, err)
+		return nil, respMeta{}, fmt.Errorf("catalogcrawler: reading %s: %w", raw, err)
 	}
 	if int64(len(b)) > c.maxBytes {
-		return nil, fmt.Errorf("catalogcrawler: %s exceeds max %d bytes", raw, c.maxBytes)
+		return nil, respMeta{}, fmt.Errorf("catalogcrawler: %s exceeds max %d bytes", raw, c.maxBytes)
 	}
-	return b, nil
+	meta := respMeta{etag: resp.Header.Get("ETag"), lastModified: resp.Header.Get("Last-Modified")}
+	return b, meta, nil
 }
 
 // digestMatches compares body's SHA-256 to a "sha-256:<hex>" digest.

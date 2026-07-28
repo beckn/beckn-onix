@@ -66,7 +66,7 @@ func TestEngine_IndexThenCatalogPass(t *testing.T) {
 	}, Deps{
 		Store:      s,
 		Source:     NewConfigSource([]string{"https://x/i.json"}),
-		FetchIndex: func(context.Context, string) (Index, error) { return idx, nil },
+		FetchIndex: func(context.Context, string, IndexCond) (IndexResult, error) { return IndexResult{Index: idx}, nil },
 		FetchFile:  func(_ context.Context, f FileEntry) ([]byte, error) { return files[f.URL], nil },
 		Validate:   func(context.Context, []byte) error { return nil },
 		Push: func(_ context.Context, body []byte) (PartOutcome, error) {
@@ -131,3 +131,53 @@ func (m *recMetrics) CatalogFailed(string)        { m.failed++ }
 func (m *recMetrics) SetQueueDepth(n int)         { m.depth = n }
 func (m *recMetrics) ObservePushSeconds(float64)  {}
 func (m *recMetrics) ObserveIndexSeconds(float64) {}
+
+// A 304 Not Modified from the index host: the engine echoes the stored ETag,
+// enqueues nothing, keeps the version, and only advances the crawl cadence.
+func TestCrawlIndex_NotModified_TouchesCadence(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	url := "https://x/i.json"
+
+	// Seed a prior crawl so there is a stored validator to send and the row is due.
+	if err := s.UpsertIndex(ctx, url, "p", "config", 5, "ok", time.Now().Add(-time.Hour), "etag5", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	sawCond := ""
+	eng := New(Config{
+		MaxAttempts: 3, IndexInterval: time.Hour, CatalogInterval: time.Hour,
+	}, Deps{
+		Store:  s,
+		Source: NewConfigSource([]string{url}),
+		FetchIndex: func(_ context.Context, _ string, cond IndexCond) (IndexResult, error) {
+			sawCond = cond.ETag
+			return IndexResult{NotModified: true}, nil
+		},
+		FetchFile: func(_ context.Context, f FileEntry) ([]byte, error) { return nil, nil },
+		Push: func(context.Context, []byte) (PartOutcome, error) {
+			return PartOutcome{Acked: true, HTTPStatus: 200}, nil
+		},
+		Metrics: &recMetrics{},
+		NewID:   func() string { return "id" },
+	})
+
+	eng.indexPass(ctx)
+
+	if sawCond != "etag5" {
+		t.Fatalf("engine must send the stored ETag as the conditional validator, got %q", sawCond)
+	}
+	if d, _ := s.QueueDepth(ctx); d != 0 {
+		t.Fatalf("304 must enqueue nothing, got queue depth %d", d)
+	}
+	got, err := s.GetIndex(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.IndexVersion != 5 {
+		t.Fatalf("version must stay 5 on 304, got %d", got.IndexVersion)
+	}
+	if !got.NextCrawlAt.After(time.Now()) {
+		t.Fatalf("304 must advance next_crawl_at, got %v", got.NextCrawlAt)
+	}
+}
