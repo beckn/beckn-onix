@@ -16,6 +16,7 @@ func TestBuildPushBody(t *testing.T) {
 		TransactionID: "txn-1",
 		Timestamp:     "2026-07-28T00:00:00Z",
 		UpdateMode:    UpdateModeFull,
+		CatalogType:   "REGULAR",
 		VisibleTo:     []string{"network-a.example.com"},
 	}
 
@@ -36,9 +37,10 @@ func TestBuildPushBody(t *testing.T) {
 		Message struct {
 			Catalogs          []json.RawMessage `json:"catalogs"`
 			PublishDirectives []struct {
-				CatalogID  string   `json:"catalogId"`
-				UpdateMode string   `json:"updateMode"`
-				VisibleTo  []string `json:"visibleTo"`
+				CatalogID   string   `json:"catalogId"`
+				CatalogType string   `json:"catalogType"`
+				UpdateMode  string   `json:"updateMode"`
+				VisibleTo   []string `json:"visibleTo"`
 			} `json:"publishDirectives"`
 		} `json:"message"`
 	}
@@ -71,8 +73,8 @@ func TestBuildPushBody(t *testing.T) {
 		t.Fatalf("directives len = %d, want 1", len(got.Message.PublishDirectives))
 	}
 	d := got.Message.PublishDirectives[0]
-	if d.CatalogID != "p/electronics-2026" || d.UpdateMode != "FULL" || !reflect.DeepEqual(d.VisibleTo, []string{"network-a.example.com"}) {
-		t.Errorf("directive = %+v, want {p/electronics-2026 FULL [network-a.example.com]}", d)
+	if d.CatalogID != "p/electronics-2026" || d.CatalogType != "REGULAR" || d.UpdateMode != "FULL" || !reflect.DeepEqual(d.VisibleTo, []string{"network-a.example.com"}) {
+		t.Errorf("directive = %+v, want {p/electronics-2026 REGULAR FULL [network-a.example.com]}", d)
 	}
 }
 

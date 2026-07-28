@@ -23,6 +23,7 @@ type PushMeta struct {
 	TransactionID string   // per-call uuid
 	Timestamp     string   // RFC3339
 	UpdateMode    string   // UpdateModeFull | UpdateModeMerge
+	CatalogType   string   // from the index entry -> publishDirective.catalogType (required)
 	VisibleTo     []string // catalog networks; nil/empty => public (omitted)
 }
 
@@ -38,8 +39,9 @@ func BuildPushBody(meta PushMeta, catalog []byte) ([]byte, error) {
 	}
 
 	directive := map[string]any{
-		"catalogId":  head.ID,
-		"updateMode": meta.UpdateMode,
+		"catalogId":   head.ID,
+		"catalogType": meta.CatalogType,
+		"updateMode":  meta.UpdateMode,
 	}
 	if len(meta.VisibleTo) > 0 {
 		directive["visibleTo"] = meta.VisibleTo
