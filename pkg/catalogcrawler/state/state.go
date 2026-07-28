@@ -54,29 +54,31 @@ type Store struct{ db *sql.DB }
 // New wraps a *sql.DB.
 func New(db *sql.DB) *Store { return &Store{db: db} }
 
-// IndexState is the stored state for one index (the change gate).
+// IndexState is the stored state for one index (the change gate + cadence).
 type IndexState struct {
 	IndexVersion int64
 	SyncStatus   string
+	NextCrawlAt  time.Time
 }
 
 // GetIndex returns the stored state for an index, or nil if never crawled.
 func (s *Store) GetIndex(ctx context.Context, indexURL string) (*IndexState, error) {
 	var (
-		st IndexState
-		v  sql.NullInt64
-		ss sql.NullString
+		st  IndexState
+		v   sql.NullInt64
+		ss  sql.NullString
+		nca sql.NullTime
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT index_version, sync_status FROM crawler_index WHERE index_url=$1`, indexURL).
-		Scan(&v, &ss)
+		`SELECT index_version, sync_status, next_crawl_at FROM crawler_index WHERE index_url=$1`, indexURL).
+		Scan(&v, &ss, &nca)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("state: GetIndex: %w", err)
 	}
-	st.IndexVersion, st.SyncStatus = v.Int64, ss.String
+	st.IndexVersion, st.SyncStatus, st.NextCrawlAt = v.Int64, ss.String, nca.Time
 	return &st, nil
 }
 

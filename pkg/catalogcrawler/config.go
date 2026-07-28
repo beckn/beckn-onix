@@ -20,6 +20,7 @@ type Settings struct {
 	FetchTimeout     time.Duration
 	MaxArtifactBytes int64
 	MaxAttempts      int
+	PushBatchSize    int
 	BppURI           string
 }
 
@@ -40,6 +41,7 @@ func LoadSettings(getenv func(string) string) (Settings, error) {
 		FetchTimeout:     durOr(getenv("CRAWLER_FETCH_TIMEOUT"), 30*time.Second),
 		MaxArtifactBytes: int64Or(getenv("CRAWLER_MAX_ARTIFACT_BYTES"), 10<<20),
 		MaxAttempts:      intOr(getenv("CRAWLER_MAX_ATTEMPTS"), 5),
+		PushBatchSize:    intOr(getenv("CRAWLER_PUSH_BATCH_SIZE"), 1000),
 	}
 
 	var missing []string

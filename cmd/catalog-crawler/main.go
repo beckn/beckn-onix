@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
 
 	cc "github.com/beckn-one/beckn-onix/pkg/catalogcrawler"
 	"github.com/beckn-one/beckn-onix/pkg/catalogcrawler/state"
@@ -44,12 +45,17 @@ func main() {
 	}
 
 	httpc := cc.NewHTTPClient(s.FetchTimeout, s.MaxArtifactBytes, false)
+	metrics, err := cc.NewOTelMetrics(otel.Meter("catalogcrawler"))
+	if err != nil {
+		metrics = cc.NopMetrics{}
+	}
 	eng := cc.New(cc.Config{
 		Networks:        s.NetworkIDs,
 		BppURI:          s.BppURI,
 		IndexInterval:   s.IndexInterval,
 		CatalogInterval: s.CatalogInterval,
 		MaxAttempts:     s.MaxAttempts,
+		PushBatchSize:   s.PushBatchSize,
 	}, cc.Deps{
 		Store:      state.New(db),
 		Source:     cc.NewConfigSource(s.IndexURLs),
@@ -58,8 +64,9 @@ func main() {
 		Push: func(ctx context.Context, body []byte) (cc.PartOutcome, error) {
 			return httpc.Push(ctx, s.PushEndpoint, body)
 		},
-		Log:   cc.NewSlogLogger(logger),
-		NewID: func() string { return uuid.NewString() },
+		Log:     cc.NewSlogLogger(logger),
+		Metrics: metrics,
+		NewID:   func() string { return uuid.NewString() },
 	})
 
 	if err := eng.Start(ctx); err != nil {

@@ -13,6 +13,7 @@ import (
 	"os"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
 
 	engine "github.com/beckn-one/beckn-onix/pkg/catalogcrawler"
 	"github.com/beckn-one/beckn-onix/pkg/catalogcrawler/state"
@@ -61,6 +62,10 @@ func New(ctx context.Context, validator definition.SchemaValidator, config map[s
 	}
 
 	logger := engine.NewSlogLogger(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	metrics, err := engine.NewOTelMetrics(otel.Meter("catalogcrawler"))
+	if err != nil {
+		metrics = engine.NopMetrics{}
+	}
 
 	eng := engine.New(engine.Config{
 		Networks:        settings.NetworkIDs,
@@ -68,6 +73,7 @@ func New(ctx context.Context, validator definition.SchemaValidator, config map[s
 		IndexInterval:   settings.IndexInterval,
 		CatalogInterval: settings.CatalogInterval,
 		MaxAttempts:     settings.MaxAttempts,
+		PushBatchSize:   settings.PushBatchSize,
 	}, engine.Deps{
 		Store:      state.New(db),
 		Source:     engine.NewConfigSource(settings.IndexURLs),
@@ -77,8 +83,9 @@ func New(ctx context.Context, validator definition.SchemaValidator, config map[s
 		Push: func(ctx context.Context, body []byte) (engine.PartOutcome, error) {
 			return httpc.Push(ctx, settings.PushEndpoint, body)
 		},
-		Log:   logger,
-		NewID: func() string { return uuid.NewString() },
+		Log:     logger,
+		Metrics: metrics,
+		NewID:   func() string { return uuid.NewString() },
 	})
 
 	// Start on a background context so job lifetime is bound to Stop(), not to

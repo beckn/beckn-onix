@@ -3,6 +3,8 @@ package catalogcrawler
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/beckn-one/beckn-onix/pkg/catalogfile"
 )
 
 // Discovery /push update modes (beckn-discovr publishDirectives.updateMode).
@@ -59,4 +61,55 @@ func BuildPushBody(meta PushMeta, catalog []byte) ([]byte, error) {
 		},
 	}
 	return json.Marshal(body)
+}
+
+// CatalogBatch is one push of a slice of a catalog's resources with the
+// update mode Discovery should apply.
+type CatalogBatch struct {
+	Doc        []byte
+	UpdateMode string
+}
+
+// BatchCatalog splits a resolved catalog into push batches by resource
+// count. A catalog that fits in batchSize is one FULL batch (replace). A
+// larger catalog is the first batch FULL (descriptor/provider/offers +
+// the first resource slice) then the rest MERGE (id + resource slice),
+// which must be applied in order (see the ordering caveat in the design).
+func BatchCatalog(catalog []byte, batchSize int) ([]CatalogBatch, error) {
+	var doc catalogfile.Doc
+	if err := json.Unmarshal(catalog, &doc); err != nil {
+		return nil, fmt.Errorf("catalogcrawler: reading catalog for batching: %w", err)
+	}
+	if batchSize <= 0 || len(doc.Resources) <= batchSize {
+		return []CatalogBatch{{Doc: catalog, UpdateMode: UpdateModeFull}}, nil
+	}
+
+	var batches []CatalogBatch
+	for start := 0; start < len(doc.Resources); start += batchSize {
+		end := start + batchSize
+		if end > len(doc.Resources) {
+			end = len(doc.Resources)
+		}
+		chunk := doc.Resources[start:end]
+
+		if start == 0 {
+			first := doc
+			first.Resources = chunk
+			b, err := json.Marshal(first)
+			if err != nil {
+				return nil, err
+			}
+			batches = append(batches, CatalogBatch{Doc: b, UpdateMode: UpdateModeFull})
+			continue
+		}
+		b, err := json.Marshal(struct {
+			ID        json.RawMessage   `json:"id"`
+			Resources []json.RawMessage `json:"resources"`
+		}{ID: doc.ID, Resources: chunk})
+		if err != nil {
+			return nil, err
+		}
+		batches = append(batches, CatalogBatch{Doc: b, UpdateMode: UpdateModeMerge})
+	}
+	return batches, nil
 }
