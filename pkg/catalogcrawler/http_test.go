@@ -30,12 +30,12 @@ func TestHTTPClient_FetchIndexAndFile(t *testing.T) {
 	c := NewHTTPClient(5*time.Second, 1<<20, 1<<20, true) // allowPrivate for httptest (127.0.0.1)
 	ctx := context.Background()
 
-	idx, err := c.FetchIndex(ctx, srv.URL+"/index")
+	res, err := c.FetchIndex(ctx, srv.URL+"/index", IndexCond{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if idx.ParticipantID != "p" || idx.Version != 7 {
-		t.Fatalf("index = %+v, want participantId p version 7", idx)
+	if res.Index.ParticipantID != "p" || res.Index.Version != 7 {
+		t.Fatalf("index = %+v, want participantId p version 7", res.Index)
 	}
 
 	body, err := c.FetchFile(ctx, FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(catalog)})
@@ -83,6 +83,75 @@ func TestHTTPClient_FetchGzipFile(t *testing.T) {
 	}
 	if string(body) != catalog {
 		t.Fatalf("explicit-encoding decoded = %q, want %q", body, catalog)
+	}
+}
+
+// The conditional-GET round-trip: a 200 captures the host's validators; echoing
+// them back yields a 304 with no body (the bandwidth saving), and the validators
+// are preserved so they stay stored for next time.
+func TestHTTPClient_FetchIndex_Conditional(t *testing.T) {
+	const etag = `W/"v7"`
+	const lastMod = "Wed, 21 Oct 2026 07:28:00 GMT"
+	index := `{"participantId":"p","version":7,"catalogs":[]}`
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/index", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Last-Modified", lastMod)
+		w.Write([]byte(index))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewHTTPClient(5*time.Second, 1<<20, 1<<20, true)
+	ctx := context.Background()
+
+	// First fetch (no validator) → 200, and we capture ETag / Last-Modified.
+	res, err := c.FetchIndex(ctx, srv.URL+"/index", IndexCond{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.NotModified {
+		t.Fatal("first fetch must not be NotModified")
+	}
+	if res.Index.Version != 7 || res.ETag != etag || res.LastModified != lastMod {
+		t.Fatalf("first fetch = %+v, want version 7 + captured ETag/Last-Modified", res)
+	}
+
+	// Second fetch echoing the ETag → server answers 304, no body downloaded.
+	res2, err := c.FetchIndex(ctx, srv.URL+"/index", IndexCond{ETag: res.ETag, LastModified: res.LastModified})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res2.NotModified {
+		t.Fatal("fetch with matching ETag must be NotModified")
+	}
+	if res2.ETag != etag {
+		t.Fatalf("304 must echo the ETag so it stays stored, got %q", res2.ETag)
+	}
+}
+
+// A host that sends no validators still works: the fetch is a plain 200 with
+// empty ETag/Last-Modified, and the caller falls back to its version gate.
+func TestHTTPClient_FetchIndex_NoValidators(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/index", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"participantId":"p","version":3,"catalogs":[]}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewHTTPClient(5*time.Second, 1<<20, 1<<20, true)
+	res, err := c.FetchIndex(context.Background(), srv.URL+"/index", IndexCond{ETag: `W/"stale"`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.NotModified || res.Index.Version != 3 || res.ETag != "" {
+		t.Fatalf("no-validator host = %+v, want a plain 200 (version 3, empty ETag)", res)
 	}
 }
 

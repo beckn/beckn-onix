@@ -25,8 +25,27 @@ func (NopLogger) Info(string, ...any)  {}
 func (NopLogger) Warn(string, ...any)  {}
 func (NopLogger) Error(string, ...any) {}
 
-// IndexFetcher fetches and parses a publisher's catalog index.
-type IndexFetcher func(ctx context.Context, indexURL string) (Index, error)
+// IndexCond carries the conditional-GET validators from the last successful
+// index fetch. Both empty means an unconditional GET (the host sent none, or
+// we've never fetched this index).
+type IndexCond struct {
+	ETag         string
+	LastModified string
+}
+
+// IndexResult is one index fetch. NotModified is true when the host answered
+// 304 (the index is unchanged and Index is zero — skip it). ETag/LastModified
+// are the validators to store for next time (echoed back on a 304).
+type IndexResult struct {
+	Index        Index
+	NotModified  bool
+	ETag         string
+	LastModified string
+}
+
+// IndexFetcher fetches and parses a publisher's catalog index, sending cond as
+// If-None-Match / If-Modified-Since so an unchanged index can answer 304.
+type IndexFetcher func(ctx context.Context, indexURL string, cond IndexCond) (IndexResult, error)
 
 // Validator schema-validates the /push request body before it is sent
 // (Phase 1; reuses onix's schemav2validator against the catalog/publish
@@ -197,11 +216,26 @@ func (e *Engine) crawlIndex(ctx context.Context, ref IndexRef, force bool) {
 		return // not due yet (per-index cadence via next_crawl_at)
 	}
 
-	idx, err := e.deps.FetchIndex(ctx, ref.IndexURL)
+	cond := IndexCond{}
+	if prev != nil {
+		cond = IndexCond{ETag: prev.ETag, LastModified: prev.LastModified}
+	}
+	res, err := e.deps.FetchIndex(ctx, ref.IndexURL, cond)
 	if err != nil {
 		e.deps.Log.Warn("crawler.index.fetch_failed", "indexUrl", ref.IndexURL, "err", err)
 		return
 	}
+	if res.NotModified {
+		// 304 Not Modified: the host confirmed nothing changed — no body
+		// downloaded, no parse. Just advance the crawl cadence.
+		e.deps.Log.Info("crawler.index.not_modified", "indexUrl", ref.IndexURL)
+		if err := e.deps.Store.TouchIndex(ctx, ref.IndexURL, e.nextIndexCrawl()); err != nil {
+			e.deps.Log.Error("crawler.index.touch_failed", "indexUrl", ref.IndexURL, "err", err)
+		}
+		e.deps.Metrics.ObserveIndexSeconds(e.deps.Now().Sub(now).Seconds())
+		return
+	}
+	idx := res.Index
 	e.deps.Log.Info("crawler.index.checked", "indexUrl", ref.IndexURL, "version", idx.Version)
 
 	// Process only when the index version advanced; per-catalog cursors +
@@ -248,7 +282,7 @@ func (e *Engine) crawlIndex(ctx context.Context, ref IndexRef, force bool) {
 		}
 	}
 
-	if err := e.deps.Store.UpsertIndex(ctx, ref.IndexURL, idx.ParticipantID, ref.Source, idx.Version, SyncOK, e.nextIndexCrawl()); err != nil {
+	if err := e.deps.Store.UpsertIndex(ctx, ref.IndexURL, idx.ParticipantID, ref.Source, idx.Version, SyncOK, e.nextIndexCrawl(), res.ETag, res.LastModified); err != nil {
 		e.deps.Log.Error("crawler.index.record_failed", "indexUrl", ref.IndexURL, "err", err)
 	}
 	e.deps.Metrics.ObserveIndexSeconds(e.deps.Now().Sub(now).Seconds())
@@ -298,12 +332,14 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 		return
 	}
 
-	idx, err := e.deps.FetchIndex(ctx, item.IndexURL)
+	// The catalog job always needs the body to resolve the entry, so it fetches
+	// unconditionally (empty cond) rather than risking a 304.
+	res, err := e.deps.FetchIndex(ctx, item.IndexURL, IndexCond{})
 	if err != nil {
 		e.fail(ctx, item, 0, "index_fetch: "+err.Error(), err)
 		return
 	}
-	entry, ok := findCatalog(idx, item.CatalogID)
+	entry, ok := findCatalog(res.Index, item.CatalogID)
 	if !ok {
 		e.failPermanent(ctx, item, 0, "catalog_absent_from_index")
 		return
@@ -342,7 +378,7 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 	var outcomes []PartOutcome
 	for _, batch := range batches {
 		body, err := BuildPushBody(PushMeta{
-			ParticipantID: idx.ParticipantID, BppURI: e.cfg.BppURI,
+			ParticipantID: res.Index.ParticipantID, BppURI: e.cfg.BppURI,
 			MessageID: e.newID(), TransactionID: e.newID(),
 			Timestamp:  e.deps.Now().UTC().Format(time.RFC3339),
 			UpdateMode: batch.UpdateMode, VisibleTo: visibleTo,
@@ -378,7 +414,7 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 	}
 
 	if err := e.deps.Store.Complete(ctx, item.ID, item.ClaimID, item.ToVersion, state.CatalogState{
-		CatalogID: item.CatalogID, IndexURL: item.IndexURL, ParticipantID: idx.ParticipantID,
+		CatalogID: item.CatalogID, IndexURL: item.IndexURL, ParticipantID: res.Index.ParticipantID,
 		Version: item.ToVersion, Status: "active", PushStatus: "pushed",
 		HTTPStatus: outcomes[len(outcomes)-1].HTTPStatus,
 	}); err != nil {
