@@ -54,6 +54,13 @@ const dediVersion = "0.1"
 // this entry references a Beckn file, not a DeDi registry).
 const catalogIndexFileName = "becknCatalogs"
 
+// indexSchemaURL is the JSON-Schema URL describing the catalog-index
+// document shape, embedded as the manifest's files[].schema. Hardcoded for
+// now rather than configurable -- this will eventually move to a shared
+// beckndefaults/becknconstants file alongside the other canonical schema
+// URLs, not stay a per-publisher config value.
+const indexSchemaURL = "https://schema.beckn.org/dedi/beckn-catalog-index-schema.json"
+
 // defaultFileValidity is the fallback used when neither Config.FileValidityIn
 // nor Config.NextUpdateIn is set -- see its use in Publish for why zero is
 // unsafe here (unlike next_update, a file's validUntil can't just be
@@ -62,21 +69,16 @@ const defaultFileValidity = 24 * time.Hour
 
 // Config controls publish behavior.
 type Config struct {
-	// KeyID is both the JWK "kid" embedded in the manifest and the
-	// signature.keyId on every catalog-index file entry, and the key
-	// identifier passed to KeyManager.Keyset to load the signing keypair.
-	// The file spec uses one key for both roles throughout its examples;
-	// nothing requires they differ.
-	KeyID string
-
-	// Domain is the publisher's own domain, embedded as the manifest's
-	// top-level "domain" and the catalog index's "participantId" (file
-	// spec: identity is the domain).
-	Domain string
-
-	// IndexSchemaURL is the JSON-Schema URL describing the catalog-index
-	// document shape, embedded as the manifest's files[].schema.
-	IndexSchemaURL string
+	// SubscriberID is the identifier passed to KeyManager.Keyset to load
+	// the signing keypair -- the same lookup key every other caller of
+	// Keyset uses (see pkg/security/artifactfetcher,
+	// core/module/handler/responsestep.go). The JWK "kid" embedded in the
+	// manifest and every signature.keyId, and the domain embedded as the
+	// manifest's top-level "domain" and the catalog index's
+	// "participantId", both come from the returned Keyset
+	// (UniqueKeyID/SubscriberID) instead of being duplicated here --
+	// that's the keymanager plugin's own config to own, not this one's.
+	SubscriberID string
 
 	// IndexNetworkIds scopes the catalog index itself (not any one
 	// catalog) to specific networks; embedded as the manifest's
@@ -144,8 +146,8 @@ func New(ctx context.Context, keyManager definition.KeyManager, cfg *Config) (*P
 	if keyManager == nil {
 		return nil, nil, fmt.Errorf("catalogpublisher: KeyManager plugin not configured")
 	}
-	if cfg == nil || cfg.KeyID == "" {
-		return nil, nil, fmt.Errorf("catalogpublisher: keyID is required")
+	if cfg == nil || cfg.SubscriberID == "" {
+		return nil, nil, fmt.Errorf("catalogpublisher: subscriberID is required")
 	}
 	p := &Publisher{keyManager: keyManager, config: cfg}
 	return p, func() error { return nil }, nil
@@ -285,14 +287,16 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 	now := time.Now()
 	result := definition.PublishResult{PublishedAt: now}
 
-	keyset, err := p.keyManager.Keyset(ctx, p.config.KeyID)
+	keyset, err := p.keyManager.Keyset(ctx, p.config.SubscriberID)
 	if err != nil {
-		return result, fmt.Errorf("catalogpublisher: loading keyset %q: %w", p.config.KeyID, err)
+		return result, fmt.Errorf("catalogpublisher: loading keyset %q: %w", p.config.SubscriberID, err)
 	}
 	priv, pub, err := decodeKeyset(keyset)
 	if err != nil {
-		return result, fmt.Errorf("catalogpublisher: decoding keyset %q: %w", p.config.KeyID, err)
+		return result, fmt.Errorf("catalogpublisher: decoding keyset %q: %w", p.config.SubscriberID, err)
 	}
+	keyID := keyset.UniqueKeyID
+	domain := keyset.SubscriberID
 
 	var nextUpdate *time.Time
 	if p.config.NextUpdateIn > 0 {
@@ -331,7 +335,7 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 			continue
 		}
 
-		outcome, entry, changed, err := p.publishOne(sub, req.PriorState[sub.CatalogID], req.ForceBaseline, now, validUntil, priv)
+		outcome, entry, changed, err := p.publishOne(sub, req.PriorState[sub.CatalogID], req.ForceBaseline, now, validUntil, priv, keyID)
 		if err != nil {
 			result.Errors = append(result.Errors, definition.PublishError{
 				CatalogID: sub.CatalogID, Stage: "diff", Reason: err.Error(), Fatal: false,
@@ -380,7 +384,7 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 	result.IndexVersion = indexVersion
 
 	indexBytes, err := json.Marshal(catalogIndexDoc{
-		ParticipantID: p.config.Domain,
+		ParticipantID: domain,
 		Version:       indexVersion,
 		NextUpdate:    nextUpdate,
 		Catalogs:      entries,
@@ -390,12 +394,12 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 	}
 	result.Index = indexBytes
 
-	jwk := dediKey{KID: p.config.KeyID, Kty: "OKP", Crv: "Ed25519", X: base64.RawURLEncoding.EncodeToString(pub)}
+	jwk := dediKey{KID: keyID, Kty: "OKP", Crv: "Ed25519", X: base64.RawURLEncoding.EncodeToString(pub)}
 
 	files := []dediFile{{
 		Name:        catalogIndexFileName,
 		URL:         p.indexURL(),
-		Schema:      p.config.IndexSchemaURL,
+		Schema:      indexSchemaURL,
 		NetworkIds:  p.config.IndexNetworkIds,
 		AuthMethods: toAuthMethodWire(p.config.IndexAuthMethods),
 	}}
@@ -415,12 +419,12 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 	signedManifest, err := p.signManifest(dediManifest{
 		DediVersion: dediVersion,
 		Type:        "dedi-manifest",
-		Domain:      p.config.Domain,
+		Domain:      domain,
 		Keys:        []dediKey{jwk},
 		UpdatedAt:   &now,
 		NextUpdate:  nextUpdate,
 		Files:       files,
-	}, priv, p.config.KeyID)
+	}, priv, keyID)
 	if err != nil {
 		return result, fmt.Errorf("catalogpublisher: signing manifest: %w", err)
 	}
@@ -445,7 +449,7 @@ func currentVersion(prior definition.PriorCatalogState) int {
 // publishOne decides baseline vs. change-file vs. no-op for one submission
 // and builds both its definition.CatalogPublishOutcome and its
 // catalogEntry.
-func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definition.PriorCatalogState, forceBaseline bool, now, validUntil time.Time, priv ed25519.PrivateKey) (definition.CatalogPublishOutcome, catalogEntry, bool, error) {
+func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definition.PriorCatalogState, forceBaseline bool, now, validUntil time.Time, priv ed25519.PrivateKey, keyID string) (definition.CatalogPublishOutcome, catalogEntry, bool, error) {
 	hasPrior := prior.Catalog != nil
 	catalogType := sub.CatalogType
 	if catalogType == "" {
@@ -468,7 +472,7 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 
 	if !hasPrior || forceBaseline {
 		version := currentVersion(prior) + 1 // 0+1 == 1 for a brand-new catalog
-		fe, err := p.buildFileEntry(sub.CatalogID, version, "json", sub.Catalog, now, validUntil, priv)
+		fe, err := p.buildFileEntry(sub.CatalogID, version, "json", sub.Catalog, now, validUntil, priv, keyID)
 		if err != nil {
 			return definition.CatalogPublishOutcome{}, catalogEntry{}, false, err
 		}
@@ -503,7 +507,7 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 		return definition.CatalogPublishOutcome{}, catalogEntry{}, false, fmt.Errorf("marshaling change file: %w", err)
 	}
 
-	fe, err := p.buildFileEntry(sub.CatalogID, toVersion, "changes.json", content, now, validUntil, priv)
+	fe, err := p.buildFileEntry(sub.CatalogID, toVersion, "changes.json", content, now, validUntil, priv, keyID)
 	if err != nil {
 		return definition.CatalogPublishOutcome{}, catalogEntry{}, false, err
 	}
@@ -519,7 +523,7 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 // signature tuple for one catalog file (baseline or change), per the file
 // spec's rules: immutable, versioned URLs, and a signature over
 // {catalogId, version, url, digest, validUntil}.
-func (p *Publisher) buildFileEntry(catalogID string, version int, suffix string, content []byte, now, validUntil time.Time, priv ed25519.PrivateKey) (fileEntry, error) {
+func (p *Publisher) buildFileEntry(catalogID string, version int, suffix string, content []byte, now, validUntil time.Time, priv ed25519.PrivateKey, keyID string) (fileEntry, error) {
 	filename := fmt.Sprintf("%s.v%d.%s", localCatalogName(catalogID), version, suffix)
 	url := p.catalogPartURL(filename)
 	digest := "sha-256:" + digestOf(content)
@@ -535,14 +539,12 @@ func (p *Publisher) buildFileEntry(catalogID string, version int, suffix string,
 		Size:    int64(len(content)),
 		Digest:  digest,
 		Signature: signatureWire{
-			KeyID:      p.keyID(),
+			KeyID:      keyID,
 			Value:      sigValue,
 			ValidUntil: validUntil,
 		},
 	}, nil
 }
-
-func (p *Publisher) keyID() string { return p.config.KeyID }
 
 // localCatalogName returns catalogID with any "domain/" prefix stripped,
 // matching the file spec's example filenames (catalogId

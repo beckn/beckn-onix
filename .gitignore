@@ -159,3 +159,6 @@ test_request.json
 
 .codex
 .claude
+
+# catalogPublish handler's local output root (config/local-beckn-one-bap.yaml)
+/catalog/

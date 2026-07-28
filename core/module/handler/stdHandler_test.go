@@ -82,7 +82,7 @@ func (m *mockSpan) SetAttributes(attrs ...attribute.KeyValue) {
 	m.attributes = append(m.attributes, attrs...)
 }
 func (m *mockSpan) End(options ...trace.SpanEndOption)                  {}
-func (m *mockSpan) AddEvent(name string, options ...trace.EventOption) {}
+func (m *mockSpan) AddEvent(name string, options ...trace.EventOption)  {}
 func (m *mockSpan) AddLink(link trace.Link)                             {}
 func (m *mockSpan) IsRecording() bool                                   { return true }
 func (m *mockSpan) RecordError(err error, options ...trace.EventOption) {}
@@ -165,6 +165,10 @@ func (noopPluginManager) PayloadStore(_ context.Context, _ definition.Cache, _ s
 	return nil, nil
 }
 
+func (noopPluginManager) CatalogPublisher(_ context.Context, _ definition.KeyManager, _ *plugin.Config) (definition.CatalogPublisher, error) {
+	return nil, nil
+}
+
 type registryWithoutMetadata struct{}
 
 func (registryWithoutMetadata) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
@@ -178,12 +182,11 @@ func (stubCache) Set(context.Context, string, string, time.Duration) error { ret
 func (stubCache) Delete(context.Context, string) error                     { return nil }
 func (stubCache) Clear(context.Context) error                              { return nil }
 
-
 func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	ctx := context.Background()
 	cfg := &Config{
-		Plugins:   PluginCfg{},
-		Steps:     []string{"checkPolicy"},
+		Plugins: PluginCfg{},
+		Steps:   []string{"checkPolicy"},
 	}
 	_, err := NewStdHandler(ctx, noopPluginManager{}, cfg, "testModule")
 	if err == nil {
@@ -196,7 +199,6 @@ func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 		t.Fatalf("expected explicit PolicyChecker config error, got: %v", err)
 	}
 }
-
 
 func TestDeriveDirection(t *testing.T) {
 	tests := []struct {

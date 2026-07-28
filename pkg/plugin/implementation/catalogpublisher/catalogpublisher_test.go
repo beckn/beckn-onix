@@ -12,10 +12,15 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
-// fakeKeyManager returns a fixed Ed25519 keyset for one configured keyID;
-// it satisfies definition.KeyManager but only Keyset is ever exercised here.
+// fakeKeyManager returns a fixed Ed25519 keyset for one configured
+// subscriberID (the lookup key every Keyset caller uses); it satisfies
+// definition.KeyManager but only Keyset is ever exercised here. keyID and
+// domain populate the returned Keyset's UniqueKeyID/SubscriberID -- the
+// same fields catalogpublisher now derives its JWK kid and manifest domain
+// from, instead of duplicating them in its own Config.
 type fakeKeyManager struct {
-	keyID  string
+	keyID  string // also doubles as the lookup key (subscriberID) in these tests
+	domain string
 	priv   ed25519.PrivateKey
 	pub    ed25519.PublicKey
 	failed bool
@@ -39,6 +44,8 @@ func (f *fakeKeyManager) Keyset(ctx context.Context, keyID string) (*model.Keyse
 		return nil, errNotFound
 	}
 	return &model.Keyset{
+		SubscriberID:   f.domain,
+		UniqueKeyID:    f.keyID,
 		SigningPrivate: base64.StdEncoding.EncodeToString(f.priv.Seed()),
 		SigningPublic:  base64.StdEncoding.EncodeToString(f.pub),
 	}, nil
@@ -73,23 +80,22 @@ func mustCatalogWithItems(id string, items ...string) json.RawMessage {
 func TestNew_RequiresKeyManagerAndKeyID(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 
-	if _, _, err := New(context.Background(), nil, &Config{KeyID: "k1"}); err == nil {
+	if _, _, err := New(context.Background(), nil, &Config{SubscriberID: "k1"}); err == nil {
 		t.Fatal("expected error for nil KeyManager")
 	}
 	if _, _, err := New(context.Background(), km, &Config{}); err == nil {
 		t.Fatal("expected error for missing keyID")
 	}
-	if _, _, err := New(context.Background(), km, &Config{KeyID: "k1"}); err != nil {
+	if _, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestPublish_SingleCatalog_ProducesManifestAndIndex(t *testing.T) {
 	km := newFakeKeyManager(t, "publisher-key-1")
+	km.domain = "example.test"
 	p, _, err := New(context.Background(), km, &Config{
-		KeyID:          "publisher-key-1",
-		Domain:         "example.test",
-		IndexSchemaURL: "https://example.test/schemas/catalog-index.json",
+		SubscriberID:   "publisher-key-1",
 		NextUpdateIn:   14 * 24 * time.Hour,
 		CatalogBaseURL: "https://cdn.example.test/catalogs",
 	})
@@ -152,8 +158,8 @@ func TestPublish_SingleCatalog_ProducesManifestAndIndex(t *testing.T) {
 	if len(manifest.Files) != 1 || manifest.Files[0].Name != catalogIndexFileName {
 		t.Fatalf("unexpected manifest files: %+v", manifest.Files)
 	}
-	if manifest.Files[0].Schema != "https://example.test/schemas/catalog-index.json" {
-		t.Errorf("manifest.Files[0].Schema = %q, want the configured schema URL", manifest.Files[0].Schema)
+	if manifest.Files[0].Schema != indexSchemaURL {
+		t.Errorf("manifest.Files[0].Schema = %q, want the hardcoded %q", manifest.Files[0].Schema, indexSchemaURL)
 	}
 
 	var index catalogIndexDoc
@@ -206,7 +212,7 @@ func TestPublish_SingleCatalog_ProducesManifestAndIndex(t *testing.T) {
 
 func TestPublish_InvalidSubmissionIsNonFatal(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
-	p, _, err := New(context.Background(), km, &Config{KeyID: "k1"})
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -237,7 +243,7 @@ func TestPublish_InvalidSubmissionIsNonFatal(t *testing.T) {
 
 func TestPublish_NoValidityConfigured_FallsBackToDefault_NotAlreadyExpired(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
-	p, _, err := New(context.Background(), km, &Config{KeyID: "k1"}) // no NextUpdateIn/FileValidityIn set
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"}) // no NextUpdateIn/FileValidityIn set
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -264,7 +270,7 @@ func TestPublish_NoValidityConfigured_FallsBackToDefault_NotAlreadyExpired(t *te
 
 func TestPublish_UnknownKeyIDFails(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
-	p, _, err := New(context.Background(), km, &Config{KeyID: "wrong-key"})
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "wrong-key"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -295,7 +301,7 @@ func TestLocalCatalogName(t *testing.T) {
 
 func TestPublish_Incremental_NoPriorState_IsBaseline(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
-	p, _, err := New(context.Background(), km, &Config{KeyID: "k1"})
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -322,7 +328,7 @@ func TestPublish_Incremental_NoPriorState_IsBaseline(t *testing.T) {
 
 func TestPublish_Incremental_UnchangedProducesNoOp(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
-	p, _, err := New(context.Background(), km, &Config{KeyID: "k1"})
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -364,7 +370,7 @@ func TestPublish_Incremental_UnchangedProducesNoOp(t *testing.T) {
 
 func TestPublish_Incremental_ProducesChangeFile(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
-	p, _, err := New(context.Background(), km, &Config{KeyID: "k1", CatalogBaseURL: "https://cdn.test/catalogs"})
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1", CatalogBaseURL: "https://cdn.test/catalogs"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -432,7 +438,7 @@ func TestPublish_Incremental_ProducesChangeFile(t *testing.T) {
 
 func TestPublish_Retire_ProducesTombstone(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
-	p, _, err := New(context.Background(), km, &Config{KeyID: "k1"})
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -465,7 +471,7 @@ func TestPublish_Retire_ProducesTombstone(t *testing.T) {
 
 func TestPublish_CarryForward_IncludedVerbatim(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
-	p, _, err := New(context.Background(), km, &Config{KeyID: "k1"})
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -556,7 +562,7 @@ func TestDiffCatalogs_DescriptorChangeReportedUnderCatalog(t *testing.T) {
 func TestPublish_ExtraManifestFiles_AppendedVerbatimNoDigest(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	p, _, err := New(context.Background(), km, &Config{
-		KeyID: "k1",
+		SubscriberID: "k1",
 		ExtraManifestFiles: []ManifestFileRef{
 			{Name: "beckn-subscriber", URL: "https://example.test/dedi/beckn-subscriber.dedi.json", Schema: "https://example.test/schemas/Beckn_subscriber.json"},
 		},
