@@ -69,6 +69,7 @@ type Config struct {
 	CatalogInterval time.Duration // catalog-job cadence
 	MaxAttempts     int           // give up a catalog after this many failed pushes
 	MaxPushBytes    int64         // max /push body size Discovery accepts (0 => default 10 MiB)
+	MergeOnly       bool          // this version: always MERGE + delta-from-changefile (FULL/removals deferred)
 }
 
 // Deps are the engine's injected collaborators.
@@ -320,6 +321,64 @@ func (e *Engine) catalogPass(ctx context.Context) {
 	}
 }
 
+// resolvePush produces the push doc + updateMode for a claimed catalog.
+//
+// This version (MergeOnly) always MERGEs: an incremental update is built as a
+// delta straight from the change files (no baseline fetch) when they carry the
+// catalog metadata envelope; a first sync — or a change set without that
+// envelope — falls back to a full resolve, still pushed as MERGE. Removals are
+// recorded in the changeset but not applied (deferred).
+//
+// With MergeOnly=false the dormant mode-by-changeset path runs: only-upserts ->
+// MERGE (just the changed resources); any removal / new / re-baseline -> FULL.
+func (e *Engine) resolvePush(entry CatalogEntry, item *state.ClaimedItem, fetch FetchFunc) ([]byte, string, Changeset, error) {
+	if !e.cfg.MergeOnly {
+		catalog, cs, err := ResolveWithChangeset(entry, item.FromVersion, item.FromVersion > 0, item.ToVersion, fetch)
+		if err != nil {
+			return nil, "", cs, err
+		}
+		if cs.FromBaseline || cs.HasRemovals {
+			return catalog, UpdateModeFull, cs, nil
+		}
+		filtered, err := filterCatalog(catalog, cs.UpsertedResources, cs.UpsertedOffers)
+		return filtered, UpdateModeMerge, cs, err
+	}
+
+	// Incremental update: try the delta straight from the change files (no
+	// baseline fetch). firstSync (cursor behind the baseline) can't — the
+	// baseline is the only content — so it falls through to the full resolve.
+	if item.FromVersion >= entry.Baseline.Version {
+		delta, cs, ok, err := ResolveDelta(entry, item.FromVersion, item.ToVersion, fetch)
+		if err != nil {
+			return nil, "", cs, err
+		}
+		if ok {
+			return delta, UpdateModeMerge, cs, nil
+		}
+		// No metadata envelope in the change files -> fall back to a full resolve.
+	}
+	catalog, cs, err := ResolveWithChangeset(entry, item.FromVersion, item.FromVersion > 0, item.ToVersion, fetch)
+	return catalog, UpdateModeMerge, cs, err
+}
+
+// completeSkipped settles a claimed item that had nothing to push (e.g. a
+// removal-only change while removals are deferred): the cursor still advances
+// and a skipped pass report is recorded, so it isn't re-processed.
+func (e *Engine) completeSkipped(ctx context.Context, item *state.ClaimedItem, participantID, mode, reason string) {
+	rep := state.PassReport{
+		At: e.deps.Now().UTC(), FromVersion: item.FromVersion, ToVersion: item.ToVersion,
+		Mode: mode, Outcome: "skipped", Reason: reason,
+	}
+	if err := e.deps.Store.Complete(ctx, item.ID, item.ClaimID, item.ToVersion, state.CatalogState{
+		CatalogID: item.CatalogID, IndexURL: item.IndexURL, ParticipantID: participantID,
+		Version: item.ToVersion, Status: "active", Report: rep,
+	}); err != nil {
+		e.deps.Log.Error("crawler.complete_failed", "catalogId", item.CatalogID, "err", err)
+		return
+	}
+	e.deps.Log.Info("crawler.catalog.skipped", "catalogId", item.CatalogID, "reason", reason)
+}
+
 // processItem resolves + pushes one claimed catalog, then settles it.
 func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 	if item.Op == "retire" {
@@ -352,28 +411,25 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 	}
 
 	fetch := func(f FileEntry) ([]byte, error) { return e.deps.FetchFile(ctx, f) }
-	catalog, cs, err := ResolveWithChangeset(entry, item.FromVersion, item.FromVersion > 0, item.ToVersion, fetch)
+	pushDoc, mode, cs, err := e.resolvePush(entry, item, fetch)
 	if err != nil {
 		e.fail(ctx, item, e.failReport(item, 0, "resolve: "+err.Error()), err)
 		return
 	}
 
-	// Mode by changeset: only-upserts -> MERGE (push just the changed
-	// resources); any removal, or a new / re-baselined catalog -> FULL
-	// (push the complete catalog, the only mode Discovery deletes in).
-	mode := UpdateModeMerge
-	pushDoc := catalog
-	if cs.FromBaseline || cs.HasRemovals {
-		mode = UpdateModeFull
-	} else {
-		pushDoc, err = filterCatalog(catalog, cs.UpsertedResources, cs.UpsertedOffers)
-		if err != nil {
-			e.failPermanent(ctx, item, e.failReport(item, 0, "filter: "+err.Error()))
-			return
-		}
+	// This version applies upserts only; removals are recorded but deferred.
+	if e.cfg.MergeOnly && cs.HasRemovals {
+		e.deps.Log.Warn("crawler.catalog.removals_skipped", "catalogId", item.CatalogID,
+			"resources", cs.RemovedResources, "offers", cs.RemovedOffers)
 	}
 
 	resCount, offCount := docCounts(pushDoc) // what this pass actually pushes
+	// Nothing to upsert (e.g. a removal-only change while removals are deferred):
+	// skip the push, still advance the cursor, and record a skipped pass.
+	if resCount == 0 && offCount == 0 {
+		e.completeSkipped(ctx, item, res.Index.ParticipantID, mode, "no upserts (removals deferred)")
+		return
+	}
 	_, visibleTo := Select(entry, e.cfg.Networks)
 	// Batch by serialized SIZE so no /push body exceeds Discovery's cap. The doc
 	// budget is the body cap minus headroom for the envelope (context + directive

@@ -84,6 +84,86 @@ func ResolveWithChangeset(entry CatalogEntry, cursor int64, seen bool, toVersion
 	return current, cs, nil
 }
 
+// ResolveDelta builds a MERGE payload for an incremental update WITHOUT fetching
+// the baseline: it takes the catalog envelope (id/descriptor/provider) from a
+// change file's `catalog` block and the union of resource/offer upserts across
+// the change files in (cursor, toVersion] (latest wins per id, order preserved).
+// Removals are recorded in the changeset but NOT applied (deferred to the
+// FULL/removals version). Returns ok=false when no change file carried the
+// metadata envelope, so the caller can fall back to a full resolve.
+func ResolveDelta(entry CatalogEntry, cursor, toVersion int64, fetch FetchFunc) ([]byte, Changeset, bool, error) {
+	cs := Changeset{UpsertedResources: map[string]bool{}, UpsertedOffers: map[string]bool{}}
+	changes := append([]FileEntry(nil), entry.Changes...)
+	sort.SliceStable(changes, func(i, j int) bool { return changes[i].Version < changes[j].Version })
+
+	resByID, offByID := map[string]json.RawMessage{}, map[string]json.RawMessage{}
+	var resOrder, offOrder []string
+	var envelope json.RawMessage
+
+	for _, c := range changes {
+		if c.URL == "" || c.Version <= cursor || c.Version > toVersion {
+			continue
+		}
+		b, err := fetch(c)
+		if err != nil {
+			return nil, cs, false, fmt.Errorf("catalogcrawler: fetching change v%d: %w", c.Version, err)
+		}
+		var cf catalogfile.ChangeFileDoc
+		if err := json.Unmarshal(b, &cf); err != nil {
+			return nil, cs, false, permanentf("catalogcrawler: parsing change v%d: %v", c.Version, err)
+		}
+		if len(cf.Catalog) > 0 {
+			envelope = cf.Catalog // metadata envelope; latest wins
+		}
+		for _, u := range cf.Resources.Upserts {
+			if id, err := catalogfile.ItemID(u); err == nil {
+				if _, seen := resByID[id]; !seen {
+					resOrder = append(resOrder, id)
+				}
+				resByID[id] = u
+				cs.UpsertedResources[id] = true
+			}
+		}
+		for _, u := range cf.Offers.Upserts {
+			if id, err := catalogfile.ItemID(u); err == nil {
+				if _, seen := offByID[id]; !seen {
+					offOrder = append(offOrder, id)
+				}
+				offByID[id] = u
+				cs.UpsertedOffers[id] = true
+			}
+		}
+		cs.RemovedResources += len(cf.Resources.Removals)
+		cs.RemovedOffers += len(cf.Offers.Removals)
+	}
+	if cs.RemovedResources > 0 || cs.RemovedOffers > 0 {
+		cs.HasRemovals = true
+	}
+	if len(envelope) == 0 {
+		return nil, cs, false, nil // no metadata -> caller falls back to a full resolve
+	}
+
+	var doc catalogfile.Doc
+	if err := json.Unmarshal(envelope, &doc); err != nil {
+		return nil, cs, false, permanentf("catalogcrawler: reading change catalog envelope: %v", err)
+	}
+	doc.Resources = orderedValues(resByID, resOrder)
+	doc.Offers = orderedValues(offByID, offOrder)
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return nil, cs, false, err
+	}
+	return out, cs, true, nil
+}
+
+func orderedValues(m map[string]json.RawMessage, order []string) []json.RawMessage {
+	out := make([]json.RawMessage, 0, len(order))
+	for _, id := range order {
+		out = append(out, m[id])
+	}
+	return out
+}
+
 func accumulateChangeset(cs *Changeset, cf catalogfile.ChangeFileDoc) {
 	for _, u := range cf.Resources.Upserts {
 		if id, err := catalogfile.ItemID(u); err == nil {

@@ -22,6 +22,7 @@ type Settings struct {
 	MaxDecompressedBytes int64
 	MaxAttempts          int
 	MaxPushBytes         int64
+	MergeOnly            bool
 	BppURI               string
 }
 
@@ -44,6 +45,10 @@ func LoadSettings(getenv func(string) string) (Settings, error) {
 		MaxDecompressedBytes: int64Or(getenv("CRAWLER_MAX_DECOMPRESSED_BYTES"), 100<<20),
 		MaxAttempts:          intOr(getenv("CRAWLER_MAX_ATTEMPTS"), 5),
 		MaxPushBytes:         int64Or(getenv("CRAWLER_MAX_PUSH_BYTES"), 10<<20),
+		// This version: always MERGE + build the delta from change files (FULL /
+		// removals are deferred). Set CRAWLER_MERGE_ONLY=false to re-enable the
+		// (dormant) mode-by-changeset FULL path.
+		MergeOnly: getenv("CRAWLER_MERGE_ONLY") != "false",
 	}
 
 	// Clamp <= 0 to the default: a literal "0" parses fine (not a parse error),
