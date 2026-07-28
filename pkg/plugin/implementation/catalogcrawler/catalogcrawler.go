@@ -32,8 +32,14 @@ func New(ctx context.Context, validator definition.SchemaValidator, cfg map[stri
 		return cfg[k]
 	}
 
+	logger := crawler.NewSlogLogger(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	settings, err := config.LoadSettings(get)
 	if err != nil {
+		// crawler.New owns the rest of the daemon lifecycle; config load happens
+		// before it, so this is the one start_failed the driver still emits.
+		logger.Error("crawler.daemon.start_failed",
+			"lifecycle", "daemon", "state", "start_failed", "stage", "config", "error", err.Error())
 		return nil, nil, fmt.Errorf("catalogcrawler: config: %w", err)
 	}
 
@@ -51,12 +57,13 @@ func New(ctx context.Context, validator definition.SchemaValidator, cfg map[stri
 		}
 	}
 
-	logger := crawler.NewSlogLogger(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	metrics, err := crawler.NewOTelMetrics(otel.Meter("catalogcrawler"))
 	if err != nil {
 		metrics = runner.NopMetrics{}
 	}
 
+	// New logs crawler.daemon.ready on success / crawler.daemon.start_failed on
+	// db open/migrate failure.
 	eng, closer, err := crawler.New(ctx, settings, crawler.Options{
 		Validate: validate,
 		Logger:   logger,
@@ -70,6 +77,8 @@ func New(ctx context.Context, validator definition.SchemaValidator, cfg map[stri
 	// Start on a background context so job lifetime is bound to Stop(), not to
 	// the plugin-registration context.
 	if err := eng.Start(context.Background()); err != nil {
+		logger.Error("crawler.daemon.start_failed",
+			"lifecycle", "daemon", "state", "start_failed", "stage", "start", "error", err.Error())
 		_ = closer()
 		return nil, nil, fmt.Errorf("catalogcrawler: start: %w", err)
 	}

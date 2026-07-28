@@ -1,5 +1,9 @@
 package publish
 
+// client.go — HTTP transport that POSTs /push bodies to the operator-configured
+// Discovery endpoint, plus the per-batch BatchOutcome and the Rollup/AckedCount
+// helpers that collapse those outcomes into a catalog-level sync status.
+
 import (
 	"bytes"
 	"context"

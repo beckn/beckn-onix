@@ -1,5 +1,9 @@
 package publish
 
+// batch.go — splits a catalog into /push batches that each fit Discovery's
+// payload cap (FULL lead carrying offers, remaining resources appended MERGE),
+// so a large catalog can be pushed idempotently across several requests.
+
 import (
 	"encoding/json"
 	"fmt"

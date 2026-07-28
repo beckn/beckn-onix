@@ -32,10 +32,17 @@ type Client struct {
 func NewClient(timeout time.Duration, maxBytes, maxDecompressed int64, allowPrivate bool) *Client {
 	c := &Client{maxBytes: maxBytes, maxDecompressed: maxDecompressed, allowPrivate: allowPrivate}
 	c.hc = &http.Client{
-		Timeout:   timeout,
-		Transport: &http.Transport{DisableCompression: true},
-		// Re-run the SSRF guard on every redirect hop; a public host must not be
-		// able to bounce us to an internal address via 3xx Location.
+		Timeout: timeout,
+		// DisableCompression: resp.Body is the exact artifact bytes we hash/decode.
+		// DialContext: the authoritative SSRF guard — it validates the IP actually
+		// being connected to (closing the DNS-rebinding TOCTOU that a URL-level
+		// pre-check alone leaves open); see guardedDialContext.
+		Transport: &http.Transport{
+			DisableCompression: true,
+			DialContext:        guardedDialContext(allowPrivate, timeout),
+		},
+		// Re-run the URL-level guard on every redirect hop too (fast, clear
+		// rejection before the dial); the dialer re-guards the connection anyway.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("catalogcrawler: stopped after 10 redirects")

@@ -22,6 +22,7 @@ func NewSlogLogger(l *slog.Logger) runner.Logger {
 
 type slogLogger struct{ l *slog.Logger }
 
+func (s slogLogger) Debug(event string, kv ...any) { s.l.Debug(event, kv...) }
 func (s slogLogger) Info(event string, kv ...any)  { s.l.Info(event, kv...) }
 func (s slogLogger) Warn(event string, kv ...any)  { s.l.Warn(event, kv...) }
 func (s slogLogger) Error(event string, kv ...any) { s.l.Error(event, kv...) }

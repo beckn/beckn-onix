@@ -1,6 +1,7 @@
-// Package publish builds and sends catalog/publish requests to Discovery: the
-// /push envelope + directives (request.go), byte-size batching (batch.go), and
-// the HTTP transport + outcome rollup (client.go). Imports only catalogfile.
+// Package publish builds and sends Beckn catalog/push requests to a Discovery
+// Service: the /push envelope + directives (request.go), byte-size batching
+// (batch.go), and the HTTP transport + outcome rollup (client.go). Imports only
+// catalogfile.
 package publish
 
 import (
@@ -28,9 +29,10 @@ type PushMeta struct {
 	VisibleTo     []string // catalog networks; nil/empty => public (omitted)
 }
 
-// BuildPushBody builds the Discovery /push request body: a Beckn catalog/publish
-// context plus message.catalogs and a matching message.publishDirectives entry
-// carrying catalogType, updateMode, and visibleTo.
+// BuildPushBody builds the Discovery /push request body: a Beckn catalog/push
+// context plus a CatalogPublishAction message (message.catalogs, min 1) and a
+// matching message.publishDirectives entry carrying catalogType, updateMode,
+// and visibleTo.
 func BuildPushBody(meta PushMeta, catalog []byte) ([]byte, error) {
 	var head struct {
 		ID string `json:"id"`
@@ -50,7 +52,7 @@ func BuildPushBody(meta PushMeta, catalog []byte) ([]byte, error) {
 
 	body := map[string]any{
 		"context": map[string]any{
-			"action":        "catalog/publish",
+			"action":        "catalog/push",
 			"bppId":         meta.ParticipantID,
 			"bppUri":        meta.BppURI,
 			"messageId":     meta.MessageID,

@@ -1,5 +1,9 @@
 package catalog
 
+// decide.go — change detection: compares a catalog's index entry against our
+// stored version cursor and yields a typed Decision (sync / skip_unchanged /
+// retire / rollback). Pure, no I/O.
+
 // Action is what the index job decides to do with a catalog on a pass. (This
 // is the typed change-detection vocabulary §6b calls "Decision".)
 type Action string

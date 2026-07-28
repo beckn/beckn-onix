@@ -1,5 +1,11 @@
 package store
 
+// queue.go — the work queue: coalescing Enqueue (UNIQUE catalog_id, latest
+// to_version wins), atomic ClaimNext (FOR UPDATE SKIP LOCKED) with a per-claim
+// token + lease for crash recovery, Reschedule/Park on failure, and the
+// transactional Complete that settles the catalog cursor and removes the queue
+// row in one transaction.
+
 import (
 	"context"
 	"database/sql"

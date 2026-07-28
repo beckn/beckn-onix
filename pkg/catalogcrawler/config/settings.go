@@ -64,6 +64,21 @@ func LoadSettings(getenv func(string) string) (Settings, error) {
 	if s.MaxPushBytes <= 0 {
 		s.MaxPushBytes = 10 << 20
 	}
+	// Durations: a literal "0s" parses fine, so clamp <= 0 to the default here (the
+	// boundary). A 0 FetchTimeout means no HTTP deadline — dangerous when fetching
+	// untrusted publisher URLs (slowloris); a 0 interval is a hot loop.
+	if s.FetchTimeout <= 0 {
+		s.FetchTimeout = 30 * time.Second
+	}
+	if s.IndexInterval <= 0 {
+		s.IndexInterval = 5 * time.Minute
+	}
+	if s.CatalogInterval <= 0 {
+		s.CatalogInterval = 30 * time.Second
+	}
+	if s.MaxAttempts <= 0 {
+		s.MaxAttempts = 5
+	}
 
 	var missing []string
 	if s.DBDSN == "" {

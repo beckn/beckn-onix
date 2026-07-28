@@ -206,7 +206,7 @@ modules:
         responseHeaderTimeout: 5s
       plugins:
         # Phase-1 catalog schema validation before push (validates the
-        # /push body against the catalog/publish action).
+        # /push body against the catalog/push action).
         schemaValidator:
           id: schemav2validator
           config:

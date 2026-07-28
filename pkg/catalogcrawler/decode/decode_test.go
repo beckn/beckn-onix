@@ -1,5 +1,9 @@
 package decode
 
+// decode_test.go — covers the codec registry: plain passthrough, gzip
+// round-trip, decompression-bomb rejection at the cap, corrupt/unknown-encoding
+// permanent errors, additive registration, and encoding inference from URLs.
+
 import (
 	"bytes"
 	"compress/gzip"

@@ -140,7 +140,7 @@ pkg/catalogcrawler/
 │   └── registry.go  gzip.go  telemetry.go
 ├── validate/                # ★ schema-validate FILE DATA + push body (Validator port over schemav2validator)
 │   └── schema.go  telemetry.go
-├── publish/                 # send to Discovery (matches catalog/publish)     (was push.go)
+├── publish/                 # send to Discovery (matches catalog/push)        (was push.go)
 │   └── request.go  batch.go  client.go  telemetry.go
 ├── source/                  # where index refs come from                      (was source.go)
 │   └── static.go  registry.go  telemetry.go
@@ -333,7 +333,7 @@ Enforcement: document these in `doc.go` now. Add `depguard` **only if/when** the
 ClickStack is OpenTelemetry-native (OTel collector → ClickHouse → HyperDX). Design:
 
 - **`telemetry/` = plumbing only:** OTel meter/tracer/provider construction (today inline at `catalogcrawler.go:65`) and the correlation types. **Telemetry *names* live co-located** with the code they describe (`fetch/telemetry.go`, `publish/telemetry.go`, …) so on-call opens the failing adapter and finds its metrics/spans/events together — not a central `telemetry/events.go` junk drawer.
-- **Typed `FaultClass` taxonomy** in `catalog/fault.go` (`ssrf`, `too_large`, `digest_mismatch`, `unsupported_encoding`, `decode`, `content_invalid`, `push_schema`, `push_rejected`, `push_transient`, `index_fetch`, `absent`). Adapters return typed faults; the runner switches on the class. **One source of truth** feeding: the metric `outcome=` label, the log `event` key, and the retire/retry decision — replacing the fragile `reasonCategory` string-split (`engine.go:562`). Note the two distinct schema faults: `content_invalid` (fetched file data fails its `schemaTypes` — §9a) vs `push_schema` (the outbound push body fails `catalog/publish`); both are **permanent** (don't advance the cursor; alert).
+- **Typed `FaultClass` taxonomy** in `catalog/fault.go` (`ssrf`, `too_large`, `digest_mismatch`, `unsupported_encoding`, `decode`, `content_invalid`, `push_schema`, `push_rejected`, `push_transient`, `index_fetch`, `absent`). Adapters return typed faults; the runner switches on the class. **One source of truth** feeding: the metric `outcome=` label, the log `event` key, and the retire/retry decision — replacing the fragile `reasonCategory` string-split (`engine.go:562`). Note the two distinct schema faults: `content_invalid` (fetched file data fails its `schemaTypes` — §9a) vs `push_schema` (the outbound push body fails `catalog/push`); both are **permanent** (don't advance the cursor; alert).
 - **Correlation:** a `RunID` (per pass tick) and `PassID` (per catalog item) minted in `runner/`, carried in `context.Context`, stamped on spans, attached to every log line (`LoggerFrom(ctx)`), and used as histogram exemplars. This is what makes the HyperDX "failed span → its logs → the metric spike" pivot work; it does not exist today (`Log` calls take loose `kv` with no id).
 
 **Traces (span tree)** — one span tree per lifecycle (§6b); the `crawler.sync` root **is** a Catalog Sync, its child spans are the `SyncPhase` running sub-states:
@@ -371,7 +371,7 @@ crawler.sync_pass {run_id}
 
 ## 9a. Content schema validation
 
-Today only the **outbound push body** is schema-validated (the `Validator` port on the runner, against `catalog/publish`). This CR reserves a home for validating the **inbound file data** — the fetched catalog content against its declared `schemaTypes` (`catalog.Entry.SchemaTypes`, already in the model).
+Today only the **outbound push body** is schema-validated (the `Validator` port on the runner, against `catalog/push`). This CR reserves a home for validating the **inbound file data** — the fetched catalog content against its declared `schemaTypes` (`catalog.Entry.SchemaTypes`, already in the model).
 
 - **Where:** a `validate/` adapter wrapping onix's `schemav2validator`, exposed through the runner's `Validator` port and invoked in `syncpass` **after decode, before publish** — i.e. integrity (digest) → decode → **content validation** → compose/publish. Trust order: never validate bytes that haven't passed the digest check.
 - **What to validate — open design question (flag for the owner):**

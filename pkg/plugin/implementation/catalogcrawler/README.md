@@ -45,9 +45,9 @@ trigger** (`definition.Crawler`):
      fetch the `baseline`, then fold each `changes[]` entry in version order
      via [`pkg/catalogfile`](../../../catalogfile). No composed state is kept
      locally, so a changed catalog is always resolved in full.
-   - **Schema-validates** the push body against the `catalog/publish` action
+   - **Schema-validates** the push body against the `catalog/push` action
      (optional, via the injected `schemaValidator`).
-   - **Pushes** to Discovery (`push.go`): a `catalog/publish` context plus
+   - **Pushes** to Discovery (`publish/`): a `catalog/push` context plus
      `message.catalogs` and a matching `publishDirectives` entry carrying
      `updateMode=FULL` and `visibleTo`. `FULL` is a replace -- resources
      absent from the pushed doc are removed downstream, so retirals and
@@ -119,7 +119,6 @@ same `Settings` (`pkg/catalogcrawler/config.go`).
 | `CRAWLER_FETCH_TIMEOUT` | Per-fetch timeout (Go duration) | no | `30s` |
 | `CRAWLER_MAX_ARTIFACT_BYTES` | Byte cap per fetched artifact | no | `10485760` (10 MiB) |
 | `CRAWLER_MAX_ATTEMPTS` | Max sync attempts before `failed` | no | `5` |
-| `CRAWLER_SCHEMA_ACTION` | Action path the validator keys on | no | `catalog/publish` |
 
 `CRAWLER_DB_DSN` and `CRAWLER_PUSH_ENDPOINT` are secret / deploy-specific and
 should come from env; the non-secret keys can live in the YAML config block.

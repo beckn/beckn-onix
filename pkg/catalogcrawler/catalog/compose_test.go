@@ -1,5 +1,8 @@
 package catalog
 
+// compose_test.go — tests for the composition logic: Resolve,
+// ResolveWithChangeset, ResolveDelta, and FilterCatalog.
+
 import (
 	"bytes"
 	"encoding/json"

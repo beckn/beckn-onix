@@ -1,5 +1,8 @@
 package catalog
 
+// decide_test.go — tests for Decide (change detection): the sync / skip /
+// retire / rollback decisions and placeholder-change (no-URL) handling.
+
 import "testing"
 
 // active builds an ACTIVE catalog entry with a baseline version and any
