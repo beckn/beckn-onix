@@ -99,6 +99,18 @@ func TestEngine_IndexThenCatalogPass(t *testing.T) {
 		t.Fatalf("cursor = %d seen=%v, want 1 true", v, seen)
 	}
 
+	// A detailed pass report was appended: pushed, FULL, 1 resource.
+	reports, err := s.GetCatalogReports(ctx, "p/c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("want 1 pass report, got %d", len(reports))
+	}
+	if r := reports[0]; r.Outcome != "pushed" || r.Mode != "FULL" || r.Resources != 1 || r.BatchesTotal < 1 {
+		t.Fatalf("pass report = %+v, want pushed/FULL/1 resource", r)
+	}
+
 	// Pushed body must carry updateMode FULL.
 	var body struct {
 		Message struct {

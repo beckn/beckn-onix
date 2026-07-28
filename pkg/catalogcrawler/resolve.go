@@ -20,6 +20,8 @@ type FetchFunc func(f FileEntry) ([]byte, error)
 type Changeset struct {
 	UpsertedResources map[string]bool
 	UpsertedOffers    map[string]bool
+	RemovedResources  int
+	RemovedOffers     int
 	HasRemovals       bool
 	FromBaseline      bool
 }
@@ -93,7 +95,9 @@ func accumulateChangeset(cs *Changeset, cf catalogfile.ChangeFileDoc) {
 			cs.UpsertedOffers[id] = true
 		}
 	}
-	if len(cf.Resources.Removals) > 0 || len(cf.Offers.Removals) > 0 {
+	cs.RemovedResources += len(cf.Resources.Removals)
+	cs.RemovedOffers += len(cf.Offers.Removals)
+	if cs.RemovedResources > 0 || cs.RemovedOffers > 0 {
 		cs.HasRemovals = true
 	}
 }

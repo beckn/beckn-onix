@@ -21,7 +21,7 @@ type Settings struct {
 	MaxArtifactBytes     int64
 	MaxDecompressedBytes int64
 	MaxAttempts          int
-	PushBatchSize        int
+	MaxPushBytes         int64
 	BppURI               string
 }
 
@@ -43,7 +43,7 @@ func LoadSettings(getenv func(string) string) (Settings, error) {
 		MaxArtifactBytes:     int64Or(getenv("CRAWLER_MAX_ARTIFACT_BYTES"), 10<<20),
 		MaxDecompressedBytes: int64Or(getenv("CRAWLER_MAX_DECOMPRESSED_BYTES"), 100<<20),
 		MaxAttempts:          intOr(getenv("CRAWLER_MAX_ATTEMPTS"), 5),
-		PushBatchSize:        intOr(getenv("CRAWLER_PUSH_BATCH_SIZE"), 1000),
+		MaxPushBytes:         int64Or(getenv("CRAWLER_MAX_PUSH_BYTES"), 10<<20),
 	}
 
 	// Clamp <= 0 to the default: a literal "0" parses fine (not a parse error),
@@ -53,6 +53,9 @@ func LoadSettings(getenv func(string) string) (Settings, error) {
 	}
 	if s.MaxDecompressedBytes <= 0 {
 		s.MaxDecompressedBytes = 100 << 20
+	}
+	if s.MaxPushBytes <= 0 {
+		s.MaxPushBytes = 10 << 20
 	}
 
 	var missing []string

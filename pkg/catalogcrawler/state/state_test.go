@@ -100,6 +100,64 @@ func TestTouchIndex(t *testing.T) {
 	}
 }
 
+// push_status is a bounded, chronological history: each settle appends one
+// pass record; only the most recent passHistoryCap survive.
+func TestPassReportHistory(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	cid := "p/hist"
+
+	for i := 1; i <= passHistoryCap+5; i++ {
+		must(t, s.UpsertCatalog(ctx, CatalogState{
+			CatalogID: cid, IndexURL: "i", Version: int64(i), Status: "active",
+			Report: PassReport{ToVersion: int64(i), Mode: "FULL", Resources: i, Outcome: "pushed"},
+		}))
+	}
+
+	reports, err := s.GetCatalogReports(ctx, cid)
+	must(t, err)
+	if len(reports) != passHistoryCap {
+		t.Fatalf("history len = %d, want %d (capped)", len(reports), passHistoryCap)
+	}
+	// Oldest surviving is pass 6 (25-20+1); newest is 25; chronological order.
+	if reports[0].ToVersion != 6 || reports[len(reports)-1].ToVersion != int64(passHistoryCap+5) {
+		t.Fatalf("window = [%d..%d], want [6..%d]", reports[0].ToVersion, reports[len(reports)-1].ToVersion, passHistoryCap+5)
+	}
+	if newest := reports[len(reports)-1]; newest.Resources != passHistoryCap+5 || newest.Mode != "FULL" {
+		t.Fatalf("newest = %+v, want resources %d mode FULL", newest, passHistoryCap+5)
+	}
+}
+
+// RecordFailure appends a pass record too, preserving partial detail
+// (batchesAcked < batchesTotal) without advancing the version cursor.
+func TestPassReportRecordsPartial(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	cid := "p/partial"
+
+	must(t, s.RecordFailure(ctx, cid, "i", "", PassReport{
+		ToVersion: 3, Mode: "FULL", Resources: 10, Offers: 2,
+		BatchesAcked: 1, BatchesTotal: 3, Outcome: "partial",
+		HTTPStatus: 500, Reason: "push: boom",
+	}))
+
+	reports, err := s.GetCatalogReports(ctx, cid)
+	must(t, err)
+	if len(reports) != 1 {
+		t.Fatalf("want 1 report, got %d", len(reports))
+	}
+	if r := reports[0]; r.Outcome != "partial" || r.BatchesAcked != 1 || r.BatchesTotal != 3 || r.Resources != 10 {
+		t.Fatalf("partial report = %+v, want partial 1/3 resources 10", r)
+	}
+	// Failure must NOT advance the cursor.
+	if _, seen, _ := s.GetCatalogVersion(ctx, cid); !seen {
+		t.Fatal("row should exist after RecordFailure")
+	}
+	if v, _, _ := s.GetCatalogVersion(ctx, cid); v != 0 {
+		t.Fatalf("version = %d, want 0 (failure must not advance cursor)", v)
+	}
+}
+
 func TestCatalogCursor(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -112,7 +170,7 @@ func TestCatalogCursor(t *testing.T) {
 
 	if err := s.UpsertCatalog(ctx, CatalogState{
 		CatalogID: "p/c", IndexURL: "https://x/index.json", ParticipantID: "p",
-		Version: 42, Status: "active", PushStatus: "pushed",
+		Version: 42, Status: "active", Report: PassReport{Outcome: "pushed"},
 	}); err != nil {
 		t.Fatal(err)
 	}

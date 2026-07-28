@@ -73,7 +73,7 @@ func New(ctx context.Context, validator definition.SchemaValidator, config map[s
 		IndexInterval:   settings.IndexInterval,
 		CatalogInterval: settings.CatalogInterval,
 		MaxAttempts:     settings.MaxAttempts,
-		PushBatchSize:   settings.PushBatchSize,
+		MaxPushBytes:    settings.MaxPushBytes,
 	}, engine.Deps{
 		Store:      state.New(db),
 		Source:     engine.NewConfigSource(settings.IndexURLs),

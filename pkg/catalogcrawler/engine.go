@@ -2,12 +2,14 @@ package catalogcrawler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/catalogcrawler/state"
+	"github.com/beckn-one/beckn-onix/pkg/catalogfile"
 )
 
 // Logger is the minimal structured-log sink the engine needs. It is
@@ -66,7 +68,7 @@ type Config struct {
 	IndexInterval   time.Duration // index-job cadence
 	CatalogInterval time.Duration // catalog-job cadence
 	MaxAttempts     int           // give up a catalog after this many failed pushes
-	PushBatchSize   int           // max resources per /push call (0 => default)
+	MaxPushBytes    int64         // max /push body size Discovery accepts (0 => default 10 MiB)
 }
 
 // Deps are the engine's injected collaborators.
@@ -109,8 +111,8 @@ func New(cfg Config, deps Deps) *Engine {
 	if cfg.MaxAttempts <= 0 {
 		cfg.MaxAttempts = 5
 	}
-	if cfg.PushBatchSize <= 0 {
-		cfg.PushBatchSize = 1000
+	if cfg.MaxPushBytes <= 0 {
+		cfg.MaxPushBytes = 10 << 20
 	}
 	if cfg.IndexInterval <= 0 {
 		cfg.IndexInterval = 5 * time.Minute
@@ -323,7 +325,11 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 	if item.Op == "retire" {
 		if err := e.deps.Store.Complete(ctx, item.ID, item.ClaimID, item.ToVersion, state.CatalogState{
 			CatalogID: item.CatalogID, IndexURL: item.IndexURL,
-			Version: item.ToVersion, Status: "retired", PushStatus: "skipped",
+			Version: item.ToVersion, Status: "retired",
+			Report: state.PassReport{
+				At: e.deps.Now().UTC(), FromVersion: item.FromVersion, ToVersion: item.ToVersion,
+				Outcome: "skipped",
+			},
 		}); err != nil {
 			e.deps.Log.Error("crawler.retire_failed", "catalogId", item.CatalogID, "err", err)
 		} else {
@@ -336,19 +342,19 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 	// unconditionally (empty cond) rather than risking a 304.
 	res, err := e.deps.FetchIndex(ctx, item.IndexURL, IndexCond{})
 	if err != nil {
-		e.fail(ctx, item, 0, "index_fetch: "+err.Error(), err)
+		e.fail(ctx, item, e.failReport(item, 0, "index_fetch: "+err.Error()), err)
 		return
 	}
 	entry, ok := findCatalog(res.Index, item.CatalogID)
 	if !ok {
-		e.failPermanent(ctx, item, 0, "catalog_absent_from_index")
+		e.failPermanent(ctx, item, e.failReport(item, 0, "catalog_absent_from_index"))
 		return
 	}
 
 	fetch := func(f FileEntry) ([]byte, error) { return e.deps.FetchFile(ctx, f) }
 	catalog, cs, err := ResolveWithChangeset(entry, item.FromVersion, item.FromVersion > 0, item.ToVersion, fetch)
 	if err != nil {
-		e.fail(ctx, item, 0, "resolve: "+err.Error(), err)
+		e.fail(ctx, item, e.failReport(item, 0, "resolve: "+err.Error()), err)
 		return
 	}
 
@@ -362,15 +368,26 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 	} else {
 		pushDoc, err = filterCatalog(catalog, cs.UpsertedResources, cs.UpsertedOffers)
 		if err != nil {
-			e.failPermanent(ctx, item, 0, "filter: "+err.Error())
+			e.failPermanent(ctx, item, e.failReport(item, 0, "filter: "+err.Error()))
 			return
 		}
 	}
 
+	resCount, offCount := docCounts(pushDoc) // what this pass actually pushes
 	_, visibleTo := Select(entry, e.cfg.Networks)
-	batches, err := BatchCatalog(pushDoc, e.cfg.PushBatchSize, mode)
+	// Batch by serialized SIZE so no /push body exceeds Discovery's cap. The doc
+	// budget is the body cap minus headroom for the envelope (context + directive
+	// + visibleTo) that BuildPushBody wraps around each batch's doc.
+	docBudget := e.cfg.MaxPushBytes - pushEnvelopeReserve
+	if vb, err := json.Marshal(visibleTo); err == nil {
+		docBudget -= int64(len(vb))
+	}
+	if docBudget < 1 {
+		docBudget = 1 // still emit ≥1 resource per batch; an oversize single resource is unavoidable
+	}
+	batches, err := BatchCatalog(pushDoc, docBudget, mode)
 	if err != nil {
-		e.failPermanent(ctx, item, 0, "batch: "+err.Error())
+		e.failPermanent(ctx, item, e.failReport(item, 0, "batch: "+err.Error()))
 		return
 	}
 
@@ -384,12 +401,12 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 			UpdateMode: batch.UpdateMode, VisibleTo: visibleTo,
 		}, batch.Doc)
 		if err != nil {
-			e.failPermanent(ctx, item, 0, "build_push: "+err.Error())
+			e.failPermanent(ctx, item, e.failReport(item, 0, "build_push: "+err.Error()))
 			return
 		}
 		if e.deps.Validate != nil {
 			if err := e.deps.Validate(ctx, body); err != nil {
-				e.failPermanent(ctx, item, 0, "schema: "+err.Error())
+				e.failPermanent(ctx, item, e.failReport(item, 0, "schema: "+err.Error()))
 				return
 			}
 		}
@@ -404,83 +421,106 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 	}
 	e.deps.Metrics.ObservePushSeconds(e.deps.Now().Sub(start).Seconds())
 
+	acked := ackedCount(outcomes)
 	if status, failed := Rollup(outcomes); status != SyncOK {
 		httpStatus, reason := 0, "push failed"
 		if len(failed) > 0 {
 			httpStatus, reason = failed[0].HTTPStatus, failed[0].Reason
 		}
-		e.fail(ctx, item, httpStatus, "push: "+reason, nil)
+		outcome := "failed"
+		if httpStatus >= 400 && httpStatus < 500 {
+			outcome = "rejected"
+		} else if acked > 0 {
+			outcome = "partial" // some batches landed, some didn't
+		}
+		e.fail(ctx, item, state.PassReport{
+			At: e.deps.Now().UTC(), FromVersion: item.FromVersion, ToVersion: item.ToVersion,
+			Mode: mode, Resources: resCount, Offers: offCount,
+			Removals:     cs.RemovedResources + cs.RemovedOffers,
+			BatchesAcked: acked, BatchesTotal: len(batches),
+			Outcome: outcome, HTTPStatus: httpStatus, Reason: "push: " + reason,
+		}, nil)
 		return
 	}
 
 	if err := e.deps.Store.Complete(ctx, item.ID, item.ClaimID, item.ToVersion, state.CatalogState{
 		CatalogID: item.CatalogID, IndexURL: item.IndexURL, ParticipantID: res.Index.ParticipantID,
-		Version: item.ToVersion, Status: "active", PushStatus: "pushed",
-		HTTPStatus: outcomes[len(outcomes)-1].HTTPStatus,
+		Version: item.ToVersion, Status: "active",
+		Report: state.PassReport{
+			At: e.deps.Now().UTC(), FromVersion: item.FromVersion, ToVersion: item.ToVersion,
+			Mode: mode, Resources: resCount, Offers: offCount,
+			Removals:     cs.RemovedResources + cs.RemovedOffers,
+			BatchesAcked: acked, BatchesTotal: len(batches),
+			Outcome: "pushed", HTTPStatus: outcomes[len(outcomes)-1].HTTPStatus,
+		},
 	}); err != nil {
 		e.deps.Log.Error("crawler.complete_failed", "catalogId", item.CatalogID, "err", err)
 		return
 	}
 	e.deps.Metrics.CatalogPushed()
-	e.deps.Log.Info("crawler.catalog.pushed", "catalogId", item.CatalogID, "version", item.ToVersion, "batches", len(outcomes))
+	e.deps.Log.Info("crawler.catalog.pushed", "catalogId", item.CatalogID, "version", item.ToVersion,
+		"mode", mode, "resources", resCount, "offers", offCount, "batches", len(outcomes))
 }
 
 // fail routes a failure: permanent (won't fix on retry) errors and 4xx
-// rejections are parked; everything else is a transient retry.
-func (e *Engine) fail(ctx context.Context, item *state.ClaimedItem, httpStatus int, reason string, err error) {
-	if IsPermanent(err) || (httpStatus >= 400 && httpStatus < 500) {
-		e.failPermanent(ctx, item, httpStatus, reason)
+// rejections are parked; everything else is a transient retry. Either way the
+// pass report is appended to the catalog's push_status history.
+func (e *Engine) fail(ctx context.Context, item *state.ClaimedItem, report state.PassReport, err error) {
+	if IsPermanent(err) || (report.HTTPStatus >= 400 && report.HTTPStatus < 500) {
+		e.failPermanent(ctx, item, report)
 		return
 	}
-	e.failItem(ctx, item, httpStatus, reason)
+	e.failItem(ctx, item, report)
+}
+
+// failReport builds the minimal pass report for a pre-push failure (no push
+// counts): the outcome is derived from the HTTP status.
+func (e *Engine) failReport(item *state.ClaimedItem, httpStatus int, reason string) state.PassReport {
+	outcome := "failed"
+	if httpStatus >= 400 && httpStatus < 500 {
+		outcome = "rejected"
+	}
+	return state.PassReport{
+		At: e.deps.Now().UTC(), FromVersion: item.FromVersion, ToVersion: item.ToVersion,
+		Outcome: outcome, HTTPStatus: httpStatus, Reason: reason,
+	}
 }
 
 // failPermanent parks a permanently-failed item (no hot retry; re-activates on
-// a version bump), records the failure WITHOUT advancing the cursor, counts
+// a version bump), appends the pass report WITHOUT advancing the cursor, counts
 // it, and logs at error level (the operator alert). "Too big" / "corrupt" /
 // "unsupported encoding" becomes visible and actionable, never silently lost.
-func (e *Engine) failPermanent(ctx context.Context, item *state.ClaimedItem, httpStatus int, reason string) {
+func (e *Engine) failPermanent(ctx context.Context, item *state.ClaimedItem, report state.PassReport) {
 	if err := e.deps.Store.ParkQueueItem(ctx, item.ID, item.ClaimID); err != nil {
 		e.deps.Log.Error("crawler.park_failed", "catalogId", item.CatalogID, "err", err)
 	}
-	pushStatus := "failed"
-	if httpStatus >= 400 && httpStatus < 500 {
-		pushStatus = "rejected"
-	}
-	if err := e.deps.Store.RecordFailure(ctx, item.CatalogID, item.IndexURL, "", pushStatus, reason, httpStatus); err != nil {
+	if err := e.deps.Store.RecordFailure(ctx, item.CatalogID, item.IndexURL, "", report); err != nil {
 		e.deps.Log.Error("crawler.recordfailure_failed", "catalogId", item.CatalogID, "err", err)
 	}
-	e.deps.Metrics.CatalogFailed(reasonCategory(reason))
-	e.deps.Log.Error("crawler.catalog.permanent_failure", "catalogId", item.CatalogID, "reason", reason, "httpStatus", httpStatus)
+	e.deps.Metrics.CatalogFailed(reasonCategory(report.Reason))
+	e.deps.Log.Error("crawler.catalog.permanent_failure", "catalogId", item.CatalogID, "reason", report.Reason, "httpStatus", report.HTTPStatus)
 }
 
-// failItem retries with capped backoff, and records the failure once
+// failItem retries with capped backoff, and appends the pass report once
 // MaxAttempts is reached. The cursor is NEVER advanced on failure (only
 // Complete advances it), so the item keeps retrying until it succeeds.
-func (e *Engine) failItem(ctx context.Context, item *state.ClaimedItem, httpStatus int, reason string) {
+func (e *Engine) failItem(ctx context.Context, item *state.ClaimedItem, report state.PassReport) {
 	attempts := item.Attempts + 1
-	// The cursor is NEVER advanced on failure (only Complete advances it), so a
-	// catalog whose push failed is never treated as applied — it keeps retrying
-	// at a capped backoff until it succeeds.
 	next := e.deps.Now().Add(Backoff(attempts))
 	if err := e.deps.Store.FailQueueItem(ctx, item.ID, item.ClaimID, next); err != nil {
 		e.deps.Log.Error("crawler.fail_failed", "catalogId", item.CatalogID, "err", err)
 	}
 	if attempts >= e.cfg.MaxAttempts {
-		pushStatus := "failed"
-		if httpStatus >= 400 && httpStatus < 500 {
-			pushStatus = "rejected"
-		}
 		// Record the failure WITHOUT advancing the version (queryable), and keep
 		// the item queued for retry.
-		if err := e.deps.Store.RecordFailure(ctx, item.CatalogID, item.IndexURL, "", pushStatus, reason, httpStatus); err != nil {
+		if err := e.deps.Store.RecordFailure(ctx, item.CatalogID, item.IndexURL, "", report); err != nil {
 			e.deps.Log.Error("crawler.recordfailure_failed", "catalogId", item.CatalogID, "err", err)
 		}
-		e.deps.Metrics.CatalogFailed(reasonCategory(reason))
-		e.deps.Log.Warn("crawler.catalog.failed", "catalogId", item.CatalogID, "reason", reason, "attempts", attempts, "httpStatus", httpStatus)
+		e.deps.Metrics.CatalogFailed(reasonCategory(report.Reason))
+		e.deps.Log.Warn("crawler.catalog.failed", "catalogId", item.CatalogID, "reason", report.Reason, "attempts", attempts, "httpStatus", report.HTTPStatus)
 		return
 	}
-	e.deps.Log.Warn("crawler.catalog.retry", "catalogId", item.CatalogID, "reason", reason, "attempts", attempts)
+	e.deps.Log.Warn("crawler.catalog.retry", "catalogId", item.CatalogID, "reason", report.Reason, "attempts", attempts)
 }
 
 func (e *Engine) newID() string {
@@ -488,6 +528,32 @@ func (e *Engine) newID() string {
 		return e.deps.NewID()
 	}
 	return ""
+}
+
+// pushEnvelopeReserve is headroom subtracted from the push-body cap to cover the
+// fixed /push envelope (context + one publishDirective) that wraps each batch's
+// catalog doc. visibleTo is accounted for separately at the call site.
+const pushEnvelopeReserve = 4 << 10
+
+// docCounts reports how many resources and offers a pushed catalog doc carries
+// (best-effort — a doc that won't parse counts as zero, never blocks the pass).
+func docCounts(b []byte) (resources, offers int) {
+	var d catalogfile.Doc
+	if json.Unmarshal(b, &d) == nil {
+		return len(d.Resources), len(d.Offers)
+	}
+	return 0, 0
+}
+
+// ackedCount is how many pushed batches Discovery acknowledged.
+func ackedCount(outcomes []PartOutcome) int {
+	n := 0
+	for _, o := range outcomes {
+		if o.Acked {
+			n++
+		}
+	}
+	return n
 }
 
 // reasonCategory reduces a full failure reason ("schema: ...") to a
