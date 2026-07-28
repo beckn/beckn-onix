@@ -39,22 +39,22 @@ const (
 )
 
 type stdHandler struct {
-	signer                definition.Signer
-	steps                 []definition.Step
-	responseSteps         []definition.ResponseStep
-	signValidator         definition.SignValidator
-	cache                 definition.Cache
-	registry              definition.RegistryLookup
-	manifestLoader        definition.ManifestLoader
-	km                    definition.KeyManager
-	schemaValidator       definition.SchemaValidator
+	signer             definition.Signer
+	steps              []definition.Step
+	responseSteps      []definition.ResponseStep
+	signValidator      definition.SignValidator
+	cache              definition.Cache
+	registry           definition.RegistryLookup
+	manifestLoader     definition.ManifestLoader
+	km                 definition.KeyManager
+	schemaValidator    definition.SchemaValidator
 	policyChecker         definition.PolicyChecker
 	schemaVersionMediator definition.SchemaVersionMediator
 	router                definition.Router
-	publisher             definition.Publisher
-	transportWrapper      definition.TransportWrapper
-	payloadTransformer    definition.Step
-	payloadStore          definition.PayloadStore
+	publisher          definition.Publisher
+	transportWrapper   definition.TransportWrapper
+	payloadTransformer definition.Step
+	payloadStore       definition.PayloadStore
 	// ackSigner is non-nil only when the "signAck" step is configured (Receiver
 	// modules). It is also used to sign pipeline-NACK responses so that ALL
 	// synchronous responses carry a Signature header per NFH-007 CON-004-02.

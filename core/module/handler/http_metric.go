@@ -129,6 +129,7 @@ func (r *responseRecorder) WriteHeader(statusCode int) {
 	r.ResponseWriter.WriteHeader(statusCode)
 }
 
+
 func specHttpMetricAttr(metricCode, category string) []attribute.KeyValue {
 
 	granularity, frequency := telemetry.GetNetworkMetricsConfig()
