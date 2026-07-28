@@ -193,3 +193,75 @@ func TestCrawlIndex_NotModified_TouchesCadence(t *testing.T) {
 		t.Fatalf("304 must advance next_crawl_at, got %v", got.NextCrawlAt)
 	}
 }
+
+// MergeOnly incremental update: the push is a MERGE delta built straight from
+// the change file (metadata envelope + upserts), and the baseline is NOT fetched.
+func TestEngine_MergeOnly_DeltaPush(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	url := "https://x/i.json"
+
+	entry := CatalogEntry{
+		CatalogID: "p/c", Status: StatusActive,
+		Baseline: FileEntry{Version: 1, URL: "base", Digest: "d"},
+		Changes:  []FileEntry{{Version: 2, URL: "chg2", Digest: "d"}},
+	}
+	idx := Index{ParticipantID: "p", Version: 2, Catalogs: []CatalogEntry{entry}}
+	files := map[string][]byte{
+		"base": []byte(`{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"prov"},"resources":[{"id":"r1"}]}`),
+		"chg2": []byte(`{"catalogId":"p/c","fromVersion":1,"toVersion":2,"catalog":{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"prov"}},"resources":{"upserts":[{"id":"rNew","descriptor":{"name":"New"}}]},"offers":{}}`),
+	}
+
+	// Seed the cursor at the baseline version → the next pass is incremental.
+	if err := s.UpsertCatalog(ctx, state.CatalogState{CatalogID: "p/c", IndexURL: url, Version: 1, Status: "active", Report: state.PassReport{Outcome: "pushed"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	var pushed [][]byte
+	var fetched []string
+	eng := New(Config{MergeOnly: true, MaxAttempts: 3, IndexInterval: time.Hour, CatalogInterval: time.Hour}, Deps{
+		Store:      s,
+		Source:     NewConfigSource([]string{url}),
+		FetchIndex: func(context.Context, string, IndexCond) (IndexResult, error) { return IndexResult{Index: idx}, nil },
+		FetchFile: func(_ context.Context, f FileEntry) ([]byte, error) {
+			fetched = append(fetched, f.URL)
+			return files[f.URL], nil
+		},
+		Push: func(_ context.Context, body []byte) (PartOutcome, error) {
+			pushed = append(pushed, body)
+			return PartOutcome{Acked: true, HTTPStatus: 200}, nil
+		},
+		Metrics: &recMetrics{},
+		NewID:   func() string { return "id" },
+	})
+
+	eng.indexPass(ctx)
+	eng.catalogPass(ctx)
+
+	if len(pushed) != 1 {
+		t.Fatalf("pushed %d times, want 1", len(pushed))
+	}
+	for _, u := range fetched {
+		if u == "base" {
+			t.Fatal("MergeOnly incremental must NOT fetch the baseline")
+		}
+	}
+	var body struct {
+		Message struct {
+			Catalogs          []json.RawMessage `json:"catalogs"`
+			PublishDirectives []struct {
+				UpdateMode string `json:"updateMode"`
+			} `json:"publishDirectives"`
+		} `json:"message"`
+	}
+	json.Unmarshal(pushed[0], &body)
+	if len(body.Message.PublishDirectives) != 1 || body.Message.PublishDirectives[0].UpdateMode != "MERGE" {
+		t.Fatalf("directive = %+v, want MERGE", body.Message.PublishDirectives)
+	}
+	if ids := resourceIDs(t, body.Message.Catalogs[0]); len(ids) != 1 || ids[0] != "rNew" {
+		t.Fatalf("pushed resources = %v, want [rNew] (delta only)", ids)
+	}
+	if v, _, _ := s.GetCatalogVersion(ctx, "p/c"); v != 2 {
+		t.Fatalf("cursor = %d, want 2", v)
+	}
+}

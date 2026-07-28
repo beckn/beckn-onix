@@ -56,6 +56,7 @@ func main() {
 		CatalogInterval: s.CatalogInterval,
 		MaxAttempts:     s.MaxAttempts,
 		MaxPushBytes:    s.MaxPushBytes,
+		MergeOnly:       s.MergeOnly,
 	}, cc.Deps{
 		Store:      state.New(db),
 		Source:     cc.NewConfigSource(s.IndexURLs),
