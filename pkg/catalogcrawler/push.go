@@ -70,18 +70,19 @@ type CatalogBatch struct {
 	UpdateMode string
 }
 
-// BatchCatalog splits a resolved catalog into push batches by resource
-// count. A catalog that fits in batchSize is one FULL batch (replace). A
-// larger catalog is the first batch FULL (descriptor/provider/offers +
-// the first resource slice) then the rest MERGE (id + resource slice),
-// which must be applied in order (see the ordering caveat in the design).
-func BatchCatalog(catalog []byte, batchSize int) ([]CatalogBatch, error) {
+// BatchCatalog splits a catalog into push batches by resource count. A
+// catalog that fits in batchSize is one batch with baseMode. A larger catalog
+// is the lead batch with baseMode then the rest MERGE (append). Every batch
+// keeps the catalog metadata — the publish job builds each resource's payload
+// from it — so only the resource slice differs; offers ride on the lead batch.
+// A FULL lead replaces once and the MERGE batches fill the rest.
+func BatchCatalog(catalog []byte, batchSize int, baseMode string) ([]CatalogBatch, error) {
 	var doc catalogfile.Doc
 	if err := json.Unmarshal(catalog, &doc); err != nil {
 		return nil, fmt.Errorf("catalogcrawler: reading catalog for batching: %w", err)
 	}
 	if batchSize <= 0 || len(doc.Resources) <= batchSize {
-		return []CatalogBatch{{Doc: catalog, UpdateMode: UpdateModeFull}}, nil
+		return []CatalogBatch{{Doc: catalog, UpdateMode: baseMode}}, nil
 	}
 
 	var batches []CatalogBatch
@@ -90,26 +91,20 @@ func BatchCatalog(catalog []byte, batchSize int) ([]CatalogBatch, error) {
 		if end > len(doc.Resources) {
 			end = len(doc.Resources)
 		}
-		chunk := doc.Resources[start:end]
 
+		slice := doc
+		slice.Resources = doc.Resources[start:end]
+		mode := UpdateModeMerge
 		if start == 0 {
-			first := doc
-			first.Resources = chunk
-			b, err := json.Marshal(first)
-			if err != nil {
-				return nil, err
-			}
-			batches = append(batches, CatalogBatch{Doc: b, UpdateMode: UpdateModeFull})
-			continue
+			mode = baseMode
+		} else {
+			slice.Offers = nil
 		}
-		b, err := json.Marshal(struct {
-			ID        json.RawMessage   `json:"id"`
-			Resources []json.RawMessage `json:"resources"`
-		}{ID: doc.ID, Resources: chunk})
+		b, err := json.Marshal(slice)
 		if err != nil {
 			return nil, err
 		}
-		batches = append(batches, CatalogBatch{Doc: b, UpdateMode: UpdateModeMerge})
+		batches = append(batches, CatalogBatch{Doc: b, UpdateMode: mode})
 	}
 	return batches, nil
 }

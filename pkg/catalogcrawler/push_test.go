@@ -78,29 +78,43 @@ func TestBuildPushBody(t *testing.T) {
 func TestBatchCatalog(t *testing.T) {
 	catalog := []byte(`{"id":"p/c","descriptor":{"name":"C"},"resources":[{"id":"r1"},{"id":"r2"},{"id":"r3"}]}`)
 
-	// Fits in one batch -> single FULL.
-	if one, err := BatchCatalog(catalog, 10); err != nil {
+	// Fits in one batch -> single batch carrying baseMode.
+	if one, err := BatchCatalog(catalog, 10, UpdateModeFull); err != nil {
 		t.Fatal(err)
 	} else if len(one) != 1 || one[0].UpdateMode != UpdateModeFull {
 		t.Fatalf("fit = %+v, want 1 FULL", one)
 	}
 
-	// batchSize 2 -> FULL[r1,r2], MERGE[r3].
-	b, err := BatchCatalog(catalog, 2)
+	// FULL base, batchSize 2 -> FULL[r1,r2], MERGE[r3].
+	b, err := BatchCatalog(catalog, 2, UpdateModeFull)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(b) != 2 {
-		t.Fatalf("batches = %d, want 2", len(b))
-	}
-	if b[0].UpdateMode != UpdateModeFull || b[1].UpdateMode != UpdateModeMerge {
-		t.Fatalf("modes = %s, %s, want FULL, MERGE", b[0].UpdateMode, b[1].UpdateMode)
+	if len(b) != 2 || b[0].UpdateMode != UpdateModeFull || b[1].UpdateMode != UpdateModeMerge {
+		t.Fatalf("batches = %+v, want FULL then MERGE", b)
 	}
 	if ids := resourceIDs(t, b[0].Doc); !reflect.DeepEqual(ids, []string{"r1", "r2"}) {
 		t.Fatalf("batch 0 resources = %v, want [r1 r2]", ids)
 	}
 	if ids := resourceIDs(t, b[1].Doc); !reflect.DeepEqual(ids, []string{"r3"}) {
 		t.Fatalf("batch 1 resources = %v, want [r3]", ids)
+	}
+	// Catalog metadata must ride on every batch (incl. the MERGE one).
+	var meta struct {
+		Descriptor json.RawMessage `json:"descriptor"`
+	}
+	json.Unmarshal(b[1].Doc, &meta)
+	if len(meta.Descriptor) == 0 {
+		t.Fatal("MERGE batch must keep catalog metadata")
+	}
+
+	// MERGE base, batchSize 2 -> all MERGE.
+	m, err := BatchCatalog(catalog, 2, UpdateModeMerge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m) != 2 || m[0].UpdateMode != UpdateModeMerge || m[1].UpdateMode != UpdateModeMerge {
+		t.Fatalf("merge batches = %+v, want all MERGE", m)
 	}
 }
 
