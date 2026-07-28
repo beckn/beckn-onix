@@ -101,20 +101,20 @@ func (e *Engine) logSyncPassStarted(runID string, queueDepth int) {
 }
 
 // logSyncPassCompleted closes a catalog tick that did work, with its tally.
-func (e *Engine) logSyncPassCompleted(runID string, synced, skipped, dropped, faulted, queueDepthAfter int, dur time.Duration) {
+func (e *Engine) logSyncPassCompleted(runID string, synced, skipped, dropped, faulted, retried, queueDepthAfter int, dur time.Duration) {
 	e.deps.Log.Info("crawler.sync_pass.completed",
 		"lifecycle", "sync_pass", "state", "completed", "run_id", runID,
-		"synced", synced, "skipped", skipped, "dropped", dropped, "faulted", faulted,
+		"synced", synced, "skipped", skipped, "dropped", dropped, "faulted", faulted, "retried", retried,
 		"queue_depth_after", queueDepthAfter, "duration_ms", dur.Milliseconds())
 }
 
 // --- Index crawl (lifecycle=index_pass / index_crawl) -----------------------
 
 // logIndexPassCompleted closes one index tick with its tally.
-func (e *Engine) logIndexPassCompleted(runID string, checked, changed, enqueued int, dur time.Duration) {
+func (e *Engine) logIndexPassCompleted(runID string, fetched, changed, enqueued int, dur time.Duration) {
 	e.deps.Log.Info("crawler.index_pass.completed",
 		"lifecycle", "index_pass", "state", "completed", "run_id", runID,
-		"indexes_checked", checked, "indexes_changed", changed,
+		"indexes_fetched", fetched, "indexes_changed", changed,
 		"catalogs_enqueued", enqueued, "duration_ms", dur.Milliseconds())
 }
 

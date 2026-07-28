@@ -28,12 +28,12 @@ const (
 )
 
 // crawlResult is what one crawlIndex reports back so indexPass can tally the
-// heartbeat: whether the index was actually fetched (checked), whether its
-// version advanced (changed), how many catalogs were enqueued, and the terminal
-// IndexOutcome.
+// heartbeat: whether the index was actually fetched (fetched — the conditional
+// GET was made, incl. a 304), whether its version advanced (changed), how many
+// catalogs were enqueued, and the terminal IndexOutcome.
 type crawlResult struct {
 	outcome  IndexOutcome
-	checked  bool
+	fetched  bool
 	changed  bool
 	enqueued int
 }
@@ -48,21 +48,21 @@ func (e *Engine) indexPass(ctx context.Context) {
 		e.logIndexPassFailed(runID, "source_resolve", err)
 		return
 	}
-	var checked, changed, enqueued int
+	var fetched, changed, enqueued int
 	for _, ref := range refs {
 		if ctx.Err() != nil {
 			return
 		}
 		r := e.crawlIndex(ctx, ref, scheduled, runID)
-		if r.checked {
-			checked++
+		if r.fetched {
+			fetched++
 		}
 		if r.changed {
 			changed++
 		}
 		enqueued += r.enqueued
 	}
-	e.logIndexPassCompleted(runID, checked, changed, enqueued, e.deps.Now().Sub(start))
+	e.logIndexPassCompleted(runID, fetched, changed, enqueued, e.deps.Now().Sub(start))
 }
 
 // crawlIndex crawls one publisher index. The steps read top to bottom:
@@ -121,7 +121,7 @@ func (e *Engine) indexUnchanged(ctx context.Context, ref source.IndexRef, runID 
 		e.storeUnhealthy(runID, "advance_cadence", "", err)
 	}
 	e.deps.Metrics.ObserveIndexSeconds(e.deps.Now().Sub(since).Seconds())
-	return crawlResult{outcome: IndexUnchanged, checked: true}
+	return crawlResult{outcome: IndexUnchanged, fetched: true}
 }
 
 // processIndex handles a freshly-fetched index body: it always counts as
@@ -129,7 +129,7 @@ func (e *Engine) indexUnchanged(ctx context.Context, ref source.IndexRef, runID 
 // A same-version index is logged and left for the per-catalog cursors + queue.
 func (e *Engine) processIndex(ctx context.Context, ref source.IndexRef, prev *store.IndexState, idx catalog.Index, runID string) crawlResult {
 	e.logIndexChecked(runID, ref.IndexURL, idx.Version)
-	out := crawlResult{outcome: IndexUnchanged, checked: true}
+	out := crawlResult{outcome: IndexUnchanged, fetched: true}
 	if prev != nil && prev.IndexVersion == idx.Version {
 		e.logIndexUnchanged(runID, ref.IndexURL, idx.Version)
 		return out

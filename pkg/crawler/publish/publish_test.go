@@ -185,20 +185,24 @@ func TestRollup(t *testing.T) {
 		outcomes   []BatchOutcome
 		wantStatus string
 		wantFailed int
+		wantAcked  int
 	}{
-		{"all acked -> success", []BatchOutcome{ok, ok}, SyncOK, 0},
-		{"some acked -> partial", []BatchOutcome{ok, bad}, SyncPartial, 1},
-		{"none acked -> failed", []BatchOutcome{bad, bad}, SyncFailed, 2},
-		{"empty -> success", nil, SyncOK, 0},
+		{"all acked -> success", []BatchOutcome{ok, ok}, SyncOK, 0, 2},
+		{"some acked -> partial", []BatchOutcome{ok, bad}, SyncPartial, 1, 1},
+		{"none acked -> failed", []BatchOutcome{bad, bad}, SyncFailed, 2, 0},
+		{"empty -> success", nil, SyncOK, 0, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			status, failed := Rollup(tt.outcomes)
+			status, failed, acked := Rollup(tt.outcomes)
 			if status != tt.wantStatus {
 				t.Errorf("status = %q, want %q", status, tt.wantStatus)
 			}
 			if len(failed) != tt.wantFailed {
 				t.Errorf("failed count = %d, want %d", len(failed), tt.wantFailed)
+			}
+			if acked != tt.wantAcked {
+				t.Errorf("acked = %d, want %d", acked, tt.wantAcked)
 			}
 		})
 	}

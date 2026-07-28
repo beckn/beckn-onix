@@ -32,7 +32,7 @@ const pushEnvelopeReserve = 4 << 10
 func (e *Engine) catalogPass(ctx context.Context) {
 	runID := e.newID()
 	start := e.deps.Now()
-	var synced, skipped, dropped, faulted int
+	var synced, skipped, dropped, faulted, retried int
 	started := false
 	for {
 		if ctx.Err() != nil {
@@ -58,7 +58,9 @@ func (e *Engine) catalogPass(ctx context.Context) {
 			skipped++
 		case catalog.OutcomeDropped:
 			dropped++
-		default: // faulted / partial (retried)
+		case catalog.OutcomePartial:
+			retried++ // partial push is a retry-in-progress, not a permanent fault
+		default: // faulted
 			faulted++
 		}
 	}
@@ -67,7 +69,7 @@ func (e *Engine) catalogPass(ctx context.Context) {
 		e.deps.Metrics.SetQueueDepth(depthAfter)
 	}
 	if started {
-		e.logSyncPassCompleted(runID, synced, skipped, dropped, faulted, depthAfter, e.deps.Now().Sub(start))
+		e.logSyncPassCompleted(runID, synced, skipped, dropped, faulted, retried, depthAfter, e.deps.Now().Sub(start))
 	}
 }
 
@@ -77,13 +79,9 @@ func (e *Engine) catalogPass(ctx context.Context) {
 func (e *Engine) handleQueueItem(ctx context.Context, item *store.ClaimedItem, runID string) catalog.SyncOutcome {
 	passID := e.newID()
 	if item.Op == "retire" {
-		if err := e.deps.Store.Complete(ctx, item.ID, item.ClaimID, item.ToVersion, store.CatalogState{
-			CatalogID: item.CatalogID, IndexURL: item.IndexURL,
-			Version: item.ToVersion, Status: string(catalog.CatalogRetired),
-			Report: store.PassReport{
-				At: e.deps.Now().UTC(), FromVersion: item.FromVersion, ToVersion: item.ToVersion,
-				Outcome: string(catalog.OutcomeRetired),
-			},
+		if err := e.settle(ctx, item, "", catalog.CatalogRetired, store.PassReport{
+			At: e.deps.Now().UTC(), FromVersion: item.FromVersion, ToVersion: item.ToVersion,
+			Outcome: string(catalog.OutcomeRetired),
 		}); err != nil {
 			e.storeUnhealthy(runID, "complete", item.CatalogID, err)
 			return catalog.OutcomeFaulted
@@ -138,7 +136,7 @@ func (e *Engine) syncCatalog(ctx context.Context, item *store.ClaimedItem, runID
 		{SyncResolving, "fetch index & find catalog", e.resolveEntry},
 		{SyncResolving, "pull & unpack files", e.fetchContent},
 		{SyncVerifying, "verify digests & decide upserts", e.verifyContent},
-		{SyncScoping, "resolve who may see it (visibleTo)", e.scope},
+		{SyncScoping, "resolve who may see it (visibleTo)", e.resolveVisibility},
 		{SyncScoping, "batch by size cap", e.batch},
 		{SyncPublishing, "push each batch to Discovery", e.publish},
 		{SyncPublishing, "record & advance cursor", e.complete},
@@ -200,7 +198,7 @@ func (e *Engine) resolveEntry(ctx context.Context, s *syncState) (catalog.SyncOu
 // it is pulled.
 func (e *Engine) fetchContent(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
 	fetch := func(f catalog.FileEntry) ([]byte, error) { return e.deps.FetchFile(ctx, f) }
-	pushDoc, mode, cs, err := e.resolvePush(s.entry, s.item, fetch)
+	pushDoc, mode, cs, err := e.buildPushDoc(s.entry, s.item, fetch)
 	if err != nil {
 		e.routeFailure(ctx, s.item, e.newFailureReport(s.item, 0, "resolve: "+err.Error()), err, s.runID, s.passID)
 		return catalog.OutcomeFaulted, true
@@ -225,9 +223,11 @@ func (e *Engine) verifyContent(ctx context.Context, s *syncState) (catalog.SyncO
 	return "", false
 }
 
-// scope (scoping): decide the network membership + who this catalog is visible
-// to (handed to Discovery as visibleTo).
-func (e *Engine) scope(_ context.Context, s *syncState) (catalog.SyncOutcome, bool) {
+// resolveVisibility (scoping): resolve who this catalog is visible to (handed to
+// Discovery as visibleTo). Membership — whether we carry this catalog at all —
+// was already decided upstream at enqueue time in the crawl job's decideCatalog,
+// so ResolveScope's take flag is discarded here and only visibleTo is kept.
+func (e *Engine) resolveVisibility(_ context.Context, s *syncState) (catalog.SyncOutcome, bool) {
 	_, visibleTo := catalog.ResolveScope(s.entry, e.cfg.Networks)
 	s.visibleTo = visibleTo
 	return "", false
@@ -290,8 +290,9 @@ func (e *Engine) publish(ctx context.Context, s *syncState) (catalog.SyncOutcome
 	e.deps.Metrics.ObservePushSeconds(e.deps.Now().Sub(start).Seconds())
 
 	s.outcomes = outcomes
-	s.acked = publish.AckedCount(outcomes)
-	if status, failed := publish.Rollup(outcomes); status != publish.SyncOK {
+	status, failed, acked := publish.Rollup(outcomes)
+	s.acked = acked
+	if status != publish.SyncOK {
 		httpStatus, reason := 0, "push failed"
 		if len(failed) > 0 {
 			httpStatus, reason = failed[0].HTTPStatus, failed[0].Reason
@@ -311,16 +312,12 @@ func (e *Engine) publish(ctx context.Context, s *syncState) (catalog.SyncOutcome
 // complete (publishing): settle a fully-acked sync — advance the cursor, record
 // the pushed pass report, and emit the success terminal.
 func (e *Engine) complete(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
-	if err := e.deps.Store.Complete(ctx, s.item.ID, s.item.ClaimID, s.item.ToVersion, store.CatalogState{
-		CatalogID: s.item.CatalogID, IndexURL: s.item.IndexURL, ParticipantID: s.participantID,
-		Version: s.item.ToVersion, Status: string(catalog.CatalogActive),
-		Report: store.PassReport{
-			At: e.deps.Now().UTC(), FromVersion: s.item.FromVersion, ToVersion: s.item.ToVersion,
-			Mode: s.mode, Resources: s.resCount, Offers: s.offCount,
-			Removals:     s.cs.RemovedResources + s.cs.RemovedOffers,
-			BatchesAcked: s.acked, BatchesTotal: len(s.batches),
-			Outcome: string(catalog.OutcomePushed), HTTPStatus: s.outcomes[len(s.outcomes)-1].HTTPStatus,
-		},
+	if err := e.settle(ctx, s.item, s.participantID, catalog.CatalogActive, store.PassReport{
+		At: e.deps.Now().UTC(), FromVersion: s.item.FromVersion, ToVersion: s.item.ToVersion,
+		Mode: s.mode, Resources: s.resCount, Offers: s.offCount,
+		Removals:     s.cs.RemovedResources + s.cs.RemovedOffers,
+		BatchesAcked: s.acked, BatchesTotal: len(s.batches),
+		Outcome: string(catalog.OutcomePushed), HTTPStatus: s.outcomes[len(s.outcomes)-1].HTTPStatus,
 	}); err != nil {
 		e.storeUnhealthy(s.runID, "complete", s.item.CatalogID, err)
 		return catalog.OutcomeFaulted, true
@@ -332,7 +329,7 @@ func (e *Engine) complete(ctx context.Context, s *syncState) (catalog.SyncOutcom
 
 // --- shared helpers used by the stages --------------------------------------
 
-// resolvePush produces the push doc + updateMode for a claimed catalog.
+// buildPushDoc produces the push doc + updateMode for a claimed catalog.
 //
 // This version (MergeOnly) always MERGEs: an incremental update is built as a
 // delta straight from the change files (no baseline fetch) when they carry the
@@ -342,7 +339,7 @@ func (e *Engine) complete(ctx context.Context, s *syncState) (catalog.SyncOutcom
 //
 // With MergeOnly=false the dormant mode-by-changeset path runs: only-upserts ->
 // MERGE (just the changed resources); any removal / new / re-baseline -> FULL.
-func (e *Engine) resolvePush(entry catalog.CatalogEntry, item *store.ClaimedItem, fetch catalog.FetchFunc) ([]byte, string, catalog.Changeset, error) {
+func (e *Engine) buildPushDoc(entry catalog.CatalogEntry, item *store.ClaimedItem, fetch catalog.FetchFunc) ([]byte, string, catalog.Changeset, error) {
 	if !e.cfg.MergeOnly {
 		full, cs, err := catalog.ResolveWithChangeset(entry, item.FromVersion, item.FromVersion > 0, item.ToVersion, fetch)
 		if err != nil {
@@ -372,6 +369,18 @@ func (e *Engine) resolvePush(entry catalog.CatalogEntry, item *store.ClaimedItem
 	return full, publish.UpdateModeMerge, cs, err
 }
 
+// settle builds the common CatalogState envelope and calls Store.Complete for a
+// terminal outcome (pushed / skipped / retired): the cursor advances to the
+// item's ToVersion and the pass report is appended. It is the single write path
+// shared by the three terminal sites — the caller handles the returned error
+// (all currently via storeUnhealthy("complete")).
+func (e *Engine) settle(ctx context.Context, item *store.ClaimedItem, participantID string, status catalog.CatalogStatus, report store.PassReport) error {
+	return e.deps.Store.Complete(ctx, item.ID, item.ClaimID, item.ToVersion, store.CatalogState{
+		CatalogID: item.CatalogID, IndexURL: item.IndexURL, ParticipantID: participantID,
+		Version: item.ToVersion, Status: string(status), Report: report,
+	})
+}
+
 // completeSkipped settles a claimed item that had nothing to push (e.g. a
 // removal-only change while removals are deferred): the cursor still advances
 // and a skipped pass report is recorded, so it isn't re-processed.
@@ -380,10 +389,7 @@ func (e *Engine) completeSkipped(ctx context.Context, item *store.ClaimedItem, p
 		At: e.deps.Now().UTC(), FromVersion: item.FromVersion, ToVersion: item.ToVersion,
 		Mode: mode, Outcome: string(catalog.OutcomeSkipped), Reason: reason,
 	}
-	if err := e.deps.Store.Complete(ctx, item.ID, item.ClaimID, item.ToVersion, store.CatalogState{
-		CatalogID: item.CatalogID, IndexURL: item.IndexURL, ParticipantID: participantID,
-		Version: item.ToVersion, Status: string(catalog.CatalogActive), Report: rep,
-	}); err != nil {
+	if err := e.settle(ctx, item, participantID, catalog.CatalogActive, rep); err != nil {
 		e.storeUnhealthy(runID, "complete", item.CatalogID, err)
 		return
 	}

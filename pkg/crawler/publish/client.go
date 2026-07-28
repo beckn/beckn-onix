@@ -1,8 +1,8 @@
 package publish
 
 // client.go — HTTP transport that POSTs /push bodies to the operator-configured
-// Discovery endpoint, plus the per-batch BatchOutcome and the Rollup/AckedCount
-// helpers that collapse those outcomes into a catalog-level sync status.
+// Discovery endpoint, plus the per-batch BatchOutcome and the Rollup helper that
+// collapses those outcomes into a catalog-level sync status.
 
 import (
 	"bytes"
@@ -60,9 +60,9 @@ func (c *Client) Push(ctx context.Context, endpoint string, body []byte) (BatchO
 }
 
 // Rollup collapses per-batch push outcomes into a catalog-level sync_status and
-// returns the batches that failed (for retry + the error reason).
-func Rollup(outcomes []BatchOutcome) (status string, failed []BatchOutcome) {
-	acked := 0
+// returns the batches that failed (for retry + the error reason) plus how many
+// batches Discovery acknowledged.
+func Rollup(outcomes []BatchOutcome) (status string, failed []BatchOutcome, acked int) {
 	for _, o := range outcomes {
 		if o.Acked {
 			acked++
@@ -72,21 +72,10 @@ func Rollup(outcomes []BatchOutcome) (status string, failed []BatchOutcome) {
 	}
 	switch {
 	case len(failed) == 0:
-		return SyncOK, nil
+		return SyncOK, nil, acked
 	case acked == 0:
-		return SyncFailed, failed
+		return SyncFailed, failed, acked
 	default:
-		return SyncPartial, failed
+		return SyncPartial, failed, acked
 	}
-}
-
-// AckedCount is how many pushed batches Discovery acknowledged.
-func AckedCount(outcomes []BatchOutcome) int {
-	n := 0
-	for _, o := range outcomes {
-		if o.Acked {
-			n++
-		}
-	}
-	return n
 }

@@ -1,5 +1,5 @@
 // Package catalog is the crawler's pure domain: the DeDi index/catalog model,
-// change-detection and eligibility rules, baseline+change composition, and the
+// change-detection and scope-resolution rules, baseline+change composition, and the
 // shared lifecycle/fault vocabulary. It imports only stdlib + pkg/catalogfile
 // (never any adapter or telemetry), so the same rules drive an onix plugin, a
 // standalone binary, or tests alike. Types here follow the Decentralized
