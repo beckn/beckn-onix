@@ -146,7 +146,7 @@ func TestComplete(t *testing.T) {
 	it, err := s.ClaimNext(ctx)
 	must(t, err)
 	must(t, s.Complete(ctx, it.ID, it.ClaimID, it.ToVersion, CatalogState{
-		CatalogID: "p/c", IndexURL: "i", Version: 42, Status: "active", PushStatus: "pushed",
+		CatalogID: "p/c", IndexURL: "i", Version: 42, Status: "active", Report: PassReport{Outcome: "pushed"},
 	}))
 
 	if depth, err := s.QueueDepth(ctx); err != nil {
@@ -185,7 +185,7 @@ func TestEnqueue_PreservesInProgressClaim(t *testing.T) {
 
 	// Completing v5 advances the cursor but must NOT delete the v7 work.
 	must(t, s.Complete(ctx, it.ID, it.ClaimID, 5, CatalogState{
-		CatalogID: "p/c", IndexURL: "i", Version: 5, Status: "active", PushStatus: "pushed",
+		CatalogID: "p/c", IndexURL: "i", Version: 5, Status: "active", Report: PassReport{Outcome: "pushed"},
 	}))
 	if v, seen, _ := s.GetCatalogVersion(ctx, "p/c"); !seen || v != 5 {
 		t.Fatalf("cursor = %d seen=%v, want 5", v, seen)

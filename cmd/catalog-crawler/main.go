@@ -55,7 +55,7 @@ func main() {
 		IndexInterval:   s.IndexInterval,
 		CatalogInterval: s.CatalogInterval,
 		MaxAttempts:     s.MaxAttempts,
-		PushBatchSize:   s.PushBatchSize,
+		MaxPushBytes:    s.MaxPushBytes,
 	}, cc.Deps{
 		Store:      state.New(db),
 		Source:     cc.NewConfigSource(s.IndexURLs),

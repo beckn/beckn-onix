@@ -3,6 +3,7 @@ package catalogcrawler
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -77,44 +78,70 @@ func TestBuildPushBody(t *testing.T) {
 
 func TestBatchCatalog(t *testing.T) {
 	catalog := []byte(`{"id":"p/c","descriptor":{"name":"C"},"resources":[{"id":"r1"},{"id":"r2"},{"id":"r3"}]}`)
+	full := int64(len(catalog))
 
-	// Fits in one batch -> single batch carrying baseMode.
-	if one, err := BatchCatalog(catalog, 10, UpdateModeFull); err != nil {
+	// Whole doc fits the budget -> single batch carrying baseMode.
+	if one, err := BatchCatalog(catalog, full+100, UpdateModeFull); err != nil {
 		t.Fatal(err)
 	} else if len(one) != 1 || one[0].UpdateMode != UpdateModeFull {
 		t.Fatalf("fit = %+v, want 1 FULL", one)
 	}
 
-	// FULL base, batchSize 2 -> FULL[r1,r2], MERGE[r3].
-	b, err := BatchCatalog(catalog, 2, UpdateModeFull)
+	// Budget below the whole doc -> split by SIZE: lead FULL, rest MERGE; every
+	// batch keeps catalog metadata; resources preserved in order + complete; and
+	// no batch's doc exceeds the budget (all resources here are small).
+	budget := full - 1
+	b, err := BatchCatalog(catalog, budget, UpdateModeFull)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(b) != 2 || b[0].UpdateMode != UpdateModeFull || b[1].UpdateMode != UpdateModeMerge {
-		t.Fatalf("batches = %+v, want FULL then MERGE", b)
+	if len(b) < 2 {
+		t.Fatalf("want >=2 batches under budget, got %d", len(b))
 	}
-	if ids := resourceIDs(t, b[0].Doc); !reflect.DeepEqual(ids, []string{"r1", "r2"}) {
-		t.Fatalf("batch 0 resources = %v, want [r1 r2]", ids)
+	if b[0].UpdateMode != UpdateModeFull {
+		t.Fatalf("lead batch must be FULL, got %s", b[0].UpdateMode)
 	}
-	if ids := resourceIDs(t, b[1].Doc); !reflect.DeepEqual(ids, []string{"r3"}) {
-		t.Fatalf("batch 1 resources = %v, want [r3]", ids)
+	var got []string
+	for i, batch := range b {
+		if i > 0 && batch.UpdateMode != UpdateModeMerge {
+			t.Fatalf("batch %d must be MERGE, got %s", i, batch.UpdateMode)
+		}
+		if int64(len(batch.Doc)) > budget {
+			t.Fatalf("batch %d doc = %d bytes, exceeds budget %d", i, len(batch.Doc), budget)
+		}
+		var meta struct {
+			Descriptor json.RawMessage `json:"descriptor"`
+		}
+		json.Unmarshal(batch.Doc, &meta)
+		if len(meta.Descriptor) == 0 {
+			t.Fatalf("batch %d dropped catalog metadata", i)
+		}
+		got = append(got, resourceIDs(t, batch.Doc)...)
 	}
-	// Catalog metadata must ride on every batch (incl. the MERGE one).
-	var meta struct {
-		Descriptor json.RawMessage `json:"descriptor"`
-	}
-	json.Unmarshal(b[1].Doc, &meta)
-	if len(meta.Descriptor) == 0 {
-		t.Fatal("MERGE batch must keep catalog metadata")
+	if !reflect.DeepEqual(got, []string{"r1", "r2", "r3"}) {
+		t.Fatalf("reassembled resources = %v, want [r1 r2 r3]", got)
 	}
 
-	// MERGE base, batchSize 2 -> all MERGE.
-	m, err := BatchCatalog(catalog, 2, UpdateModeMerge)
+	// MERGE base -> every batch is MERGE.
+	m, err := BatchCatalog(catalog, budget, UpdateModeMerge)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(m) != 2 || m[0].UpdateMode != UpdateModeMerge || m[1].UpdateMode != UpdateModeMerge {
-		t.Fatalf("merge batches = %+v, want all MERGE", m)
+	for i, batch := range m {
+		if batch.UpdateMode != UpdateModeMerge {
+			t.Fatalf("merge batch %d = %s, want MERGE", i, batch.UpdateMode)
+		}
+	}
+
+	// A single resource larger than the budget can't be split — it still forms
+	// its own (over-budget) batch rather than being dropped.
+	big := []byte(`{"id":"p/c","resources":[{"id":"huge","blob":"` + strings.Repeat("x", 500) + `"}]}`)
+	bb, err := BatchCatalog(big, 50, UpdateModeFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bb) != 1 {
+		t.Fatalf("oversize single resource: want 1 batch, got %d", len(bb))
 	}
 }
 

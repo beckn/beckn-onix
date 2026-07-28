@@ -7,12 +7,18 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx database/sql driver ("pgx")
 )
+
+// passHistoryCap bounds how many recent pass records crawler_catalog.push_status
+// keeps per catalog (append-and-trim), so a long-running crawler can't bloat the
+// row while still giving a useful recent history.
+const passHistoryCap = 20
 
 //go:embed migrations/*.sql
 var migrationFS embed.FS
@@ -143,16 +149,34 @@ func (s *Store) GetCatalogVersion(ctx context.Context, catalogID string) (versio
 	return v.Int64, true, nil
 }
 
-// CatalogState is the settled per-catalog outcome to persist.
+// PassReport is one settled pass's detailed outcome, appended to a catalog's
+// push_status history array. Counts are what this pass actually pushed; on a
+// partial/failed push, BatchesAcked < BatchesTotal tells the story.
+type PassReport struct {
+	At           time.Time `json:"ts"`
+	FromVersion  int64     `json:"from"`
+	ToVersion    int64     `json:"to"`
+	Mode         string    `json:"mode,omitempty"` // FULL | MERGE ("" for retire/skip)
+	Resources    int       `json:"resources"`      // resources pushed this pass
+	Offers       int       `json:"offers"`         // offers pushed this pass
+	Removals     int       `json:"removals"`       // resources+offers removed this pass
+	BatchesAcked int       `json:"batchesAcked"`
+	BatchesTotal int       `json:"batchesTotal"`
+	Outcome      string    `json:"outcome"` // pushed | partial | failed | rejected | skipped
+	HTTPStatus   int       `json:"httpStatus,omitempty"`
+	Reason       string    `json:"reason,omitempty"`
+}
+
+// CatalogState is the settled per-catalog outcome to persist. Report is
+// appended to the push_status history array; Reason/HTTPStatus mirror the
+// latest pass for cheap top-level queries.
 type CatalogState struct {
 	CatalogID     string
 	IndexURL      string
 	ParticipantID string
 	Version       int64
 	Status        string // active | retired
-	PushStatus    string
-	Reason        string
-	HTTPStatus    int
+	Report        PassReport
 }
 
 // execer is satisfied by both *sql.DB and *sql.Tx, so upsertCatalog can run
@@ -161,27 +185,62 @@ type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
+// appendPassClause is the ON CONFLICT expression that appends the incoming
+// single-element push_status array to the existing history and trims to the
+// most recent passHistoryCap entries (chronological order preserved).
+var appendPassClause = fmt.Sprintf(`(
+		   SELECT COALESCE(jsonb_agg(e ORDER BY n), '[]'::jsonb)
+		     FROM jsonb_array_elements(COALESCE(crawler_catalog.push_status,'[]'::jsonb) || EXCLUDED.push_status)
+		          WITH ORDINALITY AS t(e, n)
+		    WHERE n > jsonb_array_length(COALESCE(crawler_catalog.push_status,'[]'::jsonb) || EXCLUDED.push_status) - %d
+		 )`, passHistoryCap)
+
 func upsertCatalog(ctx context.Context, ex execer, c CatalogState) error {
-	_, err := ex.ExecContext(ctx,
+	rep, err := json.Marshal(c.Report)
+	if err != nil {
+		return fmt.Errorf("state: upsertCatalog marshal report: %w", err)
+	}
+	_, err = ex.ExecContext(ctx,
 		`INSERT INTO crawler_catalog
 		   (catalog_id, index_url, participant_id, version, status, push_status, reason, http_status, last_pushed_at, updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now(), now())
+		 VALUES ($1,$2,$3,$4,$5, jsonb_build_array($6::jsonb), $7, $8, now(), now())
 		 ON CONFLICT (catalog_id) DO UPDATE SET
 		   index_url      = EXCLUDED.index_url,
 		   participant_id = EXCLUDED.participant_id,
 		   version        = EXCLUDED.version,
 		   status         = EXCLUDED.status,
-		   push_status    = EXCLUDED.push_status,
+		   push_status    = `+appendPassClause+`,
 		   reason         = EXCLUDED.reason,
 		   http_status    = EXCLUDED.http_status,
 		   last_pushed_at = now(),
 		   updated_at     = now()`,
 		c.CatalogID, c.IndexURL, nullStr(c.ParticipantID), c.Version, c.Status,
-		nullStr(c.PushStatus), nullStr(c.Reason), nullIntZero(c.HTTPStatus))
+		string(rep), nullStr(c.Report.Reason), nullIntZero(c.Report.HTTPStatus))
 	if err != nil {
 		return fmt.Errorf("state: upsertCatalog: %w", err)
 	}
 	return nil
+}
+
+// GetCatalogReports returns a catalog's pass history (oldest -> newest), decoded
+// from the push_status jsonb array. Empty if the catalog has never settled.
+func (s *Store) GetCatalogReports(ctx context.Context, catalogID string) ([]PassReport, error) {
+	var raw []byte
+	err := s.db.QueryRowContext(ctx, `SELECT push_status FROM crawler_catalog WHERE catalog_id=$1`, catalogID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("state: GetCatalogReports: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var reports []PassReport
+	if err := json.Unmarshal(raw, &reports); err != nil {
+		return nil, fmt.Errorf("state: GetCatalogReports decode: %w", err)
+	}
+	return reports, nil
 }
 
 // UpsertCatalog writes a catalog's settled state (cursor + push outcome).
@@ -192,19 +251,23 @@ func (s *Store) UpsertCatalog(ctx context.Context, c CatalogState) error {
 // RecordFailure records a push failure WITHOUT advancing the version cursor,
 // so a failed catalog is never treated as applied (it keeps retrying via the
 // queue). On a first-ever failure the row is inserted with a NULL version.
-func (s *Store) RecordFailure(ctx context.Context, catalogID, indexURL, participantID, pushStatus, reason string, httpStatus int) error {
-	_, err := s.db.ExecContext(ctx,
+func (s *Store) RecordFailure(ctx context.Context, catalogID, indexURL, participantID string, report PassReport) error {
+	rep, err := json.Marshal(report)
+	if err != nil {
+		return fmt.Errorf("state: RecordFailure marshal report: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO crawler_catalog
 		   (catalog_id, index_url, participant_id, status, push_status, reason, http_status, updated_at)
-		 VALUES ($1,$2,$3,'active',$4,$5,$6, now())
+		 VALUES ($1,$2,$3,'active', jsonb_build_array($4::jsonb), $5, $6, now())
 		 ON CONFLICT (catalog_id) DO UPDATE SET
 		   index_url      = EXCLUDED.index_url,
 		   participant_id = EXCLUDED.participant_id,
-		   push_status    = EXCLUDED.push_status,
+		   push_status    = `+appendPassClause+`,
 		   reason         = EXCLUDED.reason,
 		   http_status    = EXCLUDED.http_status,
 		   updated_at     = now()`, // version deliberately not touched
-		catalogID, nullStr(indexURL), nullStr(participantID), nullStr(pushStatus), nullStr(reason), nullIntZero(httpStatus))
+		catalogID, nullStr(indexURL), nullStr(participantID), string(rep), nullStr(report.Reason), nullIntZero(report.HTTPStatus))
 	if err != nil {
 		return fmt.Errorf("state: RecordFailure: %w", err)
 	}
