@@ -46,53 +46,55 @@ func ResolveWithChangeset(entry CatalogEntry, cursor int64, seen bool, toVersion
 	}
 
 	changes := append([]FileEntry(nil), entry.Changes...)
-	sort.Slice(changes, func(i, j int) bool { return changes[i].Version < changes[j].Version })
+	sort.SliceStable(changes, func(i, j int) bool { return changes[i].Version < changes[j].Version })
 
+	running := entry.Baseline.Version
 	for _, c := range changes {
-		if c.URL == "" || c.Version <= entry.Baseline.Version || c.Version > toVersion {
+		if c.URL == "" {
+			continue // not-yet-published placeholder entry (no content)
+		}
+		if c.Version <= entry.Baseline.Version || c.Version > toVersion {
 			continue
 		}
 		b, err := fetch(c)
 		if err != nil {
 			return nil, cs, fmt.Errorf("catalogcrawler: fetching change v%d: %w", c.Version, err)
 		}
-		// Accumulate the changeset only for versions past our cursor.
-		if c.Version > cursor {
-			if err := accumulateChangeset(&cs, b); err != nil {
-				return nil, cs, err
-			}
+		var cf catalogfile.ChangeFileDoc
+		if err := json.Unmarshal(b, &cf); err != nil {
+			return nil, cs, fmt.Errorf("catalogcrawler: parsing change v%d: %w", c.Version, err)
+		}
+		// Continuity: each change must start where the previous one ended, or
+		// the fold silently mis-composes (a gap => a wrong catalog).
+		if int64(cf.FromVersion) != running {
+			return nil, cs, fmt.Errorf("catalogcrawler: change v%d fromVersion=%d, expected %d (gap in change files)", c.Version, cf.FromVersion, running)
+		}
+		if c.Version > cursor { // accumulate the changeset only past our cursor
+			accumulateChangeset(&cs, cf)
 		}
 		current, err = catalogfile.Apply(current, b)
 		if err != nil {
 			return nil, cs, fmt.Errorf("catalogcrawler: folding change v%d: %w", c.Version, err)
 		}
+		running = int64(cf.ToVersion)
 	}
 	return current, cs, nil
 }
 
-func accumulateChangeset(cs *Changeset, changeRaw []byte) error {
-	var cf catalogfile.ChangeFileDoc
-	if err := json.Unmarshal(changeRaw, &cf); err != nil {
-		return fmt.Errorf("catalogcrawler: parsing change file: %w", err)
-	}
+func accumulateChangeset(cs *Changeset, cf catalogfile.ChangeFileDoc) {
 	for _, u := range cf.Resources.Upserts {
-		id, err := catalogfile.ItemID(u)
-		if err != nil {
-			return err
+		if id, err := catalogfile.ItemID(u); err == nil {
+			cs.UpsertedResources[id] = true
 		}
-		cs.UpsertedResources[id] = true
 	}
 	for _, u := range cf.Offers.Upserts {
-		id, err := catalogfile.ItemID(u)
-		if err != nil {
-			return err
+		if id, err := catalogfile.ItemID(u); err == nil {
+			cs.UpsertedOffers[id] = true
 		}
-		cs.UpsertedOffers[id] = true
 	}
 	if len(cf.Resources.Removals) > 0 || len(cf.Offers.Removals) > 0 {
 		cs.HasRemovals = true
 	}
-	return nil
 }
 
 // filterCatalog returns the catalog keeping only the given resource/offer ids

@@ -27,7 +27,22 @@ type HTTPClient struct {
 // NewHTTPClient builds a client. allowPrivate must be false in production so
 // fetches of publisher URLs can't be pointed at internal addresses (SSRF).
 func NewHTTPClient(timeout time.Duration, maxBytes int64, allowPrivate bool) *HTTPClient {
-	return &HTTPClient{hc: &http.Client{Timeout: timeout}, maxBytes: maxBytes, allowPrivate: allowPrivate}
+	c := &HTTPClient{maxBytes: maxBytes, allowPrivate: allowPrivate}
+	c.hc = &http.Client{
+		Timeout: timeout,
+		// Re-run the SSRF guard on every redirect hop; a public host must not be
+		// able to bounce us to an internal address via 3xx Location.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("catalogcrawler: stopped after 10 redirects")
+			}
+			if !allowPrivate {
+				return checkPublicURL(req.URL.String())
+			}
+			return nil
+		},
+	}
+	return c
 }
 
 // FetchIndex GETs and parses a publisher's catalog index.
@@ -44,12 +59,18 @@ func (c *HTTPClient) FetchIndex(ctx context.Context, indexURL string) (Index, er
 }
 
 // FetchFile GETs one file and verifies its bytes against the declared digest.
+// The digest is mandatory — it's the only integrity check in Phase 1 (signature
+// verification is Phase 2), so a missing digest fails closed rather than
+// letting unverified bytes through.
 func (c *HTTPClient) FetchFile(ctx context.Context, f FileEntry) ([]byte, error) {
+	if f.Digest == "" {
+		return nil, fmt.Errorf("catalogcrawler: %s has no digest (integrity check required)", f.URL)
+	}
 	b, err := c.get(ctx, f.URL)
 	if err != nil {
 		return nil, err
 	}
-	if f.Digest != "" && !digestMatches(b, f.Digest) {
+	if !digestMatches(b, f.Digest) {
 		return nil, fmt.Errorf("catalogcrawler: digest mismatch for %s", f.URL)
 	}
 	return b, nil
@@ -143,9 +164,15 @@ func checkPublicURL(raw string) error {
 		ips = resolved
 	}
 	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || isCGNAT(ip) {
 			return fmt.Errorf("catalogcrawler: refusing private/loopback host %q", host)
 		}
 	}
 	return nil
+}
+
+// isCGNAT reports whether ip is in the carrier-grade NAT range 100.64.0.0/10.
+func isCGNAT(ip net.IP) bool {
+	ip4 := ip.To4()
+	return ip4 != nil && ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127
 }

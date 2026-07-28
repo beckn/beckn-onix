@@ -2,6 +2,7 @@ package catalogcrawler
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -68,7 +69,11 @@ type Engine struct {
 	cfg  Config
 	deps Deps
 	wg   sync.WaitGroup
-	stop context.CancelFunc
+
+	mu      sync.Mutex
+	ctx     context.Context
+	stop    context.CancelFunc
+	stopped bool
 }
 
 // New builds an Engine, filling in sane defaults for optional deps.
@@ -88,31 +93,58 @@ func New(cfg Config, deps Deps) *Engine {
 	if cfg.PushBatchSize <= 0 {
 		cfg.PushBatchSize = 1000
 	}
+	if cfg.IndexInterval <= 0 {
+		cfg.IndexInterval = 5 * time.Minute
+	}
+	if cfg.CatalogInterval <= 0 {
+		cfg.CatalogInterval = 30 * time.Second
+	}
 	return &Engine{cfg: cfg, deps: deps}
 }
 
 // Start launches the index and catalog jobs as two goroutines. It returns
 // immediately; Stop() drains them.
 func (e *Engine) Start(ctx context.Context) error {
-	ctx, e.stop = context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(ctx)
+	e.mu.Lock()
+	e.ctx, e.stop = ctx, cancel
+	e.mu.Unlock()
 	e.loop(ctx, e.cfg.IndexInterval, e.indexPass)
 	e.loop(ctx, e.cfg.CatalogInterval, e.catalogPass)
 	return nil
 }
 
-// Stop signals both jobs and waits for the in-flight pass to drain.
+// Stop signals all jobs (scheduled + in-flight /crawl) and waits for them to
+// drain, so a caller can safely close the DB afterwards.
 func (e *Engine) Stop() error {
-	if e.stop != nil {
-		e.stop()
+	e.mu.Lock()
+	e.stopped = true
+	stop := e.stop
+	e.mu.Unlock()
+	if stop != nil {
+		stop()
 	}
 	e.wg.Wait()
 	return nil
 }
 
 // CrawlNow runs an immediate index crawl for one index URL (the /crawl
-// supportability trigger).
-func (e *Engine) CrawlNow(ctx context.Context, indexURL string) error {
-	e.crawlIndex(ctx, IndexRef{IndexURL: indexURL, Source: SourceOnDemand}, true)
+// supportability trigger). It launches a tracked goroutine on the engine's own
+// context, so Stop() drains it before the DB is closed.
+func (e *Engine) CrawlNow(_ context.Context, indexURL string) error {
+	e.mu.Lock()
+	if e.stopped || e.ctx == nil {
+		e.mu.Unlock()
+		return fmt.Errorf("catalogcrawler: engine not running")
+	}
+	ctx := e.ctx
+	e.wg.Add(1)
+	e.mu.Unlock()
+
+	go func() {
+		defer e.wg.Done()
+		e.crawlIndex(ctx, IndexRef{IndexURL: indexURL, Source: SourceOnDemand}, true)
+	}()
 	return nil
 }
 
@@ -255,7 +287,7 @@ func (e *Engine) catalogPass(ctx context.Context) {
 // processItem resolves + pushes one claimed catalog, then settles it.
 func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 	if item.Op == "retire" {
-		if err := e.deps.Store.Complete(ctx, item.ID, state.CatalogState{
+		if err := e.deps.Store.Complete(ctx, item.ID, item.ClaimID, item.ToVersion, state.CatalogState{
 			CatalogID: item.CatalogID, IndexURL: item.IndexURL,
 			Version: item.ToVersion, Status: "retired", PushStatus: "skipped",
 		}); err != nil {
@@ -345,7 +377,7 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 		return
 	}
 
-	if err := e.deps.Store.Complete(ctx, item.ID, state.CatalogState{
+	if err := e.deps.Store.Complete(ctx, item.ID, item.ClaimID, item.ToVersion, state.CatalogState{
 		CatalogID: item.CatalogID, IndexURL: item.IndexURL, ParticipantID: idx.ParticipantID,
 		Version: item.ToVersion, Status: "active", PushStatus: "pushed",
 		HTTPStatus: outcomes[len(outcomes)-1].HTTPStatus,
@@ -362,25 +394,26 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 // catalog's version advances again (no hot loop).
 func (e *Engine) failItem(ctx context.Context, item *state.ClaimedItem, httpStatus int, reason string) {
 	attempts := item.Attempts + 1
+	// The cursor is NEVER advanced on failure (only Complete advances it), so a
+	// catalog whose push failed is never treated as applied — it keeps retrying
+	// at a capped backoff until it succeeds.
+	next := e.deps.Now().Add(Backoff(attempts))
+	if err := e.deps.Store.FailQueueItem(ctx, item.ID, item.ClaimID, next); err != nil {
+		e.deps.Log.Error("crawler.fail_failed", "catalogId", item.CatalogID, "err", err)
+	}
 	if attempts >= e.cfg.MaxAttempts {
 		pushStatus := "failed"
 		if httpStatus >= 400 && httpStatus < 500 {
 			pushStatus = "rejected"
 		}
-		if err := e.deps.Store.Complete(ctx, item.ID, state.CatalogState{
-			CatalogID: item.CatalogID, IndexURL: item.IndexURL,
-			Version: item.ToVersion, Status: "active",
-			PushStatus: pushStatus, Reason: reason, HTTPStatus: httpStatus,
-		}); err != nil {
-			e.deps.Log.Error("crawler.giveup_failed", "catalogId", item.CatalogID, "err", err)
+		// Record the failure WITHOUT advancing the version (queryable), and keep
+		// the item queued for retry.
+		if err := e.deps.Store.RecordFailure(ctx, item.CatalogID, item.IndexURL, "", pushStatus, reason, httpStatus); err != nil {
+			e.deps.Log.Error("crawler.recordfailure_failed", "catalogId", item.CatalogID, "err", err)
 		}
 		e.deps.Metrics.CatalogFailed(reasonCategory(reason))
 		e.deps.Log.Warn("crawler.catalog.failed", "catalogId", item.CatalogID, "reason", reason, "attempts", attempts, "httpStatus", httpStatus)
 		return
-	}
-	next := e.deps.Now().Add(Backoff(attempts))
-	if err := e.deps.Store.FailQueueItem(ctx, item.ID, next); err != nil {
-		e.deps.Log.Error("crawler.fail_failed", "catalogId", item.CatalogID, "err", err)
 	}
 	e.deps.Log.Warn("crawler.catalog.retry", "catalogId", item.CatalogID, "reason", reason, "attempts", attempts)
 }
