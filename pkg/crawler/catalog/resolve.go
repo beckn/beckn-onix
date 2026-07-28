@@ -121,13 +121,17 @@ func ResolveDelta(entry CatalogEntry, cursor, toVersion int64, fetch FetchFunc) 
 		if len(cf.Catalog) > 0 {
 			envelope = cf.Catalog // metadata envelope; latest wins
 		}
+		// Changeset side (upsert-id set, removal counts, HasRemovals) is the same
+		// accumulation ResolveWithChangeset does; the id->raw maps below are the
+		// delta-only bit that carries the actual bytes to push (latest wins per id,
+		// order preserved).
+		accumulateChangeset(&cs, cf)
 		for _, u := range cf.Resources.Upserts {
 			if id, err := catalogfile.ItemID(u); err == nil {
 				if _, seen := resByID[id]; !seen {
 					resOrder = append(resOrder, id)
 				}
 				resByID[id] = u
-				cs.UpsertedResources[id] = true
 			}
 		}
 		for _, u := range cf.Offers.Upserts {
@@ -136,14 +140,8 @@ func ResolveDelta(entry CatalogEntry, cursor, toVersion int64, fetch FetchFunc) 
 					offOrder = append(offOrder, id)
 				}
 				offByID[id] = u
-				cs.UpsertedOffers[id] = true
 			}
 		}
-		cs.RemovedResources += len(cf.Resources.Removals)
-		cs.RemovedOffers += len(cf.Offers.Removals)
-	}
-	if cs.RemovedResources > 0 || cs.RemovedOffers > 0 {
-		cs.HasRemovals = true
 	}
 	if len(envelope) == 0 {
 		return nil, cs, false, nil // no metadata -> caller falls back to a full resolve

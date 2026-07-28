@@ -45,10 +45,10 @@ const (
 
 func (c CatalogStatus) String() string { return string(c) }
 
-// DropReason says why an eligible-looking catalog was excluded from a sync
+// DropReason says why an in-scope-looking catalog was excluded from a sync
 // (membership / scope) — the *why* behind a `dropped` outcome. Reserved for
-// scope enforcement (P2): produced by eligibility, consumed by the runner.
-// Defined now; nothing produces it yet (no scope code).
+// scope enforcement (P2): the sync's scope step (ResolveScope) resolves
+// visibility today but does not yet drop, so nothing produces a DropReason yet.
 type DropReason string
 
 const (

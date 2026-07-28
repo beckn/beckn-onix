@@ -2,8 +2,8 @@ package runner
 
 // runner.go — the Engine type and its process supervisor: New (defaults), Start
 // / Stop (launch + drain the two scheduled jobs), CrawlNow (the on-demand /crawl
-// trigger), the ticker loop, and the correlation-id minter. The per-pass logic
-// lives in indexpass.go / syncpass.go; the log vocabulary in telemetry.go.
+// trigger), the ticker loop, and the correlation-id minter. The per-job logic
+// lives in crawl.go / sync.go; the log vocabulary in telemetry.go.
 
 import (
 	"context"
