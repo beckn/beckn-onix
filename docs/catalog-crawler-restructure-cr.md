@@ -1,0 +1,363 @@
+# Change Request: Restructure `pkg/catalogcrawler` + Observability Foundation
+
+| | |
+| :--- | :--- |
+| **CR ID** | CC-RESTRUCTURE-001 |
+| **Status** | Proposed |
+| **Type** | **PR-A**: structural refactor (behavior-preserving) · **PR-B**: observability foundation (real change) |
+| **Component** | `pkg/catalogcrawler` (+ `pkg/plugin/implementation/catalogcrawler`, `cmd/catalog-crawler`) |
+| **Author** | — |
+| **Reviewers** | — |
+| **Related** | `docs/catalog-crawler-phase1-review.md`, `docs/catalog-crawler-gzip-support-review.md`, ION reference ("Decentralized Catalog: Example (ION)") |
+
+---
+
+## 1. Summary
+
+Reorganize the crawler from one flat package into a domain-oriented layout (~6–7 packages) with intent-revealing names, split the 576-line orchestrator, and put observability (OpenTelemetry → ClickStack) on a proper footing. **Ship as two PRs: PR-A is a behavior-preserving structural move; PR-B is the observability change** (new instruments, correlation ids, error taxonomy) with a dual-emit metric migration so live dashboards don't break.
+
+This design is the synthesis of a three-lens architecture review (§3). It unblocks the roadmap — registry discovery, scope enforcement, restricted/authMethods fetch, more codecs — by giving each a clear home, without over-packaging a 2.7k-line codebase.
+
+## 2. Motivation
+
+The package is a single flat namespace that is hard to navigate, debug, and extend:
+
+- **24 `.go` files, ~2,783 lines, one `package catalogcrawler`, 115 exported symbols.**
+- **`engine.go` is 576 lines** and does three jobs (lifecycle + index pass + catalog pass) plus push helpers and a string-splitting error classifier (`reasonCategory`, `engine.go:562`). Every named failure mode — claim/lease races, push nacks, decode bombs, SSRF — surfaces inside two God-functions (`crawlIndex`, `processItem`), so triage means grepping one giant file.
+- Pure rules (`change`, `select`, `resolve`) already import nothing internal, but sit beside I/O (`http`, `push`, `source`), config, codec, and orchestration, with **no expressed dependency direction**.
+- Names describe *mechanism* (`http`), *layer* (`model`), or are vague (`engine`, `state`, `select`).
+
+Note: recent commits already implemented much of the review backlog (two size caps, codec registry, CGNAT SSRF coverage, conditional-GET, MERGE/FULL push modes, size-based batching, queue claim tokens). **This CR is about where that code lives and how it's named — and about making observability real — not re-doing the logic.**
+
+## 3. How this design was chosen (three-lens review)
+
+Three senior reviewers independently critiqued an earlier 10-package/single-PR draft; this CR is the synthesis:
+
+| Lens | Core contribution kept |
+| :--- | :--- |
+| **Pragmatic Go** | 10 packages is over-engineering for 2.7k lines; ports/purity/composition-root **already exist inline**. → keep domain as **one** package, no separate `ports.go`, drop the artificial line-count rule, no premature `depguard`. Flagged: in-package tests reach unexported symbols, so the move is **not** "import-only." |
+| **DDD / hexagonal** | "membership wins over declaration" (ION) is a **cross-authority** invariant; `access.go` (networkIds + authMethods + scopes) is a junk drawer. → express membership as a **port/seam now**, promote to its own package + anti-corruption layer **when scope enforcement lands** (not 4 empty contexts today). |
+| **Operability** | The draft's "no behavior change" was false — it renamed **live** metrics. → **two PRs**; add a typed **`FaultClass`** taxonomy and **`RunID`/`PassID`** correlation; **co-locate** telemetry names per adapter; `telemetry/` = thin plumbing. |
+
+Rejected: the 10-package split (over-structured), the 4-context domain split (premature), and a central `telemetry/events.go` vocabulary (recreates the junk drawer).
+
+## 4. Goals / Non-goals
+
+**Goals**
+- Clear separation: pure domain ← adapters ← orchestration; observability as a leaf.
+- Intent-revealing package and file names; the 576-line orchestrator split by job.
+- Smaller public surface; explicit, low-ceremony extension points for the roadmap.
+- Observability that actually works in ClickStack: consistent metric/trace/log vocabulary, a typed error taxonomy, and per-run correlation.
+
+**Non-goals**
+- **PR-A** changes no behavior, protocol, schema, or telemetry contract — moves/renames/splits only.
+- **PR-B** *does* change the telemetry contract (new instruments, renamed metrics via dual-emit) — it is a reviewed change, not a "pure refactor."
+- Not implementing roadmap features (registry, scope, authMethods) — only making room.
+- Not converting decode to true streaming (the `io.ReadCloser` seam in `decode/` is preserved).
+
+## 5. Naming principles
+
+1. Name for **intent**, not mechanism/tech (`fetch` not `http`, `publish` not `push`, `store` not `state`).
+2. No **layer/junk-drawer** names (`model.go`, `util.go`, `helpers.go`, `access.go`).
+3. No **stutter** — package `catalog` → `catalog.Index`.
+4. **Nouns** for type files, **verbs** for behavior files.
+5. **Adapters mirror the port** they satisfy.
+6. **Split by cohesion, not line count.** (No fixed line ceiling; honor the repo's 500-line guideline by splitting `engine.go`, but don't fragment cohesive files.)
+
+## 5a. Function-name review (name ⇢ behavior)
+
+A function name is a promise about what the function does; `add(a, b)` must only add. Reviewing the current functions against their bodies, the code is **mostly honest** — but there is one genuinely misleading cluster and a few smaller mismatches. Fix these as part of PR-A (mechanical, compiler-checked renames).
+
+### The main offender: the failure-handling vocabulary
+
+Five `fail*`-shaped names do five different things, and **two of them actually mean "retry"** — the opposite of "fail". A reader cannot tell park from retry from route from build by the name.
+
+| Current (`file:line`) | What it actually does | Why the name misleads | Suggested |
+| :--- | :--- | :--- | :--- |
+| `failItem` (`engine.go:508`) | schedules a **retry** with backoff; only records after `MaxAttempts`; never advances the cursor | says "fail", **retries** — and is a sibling of `failPermanent` that does the *opposite* | `scheduleRetry` |
+| `failPermanent` (`engine.go:494`) | **parks** the item (no retry), records, alerts | ok alone, but the `failItem`/`failPermanent` pair hides that the real axis is *transient vs permanent* | `parkPermanently` |
+| `fail` (`engine.go:469`) | **routes** a failure to permanent-vs-transient | reads as "cause a failure"; it's a router | `routeFailure` |
+| `failReport` (`engine.go:479`) | **builds and returns** a `PassReport` | verb-shaped name for a builder (a noun result) | `newFailureReport` |
+| `FailQueueItem` (`state/queue.go:99`) | releases the claim, bumps `attempts`, sets `next_attempt_at` — i.e. **reschedules for retry** | says "fail", **reschedules** | `RescheduleQueueItem` |
+
+After the rename the flow reads correctly: `routeFailure` sends a fault to either `parkPermanently` (store: `ParkQueueItem`) or `scheduleRetry` (store: `RescheduleQueueItem`). The transient-vs-permanent axis is finally visible in the names — one committed name each, no synonyms to choose between.
+
+### Smaller mismatches
+
+| Current (`file:line`) | Issue | Suggested |
+| :--- | :--- | :--- |
+| `Source.IndexURLs()` (`source.go:23`) | returns `[]IndexRef` (refs), **not** URL strings — the name promises the wrong type | `IndexRefs()` |
+| `crawlIndex(…, force bool)` (`engine.go:210`) | **boolean-blindness** at call sites (`crawlIndex(ctx, ref, false)`); a bare `bool` says nothing | replace `force bool` with a named `bypassCadence bool` type or a two-value `trigger` enum |
+| `processItem` (`engine.go:324`) | "process" is a junk verb, and it also **dispatches** retire-vs-sync before doing the sync | split the dispatch (`handleQueueItem`) from the sync path (`syncCatalog`) |
+| `FetchFile` (`http.go:81`) | does GET **+ digest-verify + decode** — the name hides the integrity and decompression steps | `fetchVerifyDecode` — or keep `FetchFile` only if its doc comment states all three steps |
+| `getCond` (`http.go:137`) | abbreviation | `getConditional` |
+| `TouchIndex` (`state/state.go:126`) | "touch" is a known idiom but vague about *what* it advances (only `next_crawl_at`) | `AdvanceIndexCadence` |
+
+### Second pass — type names (a name should also tell you what the *type* is)
+
+| Current (`file:line`) | Problem | Suggested |
+| :--- | :--- | :--- |
+| `PartOutcome` (`retry.go`) | "Part" of *what*? It's the result of one push **batch** — the name doesn't say push, batch, or result | `BatchOutcome` |
+| `Config` (`engine.go`) **and** `Settings` (`config.go`) | two config-shaped types, and the names don't say which is which (engine tunables vs env-loaded values) | keep `Settings` (env-loaded); rename the engine struct `EngineConfig` |
+| `IndexCond` (`http.go`) | cryptic abbreviation for the conditional-GET validators | `IndexConditions` |
+| `durOr` / `intOr` / `int64Or` (`config.go`) | "Or" is terse for "or default"; reads as an operator | `durationOrDefault` / `intOrDefault` / `int64OrDefault` |
+
+### Third pass — package names (the import path is read more than any symbol)
+
+| Original | Problem | Adopted |
+| :--- | :--- | :--- |
+| `codec/` | "codec" implies encode **and** decode; the crawler only ever **decodes** (the publisher encodes) | **`decode/`** — `decode.For(encoding)`, `decode.Registry` read honestly |
+| `obs/` | cryptic abbreviation; a reader shouldn't have to expand it | **`telemetry/`** (note: distinct import path from the repo-level `pkg/telemetry`) |
+
+**Both are adopted throughout this CR** (§6, §6a, §7, §9, and the mapping table already use `decode/` and `telemetry/`). The remaining open naming calls are `source/` vs `feed/` and `runner/` vs `engine/`.
+
+### Leave these alone (name already matches behavior)
+
+`Decide`, `Select`, `Resolve` / `ResolveWithChangeset`, `BatchCatalog`, `ParkQueueItem`, `RecordFailure`, `ClaimNext`, `Complete`, `digestMatches`, `IsPermanent`, `docCounts`, `ackedCount`, `encodingFor`, `Backoff`, `Rollup`. Renaming these would be churn for no clarity gain — the discipline is "fix names that lie", not "rename everything".
+
+**Sequencing:** these are pure renames — do them in **PR-A** (they're compiler-verified and behavior-preserving). The `failItem`/`failPermanent` → `scheduleRetry`/`parkPermanently` rename in particular should land *with* the `runner/` split (§6), since that code moves anyway.
+
+## 6. Target structure (~6–7 packages)
+
+```
+pkg/catalogcrawler/
+├── catalogcrawler.go        # composition root — New(Config, Deps); only file naming every concrete type
+
+├── catalog/                 # pure domain — imports nothing internal (importing telemetry/ is FORBIDDEN)
+│   ├── index.go             #   Index, Entry, FileRef                         (was model.go)
+│   ├── signature.go         #   Signature + signed tuple                      (was model.go)
+│   ├── visibility.go        #   networkIds / visibleTo — publisher declaration (was part of model/select)
+│   ├── decide.go            #   Decide() → sync/skip/retire/rollback          (was change.go)
+│   ├── eligibility.go       #   Select() → carry? + visibleTo; calls Membership port for scope (was select.go)
+│   ├── compose.go           #   fold baseline+changes → composed catalog      (was resolve.go)
+│   └── fault.go             # ★ typed FaultClass taxonomy (replaces engine.go reasonCategory)
+
+├── fetch/                   # retrieval + integrity                           (was http.go)
+│   ├── client.go  guard.go  integrity.go  conditional.go
+│   └── telemetry.go               #   fetch's metric/span/event names, co-located
+├── decode/                   # decode registry — format extension point        (was codec.go)
+│   └── registry.go  gzip.go  telemetry.go
+├── validate/                # ★ schema-validate FILE DATA + push body (Validator port over schemav2validator)
+│   └── schema.go  telemetry.go
+├── publish/                 # send to Discovery (matches catalog/publish)     (was push.go)
+│   └── request.go  batch.go  client.go  telemetry.go
+├── source/                  # where index refs come from                      (was source.go)
+│   └── static.go  registry.go  telemetry.go
+├── store/                   # Postgres — ONE package (tx sharing)             (was state/)
+│   └── open.go  queue.go  cursor.go  indexstate.go  schema/  telemetry.go
+├── runner/                  # orchestration only                             (was engine.go, 576→split)
+│   └── runner.go  indexpass.go  syncpass.go  backoff.go  ports.go  telemetry.go
+├── config/                  # settings.go                                     (was config.go)
+└── telemetry/                     # ★ thin plumbing only
+    └── otel.go              #   meter/tracer/provider construction, exemplars
+    └── correlation.go       #   RunID/PassID types + context propagation
+```
+
+### Before → after mapping
+
+| Before | After |
+| :--- | :--- |
+| `model.go` | `catalog/index.go` + `signature.go` + `visibility.go` |
+| `change.go` | `catalog/decide.go` |
+| `select.go` | `catalog/eligibility.go` (+ `Membership` port) |
+| `resolve.go` | `catalog/compose.go` |
+| *(`reasonCategory` in `engine.go`)* | `catalog/fault.go` ★ |
+| `http.go` | `fetch/{client,guard,integrity,conditional}.go` |
+| `codec.go` | `decode/{registry,gzip}.go` |
+| `push.go` | `publish/{request,batch,client}.go` |
+| `source.go` | `source/{static,registry}.go` |
+| `retry.go` | `runner/backoff.go` |
+| `engine.go` (576) | `runner/{runner,indexpass,syncpass,ports}.go` |
+| `config.go` | `config/settings.go` |
+| `metrics.go` + `log.go` | `telemetry/{otel,correlation}.go` + co-located `*/telemetry.go` names ★ |
+| `state/` | `store/{open,queue,cursor,indexstate}.go` (one package) |
+
+## 6a. File-content contract (a file holds only what it names)
+
+Same principle as §5a, one level up: `request.go` must contain **only** push-request building — not batching, not transport, not a fault type. No `misc.go` / `helpers.go` / `util.go` catch-alls. Each file's contents are a promise made by its name.
+
+### What each notable file contains — and must NOT
+
+| File | Contains ONLY | Must NOT contain |
+| :--- | :--- | :--- |
+| `catalog/index.go` | `Index`, `Entry`, `FileRef` + `LatestVersion` | signatures, auth, I/O |
+| `catalog/signature.go` | `Signature`, signed-tuple shape | verification transport, keys |
+| `catalog/visibility.go` | `networkIds`/`visibleTo` + `IsPublic` | scope/`approvedScopes` (that's the `Membership` port) |
+| `catalog/fault.go` | `FaultClass`, `PermanentError`, `IsPermanent` | any decode/http logic |
+| `fetch/client.go` | the GET client + `get`/`getConditional` | **`Push`** (that's publish), digest, SSRF rules |
+| `fetch/guard.go` | SSRF host checks (`checkPublicURL`, `isCGNAT`) | GET logic |
+| `fetch/integrity.go` | `digestMatches` | decode |
+| `publish/request.go` | `BuildPushBody`, `PushMeta`, envelope/directive, `UpdateMode*` | batching, HTTP transport |
+| `publish/batch.go` | `BatchCatalog`, `CatalogBatch` | body-building, transport |
+| `publish/client.go` | the `Push` transport + `PartOutcome` | body-building, batching |
+| `decode/registry.go` | the registry, `decode`, `encodingFor` | the fault type (→ `catalog/fault.go`) |
+| `store/cursor.go` | per-catalog version cursor + reports | queue, index state |
+| `store/queue.go` | enqueue/claim/reschedule/park/complete | catalog cursor, index state |
+| `runner/syncpass.go` | the sync-one-catalog flow | index-pass logic, lifecycle |
+
+### Current cohesion violations to fix during the split
+
+The flat package has real "file does more than its name" cases — the split must place each piece by concept, not dump leftovers:
+
+- **`http.go` holds `Push` (`http.go:101`)** — a *fetch* file that also *publishes*. `Push` + `PartOutcome` move to **`publish/client.go`**; only retrieval stays in `fetch/`.
+- **`codec.go` holds `PermanentError`/`IsPermanent` (`codec.go:15-27`)** — a *fault* concept living in the *decode* file. Move to **`catalog/fault.go`** (it's the taxonomy's home, §9).
+- **`engine.go` free helpers** — place by concept, do **not** create a `runner/helpers.go`:
+  - `docCounts` / `ackedCount` (`engine.go:541,550`) → `publish/` (they describe push outcomes/counts).
+  - `reasonCategory` (`engine.go:562`) → deleted, replaced by `catalog/fault.go` (§9).
+  - `findCatalog` (`engine.go:569`) → `catalog/` (it's an index lookup, pure).
+- **`state.go` null helpers** (`nullStr`/`nullIntZero`/`nullTime`, `state.go:279-295`) → one small **`store/scan.go`**, not scattered across `cursor.go`/`indexstate.go`.
+- **`push.go` mixes body-building and batching** (`BuildPushBody` + `BatchCatalog`) → split into `publish/request.go` and `publish/batch.go` (already in §6).
+
+Acceptance check for PR-A: no file contains a symbol that belongs to another file's concept, and there is no `helpers.go`/`util.go`/`misc.go` anywhere.
+
+### Deliberate calls
+- **Domain is one `catalog/` package**, not four contexts — but `access.go` is broken up (visibility → `catalog`, scope → a `Membership` port, authMethods → `fetch`).
+- **Ports are consumer-defined in `runner`** (declared next to their consumer, e.g. `runner/ports.go`) — not a separate ports *package*, not hoisted away.
+- **`store/` stays one Go package** — `Complete → upsertCatalog` shares a transaction (`queue.go:134` / `state.go`); a package split would leak the tx boundary.
+- **`telemetry/` is plumbing only** (~OTel wiring + correlation); each adapter owns its own telemetry *names* in a local `telemetry.go`.
+
+### Open naming choices (one review round vs. the team's spoken vocabulary)
+- `source/` vs `feed/` · `runner/` vs `engine/` · the future `membership/` and `trust/` package names.
+
+## 7. Dependency rules
+
+- `catalog/` imports **only stdlib + `catalogfile`** — and is **forbidden** from importing `telemetry/` (telemetry must not enter the pure core; the runner instruments *around* domain calls).
+- `runner/` **defines the interfaces it consumes** (`Fetcher`, `Pusher`, `Source`, `Validator`, `Membership`, `Verifier`) next to its constructor; it imports no concrete adapter.
+- Adapters (`fetch`,`decode`,`publish`,`source`,`store`) import `catalog/` + `telemetry/` and **structurally satisfy** the runner's ports; they never import `runner/`.
+- `telemetry/` and `config/` are leaves.
+- `catalogcrawler.go` is the **only** composition root that names concrete types.
+
+Enforcement: document these in `doc.go` now. Add `depguard` **only if/when** the graph grows enough to actually drift — with two rules the compiler can't give for free: `catalog → telemetry` forbidden, and (later) `source/registry` as the sole importer of raw registry wire types (the anti-corruption boundary).
+
+## 8. Extension points (roadmap slots in additively)
+
+| Feature | Lands in | Ripple |
+| :--- | :--- | :--- |
+| **Registry discovery** (networkId → index refs) | `source/registry.go` (with an ACL translating registry wire types → internal) | composition root swaps `source.Static` → `source.Registry` |
+| **Scope enforcement** (schemaTypes vs approvedScopes) | `catalog/eligibility.go` via the `Membership` port; promote to a `membership/` package when it lands | isolated |
+| **Restricted / signed-request fetch** (authMethods) | a signing decorator in `fetch/` (+ a future `trust/` for the 7-step verify) | runner still calls the `Fetcher` port |
+| New codec (zstd/brotli) | one file in `decode/` + one `FaultClass` for its decode errors | none |
+| **Content schema validation** (validate fetched file data vs `schemaTypes`) | `validate/schema.go` behind the `Validator` port; runner calls it in `syncpass` after decode/compose | isolated |
+| Signed-`size` tuple (ION conformance) | `catalog/signature.go` + verifier | localized |
+
+## 9. Observability (PR-B)
+
+ClickStack is OpenTelemetry-native (OTel collector → ClickHouse → HyperDX). Design:
+
+- **`telemetry/` = plumbing only:** OTel meter/tracer/provider construction (today inline at `catalogcrawler.go:65`) and the correlation types. **Telemetry *names* live co-located** with the code they describe (`fetch/telemetry.go`, `publish/telemetry.go`, …) so on-call opens the failing adapter and finds its metrics/spans/events together — not a central `telemetry/events.go` junk drawer.
+- **Typed `FaultClass` taxonomy** in `catalog/fault.go` (`ssrf`, `too_large`, `digest_mismatch`, `unsupported_encoding`, `decode`, `content_invalid`, `push_schema`, `push_rejected`, `push_transient`, `index_fetch`, `absent`). Adapters return typed faults; the runner switches on the class. **One source of truth** feeding: the metric `outcome=` label, the log `event` key, and the retire/retry decision — replacing the fragile `reasonCategory` string-split (`engine.go:562`). Note the two distinct schema faults: `content_invalid` (fetched file data fails its `schemaTypes` — §9a) vs `push_schema` (the outbound push body fails `catalog/publish`); both are **permanent** (don't advance the cursor; alert).
+- **Correlation:** a `RunID` (per pass tick) and `PassID` (per catalog item) minted in `runner/`, carried in `context.Context`, stamped on spans, attached to every log line (`LoggerFrom(ctx)`), and used as histogram exemplars. This is what makes the HyperDX "failed span → its logs → the metric spike" pivot work; it does not exist today (`Log` calls take loose `kv` with no id).
+
+**Traces (span tree):**
+```
+crawler.index_pass {source, run_id}
+└─ crawler.crawl_index {index_url, index_version, result}
+   └─ crawler.fetch {kind, encoding, bytes; status=ssrf|digest_mismatch on failure}
+crawler.catalog_job {run_id}
+└─ crawler.process_item {catalog_id, to_version, pass_id}
+   ├─ crawler.resolve {baseline_v, change_count}
+   ├─ crawler.decode  {encoding, in_bytes, out_bytes}
+   └─ crawler.publish {mode, batches, body_bytes, http_status}
+```
+
+**Metrics** — bounded-cardinality attributes only (never `catalog_id`/`url` as a label):
+
+| Metric | Type | Attributes |
+| :--- | :--- | :--- |
+| `crawler.index.checked` | counter | `result` (changed/not_modified/error), `source` |
+| `crawler.catalog.decision` | counter | `action` |
+| `crawler.queue.depth` | observable gauge | — |
+| `crawler.queue.claim_reclaimed` | counter | — (lease-race signal) |
+| `crawler.queue.superseded` | counter | — (concurrency-visibility) |
+| `crawler.process.duration` | histogram | `outcome` (= FaultClass or `ok`) |
+| `crawler.fetch.bytes` | histogram | `kind`, `encoding` |
+| `crawler.decode.in_bytes` / `.out_bytes` | histogram | `encoding` (ratio = bomb signal) |
+| `crawler.fetch.result` | counter | `outcome`, `status_class` |
+| `crawler.publish.result` | counter | `mode`, `outcome`, `status_class` |
+| `crawler.publish.batches` | histogram | `mode` |
+| `crawler.catalog.failed` | counter | `class` (permanent/transient) |
+
+**Metric migration:** the existing names (`crawler_catalogs_pushed_total`, `crawler_queue_depth`, `crawler_push_latency_seconds`, …, `metrics.go:44-63`) are **live**. Migrate via **dual-emit** — emit old + new for one release, cut dashboards over, then drop old. Never rename live metrics inside PR-A.
+
+## 9a. Content schema validation
+
+Today only the **outbound push body** is schema-validated (the `Validator` port on the runner, against `catalog/publish`). This CR reserves a home for validating the **inbound file data** — the fetched catalog content against its declared `schemaTypes` (`catalog.Entry.SchemaTypes`, already in the model).
+
+- **Where:** a `validate/` adapter wrapping onix's `schemav2validator`, exposed through the runner's `Validator` port and invoked in `syncpass` **after decode, before publish** — i.e. integrity (digest) → decode → **content validation** → compose/publish. Trust order: never validate bytes that haven't passed the digest check.
+- **What to validate — open design question (flag for the owner):**
+  - A **baseline** file is a full catalog → validate against the catalog `schemaTypes`.
+  - A **change file** is a *diff* (upserts/removals), **not** a full catalog, so it can't be validated as one. ION says each upsert is "the complete, schema-valid object" — so validate **each upsert item** against the resource/offer schema, and/or validate the **composed** catalog after the fold. Recommendation: validate the **composed result** against `schemaTypes` (covers baseline + all applied changes in one check) and treat a malformed upsert as surfacing there; validate individual upserts only if per-item error attribution is needed.
+- **Failure handling:** a schema failure is a **`content_invalid`** fault — **permanent** (a malformed file won't fix itself on retry), so fail fast, **do not advance the cursor**, emit `crawler.catalog.failed{class=content_invalid}` + alert. Same discipline as too-large/decode faults.
+- **Config:** gate it behind a flag (e.g. `CRAWLER_VALIDATE_CONTENT`) and make the schema source explicit (from `schemaTypes`); default posture (strict-reject vs log-only-warn) is a policy call for the owner — recommend **log-only-warn** at first rollout, then flip to strict once false-positive rate is known.
+
+This reuses the same schema plumbing as the push-body validation, so `validate/` serves **both** validation points (inbound content, outbound body) behind one adapter.
+
+## 10. Migration plan (two PRs)
+
+**PR-A — structural, behavior-preserving.** Compiler-verified moves, tests green after each step:
+1. `catalog/` first (pure, no internal imports): `model→index/signature/visibility`, `change→decide`, `select→eligibility`, `resolve→compose`.
+2. `store/` — rename `state/`, split by aggregate (`cursor.go`, `indexstate.go`), **keep one package** (tx sharing).
+3. Adapters — `fetch/` (split guard/integrity/conditional), `decode/`, `publish/`, `source/`.
+4. `runner/` — carve `engine.go` into `runner`/`indexpass`/`syncpass`/`backoff`/`ports`; move push helpers here.
+5. `config/`; thin `catalogcrawler.go` composition root; update the plugin + `cmd/catalog-crawler` imports (highest blast radius — last).
+
+**Verification for PR-A (make zero-drift mechanical, not aspirational):** `go build ./... && go vet ./... && go test ./...`, and a gofmt-normalized `git diff` that shows **only** package clauses, import paths, and file moves. Anything else is a red flag.
+
+**PR-B — observability (a real change, reviewed as such):**
+6. `telemetry/` plumbing (OTel wiring + `RunID`/`PassID` correlation); `catalog/fault.go` taxonomy replacing `reasonCategory`; adapters return typed faults; co-located `*/telemetry.go` names; dual-emit metric migration; new instruments (`fetch.result`, `decode.*`, `queue.claim_reclaimed`, `queue.superseded`).
+
+**Honest caveat (from the pragmatic-Go review):** tests currently live in-package (`package catalogcrawler`, reaching unexported `filterCatalog`, `docCounts`, …). Moving code into subpackages **will** require moving those tests and, in places, exporting a symbol or switching to `_test` package — that is more than "import-path edits." Budget for it in PR-A; it does not change behavior, but it is not free.
+
+## 10a. Test-suite organization
+
+Tests live **next to the code, per package** (Go convention). The restructure makes the suite *faster and clearer*, but it does move tests out of the single flat package. Guidelines:
+
+- **Pure domain (`catalog/`) — white-box, no mocks, table-driven.** `decide_test.go`, `eligibility_test.go`, `compose_test.go`, `fault_test.go`. These are the fast majority of the suite: no I/O, no fakes, deterministic. This is the biggest testability win of the split — today these rules are testable only through the flat package.
+- **Adapters — black-box (`package fetch_test`, etc.) against real seams:**
+  - `fetch/` → `httptest` servers (SSRF guard, conditional-GET/304, digest, size cap).
+  - `decode/` → round-trip + **decompression-bomb** + corrupt-gzip rejection.
+  - `publish/` → body-builder assertions + `httptest` for the client (FULL/MERGE, batching).
+  - `validate/` → valid/invalid catalog + change-file fixtures.
+  - `store/` → **Postgres-backed**, keeping today's pattern: skip when `CRAWLER_TEST_DB_DSN` is unset, and a **per-package schema** so parallel `go test ./...` stays isolated (`state/*_test.go` already does this — carry it over).
+- **Orchestration (`runner/`) — behavior tests against in-memory fakes of the ports.** Because ports are consumer-defined in `runner`, a `runner/fakes_test.go` provides an in-memory `Source`/`Fetcher`/`Store`/`Pusher`/`Validator`. This is where today's `engine_test.go` scenarios go (queue drain, retry/backoff, retire, fail-permanent-no-cursor-advance). No DB, no network — fast.
+- **`telemetry/` — light tests** (correlation id propagation via context; that metric names/attrs are bounded-cardinality).
+- **Shared fixtures / doubles:** a small `internal/crawlertest` (or per-package `*_test.go` helpers) for the ION-shaped index/catalog/change fixtures used across packages, so the golden model isn't duplicated.
+
+**White-box vs black-box:** default to **black-box** (`package foo_test`) to test each package through its public surface — this also validates that the public surface is sufficient. Use white-box (`package foo`) only where a test must reach an internal (mainly `catalog/` rules and `store/` helpers). Where a black-box test needs one internal, expose it via an `export_test.go` rather than widening the real API.
+
+**Migration caveat (repeated from §10):** current tests are in-package (`package catalogcrawler`) and reach unexported symbols (`filterCatalog`, `docCounts`, …). As their code moves to `catalog/`, `runner/`, etc., the tests move with it and some flip from white-box-in-flat-package to black-box-with-`export_test.go`. This is mechanical but **not** a zero-touch "import path only" change — budget it in PR-A.
+
+## 11. Risks & mitigations
+
+| Risk | Mitigation |
+| :--- | :--- |
+| Telemetry rename breaks live dashboards | Split into PR-A/PR-B; dual-emit in PR-B |
+| Import cycles during the move | Domain-first ordering; runner defines ports; adapters never import runner |
+| Silent behavior drift in PR-A | Symbol-level gofmt diff (moves + imports only); full suite green |
+| In-package tests undersold as trivial | Explicitly budgeted (§10 caveat) |
+| `store/` tx boundary leaking | Keep `store/` a single Go package |
+| Over-fragmentation | ~6–7 packages; domain stays one package; decode/identity not its own file |
+
+## 12. Acceptance criteria
+
+**PR-A**
+- [ ] `engine.go` split; no file mixes unrelated concerns.
+- [ ] `catalog/` imports only stdlib + `catalogfile` (and never `telemetry/`).
+- [ ] Adapters do not import `runner/`.
+- [ ] Public surface reduced to constructor + `Config` + ports + boundary types.
+- [ ] **File cohesion (§6a):** every file contains only symbols matching its name; no `helpers.go`/`util.go`/`misc.go`; the known violations are relocated (`Push`→`publish/client.go`, `PermanentError`→`catalog/fault.go`, `findCatalog`→`catalog/`, `docCounts`/`ackedCount`→`publish/`).
+- [ ] **Names (§5a):** the misleading `fail*` cluster renamed (`failItem`→`scheduleRetry`, `failPermanent`→`parkPermanently`, `fail`→`routeFailure`, `failReport`→`newFailureReport`, `FailQueueItem`→`RescheduleQueueItem`); `Source.IndexURLs`→`IndexRefs`; type names (`PartOutcome`→`BatchOutcome`, engine `Config`→`EngineConfig`, `IndexCond`→`IndexConditions`); `crawlIndex`'s `force bool` replaced by a named type.
+- [ ] Diff is moves + import/package/rename edits only; `build`/`vet`/`test` green; onix plugin + `cmd/catalog-crawler` behave identically.
+
+**PR-B**
+- [ ] `FaultClass` taxonomy in `catalog/`; `reasonCategory` removed; one source drives metric label + log event + retry decision.
+- [ ] `RunID`/`PassID` in context, on spans, logs, and exemplars.
+- [ ] Telemetry names co-located per adapter; `telemetry/` is plumbing only.
+- [ ] Metric migration is dual-emit; no live dashboard breaks on deploy.
+
+## 13. Out of scope (tracked elsewhere)
+
+- Registry integration, scope enforcement, restricted/authMethods fetch, pointer-file traversal, signed-`size` conformance — see the ION reference mapping.
+- **Inbound content schema validation** — this CR *reserves the home* (`validate/` package + `Validator` port + `content_invalid` fault, §9a); the validation logic, the composed-vs-per-item decision, and the strict/warn policy are a **follow-up feature**, not part of PR-A/PR-B.
+- True streaming decode into `json.Decoder` (the `io.ReadCloser` seam is preserved).
+- Batched-push protocol negotiation with Discovery (MERGE/session, Kafka size ceiling) — see the gzip/large-catalog review.
