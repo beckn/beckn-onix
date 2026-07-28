@@ -17,9 +17,9 @@ func TestPluginEntries_AllNil(t *testing.T) {
 
 func TestPluginEntries_EmptyIDSkipped(t *testing.T) {
 	p := PluginCfg{
-		Router:     &plugin.Config{ID: ""},
-		Signer:     &plugin.Config{ID: ""},
-		Steps:      []plugin.Config{{ID: ""}},
+		Router:  &plugin.Config{ID: ""},
+		Signer:  &plugin.Config{ID: ""},
+		Steps:   []plugin.Config{{ID: ""}},
 		Middleware: []plugin.Config{{ID: ""}},
 	}
 	assert.Empty(t, p.PluginEntries(), "configs with empty ID should be skipped")
