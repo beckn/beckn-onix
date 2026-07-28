@@ -83,4 +83,3 @@ func (e CatalogEntry) LatestVersion() int64 {
 	}
 	return v
 }
-

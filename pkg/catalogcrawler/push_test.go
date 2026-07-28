@@ -75,6 +75,35 @@ func TestBuildPushBody(t *testing.T) {
 	}
 }
 
+func TestBatchCatalog(t *testing.T) {
+	catalog := []byte(`{"id":"p/c","descriptor":{"name":"C"},"resources":[{"id":"r1"},{"id":"r2"},{"id":"r3"}]}`)
+
+	// Fits in one batch -> single FULL.
+	if one, err := BatchCatalog(catalog, 10); err != nil {
+		t.Fatal(err)
+	} else if len(one) != 1 || one[0].UpdateMode != UpdateModeFull {
+		t.Fatalf("fit = %+v, want 1 FULL", one)
+	}
+
+	// batchSize 2 -> FULL[r1,r2], MERGE[r3].
+	b, err := BatchCatalog(catalog, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b) != 2 {
+		t.Fatalf("batches = %d, want 2", len(b))
+	}
+	if b[0].UpdateMode != UpdateModeFull || b[1].UpdateMode != UpdateModeMerge {
+		t.Fatalf("modes = %s, %s, want FULL, MERGE", b[0].UpdateMode, b[1].UpdateMode)
+	}
+	if ids := resourceIDs(t, b[0].Doc); !reflect.DeepEqual(ids, []string{"r1", "r2"}) {
+		t.Fatalf("batch 0 resources = %v, want [r1 r2]", ids)
+	}
+	if ids := resourceIDs(t, b[1].Doc); !reflect.DeepEqual(ids, []string{"r3"}) {
+		t.Fatalf("batch 1 resources = %v, want [r3]", ids)
+	}
+}
+
 func TestBuildPushBody_PublicOmitsVisibleTo(t *testing.T) {
 	catalog := []byte(`{"id":"p/c","resources":[]}`)
 	body, err := BuildPushBody(PushMeta{ParticipantID: "p", UpdateMode: UpdateModeFull}, catalog)

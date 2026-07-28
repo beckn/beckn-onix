@@ -59,6 +59,7 @@ func TestEngine_IndexThenCatalogPass(t *testing.T) {
 	files := map[string][]byte{"base": []byte(`{"id":"p/c","resources":[{"id":"r1"}]}`)}
 
 	var pushed [][]byte
+	rec := &recMetrics{}
 	eng := New(Config{
 		MaxAttempts:   3,
 		IndexInterval: time.Hour, CatalogInterval: time.Hour,
@@ -72,7 +73,8 @@ func TestEngine_IndexThenCatalogPass(t *testing.T) {
 			pushed = append(pushed, body)
 			return PartOutcome{Acked: true, HTTPStatus: 200}, nil
 		},
-		NewID: func() string { return "id" },
+		Metrics: rec,
+		NewID:   func() string { return "id" },
 	})
 
 	// Index pass enqueues the (new) catalog.
@@ -85,6 +87,9 @@ func TestEngine_IndexThenCatalogPass(t *testing.T) {
 	eng.catalogPass(ctx)
 	if len(pushed) != 1 {
 		t.Fatalf("pushed %d times, want 1", len(pushed))
+	}
+	if rec.pushed != 1 {
+		t.Fatalf("metrics CatalogPushed = %d, want 1", rec.pushed)
 	}
 	if d, _ := s.QueueDepth(ctx); d != 0 {
 		t.Fatalf("queue depth after catalog pass = %d, want 0", d)
@@ -113,3 +118,16 @@ func TestEngine_IndexThenCatalogPass(t *testing.T) {
 		t.Fatalf("unchanged index re-enqueued work: depth %d, want 0", d)
 	}
 }
+
+// recMetrics records engine metric calls for assertions.
+type recMetrics struct {
+	pushed int
+	failed int
+	depth  int
+}
+
+func (m *recMetrics) CatalogPushed()              { m.pushed++ }
+func (m *recMetrics) CatalogFailed(string)        { m.failed++ }
+func (m *recMetrics) SetQueueDepth(n int)         { m.depth = n }
+func (m *recMetrics) ObservePushSeconds(float64)  {}
+func (m *recMetrics) ObserveIndexSeconds(float64) {}

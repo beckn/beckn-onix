@@ -2,6 +2,7 @@ package catalogcrawler
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +46,7 @@ type Config struct {
 	IndexInterval   time.Duration // index-job cadence
 	CatalogInterval time.Duration // catalog-job cadence
 	MaxAttempts     int           // give up a catalog after this many failed pushes
+	PushBatchSize   int           // max resources per /push call (0 => default)
 }
 
 // Deps are the engine's injected collaborators.
@@ -56,6 +58,7 @@ type Deps struct {
 	Validate   Validator
 	Push       Pusher
 	Log        Logger
+	Metrics    Metrics
 	Now        func() time.Time
 	NewID      func() string
 }
@@ -76,8 +79,14 @@ func New(cfg Config, deps Deps) *Engine {
 	if deps.Log == nil {
 		deps.Log = NopLogger{}
 	}
+	if deps.Metrics == nil {
+		deps.Metrics = NopMetrics{}
+	}
 	if cfg.MaxAttempts <= 0 {
 		cfg.MaxAttempts = 5
+	}
+	if cfg.PushBatchSize <= 0 {
+		cfg.PushBatchSize = 1000
 	}
 	return &Engine{cfg: cfg, deps: deps}
 }
@@ -103,7 +112,7 @@ func (e *Engine) Stop() error {
 // CrawlNow runs an immediate index crawl for one index URL (the /crawl
 // supportability trigger).
 func (e *Engine) CrawlNow(ctx context.Context, indexURL string) error {
-	e.crawlIndex(ctx, IndexRef{IndexURL: indexURL, Source: SourceOnDemand})
+	e.crawlIndex(ctx, IndexRef{IndexURL: indexURL, Source: SourceOnDemand}, true)
 	return nil
 }
 
@@ -139,12 +148,23 @@ func (e *Engine) indexPass(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		e.crawlIndex(ctx, ref)
+		e.crawlIndex(ctx, ref, false)
 	}
 }
 
 // crawlIndex fetches one index and, for each catalog, decides + enqueues.
-func (e *Engine) crawlIndex(ctx context.Context, ref IndexRef) {
+// force bypasses the per-index next_crawl_at cadence gate (used by /crawl).
+func (e *Engine) crawlIndex(ctx context.Context, ref IndexRef, force bool) {
+	prev, err := e.deps.Store.GetIndex(ctx, ref.IndexURL)
+	if err != nil {
+		e.deps.Log.Error("crawler.index.state_failed", "indexUrl", ref.IndexURL, "err", err)
+		return
+	}
+	now := e.deps.Now()
+	if !force && prev != nil && !prev.NextCrawlAt.IsZero() && prev.NextCrawlAt.After(now) {
+		return // not due yet (per-index cadence via next_crawl_at)
+	}
+
 	idx, err := e.deps.FetchIndex(ctx, ref.IndexURL)
 	if err != nil {
 		e.deps.Log.Warn("crawler.index.fetch_failed", "indexUrl", ref.IndexURL, "err", err)
@@ -152,57 +172,54 @@ func (e *Engine) crawlIndex(ctx context.Context, ref IndexRef) {
 	}
 	e.deps.Log.Info("crawler.index.checked", "indexUrl", ref.IndexURL, "version", idx.Version)
 
-	// Skip an unchanged index (version gate); per-catalog cursors + the
-	// queue handle any still-pending work independently.
-	if prev, err := e.deps.Store.GetIndex(ctx, ref.IndexURL); err != nil {
-		e.deps.Log.Error("crawler.index.state_failed", "indexUrl", ref.IndexURL, "err", err)
-		return
-	} else if prev != nil && prev.IndexVersion == idx.Version {
+	// Process only when the index version advanced; per-catalog cursors +
+	// the queue handle any still-pending work independently.
+	if prev != nil && prev.IndexVersion == idx.Version {
 		e.deps.Log.Info("crawler.index.unchanged", "indexUrl", ref.IndexURL, "version", idx.Version)
-		return
-	}
-
-	for _, entry := range idx.Catalogs {
-		take, _ := Select(entry, e.cfg.Networks)
-		cursor, seen, err := e.deps.Store.GetCatalogVersion(ctx, entry.CatalogID)
-		if err != nil {
-			e.deps.Log.Error("crawler.catalog.state_failed", "catalogId", entry.CatalogID, "err", err)
-			continue
-		}
-		switch d := Decide(entry, cursor, seen); d.Action {
-		case ActionSync:
-			if !take {
-				continue // not for this crawler's networks
-			}
-			if err := e.deps.Store.Enqueue(ctx, state.QueueItem{
-				CatalogID: entry.CatalogID, IndexURL: ref.IndexURL,
-				FromVersion: cursor, ToVersion: d.ToVersion, Op: "sync",
-			}); err != nil {
-				e.deps.Log.Error("crawler.enqueue_failed", "catalogId", entry.CatalogID, "err", err)
+	} else {
+		for _, entry := range idx.Catalogs {
+			take, _ := Select(entry, e.cfg.Networks)
+			cursor, seen, err := e.deps.Store.GetCatalogVersion(ctx, entry.CatalogID)
+			if err != nil {
+				e.deps.Log.Error("crawler.catalog.state_failed", "catalogId", entry.CatalogID, "err", err)
 				continue
 			}
-			e.deps.Log.Info("crawler.catalog.enqueued", "catalogId", entry.CatalogID, "toVersion", d.ToVersion)
-		case ActionRetire:
-			if !seen {
-				continue // never had it; nothing to retire
+			switch d := Decide(entry, cursor, seen); d.Action {
+			case ActionSync:
+				if !take {
+					continue // not for this crawler's networks
+				}
+				if err := e.deps.Store.Enqueue(ctx, state.QueueItem{
+					CatalogID: entry.CatalogID, IndexURL: ref.IndexURL,
+					FromVersion: cursor, ToVersion: d.ToVersion, Op: "sync",
+				}); err != nil {
+					e.deps.Log.Error("crawler.enqueue_failed", "catalogId", entry.CatalogID, "err", err)
+					continue
+				}
+				e.deps.Log.Info("crawler.catalog.enqueued", "catalogId", entry.CatalogID, "toVersion", d.ToVersion)
+			case ActionRetire:
+				if !seen {
+					continue // never had it; nothing to retire
+				}
+				if err := e.deps.Store.Enqueue(ctx, state.QueueItem{
+					CatalogID: entry.CatalogID, IndexURL: ref.IndexURL, ToVersion: cursor, Op: "retire",
+				}); err != nil {
+					e.deps.Log.Error("crawler.enqueue_failed", "catalogId", entry.CatalogID, "err", err)
+					continue
+				}
+				e.deps.Log.Info("crawler.catalog.retire_enqueued", "catalogId", entry.CatalogID)
+			case ActionRollback:
+				e.deps.Log.Warn("crawler.catalog.rollback", "catalogId", entry.CatalogID, "cursor", cursor, "indexVersion", d.ToVersion)
+			case ActionSkipUnchanged:
+				// nothing to do
 			}
-			if err := e.deps.Store.Enqueue(ctx, state.QueueItem{
-				CatalogID: entry.CatalogID, IndexURL: ref.IndexURL, ToVersion: cursor, Op: "retire",
-			}); err != nil {
-				e.deps.Log.Error("crawler.enqueue_failed", "catalogId", entry.CatalogID, "err", err)
-				continue
-			}
-			e.deps.Log.Info("crawler.catalog.retire_enqueued", "catalogId", entry.CatalogID)
-		case ActionRollback:
-			e.deps.Log.Warn("crawler.catalog.rollback", "catalogId", entry.CatalogID, "cursor", cursor, "indexVersion", d.ToVersion)
-		case ActionSkipUnchanged:
-			// nothing to do
 		}
 	}
 
 	if err := e.deps.Store.UpsertIndex(ctx, ref.IndexURL, idx.ParticipantID, ref.Source, idx.Version, SyncOK, e.nextIndexCrawl()); err != nil {
 		e.deps.Log.Error("crawler.index.record_failed", "indexUrl", ref.IndexURL, "err", err)
 	}
+	e.deps.Metrics.ObserveIndexSeconds(e.deps.Now().Sub(now).Seconds())
 }
 
 func (e *Engine) nextIndexCrawl() time.Time {
@@ -223,12 +240,15 @@ func (e *Engine) catalogPass(ctx context.Context) {
 		item, err := e.deps.Store.ClaimNext(ctx)
 		if err != nil {
 			e.deps.Log.Error("crawler.claim_failed", "err", err)
-			return
+			break
 		}
 		if item == nil {
-			return // queue drained
+			break // queue drained
 		}
 		e.processItem(ctx, item)
+	}
+	if n, err := e.deps.Store.QueueDepth(ctx); err == nil {
+		e.deps.Metrics.SetQueueDepth(n)
 	}
 }
 
@@ -264,42 +284,61 @@ func (e *Engine) processItem(ctx context.Context, item *state.ClaimedItem) {
 		return
 	}
 	_, visibleTo := Select(entry, e.cfg.Networks)
-	body, err := BuildPushBody(PushMeta{
-		ParticipantID: idx.ParticipantID, BppURI: e.cfg.BppURI,
-		MessageID: e.newID(), TransactionID: e.newID(),
-		Timestamp:  e.deps.Now().UTC().Format(time.RFC3339),
-		UpdateMode: UpdateModeFull, VisibleTo: visibleTo,
-	}, catalog)
+	batches, err := BatchCatalog(catalog, e.cfg.PushBatchSize)
 	if err != nil {
-		e.failItem(ctx, item, 0, "build_push: "+err.Error())
+		e.failItem(ctx, item, 0, "batch: "+err.Error())
 		return
 	}
 
-	if e.deps.Validate != nil {
-		if err := e.deps.Validate(ctx, body); err != nil {
-			e.failItem(ctx, item, 0, "schema: "+err.Error())
+	start := e.deps.Now()
+	var outcomes []PartOutcome
+	for _, batch := range batches {
+		body, err := BuildPushBody(PushMeta{
+			ParticipantID: idx.ParticipantID, BppURI: e.cfg.BppURI,
+			MessageID: e.newID(), TransactionID: e.newID(),
+			Timestamp:  e.deps.Now().UTC().Format(time.RFC3339),
+			UpdateMode: batch.UpdateMode, VisibleTo: visibleTo,
+		}, batch.Doc)
+		if err != nil {
+			e.failItem(ctx, item, 0, "build_push: "+err.Error())
 			return
 		}
+		if e.deps.Validate != nil {
+			if err := e.deps.Validate(ctx, body); err != nil {
+				e.failItem(ctx, item, 0, "schema: "+err.Error())
+				return
+			}
+		}
+		out, err := e.deps.Push(ctx, body)
+		if err != nil {
+			out = PartOutcome{HTTPStatus: out.HTTPStatus, Reason: err.Error()}
+		}
+		outcomes = append(outcomes, out)
+		if !out.Acked {
+			break // don't send later MERGE batches after a failed FULL
+		}
 	}
+	e.deps.Metrics.ObservePushSeconds(e.deps.Now().Sub(start).Seconds())
 
-	outcome, err := e.deps.Push(ctx, body)
-	if err != nil {
-		e.failItem(ctx, item, outcome.HTTPStatus, "push: "+err.Error())
-		return
-	}
-	if !outcome.Acked {
-		e.failItem(ctx, item, outcome.HTTPStatus, "push_nack: "+outcome.Reason)
+	if status, failed := Rollup(outcomes); status != SyncOK {
+		httpStatus, reason := 0, "push failed"
+		if len(failed) > 0 {
+			httpStatus, reason = failed[0].HTTPStatus, failed[0].Reason
+		}
+		e.failItem(ctx, item, httpStatus, "push: "+reason)
 		return
 	}
 
 	if err := e.deps.Store.Complete(ctx, item.ID, state.CatalogState{
 		CatalogID: item.CatalogID, IndexURL: item.IndexURL, ParticipantID: idx.ParticipantID,
-		Version: item.ToVersion, Status: "active", PushStatus: "pushed", HTTPStatus: outcome.HTTPStatus,
+		Version: item.ToVersion, Status: "active", PushStatus: "pushed",
+		HTTPStatus: outcomes[len(outcomes)-1].HTTPStatus,
 	}); err != nil {
 		e.deps.Log.Error("crawler.complete_failed", "catalogId", item.CatalogID, "err", err)
 		return
 	}
-	e.deps.Log.Info("crawler.catalog.pushed", "catalogId", item.CatalogID, "version", item.ToVersion)
+	e.deps.Metrics.CatalogPushed()
+	e.deps.Log.Info("crawler.catalog.pushed", "catalogId", item.CatalogID, "version", item.ToVersion, "batches", len(outcomes))
 }
 
 // failItem retries with backoff, or gives up after MaxAttempts — recording
@@ -319,6 +358,7 @@ func (e *Engine) failItem(ctx context.Context, item *state.ClaimedItem, httpStat
 		}); err != nil {
 			e.deps.Log.Error("crawler.giveup_failed", "catalogId", item.CatalogID, "err", err)
 		}
+		e.deps.Metrics.CatalogFailed(reasonCategory(reason))
 		e.deps.Log.Warn("crawler.catalog.failed", "catalogId", item.CatalogID, "reason", reason, "attempts", attempts, "httpStatus", httpStatus)
 		return
 	}
@@ -334,6 +374,15 @@ func (e *Engine) newID() string {
 		return e.deps.NewID()
 	}
 	return ""
+}
+
+// reasonCategory reduces a full failure reason ("schema: ...") to a
+// low-cardinality category ("schema") for the failed-total metric label.
+func reasonCategory(reason string) string {
+	if i := strings.IndexByte(reason, ':'); i > 0 {
+		return reason[:i]
+	}
+	return reason
 }
 
 func findCatalog(idx Index, catalogID string) (CatalogEntry, bool) {
