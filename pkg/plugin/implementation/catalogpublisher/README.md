@@ -265,9 +265,8 @@ one subdirectory per catalog -- matching the file spec's own example URLs.
 | `-catalog` | path to a Beckn Catalog JSON file | -- |
 | `-catalogId` | catalog id; a bare name (no `/`) is prefixed with `-domain` | `{domain}/{the catalog's own top-level "id"}` |
 | `-out` | output directory for artifacts and local state | `./catalog-publish-out` |
-| `-keyID` | signing key id (auto-generated into `<out>/.keys/` on first use) | `local-publisher-key` |
-| `-domain` | publisher domain -- the manifest's `domain` and the index's `participantId` | `local.test` |
-| `-indexSchemaURL` | JSON-Schema URL for the catalog-index document shape | the live reference fixture's schema URL |
+| `-keyID` | signing key id (auto-generated into `<out>/.keys/` on first use); embedded in the keyset this CLI's file-backed KeyManager returns, and read from there by `catalogpublisher`, not passed to its config directly | `local-publisher-key` |
+| `-domain` | publisher domain -- likewise embedded in the returned keyset (`SubscriberID`), not `catalogpublisher`'s own config | `local.test` |
 | `-nextUpdateDays` | days until `next_update` expires; `0` omits it | `14` |
 | `-fileValidityDays` | days until each file's `signature.validUntil` expires; `0` falls back to `-nextUpdateDays` | `14` |
 | `-retire` | comma-separated catalogIds to mark RETIRED this run | *(empty)* |
@@ -314,22 +313,87 @@ go test ./pkg/plugin/implementation/catalogpublisher/... -v
   signed-challenge gateway side (that's `catalogcrawler`/a gateway's job,
   not the publisher's).
 
+## Local persistence: `localstore`
+
+[`localstore`](localstore) is the shared "write a `Publish` result to a
+local directory, read it back as prior state" logic -- the same layout
+`catalogpublisherctl` always wrote (`.well-known/dedi.index.json`,
+`dedi/becknCatalogs.index.json`, flat `catalogs/<name>.v<version>[.changes].json`
+files), extracted so both the CLI and the `catalogPublish` HTTP handler
+(below) use one implementation instead of two. `Publish` itself still
+holds no storage-backed state -- `localstore.Load`/`Write` are one
+concrete, filesystem-backed way to supply and persist
+`definition.PriorCatalogState`/`PublishResult`, not part of the core
+plugin's own logic. `localstore.Load` reads the index once and returns
+prior state for every catalogId asked for, plus every other catalog's raw
+entry to carry forward untouched -- see its doc comments for the exact
+contract.
+
+## HTTP handler: `catalog/publish`
+
+`core/module/handler/catalogPublishHandler.go` (`NewCatalogPublishHandler`)
+exposes the same capability `catalogpublisherctl` does, as a DS-internal,
+unsigned trigger -- mirroring `catalogPullHandler` exactly: no
+`validateSign`/`addRoute`/`signAck` pipeline, since the caller is the
+operator's own tooling, not another network participant. Request body:
+```json
+{ "catalogs": [ { "id": "ds.local.dev/CAT-1", "descriptor": {...}, "provider": {...}, "resources": [...] } ],
+  "retire": ["..."], "forceBaseline": false }
+```
+Each catalog's own top-level `"id"` is used verbatim as its `catalogId` --
+the handler does not prefix or derive it from a domain the way
+`catalogpublisherctl`'s `-catalogId` convenience-defaulting does; submit
+the full id you want. Response borrows beckn.yaml's
+`CatalogPublishAction`/`CatalogProcessingResult` vocabulary
+(`ACCEPTED`/`REJECTED` per catalog) but as one synchronous call, not an
+Ack-now/`on_publish`-later pair -- beckn.yaml's async, signed
+`CatalogPublishAction` is a materially larger scope (routing, subscriber
+lookup, callback signing) that this handler deliberately does not
+implement; see "Known open items."
+
+Config: a new `outputRoot` field on the handler config (not a plugin
+`config:` map -- there was no precedent for a handler-level scalar besides
+`role`/`subscriberId`/`basePath`, so `outputRoot` joins them) is the
+common local directory every generated file goes under; `plugins.catalogPublisher`
+wires the core plugin the same way `plugins.crawler` wires `catalogcrawler`
+for `catalogPull`. See `config/local-beckn-one-bap.yaml`'s `catalogPublish`
+module block for a full working example.
+
+**Config has one field: `subscriberId`.** There is no `keyID`/`domain`/
+`indexSchemaURL` in `catalogpublisher.Config` -- `subscriberId` is only
+the `KeyManager.Keyset` lookup key (the same one every other `Keyset`
+caller uses, e.g. `pkg/security/artifactfetcher`,
+`core/module/handler/responsestep.go`). The manifest/signature `kid` and
+the manifest's `domain`/index's `participantId` are read from the
+returned `Keyset`'s `UniqueKeyID`/`SubscriberID` fields instead --
+whatever the KeyManager plugin's own config (e.g. `simplekeymanager`'s
+`subscriberId`/`keyId`) already populated them with, not duplicated here.
+This used to be a real gotcha: `simplekeymanager`'s config-loaded keyset
+is indexed by `subscriberId` (see `loadKeysFromConfig` in
+`simplekeymanager.go`), so the old `catalogPublisher.config.keyID` had to
+be set to the *subscriberId* value, not the `keyId` string sitting right
+next to it in the same config block -- easy to get backwards. Removing
+the duplicate field removes the chance to get it backwards.
+`indexSchemaURL` is hardcoded (`indexSchemaURL` const in
+`catalogpublisher.go`) rather than configurable, pending a move to a
+shared beckndefaults/becknconstants file.
+
+**Public catalogs only in this phase**: every submission is published with
+no `networkIds`/`authMethods`, matching `CatalogSubmission`'s zero value.
+
 ## Known open items
 
-- **`catalogcrawler` has not been updated for this wire shape.** It still
-  expects the earlier DeDi-wrapper-shaped index (`publisher`/`registry`/
-  `records[].details`/flattened `parts[]`, one whole-document proof) this
-  package used to produce before this rewrite. `pkg/plugin/implementation/
-  catalogcrawler/roundtrip_test.go` is temporarily `t.Skip`-ed with this
-  reason -- rewriting the crawler to match the file spec (participantId/
-  version/catalogs[]/baseline+changes, per-entry signature verification,
-  version-regression checks against the file-spec's monotonic version
-  rule, tombstone handling) is the immediate next step.
 - Compaction scheduling and grace-period cleanup (see above).
 - `ArtifactStore` wiring once a storage plugin exists, to replace the
-  placeholder URLs with real published locations.
-- A `catalog/publish`-style handler (mirroring `catalogPullHandler`) for
-  DS-internal HTTP triggering, and/or a non-demo CLI/desktop packaging --
-  this package's `Publisher.Publish` is a plain in-process call with no
-  ONIX-runtime dependency, so either caller can be added without touching
-  this package.
+  placeholder URLs with real published locations -- until then, the
+  `catalogPublish` handler's `outputRoot` only ever holds local files;
+  "moving them to wherever they're actually served from" is left to a
+  separate, later deployment step.
+- Restricted-catalog support in the `catalogPublish` handler (currently
+  public-only; the core plugin itself already supports `NetworkIds`/
+  `AuthMethods`, just not exposed through this request body yet).
+- A real, signed, async `catalog/publish` Beckn action per beckn.yaml
+  (context/action envelope, `validateSign`/`addRoute`/`sign` pipeline,
+  `on_publish` callback with `CatalogProcessingResult`) is a materially
+  different, larger scope than the internal trigger built here -- not
+  attempted in this phase.
