@@ -14,7 +14,7 @@ import (
 // one provider's index on demand (basic supportability for a stuck
 // publisher). The crawler's scheduled jobs run in the background from plugin
 // init; this handler only pokes an immediate pass. Same-operator call, so no
-// validateSign/signAck pipeline (see the catalog-crawler design).
+// validateSign/signAck pipeline (see the crawler design).
 type crawlHandler struct {
 	crawler definition.Crawler
 }

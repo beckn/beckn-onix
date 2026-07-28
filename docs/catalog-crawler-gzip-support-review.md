@@ -1,7 +1,7 @@
 # Catalog Crawler — `.json.gzip` Support Review (Phase 2 design)
 
 **Scope:** what it takes to support catalog artifacts in **`.json` and `.json.gzip`** — *efficiently, memory-safely, and extensibly* (more formats such as `zstd`/`brotli` are expected later, so the decode layer is built as a codec registry — G10 — not a gzip-specific branch).
-**Status today:** verified — the crawler supports **`.json` only**. There is no decompression anywhere in the fetch/parse path (`grep -ri 'gzip|compress|inflate|Content-Encoding'` over `pkg/catalogcrawler/`, `pkg/catalogfile/`, `pkg/security/artifactfetcher/` → **0 matches**). `FetchFile`/`FetchIndex` hand raw fetched bytes straight to `json.Unmarshal` (`http.go:40,99`, `catalogfile.go:58`).
+**Status today:** verified — the crawler supports **`.json` only**. There is no decompression anywhere in the fetch/parse path (`grep -ri 'gzip|compress|inflate|Content-Encoding'` over `pkg/crawler/`, `pkg/catalogfile/`, `pkg/security/artifactfetcher/` → **0 matches**). `FetchFile`/`FetchIndex` hand raw fetched bytes straight to `json.Unmarshal` (`http.go:40,99`, `catalogfile.go:58`).
 
 These are **enhancement comments**, distinct from the correctness findings in `catalog-crawler-phase1-review.md`. Nothing here is a bug in shipped behavior; it's the work to lift the format limitation.
 
@@ -62,7 +62,7 @@ The G-items below are the detailed rationale for each step above.
 
 ## G1 — Add a bounded gzip-decode step (Must)
 
-**Where:** `pkg/catalogcrawler/http.go` (`FetchFile` `:47`, `FetchIndex` `:33`, and the shared `get` `:81`).
+**Where:** `pkg/crawler/http.go` (`FetchFile` `:47`, `FetchIndex` `:33`, and the shared `get` `:81`).
 
 Insert a decode stage between "fetched bytes" and "hand to parser", selected by format (G5) and dispatched through the **codec registry** (G10) so `json` is a passthrough, `json.gzip` inflates through a bounded reader, and a future format is just another registered entry. Do **not** hardcode a `gzip`-only branch here. See G10 for the registry; a decoder for one codec looks like:
 
@@ -73,7 +73,7 @@ Insert a decode stage between "fetched bytes" and "hand to parser", selected by 
 func gzipDecoder(compressed []byte) (io.ReadCloser, error) {
     zr, err := gzip.NewReader(bytes.NewReader(compressed))
     if err != nil {
-        return nil, fmt.Errorf("catalogcrawler: gzip open: %w", err)
+        return nil, fmt.Errorf("crawler: gzip open: %w", err)
     }
     return zr, nil // zr.Close() called by the shared decode wrapper
 }
@@ -144,12 +144,12 @@ This is the decode mechanism the recommended solution uses. **Buffer only the co
 ```go
 zr, err := gzip.NewReader(bytes.NewReader(compressed)) // compressed already in hand + digest-verified (G4)
 if err != nil {
-    return fmt.Errorf("catalogcrawler: gzip open: %w", err)
+    return fmt.Errorf("crawler: gzip open: %w", err)
 }
 defer zr.Close()
 dec := json.NewDecoder(io.LimitReader(zr, maxDecompressed+1)) // bounded, streamed (G2)
 if err := dec.Decode(&doc); err != nil {
-    return fmt.Errorf("catalogcrawler: decode: %w", err) // covers corrupt gzip and oversize
+    return fmt.Errorf("crawler: decode: %w", err) // covers corrupt gzip and oversize
 }
 ```
 

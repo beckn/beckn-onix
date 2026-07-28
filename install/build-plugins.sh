@@ -41,7 +41,7 @@ plugins=(
     "opapolicychecker"
     "payloadstore"
     "schemaversionmediator"
-    "catalogcrawler"
+    "crawler"
     "vcvalidator:validateVC"
 )
 
