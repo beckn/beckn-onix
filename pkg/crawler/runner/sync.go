@@ -1,6 +1,6 @@
 package runner
 
-// syncpass.go — the catalog job: drain the queue, and for each claimed item run
+// sync.go — the catalog job: drain the queue, and for each claimed item run
 // the Catalog Sync (resolve → verify → scope → publish → settle) or a retire.
 // It owns the retry/park routing (routeFailure → parkPermanently / scheduleRetry)
 // and drives the SyncPhase breadcrumbs + terminal SyncOutcome. The log
@@ -191,7 +191,7 @@ func (e *Engine) syncCatalog(ctx context.Context, item *store.ClaimedItem, runID
 
 	// scoping: decide membership + who this catalog is visible to.
 	phase = e.advancePhase(phase, SyncScoping, runID, passID, item)
-	_, visibleTo := catalog.Select(entry, e.cfg.Networks)
+	_, visibleTo := catalog.ResolveScope(entry, e.cfg.Networks)
 	// Batch by serialized SIZE so no /push body exceeds Discovery's cap. The doc
 	// budget is the body cap minus headroom for the envelope (context + directive
 	// + visibleTo) that BuildPushBody wraps around each batch's doc.

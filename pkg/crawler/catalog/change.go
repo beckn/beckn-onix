@@ -1,6 +1,6 @@
 package catalog
 
-// decide.go — change detection: compares a catalog's index entry against our
+// change.go — change detection: compares a catalog's index entry against our
 // stored version cursor and yields a typed Decision (sync / skip_unchanged /
 // retire / rollback). Pure, no I/O.
 
@@ -21,9 +21,9 @@ type Decision struct {
 	ToVersion int64
 }
 
-// Decide compares a catalog's index entry against our stored cursor and
+// DetectChange compares a catalog's index entry against our stored cursor and
 // decides what to do. seen=false means we have never synced this catalog.
-func Decide(entry CatalogEntry, cursor int64, seen bool) Decision {
+func DetectChange(entry CatalogEntry, cursor int64, seen bool) Decision {
 	if entry.Status == StatusRetired {
 		return Decision{Action: ActionRetire}
 	}

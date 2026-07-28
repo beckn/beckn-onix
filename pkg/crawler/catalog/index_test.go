@@ -1,7 +1,7 @@
 package catalog
 
 // index_test.go — tests that the index model parses the spec-example index and
-// that LatestVersion / IsPublic / Select / Decide behave correctly on it.
+// that LatestVersion / IsPublic / ResolveScope / DetectChange behave correctly on it.
 
 import (
 	"encoding/json"
@@ -90,7 +90,7 @@ func TestModel_ParsesSpecExampleIndex(t *testing.T) {
 	if len(restricted.AuthMethods) != 1 || restricted.AuthMethods[0].Method != "signed-request" || restricted.AuthMethods[0].FreshnessSeconds != 60 {
 		t.Errorf("authMethods = %+v", restricted.AuthMethods)
 	}
-	if take, visible := Select(restricted, []string{"network-a.example.com"}); !take || len(visible) != 1 {
+	if take, visible := ResolveScope(restricted, []string{"network-a.example.com"}); !take || len(visible) != 1 {
 		t.Errorf("network catalog should be taken by a member crawler; take=%v visible=%v", take, visible)
 	}
 
@@ -99,7 +99,7 @@ func TestModel_ParsesSpecExampleIndex(t *testing.T) {
 	if tomb.Status != StatusRetired || tomb.RetiredAt == "" {
 		t.Errorf("tombstone = %+v", tomb)
 	}
-	if d := Decide(tomb, 12, true); d.Action != ActionRetire {
-		t.Errorf("Decide(retired) = %v, want retire", d.Action)
+	if d := DetectChange(tomb, 12, true); d.Action != ActionRetire {
+		t.Errorf("DetectChange(retired) = %v, want retire", d.Action)
 	}
 }
