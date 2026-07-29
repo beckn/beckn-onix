@@ -401,3 +401,68 @@ func TestIndexPass_ReCrawlsPersistedIndexes(t *testing.T) {
 		t.Errorf("configured index crawled %d times, want 1 (must dedup against its persisted row); fetched=%v", n, fetched)
 	}
 }
+
+// On an incremental update, a change file that omits the catalog metadata
+// envelope is malformed — the crawler must NOT fall back to re-fetching the
+// baseline. It is a permanent content fault: the baseline is not fetched,
+// nothing is pushed, and the cursor does not advance (the item parks until the
+// publisher republishes a compliant change file).
+func TestEngine_MergeOnly_NoEnvelope_ParksNoBaselineFallback(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	url := "https://x/i.json"
+
+	entry := catalog.CatalogEntry{
+		CatalogID: "p/c", Status: catalog.StatusActive,
+		Baseline: catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
+		Changes:  []catalog.FileEntry{{Version: 2, URL: "chg2", Digest: "d"}},
+	}
+	idx := catalog.Index{ParticipantID: "p", Version: 2, Catalogs: []catalog.CatalogEntry{entry}}
+	files := map[string][]byte{
+		"base": []byte(`{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"prov"},"resources":[{"id":"r1"}]}`),
+		// change file WITHOUT a "catalog" metadata envelope:
+		"chg2": []byte(`{"catalogId":"p/c","fromVersion":1,"toVersion":2,"resources":{"upserts":[{"id":"rNew"}]},"offers":{}}`),
+	}
+
+	// Seed the cursor at the baseline version → the next pass is incremental.
+	if err := s.UpsertCatalog(ctx, store.CatalogState{CatalogID: "p/c", IndexURL: url, Version: 1, Status: "active", Report: store.PassReport{Outcome: "pushed"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	var pushed [][]byte
+	var fetched []string
+	rec := &recMetrics{}
+	eng := New(EngineConfig{MergeOnly: true, MaxAttempts: 3, IndexInterval: time.Hour, CatalogInterval: time.Hour}, Deps{
+		Store:  s,
+		Source: source.NewConfigSource([]string{url}),
+		FetchIndex: func(context.Context, string, catalog.IndexConditions) (catalog.IndexResult, error) {
+			return catalog.IndexResult{Index: idx}, nil
+		},
+		FetchFile: func(_ context.Context, f catalog.FileEntry) ([]byte, error) {
+			fetched = append(fetched, f.URL)
+			return files[f.URL], nil
+		},
+		Push: func(_ context.Context, body []byte) (publish.BatchOutcome, error) {
+			pushed = append(pushed, body)
+			return publish.BatchOutcome{Acked: true, HTTPStatus: 200}, nil
+		},
+		Metrics: rec,
+		NewID:   func() string { return "id" },
+	})
+
+	eng.indexPass(ctx)
+	eng.catalogPass(ctx)
+
+	if slices.Contains(fetched, "base") {
+		t.Errorf("must NOT fall back to the baseline when the change file lacks the envelope; fetched=%v", fetched)
+	}
+	if len(pushed) != 0 {
+		t.Errorf("nothing should be pushed for a malformed change file; got %d push(es)", len(pushed))
+	}
+	if v, _, _ := s.GetCatalogVersion(ctx, "p/c"); v != 1 {
+		t.Errorf("cursor must not advance on a permanent content fault; got %d, want 1", v)
+	}
+	if rec.failed != 1 {
+		t.Errorf("expected 1 faulted outcome recorded, got %d", rec.failed)
+	}
+}

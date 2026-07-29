@@ -344,11 +344,19 @@ func (e *Engine) buildPushDoc(entry catalog.CatalogEntry, item *store.ClaimedIte
 		if err != nil {
 			return nil, "", cs, err
 		}
-		if ok {
-			return delta, publish.UpdateModeMerge, cs, nil
+		if !ok {
+			// The change file(s) carry no catalog metadata envelope. An incremental
+			// MERGE requires it (id/descriptor/provider), so a missing envelope is a
+			// malformed change file — NOT a reason to re-download the baseline. Park
+			// it as a permanent content fault until the publisher republishes a
+			// compliant change file.
+			return nil, "", cs, catalog.PermanentFaultf(catalog.FaultContentInvalid,
+				"crawler: change file(s) for %s carry no catalog metadata envelope (required for an incremental MERGE)", entry.CatalogID)
 		}
-		// No metadata envelope in the change files -> fall back to a full resolve.
+		return delta, publish.UpdateModeMerge, cs, nil
 	}
+	// First sync (cursor behind the baseline): the baseline is the only content,
+	// so it is fetched here — this is not a fallback, it is the initial resolve.
 	full, cs, err := catalog.ResolveWithChangeset(entry, item.FromVersion, item.FromVersion > 0, item.ToVersion, fetch)
 	return full, publish.UpdateModeMerge, cs, err
 }
