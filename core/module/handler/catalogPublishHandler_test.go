@@ -6,8 +6,10 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -59,8 +61,38 @@ func (fakeCache) Clear(context.Context) error          { return nil }
 // are ever called by it, every other method is unreachable and panics if
 // invoked.
 type catalogPublishTestManager struct {
-	km        *fakeKeyManager
-	publisher definition.CatalogPublisher
+	km              *fakeKeyManager
+	publisher       definition.CatalogPublisher
+	schemaValidator definition.SchemaValidator
+	policyChecker   definition.PolicyChecker
+}
+
+// fakeSchemaValidator records the last payload it was asked to validate and
+// returns a configurable error.
+type fakeSchemaValidator struct {
+	err       error
+	lastBody  []byte
+	callCount int
+}
+
+func (f *fakeSchemaValidator) Validate(_ context.Context, _ *url.URL, data []byte) error {
+	f.callCount++
+	f.lastBody = data
+	return f.err
+}
+
+// fakePolicyChecker records the last StepContext.Body it was asked to check
+// and returns a configurable error.
+type fakePolicyChecker struct {
+	err       error
+	lastBody  []byte
+	callCount int
+}
+
+func (f *fakePolicyChecker) CheckPolicy(ctx *model.StepContext) error {
+	f.callCount++
+	f.lastBody = ctx.Body
+	return f.err
 }
 
 func (m *catalogPublishTestManager) Cache(context.Context, *plugin.Config) (definition.Cache, error) {
@@ -97,7 +129,10 @@ func (m *catalogPublishTestManager) Step(context.Context, *plugin.Config) (defin
 	panic("unused")
 }
 func (m *catalogPublishTestManager) PolicyChecker(context.Context, definition.ManifestLoader, *plugin.Config) (definition.PolicyChecker, error) {
-	panic("unused")
+	if m.policyChecker == nil {
+		panic("unused")
+	}
+	return m.policyChecker, nil
 }
 func (m *catalogPublishTestManager) SchemaVersionMediator(context.Context, definition.ManifestLoader, *plugin.Config) (definition.SchemaVersionMediator, error) {
 	panic("unused")
@@ -109,7 +144,10 @@ func (m *catalogPublishTestManager) TransportWrapper(context.Context, *plugin.Co
 	panic("unused")
 }
 func (m *catalogPublishTestManager) SchemaValidator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
-	panic("unused")
+	if m.schemaValidator == nil {
+		panic("unused")
+	}
+	return m.schemaValidator, nil
 }
 func (m *catalogPublishTestManager) PayloadStore(context.Context, definition.Cache, string, *plugin.Config) (definition.PayloadStore, error) {
 	panic("unused")
@@ -244,6 +282,151 @@ func TestCatalogPublishHandler_PublishesAndWritesToOutputRoot(t *testing.T) {
 	}
 	if _, err := os.Stat(root + "/dedi/becknCatalogs.index.json"); err != nil {
 		t.Errorf("expected index written: %v", err)
+	}
+}
+
+func TestCatalogPublishHandler_RunsSchemaValidatorAndPolicyCheckerOnEnvelope(t *testing.T) {
+	root := t.TempDir()
+	schemaValidator := &fakeSchemaValidator{}
+	policyChecker := &fakePolicyChecker{}
+	mgr := newTestManager(t)
+	mgr.schemaValidator = schemaValidator
+	mgr.policyChecker = policyChecker
+
+	cfg := newTestConfig(root)
+	cfg.Plugins.SchemaValidator = &plugin.Config{ID: "schemav2validator"}
+	cfg.Plugins.PolicyChecker = &plugin.Config{ID: "opapolicychecker"}
+	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	body := `{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if schemaValidator.callCount != 1 {
+		t.Fatalf("expected schemaValidator.Validate called once, got %d", schemaValidator.callCount)
+	}
+	if policyChecker.callCount != 1 {
+		t.Fatalf("expected policyChecker.CheckPolicy called once, got %d", policyChecker.callCount)
+	}
+
+	var envelope struct {
+		Context struct {
+			Action string `json:"action"`
+		} `json:"context"`
+		Message struct {
+			Catalogs []json.RawMessage `json:"catalogs"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(schemaValidator.lastBody, &envelope); err != nil {
+		t.Fatalf("parsing envelope passed to schemaValidator: %v", err)
+	}
+	if envelope.Context.Action != "catalog/publish" {
+		t.Errorf("envelope context.action = %q, want catalog/publish", envelope.Context.Action)
+	}
+	if len(envelope.Message.Catalogs) != 1 {
+		t.Fatalf("expected 1 catalog in envelope message.catalogs, got %d", len(envelope.Message.Catalogs))
+	}
+	if string(schemaValidator.lastBody) != string(policyChecker.lastBody) {
+		t.Errorf("schemaValidator and policyChecker were not given the same envelope")
+	}
+}
+
+func TestCatalogPublishHandler_RejectsRequestWhenSchemaValidationFails(t *testing.T) {
+	root := t.TempDir()
+	schemaValidator := &fakeSchemaValidator{err: fmt.Errorf("schema mismatch")}
+	mgr := newTestManager(t)
+	mgr.schemaValidator = schemaValidator
+
+	cfg := newTestConfig(root)
+	cfg.Plugins.SchemaValidator = &plugin.Config{ID: "schemav2validator"}
+	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	body := `{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(root + "/dedi/becknCatalogs.index.json"); err == nil {
+		t.Error("expected no index written when schema validation fails")
+	}
+}
+
+func TestCatalogPublishHandler_RejectsRequestWhenPolicyCheckFails(t *testing.T) {
+	root := t.TempDir()
+	policyChecker := &fakePolicyChecker{err: fmt.Errorf("policy violation")}
+	mgr := newTestManager(t)
+	mgr.policyChecker = policyChecker
+
+	cfg := newTestConfig(root)
+	cfg.Plugins.PolicyChecker = &plugin.Config{ID: "opapolicychecker"}
+	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	body := `{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatalogPublishHandler_SkipsValidationWhenNotConfigured(t *testing.T) {
+	root := t.TempDir()
+	h, err := NewCatalogPublishHandler(context.Background(), newTestManager(t), newTestConfig(root), "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	body := `{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with no validators configured, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCatalogPublishHandler_SkipsValidationForRetireOnlyRequest(t *testing.T) {
+	root := t.TempDir()
+	schemaValidator := &fakeSchemaValidator{}
+	mgr := newTestManager(t)
+	mgr.schemaValidator = schemaValidator
+
+	cfg := newTestConfig(root)
+	cfg.Plugins.SchemaValidator = &plugin.Config{ID: "schemav2validator"}
+	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	body := `{"retire":["example.test/CAT-GONE"]}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if schemaValidator.callCount != 0 {
+		t.Errorf("expected schemaValidator not called for a retire-only request, got %d calls", schemaValidator.callCount)
 	}
 }
 

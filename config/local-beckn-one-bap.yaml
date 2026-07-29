@@ -242,3 +242,21 @@ modules:
             # Left unset here; a "pending-artifact-store://..." placeholder
             # is used until you point it at a real public location.
             # catalogBaseURL: "https://your-tunnel.ngrok-free.app"
+        # schemaValidator/checkPolicy are both optional -- unset (as here)
+        # means catalogPublish skips validation entirely, same as before
+        # this was wired up. Both plugins are reused unchanged: the handler
+        # wraps submitted catalogs in a minimal {context:{action:
+        # "catalog/publish"}, message:{catalogs:[...]}} envelope before
+        # calling them, so schemav2validator/opapolicychecker never need to
+        # know this isn't a signed/routed network action -- catalogPublish's
+        # own request body (POST {catalogs, retire, forceBaseline}) is
+        # unchanged for callers.
+        # schemaValidator:
+        #   id: schemav2validator
+        #   config:
+        #     type: url
+        #     location: https://raw.githubusercontent.com/beckn/protocol-specifications-v2/main/api/v2.0.0/beckn.yaml
+        # checkPolicy:
+        #   id: opapolicychecker
+        #   config:
+        #     policyDir: ./config/policies

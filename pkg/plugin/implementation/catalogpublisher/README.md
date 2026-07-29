@@ -396,6 +396,32 @@ must legitimately differ from the KeyManager's.
 **Public catalogs only in this phase**: every submission is published with
 no `networkIds`/`authMethods`, matching `CatalogSubmission`'s zero value.
 
+**Optional schema/policy validation, reusing existing plugins as-is.**
+`plugins.schemaValidator` (`schemav2validator`) and `plugins.checkPolicy`
+(`opapolicychecker`) can both be wired under the `catalogPublish` module,
+exactly like any `std` handler already does. Both are unconfigured by
+default -- validation is skipped entirely until you add one. Neither
+plugin is modified or wrapped in a new interface to support this: both
+already validate/police an arbitrary raw JSON body keyed off a bare
+`context.action` field (`schemav2Validator.Validate` looks up its
+pre-loaded OpenAPI schema by `context.action` alone; `opapolicychecker.
+CheckPolicy` only ever reads `ctx.Body`, tolerantly). So the handler
+builds a minimal, throwaway envelope purely for these two calls --
+```json
+{ "context": { "action": "catalog/publish" }, "message": { "catalogs": [ ... ] } }
+```
+-- and never changes `catalogPublish`'s own request body (still just
+`{catalogs, retire, forceBaseline}` as documented above). If a
+`schemaValidator` is configured, it validates against `catalog/publish`'s
+real `message.catalogs[]: Catalog[]` schema as defined in beckn.yaml
+(`components.schemas.CatalogPublishAction`) -- so it validates for real,
+not just a rubber-stamped envelope. `signValidator` (needed once signed
+inbound `GET` requests are added) is a follow-up, not yet wired.
+Validation runs once for the whole submitted batch (not per catalog); a
+failure rejects the entire request with `400` before `Publish` is ever
+called, and skips entirely for a retire-only request (no catalogs
+submitted, nothing to validate).
+
 ## Known open items
 
 - Compaction scheduling and grace-period cleanup (see above).
@@ -412,3 +438,5 @@ no `networkIds`/`authMethods`, matching `CatalogSubmission`'s zero value.
   `on_publish` callback with `CatalogProcessingResult`) is a materially
   different, larger scope than the internal trigger built here -- not
   attempted in this phase.
+- `signValidator` (`signvalidator`) isn't wired in yet -- needed once
+  signed inbound `GET` requests to this handler are added.
