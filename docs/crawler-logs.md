@@ -46,6 +46,11 @@ Rule of thumb: **attributes = which one; stats = how much.**
 
 - **Event key** is always `crawler.<component>.<stage>` (e.g. `crawler.sync.failed`).
 - **Base attributes on every line:** `component`, `stage`, `msg`, `run_id`.
+- **Every `crawl` line also carries:** `trigger` (`scheduled` or `on_demand`) — a
+  scheduled tick and a `/crawl` on-demand trigger both log through the same
+  `crawl` component, so this is how to tell which one you're looking at
+  without cross-referencing `run_id` against the `/crawl` HTTP response.
+  `sync` has no on-demand variant, so its lines don't carry this.
 - **Sync per-catalog lines also carry:** `pass_id`, `catalog_id`, `from`, `to`.
 
 ### Correlation ids
@@ -54,6 +59,14 @@ Rule of thumb: **attributes = which one; stats = how much.**
 | `run_id` | one job tick | follow everything one crawl/sync tick did |
 | `pass_id` | one catalog's sync | follow one catalog through its sync |
 | `catalog_id` | a catalog | follow one catalog across ticks |
+
+### On-demand crawls (`POST /crawl`)
+
+`/crawl` runs an immediate single-index crawl through the same `crawl`
+component and the same `logCrawlFinished` summary a scheduled tick uses —
+`trigger=on_demand` is the only thing that marks it as one. The HTTP response
+returns `runId` (the same `run_id` on these lines) so an operator can grep for
+their specific request's log lines instead of guessing from interleaving.
 
 ## 3. Levels
 
@@ -77,6 +90,10 @@ At `INFO`, a healthy crawler is quiet: `daemon.ready` once, then one `finished` 
 | `failed` | ERROR | "crawler failed to start while opening the database: `<err>`" | at (`db_open`/`db_migrate`/`config`/`start`), error | — |
 
 ### `crawl` — job 1 (find work)
+
+Every stage below also carries `trigger` (`scheduled` or `on_demand`) — omitted
+from the attributes column since it's on all of them.
+
 | stage | level | message (varies by result) | attributes | stats |
 |---|---|---|---|---|
 | `polled` | DEBUG · WARN | "index unchanged" · "index updated to v5" · "index not modified (304)" · **WARN** "couldn't reach the index: `<err>`" | index_url, version, result (`unchanged`/`updated`/`not_modified`/`unreachable`) | — |
@@ -129,9 +146,9 @@ The *where* comes from the fault, so no code needs decoding:
 **Healthy cycle (at DEBUG):**
 ```
 daemon ready     "crawler started — 1 source, polling every 5m → discovery.local"
-crawl  polled    "index updated to v5"                              index_url=…
-crawl  queued    "queued this catalog to sync (v3 → v5)"            catalog_id=…/electronics-2025
-crawl  finished  "crawl finished — polled 1 index(es), 1 updated, queued 1 catalog(s)"   {indexes=1 updated=1 queued=1 dur_ms=142}
+crawl  polled    "index updated to v5"                              index_url=… trigger=scheduled
+crawl  queued    "queued this catalog to sync (v3 → v5)"            catalog_id=…/electronics-2025 trigger=scheduled
+crawl  finished  "crawl finished — polled 1 index(es), 1 updated, queued 1 catalog(s)"   {indexes=1 updated=1 queued=1 dur_ms=142} trigger=scheduled
 sync   syncing   "syncing catalog (v3 → v5)"                        catalog_id=…/electronics-2025
 sync   synced    "sent the catalog update to Discovery"             catalog_id=…/electronics-2025 {resources=12 offers=4 batches=2 dur_ms=180}
 sync   finished  "sync finished — 1 sent, 0 skipped, 0 failed, 0 retrying; queue empty"   {synced=1 skipped=0 failed=0 retrying=0 queue=0 dur_ms=318}
