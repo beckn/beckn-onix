@@ -48,6 +48,10 @@ func Decode(encoding string, b []byte, maxDecompressed int64) ([]byte, error) {
 	if err != nil {
 		return nil, catalog.Permanentf("crawler: decode %q: %v", encoding, err)
 	}
+	// Stays unclassified (=> FaultDecode, "couldn't unpack the files"): a
+	// decompression bomb is caught while unpacking, so that IS the truthful stage.
+	// FaultOversize is reserved for the download cap in fetch/client.go, whose
+	// phrase is "download the files". Both park; only the stage differs.
 	if int64(len(out)) > maxDecompressed {
 		return nil, catalog.Permanentf("crawler: decoded body exceeds max %d bytes", maxDecompressed)
 	}

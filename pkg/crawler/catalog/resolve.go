@@ -76,7 +76,7 @@ func ResolveWithChangeset(entry CatalogEntry, cursor int64, seen bool, toVersion
 		// fold silently mis-composes (a gap => a wrong catalog). A gap is a
 		// publisher-side data problem — it won't fix on retry, so it's permanent.
 		if int64(cf.FromVersion) != running {
-			return nil, cs, Permanentf("crawler: change v%d fromVersion=%d, expected %d (gap in change files)", c.Version, cf.FromVersion, running)
+			return nil, cs, PermanentFaultf(FaultGap, "crawler: change v%d fromVersion=%d, expected %d (gap in change files)", c.Version, cf.FromVersion, running)
 		}
 		if c.Version > cursor { // accumulate the changeset only past our cursor
 			accumulateChangeset(&cs, cf)

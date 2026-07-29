@@ -96,8 +96,13 @@ func (c *Client) FetchFile(ctx context.Context, f catalog.FileEntry) ([]byte, er
 	// Digest covers the artifact at rest (the compressed bytes) — verify BEFORE
 	// spending CPU/memory inflating, so a tampered or bomb file is rejected on a
 	// cheap hash. Only authenticated bytes are ever decoded.
+	// Permanent, not transient: re-fetching the same URL yields the same bad
+	// bytes. This is Phase 1's only integrity gate and the spec's "treat as
+	// tampering and flag it" signal, so it must park + alert (ERROR) rather than
+	// retry on a 5-minute loop forever, logged as a network blip. Same policy as
+	// the missing-digest branch above.
 	if !digestMatches(b, f.Digest) {
-		return nil, fmt.Errorf("crawler: digest mismatch for %s", f.URL)
+		return nil, catalog.PermanentFaultf(catalog.FaultDigestMismatch, "crawler: digest mismatch for %s", f.URL)
 	}
 	return decode.Decode(decode.EncodingFor(f.Encoding, f.URL), b, c.maxDecompressed)
 }
@@ -150,8 +155,12 @@ func (c *Client) getConditional(ctx context.Context, raw string, cond catalog.In
 	if err != nil {
 		return nil, respMeta{}, fmt.Errorf("crawler: reading %s: %w", raw, err)
 	}
+	// Permanent for the same reason the decompressed cap is (decode/registry.go):
+	// the publisher has to publish a smaller artifact, so park until they do
+	// instead of re-downloading an over-cap file forever. Note this is NOT the
+	// non-200 branch above — a 5xx must stay transient and retry.
 	if int64(len(b)) > c.maxBytes {
-		return nil, respMeta{}, fmt.Errorf("crawler: %s exceeds max %d bytes", raw, c.maxBytes)
+		return nil, respMeta{}, catalog.PermanentFaultf(catalog.FaultOversize, "crawler: %s exceeds max %d bytes", raw, c.maxBytes)
 	}
 	meta := respMeta{etag: resp.Header.Get("ETag"), lastModified: resp.Header.Get("Last-Modified")}
 	return b, meta, nil

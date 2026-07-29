@@ -125,13 +125,25 @@ The *where* comes from the fault, so no code needs decoding:
 | fault | message says "couldn't **…**" |
 |---|---|
 | `index_fetch` / `absent` | resolve the catalog |
-| `ssrf` | download the files |
+| `ssrf` / `oversize` | download the files |
 | `decode` / `gap` | unpack the files |
 | `digest_mismatch` | verify the downloaded files |
-| `oversize` | batch the catalog |
 | `content_invalid` | build the push request |
 | `push_schema` / `push_rejected` / transient (5xx) | send the catalog to Discovery |
 | `store` | save progress |
+
+**Which faults park.** `ssrf`, `oversize`, `digest_mismatch`, `decode`, `gap`,
+`content_invalid`, `push_schema` and `push_rejected` are permanent — they park
+(ERROR) and re-activate only when the publisher publishes a new version.
+`index_fetch`, `store` and `transient` retry with backoff (WARN). The fetch layer
+names its own fault class, so a tampered artifact reports `digest_mismatch` and a
+continuity gap reports `gap`, rather than both collapsing to `decode`.
+
+Two "too big" caps land on different stages, because they fail at different
+points: the download cap (`CRAWLER_MAX_ARTIFACT_BYTES`) is `oversize` →
+"download the files", while a decompression bomb
+(`CRAWLER_MAX_DECOMPRESSED_BYTES`) is caught while inflating, so it is `decode` →
+"unpack the files". Both park.
 
 ## 5. Reading the logs
 

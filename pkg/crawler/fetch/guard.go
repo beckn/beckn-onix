@@ -10,6 +10,8 @@ import (
 	"net"
 	"net/url"
 	"time"
+
+	"github.com/beckn-one/beckn-onix/pkg/crawler/catalog"
 )
 
 // checkPublicURL rejects non-HTTP(S) schemes and hosts that resolve to
@@ -39,7 +41,10 @@ func checkPublicURL(raw string) error {
 	}
 	for _, ip := range ips {
 		if !isPublicIP(ip) {
-			return fmt.Errorf("crawler: refusing private/loopback host %q", host)
+			// Permanent: the published URL points at an internal address, which no
+			// amount of retrying fixes. Park it so an operator sees the rejection
+			// instead of it looping as "transient" forever.
+			return catalog.PermanentFaultf(catalog.FaultSSRF, "crawler: refusing private/loopback host %q", host)
 		}
 	}
 	return nil
@@ -85,7 +90,10 @@ func guardedDialContext(allowPrivate bool, timeout time.Duration) func(context.C
 		var lastErr error
 		for _, ipa := range ips {
 			if !isPublicIP(ipa.IP) {
-				lastErr = fmt.Errorf("crawler: refusing private/loopback address %s for %q", ipa.IP, host)
+				// Permanent (see checkPublicURL). net/http wraps this in *url.Error,
+				// and errors.As unwraps through it, so the class still reaches
+				// ClassifyFault at the far end.
+				lastErr = catalog.PermanentFaultf(catalog.FaultSSRF, "crawler: refusing private/loopback address %s for %q", ipa.IP, host)
 				continue
 			}
 			conn, err := d.DialContext(ctx, network, net.JoinHostPort(ipa.IP.String(), port))

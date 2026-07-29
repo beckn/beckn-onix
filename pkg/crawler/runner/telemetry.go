@@ -199,7 +199,10 @@ func stepPhrase(fault string) string {
 	case "digest_mismatch":
 		return "verify the downloaded files"
 	case "oversize":
-		return "batch the catalog"
+		// The artifact blew the download cap. ("batch the catalog" used to sit here
+		// for a batching-oversize fault that no code path raises — a batch Discovery
+		// rejects comes back as a 413, i.e. push_rejected.)
+		return "download the files"
 	case "store":
 		return "save progress"
 	case "content_invalid":
