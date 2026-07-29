@@ -40,8 +40,13 @@ func (e *Engine) catalogPass(ctx context.Context) {
 		}
 		item, err := e.deps.Store.ClaimNext(ctx)
 		if err != nil {
+			// Return, don't break: the tail below marks the pass successful, and a
+			// queue we can't claim from is exactly the wedged state that
+			// crawler_seconds_since_last_success must keep reporting. Same rule as
+			// indexPass on a Source failure. (A drained queue still breaks — an
+			// idle tick is a successful one.)
 			e.storeUnhealthy("sync", runID, "claim", "", err)
-			break
+			return
 		}
 		if item == nil {
 			break // queue drained
