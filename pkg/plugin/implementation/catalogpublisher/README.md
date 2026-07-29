@@ -350,21 +350,49 @@ contract.
 exposes the same capability `catalogpublisherctl` does, as a DS-internal,
 unsigned trigger -- mirroring `catalogPullHandler` exactly: no
 `validateSign`/`addRoute`/`signAck` pipeline, since the caller is the
-operator's own tooling, not another network participant. Request body:
+operator's own tooling, not another network participant. Request body
+matches beckn.yaml's real `CatalogPublishAction` envelope shape
+(`context`/`message.catalogs[]`/`message.publishDirectives[]`) as closely
+as possible, so `schemaValidator`/`policyChecker` (below) can validate the
+raw request directly with no synthesized wrapper:
 ```json
-{ "catalogs": [ { "id": "ds.local.dev/CAT-1", "descriptor": {...}, "provider": {...}, "resources": [...] } ],
-  "retire": ["..."], "forceBaseline": false }
+{
+  "context": { "action": "catalog/publish" },
+  "message": {
+    "catalogs": [ { "id": "ds.local.dev/CAT-1", "descriptor": {...}, "provider": {...}, "resources": [...] } ],
+    "publishDirectives": [ { "catalogId": "ds.local.dev/CAT-1", "catalogType": "REGULAR", "visibleTo": ["retail-network"] } ]
+  },
+  "retire": ["..."], "forceBaseline": false
+}
 ```
-Each catalog's own top-level `"id"` is used verbatim as its `catalogId` --
-the handler does not prefix or derive it from a domain the way
-`catalogpublisherctl`'s `-catalogId` convenience-defaulting does; submit
-the full id you want. Response borrows beckn.yaml's
+`context` carries only `action` -- the real spec leaves every other
+`Context` field optional, and none of them (`bapId`/`bapUri`/`messageId`/
+...) are meaningful for this unsigned, same-operator trigger.
+`publishDirectives[]` is beckn.yaml's own construct (matched to a catalog
+by `catalogId`, alongside `updateMode`/`resourceDirectives` which this
+handler doesn't act on yet). `catalogType` (`MASTER`/`REGULAR`) is
+required by the schema (unlike `CatalogSubmission.CatalogType`, which
+defaults to `"REGULAR"` on its own when empty -- callers must still set it
+explicitly here once `schemaValidator` is configured) and `visibleTo` is
+wired onto `CatalogSubmission.NetworkIds`; both map directly onto the
+same-named fields (`catalogType`/`networkIds`) in the published index.
+`retire`/`forceBaseline` have no beckn.yaml equivalent and stay as this
+handler's own siblings of `context`/`message`. Each catalog's own top-level `"id"` is used verbatim
+as its `catalogId` -- the handler does not prefix or derive it from a
+domain the way `catalogpublisherctl`'s `-catalogId` convenience-defaulting
+does; submit the full id you want. Response borrows beckn.yaml's
 `CatalogPublishAction`/`CatalogProcessingResult` vocabulary
 (`ACCEPTED`/`REJECTED` per catalog) but as one synchronous call, not an
 Ack-now/`on_publish`-later pair -- beckn.yaml's async, signed
 `CatalogPublishAction` is a materially larger scope (routing, subscriber
 lookup, callback signing) that this handler deliberately does not
 implement; see "Known open items."
+
+Note: beckn.yaml's `schemaTypes` concept only exists on `catalog/
+subscription`'s `CatalogSubscribeAction` (a subscriber declaring interest
+in updates) -- there is no publish-time directive for it, so
+`CatalogSubmission.SchemaTypes` is not wired to any request field yet and
+is never inferred from catalog content either.
 
 Config: a new `outputRoot` field on the handler config (not a plugin
 `config:` map -- there was no precedent for a handler-level scalar besides
@@ -403,34 +431,64 @@ kept in sync by hand. An explicit `subscriberId` under
 `catalogPublisher.config` is still honored untouched, for the rare case it
 must legitimately differ from the KeyManager's.
 
-**Public catalogs only in this phase**: every submission is published with
-no `networkIds`/`authMethods`, matching `CatalogSubmission`'s zero value.
+**Restricted catalogs**: `visibleTo` (via `publishDirectives`, see above)
+maps onto `NetworkIds`; `AuthMethods` isn't wired to any request field
+yet -- custom auth for restricted catalogs is a later phase.
 
-**Optional schema/policy validation, reusing existing plugins as-is.**
-`plugins.schemaValidator` (`schemav2validator`) and `plugins.checkPolicy`
-(`opapolicychecker`) can both be wired under the `catalogPublish` module,
-exactly like any `std` handler already does. Both are unconfigured by
-default -- validation is skipped entirely until you add one. Neither
-plugin is modified or wrapped in a new interface to support this: both
-already validate/police an arbitrary raw JSON body keyed off a bare
-`context.action` field (`schemav2Validator.Validate` looks up its
-pre-loaded OpenAPI schema by `context.action` alone; `opapolicychecker.
-CheckPolicy` only ever reads `ctx.Body`, tolerantly). So the handler
-builds a minimal, throwaway envelope purely for these two calls --
-```json
-{ "context": { "action": "catalog/publish" }, "message": { "catalogs": [ ... ] } }
-```
--- and never changes `catalogPublish`'s own request body (still just
-`{catalogs, retire, forceBaseline}` as documented above). If a
-`schemaValidator` is configured, it validates against `catalog/publish`'s
-real `message.catalogs[]: Catalog[]` schema as defined in beckn.yaml
-(`components.schemas.CatalogPublishAction`) -- so it validates for real,
-not just a rubber-stamped envelope. `signValidator` (needed once signed
-inbound `GET` requests are added) is a follow-up, not yet wired.
-Validation runs once for the whole submitted batch (not per catalog); a
-failure rejects the entire request with `400` before `Publish` is ever
-called, and skips entirely for a retire-only request (no catalogs
-submitted, nothing to validate).
+**Optional schema/policy validation, reusing existing plugins as-is, on
+the real request body.** `plugins.schemaValidator` (`schemav2validator`)
+and `plugins.checkPolicy` (`opapolicychecker`) can both be wired under the
+`catalogPublish` module, exactly like any `std` handler already does.
+Both are unconfigured by default -- validation is skipped entirely until
+you add one. Neither plugin is modified or wrapped in a new interface to
+support this: both already validate/police an arbitrary raw JSON body
+keyed off a bare `context.action` field (`schemav2Validator.Validate`
+looks up its pre-loaded OpenAPI schema by `context.action` alone;
+`opapolicychecker.CheckPolicy` only ever reads `ctx.Body`, tolerantly).
+Because the request body already matches beckn.yaml's real envelope shape
+(see above), the handler passes the raw incoming bytes straight to both
+plugins -- no synthesized wrapper. If a `schemaValidator` is configured,
+it validates against `catalog/publish`'s real `message.catalogs[]:
+Catalog[]` schema as defined in beckn.yaml
+(`components.schemas.CatalogPublishAction`) -- so it validates for real.
+`signValidator` (needed once signed inbound `GET` requests are added) is a
+follow-up, not yet wired. Validation runs once for the whole submitted
+batch (not per catalog); a failure rejects the entire request with `400`
+before `Publish` is ever called, and skips entirely for a retire-only
+request (no catalogs submitted, nothing to validate).
+
+**Optional node-manifest link check, warn-only.** `plugins.manifestLoader`
+(`manifestloader`) can also be wired under the `catalogPublish` module.
+When configured, after every successful publish the handler fetches this
+node's own manifest -- `manifestLoader.GetBySubscriberID(ctx,
+manifestSubscriberID)`, the same self-lookup `schemaversionmediator`
+already does at its own cold start, using `dediregistry` read-only -- and
+checks whether its `catalog.catalogIndexes[]` already lists this
+publisher's own index URL (`CatalogPublisher.IndexURL()`, part of the
+plugin's exported interface precisely so callers like this can ask for it
+without knowing `PublicBaseURL` internals). The real manifest on DeDi is
+**never written to** here, matching this package's manifest policy
+elsewhere (see "The manifest's filename" above) -- if the link is
+missing, the handler instead writes a locally-staged proposal (existing
+manifest content, or a bare skeleton if none exists yet, plus the new
+`catalogIndexes` entry) to `outputRoot/index/node-manifest.staged.yaml`
+(`localstore.WriteStagedNodeManifest`) and returns a `warnings[]` entry in
+the response naming that path -- the publish itself still succeeds; this
+never blocks it. Reviewing and actually pushing the staged file to DeDi is
+a manual, deliberate operator step. Unconfigured (the default) skips this
+check entirely.
+
+**`manifestSubscriberId` is deliberately separate from `subscriberId`.**
+`ManifestLoader.GetBySubscriberID` (and `dediregistry.LookupNode`
+underneath it) require the DeDi-native `namespace/registry/recordName`
+path format (e.g. `nfh.global/staging-nodes/staging-p-node`) and error
+otherwise -- a different shape than the plain Beckn `subscriberId`
+`KeyManager.Keyset` is indexed by. Setting `subscriberId` itself to that
+3-part path would break signing (the keyset lookup would fail), so the
+manifest self-lookup reads its own
+`plugins.catalogPublisher.config.manifestSubscriberId` instead, falling
+back to `subscriberId` only when unset (works only if that value happens
+to already be 3-part).
 
 ## Known open items
 

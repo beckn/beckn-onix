@@ -14,10 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher/localstore"
 )
 
 // fakeKeyManager returns a fixed Ed25519 keyset for any keyID.
@@ -46,6 +49,31 @@ type fakeRegistry struct{}
 func (fakeRegistry) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
 	return nil, nil
 }
+func (fakeRegistry) LookupRegistry(context.Context, string, string) (*model.RegistryMetadata, error) {
+	panic("unused")
+}
+func (fakeRegistry) LookupNode(context.Context, string) (*model.SubscriberRecord, error) {
+	panic("unused")
+}
+
+// fakeManifestLoader returns a configurable manifest document (or error)
+// for GetBySubscriberID; GetByNetworkID/GetByMetadata are unused here.
+type fakeManifestLoader struct {
+	doc            *model.ManifestDocument
+	err            error
+	lastSubscriber string
+}
+
+func (f *fakeManifestLoader) GetByNetworkID(context.Context, string) (*model.ManifestDocument, error) {
+	panic("unused")
+}
+func (f *fakeManifestLoader) GetByMetadata(context.Context, model.ManifestMetadata) (*model.ManifestDocument, error) {
+	panic("unused")
+}
+func (f *fakeManifestLoader) GetBySubscriberID(_ context.Context, subscriberID string) (*model.ManifestDocument, error) {
+	f.lastSubscriber = subscriberID
+	return f.doc, f.err
+}
 
 type fakeCache struct{}
 
@@ -65,6 +93,7 @@ type catalogPublishTestManager struct {
 	publisher       definition.CatalogPublisher
 	schemaValidator definition.SchemaValidator
 	policyChecker   definition.PolicyChecker
+	manifestLoader  definition.ManifestLoader
 }
 
 // fakeSchemaValidator records the last payload it was asked to validate and
@@ -138,7 +167,10 @@ func (m *catalogPublishTestManager) SchemaVersionMediator(context.Context, defin
 	panic("unused")
 }
 func (m *catalogPublishTestManager) ManifestLoader(context.Context, definition.Cache, definition.RegistryMetadataLookup, *plugin.Config) (definition.ManifestLoader, error) {
-	panic("unused")
+	if m.manifestLoader == nil {
+		panic("unused")
+	}
+	return m.manifestLoader, nil
 }
 func (m *catalogPublishTestManager) TransportWrapper(context.Context, *plugin.Config) (definition.TransportWrapper, error) {
 	panic("unused")
@@ -258,7 +290,7 @@ func TestCatalogPublishHandler_PublishesAndWritesToOutputRoot(t *testing.T) {
 		t.Fatalf("NewCatalogPublishHandler: %v", err)
 	}
 
-	body := `{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}`
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -288,6 +320,44 @@ func TestCatalogPublishHandler_PublishesAndWritesToOutputRoot(t *testing.T) {
 	}
 }
 
+func TestCatalogPublishHandler_PublishDirectivesVisibleToMapsToNetworkIds(t *testing.T) {
+	root := t.TempDir()
+	h, err := NewCatalogPublishHandler(context.Background(), newTestManager(t), newTestConfig(root), "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}],
+		"publishDirectives":[{"catalogId":"example.test/CAT-1","visibleTo":["retail-network","mobility-network"]}]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	raw, err := os.ReadFile(localstore.IndexPath(root))
+	if err != nil {
+		t.Fatalf("reading index: %v", err)
+	}
+	var index struct {
+		Catalogs []struct {
+			CatalogID  string   `json:"catalogId"`
+			NetworkIds []string `json:"networkIds"`
+		} `json:"catalogs"`
+	}
+	if err := json.Unmarshal(raw, &index); err != nil {
+		t.Fatalf("parsing index: %v", err)
+	}
+	if len(index.Catalogs) != 1 || len(index.Catalogs[0].NetworkIds) != 2 ||
+		index.Catalogs[0].NetworkIds[0] != "retail-network" || index.Catalogs[0].NetworkIds[1] != "mobility-network" {
+		t.Errorf("unexpected networkIds in index: %+v", index.Catalogs)
+	}
+}
+
 func TestCatalogPublishHandler_RunsSchemaValidatorAndPolicyCheckerOnEnvelope(t *testing.T) {
 	root := t.TempDir()
 	schemaValidator := &fakeSchemaValidator{}
@@ -304,7 +374,7 @@ func TestCatalogPublishHandler_RunsSchemaValidatorAndPolicyCheckerOnEnvelope(t *
 		t.Fatalf("NewCatalogPublishHandler: %v", err)
 	}
 
-	body := `{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}`
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -354,7 +424,7 @@ func TestCatalogPublishHandler_RejectsRequestWhenSchemaValidationFails(t *testin
 		t.Fatalf("NewCatalogPublishHandler: %v", err)
 	}
 
-	body := `{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}`
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -380,7 +450,7 @@ func TestCatalogPublishHandler_RejectsRequestWhenPolicyCheckFails(t *testing.T) 
 		t.Fatalf("NewCatalogPublishHandler: %v", err)
 	}
 
-	body := `{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}`
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -397,7 +467,7 @@ func TestCatalogPublishHandler_SkipsValidationWhenNotConfigured(t *testing.T) {
 		t.Fatalf("NewCatalogPublishHandler: %v", err)
 	}
 
-	body := `{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}`
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -464,7 +534,7 @@ func TestCatalogPublishHandler_InvalidCatalogIsRejectedNotFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCatalogPublishHandler: %v", err)
 	}
-	body := `{"catalogs":[{"descriptor":{"name":"missing id"}}]}`
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"descriptor":{"name":"missing id"}}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -505,6 +575,177 @@ func TestCatalogPublishHandler_Retire(t *testing.T) {
 	}
 	if len(resp.Results) != 1 || resp.Results[0].Status != catalogAccepted || resp.Results[0].CatalogID != "example.test/CAT-OLD" {
 		t.Fatalf("unexpected retire result: %+v", resp.Results)
+	}
+}
+
+func TestCatalogPublishHandler_StagesNodeManifestWhenIndexNotLinked(t *testing.T) {
+	root := t.TempDir()
+	mgr := newTestManager(t)
+	mgr.manifestLoader = &fakeManifestLoader{err: fmt.Errorf("subscriber has not published a node manifest")}
+
+	cfg := newTestConfig(root)
+	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp publishResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parsing response: %v", err)
+	}
+	if len(resp.Warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %+v", resp.Warnings)
+	}
+
+	staged, err := os.ReadFile(localstore.StagedNodeManifestPath(root))
+	if err != nil {
+		t.Fatalf("expected staged node manifest written: %v", err)
+	}
+	var nm model.NodeManifest
+	if err := yaml.Unmarshal(staged, &nm); err != nil {
+		t.Fatalf("parsing staged manifest: %v", err)
+	}
+	if len(nm.Catalog.CatalogIndexes) != 1 || nm.Catalog.CatalogIndexes[0].URL != "pending-artifact-store://catalog-index.json" {
+		t.Errorf("unexpected staged catalogIndexes: %+v", nm.Catalog.CatalogIndexes)
+	}
+}
+
+func TestCatalogPublishHandler_NoWarningWhenIndexAlreadyLinked(t *testing.T) {
+	root := t.TempDir()
+	existing := &model.NodeManifest{
+		ManifestVersion: "1.0",
+		ManifestType:    model.NodeManifestType,
+		SubscriberID:    "example.test",
+		Catalog: model.NodeManifestCatalog{
+			CatalogIndexes: []model.CatalogIndexEntry{{URL: "pending-artifact-store://catalog-index.json"}},
+		},
+	}
+	raw, err := yaml.Marshal(existing)
+	if err != nil {
+		t.Fatalf("marshaling fixture manifest: %v", err)
+	}
+	mgr := newTestManager(t)
+	mgr.manifestLoader = &fakeManifestLoader{doc: &model.ManifestDocument{Content: raw}}
+
+	cfg := newTestConfig(root)
+	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp publishResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parsing response: %v", err)
+	}
+	if len(resp.Warnings) != 0 {
+		t.Errorf("expected no warnings, got %+v", resp.Warnings)
+	}
+	if _, err := os.Stat(localstore.StagedNodeManifestPath(root)); !os.IsNotExist(err) {
+		t.Errorf("expected no staged manifest written, got err=%v", err)
+	}
+}
+
+func TestCatalogPublishHandler_ManifestSubscriberIdOverridesSubscriberIdForManifestLookup(t *testing.T) {
+	root := t.TempDir()
+	loader := &fakeManifestLoader{}
+	mgr := newTestManager(t)
+	mgr.manifestLoader = loader
+
+	cfg := newTestConfig(root)
+	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	cfg.Plugins.CatalogPublisher.Config = map[string]string{
+		"manifestSubscriberId": "nfh.global/staging-nodes/staging-p-node",
+	}
+	// existing NodeManifest fixture, keyed under the 3-part identity, with
+	// the catalogIndex link already present, so no warning/staged file is
+	// produced -- proving the handler looked it up using
+	// manifestSubscriberId, not subscriberId ("example.test", which would
+	// never match this document if used).
+	nm := &model.NodeManifest{
+		ManifestVersion: "1.0",
+		ManifestType:    model.NodeManifestType,
+		SubscriberID:    "nfh.global/staging-nodes/staging-p-node",
+		Catalog: model.NodeManifestCatalog{
+			CatalogIndexes: []model.CatalogIndexEntry{{URL: "pending-artifact-store://catalog-index.json"}},
+		},
+	}
+	raw, err := yaml.Marshal(nm)
+	if err != nil {
+		t.Fatalf("marshaling fixture manifest: %v", err)
+	}
+	loader.doc = &model.ManifestDocument{Content: raw}
+
+	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp publishResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parsing response: %v", err)
+	}
+	if len(resp.Warnings) != 0 {
+		t.Errorf("expected no warnings (manifest lookup should have used manifestSubscriberId), got %+v", resp.Warnings)
+	}
+	if loader.lastSubscriber != "nfh.global/staging-nodes/staging-p-node" {
+		t.Errorf("GetBySubscriberID called with %q, want manifestSubscriberId value", loader.lastSubscriber)
+	}
+}
+
+// TestCatalogPublishHandler_ManifestFetchErrorDoesNotProduceFalseWarning
+// guards against the bug this handler previously had: any manifest fetch
+// failure (bad subscriberID format, network error, ...) was silently
+// treated the same as "no manifest published yet", producing a staged
+// proposal and a "not declared" warning even when the real manifest
+// already declared the index. Now, a fetch error that isn't specifically
+// "no manifest published" is surfaced via a log only -- no warning, no
+// staged file, since the check is inconclusive, not negative.
+func TestCatalogPublishHandler_ManifestFetchErrorDoesNotProduceFalseWarning(t *testing.T) {
+	root := t.TempDir()
+	mgr := newTestManager(t)
+	mgr.manifestLoader = &fakeManifestLoader{err: fmt.Errorf(`subscriberID "example.test" must be in namespace/registry/recordName format`)}
+
+	cfg := newTestConfig(root)
+	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var resp publishResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parsing response: %v", err)
+	}
+	if len(resp.Warnings) != 0 {
+		t.Errorf("expected no warnings on an inconclusive manifest check, got %+v", resp.Warnings)
+	}
+	if _, err := os.Stat(localstore.StagedNodeManifestPath(root)); !os.IsNotExist(err) {
+		t.Errorf("expected no staged manifest written, got err=%v", err)
 	}
 }
 

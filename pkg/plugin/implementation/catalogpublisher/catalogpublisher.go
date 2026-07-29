@@ -40,6 +40,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher/localstore"
@@ -150,6 +151,7 @@ func New(ctx context.Context, keyManager definition.KeyManager, cfg *Config) (*P
 		return nil, nil, fmt.Errorf("catalogpublisher: subscriberID is required")
 	}
 	p := &Publisher{keyManager: keyManager, config: cfg}
+	log.Debugf(ctx, "catalogpublisher: New, subscriberId=%s, publicBaseURL=%s", cfg.SubscriberID, cfg.PublicBaseURL)
 	return p, func() error { return nil }, nil
 }
 
@@ -286,6 +288,8 @@ func (b diffBlock) isEmpty() bool { return len(b.Upserts) == 0 && len(b.Removals
 func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) (definition.PublishResult, error) {
 	now := time.Now()
 	result := definition.PublishResult{PublishedAt: now}
+	log.Debugf(ctx, "catalogpublisher: Publish called, subscriberId=%s, %d catalog(s), %d retire(s), forceBaseline=%v, priorIndexVersion=%d",
+		p.config.SubscriberID, len(req.Catalogs), len(req.Retire), req.ForceBaseline, req.PriorIndexVersion)
 
 	keyset, err := p.keyManager.Keyset(ctx, p.config.SubscriberID)
 	if err != nil {
@@ -342,6 +346,7 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 			})
 			continue
 		}
+		log.Debugf(ctx, "catalogpublisher: %s mode=%s version=%d changed=%v", sub.CatalogID, outcome.Mode, outcome.Version, changed)
 
 		raw, err := json.Marshal(entry)
 		if err != nil {
@@ -393,6 +398,7 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 		return result, fmt.Errorf("catalogpublisher: marshaling catalog index: %w", err)
 	}
 	result.Index = indexBytes
+	log.Debugf(ctx, "catalogpublisher: built catalog index, participantId=%s, version=%d, %d entries, indexURL=%s", domain, indexVersion, len(entries), p.indexURL())
 
 	jwk := dediKey{KID: keyID, Kty: "OKP", Crv: "Ed25519", X: base64.RawURLEncoding.EncodeToString(pub)}
 
@@ -429,6 +435,7 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 		return result, fmt.Errorf("catalogpublisher: signing manifest: %w", err)
 	}
 	result.Manifest = signedManifest
+	log.Debugf(ctx, "catalogpublisher: Publish done, keyId=%s, domain=%s, %d catalog(s) published, %d error(s)", keyID, domain, len(result.Catalogs), len(result.Errors))
 
 	return result, nil
 }
@@ -830,6 +837,9 @@ func (p *Publisher) indexURL() string {
 	}
 	return "pending-artifact-store://catalog-index.json"
 }
+
+// IndexURL implements definition.CatalogPublisher.
+func (p *Publisher) IndexURL() string { return p.indexURL() }
 
 // catalogPartURL returns the configured location for one of a catalog's
 // versioned file names (see buildFileEntry) under PublicBaseURL, or a

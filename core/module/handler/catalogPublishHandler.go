@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
@@ -12,11 +14,6 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher/localstore"
 )
-
-// catalogPublishAction is the fixed context.action value this handler's
-// requests are validated under -- there is only one action this handler
-// ever serves, so it's never read from the request itself.
-const catalogPublishAction = "catalog/publish"
 
 // catalogPublishHandler serves a DS-internal, unsigned catalog/publish
 // trigger: it invokes a CatalogPublisher synchronously with the catalogs in
@@ -28,28 +25,73 @@ const catalogPublishAction = "catalog/publish"
 // DS-internal trigger, not a network-facing Beckn action, so there is no
 // validateSign/addRoute/signAck pipeline and no async callback.
 //
-// Only public catalogs are supported in this phase: every submission is
-// published with no networkIds/authMethods, matching
-// catalogpublisher.CatalogSubmission's zero value. Restricted-catalog
-// support is a later phase, tracked in this package's README.
+// A catalog's NetworkIds come from a matching publishRequest.Message.
+// PublishDirectives[].VisibleTo entry (matched by catalogId); AuthMethods
+// isn't wired to any request field yet -- restricted catalogs with custom
+// auth are a later phase, tracked in this package's README.
 type catalogPublishHandler struct {
 	publisher       definition.CatalogPublisher
 	outputRoot      string
 	schemaValidator definition.SchemaValidator
 	policyChecker   definition.PolicyChecker
+	manifestLoader  definition.ManifestLoader
+	// subscriberID is the plain Beckn subscriberId (keyManager.config.
+	// subscriberId) -- the KeyManager.Keyset lookup key, used for signing.
+	subscriberID string
+	// manifestSubscriberID is the DeDi-native namespace/registry/
+	// recordName identifier ManifestLoader.GetBySubscriberID (and
+	// dediregistry.LookupNode underneath it) requires for the manifest
+	// self-lookup (same self-lookup schemaversionmediator does at its own
+	// cold start, via its own separate nodeId config) -- deliberately NOT
+	// subscriberID: DeDi's record path has a different shape than the flat
+	// subscriberId used for keyset lookup, and reusing subscriberId here
+	// would mean setting it to the 3-part path breaks Keyset() lookups
+	// instead (simplekeymanager's keyset is keyed by the plain
+	// subscriberId, not this path). Read from
+	// plugins.catalogPublisher.config.manifestSubscriberId; falls back to
+	// subscriberID when unset (works only if that happens to already be
+	// 3-part).
+	manifestSubscriberID string
 }
 
-// publishRequest is the DS-facing catalog/publish request body. Catalogs
-// carries plain Beckn Catalog objects (no context/message envelope, unlike
-// beckn.yaml's CatalogPublishAction) -- each entry's own top-level "id"
-// field is used verbatim as its catalogId; this handler does not prefix or
-// derive it from a domain, unlike catalogpublisherctl's convenience
-// defaulting. Retire/ForceBaseline map 1:1 onto
-// definition.PublishRequest's fields of the same purpose.
+// publishDirective is one entry in publishRequest.Message.PublishDirectives,
+// matched to a submitted catalog by CatalogID -- beckn.yaml's own
+// CatalogPublishAction.publishDirectives shape (only the fields this
+// handler currently acts on are modeled; catalogType/updateMode/
+// resourceDirectives are part of the real schema too but not wired here
+// yet). VisibleTo is the spec's name for what the catalog-index file
+// itself (and CatalogSubmission) call NetworkIds -- restricts delivery of
+// this catalog to the listed network participant ids; omitted means
+// visible to all. CatalogType is required by the spec (unlike
+// CatalogSubmission.CatalogType, which defaults to "REGULAR" when empty);
+// callers must set it explicitly once schemaValidator is configured.
+type publishDirective struct {
+	CatalogID   string   `json:"catalogId"`
+	VisibleTo   []string `json:"visibleTo,omitempty"`
+	CatalogType string   `json:"catalogType,omitempty"`
+}
+
+// publishRequest is the DS-facing catalog/publish request body. It matches
+// beckn.yaml's real CatalogPublishAction envelope shape (context/message,
+// message.catalogs[]/publishDirectives[]) so schemaValidator/policyChecker
+// can validate the raw request body directly -- no synthesized envelope
+// needed (see ServeHTTP). Context carries only "action": this is still a
+// DS-internal, unsigned, same-operator trigger, not a signed/routed
+// network-facing Beckn action, so none of Context's other fields
+// (bapId/bapUri/messageId/...) are meaningful here and the real spec
+// leaves all of them optional. Retire/ForceBaseline are this handler's own
+// additions, with no beckn.yaml equivalent -- kept as siblings of context/
+// message rather than invented fields inside either.
 type publishRequest struct {
-	Catalogs      []json.RawMessage `json:"catalogs"`
-	Retire        []string          `json:"retire,omitempty"`
-	ForceBaseline bool              `json:"forceBaseline,omitempty"`
+	Context struct {
+		Action string `json:"action"`
+	} `json:"context"`
+	Message struct {
+		Catalogs          []json.RawMessage  `json:"catalogs"`
+		PublishDirectives []publishDirective `json:"publishDirectives,omitempty"`
+	} `json:"message"`
+	Retire        []string `json:"retire,omitempty"`
+	ForceBaseline bool     `json:"forceBaseline,omitempty"`
 }
 
 // NewCatalogPublishHandler builds the catalogPublish handler type: it loads
@@ -89,6 +131,7 @@ func NewCatalogPublishHandler(ctx context.Context, mgr PluginManager, cfg *Confi
 	if err != nil {
 		return nil, fmt.Errorf("catalogPublish handler %s: %w", moduleName, err)
 	}
+	log.Debugf(ctx, "catalogPublish handler %s: resolved subscriberId=%s", moduleName, publisherCfg.Config["subscriberId"])
 	publisher, err := mgr.CatalogPublisher(ctx, km, publisherCfg)
 	if err != nil {
 		return nil, fmt.Errorf("catalogPublish handler %s: failed to load catalogPublisher plugin (%s): %w", moduleName, cfg.Plugins.CatalogPublisher.ID, err)
@@ -106,12 +149,27 @@ func NewCatalogPublishHandler(ctx context.Context, mgr PluginManager, cfg *Confi
 		return nil, fmt.Errorf("catalogPublish handler %s: %w", moduleName, err)
 	}
 
+	// Also optional: when configured, checks (read-only, via dediregistry)
+	// whether this node's manifest already links this publisher's catalog
+	// index before every publish -- see checkNodeManifestLinksIndex.
+	manifestLoader, err := loadManifestLoader(ctx, mgr, cache, registry, cfg.Plugins.ManifestLoader)
+	if err != nil {
+		return nil, fmt.Errorf("catalogPublish handler %s: %w", moduleName, err)
+	}
+	manifestSubscriberID := cfg.Plugins.CatalogPublisher.Config["manifestSubscriberId"]
+	if manifestSubscriberID == "" {
+		manifestSubscriberID = publisherCfg.Config["subscriberId"]
+	}
+
 	log.Debugf(ctx, "catalogPublish handler %s initialized, outputRoot=%s", moduleName, cfg.OutputRoot)
 	return &catalogPublishHandler{
-		publisher:       publisher,
-		outputRoot:      cfg.OutputRoot,
-		schemaValidator: schemaValidator,
-		policyChecker:   policyChecker,
+		publisher:            publisher,
+		outputRoot:           cfg.OutputRoot,
+		schemaValidator:      schemaValidator,
+		policyChecker:        policyChecker,
+		manifestLoader:       manifestLoader,
+		subscriberID:         publisherCfg.Config["subscriberId"],
+		manifestSubscriberID: manifestSubscriberID,
 	}, nil
 }
 
@@ -170,10 +228,21 @@ type catalogProcessingResult struct {
 	Reason    string                  `json:"reason,omitempty"`
 }
 
+// publishResponseMessage nests Error under "message" the same way
+// beckn.yaml's own NACK envelope does (model.Message{Status, Error} in
+// pkg/model/model.go, written by core/module/handler/responsestep.go for
+// every std/network-facing action) -- {code, message, details} on model.
+// Error itself already matches beckn.yaml's Error schema field-for-field;
+// this only fixes where it's nested, not its own shape.
+type publishResponseMessage struct {
+	Error *model.Error `json:"error,omitempty"`
+}
+
 type publishResponse struct {
-	Status  publishOverallStatus      `json:"status"`
-	Results []catalogProcessingResult `json:"results,omitempty"`
-	Error   *model.Error              `json:"error,omitempty"`
+	Status   publishOverallStatus      `json:"status"`
+	Results  []catalogProcessingResult `json:"results,omitempty"`
+	Warnings []string                  `json:"warnings,omitempty"`
+	Message  *publishResponseMessage   `json:"message,omitempty"`
 }
 
 // ServeHTTP parses the DS-internal request body, loads prior state for the
@@ -190,59 +259,77 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("reading request body: %v", err), http.StatusBadRequest)
+		return
+	}
 	var req publishRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
 		return
 	}
-	if len(req.Catalogs) == 0 && len(req.Retire) == 0 {
-		http.Error(w, "catalogs or retire is required", http.StatusBadRequest)
+	if len(req.Message.Catalogs) == 0 && len(req.Retire) == 0 {
+		http.Error(w, "message.catalogs or retire is required", http.StatusBadRequest)
 		return
 	}
+	log.Debugf(r.Context(), "catalogPublish: received %d catalog(s), %d retire(s), forceBaseline=%v", len(req.Message.Catalogs), len(req.Retire), req.ForceBaseline)
 
-	if len(req.Catalogs) > 0 && (h.schemaValidator != nil || h.policyChecker != nil) {
-		envelope, err := buildValidationEnvelope(req.Catalogs)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
-			return
-		}
+	if len(req.Message.Catalogs) > 0 {
 		if h.schemaValidator != nil {
-			if err := h.schemaValidator.Validate(r.Context(), nil, envelope); err != nil {
+			log.Debug(r.Context(), "catalogPublish: running schema validation")
+			if err := h.schemaValidator.Validate(r.Context(), nil, body); err != nil {
+				log.Debugf(r.Context(), "catalogPublish: schema validation failed: %v", err)
 				http.Error(w, fmt.Sprintf("schema validation failed: %v", err), http.StatusBadRequest)
 				return
 			}
 		}
 		if h.policyChecker != nil {
-			if err := h.policyChecker.CheckPolicy(&model.StepContext{Context: r.Context(), Body: envelope}); err != nil {
+			log.Debug(r.Context(), "catalogPublish: running policy check")
+			if err := h.policyChecker.CheckPolicy(&model.StepContext{Context: r.Context(), Body: body}); err != nil {
+				log.Debugf(r.Context(), "catalogPublish: policy check failed: %v", err)
 				http.Error(w, fmt.Sprintf("policy check failed: %v", err), http.StatusBadRequest)
 				return
 			}
 		}
 	}
 
-	submissions := make([]definition.CatalogSubmission, 0, len(req.Catalogs))
-	catalogIDs := make([]string, 0, len(req.Catalogs))
-	for _, raw := range req.Catalogs {
+	directives := make(map[string]publishDirective, len(req.Message.PublishDirectives))
+	for _, d := range req.Message.PublishDirectives {
+		directives[d.CatalogID] = d
+	}
+
+	submissions := make([]definition.CatalogSubmission, 0, len(req.Message.Catalogs))
+	catalogIDs := make([]string, 0, len(req.Message.Catalogs))
+	for _, raw := range req.Message.Catalogs {
 		var probe struct {
 			ID string `json:"id"`
 		}
 		_ = json.Unmarshal(raw, &probe) // empty ID surfaces as a non-fatal PublishError below
-		submissions = append(submissions, definition.CatalogSubmission{CatalogID: probe.ID, Catalog: raw})
+		d := directives[probe.ID]
+		submissions = append(submissions, definition.CatalogSubmission{
+			CatalogID:   probe.ID,
+			Catalog:     raw,
+			NetworkIds:  d.VisibleTo,
+			CatalogType: d.CatalogType,
+		})
 		if probe.ID != "" {
 			catalogIDs = append(catalogIDs, probe.ID)
 		}
 	}
 
+	log.Debugf(r.Context(), "catalogPublish: loading prior state for %v from %s", catalogIDs, h.outputRoot)
 	state, err := localstore.Load(h.outputRoot, catalogIDs)
 	if err != nil {
 		log.Errorf(r.Context(), err, "catalogPublish: loading prior state from %s", h.outputRoot)
 		writePublishJSON(w, r, publishResponse{
-			Status: publishOverallFailed,
-			Error:  model.NewCodedError("BIZ_PUBLISH_FAILED", err.Error()),
+			Status:  publishOverallFailed,
+			Message: &publishResponseMessage{Error: model.NewCodedError("BIZ_PUBLISH_FAILED", err.Error())},
 		})
 		return
 	}
 
+	log.Debugf(r.Context(), "catalogPublish: calling Publish, priorIndexVersion=%d, carryForward=%d", state.PriorIndexVersion, len(state.CarryForward))
 	result, err := h.publisher.Publish(r.Context(), definition.PublishRequest{
 		Catalogs:          submissions,
 		PriorState:        state.PriorState,
@@ -254,19 +341,31 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		log.Errorf(r.Context(), err, "catalogPublish: publish failed")
 		writePublishJSON(w, r, publishResponse{
-			Status: publishOverallFailed,
-			Error:  model.NewCodedError("BIZ_PUBLISH_FAILED", err.Error()),
+			Status:  publishOverallFailed,
+			Message: &publishResponseMessage{Error: model.NewCodedError("BIZ_PUBLISH_FAILED", err.Error())},
 		})
 		return
 	}
 
+	log.Debugf(r.Context(), "catalogPublish: writing result to %s, indexVersion=%d, %d catalog outcome(s), %d error(s)", h.outputRoot, result.IndexVersion, len(result.Catalogs), len(result.Errors))
 	if err := localstore.Write(h.outputRoot, result); err != nil {
 		log.Errorf(r.Context(), err, "catalogPublish: writing result to %s", h.outputRoot)
 		writePublishJSON(w, r, publishResponse{
-			Status: publishOverallFailed,
-			Error:  model.NewCodedError("BIZ_PUBLISH_FAILED", err.Error()),
+			Status:  publishOverallFailed,
+			Message: &publishResponseMessage{Error: model.NewCodedError("BIZ_PUBLISH_FAILED", err.Error())},
 		})
 		return
+	}
+
+	var warnings []string
+	if h.manifestLoader != nil {
+		if warning, err := h.checkNodeManifestLinksIndex(r.Context()); err != nil {
+			log.Warnf(r.Context(), "catalogPublish: node manifest link check failed: %v", err)
+		} else if warning != "" {
+			warnings = append(warnings, warning)
+		}
+	} else {
+		log.Debug(r.Context(), "catalogPublish: manifestLoader not configured, skipping node manifest link check")
 	}
 
 	results := make([]catalogProcessingResult, 0, len(result.Catalogs)+len(result.Errors)+len(req.Retire))
@@ -281,27 +380,84 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		results = append(results, catalogProcessingResult{CatalogID: id, Status: catalogAccepted, Reason: "retired"})
 	}
 
-	writePublishJSON(w, r, publishResponse{Status: publishOverallCompleted, Results: results})
+	log.Debugf(r.Context(), "catalogPublish: completed, %d result(s), %d warning(s)", len(results), len(warnings))
+	writePublishJSON(w, r, publishResponse{Status: publishOverallCompleted, Results: results, Warnings: warnings})
 }
 
-// buildValidationEnvelope wraps the submitted catalogs in the minimal
-// {context: {action}, message: {catalogs}} shape schemaValidator/
-// policyChecker plugins expect, so they can be reused as-is without this
-// handler adopting the full signed/routed Beckn action envelope (context.
-// action is the only field either plugin actually requires here) -- this
-// keeps the DS-facing request body (publishRequest) unchanged.
-func buildValidationEnvelope(catalogs []json.RawMessage) ([]byte, error) {
-	envelope := struct {
-		Context struct {
-			Action string `json:"action"`
-		} `json:"context"`
-		Message struct {
-			Catalogs []json.RawMessage `json:"catalogs"`
-		} `json:"message"`
-	}{}
-	envelope.Context.Action = catalogPublishAction
-	envelope.Message.Catalogs = catalogs
-	return json.Marshal(envelope)
+// checkNodeManifestLinksIndex reads this node's manifest (read-only, via
+// ManifestLoader/dediregistry -- the real manifest is never written to, see
+// localstore.Write) and checks whether catalog.catalogIndexes already
+// declares this publisher's index URL (h.publisher.IndexURL()). If not, it
+// stages a proposed updated manifest locally (localstore.
+// WriteStagedNodeManifest, under outputRoot/index/) for the operator to
+// review and push to DeDi themselves, and returns a warning describing
+// what's missing. Returns ("", nil) when the link already exists.
+func (h *catalogPublishHandler) checkNodeManifestLinksIndex(ctx context.Context) (string, error) {
+	indexURL := h.publisher.IndexURL()
+	log.Debugf(ctx, "catalogPublish: checking node manifest for %s links catalog index %s", h.manifestSubscriberID, indexURL)
+
+	nm, err := h.loadOwnNodeManifest(ctx)
+	if err != nil {
+		// Deliberately NOT treated as "no manifest yet, start a skeleton"
+		// -- that would silently mask real failures (GetBySubscriberID
+		// requires subscriberID in DeDi's namespace/registry/recordName
+		// format and errors otherwise; a lookup/parse failure here means
+		// the check is inconclusive, not that the link is missing).
+		return "", fmt.Errorf("fetching/parsing node manifest for %s: %w", h.manifestSubscriberID, err)
+	}
+
+	for _, entry := range nm.Catalog.CatalogIndexes {
+		if entry.URL == indexURL {
+			log.Debugf(ctx, "catalogPublish: node manifest for %s already declares catalog index %s", h.manifestSubscriberID, indexURL)
+			return "", nil
+		}
+	}
+
+	nm.Catalog.CatalogIndexes = append(nm.Catalog.CatalogIndexes, model.CatalogIndexEntry{URL: indexURL})
+	if err := localstore.WriteStagedNodeManifest(h.outputRoot, nm); err != nil {
+		return "", fmt.Errorf("staging updated node manifest: %w", err)
+	}
+	log.Debugf(ctx, "catalogPublish: staged updated node manifest at %s", localstore.StagedNodeManifestPath(h.outputRoot))
+
+	return fmt.Sprintf(
+		"node manifest for %s does not declare catalog index %s; a proposed update was staged at %s -- review and publish it to DeDi yourself",
+		h.manifestSubscriberID, indexURL, localstore.StagedNodeManifestPath(h.outputRoot),
+	), nil
+}
+
+// noManifestPublishedErrMsg matches manifestloader.ErrNoManifestPublished's
+// message. Compared by string, not errors.Is/sentinel identity: manifestLoader
+// is loaded as a plugin.Config-driven definition.ManifestLoader (potentially
+// a separately-compiled Go plugin .so, see PluginManager), so a sentinel
+// error value from a statically-imported copy of that package is not
+// guaranteed to compare equal to one returned across that boundary.
+const noManifestPublishedErrMsg = "subscriber has not published a node manifest"
+
+// loadOwnNodeManifest fetches and parses this node's own manifest via
+// GetBySubscriberID (the same self-lookup schemaversionmediator already
+// uses at cold start). Only the specific "subscriber has never published a
+// manifest at all" case is treated as non-fatal -- a fresh skeleton
+// (SubscriberID/ManifestVersion/ManifestType only) checkNodeManifestLinksIndex
+// can add a catalogIndexes entry to and stage from scratch. Any other
+// failure (wrong subscriberID format, network error, unparseable content)
+// is a real error, surfaced to the caller instead of being mistaken for "no
+// manifest" -- silently swallowing it here previously produced a false
+// "not declared" warning even when the real manifest already listed this
+// index, whenever the underlying fetch failed for an unrelated reason.
+func (h *catalogPublishHandler) loadOwnNodeManifest(ctx context.Context) (*model.NodeManifest, error) {
+	doc, err := h.manifestLoader.GetBySubscriberID(ctx, h.manifestSubscriberID)
+	if err != nil {
+		if strings.Contains(err.Error(), noManifestPublishedErrMsg) {
+			log.Debugf(ctx, "catalogPublish: no node manifest published yet for %s, starting from a fresh skeleton", h.manifestSubscriberID)
+			return &model.NodeManifest{
+				ManifestVersion: "1.0",
+				ManifestType:    model.NodeManifestType,
+				SubscriberID:    h.manifestSubscriberID,
+			}, nil
+		}
+		return nil, err
+	}
+	return model.ParseNodeManifest(doc.Content)
 }
 
 func writePublishJSON(w http.ResponseWriter, r *http.Request, body publishResponse) {
