@@ -137,22 +137,23 @@ func NewCatalogPublishHandler(ctx context.Context, mgr PluginManager, cfg *Confi
 		return nil, fmt.Errorf("catalogPublish handler %s: failed to load catalogPublisher plugin (%s): %w", moduleName, cfg.Plugins.CatalogPublisher.ID, err)
 	}
 
-	// Both optional, matching this handler's other plugins: unconfigured
+	// All optional, matching this handler's other plugins: unconfigured
 	// means skipped, not an error, so existing deployments keep working
-	// unchanged until a schemaValidator/checkPolicy block is added.
+	// unchanged until a schemaValidator/checkPolicy/manifestLoader block is
+	// added. manifestLoader is loaded before policyChecker (mirroring
+	// stdHandler.go's own load order) and threaded into it, so a
+	// manifest-backed policy (opapolicychecker's policyType "manifest") can
+	// actually resolve here -- it also doubles as the manifestLoader used by
+	// checkNodeManifestLinksIndex below.
 	schemaValidator, err := loadPlugin(ctx, "SchemaValidator", cfg.Plugins.SchemaValidator, mgr.SchemaValidator)
 	if err != nil {
 		return nil, fmt.Errorf("catalogPublish handler %s: %w", moduleName, err)
 	}
-	policyChecker, err := loadPolicyChecker(ctx, mgr, nil, cfg.Plugins.PolicyChecker)
+	manifestLoader, err := loadManifestLoader(ctx, mgr, cache, registry, cfg.Plugins.ManifestLoader)
 	if err != nil {
 		return nil, fmt.Errorf("catalogPublish handler %s: %w", moduleName, err)
 	}
-
-	// Also optional: when configured, checks (read-only, via dediregistry)
-	// whether this node's manifest already links this publisher's catalog
-	// index before every publish -- see checkNodeManifestLinksIndex.
-	manifestLoader, err := loadManifestLoader(ctx, mgr, cache, registry, cfg.Plugins.ManifestLoader)
+	policyChecker, err := loadPolicyChecker(ctx, mgr, manifestLoader, cfg.Plugins.PolicyChecker)
 	if err != nil {
 		return nil, fmt.Errorf("catalogPublish handler %s: %w", moduleName, err)
 	}
@@ -372,16 +373,42 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	for _, c := range result.Catalogs {
 		results = append(results, catalogProcessingResult{CatalogID: c.CatalogID, Status: catalogAccepted, Version: c.Version})
 	}
+	anyFatal := false
 	for _, e := range result.Errors {
-		log.Warnf(r.Context(), "catalogPublish: %s publish error at stage %s: %s", e.CatalogID, e.Stage, e.Reason)
+		if e.Fatal {
+			anyFatal = true
+			log.Errorf(r.Context(), fmt.Errorf("%s", e.Reason), "catalogPublish: %s fatal publish error at stage %s", e.CatalogID, e.Stage)
+		} else {
+			log.Warnf(r.Context(), "catalogPublish: %s publish error at stage %s: %s", e.CatalogID, e.Stage, e.Reason)
+		}
 		results = append(results, catalogProcessingResult{CatalogID: e.CatalogID, Status: catalogRejected, Reason: e.Reason})
 	}
+	submittedIDs := make(map[string]bool, len(catalogIDs))
+	for _, id := range catalogIDs {
+		submittedIDs[id] = true
+	}
 	for _, id := range req.Retire {
+		if submittedIDs[id] {
+			// Publish's own rule: submitting and retiring the same
+			// catalogId in one call means the submission wins, so no
+			// tombstone was actually written -- reporting "retired" here
+			// too would falsely tell the caller this catalog was retired.
+			continue
+		}
 		results = append(results, catalogProcessingResult{CatalogID: id, Status: catalogAccepted, Reason: "retired"})
 	}
 
-	log.Debugf(r.Context(), "catalogPublish: completed, %d result(s), %d warning(s)", len(results), len(warnings))
-	writePublishJSON(w, r, publishResponse{Status: publishOverallCompleted, Results: results, Warnings: warnings})
+	// A Fatal PublishError signals something worse than one catalog being
+	// invalid -- e.g. a failure likely affecting every other catalog in the
+	// same call too (see definition.PublishError.Fatal) -- so the overall
+	// status must not read as a routine COMPLETED alongside it.
+	status := publishOverallCompleted
+	if anyFatal {
+		status = publishOverallFailed
+	}
+
+	log.Debugf(r.Context(), "catalogPublish: completed, %d result(s), %d warning(s), anyFatal=%v", len(results), len(warnings), anyFatal)
+	writePublishJSON(w, r, publishResponse{Status: status, Results: results, Warnings: warnings})
 }
 
 // checkNodeManifestLinksIndex reads this node's manifest (read-only, via

@@ -151,9 +151,6 @@ func Write(root string, result definition.PublishResult) error {
 	if err := EnsureDirs(root); err != nil {
 		return err
 	}
-	// if err := os.WriteFile(ManifestPath(root), result.Manifest, 0o644); err != nil {
-	// 	return fmt.Errorf("localstore: writing manifest: %w", err)
-	// }
 	if err := os.WriteFile(IndexPath(root), result.Index, 0o644); err != nil {
 		return fmt.Errorf("localstore: writing index: %w", err)
 	}
