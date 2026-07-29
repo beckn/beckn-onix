@@ -49,24 +49,33 @@ func (NopLogger) Warn(string, ...any)  {}
 func (NopLogger) Error(string, ...any) {}
 
 // Metrics is the runner's metrics sink (injected; NopMetrics by default so the
-// module stays framework-agnostic). Reasons passed to CatalogFailed are
-// low-cardinality categories, never full error strings.
+// module stays framework-agnostic). All label values (outcome, fault, job,
+// result) are low-cardinality categories, never full error strings, catalog
+// ids, urls, or versions — those are high-cardinality and belong in traces/logs.
 type Metrics interface {
-	CatalogPushed()
-	CatalogFailed(reason string)
-	SetQueueDepth(n int)
-	ObservePushSeconds(seconds float64)
-	ObserveIndexSeconds(seconds float64)
+	RecordSyncOutcome(outcome, fault string) // one labeled counter; replaces CatalogPushed + CatalogFailed
+	MarkPassSuccess(job string)              // liveness: last time the crawl/sync loop completed a tick
+	SetQueueDepth(n int)                     // backlog gauge
+	SetCatalogsParked(n int)                 // gauge of permanently-failed items
+	SetCatalogsTracked(n int)                // gauge of catalogs we track
+	ObservePushSeconds(seconds float64)      // push latency
+	ObserveIndexSeconds(seconds float64)     // index-crawl latency
+	ObserveSyncLagSeconds(seconds float64)   // queue-residence lag: synced_at - enqueued_at
+	RecordIndexPoll(result string)           // per index poll: updated/unchanged/not_modified/unreachable
 }
 
 // NopMetrics discards all metrics.
 type NopMetrics struct{}
 
-func (NopMetrics) CatalogPushed()              {}
-func (NopMetrics) CatalogFailed(string)        {}
-func (NopMetrics) SetQueueDepth(int)           {}
-func (NopMetrics) ObservePushSeconds(float64)  {}
-func (NopMetrics) ObserveIndexSeconds(float64) {}
+func (NopMetrics) RecordSyncOutcome(string, string) {}
+func (NopMetrics) MarkPassSuccess(string)           {}
+func (NopMetrics) SetQueueDepth(int)                {}
+func (NopMetrics) SetCatalogsParked(int)            {}
+func (NopMetrics) SetCatalogsTracked(int)           {}
+func (NopMetrics) ObservePushSeconds(float64)       {}
+func (NopMetrics) ObserveIndexSeconds(float64)      {}
+func (NopMetrics) ObserveSyncLagSeconds(float64)    {}
+func (NopMetrics) RecordIndexPoll(string)           {}
 
 // EngineConfig is the engine's tunables (all config-driven, no hardcodes).
 type EngineConfig struct {

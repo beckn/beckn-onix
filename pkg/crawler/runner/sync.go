@@ -62,6 +62,13 @@ func (e *Engine) catalogPass(ctx context.Context) {
 	if derr == nil {
 		e.deps.Metrics.SetQueueDepth(depthAfter)
 	}
+	if n, err := e.deps.Store.CountParked(ctx); err == nil {
+		e.deps.Metrics.SetCatalogsParked(n)
+	}
+	if n, err := e.deps.Store.CountTracked(ctx); err == nil {
+		e.deps.Metrics.SetCatalogsTracked(n)
+	}
+	e.deps.Metrics.MarkPassSuccess("sync")
 	if started {
 		e.logSyncFinished(runID, synced, skipped, failed, retrying, depthAfter, e.deps.Now().Sub(start))
 	}
@@ -80,6 +87,7 @@ func (e *Engine) handleQueueItem(ctx context.Context, item *store.ClaimedItem, r
 			e.storeUnhealthy("sync", runID, "complete", item.CatalogID, err)
 			return catalog.OutcomeFaulted
 		}
+		e.deps.Metrics.RecordSyncOutcome(string(catalog.OutcomeRetired), "")
 		e.logRetired(runID, passID, item)
 		return catalog.OutcomeRetired
 	}
@@ -292,7 +300,8 @@ func (e *Engine) complete(ctx context.Context, s *syncState) (catalog.SyncOutcom
 		e.storeUnhealthy("sync", s.runID, "complete", s.item.CatalogID, err)
 		return catalog.OutcomeFaulted, true
 	}
-	e.deps.Metrics.CatalogPushed()
+	e.deps.Metrics.RecordSyncOutcome(string(catalog.OutcomePushed), "")
+	e.deps.Metrics.ObserveSyncLagSeconds(e.deps.Now().Sub(s.item.EnqueuedAt).Seconds())
 	e.logSynced(s.runID, s.passID, s.item, s.mode, s.resCount, s.offCount, len(s.outcomes))
 	return catalog.OutcomePushed, true
 }
@@ -363,6 +372,7 @@ func (e *Engine) completeSkipped(ctx context.Context, item *store.ClaimedItem, p
 		e.storeUnhealthy("sync", runID, "complete", item.CatalogID, err)
 		return
 	}
+	e.deps.Metrics.RecordSyncOutcome(string(catalog.OutcomeSkipped), "")
 	e.logSkipped(runID, passID, item, reason)
 }
 
@@ -399,7 +409,7 @@ func (e *Engine) parkPermanently(ctx context.Context, item *store.ClaimedItem, r
 	if err := e.deps.Store.RecordFailure(ctx, item.CatalogID, item.IndexURL, "", report); err != nil {
 		e.storeUnhealthy("sync", runID, "record", item.CatalogID, err)
 	}
-	e.deps.Metrics.CatalogFailed(fc.String())
+	e.deps.Metrics.RecordSyncOutcome(report.Outcome, fc.String())
 	// Parked: won't retry until the publisher publishes a new version (ERROR).
 	e.logFailed(runID, passID, item, fc, report, false, item.Attempts+1)
 }
@@ -420,7 +430,7 @@ func (e *Engine) scheduleRetry(ctx context.Context, item *store.ClaimedItem, rep
 		if err := e.deps.Store.RecordFailure(ctx, item.CatalogID, item.IndexURL, "", report); err != nil {
 			e.storeUnhealthy("sync", runID, "record", item.CatalogID, err)
 		}
-		e.deps.Metrics.CatalogFailed(fc.String())
+		e.deps.Metrics.RecordSyncOutcome(report.Outcome, fc.String())
 		// Still a retry — the item was rescheduled above; MaxAttempts only gates
 		// when the failure is recorded, it does not park the item (WARN, not ERROR).
 		e.logFailed(runID, passID, item, fc, report, true, attempts)

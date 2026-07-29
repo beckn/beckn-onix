@@ -100,6 +100,26 @@ func (s *Store) UpsertCatalog(ctx context.Context, c CatalogState) error {
 	return upsertCatalog(ctx, s.db, c)
 }
 
+// CountParked returns the number of permanently-failed queue items (status
+// 'failed') — the gauge of inventory currently missing from Discovery.
+func (s *Store) CountParked(ctx context.Context) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM crawler_queue WHERE status='failed'`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: CountParked: %w", err)
+	}
+	return n, nil
+}
+
+// CountTracked returns the number of catalogs the crawler tracks — the coverage
+// gauge (how much inventory we serve).
+func (s *Store) CountTracked(ctx context.Context) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM crawler_catalog`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: CountTracked: %w", err)
+	}
+	return n, nil
+}
+
 // GetCatalogReports returns a catalog's pass history (oldest -> newest), decoded
 // from the push_status jsonb array. Empty if the catalog has never settled.
 func (s *Store) GetCatalogReports(ctx context.Context, catalogID string) ([]PassReport, error) {
