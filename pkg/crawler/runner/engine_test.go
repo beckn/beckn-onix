@@ -155,11 +155,13 @@ func TestEngine_IndexThenCatalogPass(t *testing.T) {
 }
 
 // recMetrics records engine metric calls for assertions. pushed/failed are
-// derived from RecordSyncOutcome by outcome (pushed vs faulted/partial).
+// derived from RecordSyncOutcome by outcome (pushed vs faulted/partial);
+// passSuccess counts MarkPassSuccess per job (the liveness signal).
 type recMetrics struct {
-	pushed int
-	failed int
-	depth  int
+	pushed      int
+	failed      int
+	depth       int
+	passSuccess map[string]int
 }
 
 func (m *recMetrics) RecordSyncOutcome(outcome, _ string) {
@@ -170,7 +172,12 @@ func (m *recMetrics) RecordSyncOutcome(outcome, _ string) {
 		m.failed++
 	}
 }
-func (m *recMetrics) MarkPassSuccess(string)        {}
+func (m *recMetrics) MarkPassSuccess(job string) {
+	if m.passSuccess == nil {
+		m.passSuccess = map[string]int{}
+	}
+	m.passSuccess[job]++
+}
 func (m *recMetrics) SetQueueDepth(n int)           { m.depth = n }
 func (m *recMetrics) SetCatalogsParked(int)         {}
 func (m *recMetrics) SetCatalogsTracked(int)        {}
@@ -178,6 +185,50 @@ func (m *recMetrics) ObservePushSeconds(float64)    {}
 func (m *recMetrics) ObserveIndexSeconds(float64)   {}
 func (m *recMetrics) ObserveSyncLagSeconds(float64) {}
 func (m *recMetrics) RecordIndexPoll(string)        {}
+
+// A store failure inside the sync loop must NOT mark the sync pass successful.
+// MarkPassSuccess drives crawler_seconds_since_last_success, the only input to
+// the "crawler wedged" alert — so if the queue can't even be claimed from, the
+// liveness gauge has to go stale rather than reset every tick. indexPass gets
+// this right by returning on a Source error; catalogPass must match.
+//
+// A drained queue is the opposite case and is covered by the passes above: an
+// idle tick IS a successful tick, and must keep marking success.
+func TestCatalogPass_ClaimFailure_WithholdsPassSuccess(t *testing.T) {
+	dsn := os.Getenv("CRAWLER_TEST_DB_DSN")
+	if dsn == "" {
+		t.Skip("set CRAWLER_TEST_DB_DSN to run engine tests")
+	}
+	db, err := store.Open(withSchema(dsn, "cc_test_engine"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS cc_test_engine"); err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	if err := store.Migrate(ctx, db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	rec := &recMetrics{}
+	eng := New(EngineConfig{MaxAttempts: 3, IndexInterval: time.Hour, CatalogInterval: time.Hour}, Deps{
+		Store:   store.New(db),
+		Source:  source.NewConfigSource(nil),
+		Metrics: rec,
+		NewID:   func() string { return "id" },
+	})
+
+	// Close the pool so the first ClaimNext fails the way a real DB outage does.
+	db.Close()
+
+	eng.catalogPass(ctx)
+
+	if n := rec.passSuccess["sync"]; n != 0 {
+		t.Fatalf("MarkPassSuccess(\"sync\") called %d time(s) after a ClaimNext failure; "+
+			"a sync job that can't reach the queue must leave the liveness gauge stale", n)
+	}
+}
 
 // A 304 Not Modified from the index host: the engine echoes the stored ETag,
 // enqueues nothing, keeps the version, and only advances the crawl cadence.
