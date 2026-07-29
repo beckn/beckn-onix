@@ -46,6 +46,28 @@ func TestApply_UpsertsAndRemovals(t *testing.T) {
 	}
 }
 
+func TestApply_DuplicateNewIDUpsertsCollapseToOne(t *testing.T) {
+	catalog := []byte(`{"id":"CAT-1","descriptor":{"name":"Old"},"provider":{},"resources":[]}`)
+	change := []byte(`{"catalogId":"CAT-1","fromVersion":1,"toVersion":2,"resources":{"upserts":[{"id":"ITEM-1","descriptor":{"name":"v1"}},{"id":"ITEM-1","descriptor":{"name":"v2"}}]},"offers":{}}`)
+
+	result, err := Apply(catalog, change)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	resources := resourcesOf(t, result)
+	count := 0
+	for _, r := range resources {
+		id, _ := ItemID(r)
+		if id == "ITEM-1" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected ITEM-1 to appear exactly once, appeared %d times: %s", count, result)
+	}
+}
+
 func TestApply_CatalogAttributeOverlay(t *testing.T) {
 	catalog := []byte(`{"id":"CAT-1","descriptor":{"name":"Old Name"},"provider":{"id":"P1"},"resources":[]}`)
 	change := []byte(`{"catalogId":"CAT-1","fromVersion":1,"toVersion":2,"resources":{},"offers":{},"catalog":{"descriptor":{"name":"New Name"}}}`)

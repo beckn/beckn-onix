@@ -359,10 +359,12 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 		}
 	}
 
-	for id := range retireSet {
-		if submitted[id] {
-			continue // submitting and retiring the same catalogId in one call: submission wins
+	tombstoned := make(map[string]bool, len(req.Retire))
+	for _, id := range req.Retire {
+		if submitted[id] || tombstoned[id] {
+			continue // submitting and retiring the same catalogId in one call: submission wins; duplicate retire ids collapse to one tombstone
 		}
+		tombstoned[id] = true
 		tomb := catalogEntry{CatalogID: id, Status: "RETIRED", RetiredAt: &now}
 		raw, err := json.Marshal(tomb)
 		if err != nil {
@@ -612,30 +614,38 @@ type catalogDiff struct {
 // ("name, validity window") without having to special-case each one.
 // changeCatalog is nil when no catalog-level attributes changed.
 func diffCatalogs(prior, next json.RawMessage) (catalogDiff, json.RawMessage, error) {
-	resourcesDiff, err := diffArrayField(prior, next, "resources")
+	var priorFields, nextFields map[string]json.RawMessage
+	if err := json.Unmarshal(prior, &priorFields); err != nil {
+		return catalogDiff{}, nil, fmt.Errorf("parsing prior catalog: %w", err)
+	}
+	if err := json.Unmarshal(next, &nextFields); err != nil {
+		return catalogDiff{}, nil, fmt.Errorf("parsing submitted catalog: %w", err)
+	}
+
+	resourcesDiff, err := diffArrayField(priorFields, nextFields, "resources")
 	if err != nil {
 		return catalogDiff{}, nil, fmt.Errorf("diffing resources: %w", err)
 	}
-	offersDiff, err := diffArrayField(prior, next, "offers")
+	offersDiff, err := diffArrayField(priorFields, nextFields, "offers")
 	if err != nil {
 		return catalogDiff{}, nil, fmt.Errorf("diffing offers: %w", err)
 	}
-	changeCatalog, err := diffCatalogAttributes(prior, next)
-	if err != nil {
-		return catalogDiff{}, nil, fmt.Errorf("diffing catalog attributes: %w", err)
-	}
+	changeCatalog := diffCatalogAttributes(priorFields, nextFields)
 	return catalogDiff{Resources: resourcesDiff, Offers: offersDiff}, changeCatalog, nil
 }
 
-// diffArrayField diffs prior[field] against next[field] (each a
+// diffArrayField diffs priorFields[field] against nextFields[field] (each a
 // json.RawMessage array, defaulting to empty when the field is absent),
 // matched by item id, merging added+updated into one Upserts list.
-func diffArrayField(prior, next json.RawMessage, field string) (diffBlock, error) {
-	priorItems, err := itemsByID(prior, field)
+// priorFields/nextFields are each catalog's already-parsed top-level shape
+// (see diffCatalogs), so a submission's prior/next JSON is decoded once
+// overall rather than once per field diffed.
+func diffArrayField(priorFields, nextFields map[string]json.RawMessage, field string) (diffBlock, error) {
+	priorItems, _, err := itemsByIDOrdered(priorFields, field)
 	if err != nil {
 		return diffBlock{}, fmt.Errorf("prior catalog: %w", err)
 	}
-	nextItems, nextIDs, err := itemsByIDOrdered(next, field)
+	nextItems, nextIDs, err := itemsByIDOrdered(nextFields, field)
 	if err != nil {
 		return diffBlock{}, fmt.Errorf("submitted catalog: %w", err)
 	}
@@ -656,20 +666,12 @@ func diffArrayField(prior, next json.RawMessage, field string) (diffBlock, error
 	return block, nil
 }
 
-func itemsByID(catalog json.RawMessage, field string) (map[string]json.RawMessage, error) {
-	m, _, err := itemsByIDOrdered(catalog, field)
-	return m, err
-}
-
-// itemsByIDOrdered is itemsByID plus the ids in their original array
-// order, so diff output (Upserts) is deterministic rather than depending
-// on Go's randomized map iteration order.
-func itemsByIDOrdered(catalog json.RawMessage, field string) (map[string]json.RawMessage, []string, error) {
-	var shape map[string]json.RawMessage
-	if err := json.Unmarshal(catalog, &shape); err != nil {
-		return nil, nil, fmt.Errorf("parsing catalog: %w", err)
-	}
-	raw, ok := shape[field]
+// itemsByIDOrdered reads fields[field] (a catalog's already-parsed top-level
+// shape) as an array of {id, ...} items, returning them by id plus the ids
+// in their original array order so diff output (Upserts) is deterministic
+// rather than depending on Go's randomized map iteration order.
+func itemsByIDOrdered(fields map[string]json.RawMessage, field string) (map[string]json.RawMessage, []string, error) {
+	raw, ok := fields[field]
 	if !ok || len(raw) == 0 {
 		return map[string]json.RawMessage{}, nil, nil
 	}
@@ -684,8 +686,13 @@ func itemsByIDOrdered(catalog json.RawMessage, field string) (map[string]json.Ra
 		if err != nil {
 			return nil, nil, err
 		}
+		// A later item with the same id overwrites the map entry (last
+		// write wins), so ids must not gain a second entry for it too --
+		// otherwise diffArrayField would emit the same upsert twice.
+		if _, dup := m[id]; !dup {
+			ids = append(ids, id)
+		}
 		m[id] = item
-		ids = append(ids, id)
 	}
 	return m, ids, nil
 }
@@ -711,20 +718,13 @@ var catalogAttributeFieldsToSkip = map[string]bool{"id": true, "resources": true
 
 // diffCatalogAttributes returns a non-nil json.RawMessage carrying every
 // top-level catalog field (other than id/resources/offers) that changed
-// or is new between prior and next, or nil if none did. Not a fixed field
-// list -- a Catalog object can carry anything beyond the ones diffed
-// elsewhere (the file spec's own examples: "name, validity window"), and
-// all of it needs to round-trip through a change file, not just whichever
-// fields happen to be hardcoded here.
-func diffCatalogAttributes(prior, next json.RawMessage) (json.RawMessage, error) {
-	var priorFields, nextFields map[string]json.RawMessage
-	if err := json.Unmarshal(prior, &priorFields); err != nil {
-		return nil, fmt.Errorf("parsing prior catalog: %w", err)
-	}
-	if err := json.Unmarshal(next, &nextFields); err != nil {
-		return nil, fmt.Errorf("parsing submitted catalog: %w", err)
-	}
-
+// or is new between priorFields and nextFields (each catalog's
+// already-parsed top-level shape, see diffCatalogs), or nil if none did.
+// Not a fixed field list -- a Catalog object can carry anything beyond the
+// ones diffed elsewhere (the file spec's own examples: "name, validity
+// window"), and all of it needs to round-trip through a change file, not
+// just whichever fields happen to be hardcoded here.
+func diffCatalogAttributes(priorFields, nextFields map[string]json.RawMessage) json.RawMessage {
 	changed := map[string]json.RawMessage{}
 	for field, nv := range nextFields {
 		if catalogAttributeFieldsToSkip[field] {
@@ -735,9 +735,13 @@ func diffCatalogAttributes(prior, next json.RawMessage) (json.RawMessage, error)
 		}
 	}
 	if len(changed) == 0 {
-		return nil, nil
+		return nil
 	}
-	return json.Marshal(changed)
+	// changed only holds json.RawMessage values already produced by a
+	// successful Unmarshal above, so marshaling map[string]json.RawMessage
+	// back out cannot fail.
+	raw, _ := json.Marshal(changed)
+	return raw
 }
 
 // jsonEqual compares two JSON values semantically (decoded structure, not

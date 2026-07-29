@@ -399,8 +399,10 @@ Config: a new `outputRoot` field on the handler config (not a plugin
 `role`/`subscriberId`/`basePath`, so `outputRoot` joins them) is the
 common local directory every generated file goes under; `plugins.catalogPublisher`
 wires the core plugin the same way `plugins.crawler` wires `catalogcrawler`
-for `catalogPull`. See `config/local-beckn-one-bap.yaml`'s `catalogPublish`
-module block for a full working example.
+for `catalogPull`. See `config/local-beckn-one-bap.yaml`'s and
+`config/local-beckn-one-bpp.yaml`'s `catalogPublish` module blocks for
+full working examples (the bpp one also has `schemaValidator`/
+`manifestLoader` active, matching starter-kit's `generic-bpp.yaml`).
 
 **Config has one field: `subscriberId`.** There is no `keyID`/`domain`/
 `indexSchemaURL` in `catalogpublisher.Config` -- `subscriberId` is only

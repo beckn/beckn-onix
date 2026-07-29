@@ -525,6 +525,19 @@ func TestDiffCatalogs(t *testing.T) {
 	}
 }
 
+func TestDiffCatalogs_DuplicateSubmittedIDsCollapseToOneUpsert(t *testing.T) {
+	prior := mustCatalogWithItems("CAT-1")
+	next := json.RawMessage(`{"resources":[{"id":"ITEM-1","descriptor":{"name":"v1"}},{"id":"ITEM-1","descriptor":{"name":"v2"}}]}`)
+
+	diff, _, err := diffCatalogs(prior, next)
+	if err != nil {
+		t.Fatalf("diffCatalogs: %v", err)
+	}
+	if len(diff.Resources.Upserts) != 1 {
+		t.Fatalf("expected exactly 1 upsert for a duplicated id, got %d: %+v", len(diff.Resources.Upserts), diff.Resources.Upserts)
+	}
+}
+
 func TestDiffCatalogs_NoChangesIsEmpty(t *testing.T) {
 	catalog := mustCatalogWithItems("CAT-1", "ITEM-1")
 	diff, changeCatalog, err := diffCatalogs(catalog, catalog)
@@ -621,5 +634,94 @@ func TestPublish_ExtraManifestFiles_AppendedVerbatimNoDigest(t *testing.T) {
 	extra := manifest.Files[1]
 	if extra.Name != "beckn-subscriber" || extra.URL != "https://example.test/dedi/beckn-subscriber.dedi.json" || extra.Schema != "https://example.test/schemas/Beckn_subscriber.json" {
 		t.Errorf("extra manifest file not passed through verbatim: %+v", extra)
+	}
+}
+
+func TestToAuthMethodWire(t *testing.T) {
+	if got := toAuthMethodWire(nil); got != nil {
+		t.Errorf("expected nil for no auth methods, got %+v", got)
+	}
+	in := []definition.AuthMethod{{
+		Method: "signature", Algorithm: "ed25519", Header: "Authorization",
+		Challenge: []string{"nonce"}, FreshnessSeconds: 300,
+	}}
+	got := toAuthMethodWire(in)
+	if len(got) != 1 || got[0].Method != "signature" || got[0].Algorithm != "ed25519" ||
+		got[0].Header != "Authorization" || len(got[0].Challenge) != 1 || got[0].FreshnessSeconds != 300 {
+		t.Errorf("toAuthMethodWire did not round-trip fields, got %+v", got)
+	}
+}
+
+func TestFileRefsToWire(t *testing.T) {
+	if got := fileRefsToWire(nil); got != nil {
+		t.Errorf("expected nil for no file refs, got %+v", got)
+	}
+	validUntil := time.Now()
+	in := []definition.FileRef{{
+		Version: 3, URL: "https://example.test/catalogs/CAT-1.v3.json", Size: 42,
+		Digest: "sha-256:abc", SignatureKeyID: "k1", SignatureValue: "sig", SignatureValidUntil: validUntil,
+	}}
+	got := fileRefsToWire(in)
+	if len(got) != 1 || got[0].Version != 3 || got[0].URL != in[0].URL || got[0].Size != 42 ||
+		got[0].Digest != "sha-256:abc" || got[0].Signature.KeyID != "k1" || got[0].Signature.Value != "sig" || !got[0].Signature.ValidUntil.Equal(validUntil) {
+		t.Errorf("fileRefsToWire did not round-trip fields, got %+v", got)
+	}
+}
+
+func TestIndexURL(t *testing.T) {
+	p := &Publisher{config: &Config{}}
+	if got := p.IndexURL(); got != "pending-artifact-store://catalog-index.json" {
+		t.Errorf("expected placeholder index URL when PublicBaseURL is unset, got %q", got)
+	}
+	p.config.PublicBaseURL = "https://example.test"
+	if got := p.IndexURL(); got != "https://example.test/index/becknCatalogs.index.json" {
+		t.Errorf("expected index URL under PublicBaseURL, got %q", got)
+	}
+}
+
+func TestDecodeKeyset_NilKeysetIsError(t *testing.T) {
+	if _, _, err := decodeKeyset(nil); err == nil {
+		t.Fatal("expected error for nil keyset")
+	}
+}
+
+func TestDecodeKeyset_InvalidBase64IsError(t *testing.T) {
+	if _, _, err := decodeKeyset(&model.Keyset{SigningPrivate: "not-base64!!", SigningPublic: "AA=="}); err == nil {
+		t.Fatal("expected error for invalid base64 signing private key")
+	}
+	validSeed := base64.StdEncoding.EncodeToString(make([]byte, ed25519.SeedSize))
+	if _, _, err := decodeKeyset(&model.Keyset{SigningPrivate: validSeed, SigningPublic: "not-base64!!"}); err == nil {
+		t.Fatal("expected error for invalid base64 signing public key")
+	}
+}
+
+func TestDecodeKeyset_WrongKeyLengthIsError(t *testing.T) {
+	shortSeed := base64.StdEncoding.EncodeToString([]byte("too-short"))
+	if _, _, err := decodeKeyset(&model.Keyset{SigningPrivate: shortSeed, SigningPublic: base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))}); err == nil {
+		t.Fatal("expected error for wrong-length signing private key")
+	}
+
+	validSeed := base64.StdEncoding.EncodeToString(make([]byte, ed25519.SeedSize))
+	shortPub := base64.StdEncoding.EncodeToString([]byte("too-short"))
+	if _, _, err := decodeKeyset(&model.Keyset{SigningPrivate: validSeed, SigningPublic: shortPub}); err == nil {
+		t.Fatal("expected error for wrong-length signing public key")
+	}
+}
+
+func TestDecodeKeyset_Valid(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	keyset := &model.Keyset{
+		SigningPrivate: base64.StdEncoding.EncodeToString(priv.Seed()),
+		SigningPublic:  base64.StdEncoding.EncodeToString(pub),
+	}
+	gotPriv, gotPub, err := decodeKeyset(keyset)
+	if err != nil {
+		t.Fatalf("decodeKeyset: %v", err)
+	}
+	if !gotPriv.Equal(priv) || !gotPub.Equal(pub) {
+		t.Error("decoded keys do not match input")
 	}
 }

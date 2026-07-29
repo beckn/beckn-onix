@@ -94,6 +94,11 @@ type catalogPublishTestManager struct {
 	schemaValidator definition.SchemaValidator
 	policyChecker   definition.PolicyChecker
 	manifestLoader  definition.ManifestLoader
+	// policyCheckerManifestLoaderArg records whatever ManifestLoader
+	// PolicyChecker(ctx, ml, cfg) was actually called with, so tests can
+	// assert NewCatalogPublishHandler threads the real manifestLoader into
+	// policyChecker construction instead of a hard-coded nil.
+	policyCheckerManifestLoaderArg definition.ManifestLoader
 }
 
 // fakeSchemaValidator records the last payload it was asked to validate and
@@ -157,10 +162,11 @@ func (m *catalogPublishTestManager) Signer(context.Context, *plugin.Config) (def
 func (m *catalogPublishTestManager) Step(context.Context, *plugin.Config) (definition.Step, error) {
 	panic("unused")
 }
-func (m *catalogPublishTestManager) PolicyChecker(context.Context, definition.ManifestLoader, *plugin.Config) (definition.PolicyChecker, error) {
+func (m *catalogPublishTestManager) PolicyChecker(_ context.Context, ml definition.ManifestLoader, _ *plugin.Config) (definition.PolicyChecker, error) {
 	if m.policyChecker == nil {
 		panic("unused")
 	}
+	m.policyCheckerManifestLoaderArg = ml
 	return m.policyChecker, nil
 }
 func (m *catalogPublishTestManager) SchemaVersionMediator(context.Context, definition.ManifestLoader, *plugin.Config) (definition.SchemaVersionMediator, error) {
@@ -411,6 +417,65 @@ func TestCatalogPublishHandler_RunsSchemaValidatorAndPolicyCheckerOnEnvelope(t *
 	}
 }
 
+func TestNewCatalogPublishHandler_PolicyCheckerReceivesRealManifestLoader(t *testing.T) {
+	root := t.TempDir()
+	mgr := newTestManager(t)
+	mgr.policyChecker = &fakePolicyChecker{}
+	mgr.manifestLoader = &fakeManifestLoader{doc: &model.ManifestDocument{Content: []byte(`{"manifestVersion":"1.0","manifestType":"node","subscriberId":"example.test"}`)}}
+
+	cfg := newTestConfig(root)
+	cfg.Plugins.PolicyChecker = &plugin.Config{ID: "opapolicychecker"}
+	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	if _, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test"); err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	if mgr.policyCheckerManifestLoaderArg == nil {
+		t.Fatal("expected PolicyChecker to be constructed with the real ManifestLoader, got nil -- a manifest-backed policy type can never resolve")
+	}
+}
+
+// fakeFatalPublisher always returns one Fatal PublishError and no successful
+// catalog outcomes, to exercise the handler's Fatal -> overall status wiring.
+type fakeFatalPublisher struct{}
+
+func (fakeFatalPublisher) Publish(context.Context, definition.PublishRequest) (definition.PublishResult, error) {
+	return definition.PublishResult{
+		Errors: []definition.PublishError{{CatalogID: "example.test/CAT-1", Stage: "sign", Reason: "signing key unavailable", Fatal: true}},
+	}, nil
+}
+func (fakeFatalPublisher) IndexURL() string { return "pending-artifact-store://catalog-index.json" }
+
+func TestCatalogPublishHandler_FatalPublishErrorReportsOverallFailed(t *testing.T) {
+	root := t.TempDir()
+	mgr := newTestManager(t)
+	mgr.publisher = fakeFatalPublisher{}
+
+	h, err := NewCatalogPublishHandler(context.Background(), mgr, newTestConfig(root), "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (Fatal is still reported in the body, not a transport error), got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp publishResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parsing response: %v", err)
+	}
+	if resp.Status != publishOverallFailed {
+		t.Fatalf("expected overall status FAILED when a PublishError is Fatal, got %+v", resp)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != catalogRejected {
+		t.Fatalf("expected 1 rejected result, got %+v", resp.Results)
+	}
+}
+
 func TestCatalogPublishHandler_RejectsRequestWhenSchemaValidationFails(t *testing.T) {
 	root := t.TempDir()
 	schemaValidator := &fakeSchemaValidator{err: fmt.Errorf("schema mismatch")}
@@ -575,6 +640,38 @@ func TestCatalogPublishHandler_Retire(t *testing.T) {
 	}
 	if len(resp.Results) != 1 || resp.Results[0].Status != catalogAccepted || resp.Results[0].CatalogID != "example.test/CAT-OLD" {
 		t.Fatalf("unexpected retire result: %+v", resp.Results)
+	}
+}
+
+func TestCatalogPublishHandler_SubmittedAndRetiredSameCatalogID_ReportsOnlyAccepted(t *testing.T) {
+	root := t.TempDir()
+	mgr := newTestManager(t)
+	h, err := NewCatalogPublishHandler(context.Background(), mgr, newTestConfig(root), "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}]},"retire":["example.test/CAT-1"]}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp publishResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parsing response: %v", err)
+	}
+	// Publish's own rule is "submission wins" when a catalogId is both
+	// submitted and retired in one call, so exactly one result should be
+	// reported for it -- the real publish outcome, not a second spurious
+	// "retired" entry for a tombstone that was never actually written.
+	if len(resp.Results) != 1 {
+		t.Fatalf("expected exactly 1 result for a catalogId that was both submitted and retired, got %+v", resp.Results)
+	}
+	if resp.Results[0].CatalogID != "example.test/CAT-1" || resp.Results[0].Status != catalogAccepted || resp.Results[0].Reason == "retired" {
+		t.Fatalf("expected the real publish outcome, not a spurious retired result, got %+v", resp.Results[0])
 	}
 }
 

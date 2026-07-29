@@ -150,6 +150,7 @@ func applyDiffBlock(items []json.RawMessage, block DiffBlock) ([]json.RawMessage
 	for _, u := range block.Upserts {
 		id, _ := ItemID(u) // already validated above
 		if !seen[id] {
+			seen[id] = true
 			next = append(next, u)
 		}
 	}
