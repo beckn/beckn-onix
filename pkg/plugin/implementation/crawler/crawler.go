@@ -32,7 +32,8 @@ func New(ctx context.Context, validator definition.SchemaValidator, cfg map[stri
 		return cfg[k]
 	}
 
-	logger := crawler.NewSlogLogger(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	level := crawler.ParseLogLevel(get("CRAWLER_LOG_LEVEL"))
+	logger := crawler.NewSlogLogger(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
 
 	settings, err := config.LoadSettings(get)
 	if err != nil {

@@ -21,7 +21,8 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	level := crawler.ParseLogLevel(os.Getenv("CRAWLER_LOG_LEVEL"))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(logger)
 
 	s, err := config.LoadSettings(os.Getenv)
