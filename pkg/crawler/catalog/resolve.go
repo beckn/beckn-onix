@@ -144,7 +144,7 @@ func ResolveDelta(entry CatalogEntry, cursor, toVersion int64, fetch FetchFunc) 
 		}
 	}
 	if len(envelope) == 0 {
-		return nil, cs, false, nil // no metadata -> caller falls back to a full resolve
+		return nil, cs, false, nil // no metadata envelope -> caller treats it as a content fault (no baseline fallback)
 	}
 
 	var doc catalogfile.Doc
