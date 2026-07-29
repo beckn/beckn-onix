@@ -281,12 +281,15 @@ func TestPublish_UnknownKeyIDFails(t *testing.T) {
 
 func TestCatalogPartURL_PlaceholderWhenUnconfigured(t *testing.T) {
 	p := &Publisher{config: &Config{}}
-	if got := p.catalogPartURL("CAT-1.v1.json"); got != "pending-artifact-store://catalog/CAT-1.v1.json" {
+	if got := p.catalogPartURL("CAT-1.v1.json", "json"); got != "pending-artifact-store://catalog/CAT-1.v1.json" {
 		t.Errorf("unexpected placeholder URL: %q", got)
 	}
 	p.config.PublicBaseURL = "https://cdn.example.com/"
-	if got := p.catalogPartURL("CAT-1.v1.json"); got != "https://cdn.example.com/catalogs/CAT-1.v1.json" {
-		t.Errorf("unexpected configured URL: %q", got)
+	if got := p.catalogPartURL("CAT-1.v1.json", "json"); got != "https://cdn.example.com/catalogs/CAT-1.v1.json" {
+		t.Errorf("unexpected configured baseline URL: %q", got)
+	}
+	if got := p.catalogPartURL("CAT-1.v2.changes.json", "changes.json"); got != "https://cdn.example.com/catalogs/changes/CAT-1.v2.changes.json" {
+		t.Errorf("unexpected configured change-file URL: %q", got)
 	}
 }
 
@@ -431,7 +434,7 @@ func TestPublish_Incremental_ProducesChangeFile(t *testing.T) {
 	if entry.Baseline.URL != "https://cdn.test/catalogs/CAT-1.v1.json" {
 		t.Errorf("expected baseline carried forward unchanged, got %+v", entry.Baseline)
 	}
-	if len(entry.Changes) != 1 || entry.Changes[0].Version != 2 || entry.Changes[0].URL != "https://cdn.test/catalogs/CAT-1.v2.changes.json" {
+	if len(entry.Changes) != 1 || entry.Changes[0].Version != 2 || entry.Changes[0].URL != "https://cdn.test/catalogs/changes/CAT-1.v2.changes.json" {
 		t.Errorf("unexpected change entry: %+v", entry.Changes)
 	}
 }
