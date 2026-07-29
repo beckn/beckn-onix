@@ -166,6 +166,13 @@ type PublishResult struct {
 // consumes and verifies.
 type CatalogPublisher interface {
 	Publish(ctx context.Context, req PublishRequest) (PublishResult, error)
+
+	// IndexURL returns the public location this publisher's catalog index
+	// is (or will be) reachable at -- callers use this to check a node
+	// manifest's catalog.catalogIndexes for a matching entry before
+	// publishing (see catalogPublishHandler.go), without this package
+	// knowing anything about manifests itself.
+	IndexURL() string
 }
 
 // CatalogPublisherProvider is the plugin constructor interface.
