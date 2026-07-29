@@ -1,6 +1,6 @@
 // Package runner is the crawler's orchestration: the two scheduled jobs (index
-// + catalog) linked by the queue, the lifecycle state machine, and the retry
-// policy. It defines the ports it consumes (fetch/push/source/validate + the
+// + catalog) linked by the queue, the sync pipeline, and the retry/park policy.
+// It defines the ports it consumes (fetch/push/source/validate + the
 // log/metric sinks) and is wired to concrete adapters by the composition root;
 // it imports the pure domain (catalog), the store, and publish helpers, never a
 // fetch/decode adapter directly.

@@ -14,6 +14,20 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/crawler/source"
 )
 
+// DaemonState is the crawler process lifecycle — the supervisor (the "driver").
+// It has NO "completed": a supervisor never completes, it just launches Catalog
+// Syncs until stopped.
+type DaemonState string
+
+const (
+	DaemonReady       DaemonState = "ready"
+	DaemonStopping    DaemonState = "stopping"
+	DaemonStopped     DaemonState = "stopped"
+	DaemonStartFailed DaemonState = "start_failed"
+)
+
+func (d DaemonState) String() string { return string(d) }
+
 // Engine runs the two scheduled jobs (index + catalog) linked by the queue.
 type Engine struct {
 	cfg  EngineConfig

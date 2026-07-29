@@ -4,8 +4,8 @@ package runner
 // run the Catalog Sync as a pipeline of named stages
 // (resolve → pull+unpack → verify → scope → batch → push → settle), or a
 // retire. It owns the retry/park routing (routeFailure → parkPermanently /
-// scheduleRetry) and drives the SyncPhase breadcrumbs + terminal SyncOutcome.
-// The log vocabulary itself lives in telemetry.go.
+// scheduleRetry) and settles into a terminal SyncOutcome. The log vocabulary
+// itself lives in telemetry.go.
 //
 // The whole per-catalog recipe is the list in syncCatalog — read it top to
 // bottom. Each stage is a method with the same signature, so a new step is one
@@ -32,7 +32,7 @@ const pushEnvelopeReserve = 4 << 10
 func (e *Engine) catalogPass(ctx context.Context) {
 	runID := e.newID()
 	start := e.deps.Now()
-	var synced, skipped, dropped, faulted, retried int
+	var synced, skipped, failed, retrying int
 	started := false
 	for {
 		if ctx.Err() != nil {
@@ -40,7 +40,7 @@ func (e *Engine) catalogPass(ctx context.Context) {
 		}
 		item, err := e.deps.Store.ClaimNext(ctx)
 		if err != nil {
-			e.storeUnhealthy(runID, "claim", "", err)
+			e.storeUnhealthy("sync", runID, "claim", "", err)
 			break
 		}
 		if item == nil {
@@ -49,19 +49,17 @@ func (e *Engine) catalogPass(ctx context.Context) {
 		if !started {
 			started = true
 			depth, _ := e.deps.Store.QueueDepth(ctx)
-			e.logSyncPassStarted(runID, depth)
+			e.logSyncStarted(runID, depth)
 		}
 		switch e.handleQueueItem(ctx, item, runID) {
 		case catalog.OutcomePushed, catalog.OutcomeRetired:
 			synced++
-		case catalog.OutcomeSkipped:
+		case catalog.OutcomeSkipped, catalog.OutcomeDropped:
 			skipped++
-		case catalog.OutcomeDropped:
-			dropped++
 		case catalog.OutcomePartial:
-			retried++ // partial push is a retry-in-progress, not a permanent fault
+			retrying++ // partial push is a retry-in-progress, not a permanent fault
 		default: // faulted
-			faulted++
+			failed++
 		}
 	}
 	depthAfter, derr := e.deps.Store.QueueDepth(ctx)
@@ -69,7 +67,7 @@ func (e *Engine) catalogPass(ctx context.Context) {
 		e.deps.Metrics.SetQueueDepth(depthAfter)
 	}
 	if started {
-		e.logSyncPassCompleted(runID, synced, skipped, dropped, faulted, retried, depthAfter, e.deps.Now().Sub(start))
+		e.logSyncFinished(runID, synced, skipped, failed, retrying, depthAfter, e.deps.Now().Sub(start))
 	}
 }
 
@@ -83,10 +81,10 @@ func (e *Engine) handleQueueItem(ctx context.Context, item *store.ClaimedItem, r
 			At: e.deps.Now().UTC(), FromVersion: item.FromVersion, ToVersion: item.ToVersion,
 			Outcome: string(catalog.OutcomeRetired),
 		}); err != nil {
-			e.storeUnhealthy(runID, "complete", item.CatalogID, err)
+			e.storeUnhealthy("sync", runID, "complete", item.CatalogID, err)
 			return catalog.OutcomeFaulted
 		}
-		e.logSyncRetired(runID, passID, item)
+		e.logRetired(runID, passID, item)
 		return catalog.OutcomeRetired
 	}
 	return e.syncCatalog(ctx, item, runID, passID)
@@ -99,7 +97,6 @@ func (e *Engine) handleQueueItem(ctx context.Context, item *store.ClaimedItem, r
 type syncState struct {
 	item          *store.ClaimedItem
 	runID, passID string
-	phase         SyncPhase // current running sub-state (drives the breadcrumb)
 
 	entry         catalog.CatalogEntry
 	participantID string
@@ -117,59 +114,41 @@ type syncState struct {
 // syncStage is one step in the Catalog Sync pipeline. run does the step against
 // the shared state and returns (outcome, stop): stop=true ends the sync here —
 // either a terminal success/skip, or a failure the step already routed
-// (park/retry). phase is the running sub-state this step belongs to.
+// (park/retry). what is a human label for the step (for reading the recipe).
 type syncStage struct {
-	phase SyncPhase
-	what  string
-	run   func(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool)
+	what string
+	run  func(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool)
 }
 
 // syncCatalog runs ONE claimed catalog through the sync pipeline and returns its
 // terminal SyncOutcome. This list is the whole per-catalog recipe — read it top
 // to bottom. To add a step (e.g. §9a content-schema validation, which would be
-// {SyncValidating, "validate content schema", e.validateContent}), insert one
-// line; the runner drives the phase breadcrumb from each stage's phase.
+// {"validate content schema", e.validateContent}), insert one line.
 func (e *Engine) syncCatalog(ctx context.Context, item *store.ClaimedItem, runID, passID string) catalog.SyncOutcome {
 	s := &syncState{item: item, runID: runID, passID: passID}
+	e.logSyncing(runID, passID, item)
 
 	pipeline := []syncStage{
-		{SyncResolving, "fetch index & find catalog", e.resolveEntry},
-		{SyncResolving, "pull & unpack files", e.fetchContent},
-		{SyncVerifying, "verify digests & decide upserts", e.verifyContent},
-		{SyncScoping, "resolve who may see it (visibleTo)", e.resolveVisibility},
-		{SyncScoping, "batch by size cap", e.batch},
-		{SyncPublishing, "push each batch to Discovery", e.publish},
-		{SyncPublishing, "record & advance cursor", e.complete},
+		{"fetch index & find catalog", e.resolveEntry},
+		{"pull & unpack files", e.fetchContent},
+		{"verify digests & decide upserts", e.verifyContent},
+		{"resolve who may see it (visibleTo)", e.resolveVisibility},
+		{"batch by size cap", e.batch},
+		{"push each batch to Discovery", e.publish},
+		{"record & advance cursor", e.complete},
 	}
 	return e.runPipeline(ctx, s, pipeline)
 }
 
-// runPipeline walks the stages in order. Before each stage it enters that
-// stage's phase (emitting the breadcrumb once per phase); a stage returning
-// stop=true ends the sync with its outcome.
+// runPipeline walks the stages in order; a stage returning stop=true ends the
+// sync with its outcome.
 func (e *Engine) runPipeline(ctx context.Context, s *syncState, stages []syncStage) catalog.SyncOutcome {
 	for _, st := range stages {
-		e.enterPhase(s, st.phase)
 		if outcome, stop := st.run(ctx, s); stop {
 			return outcome
 		}
 	}
 	return catalog.OutcomePushed
-}
-
-// enterPhase moves the sync to a running sub-state and emits the DEBUG
-// breadcrumb once per phase: it no-ops when the phase is unchanged (so adjacent
-// same-phase stages don't re-log) and ignores an illegal jump (ValidSyncPhase),
-// exactly as the old advancePhase did — the first phase (from "") always logs.
-func (e *Engine) enterPhase(s *syncState, to SyncPhase) {
-	if s.phase == to {
-		return
-	}
-	if s.phase != "" && !ValidSyncPhase(s.phase, to) {
-		return // defensive: don't record an illegal transition
-	}
-	s.phase = to
-	e.logSyncPhase(to, s.runID, s.passID, s.item)
 }
 
 // --- the pipeline stages ----------------------------------------------------
@@ -212,9 +191,6 @@ func (e *Engine) fetchContent(ctx context.Context, s *syncState) (catalog.SyncOu
 // Nothing to upsert (e.g. a removal-only change while removals are deferred) is a
 // clean skip — the cursor still advances so it isn't re-processed.
 func (e *Engine) verifyContent(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
-	if e.cfg.MergeOnly && s.cs.HasRemovals {
-		e.logCatalogRemovalsSkipped(s.runID, s.item.CatalogID, s.cs.RemovedResources, s.cs.RemovedOffers)
-	}
 	s.resCount, s.offCount = publish.DocCounts(s.pushDoc)
 	if s.resCount == 0 && s.offCount == 0 {
 		e.completeSkipped(ctx, s.item, s.participantID, s.mode, "no upserts (removals deferred)", s.runID, s.passID)
@@ -319,11 +295,11 @@ func (e *Engine) complete(ctx context.Context, s *syncState) (catalog.SyncOutcom
 		BatchesAcked: s.acked, BatchesTotal: len(s.batches),
 		Outcome: string(catalog.OutcomePushed), HTTPStatus: s.outcomes[len(s.outcomes)-1].HTTPStatus,
 	}); err != nil {
-		e.storeUnhealthy(s.runID, "complete", s.item.CatalogID, err)
+		e.storeUnhealthy("sync", s.runID, "complete", s.item.CatalogID, err)
 		return catalog.OutcomeFaulted, true
 	}
 	e.deps.Metrics.CatalogPushed()
-	e.logSyncPushed(s.runID, s.passID, s.item, s.mode, s.resCount, s.offCount, len(s.outcomes))
+	e.logSynced(s.runID, s.passID, s.item, s.mode, s.resCount, s.offCount, len(s.outcomes))
 	return catalog.OutcomePushed, true
 }
 
@@ -390,10 +366,10 @@ func (e *Engine) completeSkipped(ctx context.Context, item *store.ClaimedItem, p
 		Mode: mode, Outcome: string(catalog.OutcomeSkipped), Reason: reason,
 	}
 	if err := e.settle(ctx, item, participantID, catalog.CatalogActive, rep); err != nil {
-		e.storeUnhealthy(runID, "complete", item.CatalogID, err)
+		e.storeUnhealthy("sync", runID, "complete", item.CatalogID, err)
 		return
 	}
-	e.logSyncSkipped(runID, passID, item, mode, reason)
+	e.logSkipped(runID, passID, item, reason)
 }
 
 // routeFailure routes a failure: permanent (won't fix on retry) faults and 4xx
@@ -424,13 +400,14 @@ func (e *Engine) newFailureReport(item *store.ClaimedItem, httpStatus int, reaso
 // "unsupported encoding" becomes visible and actionable, never silently lost.
 func (e *Engine) parkPermanently(ctx context.Context, item *store.ClaimedItem, report store.PassReport, fc catalog.FaultClass, runID, passID string) {
 	if err := e.deps.Store.ParkQueueItem(ctx, item.ID, item.ClaimID); err != nil {
-		e.storeUnhealthy(runID, "park", item.CatalogID, err)
+		e.storeUnhealthy("sync", runID, "park", item.CatalogID, err)
 	}
 	if err := e.deps.Store.RecordFailure(ctx, item.CatalogID, item.IndexURL, "", report); err != nil {
-		e.storeUnhealthy(runID, "record", item.CatalogID, err)
+		e.storeUnhealthy("sync", runID, "record", item.CatalogID, err)
 	}
 	e.deps.Metrics.CatalogFailed(fc.String())
-	e.logSyncFaulted(runID, passID, item, fc, report)
+	// Parked: won't retry until the publisher publishes a new version (ERROR).
+	e.logFailed(runID, passID, item, fc, report, false, item.Attempts+1)
 }
 
 // scheduleRetry retries with capped backoff, and appends the pass report once
@@ -440,17 +417,41 @@ func (e *Engine) scheduleRetry(ctx context.Context, item *store.ClaimedItem, rep
 	attempts := item.Attempts + 1
 	next := e.deps.Now().Add(Backoff(attempts))
 	if err := e.deps.Store.RescheduleQueueItem(ctx, item.ID, item.ClaimID, next); err != nil {
-		e.storeUnhealthy(runID, "reschedule", item.CatalogID, err)
+		e.storeUnhealthy("sync", runID, "reschedule", item.CatalogID, err)
 	}
 	if attempts >= e.cfg.MaxAttempts {
-		// Record the failure WITHOUT advancing the version (queryable), and keep
-		// the item queued for retry.
+		// Past MaxAttempts: record the failure (queryable) WITHOUT advancing the
+		// version, and keep the item queued — it still retries with backoff; the
+		// cap only decides when the failure gets recorded, it does not park it.
 		if err := e.deps.Store.RecordFailure(ctx, item.CatalogID, item.IndexURL, "", report); err != nil {
-			e.storeUnhealthy(runID, "record", item.CatalogID, err)
+			e.storeUnhealthy("sync", runID, "record", item.CatalogID, err)
 		}
 		e.deps.Metrics.CatalogFailed(fc.String())
-		e.logSyncRetryExhausted(runID, passID, item, attempts, fc, report)
+		// Still a retry — the item was rescheduled above; MaxAttempts only gates
+		// when the failure is recorded, it does not park the item (WARN, not ERROR).
+		e.logFailed(runID, passID, item, fc, report, true, attempts)
 		return
 	}
-	e.logSyncRetry(runID, passID, item, attempts, fc)
+	// Transient fault, will retry with backoff (WARN).
+	e.logFailed(runID, passID, item, fc, report, true, attempts)
+}
+
+// classifyOutcome is the ONE place the push-outcome rule lives (it replaced the
+// duplicated logic at the old engine fail sites): a 4xx push rejection or any
+// error is `faulted` (the FaultClass — push_rejected for a 4xx — is decided
+// separately by catalog.ClassifyFault and drives park-vs-retry); a push that
+// acked some batches but not all is `partial`; anything else (5xx / all
+// unacked) is `faulted`. Success (all acked) and skipped are decided by their
+// own sites, not here.
+func classifyOutcome(httpStatus, ackedBatches int, err error) catalog.SyncOutcome {
+	switch {
+	case httpStatus >= 400 && httpStatus < 500:
+		return catalog.OutcomeFaulted
+	case err != nil:
+		return catalog.OutcomeFaulted
+	case ackedBatches > 0:
+		return catalog.OutcomePartial
+	default:
+		return catalog.OutcomeFaulted
+	}
 }

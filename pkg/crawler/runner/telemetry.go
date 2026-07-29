@@ -1,17 +1,21 @@
 package runner
 
-// telemetry.go — the runner's co-located §9b log vocabulary. Every crawler
-// event the orchestration emits is minted by exactly one helper here, so the
-// event catalog (names, levels, mandatory fields) lives in one readable place
-// rather than scattered across the passes. Two fields are mandatory on every
-// line: `lifecycle` (which state machine — sync / sync_pass / index_pass /
-// index_crawl / catalog / store) and `state` (where in it); the event key is
-// always `crawler.<lifecycle>.<state>`. Typed values only: fault classes and
-// decisions are rendered via their String(), never a free-form error phrase
-// (the raw cause travels in `error`). The daemon lifecycle (crawler.daemon.*)
-// is owned by the composition root, not here.
+// telemetry.go — the runner's co-located log vocabulary (see docs/crawler-logs.md).
+// Every crawler event the orchestration emits is minted by exactly one helper
+// here, so the event catalog (components, stages, messages, levels, fields)
+// lives in one readable place rather than scattered across the jobs.
+//
+// The model is one process running two jobs, so there are three log components:
+// `daemon` (the process — owned by the composition root, not here), `crawl`
+// (job 1: poll indexes, queue changed catalogs), and `sync` (job 2: sync one
+// queued catalog to Discovery). Every line carries, in order: the natural
+// message (the logger's first arg), then base fields `component`, `stage`,
+// `run_id`; sync per-catalog lines also carry `pass_id`, `catalog_id`, `from`,
+// `to`. The event key is always `crawler.<component>.<stage>`. The persisted
+// status/outcome enums Discovery/DB care about live in catalog/status.go.
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/crawler/catalog"
@@ -26,187 +30,195 @@ func errStr(err error) string {
 	return err.Error()
 }
 
-// syncKV is the mandatory field set every lifecycle=sync line carries: the two
-// correlation ids plus the catalog and the version jump it is making.
-func syncKV(state, runID, passID string, item *store.ClaimedItem) []any {
+// syncKV is the mandatory field set every component=sync per-catalog line
+// carries: the two correlation ids plus the catalog and the version jump.
+func syncKV(stage, runID, passID string, item *store.ClaimedItem) []any {
 	return []any{
-		"lifecycle", "sync", "state", state,
+		"component", "sync", "stage", stage,
 		"run_id", runID, "pass_id", passID,
 		"catalog_id", item.CatalogID,
-		"from_version", item.FromVersion, "to_version", item.ToVersion,
+		"from", item.FromVersion, "to", item.ToVersion,
 	}
 }
 
-// --- Catalog Sync (lifecycle=sync) ------------------------------------------
+// --- crawl (job 1: find work) -----------------------------------------------
 
-// logSyncPhase emits the DEBUG breadcrumb for a running sub-state the sync
-// actually reached (resolving/verifying/scoping/publishing).
-func (e *Engine) logSyncPhase(phase SyncPhase, runID, passID string, item *store.ClaimedItem) {
-	e.deps.Log.Debug("crawler.sync."+phase.String(), syncKV(phase.String(), runID, passID, item)...)
+// logPolled is the DEBUG trace of one index poll: result is `updated`,
+// `unchanged`, or `not_modified` (version is 0 for a 304, which had no body).
+func (e *Engine) logPolled(runID, indexURL string, version int64, result string) {
+	msg := "index unchanged"
+	switch result {
+	case "updated":
+		msg = fmt.Sprintf("index updated to v%d", version)
+	case "not_modified":
+		msg = "index not modified (304)"
+	}
+	e.deps.Log.Debug(msg,
+		"component", "crawl", "stage", "polled", "run_id", runID,
+		"index_url", indexURL, "version", version, "result", result)
 }
 
-// logSyncPushed is the success terminal: the catalog landed in Discovery.
-func (e *Engine) logSyncPushed(runID, passID string, item *store.ClaimedItem, mode string, resources, offers, batches int) {
-	kv := append(syncKV("pushed", runID, passID, item),
+// logPollFailed fires when one index can't be reached/parsed (WARN — the crawl
+// will try again next tick). Keyed on the index URL: the participant is still
+// unknown pre-fetch.
+func (e *Engine) logPollFailed(runID, indexURL string, err error) {
+	e.deps.Log.Warn("couldn't reach the index: "+errStr(err),
+		"component", "crawl", "stage", "polled", "run_id", runID,
+		"index_url", indexURL, "result", "unreachable", "error", errStr(err))
+}
+
+// logRollback flags a catalog whose index version went backwards — not applied,
+// recorded for an operator (WARN).
+func (e *Engine) logRollback(runID, catalogID string, cursorVersion, indexVersion int64) {
+	e.deps.Log.Warn("index version went backwards — ignored",
+		"component", "crawl", "stage", "polled", "run_id", runID,
+		"catalog_id", catalogID, "result", "rollback",
+		"cursor_version", cursorVersion, "index_version", indexVersion)
+}
+
+// logQueued (DEBUG) records that the crawl enqueued one catalog: op is `sync`
+// or `retire`, from/to are the version jump.
+func (e *Engine) logQueued(runID, catalogID, op string, from, to int64) {
+	msg := fmt.Sprintf("queued this catalog to sync (v%d → v%d)", from, to)
+	if op == "retire" {
+		msg = "queued this catalog to retire"
+	}
+	e.deps.Log.Debug(msg,
+		"component", "crawl", "stage", "queued", "run_id", runID,
+		"catalog_id", catalogID, "op", op, "from", from, "to", to)
+}
+
+// logCrawlFinished closes one crawl tick with its tally (INFO).
+func (e *Engine) logCrawlFinished(runID string, indexes, updated, queued int, dur time.Duration) {
+	e.deps.Log.Info("crawl finished",
+		"component", "crawl", "stage", "finished", "run_id", runID,
+		"indexes", indexes, "updated", updated, "queued", queued, "dur_ms", dur.Milliseconds())
+}
+
+// logCrawlFailed fires when the source can't even be resolved — no refs to
+// crawl this tick (ERROR).
+func (e *Engine) logCrawlFailed(runID, at string, err error) {
+	e.deps.Log.Error("crawl failed to resolve its sources: "+errStr(err),
+		"component", "crawl", "stage", "failed", "run_id", runID,
+		"at", at, "error", errStr(err))
+}
+
+// --- sync (job 2: do the work) ----------------------------------------------
+
+// logSyncing (DEBUG) marks the start of one catalog's sync.
+func (e *Engine) logSyncing(runID, passID string, item *store.ClaimedItem) {
+	msg := fmt.Sprintf("syncing catalog (v%d → v%d)", item.FromVersion, item.ToVersion)
+	e.deps.Log.Debug(msg, syncKV("syncing", runID, passID, item)...)
+}
+
+// logSynced is the success terminal: the catalog landed in Discovery (DEBUG).
+func (e *Engine) logSynced(runID, passID string, item *store.ClaimedItem, mode string, resources, offers, batches int) {
+	kv := append(syncKV("synced", runID, passID, item),
 		"mode", mode, "resources", resources, "offers", offers, "batches", batches)
-	e.deps.Log.Debug("crawler.sync.pushed", kv...)
+	e.deps.Log.Debug("sent the catalog update to Discovery", kv...)
 }
 
-// logSyncSkipped is the terminal for a claimed item with nothing to push (e.g.
-// a removal-only change while removals are deferred).
-func (e *Engine) logSyncSkipped(runID, passID string, item *store.ClaimedItem, mode, reason string) {
-	kv := append(syncKV("skipped", runID, passID, item), "mode", mode, "reason", reason)
-	e.deps.Log.Debug("crawler.sync.skipped", kv...)
+// logSkipped is the terminal for a claimed item with nothing to send (e.g. a
+// removal-only change while removals are deferred) (DEBUG).
+func (e *Engine) logSkipped(runID, passID string, item *store.ClaimedItem, reason string) {
+	kv := append(syncKV("skipped", runID, passID, item), "reason", reason)
+	e.deps.Log.Debug("nothing to send — this update only removed items, and removals aren't applied yet", kv...)
 }
 
-// logSyncRetired is the terminal for a retire settle (catalog tombstoned).
-func (e *Engine) logSyncRetired(runID, passID string, item *store.ClaimedItem) {
-	e.deps.Log.Debug("crawler.sync.retired", syncKV("retired", runID, passID, item)...)
+// logRetired is the terminal for a retire settle: recorded locally, Discovery
+// not notified yet (Phase 2) (DEBUG).
+func (e *Engine) logRetired(runID, passID string, item *store.ClaimedItem) {
+	e.deps.Log.Debug("recorded the catalog as retired locally — Discovery not notified yet (Phase 2)",
+		syncKV("retired", runID, passID, item)...)
 }
 
-// logSyncRetry is a transient retry attempt BEFORE exhaustion (DEBUG trace).
-func (e *Engine) logSyncRetry(runID, passID string, item *store.ClaimedItem, attempts int, fc catalog.FaultClass) {
-	kv := append(syncKV("retry", runID, passID, item), "attempts", attempts, "fault_class", fc.String())
-	e.deps.Log.Debug("crawler.sync.retry", kv...)
-}
-
-// logSyncFaulted is the operator alert: the sync failed permanently and is
-// parked (no hot retry; re-activates on a version bump).
-func (e *Engine) logSyncFaulted(runID, passID string, item *store.ClaimedItem, fc catalog.FaultClass, report store.PassReport) {
-	kv := append(syncKV("faulted", runID, passID, item),
-		"fault_class", fc.String(), "permanent", true)
+// logFailed is the single failure terminal. It explains WHERE it broke (from
+// the fault, via stepPhrase) and WHETHER it recovers (willRetry): WARN when the
+// sync will retry, ERROR when it's parked (won't retry until a new version).
+func (e *Engine) logFailed(runID, passID string, item *store.ClaimedItem, fc catalog.FaultClass, report store.PassReport, willRetry bool, attempt int) {
+	step := stepPhrase(fc.String())
+	detail := faultDetail(fc, report)
+	var msg string
+	switch {
+	case !willRetry:
+		msg = fmt.Sprintf("couldn't %s — %s; parked, won't retry until the publisher publishes a new version", step, detail)
+	case attempt >= e.cfg.MaxAttempts:
+		// Transient fault past the attempt budget: the failure is now recorded,
+		// but the item keeps retrying with backoff (it is NOT parked).
+		msg = fmt.Sprintf("couldn't %s — %s; still retrying after %d attempts (past the limit)", step, detail, attempt)
+	default:
+		msg = fmt.Sprintf("couldn't %s — %s; will retry (attempt %d of %d)", step, detail, attempt, e.cfg.MaxAttempts)
+	}
+	kv := append(syncKV("failed", runID, passID, item),
+		"step", step, "fault", fc.String(), "will_retry", willRetry, "attempt", attempt)
 	if report.HTTPStatus != 0 {
 		kv = append(kv, "http_status", report.HTTPStatus)
 	}
 	kv = append(kv, "error", report.Reason)
-	e.deps.Log.Error("crawler.sync.faulted", kv...)
+	if willRetry {
+		e.deps.Log.Warn(msg, kv...)
+		return
+	}
+	e.deps.Log.Error(msg, kv...)
 }
 
-// logSyncRetryExhausted fires ONLY when a transient fault has burned through
-// MaxAttempts: the failure is now recorded (queryable) though the item stays
-// queued.
-func (e *Engine) logSyncRetryExhausted(runID, passID string, item *store.ClaimedItem, attempts int, fc catalog.FaultClass, report store.PassReport) {
-	kv := append(syncKV("retry_exhausted", runID, passID, item),
-		"attempts", attempts, "fault_class", fc.String(), "error", report.Reason)
-	e.deps.Log.Warn("crawler.sync.retry_exhausted", kv...)
+// logSyncStarted marks a sync tick that found work (silent when idle) (INFO).
+func (e *Engine) logSyncStarted(runID string, queueDepth int) {
+	e.deps.Log.Info("sync started",
+		"component", "sync", "stage", "started", "run_id", runID, "queue", queueDepth)
 }
 
-// --- Sync batch heartbeat (lifecycle=sync_pass) -----------------------------
-
-// logSyncPassStarted marks a catalog tick that found work (silent when idle).
-func (e *Engine) logSyncPassStarted(runID string, queueDepth int) {
-	e.deps.Log.Info("crawler.sync_pass.started",
-		"lifecycle", "sync_pass", "state", "started",
-		"run_id", runID, "trigger", "schedule", "queue_depth", queueDepth)
+// logSyncFinished closes a sync tick that did work, with its tally (INFO).
+func (e *Engine) logSyncFinished(runID string, synced, skipped, failed, retrying, queue int, dur time.Duration) {
+	e.deps.Log.Info("sync finished",
+		"component", "sync", "stage", "finished", "run_id", runID,
+		"synced", synced, "skipped", skipped, "failed", failed, "retrying", retrying,
+		"queue", queue, "dur_ms", dur.Milliseconds())
 }
 
-// logSyncPassCompleted closes a catalog tick that did work, with its tally.
-func (e *Engine) logSyncPassCompleted(runID string, synced, skipped, dropped, faulted, retried, queueDepthAfter int, dur time.Duration) {
-	e.deps.Log.Info("crawler.sync_pass.completed",
-		"lifecycle", "sync_pass", "state", "completed", "run_id", runID,
-		"synced", synced, "skipped", skipped, "dropped", dropped, "faulted", faulted, "retried", retried,
-		"queue_depth_after", queueDepthAfter, "duration_ms", dur.Milliseconds())
+// stepPhrase maps a fault class to the "couldn't <…>" phrase that says where a
+// sync broke, per docs/crawler-logs.md §4.
+func stepPhrase(fault string) string {
+	switch fault {
+	case "index_fetch", "absent":
+		return "resolve the catalog"
+	case "decode", "gap":
+		return "unpack the files"
+	case "digest_mismatch":
+		return "verify the downloaded files"
+	case "oversize":
+		return "batch the catalog"
+	case "store":
+		return "save progress"
+	default: // push_schema / push_rejected / transient (5xx) / anything else
+		return "send the catalog to Discovery"
+	}
 }
 
-// --- Index crawl (lifecycle=index_pass / index_crawl) -----------------------
-
-// logIndexPassCompleted closes one index tick with its tally.
-func (e *Engine) logIndexPassCompleted(runID string, fetched, changed, enqueued int, dur time.Duration) {
-	e.deps.Log.Info("crawler.index_pass.completed",
-		"lifecycle", "index_pass", "state", "completed", "run_id", runID,
-		"indexes_fetched", fetched, "indexes_changed", changed,
-		"catalogs_enqueued", enqueued, "duration_ms", dur.Milliseconds())
+// faultDetail is the short "what went wrong" clause after the em dash: the HTTP
+// status when there is one, else the fault class.
+func faultDetail(fc catalog.FaultClass, report store.PassReport) string {
+	if report.HTTPStatus != 0 {
+		return fmt.Sprintf("%d", report.HTTPStatus)
+	}
+	return fc.String()
 }
 
-// logIndexPassFailed fires when the source can't even be resolved (no refs to
-// crawl this tick).
-func (e *Engine) logIndexPassFailed(runID, stage string, err error) {
-	e.deps.Log.Error("crawler.index_pass.failed",
-		"lifecycle", "index_pass", "state", "failed",
-		"run_id", runID, "stage", stage, "error", errStr(err))
-}
-
-// logIndexFetchFailed fires when one index can't be fetched/parsed. The
-// participant is still unknown pre-fetch, so this is keyed on the index URL.
-func (e *Engine) logIndexFetchFailed(runID, indexURL string, fc catalog.FaultClass, err error) {
-	e.deps.Log.Warn("crawler.index_crawl.fetch_failed",
-		"lifecycle", "index_crawl", "state", "fetch_failed",
-		"run_id", runID, "index_url", indexURL, "fault_class", fc.String(), "error", errStr(err))
-}
-
-// logIndexRollback flags a catalog whose index version went backwards (not
-// applied — recorded for an operator).
-func (e *Engine) logIndexRollback(runID, catalogID string, cursorVersion, indexVersion int64) {
-	e.deps.Log.Warn("crawler.index_crawl.rollback",
-		"lifecycle", "index_crawl", "state", "rollback",
-		"run_id", runID, "catalog_id", catalogID,
-		"cursor_version", cursorVersion, "index_version", indexVersion)
-}
-
-// logIndexChecked / logIndexUnchanged / logIndexNotModified are the DEBUG
-// traces of a single index crawl's shape (200 processed / 200 same-version /
-// 304).
-func (e *Engine) logIndexChecked(runID, indexURL string, version int64) {
-	e.deps.Log.Debug("crawler.index_crawl.checked",
-		"lifecycle", "index_crawl", "state", "checked",
-		"run_id", runID, "index_url", indexURL, "version", version)
-}
-
-func (e *Engine) logIndexUnchanged(runID, indexURL string, version int64) {
-	e.deps.Log.Debug("crawler.index_crawl.unchanged",
-		"lifecycle", "index_crawl", "state", "unchanged",
-		"run_id", runID, "index_url", indexURL, "version", version)
-}
-
-func (e *Engine) logIndexNotModified(runID, indexURL string) {
-	e.deps.Log.Debug("crawler.index_crawl.not_modified",
-		"lifecycle", "index_crawl", "state", "not_modified",
-		"run_id", runID, "index_url", indexURL)
-}
-
-// --- Catalog decisions (lifecycle=catalog) ----------------------------------
-
-// logCatalogDecided traces what the index crawl decided to do with one catalog.
-func (e *Engine) logCatalogDecided(runID, catalogID, decision string, cursor, toVersion int64) {
-	e.deps.Log.Debug("crawler.catalog.decided",
-		"lifecycle", "catalog", "state", "decided",
-		"run_id", runID, "catalog_id", catalogID,
-		"decision", decision, "cursor", cursor, "to_version", toVersion)
-}
-
-func (e *Engine) logCatalogEnqueued(runID, catalogID string, toVersion int64) {
-	e.deps.Log.Debug("crawler.catalog.enqueued",
-		"lifecycle", "catalog", "state", "enqueued",
-		"run_id", runID, "catalog_id", catalogID, "to_version", toVersion)
-}
-
-func (e *Engine) logCatalogRetireEnqueued(runID, catalogID string) {
-	e.deps.Log.Debug("crawler.catalog.retire_enqueued",
-		"lifecycle", "catalog", "state", "retire_enqueued",
-		"run_id", runID, "catalog_id", catalogID)
-}
-
-func (e *Engine) logCatalogRemovalsSkipped(runID, catalogID string, resources, offers int) {
-	e.deps.Log.Debug("crawler.catalog.removals_skipped",
-		"lifecycle", "catalog", "state", "removals_skipped",
-		"run_id", runID, "catalog_id", catalogID, "resources", resources, "offers", offers)
-}
-
-// --- Store (lifecycle=store) ------------------------------------------------
+// --- shared -----------------------------------------------------------------
 
 // storeUnhealthy is the single collapsed event for every failed store op: the
-// crawler's DB is momentarily unhealthy for `operation`. It replaced ~a dozen
-// bespoke *_failed events. operation uses the short vocab: read_index,
-// advance_cadence, read_cursor, enqueue, upsert_index, claim, complete, park,
-// reschedule, record.
-func (e *Engine) storeUnhealthy(runID, operation, catalogID string, err error) {
+// crawler's DB is momentarily unhealthy for `operation` (ERROR). component is
+// the job that hit it ("crawl" or "sync"). operation uses the short vocab:
+// read_index, advance_cadence, read_cursor, enqueue, upsert_index, claim,
+// complete, park, reschedule, record.
+func (e *Engine) storeUnhealthy(component, runID, operation, catalogID string, err error) {
 	kv := []any{
-		"lifecycle", "store", "state", "unhealthy",
+		"component", component, "stage", "failed", "fault", "store",
 		"run_id", runID, "operation", operation,
 	}
 	if catalogID != "" {
 		kv = append(kv, "catalog_id", catalogID)
 	}
 	kv = append(kv, "error", errStr(err))
-	e.deps.Log.Error("crawler.store.unhealthy", kv...)
+	e.deps.Log.Error("database error while "+operation+": "+errStr(err), kv...)
 }

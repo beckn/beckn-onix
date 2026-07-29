@@ -1,7 +1,7 @@
 package catalog
 
-// lifecycle_test.go — pins the stable wire values of the lifecycle enums
-// (SyncOutcome, CatalogStatus, DropReason) that the store and logs depend on.
+// status_test.go — pins the stable wire values of the persisted status/outcome
+// enums (SyncOutcome, CatalogStatus, DropReason) that the store and logs depend on.
 
 import "testing"
 

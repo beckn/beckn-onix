@@ -1,15 +1,11 @@
 package catalog
 
-// This file is the single source of truth for the Catalog Sync's shared state
-// vocabulary (§6b). The subject of the lifecycle is a Catalog Sync — one
-// catalog moving one version jump — and these are the terminal + persisted
-// states that both the store (persists) and the runner (sets) speak. Each
-// enum's String() is the STABLE WIRE VALUE used for DB persistence and
-// log/metric rendering.
-//
-// The Catalog Sync's *running* sub-states (SyncPhase), the index crawl's
-// terminal (IndexOutcome), and the crawler process supervisor (DaemonState)
-// live in runner/lifecycle.go — they never reach a layer below the runner.
+// status.go — the persisted status/outcome enums the store and Discovery care
+// about (a store/DB contract, separate from logging). The subject is a Catalog
+// Sync — one catalog moving one version jump — and these are the terminal
+// outcome + persisted status that both the store (persists) and the runner
+// (sets) speak. Each enum's String() is the STABLE WIRE VALUE used for DB
+// persistence and log/metric rendering.
 
 // SyncOutcome is how a Catalog Sync ends — a NAMED terminal outcome, never a
 // bare "completed". Persisted in a catalog's push_status history.
