@@ -13,6 +13,11 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher/localstore"
 )
 
+// catalogPublishAction is the fixed context.action value this handler's
+// requests are validated under -- there is only one action this handler
+// ever serves, so it's never read from the request itself.
+const catalogPublishAction = "catalog/publish"
+
 // catalogPublishHandler serves a DS-internal, unsigned catalog/publish
 // trigger: it invokes a CatalogPublisher synchronously with the catalogs in
 // the request body, persists the result under a common local output root
@@ -28,8 +33,10 @@ import (
 // catalogpublisher.CatalogSubmission's zero value. Restricted-catalog
 // support is a later phase, tracked in this package's README.
 type catalogPublishHandler struct {
-	publisher  definition.CatalogPublisher
-	outputRoot string
+	publisher       definition.CatalogPublisher
+	outputRoot      string
+	schemaValidator definition.SchemaValidator
+	policyChecker   definition.PolicyChecker
 }
 
 // publishRequest is the DS-facing catalog/publish request body. Catalogs
@@ -87,8 +94,25 @@ func NewCatalogPublishHandler(ctx context.Context, mgr PluginManager, cfg *Confi
 		return nil, fmt.Errorf("catalogPublish handler %s: failed to load catalogPublisher plugin (%s): %w", moduleName, cfg.Plugins.CatalogPublisher.ID, err)
 	}
 
+	// Both optional, matching this handler's other plugins: unconfigured
+	// means skipped, not an error, so existing deployments keep working
+	// unchanged until a schemaValidator/checkPolicy block is added.
+	schemaValidator, err := loadPlugin(ctx, "SchemaValidator", cfg.Plugins.SchemaValidator, mgr.SchemaValidator)
+	if err != nil {
+		return nil, fmt.Errorf("catalogPublish handler %s: %w", moduleName, err)
+	}
+	policyChecker, err := loadPolicyChecker(ctx, mgr, nil, cfg.Plugins.PolicyChecker)
+	if err != nil {
+		return nil, fmt.Errorf("catalogPublish handler %s: %w", moduleName, err)
+	}
+
 	log.Debugf(ctx, "catalogPublish handler %s initialized, outputRoot=%s", moduleName, cfg.OutputRoot)
-	return &catalogPublishHandler{publisher: publisher, outputRoot: cfg.OutputRoot}, nil
+	return &catalogPublishHandler{
+		publisher:       publisher,
+		outputRoot:      cfg.OutputRoot,
+		schemaValidator: schemaValidator,
+		policyChecker:   policyChecker,
+	}, nil
 }
 
 // withKeyManagerSubscriberID returns catalogPublisherCfg with its
@@ -176,6 +200,26 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if len(req.Catalogs) > 0 && (h.schemaValidator != nil || h.policyChecker != nil) {
+		envelope, err := buildValidationEnvelope(req.Catalogs)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
+			return
+		}
+		if h.schemaValidator != nil {
+			if err := h.schemaValidator.Validate(r.Context(), nil, envelope); err != nil {
+				http.Error(w, fmt.Sprintf("schema validation failed: %v", err), http.StatusBadRequest)
+				return
+			}
+		}
+		if h.policyChecker != nil {
+			if err := h.policyChecker.CheckPolicy(&model.StepContext{Context: r.Context(), Body: envelope}); err != nil {
+				http.Error(w, fmt.Sprintf("policy check failed: %v", err), http.StatusBadRequest)
+				return
+			}
+		}
+	}
+
 	submissions := make([]definition.CatalogSubmission, 0, len(req.Catalogs))
 	catalogIDs := make([]string, 0, len(req.Catalogs))
 	for _, raw := range req.Catalogs {
@@ -238,6 +282,26 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	}
 
 	writePublishJSON(w, r, publishResponse{Status: publishOverallCompleted, Results: results})
+}
+
+// buildValidationEnvelope wraps the submitted catalogs in the minimal
+// {context: {action}, message: {catalogs}} shape schemaValidator/
+// policyChecker plugins expect, so they can be reused as-is without this
+// handler adopting the full signed/routed Beckn action envelope (context.
+// action is the only field either plugin actually requires here) -- this
+// keeps the DS-facing request body (publishRequest) unchanged.
+func buildValidationEnvelope(catalogs []json.RawMessage) ([]byte, error) {
+	envelope := struct {
+		Context struct {
+			Action string `json:"action"`
+		} `json:"context"`
+		Message struct {
+			Catalogs []json.RawMessage `json:"catalogs"`
+		} `json:"message"`
+	}{}
+	envelope.Context.Action = catalogPublishAction
+	envelope.Message.Catalogs = catalogs
+	return json.Marshal(envelope)
 }
 
 func writePublishJSON(w http.ResponseWriter, r *http.Request, body publishResponse) {
