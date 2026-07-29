@@ -55,10 +55,13 @@ const IndexFilename = "becknCatalogs.index.json"
 // under one shared path).
 const CatalogsDirName = "catalogs"
 
+// IndexDirName is the root subdirectory holding the catalog index.
+const IndexDirName = "dedi"
+
 // ManifestPath, IndexPath, and the catalogs directory, all relative to
 // root.
 func ManifestPath(root string) string { return filepath.Join(root, ".well-known", ManifestFilename) }
-func IndexPath(root string) string    { return filepath.Join(root, "dedi", IndexFilename) }
+func IndexPath(root string) string    { return filepath.Join(root, IndexDirName, IndexFilename) }
 func CatalogsDir(root string) string  { return filepath.Join(root, CatalogsDirName) }
 
 // EnsureDirs creates every directory Write will need under root.

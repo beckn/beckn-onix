@@ -95,9 +95,9 @@ func TestPublish_SingleCatalog_ProducesManifestAndIndex(t *testing.T) {
 	km := newFakeKeyManager(t, "publisher-key-1")
 	km.domain = "example.test"
 	p, _, err := New(context.Background(), km, &Config{
-		SubscriberID:   "publisher-key-1",
-		NextUpdateIn:   14 * 24 * time.Hour,
-		CatalogBaseURL: "https://cdn.example.test/catalogs",
+		SubscriberID:  "publisher-key-1",
+		NextUpdateIn:  14 * 24 * time.Hour,
+		PublicBaseURL: "https://cdn.example.test",
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -284,7 +284,7 @@ func TestCatalogPartURL_PlaceholderWhenUnconfigured(t *testing.T) {
 	if got := p.catalogPartURL("CAT-1.v1.json"); got != "pending-artifact-store://catalog/CAT-1.v1.json" {
 		t.Errorf("unexpected placeholder URL: %q", got)
 	}
-	p.config.CatalogBaseURL = "https://cdn.example.com/catalogs/"
+	p.config.PublicBaseURL = "https://cdn.example.com/"
 	if got := p.catalogPartURL("CAT-1.v1.json"); got != "https://cdn.example.com/catalogs/CAT-1.v1.json" {
 		t.Errorf("unexpected configured URL: %q", got)
 	}
@@ -370,7 +370,7 @@ func TestPublish_Incremental_UnchangedProducesNoOp(t *testing.T) {
 
 func TestPublish_Incremental_ProducesChangeFile(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
-	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1", CatalogBaseURL: "https://cdn.test/catalogs"})
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1", PublicBaseURL: "https://cdn.test"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

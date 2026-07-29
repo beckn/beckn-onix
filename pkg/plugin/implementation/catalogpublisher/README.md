@@ -287,11 +287,16 @@ go test ./pkg/plugin/implementation/catalogpublisher/... -v
   a follow-up.
 - **No grace-period deletion of superseded files** after compaction (file
   spec: "Old files remain for a grace period... then are deleted").
-- **No storage wiring.** `Config.IndexURL`/`CatalogBaseURL` are read
-  straight from config; when unset, a `pending-artifact-store://...`
-  placeholder URL is used so the plugin can still be exercised and tested
-  before a real storage backend exists (`catalogpublisherctl` fills these
-  in with `file://` paths for its own demo purposes).
+- **No storage wiring.** `Config.PublicBaseURL` is read straight from
+  config -- one URL prefix for everything a publish writes, mirroring
+  wherever `outputRoot` (see `localstore`) is actually served from
+  publicly (e.g. an ngrok tunnel onto that one directory). The index is
+  addressed at `{PublicBaseURL}/dedi/becknCatalogs.index.json` and catalog
+  parts at `{PublicBaseURL}/catalogs/<localName>.v<version>.json`. When
+  unset, a `pending-artifact-store://...` placeholder URL is used so the
+  plugin can still be exercised and tested before a real public location
+  exists (`catalogpublisherctl` fills this in with a `file://` path for
+  its own demo purposes).
 - **`diffCatalogAttributes` is a best-effort subset**, not a complete
   implementation of the change file's optional `catalog` object. The file
   spec names "name, validity window" as examples of catalog-level

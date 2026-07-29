@@ -19,9 +19,8 @@ type catalogPublisherProvider struct {
 
 func (p catalogPublisherProvider) parseConfig(config map[string]string) (*catalogpublisher.Config, error) {
 	cfg := &catalogpublisher.Config{
-		SubscriberID:   config["subscriberId"],
-		IndexURL:       config["indexURL"],
-		CatalogBaseURL: config["catalogBaseURL"],
+		SubscriberID:  config["subscriberId"],
+		PublicBaseURL: config["catalogBaseURL"],
 	}
 	if cfg.SubscriberID == "" {
 		return nil, fmt.Errorf("subscriberId is required")

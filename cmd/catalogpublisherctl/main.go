@@ -49,7 +49,7 @@ func main() {
 	fileValidityDays := flag.Int("fileValidityDays", 14, "days until each catalog file's signature.validUntil expires (0 falls back to -nextUpdateDays)")
 	retire := flag.String("retire", "", "comma-separated catalogIds to mark RETIRED this run (works with or without -catalog)")
 	forceBaseline := flag.Bool("forceBaseline", false, "publish a fresh baseline for -catalog, discarding its change history (also how to trigger compaction)")
-	publicBaseURL := flag.String("publicBaseURL", "", "if set, embed URLs under this base instead of file:// (e.g. http://localhost:8000 when serving -out with `python3 -m http.server` from within it) -- must match wherever -out is actually served from; the manifest itself is still always written under .well-known/ relative to -out, matching the fixed well-known path a crawler expects")
+	publicBaseURL := flag.String("publicBaseURL", "", "if set, embed URLs under this single base instead of file:// (e.g. http://localhost:8000 when serving -out with `python3 -m http.server` from within it) -- must match wherever -out is actually served from; the manifest itself is still always written under .well-known/ relative to -out, matching the fixed well-known path a crawler expects")
 	flag.Parse()
 
 	var retireIDs []string
@@ -63,12 +63,12 @@ func main() {
 
 	must(localstore.EnsureDirs(*outDir))
 
-	indexURL := "file://" + mustAbs(localstore.IndexPath(*outDir))
-	catalogBaseURL := "file://" + mustAbs(localstore.CatalogsDir(*outDir))
+	// index/catalogs both live as subdirectories of outDir (localstore's own
+	// layout), so one base -- file://<outDir> by default, or -publicBaseURL
+	// when set -- addresses both.
+	base := "file://" + mustAbs(*outDir)
 	if *publicBaseURL != "" {
-		base := strings.TrimRight(*publicBaseURL, "/")
-		indexURL = base + "/dedi/" + localstore.IndexFilename
-		catalogBaseURL = base + "/" + localstore.CatalogsDirName
+		base = strings.TrimRight(*publicBaseURL, "/")
 	}
 
 	km, err := newFileKeyManager(*outDir, *keyID, *domain)
@@ -88,8 +88,7 @@ func main() {
 		SubscriberID:   *keyID,
 		NextUpdateIn:   nextUpdateIn,
 		FileValidityIn: fileValidityIn,
-		IndexURL:       indexURL,
-		CatalogBaseURL: catalogBaseURL,
+		PublicBaseURL:  base,
 	})
 	must(err)
 

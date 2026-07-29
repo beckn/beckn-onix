@@ -234,3 +234,11 @@ modules:
             # here only if it must legitimately differ from keyManager's.
             nextUpdateIn: "336h"
             fileValidityIn: "336h"
+            # catalogBaseURL: the one public URL prefix outputRoot (/catalog
+            # above) is served under -- e.g. an ngrok tunnel onto that
+            # directory. Index/catalog file URLs in the generated manifest
+            # and index are addressed under this base
+            # ({catalogBaseURL}/dedi/... and {catalogBaseURL}/catalogs/...).
+            # Left unset here; a "pending-artifact-store://..." placeholder
+            # is used until you point it at a real public location.
+            # catalogBaseURL: "https://your-tunnel.ngrok-free.app"

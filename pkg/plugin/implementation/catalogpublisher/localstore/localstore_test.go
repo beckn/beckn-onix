@@ -1,4 +1,4 @@
-package localstore
+package localstore_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher/localstore"
 )
 
 // jsonEqual compares two JSON documents structurally, ignoring key order
@@ -85,11 +86,11 @@ func TestWriteThenLoad_RoundTripsBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	if err := Write(root, result); err != nil {
+	if err := localstore.Write(root, result); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 
-	state, err := Load(root, []string{"example.test/CAT-1"})
+	state, err := localstore.Load(root, []string{"example.test/CAT-1"})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -113,7 +114,7 @@ func TestWriteThenLoad_RoundTripsBaseline(t *testing.T) {
 
 func TestLoad_NoPriorIndex_ReturnsEmptyState(t *testing.T) {
 	root := t.TempDir()
-	state, err := Load(root, []string{"example.test/CAT-1"})
+	state, err := localstore.Load(root, []string{"example.test/CAT-1"})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -138,12 +139,12 @@ func TestWriteThenLoad_IncrementalAndCarryForward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	if err := Write(root, result); err != nil {
+	if err := localstore.Write(root, result); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 
 	// Now publish an update to only CAT-A; CAT-B should carry forward.
-	state, err := Load(root, []string{"example.test/CAT-A"})
+	state, err := localstore.Load(root, []string{"example.test/CAT-A"})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -164,12 +165,12 @@ func TestWriteThenLoad_IncrementalAndCarryForward(t *testing.T) {
 	if result2.Catalogs[0].Mode != "change" || result2.Catalogs[0].Version != 2 {
 		t.Fatalf("unexpected outcome: %+v", result2.Catalogs[0])
 	}
-	if err := Write(root, result2); err != nil {
+	if err := localstore.Write(root, result2); err != nil {
 		t.Fatalf("Write (v2): %v", err)
 	}
 
 	// Reload both: CAT-A should reconstruct to v2 content, CAT-B untouched.
-	finalState, err := Load(root, []string{"example.test/CAT-A", "example.test/CAT-B"})
+	finalState, err := localstore.Load(root, []string{"example.test/CAT-A", "example.test/CAT-B"})
 	if err != nil {
 		t.Fatalf("Load (final): %v", err)
 	}
@@ -192,11 +193,11 @@ func TestLoad_RetiredCatalogHasNoPriorState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	if err := Write(root, result); err != nil {
+	if err := localstore.Write(root, result); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 
-	state, err := Load(root, []string{"example.test/CAT-GONE"})
+	state, err := localstore.Load(root, []string{"example.test/CAT-GONE"})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
