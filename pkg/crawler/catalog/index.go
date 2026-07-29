@@ -54,7 +54,7 @@ type Index struct {
 }
 
 // Index entry status values (ION wire — distinct from the stored CatalogStatus
-// in lifecycle.go, which is lowercase "active"/"retired").
+// in status.go, which is lowercase "active"/"retired").
 const (
 	StatusActive  = "ACTIVE"
 	StatusRetired = "RETIRED"

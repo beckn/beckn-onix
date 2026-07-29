@@ -1,10 +1,9 @@
 # Crawler Logs
 
-> **Status: design spec.** This is the target logging model agreed for the
-> crawler. The code today still emits an older, finer-grained vocabulary
-> (`lifecycle=index_pass/index_crawl/catalog/sync_pass/...`); `runner/telemetry.go`
-> will be updated to match this doc. Until then, treat this as the contract to
-> implement against, not a description of current output.
+> **Status: implemented.** This is the logging model the crawler emits as of
+> now — `runner/telemetry.go` mints exactly these components, stages, messages,
+> levels, and fields. This doc is a description of current output, not just a
+> target.
 
 ## 1. The model: one process, two jobs
 
@@ -65,7 +64,7 @@ Rule of thumb: **attributes = which one; stats = how much.**
 | `WARN` | recoverable — will self-heal | transient sync failure (will retry), index unreachable |
 | `ERROR` | needs a human | permanent sync failure (parked), daemon start failure, DB unhealthy |
 
-At `INFO`, a healthy crawler is quiet: `daemon.ready` once, then two summary lines per active tick. An idle tick logs nothing.
+At `INFO`, a healthy crawler is quiet: `daemon.ready` once, then one `finished` line per active job tick (`crawl.finished`, `sync.finished`). An idle tick logs nothing.
 
 ## 4. Components & stages
 
@@ -75,16 +74,17 @@ At `INFO`, a healthy crawler is quiet: `daemon.ready` once, then two summary lin
 | `ready` | INFO | "crawler started — polling N source(s) every 5m, pushing to `<host>`" | source_mode, push_host | sources, index_interval, catalog_interval, max_attempts |
 | `stopping` | INFO | "crawler stopping" | — | — |
 | `stopped` | INFO | "crawler stopped" | — | — |
-| `failed` | ERROR | "crawler failed to start while opening the database: `<err>`" | at (`db_open`/`db_migrate`/`config`), error | — |
+| `failed` | ERROR | "crawler failed to start while opening the database: `<err>`" | at (`db_open`/`db_migrate`/`config`/`start`), error | — |
 
 ### `crawl` — job 1 (find work)
 | stage | level | message (varies by result) | attributes | stats |
 |---|---|---|---|---|
-| `polled` | DEBUG · WARN | "index unchanged" · "index updated to v5" · **WARN** "couldn't reach the index: `<err>`" | index_url, version, result (`unchanged`/`updated`/`unreachable`) | — |
+| `polled` | DEBUG · WARN | "index unchanged" · "index updated to v5" · "index not modified (304)" · **WARN** "couldn't reach the index: `<err>`" | index_url, version, result (`unchanged`/`updated`/`not_modified`/`unreachable`) | — |
 | `queued` | DEBUG | "queued this catalog to sync (v3 → v5)" · "queued this catalog to retire" | catalog_id, op (`sync`/`retire`), from, to | — |
 | `finished` | INFO | "crawl finished — polled 1 index, 1 updated, queued 1 catalog" | — | indexes, updated, queued, dur_ms |
+| `failed` | ERROR | "crawl error while `<op>`: `<err>`" — source-resolve failures and DB errors during a crawl | at/operation, error | — |
 
-*(A version rollback is a rare `polled` WARN: "index version went backwards — ignored".)*
+*(A version rollback is a rare `polled` WARN: "index version went backwards — ignored". Store errors surface as component=`crawl`/`sync` stage=`failed` fault=`store`.)*
 
 ### `sync` — job 2 (do the work)
 | stage | level | message | attributes | stats |
@@ -106,9 +106,11 @@ The *where* comes from the fault, so no code needs decoding:
 | fault | message says "couldn't **…**" |
 |---|---|
 | `index_fetch` / `absent` | resolve the catalog |
+| `ssrf` | download the files |
 | `decode` / `gap` | unpack the files |
 | `digest_mismatch` | verify the downloaded files |
 | `oversize` | batch the catalog |
+| `content_invalid` | build the push request |
 | `push_schema` / `push_rejected` / transient (5xx) | send the catalog to Discovery |
 | `store` | save progress |
 
@@ -129,10 +131,10 @@ The *where* comes from the fault, so no code needs decoding:
 daemon ready     "crawler started — 1 source, polling every 5m → discovery.local"
 crawl  polled    "index updated to v5"                              index_url=…
 crawl  queued    "queued this catalog to sync (v3 → v5)"            catalog_id=…/electronics-2025
-crawl  finished  "crawl finished — polled 1 index, 1 updated, queued 1 catalog"   {indexes=1 updated=1 queued=1 dur_ms=142}
+crawl  finished  "crawl finished — polled 1 index(es), 1 updated, queued 1 catalog(s)"   {indexes=1 updated=1 queued=1 dur_ms=142}
 sync   syncing   "syncing catalog (v3 → v5)"                        catalog_id=…/electronics-2025
 sync   synced    "sent the catalog update to Discovery"             catalog_id=…/electronics-2025 {resources=12 offers=4 batches=2 dur_ms=180}
-sync   finished  "sync finished — 1 sent, 0 skipped, 0 failed; queue empty"   {synced=1 skipped=0 failed=0 retrying=0 queue=0 dur_ms=318}
+sync   finished  "sync finished — 1 sent, 0 skipped, 0 failed, 0 retrying; queue empty"   {synced=1 skipped=0 failed=0 retrying=0 queue=0 dur_ms=318}
 ```
 
 **A permanent failure (visible at INFO):**

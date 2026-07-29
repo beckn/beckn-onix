@@ -13,7 +13,6 @@ package catalog
 //	pushed   landed in Discovery
 //	partial  some batches acked, some not (retried; cursor not advanced)
 //	skipped  nothing new to send
-//	dropped  not a member / out of approved scope (P2 — scope enforcement)
 //	retired  catalog tombstoned
 //	faulted  failed with a FaultClass explaining why (see fault.go)
 type SyncOutcome string
@@ -22,7 +21,6 @@ const (
 	OutcomePushed  SyncOutcome = "pushed"
 	OutcomePartial SyncOutcome = "partial"
 	OutcomeSkipped SyncOutcome = "skipped"
-	OutcomeDropped SyncOutcome = "dropped"
 	OutcomeRetired SyncOutcome = "retired"
 	OutcomeFaulted SyncOutcome = "faulted"
 )
@@ -40,16 +38,3 @@ const (
 )
 
 func (c CatalogStatus) String() string { return string(c) }
-
-// DropReason says why an in-scope-looking catalog was excluded from a sync
-// (membership / scope) — the *why* behind a `dropped` outcome. Reserved for
-// scope enforcement (P2): the sync's scope step (ResolveScope) resolves
-// visibility today but does not yet drop, so nothing produces a DropReason yet.
-type DropReason string
-
-const (
-	DropNotAMember       DropReason = "not_a_member"
-	DropScopeNotApproved DropReason = "scope_not_approved"
-)
-
-func (d DropReason) String() string { return string(d) }

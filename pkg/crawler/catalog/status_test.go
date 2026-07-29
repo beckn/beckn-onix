@@ -1,7 +1,7 @@
 package catalog
 
 // status_test.go — pins the stable wire values of the persisted status/outcome
-// enums (SyncOutcome, CatalogStatus, DropReason) that the store and logs depend on.
+// enums (SyncOutcome, CatalogStatus) that the store and logs depend on.
 
 import "testing"
 
@@ -12,7 +12,6 @@ func TestSyncOutcomeWireValues(t *testing.T) {
 		OutcomePushed:  "pushed",
 		OutcomePartial: "partial",
 		OutcomeSkipped: "skipped",
-		OutcomeDropped: "dropped",
 		OutcomeRetired: "retired",
 		OutcomeFaulted: "faulted",
 	}
@@ -23,11 +22,8 @@ func TestSyncOutcomeWireValues(t *testing.T) {
 	}
 }
 
-func TestCatalogStatusAndDropReasonWireValues(t *testing.T) {
+func TestCatalogStatusWireValues(t *testing.T) {
 	if CatalogActive.String() != "active" || CatalogRetired.String() != "retired" {
 		t.Errorf("CatalogStatus wire values drifted: %q / %q", CatalogActive, CatalogRetired)
-	}
-	if DropNotAMember.String() != "not_a_member" || DropScopeNotApproved.String() != "scope_not_approved" {
-		t.Errorf("DropReason wire values drifted: %q / %q", DropNotAMember, DropScopeNotApproved)
 	}
 }

@@ -38,7 +38,7 @@ type crawlResult struct {
 }
 
 // indexPass resolves every configured source and crawls each index. It mints
-// one run_id for the whole tick and emits the index_pass heartbeat.
+// one run_id for the whole tick and emits the crawl finished summary.
 func (e *Engine) indexPass(ctx context.Context) {
 	runID := e.newID()
 	start := e.deps.Now()
@@ -150,7 +150,7 @@ func (e *Engine) recordIndex(ctx context.Context, ref source.IndexRef, res catal
 }
 
 // decideCatalogs walks an advanced index and, per catalog, decides + enqueues.
-// It returns how many catalogs were enqueued (for the index_pass tally).
+// It returns how many catalogs were enqueued (for the crawl finished tally).
 func (e *Engine) decideCatalogs(ctx context.Context, ref source.IndexRef, idx catalog.Index, runID string) int {
 	enqueued := 0
 	for _, entry := range idx.Catalogs {
