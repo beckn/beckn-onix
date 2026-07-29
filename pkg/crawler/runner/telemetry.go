@@ -8,11 +8,13 @@ package runner
 // The model is one process running two jobs, so there are three log components:
 // `daemon` (the process — owned by the composition root, not here), `crawl`
 // (job 1: poll indexes, queue changed catalogs), and `sync` (job 2: sync one
-// queued catalog to Discovery). Every line carries, in order: the natural
-// message (the logger's first arg), then base fields `component`, `stage`,
-// `run_id`; sync per-catalog lines also carry `pass_id`, `catalog_id`, `from`,
-// `to`. The event key is always `crawler.<component>.<stage>`. The persisted
-// status/outcome enums Discovery/DB care about live in catalog/status.go.
+// queued catalog to Discovery). Every line carries the natural message (the
+// logger's first arg) plus base fields `component` and `stage`; runner-emitted
+// lines also carry `run_id` (daemon lines, from the composition root, carry
+// `component`/`stage` only). Sync per-catalog lines add `pass_id`,
+// `catalog_id`, `from`, `to`. The event key is always
+// `crawler.<component>.<stage>`. The persisted status/outcome enums
+// Discovery/DB care about live in catalog/status.go.
 
 import (
 	"fmt"
@@ -90,7 +92,7 @@ func (e *Engine) logQueued(runID, catalogID, op string, from, to int64) {
 
 // logCrawlFinished closes one crawl tick with its tally (INFO).
 func (e *Engine) logCrawlFinished(runID string, indexes, updated, queued int, dur time.Duration) {
-	e.deps.Log.Info("crawl finished",
+	e.deps.Log.Info(fmt.Sprintf("crawl finished — polled %d index(es), %d updated, queued %d catalog(s)", indexes, updated, queued),
 		"component", "crawl", "stage", "finished", "run_id", runID,
 		"indexes", indexes, "updated", updated, "queued", queued, "dur_ms", dur.Milliseconds())
 }
@@ -162,15 +164,13 @@ func (e *Engine) logFailed(runID, passID string, item *store.ClaimedItem, fc cat
 	e.deps.Log.Error(msg, kv...)
 }
 
-// logSyncStarted marks a sync tick that found work (silent when idle) (INFO).
-func (e *Engine) logSyncStarted(runID string, queueDepth int) {
-	e.deps.Log.Info("sync started",
-		"component", "sync", "stage", "started", "run_id", runID, "queue", queueDepth)
-}
-
 // logSyncFinished closes a sync tick that did work, with its tally (INFO).
 func (e *Engine) logSyncFinished(runID string, synced, skipped, failed, retrying, queue int, dur time.Duration) {
-	e.deps.Log.Info("sync finished",
+	q := "queue empty"
+	if queue != 0 {
+		q = fmt.Sprintf("%d in queue", queue)
+	}
+	e.deps.Log.Info(fmt.Sprintf("sync finished — %d sent, %d skipped, %d failed, %d retrying; %s", synced, skipped, failed, retrying, q),
 		"component", "sync", "stage", "finished", "run_id", runID,
 		"synced", synced, "skipped", skipped, "failed", failed, "retrying", retrying,
 		"queue", queue, "dur_ms", dur.Milliseconds())
@@ -190,6 +190,10 @@ func stepPhrase(fault string) string {
 		return "batch the catalog"
 	case "store":
 		return "save progress"
+	case "content_invalid":
+		return "build the push request"
+	case "ssrf":
+		return "download the files"
 	default: // push_schema / push_rejected / transient (5xx) / anything else
 		return "send the catalog to Discovery"
 	}

@@ -27,7 +27,7 @@ import (
 const pushEnvelopeReserve = 4 << 10
 
 // catalogPass drains the queue: claim -> handle -> repeat until empty. It mints
-// one run_id per tick and emits the sync_pass heartbeat only when there was
+// one run_id per tick and emits the sync finished summary only when there was
 // work (an empty queue is silent, so the CatalogInterval never spams logs).
 func (e *Engine) catalogPass(ctx context.Context) {
 	runID := e.newID()
@@ -46,15 +46,11 @@ func (e *Engine) catalogPass(ctx context.Context) {
 		if item == nil {
 			break // queue drained
 		}
-		if !started {
-			started = true
-			depth, _ := e.deps.Store.QueueDepth(ctx)
-			e.logSyncStarted(runID, depth)
-		}
+		started = true
 		switch e.handleQueueItem(ctx, item, runID) {
 		case catalog.OutcomePushed, catalog.OutcomeRetired:
 			synced++
-		case catalog.OutcomeSkipped, catalog.OutcomeDropped:
+		case catalog.OutcomeSkipped:
 			skipped++
 		case catalog.OutcomePartial:
 			retrying++ // partial push is a retry-in-progress, not a permanent fault
@@ -111,40 +107,38 @@ type syncState struct {
 	acked         int
 }
 
-// syncStage is one step in the Catalog Sync pipeline. run does the step against
-// the shared state and returns (outcome, stop): stop=true ends the sync here —
+// stageFn is one step in the Catalog Sync pipeline. It does the step against the
+// shared state and returns (outcome, stop): stop=true ends the sync here —
 // either a terminal success/skip, or a failure the step already routed
-// (park/retry). what is a human label for the step (for reading the recipe).
-type syncStage struct {
-	what string
-	run  func(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool)
-}
+// (park/retry). The pipeline literal keeps each step's human label as an inline
+// comment so the recipe still reads top-to-bottom.
+type stageFn func(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool)
 
 // syncCatalog runs ONE claimed catalog through the sync pipeline and returns its
 // terminal SyncOutcome. This list is the whole per-catalog recipe — read it top
-// to bottom. To add a step (e.g. §9a content-schema validation, which would be
-// {"validate content schema", e.validateContent}), insert one line.
+// to bottom. To add a step (e.g. §9a content-schema validation), insert one line
+// (e.validateContent /* validate content schema */).
 func (e *Engine) syncCatalog(ctx context.Context, item *store.ClaimedItem, runID, passID string) catalog.SyncOutcome {
 	s := &syncState{item: item, runID: runID, passID: passID}
 	e.logSyncing(runID, passID, item)
 
-	pipeline := []syncStage{
-		{"fetch index & find catalog", e.resolveEntry},
-		{"pull & unpack files", e.fetchContent},
-		{"verify digests & decide upserts", e.verifyContent},
-		{"resolve who may see it (visibleTo)", e.resolveVisibility},
-		{"batch by size cap", e.batch},
-		{"push each batch to Discovery", e.publish},
-		{"record & advance cursor", e.complete},
+	pipeline := []stageFn{
+		e.resolveEntry,      // fetch index & find catalog
+		e.fetchContent,      // pull & unpack files
+		e.verifyContent,     // verify digests & decide upserts
+		e.resolveVisibility, // resolve who may see it (visibleTo)
+		e.batch,             // batch by size cap
+		e.publish,           // push each batch to Discovery
+		e.complete,          // record & advance cursor
 	}
 	return e.runPipeline(ctx, s, pipeline)
 }
 
 // runPipeline walks the stages in order; a stage returning stop=true ends the
 // sync with its outcome.
-func (e *Engine) runPipeline(ctx context.Context, s *syncState, stages []syncStage) catalog.SyncOutcome {
+func (e *Engine) runPipeline(ctx context.Context, s *syncState, stages []stageFn) catalog.SyncOutcome {
 	for _, st := range stages {
-		if outcome, stop := st.run(ctx, s); stop {
+		if outcome, stop := st(ctx, s); stop {
 			return outcome
 		}
 	}

@@ -20,10 +20,9 @@ import (
 type DaemonState string
 
 const (
-	DaemonReady       DaemonState = "ready"
-	DaemonStopping    DaemonState = "stopping"
-	DaemonStopped     DaemonState = "stopped"
-	DaemonStartFailed DaemonState = "start_failed"
+	DaemonReady    DaemonState = "ready"
+	DaemonStopping DaemonState = "stopping"
+	DaemonStopped  DaemonState = "stopped"
 )
 
 func (d DaemonState) String() string { return string(d) }
