@@ -77,7 +77,8 @@ func (h *crawlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// CrawlNow returns immediately, launching a tracked goroutine on the
 	// engine's own context (drained by Stop) — so we don't run a detached crawl
 	// on a context the shutdown path can't reach (avoids DB use-after-close).
-	if err := h.crawler.CrawlNow(r.Context(), req.IndexURL); err != nil {
+	runID, err := h.crawler.CrawlNow(r.Context(), req.IndexURL)
+	if err != nil {
 		log.Errorf(r.Context(), err, "crawl: trigger failed for %s", req.IndexURL)
 		http.Error(w, "crawl trigger unavailable", http.StatusServiceUnavailable)
 		return
@@ -85,5 +86,5 @@ func (h *crawlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ACCEPTED", "indexUrl": req.IndexURL})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ACCEPTED", "indexUrl": req.IndexURL, "runId": runID})
 }

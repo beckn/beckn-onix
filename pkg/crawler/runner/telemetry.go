@@ -32,6 +32,17 @@ func errStr(err error) string {
 	return err.Error()
 }
 
+// triggerStr renders a crawl trigger for the `trigger` field: every
+// component=crawl line carries this, so a scheduled tick and an on-demand
+// /crawl can be told apart without cross-referencing run_id against the
+// HTTP response that minted it.
+func triggerStr(trig trigger) string {
+	if trig == onDemand {
+		return "on_demand"
+	}
+	return "scheduled"
+}
+
 // syncKV is the mandatory field set every component=sync per-catalog line
 // carries: the two correlation ids plus the catalog and the version jump.
 func syncKV(stage, runID, passID string, item *store.ClaimedItem) []any {
@@ -47,7 +58,7 @@ func syncKV(stage, runID, passID string, item *store.ClaimedItem) []any {
 
 // logPolled is the DEBUG trace of one index poll: result is `updated`,
 // `unchanged`, or `not_modified` (version is 0 for a 304, which had no body).
-func (e *Engine) logPolled(runID, indexURL string, version int64, result string) {
+func (e *Engine) logPolled(runID string, trig trigger, indexURL string, version int64, result string) {
 	msg := "index unchanged"
 	switch result {
 	case "updated":
@@ -56,52 +67,53 @@ func (e *Engine) logPolled(runID, indexURL string, version int64, result string)
 		msg = "index not modified (304)"
 	}
 	e.deps.Log.Debug(msg,
-		"component", "crawl", "stage", "polled", "run_id", runID,
+		"component", "crawl", "stage", "polled", "run_id", runID, "trigger", triggerStr(trig),
 		"index_url", indexURL, "version", version, "result", result)
 }
 
 // logPollFailed fires when one index can't be reached/parsed (WARN — the crawl
 // will try again next tick). Keyed on the index URL: the participant is still
 // unknown pre-fetch.
-func (e *Engine) logPollFailed(runID, indexURL string, err error) {
+func (e *Engine) logPollFailed(runID string, trig trigger, indexURL string, err error) {
 	e.deps.Log.Warn("couldn't reach the index: "+errStr(err),
-		"component", "crawl", "stage", "polled", "run_id", runID,
+		"component", "crawl", "stage", "polled", "run_id", runID, "trigger", triggerStr(trig),
 		"index_url", indexURL, "result", "unreachable", "error", errStr(err))
 }
 
 // logRollback flags a catalog whose index version went backwards — not applied,
 // recorded for an operator (WARN).
-func (e *Engine) logRollback(runID, catalogID string, cursorVersion, indexVersion int64) {
+func (e *Engine) logRollback(runID string, trig trigger, catalogID string, cursorVersion, indexVersion int64) {
 	e.deps.Log.Warn("index version went backwards — ignored",
-		"component", "crawl", "stage", "polled", "run_id", runID,
+		"component", "crawl", "stage", "polled", "run_id", runID, "trigger", triggerStr(trig),
 		"catalog_id", catalogID, "result", "rollback",
 		"cursor_version", cursorVersion, "index_version", indexVersion)
 }
 
 // logQueued (DEBUG) records that the crawl enqueued one catalog: op is `sync`
 // or `retire`, from/to are the version jump.
-func (e *Engine) logQueued(runID, catalogID, op string, from, to int64) {
+func (e *Engine) logQueued(runID string, trig trigger, catalogID, op string, from, to int64) {
 	msg := fmt.Sprintf("queued this catalog to sync (v%d → v%d)", from, to)
 	if op == "retire" {
 		msg = "queued this catalog to retire"
 	}
 	e.deps.Log.Debug(msg,
-		"component", "crawl", "stage", "queued", "run_id", runID,
+		"component", "crawl", "stage", "queued", "run_id", runID, "trigger", triggerStr(trig),
 		"catalog_id", catalogID, "op", op, "from", from, "to", to)
 }
 
 // logCrawlFinished closes one crawl tick with its tally (INFO).
-func (e *Engine) logCrawlFinished(runID string, indexes, updated, queued int, dur time.Duration) {
+func (e *Engine) logCrawlFinished(runID string, trig trigger, indexes, updated, queued int, dur time.Duration) {
 	e.deps.Log.Info(fmt.Sprintf("crawl finished — polled %d index(es), %d updated, queued %d catalog(s)", indexes, updated, queued),
-		"component", "crawl", "stage", "finished", "run_id", runID,
+		"component", "crawl", "stage", "finished", "run_id", runID, "trigger", triggerStr(trig),
 		"indexes", indexes, "updated", updated, "queued", queued, "dur_ms", dur.Milliseconds())
 }
 
 // logCrawlFailed fires when the source can't even be resolved — no refs to
-// crawl this tick (ERROR).
-func (e *Engine) logCrawlFailed(runID, at string, err error) {
+// crawl this tick (ERROR). Only a scheduled tick resolves sources this way;
+// an on-demand /crawl targets one URL directly and never hits this path.
+func (e *Engine) logCrawlFailed(runID string, trig trigger, at string, err error) {
 	e.deps.Log.Error("crawl failed to resolve its sources: "+errStr(err),
-		"component", "crawl", "stage", "failed", "run_id", runID,
+		"component", "crawl", "stage", "failed", "run_id", runID, "trigger", triggerStr(trig),
 		"at", at, "error", errStr(err))
 }
 

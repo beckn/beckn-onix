@@ -11,8 +11,9 @@ type Crawler interface {
 	// Stop signals the jobs and waits for the in-flight pass to drain.
 	Stop() error
 	// CrawlNow runs an immediate crawl for one index URL (supportability:
-	// re-pull a stuck provider on demand).
-	CrawlNow(ctx context.Context, indexURL string) error
+	// re-pull a stuck provider on demand). It returns a run_id the caller can
+	// use to correlate the crawl's (asynchronous) log lines.
+	CrawlNow(ctx context.Context, indexURL string) (string, error)
 }
 
 // CrawlerProvider initializes a new Crawler. It receives an optional

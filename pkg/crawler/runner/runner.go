@@ -98,24 +98,38 @@ func (e *Engine) Stop() error {
 
 // CrawlNow runs an immediate index crawl for one index URL (the /crawl
 // supportability trigger). It launches a tracked goroutine on the engine's own
-// context, so Stop() drains it before the DB is closed.
-func (e *Engine) CrawlNow(_ context.Context, indexURL string) error {
+// context, so Stop() drains it before the DB is closed. It returns the run_id
+// synchronously so the caller can correlate it against the crawl's later
+// (asynchronous) log lines.
+func (e *Engine) CrawlNow(_ context.Context, indexURL string) (string, error) {
 	e.mu.Lock()
 	if e.state != DaemonReady || e.ctx == nil {
 		e.mu.Unlock()
-		return fmt.Errorf("crawler: engine not running")
+		return "", fmt.Errorf("crawler: engine not running")
 	}
 	ctx := e.ctx
 	e.wg.Add(1)
 	e.mu.Unlock()
 
+	// An on-demand crawl is its own single-index run; mint the run_id here (not
+	// inside the goroutine) so it can be returned to the caller before the
+	// crawl completes.
+	runID := e.newID()
+	start := e.deps.Now()
+
 	go func() {
 		defer e.wg.Done()
-		// An on-demand crawl is its own single-index run; mint a run_id so its
-		// log lines correlate just like a scheduled pass.
-		e.crawlIndex(ctx, source.IndexRef{IndexURL: indexURL, Source: source.KindOnDemand}, onDemand, e.newID())
+		r := e.crawlIndex(ctx, source.IndexRef{IndexURL: indexURL, Source: source.KindOnDemand}, onDemand, runID)
+		indexes, updated := 0, 0
+		if r.fetched {
+			indexes = 1
+		}
+		if r.changed {
+			updated = 1
+		}
+		e.logCrawlFinished(runID, onDemand, indexes, updated, r.enqueued, e.deps.Now().Sub(start))
 	}()
-	return nil
+	return runID, nil
 }
 
 // loop runs fn once immediately, then every interval until ctx is done.
