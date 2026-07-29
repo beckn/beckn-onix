@@ -559,6 +559,36 @@ func TestDiffCatalogs_DescriptorChangeReportedUnderCatalog(t *testing.T) {
 	}
 }
 
+// TestDiffCatalogs_ArbitraryAttributeChangeReportedUnderCatalog proves the
+// catalog-level attribute overlay isn't limited to a hardcoded
+// descriptor/provider field list -- any top-level field the submitted
+// catalog changes (e.g. a validity window) is reported under changeCatalog.
+func TestDiffCatalogs_ArbitraryAttributeChangeReportedUnderCatalog(t *testing.T) {
+	prior := json.RawMessage(`{"id":"CAT-1","descriptor":{"name":"X"},"provider":{},"resources":[],"validity":{"startDate":"2026-01-01T00:00:00Z","endDate":"2026-06-30T23:59:59Z"}}`)
+	next := json.RawMessage(`{"id":"CAT-1","descriptor":{"name":"X"},"provider":{},"resources":[],"validity":{"startDate":"2026-07-01T00:00:00Z","endDate":"2026-12-31T23:59:59Z"}}`)
+
+	diff, changeCatalog, err := diffCatalogs(prior, next)
+	if err != nil {
+		t.Fatalf("diffCatalogs: %v", err)
+	}
+	if !diff.Resources.isEmpty() {
+		t.Errorf("expected no resource diff, got %+v", diff.Resources)
+	}
+	if changeCatalog == nil {
+		t.Fatal("expected a catalog-level attribute change")
+	}
+	var attrs map[string]json.RawMessage
+	if err := json.Unmarshal(changeCatalog, &attrs); err != nil {
+		t.Fatalf("parsing changeCatalog: %v", err)
+	}
+	if _, ok := attrs["validity"]; !ok {
+		t.Errorf("expected validity in changeCatalog, got %s", changeCatalog)
+	}
+	if _, ok := attrs["descriptor"]; ok {
+		t.Errorf("expected no descriptor change reported, got %s", changeCatalog)
+	}
+}
+
 func TestPublish_ExtraManifestFiles_AppendedVerbatimNoDigest(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	p, _, err := New(context.Background(), km, &Config{

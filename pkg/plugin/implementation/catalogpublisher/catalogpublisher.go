@@ -598,10 +598,11 @@ type catalogDiff struct {
 
 // diffCatalogs compares prior and next by their top-level "resources" and
 // "offers" arrays, matched by each item's "id" field, and separately
-// detects catalog-level attribute changes (currently: "descriptor",
-// "provider" -- the file spec names "name, validity window" as examples
-// without pinning an exact shape, so this is a best-effort subset, not a
-// complete implementation of that field; tracked as an open item).
+// detects catalog-level attribute changes: any top-level field other than
+// "id" (identity, never diffed) and "resources"/"offers" (diffed
+// separately above) -- not a fixed list, so it covers whatever a Catalog
+// object carries beyond those, matching the file spec's own examples
+// ("name, validity window") without having to special-case each one.
 // changeCatalog is nil when no catalog-level attributes changed.
 func diffCatalogs(prior, next json.RawMessage) (catalogDiff, json.RawMessage, error) {
 	resourcesDiff, err := diffArrayField(prior, next, "resources")
@@ -695,9 +696,19 @@ func itemID(raw json.RawMessage) (string, error) {
 	return withID.ID, nil
 }
 
-// diffCatalogAttributes returns a non-nil json.RawMessage carrying only
-// the catalog-level fields (currently: descriptor, provider) that changed
-// between prior and next, or nil if none did.
+// catalogAttributeFieldsToSkip are handled elsewhere and never belong in
+// the change file's "catalog" overlay: "id" is the catalog's identity
+// (never diffed), "resources"/"offers" are diffed separately as arrays
+// keyed by item id, not as whole-field replacements.
+var catalogAttributeFieldsToSkip = map[string]bool{"id": true, "resources": true, "offers": true}
+
+// diffCatalogAttributes returns a non-nil json.RawMessage carrying every
+// top-level catalog field (other than id/resources/offers) that changed
+// or is new between prior and next, or nil if none did. Not a fixed field
+// list -- a Catalog object can carry anything beyond the ones diffed
+// elsewhere (the file spec's own examples: "name, validity window"), and
+// all of it needs to round-trip through a change file, not just whichever
+// fields happen to be hardcoded here.
 func diffCatalogAttributes(prior, next json.RawMessage) (json.RawMessage, error) {
 	var priorFields, nextFields map[string]json.RawMessage
 	if err := json.Unmarshal(prior, &priorFields); err != nil {
@@ -708,9 +719,8 @@ func diffCatalogAttributes(prior, next json.RawMessage) (json.RawMessage, error)
 	}
 
 	changed := map[string]json.RawMessage{}
-	for _, field := range []string{"descriptor", "provider"} {
-		nv, ok := nextFields[field]
-		if !ok {
+	for field, nv := range nextFields {
+		if catalogAttributeFieldsToSkip[field] {
 			continue
 		}
 		if pv, ok := priorFields[field]; !ok || !jsonEqual(pv, nv) {

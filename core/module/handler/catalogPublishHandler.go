@@ -78,13 +78,44 @@ func NewCatalogPublishHandler(ctx context.Context, mgr PluginManager, cfg *Confi
 	if cfg.Plugins.CatalogPublisher == nil {
 		return nil, fmt.Errorf("catalogPublish handler %s: catalogPublisher plugin not configured", moduleName)
 	}
-	publisher, err := mgr.CatalogPublisher(ctx, km, cfg.Plugins.CatalogPublisher)
+	publisherCfg, err := withKeyManagerSubscriberID(cfg.Plugins.CatalogPublisher, cfg.Plugins.KeyManager)
+	if err != nil {
+		return nil, fmt.Errorf("catalogPublish handler %s: %w", moduleName, err)
+	}
+	publisher, err := mgr.CatalogPublisher(ctx, km, publisherCfg)
 	if err != nil {
 		return nil, fmt.Errorf("catalogPublish handler %s: failed to load catalogPublisher plugin (%s): %w", moduleName, cfg.Plugins.CatalogPublisher.ID, err)
 	}
 
 	log.Debugf(ctx, "catalogPublish handler %s initialized, outputRoot=%s", moduleName, cfg.OutputRoot)
 	return &catalogPublishHandler{publisher: publisher, outputRoot: cfg.OutputRoot}, nil
+}
+
+// withKeyManagerSubscriberID returns catalogPublisherCfg with its
+// "subscriberId" config entry set from keyManagerCfg's own "subscriberId" --
+// the single source of truth for which keyset CatalogPublisher.Publish
+// loads via KeyManager.Keyset. This removes the need to declare
+// subscriberId a second time under catalogPublisher's own config; an
+// explicit value there (for the rare case it legitimately differs) is
+// still honored and left untouched.
+func withKeyManagerSubscriberID(catalogPublisherCfg, keyManagerCfg *plugin.Config) (*plugin.Config, error) {
+	if catalogPublisherCfg.Config != nil && catalogPublisherCfg.Config["subscriberId"] != "" {
+		return catalogPublisherCfg, nil
+	}
+	if keyManagerCfg == nil {
+		return nil, fmt.Errorf("keyManager plugin not configured (needed to derive catalogPublisher's subscriberId)")
+	}
+	subscriberID := keyManagerCfg.Config["subscriberId"]
+	if subscriberID == "" {
+		return nil, fmt.Errorf("keyManager plugin config missing subscriberId (needed to derive catalogPublisher's subscriberId)")
+	}
+
+	merged := make(map[string]string, len(catalogPublisherCfg.Config)+1)
+	for k, v := range catalogPublisherCfg.Config {
+		merged[k] = v
+	}
+	merged["subscriberId"] = subscriberID
+	return &plugin.Config{ID: catalogPublisherCfg.ID, Config: merged}, nil
 }
 
 // publishOverallStatus is a bespoke top-level envelope (like pullStatus,

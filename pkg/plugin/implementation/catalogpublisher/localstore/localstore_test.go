@@ -13,6 +13,22 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher"
 )
 
+// jsonEqual compares two JSON documents structurally, ignoring key order
+// (map-backed marshaling no longer preserves the original field order).
+func jsonEqual(t *testing.T, a, b json.RawMessage) bool {
+	t.Helper()
+	var av, bv any
+	if err := json.Unmarshal(a, &av); err != nil {
+		t.Fatalf("parsing a: %v", err)
+	}
+	if err := json.Unmarshal(b, &bv); err != nil {
+		t.Fatalf("parsing b: %v", err)
+	}
+	am, _ := json.Marshal(av)
+	bm, _ := json.Marshal(bv)
+	return string(am) == string(bm)
+}
+
 // fakeKeyManager returns a fixed Ed25519 keyset for one configured keyID.
 type fakeKeyManager struct {
 	keyID string
@@ -157,10 +173,10 @@ func TestWriteThenLoad_IncrementalAndCarryForward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load (final): %v", err)
 	}
-	if string(finalState.PriorState["example.test/CAT-A"].Catalog) != string(catA2) {
+	if !jsonEqual(t, finalState.PriorState["example.test/CAT-A"].Catalog, catA2) {
 		t.Errorf("CAT-A reconstruction mismatch:\ngot:  %s\nwant: %s", finalState.PriorState["example.test/CAT-A"].Catalog, catA2)
 	}
-	if string(finalState.PriorState["example.test/CAT-B"].Catalog) != string(catB) {
+	if !jsonEqual(t, finalState.PriorState["example.test/CAT-B"].Catalog, catB) {
 		t.Errorf("CAT-B reconstruction mismatch:\ngot:  %s\nwant: %s", finalState.PriorState["example.test/CAT-B"].Catalog, catB)
 	}
 	if finalState.PriorIndexVersion != result2.IndexVersion {

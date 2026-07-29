@@ -137,7 +137,7 @@ func newTestConfig(outputRoot string) *Config {
 		Plugins: PluginCfg{
 			Cache:            &plugin.Config{ID: "cache"},
 			Registry:         &plugin.Config{ID: "registry"},
-			KeyManager:       &plugin.Config{ID: "keymanager"},
+			KeyManager:       &plugin.Config{ID: "keymanager", Config: map[string]string{"subscriberId": "example.test"}},
 			CatalogPublisher: &plugin.Config{ID: "catalogpublisher"},
 		},
 	}
@@ -159,6 +159,58 @@ func TestNewCatalogPublishHandler_RequiresCatalogPublisherPlugin(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing catalogPublisher plugin config")
 	}
+}
+
+func TestNewCatalogPublishHandler_DerivesSubscriberIDFromKeyManager(t *testing.T) {
+	var captured *plugin.Config
+	mgr := newTestManager(t)
+	mgr2 := &capturingCatalogPublisherManager{catalogPublishTestManager: mgr, captured: &captured}
+
+	cfg := newTestConfig(t.TempDir()) // catalogPublisher.Config has no subscriberId of its own
+	if _, err := NewCatalogPublishHandler(context.Background(), mgr2, cfg, "test"); err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+	if captured == nil || captured.Config["subscriberId"] != "example.test" {
+		t.Fatalf("expected subscriberId derived from keyManager config, got %+v", captured)
+	}
+}
+
+func TestNewCatalogPublishHandler_ExplicitSubscriberIDIsNotOverridden(t *testing.T) {
+	var captured *plugin.Config
+	mgr := newTestManager(t)
+	mgr2 := &capturingCatalogPublisherManager{catalogPublishTestManager: mgr, captured: &captured}
+
+	cfg := newTestConfig(t.TempDir())
+	cfg.Plugins.CatalogPublisher.Config = map[string]string{"subscriberId": "explicit.test"}
+	if _, err := NewCatalogPublishHandler(context.Background(), mgr2, cfg, "test"); err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+	if captured == nil || captured.Config["subscriberId"] != "explicit.test" {
+		t.Fatalf("expected explicit subscriberId to be left untouched, got %+v", captured)
+	}
+}
+
+func TestNewCatalogPublishHandler_RequiresKeyManagerSubscriberID(t *testing.T) {
+	cfg := newTestConfig(t.TempDir())
+	cfg.Plugins.KeyManager.Config = nil // no subscriberId to derive from
+	_, err := NewCatalogPublishHandler(context.Background(), newTestManager(t), cfg, "test")
+	if err == nil {
+		t.Fatal("expected error when keyManager config has no subscriberId to derive from")
+	}
+}
+
+// capturingCatalogPublisherManager wraps catalogPublishTestManager to record
+// the *plugin.Config NewCatalogPublishHandler actually passes to
+// mgr.CatalogPublisher, so tests can assert on the derived/merged config
+// rather than just on success/failure.
+type capturingCatalogPublisherManager struct {
+	*catalogPublishTestManager
+	captured **plugin.Config
+}
+
+func (m *capturingCatalogPublisherManager) CatalogPublisher(ctx context.Context, km definition.KeyManager, cfg *plugin.Config) (definition.CatalogPublisher, error) {
+	*m.captured = cfg
+	return m.catalogPublishTestManager.CatalogPublisher(ctx, km, cfg)
 }
 
 func TestCatalogPublishHandler_PublishesAndWritesToOutputRoot(t *testing.T) {

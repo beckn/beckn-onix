@@ -228,11 +228,9 @@ modules:
         catalogPublisher:
           id: catalogpublisher
           config:
-            # subscriberId must match keyManager's subscriberId above --
-            # it's the KeyManager.Keyset lookup key. The manifest's kid
-            # and domain come from the returned Keyset
-            # (UniqueKeyID/SubscriberID), not from a separate config value
-            # here.
-            subscriberId: ds.local.dev
+            # No subscriberId here -- the handler derives it automatically
+            # from keyManager.config.subscriberId above (the single source
+            # of truth for which keyset gets loaded). Set it explicitly
+            # here only if it must legitimately differ from keyManager's.
             nextUpdateIn: "336h"
             fileValidityIn: "336h"
