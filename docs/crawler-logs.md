@@ -79,6 +79,8 @@ their specific request's log lines instead of guessing from interleaving.
 
 At `INFO`, a healthy crawler is quiet: `daemon.ready` once, then one `finished` line per active job tick (`crawl.finished`, `sync.finished`). An idle tick logs nothing.
 
+Both drivers (the onix plugin and the standalone `cmd/crawler` binary) default their handler to `INFO`, so `DEBUG` lines are off unless `CRAWLER_LOG_LEVEL` is set to `debug` (env, or the plugin config map for the onix plugin). This is a separate setting from the onix core logger's own `log.level` — that one governs a different sink and doesn't reach this one.
+
 ## 4. Components & stages
 
 ### `daemon` — the process

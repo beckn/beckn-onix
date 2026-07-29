@@ -3,6 +3,7 @@ package crawler
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +21,25 @@ func NewSlogLogger(l *slog.Logger) runner.Logger {
 		l = slog.Default()
 	}
 	return slogLogger{l: l}
+}
+
+// ParseLogLevel maps CRAWLER_LOG_LEVEL to a slog.Level: the runner's own
+// per-index/per-catalog trace lines (logPolled, logQueued, logSyncing, ...)
+// are minted at Debug, which slog's default handler level (Info) drops — so
+// without this, no deployment can ever see them regardless of the onix
+// core logger's own log.level (that setting governs a separate sink; see
+// docs/crawler-logs.md). Unrecognized or empty defaults to Info.
+func ParseLogLevel(s string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
 
 type slogLogger struct{ l *slog.Logger }
