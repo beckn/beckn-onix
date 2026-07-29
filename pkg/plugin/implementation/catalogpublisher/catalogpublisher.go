@@ -42,6 +42,7 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher/localstore"
 	"github.com/beckn-one/beckn-onix/pkg/security/artifactsigner"
 )
 
@@ -99,22 +100,20 @@ type Config struct {
 	// signature.validUntil extends. Falls back to NextUpdateIn when zero.
 	FileValidityIn time.Duration
 
-	// IndexURL is where the catalog index will be reachable once
-	// published. A placeholder ("pending-artifact-store://...") is used
-	// when unset -- there is no ArtifactStore yet to ask for a real
-	// location.
-	IndexURL string
-
-	// CatalogBaseURL, if set, is used as the URL prefix for catalog part
-	// files; parts are addressed as
-	// {CatalogBaseURL}/{localName}.v{version}.json (baseline) or
-	// {CatalogBaseURL}/{localName}.v{version}.changes.json (change file),
-	// where localName is CatalogID with any "domain/" prefix stripped
-	// (file spec's example: catalogId
-	// "open-economy.nfh.global/electronics-2026" -> file
-	// "electronics-2026.v40.json"). Same placeholder fallback as IndexURL
-	// when unset.
-	CatalogBaseURL string
+	// PublicBaseURL, if set, is the one public URL prefix everything this
+	// publish writes gets addressed under -- the same root a static file
+	// server (or ngrok tunnel) exposes localstore's on-disk layout from.
+	// The catalog index is reachable at
+	// {PublicBaseURL}/{localstore.IndexDirName}/{localstore.IndexFilename},
+	// and catalog parts at
+	// {PublicBaseURL}/{localstore.CatalogsDirName}/{localName}.v{version}.json
+	// (baseline) or ...v{version}.changes.json (change file), where
+	// localName is CatalogID with any "domain/" prefix stripped (file
+	// spec's example: catalogId "open-economy.nfh.global/electronics-2026"
+	// -> file "electronics-2026.v40.json"). A placeholder
+	// ("pending-artifact-store://...") is used for both when unset -- there
+	// is no ArtifactStore yet to ask for a real location.
+	PublicBaseURL string
 
 	// ExtraManifestFiles are additional manifest files[] entries appended
 	// after the catalog-index entry (the manifest's files[] is a list of
@@ -822,21 +821,31 @@ func validateSubmission(sub definition.CatalogSubmission) error {
 	return nil
 }
 
-// indexURL returns the configured index location, or a placeholder when
-// no ArtifactStore-assigned location exists yet.
+// indexURL returns the configured index location under PublicBaseURL, or a
+// placeholder when no ArtifactStore-assigned location exists yet.
 func (p *Publisher) indexURL() string {
-	if p.config.IndexURL != "" {
-		return p.config.IndexURL
+	if p.config.PublicBaseURL != "" {
+		return joinURL(p.config.PublicBaseURL, localstore.IndexDirName, localstore.IndexFilename)
 	}
 	return "pending-artifact-store://catalog-index.json"
 }
 
 // catalogPartURL returns the configured location for one of a catalog's
-// versioned file names (see buildFileEntry), or a placeholder when no
-// ArtifactStore-assigned location exists yet.
+// versioned file names (see buildFileEntry) under PublicBaseURL, or a
+// placeholder when no ArtifactStore-assigned location exists yet.
 func (p *Publisher) catalogPartURL(filename string) string {
-	if p.config.CatalogBaseURL != "" {
-		return strings.TrimRight(p.config.CatalogBaseURL, "/") + "/" + filename
+	if p.config.PublicBaseURL != "" {
+		return joinURL(p.config.PublicBaseURL, localstore.CatalogsDirName, filename)
 	}
 	return "pending-artifact-store://catalog/" + filename
+}
+
+// joinURL appends parts to base, trimming exactly one "/" between each
+// segment regardless of how base/parts are themselves slashed.
+func joinURL(base string, parts ...string) string {
+	out := strings.TrimRight(base, "/")
+	for _, part := range parts {
+		out += "/" + strings.Trim(part, "/")
+	}
+	return out
 }
