@@ -46,6 +46,43 @@ func (s *Store) GetIndex(ctx context.Context, indexURL string) (*IndexState, err
 	return &st, nil
 }
 
+// KnownIndex is a persisted index the crawler has crawled at least once — the
+// unit the scheduled pass re-polls so an on-demand /crawl joins the schedule.
+type KnownIndex struct {
+	IndexURL      string
+	ParticipantID string
+	Source        string
+}
+
+// KnownIndexes lists every index recorded in crawler_index (any source),
+// ordered by URL for determinism. The scheduled pass unions these with the
+// configured/registry refs, so an index crawled once (incl. on-demand) keeps
+// being re-polled on the normal cadence.
+func (s *Store) KnownIndexes(ctx context.Context) ([]KnownIndex, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT index_url, participant_id, source FROM crawler_index ORDER BY index_url`)
+	if err != nil {
+		return nil, fmt.Errorf("store: KnownIndexes: %w", err)
+	}
+	defer rows.Close()
+	var out []KnownIndex
+	for rows.Next() {
+		var (
+			url string
+			pid sql.NullString
+			src sql.NullString
+		)
+		if err := rows.Scan(&url, &pid, &src); err != nil {
+			return nil, fmt.Errorf("store: KnownIndexes scan: %w", err)
+		}
+		out = append(out, KnownIndex{IndexURL: url, ParticipantID: pid.String, Source: src.String})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: KnownIndexes rows: %w", err)
+	}
+	return out, nil
+}
+
 // UpsertIndex records an index's last-seen version + sync outcome, plus the
 // conditional-GET validators (etag / lastModified) the host returned this fetch
 // (empty string when it sent none).

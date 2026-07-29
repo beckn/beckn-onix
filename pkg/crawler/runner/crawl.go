@@ -47,6 +47,7 @@ func (e *Engine) indexPass(ctx context.Context) {
 		e.logCrawlFailed(runID, scheduled, "source_resolve", err)
 		return
 	}
+	refs = e.withPersistedIndexes(ctx, refs, runID)
 	var fetched, changed, enqueued int
 	for _, ref := range refs {
 		if ctx.Err() != nil {
@@ -63,6 +64,36 @@ func (e *Engine) indexPass(ctx context.Context) {
 	}
 	e.logCrawlFinished(runID, scheduled, fetched, changed, enqueued, e.deps.Now().Sub(start))
 	e.deps.Metrics.MarkPassSuccess("crawl")
+}
+
+// withPersistedIndexes unions the configured/registry refs with every index
+// already recorded in crawler_index (deduped by URL, configured refs win) — so
+// an index crawled once on demand keeps being re-polled on the normal cadence
+// and picks up later change files with no second /crawl. Each is still gated by
+// its own next_crawl_at in crawlIndex. A store error here is non-fatal: it is
+// logged and the pass proceeds with just the given refs.
+func (e *Engine) withPersistedIndexes(ctx context.Context, refs []source.IndexRef, runID string) []source.IndexRef {
+	seen := make(map[string]bool, len(refs))
+	for _, r := range refs {
+		seen[r.IndexURL] = true
+	}
+	known, err := e.deps.Store.KnownIndexes(ctx)
+	if err != nil {
+		e.storeUnhealthy("crawl", runID, "list_indexes", "", err)
+		return refs
+	}
+	for _, k := range known {
+		if seen[k.IndexURL] {
+			continue
+		}
+		seen[k.IndexURL] = true
+		refs = append(refs, source.IndexRef{
+			IndexURL:      k.IndexURL,
+			ParticipantID: k.ParticipantID,
+			Source:        k.Source,
+		})
+	}
+	return refs
 }
 
 // crawlIndex crawls one publisher index. The steps read top to bottom:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -351,5 +352,52 @@ func TestEngine_MergeOnly_DeltaPush(t *testing.T) {
 	}
 	if v, _, _ := s.GetCatalogVersion(ctx, "p/c"); v != 2 {
 		t.Fatalf("cursor = %d, want 2", v)
+	}
+}
+
+// A /crawl'd index must join the recurring schedule: the scheduled index pass
+// re-polls every index already recorded in crawler_index (incl. on-demand ones),
+// not just the configured/registry refs — so a later change file is picked up
+// with no second /crawl. Configured refs still crawl; persisted refs are added,
+// deduped by URL.
+func TestIndexPass_ReCrawlsPersistedIndexes(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	const configURL = "https://x/config-index.json"
+	const onDemandURL = "https://y/on-demand-index.json"
+
+	// A prior on-demand crawl left a persisted row, now due again (next_crawl_at in the past).
+	if err := s.UpsertIndex(ctx, onDemandURL, "p2", source.KindOnDemand, 1, "ok",
+		time.Now().Add(-time.Hour), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	// The configured URL is ALSO persisted → it must be crawled once, not twice (deduped).
+	if err := s.UpsertIndex(ctx, configURL, "p", source.KindConfig, 1, "ok",
+		time.Now().Add(-time.Hour), "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	var fetched []string
+	eng := New(EngineConfig{MaxAttempts: 3, IndexInterval: time.Hour, CatalogInterval: time.Hour}, Deps{
+		Store:  s,
+		Source: source.NewConfigSource([]string{configURL}),
+		FetchIndex: func(_ context.Context, indexURL string, _ catalog.IndexConditions) (catalog.IndexResult, error) {
+			fetched = append(fetched, indexURL)
+			return catalog.IndexResult{Index: catalog.Index{ParticipantID: "p", Version: 1}}, nil
+		},
+		Metrics: &recMetrics{},
+		NewID:   func() string { return "id" },
+	})
+
+	eng.indexPass(ctx)
+
+	if !slices.Contains(fetched, configURL) {
+		t.Errorf("configured index %q was not crawled; fetched=%v", configURL, fetched)
+	}
+	if !slices.Contains(fetched, onDemandURL) {
+		t.Errorf("persisted on-demand index %q was not re-crawled by the scheduled pass; fetched=%v", onDemandURL, fetched)
+	}
+	if n := strings.Count(strings.Join(fetched, "\n"), configURL); n != 1 {
+		t.Errorf("configured index crawled %d times, want 1 (must dedup against its persisted row); fetched=%v", n, fetched)
 	}
 }
