@@ -159,11 +159,12 @@ Inspect what got written:
 ```bash
 find /tmp/catalog-demo -type f
 cat /tmp/catalog-demo/catalogs/CAT-DEMO-1.v1.json          # the baseline -- unchanged Beckn Catalog JSON
-cat /tmp/catalog-demo/dedi/becknCatalogs.index.json         # participantId/version/catalogs[], per-file signatures
-cat /tmp/catalog-demo/.well-known/dedi.index.json           # keys[] + files[] pointing at the index, signed --
-                                                              # this filename/path is deliberate, see below;
-                                                              # it is NOT the catalog index.
+cat /tmp/catalog-demo/index/becknCatalogs.index.json         # participantId/version/catalogs[], per-file signatures
 ```
+Note: `Publish` still computes a signed manifest (`keys[]` + `files[]`
+pointing at the index) as part of `PublishResult`, but `localstore` does
+not currently persist it to `.well-known/dedi.index.json` -- see "The
+manifest's filename" below.
 
 ### 2. Publish an update to the same catalog (change file + version bump)
 
@@ -186,8 +187,8 @@ index version 2, artifacts written to /tmp/catalog-demo
 ```
 
 ```bash
-cat /tmp/catalog-demo/catalogs/CAT-DEMO-1.v2.changes.json   # {"catalogId":...,"fromVersion":1,"toVersion":2,"resources":{"upserts":[...ITEM-1,ITEM-3],"removals":["ITEM-2"]},"offers":{}}
-cat /tmp/catalog-demo/dedi/becknCatalogs.index.json          # index version now 2; baseline entry unchanged (same signature); changes[] has one new signed entry
+cat /tmp/catalog-demo/catalogs/changes/CAT-DEMO-1.v2.changes.json   # {"catalogId":...,"fromVersion":1,"toVersion":2,"resources":{"upserts":[...ITEM-1,ITEM-3],"removals":["ITEM-2"]},"offers":{}}
+cat /tmp/catalog-demo/index/becknCatalogs.index.json          # index version now 2; baseline entry unchanged (same signature); changes[] has one new signed entry
 ```
 
 ### 3. Publish the same content again (no-op)
@@ -215,7 +216,7 @@ catalog open-economy.nfh.global/CAT-DEMO-1: marked RETIRED
 index version 3, artifacts written to /tmp/catalog-demo
 ```
 ```bash
-cat /tmp/catalog-demo/dedi/becknCatalogs.index.json   # {"catalogId":"...","status":"RETIRED","retiredAt":"..."} -- no files, a tombstone
+cat /tmp/catalog-demo/index/becknCatalogs.index.json   # {"catalogId":"...","status":"RETIRED","retiredAt":"..."} -- no files, a tombstone
 ```
 `-retire` works with or without `-catalog` in the same invocation, and
 accepts a comma-separated list.
@@ -230,33 +231,38 @@ as a fresh baseline.
 
 ### The manifest's filename
 
-The manifest -- `keys[]` + `files[]` pointing at the catalog index -- is
-written to **`.well-known/dedi.index.json`**, matching the file spec's
-stated well-known path exactly. Despite the filename, this is **not** the
-catalog index -- that's the separate `dedi/becknCatalogs.index.json` file.
-The "index" in `dedi.index.json` is just DeDi's own naming convention for
-"the published record naming everything about a domain," a coincidence
-with the unrelated "catalog index" concept, not a hint that they're the
-same file.
+The manifest -- `keys[]` + `files[]` pointing at the catalog index --
+belongs at **`.well-known/dedi.index.json`**, matching the file spec's
+stated well-known path exactly, and `Publish` still computes it as part
+of `PublishResult`. **`localstore` deliberately does not persist it there
+right now** -- read or write -- pending a real ArtifactStore/manifest-
+ownership story; see `localstore.Write`. Despite the filename, this is
+**not** the catalog index -- that's the separate
+`index/becknCatalogs.index.json` file. The "index" in `dedi.index.json`
+is just DeDi's own naming convention for "the published record naming
+everything about a domain," a coincidence with the unrelated "catalog
+index" concept, not a hint that they're the same file.
 
 ### Output layout
 
 ```
 <out>/
-  .well-known/
+  .well-known/                  # NOT currently written -- see above
     dedi.index.json              # the manifest
-  dedi/
+  index/
     becknCatalogs.index.json     # the catalog index
   catalogs/
-    <localName>.v<version>.json           # a baseline
-    <localName>.v<version>.changes.json   # a change file
+    <localName>.v<version>.json            # a baseline
+    changes/
+      <localName>.v<version>.changes.json  # a change file
   .keys/
     <keyID>.json                 # demo-only local signing key
 ```
 `<localName>` is `catalogId` with any `domain/` prefix stripped (matching
 the file spec's own example: `open-economy.nfh.global/electronics-2026` ->
-`electronics-2026.v40.json`). Files are flat -- one shared directory, not
-one subdirectory per catalog -- matching the file spec's own example URLs.
+`electronics-2026.v40.json`). Files are flat within each of `catalogs/` and
+`catalogs/changes/` -- not one subdirectory per catalog -- matching the
+file spec's own example URLs.
 
 ### Flags
 
@@ -291,12 +297,13 @@ go test ./pkg/plugin/implementation/catalogpublisher/... -v
   config -- one URL prefix for everything a publish writes, mirroring
   wherever `outputRoot` (see `localstore`) is actually served from
   publicly (e.g. an ngrok tunnel onto that one directory). The index is
-  addressed at `{PublicBaseURL}/dedi/becknCatalogs.index.json` and catalog
-  parts at `{PublicBaseURL}/catalogs/<localName>.v<version>.json`. When
-  unset, a `pending-artifact-store://...` placeholder URL is used so the
-  plugin can still be exercised and tested before a real public location
-  exists (`catalogpublisherctl` fills this in with a `file://` path for
-  its own demo purposes).
+  addressed at `{PublicBaseURL}/index/becknCatalogs.index.json`, baselines
+  at `{PublicBaseURL}/catalogs/<localName>.v<version>.json`, and change
+  files at `{PublicBaseURL}/catalogs/changes/<localName>.v<version>.changes.json`.
+  When unset, a `pending-artifact-store://...` placeholder URL is used so
+  the plugin can still be exercised and tested before a real public
+  location exists (`catalogpublisherctl` fills this in with a `file://`
+  path for its own demo purposes).
 - **`diffCatalogAttributes` is a best-effort subset**, not a complete
   implementation of the change file's optional `catalog` object. The file
   spec names "name, validity window" as examples of catalog-level
@@ -322,9 +329,12 @@ go test ./pkg/plugin/implementation/catalogpublisher/... -v
 
 [`localstore`](localstore) is the shared "write a `Publish` result to a
 local directory, read it back as prior state" logic -- the same layout
-`catalogpublisherctl` always wrote (`.well-known/dedi.index.json`,
-`dedi/becknCatalogs.index.json`, flat `catalogs/<name>.v<version>[.changes].json`
-files), extracted so both the CLI and the `catalogPublish` HTTP handler
+`catalogpublisherctl` used to write in full (`index/becknCatalogs.index.json`,
+flat `catalogs/<name>.v<version>.json` (baselines) and
+`catalogs/changes/<name>.v<version>.changes.json` (change files); the
+manifest, `.well-known/dedi.index.json`, is deliberately excluded for now,
+see "The manifest's filename" above), extracted so both the CLI and the
+`catalogPublish` HTTP handler
 (below) use one implementation instead of two. `Publish` itself still
 holds no storage-backed state -- `localstore.Load`/`Write` are one
 concrete, filesystem-backed way to supply and persist

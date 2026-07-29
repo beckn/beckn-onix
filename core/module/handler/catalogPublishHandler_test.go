@@ -277,10 +277,13 @@ func TestCatalogPublishHandler_PublishesAndWritesToOutputRoot(t *testing.T) {
 		t.Fatalf("unexpected results: %+v", resp.Results)
 	}
 
-	if _, err := os.Stat(root + "/.well-known/dedi.index.json"); err != nil {
-		t.Errorf("expected manifest written: %v", err)
+	// The manifest (.well-known/dedi.index.json) is deliberately not
+	// written by localstore right now (see localstore.Write) -- this
+	// asserts it stays untouched, not just unwritten on a fresh root.
+	if _, err := os.Stat(root + "/.well-known"); !os.IsNotExist(err) {
+		t.Errorf("expected .well-known/ not created, got err=%v", err)
 	}
-	if _, err := os.Stat(root + "/dedi/becknCatalogs.index.json"); err != nil {
+	if _, err := os.Stat(root + "/index/becknCatalogs.index.json"); err != nil {
 		t.Errorf("expected index written: %v", err)
 	}
 }
@@ -359,7 +362,7 @@ func TestCatalogPublishHandler_RejectsRequestWhenSchemaValidationFails(t *testin
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if _, err := os.Stat(root + "/dedi/becknCatalogs.index.json"); err == nil {
+	if _, err := os.Stat(root + "/index/becknCatalogs.index.json"); err == nil {
 		t.Error("expected no index written when schema validation fails")
 	}
 }

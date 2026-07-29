@@ -12,12 +12,13 @@
 //
 //	<root>/
 //	  .well-known/
-//	    dedi.index.json           # the manifest
-//	  dedi/
+//	    dedi.index.json           # the manifest -- NOT written by this package right now, see Write
+//	  index/
 //	    becknCatalogs.index.json  # the catalog index
 //	  catalogs/
-//	    <localName>.v<version>.json           # a baseline
-//	    <localName>.v<version>.changes.json   # a change file
+//	    <localName>.v<version>.json            # a baseline
+//	    changes/
+//	      <localName>.v<version>.changes.json  # a change file
 //
 // Where these files end up being served from (a real domain, a CDN) is a
 // separate, later concern -- this package only ever reads/writes <root>
@@ -56,17 +57,25 @@ const IndexFilename = "becknCatalogs.index.json"
 const CatalogsDirName = "catalogs"
 
 // IndexDirName is the root subdirectory holding the catalog index.
-const IndexDirName = "dedi"
+const IndexDirName = "index"
+
+// ChangesDirName is the catalogs subdirectory holding change files,
+// separate from baseline files which sit directly under catalogs/.
+const ChangesDirName = "changes"
 
 // ManifestPath, IndexPath, and the catalogs directory, all relative to
 // root.
 func ManifestPath(root string) string { return filepath.Join(root, ".well-known", ManifestFilename) }
 func IndexPath(root string) string    { return filepath.Join(root, IndexDirName, IndexFilename) }
 func CatalogsDir(root string) string  { return filepath.Join(root, CatalogsDirName) }
+func ChangesDir(root string) string   { return filepath.Join(CatalogsDir(root), ChangesDirName) }
 
 // EnsureDirs creates every directory Write will need under root.
+//
+// .well-known/ (ManifestPath's directory) is deliberately not created here:
+// this package does not touch the manifest file at all for now (see Write).
 func EnsureDirs(root string) error {
-	for _, dir := range []string{filepath.Dir(ManifestPath(root)), filepath.Dir(IndexPath(root)), CatalogsDir(root)} {
+	for _, dir := range []string{filepath.Dir(IndexPath(root)), CatalogsDir(root), ChangesDir(root)} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("localstore: creating %s: %w", dir, err)
 		}
@@ -84,22 +93,33 @@ func LocalName(catalogID string) string {
 	return catalogID
 }
 
-// CatalogFilePath returns the local path for one catalog file (a baseline
-// or a change file).
+// CatalogFilePath returns the local path for one catalog file: a baseline
+// (suffix "json") sits directly under catalogs/, a change file (suffix
+// "changes.json") under catalogs/changes/.
 func CatalogFilePath(root, catalogID string, version int, suffix string) string {
-	return filepath.Join(CatalogsDir(root), fmt.Sprintf("%s.v%d.%s", LocalName(catalogID), version, suffix))
+	filename := fmt.Sprintf("%s.v%d.%s", LocalName(catalogID), version, suffix)
+	if suffix == "changes.json" {
+		return filepath.Join(ChangesDir(root), filename)
+	}
+	return filepath.Join(CatalogsDir(root), filename)
 }
 
-// Write persists a PublishResult under root: the manifest, the index, and
-// every catalog outcome's new content (baseline or change file; a no-op
-// outcome writes nothing).
+// Write persists a PublishResult under root: the index and every catalog
+// outcome's new content (baseline or change file; a no-op outcome writes
+// nothing).
+//
+// The manifest is deliberately NOT written here for now -- we do not want
+// this package touching .well-known/dedi.index.json at all, read or write,
+// until there's a real ArtifactStore/manifest-ownership story. result.
+// Manifest is still computed by catalogpublisher.Publish (it's part of
+// PublishResult), it's just not persisted by this package.
 func Write(root string, result definition.PublishResult) error {
 	if err := EnsureDirs(root); err != nil {
 		return err
 	}
-	if err := os.WriteFile(ManifestPath(root), result.Manifest, 0o644); err != nil {
-		return fmt.Errorf("localstore: writing manifest: %w", err)
-	}
+	// if err := os.WriteFile(ManifestPath(root), result.Manifest, 0o644); err != nil {
+	// 	return fmt.Errorf("localstore: writing manifest: %w", err)
+	// }
 	if err := os.WriteFile(IndexPath(root), result.Index, 0o644); err != nil {
 		return fmt.Errorf("localstore: writing index: %w", err)
 	}

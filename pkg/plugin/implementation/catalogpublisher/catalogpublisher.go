@@ -105,10 +105,11 @@ type Config struct {
 	// server (or ngrok tunnel) exposes localstore's on-disk layout from.
 	// The catalog index is reachable at
 	// {PublicBaseURL}/{localstore.IndexDirName}/{localstore.IndexFilename},
-	// and catalog parts at
-	// {PublicBaseURL}/{localstore.CatalogsDirName}/{localName}.v{version}.json
-	// (baseline) or ...v{version}.changes.json (change file), where
-	// localName is CatalogID with any "domain/" prefix stripped (file
+	// baselines at
+	// {PublicBaseURL}/{localstore.CatalogsDirName}/{localName}.v{version}.json,
+	// and change files at
+	// {PublicBaseURL}/{localstore.CatalogsDirName}/{localstore.ChangesDirName}/{localName}.v{version}.changes.json,
+	// where localName is CatalogID with any "domain/" prefix stripped (file
 	// spec's example: catalogId "open-economy.nfh.global/electronics-2026"
 	// -> file "electronics-2026.v40.json"). A placeholder
 	// ("pending-artifact-store://...") is used for both when unset -- there
@@ -524,7 +525,7 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 // {catalogId, version, url, digest, validUntil}.
 func (p *Publisher) buildFileEntry(catalogID string, version int, suffix string, content []byte, now, validUntil time.Time, priv ed25519.PrivateKey, keyID string) (fileEntry, error) {
 	filename := fmt.Sprintf("%s.v%d.%s", localCatalogName(catalogID), version, suffix)
-	url := p.catalogPartURL(filename)
+	url := p.catalogPartURL(filename, suffix)
 	digest := "sha-256:" + digestOf(content)
 
 	sigValue, err := artifactsigner.SignFileTuple(catalogID, version, url, digest, validUntil, priv)
@@ -832,12 +833,18 @@ func (p *Publisher) indexURL() string {
 
 // catalogPartURL returns the configured location for one of a catalog's
 // versioned file names (see buildFileEntry) under PublicBaseURL, or a
-// placeholder when no ArtifactStore-assigned location exists yet.
-func (p *Publisher) catalogPartURL(filename string) string {
-	if p.config.PublicBaseURL != "" {
-		return joinURL(p.config.PublicBaseURL, localstore.CatalogsDirName, filename)
+// placeholder when no ArtifactStore-assigned location exists yet. A change
+// file (suffix "changes.json") is addressed under catalogs/changes/,
+// matching localstore.CatalogFilePath's on-disk layout; a baseline sits
+// directly under catalogs/.
+func (p *Publisher) catalogPartURL(filename, suffix string) string {
+	if p.config.PublicBaseURL == "" {
+		return "pending-artifact-store://catalog/" + filename
 	}
-	return "pending-artifact-store://catalog/" + filename
+	if suffix == "changes.json" {
+		return joinURL(p.config.PublicBaseURL, localstore.CatalogsDirName, localstore.ChangesDirName, filename)
+	}
+	return joinURL(p.config.PublicBaseURL, localstore.CatalogsDirName, filename)
 }
 
 // joinURL appends parts to base, trimming exactly one "/" between each

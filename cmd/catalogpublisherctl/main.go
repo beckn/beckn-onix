@@ -49,7 +49,7 @@ func main() {
 	fileValidityDays := flag.Int("fileValidityDays", 14, "days until each catalog file's signature.validUntil expires (0 falls back to -nextUpdateDays)")
 	retire := flag.String("retire", "", "comma-separated catalogIds to mark RETIRED this run (works with or without -catalog)")
 	forceBaseline := flag.Bool("forceBaseline", false, "publish a fresh baseline for -catalog, discarding its change history (also how to trigger compaction)")
-	publicBaseURL := flag.String("publicBaseURL", "", "if set, embed URLs under this single base instead of file:// (e.g. http://localhost:8000 when serving -out with `python3 -m http.server` from within it) -- must match wherever -out is actually served from; the manifest itself is still always written under .well-known/ relative to -out, matching the fixed well-known path a crawler expects")
+	publicBaseURL := flag.String("publicBaseURL", "", "if set, embed URLs under this single base instead of file:// (e.g. http://localhost:8000 when serving -out with `python3 -m http.server` from within it) -- must match wherever -out is actually served from. Note: the manifest (.well-known/dedi.index.json) is currently not written to -out at all (see localstore.Write); only the catalog index and catalog files are")
 	flag.Parse()
 
 	var retireIDs []string
