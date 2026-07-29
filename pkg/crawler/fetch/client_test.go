@@ -187,3 +187,69 @@ func TestCheckPublicURL(t *testing.T) {
 		t.Errorf("checkPublicURL(public IP) = %v, want nil", err)
 	}
 }
+
+// The fetch layer's integrity/guard rejections must be PERMANENT and carry their
+// own FaultClass. Raised as plain errors they classified as `transient`, so the
+// runner re-fetched the same bad bytes every ~5 min forever (never parking, never
+// alerting) and mislabeled the cause — for a digest mismatch, the only integrity
+// gate Phase 1 has.
+func TestFetchFaults_ArePermanentAndClassified(t *testing.T) {
+	cat := `{"id":"p/c","resources":[{"id":"r1"}]}`
+	mux := http.NewServeMux()
+	mux.HandleFunc("/file", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte(cat)) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	ctx := context.Background()
+
+	t.Run("digest mismatch", func(t *testing.T) {
+		c := NewClient(5*time.Second, 1<<20, 1<<20, true)
+		_, err := c.FetchFile(ctx, catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed("something else")})
+		assertPermanentFault(t, err, catalog.FaultDigestMismatch)
+	})
+
+	t.Run("artifact over the compressed cap", func(t *testing.T) {
+		c := NewClient(5*time.Second, 8, 1<<20, true) // maxBytes=8 < len(cat)
+		_, err := c.FetchFile(ctx, catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(cat)})
+		assertPermanentFault(t, err, catalog.FaultOversize)
+	})
+
+	t.Run("ssrf rejection", func(t *testing.T) {
+		assertPermanentFault(t, checkPublicURL("http://10.0.0.1/x"), catalog.FaultSSRF)
+	})
+
+	// Counter-case: a 5xx must stay transient, or a publisher blip would park the
+	// catalog until they publish a new version.
+	t.Run("5xx stays transient", func(t *testing.T) {
+		down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		defer down.Close()
+		c := NewClient(5*time.Second, 1<<20, 1<<20, true)
+		_, err := c.FetchFile(ctx, catalog.FileEntry{URL: down.URL, Digest: sha256Prefixed(cat)})
+		if err == nil {
+			t.Fatal("want an error on 503")
+		}
+		if catalog.IsPermanent(err) {
+			t.Fatalf("503 must stay transient (retryable), got permanent: %v", err)
+		}
+		if got := catalog.ClassifyFault(0, err); got != catalog.FaultTransient {
+			t.Fatalf("ClassifyFault(503) = %q, want %q", got, catalog.FaultTransient)
+		}
+	})
+}
+
+func assertPermanentFault(t *testing.T, err error, want catalog.FaultClass) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("want a %q error, got nil", want)
+	}
+	if !catalog.IsPermanent(err) {
+		t.Fatalf("%v: must be permanent (park), not transient (retry forever)", err)
+	}
+	if got := catalog.ClassifyFault(0, err); got != want {
+		t.Fatalf("ClassifyFault(%v) = %q, want %q", err, got, want)
+	}
+	if !want.Permanent() {
+		t.Fatalf("FaultClass %q must be Permanent() for the runner to park it", want)
+	}
+}

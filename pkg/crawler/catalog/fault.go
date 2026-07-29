@@ -13,20 +13,45 @@ import (
 // unsupported encoding, a decompression bomb, a corrupt artifact, or a
 // continuity gap. The runner parks these (no hot retry) and never advances the
 // version cursor.
-type PermanentError struct{ Msg string }
+//
+// Class names what actually went wrong, so the raiser (which knows) decides the
+// fault label instead of ClassifyFault guessing at the far end. An empty Class
+// means "unspecified" and still classifies as FaultDecode.
+type PermanentError struct {
+	Msg   string
+	Class FaultClass
+}
 
 func (e *PermanentError) Error() string { return e.Msg }
 
-// Permanentf builds a PermanentError. Exported so adapter packages (decode,
-// fetch) can raise permanent faults over the shared taxonomy.
+// Permanentf builds a PermanentError with an unspecified class (=> FaultDecode).
+// Exported so adapter packages (decode, fetch) can raise permanent faults over
+// the shared taxonomy. Prefer PermanentFaultf when the cause has its own class.
 func Permanentf(format string, a ...any) error {
 	return &PermanentError{Msg: fmt.Sprintf(format, a...)}
+}
+
+// PermanentFaultf builds a PermanentError that carries its own FaultClass, so an
+// operator sees the real cause (digest_mismatch, ssrf, oversize, gap) rather
+// than a blanket "decode" for every permanent failure.
+func PermanentFaultf(class FaultClass, format string, a ...any) error {
+	return &PermanentError{Msg: fmt.Sprintf(format, a...), Class: class}
 }
 
 // IsPermanent reports whether err (or a wrapped cause) is a PermanentError.
 func IsPermanent(err error) bool {
 	var pe *PermanentError
 	return errors.As(err, &pe)
+}
+
+// PermanentClass returns the FaultClass a PermanentError carries, or "" if err
+// is not permanent or did not name one.
+func PermanentClass(err error) FaultClass {
+	var pe *PermanentError
+	if errors.As(err, &pe) {
+		return pe.Class
+	}
+	return ""
 }
 
 // FaultClass is the typed fault taxonomy (§6b): one vocabulary for what went
@@ -68,6 +93,11 @@ func (f FaultClass) Permanent() bool {
 // crawler's park-vs-retry rule: a 4xx push rejection or any PermanentError is
 // permanent; everything else is transient.
 //
+// A PermanentError that named its own Class reports that class; one that didn't
+// falls back to FaultDecode. Without the class, every permanent failure — a
+// continuity gap, a tampered digest, an SSRF rejection — surfaced as
+// fault_class="decode" and pointed operators at the wrong cause.
+//
 // Exception: 408 (Request Timeout), 425 (Too Early) and 429 (Too Many Requests)
 // are 4xx statuses the server itself says to retry — parking them permanently
 // would strand a catalog on a transient rate-limit/timeout. They classify as
@@ -79,6 +109,9 @@ func ClassifyFault(httpStatus int, err error) FaultClass {
 	case httpStatus >= 400 && httpStatus < 500:
 		return FaultPushRejected
 	case IsPermanent(err):
+		if c := PermanentClass(err); c != "" {
+			return c
+		}
 		return FaultDecode
 	default:
 		return FaultTransient

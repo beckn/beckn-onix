@@ -43,7 +43,13 @@ func TestStepPhrase(t *testing.T) {
 		"decode":          "unpack the files",
 		"gap":             "unpack the files",
 		"digest_mismatch": "verify the downloaded files",
-		"oversize":        "batch the catalog",
+		// oversize said "batch the catalog" while no code path produced the class.
+		// The fetch layer now raises it for the download cap, so the phrase has to
+		// name that stage; a batch Discovery rejects arrives as a 413 =>
+		// push_rejected. A decompression bomb stays `decode` ("unpack the files").
+		"oversize":        "download the files",
+		"ssrf":            "download the files",
+		"content_invalid": "build the push request",
 		"push_schema":     "send the catalog to Discovery",
 		"push_rejected":   "send the catalog to Discovery",
 		"transient":       "send the catalog to Discovery",
