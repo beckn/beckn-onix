@@ -38,6 +38,7 @@ type ClaimedItem struct {
 	ToVersion   int64
 	Op          string
 	Attempts    int
+	EnqueuedAt  time.Time
 }
 
 // Enqueue upserts a work item. UNIQUE(catalog_id) coalesces repeated changes
@@ -87,9 +88,9 @@ func (s *Store) ClaimNext(ctx context.Context) (*ClaimedItem, error) {
 		     ORDER BY next_attempt_at
 		     FOR UPDATE SKIP LOCKED
 		     LIMIT 1)
-		 RETURNING id, claim_id, catalog_id, index_url, from_version, to_version, op, attempts`,
+		 RETURNING id, claim_id, catalog_id, index_url, from_version, to_version, op, attempts, enqueued_at`,
 		claimLease.String()).
-		Scan(&it.ID, &cid, &it.CatalogID, &it.IndexURL, &fv, &it.ToVersion, &it.Op, &it.Attempts)
+		Scan(&it.ID, &cid, &it.CatalogID, &it.IndexURL, &fv, &it.ToVersion, &it.Op, &it.Attempts, &it.EnqueuedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

@@ -154,18 +154,30 @@ func TestEngine_IndexThenCatalogPass(t *testing.T) {
 	}
 }
 
-// recMetrics records engine metric calls for assertions.
+// recMetrics records engine metric calls for assertions. pushed/failed are
+// derived from RecordSyncOutcome by outcome (pushed vs faulted/partial).
 type recMetrics struct {
 	pushed int
 	failed int
 	depth  int
 }
 
-func (m *recMetrics) CatalogPushed()              { m.pushed++ }
-func (m *recMetrics) CatalogFailed(string)        { m.failed++ }
-func (m *recMetrics) SetQueueDepth(n int)         { m.depth = n }
-func (m *recMetrics) ObservePushSeconds(float64)  {}
-func (m *recMetrics) ObserveIndexSeconds(float64) {}
+func (m *recMetrics) RecordSyncOutcome(outcome, _ string) {
+	switch outcome {
+	case "pushed":
+		m.pushed++
+	case "faulted", "partial":
+		m.failed++
+	}
+}
+func (m *recMetrics) MarkPassSuccess(string)        {}
+func (m *recMetrics) SetQueueDepth(n int)           { m.depth = n }
+func (m *recMetrics) SetCatalogsParked(int)         {}
+func (m *recMetrics) SetCatalogsTracked(int)        {}
+func (m *recMetrics) ObservePushSeconds(float64)    {}
+func (m *recMetrics) ObserveIndexSeconds(float64)   {}
+func (m *recMetrics) ObserveSyncLagSeconds(float64) {}
+func (m *recMetrics) RecordIndexPoll(string)        {}
 
 // A 304 Not Modified from the index host: the engine echoes the stored ETag,
 // enqueues nothing, keeps the version, and only advances the crawl cadence.

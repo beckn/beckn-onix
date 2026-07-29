@@ -62,6 +62,7 @@ func (e *Engine) indexPass(ctx context.Context) {
 		enqueued += r.enqueued
 	}
 	e.logCrawlFinished(runID, fetched, changed, enqueued, e.deps.Now().Sub(start))
+	e.deps.Metrics.MarkPassSuccess("crawl")
 }
 
 // crawlIndex crawls one publisher index. The steps read top to bottom:
@@ -82,6 +83,7 @@ func (e *Engine) crawlIndex(ctx context.Context, ref source.IndexRef, trig trigg
 	res, err := e.deps.FetchIndex(ctx, ref.IndexURL, conditionsFrom(prev))
 	if err != nil {
 		e.logPollFailed(runID, ref.IndexURL, err)
+		e.deps.Metrics.RecordIndexPoll("unreachable")
 		return crawlResult{}
 	}
 	if res.NotModified {
@@ -116,6 +118,7 @@ func conditionsFrom(prev *store.IndexState) catalog.IndexConditions {
 // (cheap) crawl duration.
 func (e *Engine) indexUnchanged(ctx context.Context, ref source.IndexRef, runID string, since time.Time) crawlResult {
 	e.logPolled(runID, ref.IndexURL, 0, "not_modified")
+	e.deps.Metrics.RecordIndexPoll("not_modified")
 	if err := e.deps.Store.AdvanceIndexCadence(ctx, ref.IndexURL, e.nextIndexCrawl()); err != nil {
 		e.storeUnhealthy("crawl", runID, "advance_cadence", "", err)
 	}
@@ -130,9 +133,11 @@ func (e *Engine) processIndex(ctx context.Context, ref source.IndexRef, prev *st
 	out := crawlResult{fetched: true}
 	if prev != nil && prev.IndexVersion == idx.Version {
 		e.logPolled(runID, ref.IndexURL, idx.Version, "unchanged")
+		e.deps.Metrics.RecordIndexPoll("unchanged")
 		return out
 	}
 	e.logPolled(runID, ref.IndexURL, idx.Version, "updated")
+	e.deps.Metrics.RecordIndexPoll("updated")
 	out.changed = true
 	out.enqueued = e.decideCatalogs(ctx, ref, idx, runID)
 	return out
