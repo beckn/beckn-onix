@@ -378,6 +378,16 @@ the duplicate field removes the chance to get it backwards.
 `catalogpublisher.go`) rather than configurable, pending a move to a
 shared beckndefaults/becknconstants file.
 
+**The `catalogPublish` handler goes one step further: you don't even set
+`subscriberId` under `catalogPublisher.config` at all.**
+`NewCatalogPublishHandler` derives it automatically from
+`plugins.keyManager.config.subscriberId` (see `withKeyManagerSubscriberID`
+in `catalogPublishHandler.go`) -- one declaration, in the one place that
+actually needs to know it, instead of two config blocks that have to be
+kept in sync by hand. An explicit `subscriberId` under
+`catalogPublisher.config` is still honored untouched, for the rare case it
+must legitimately differ from the KeyManager's.
+
 **Public catalogs only in this phase**: every submission is published with
 no `networkIds`/`authMethods`, matching `CatalogSubmission`'s zero value.
 

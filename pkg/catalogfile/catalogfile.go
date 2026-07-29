@@ -14,17 +14,6 @@ import (
 	"fmt"
 )
 
-// Doc is the fixed top-level shape a Beckn Catalog carries (file spec:
-// "the plain Beckn catalog JSON, exactly the schema used today"). Offers
-// is optional -- not every catalog carries one.
-type Doc struct {
-	ID         json.RawMessage   `json:"id"`
-	Descriptor json.RawMessage   `json:"descriptor"`
-	Provider   json.RawMessage   `json:"provider"`
-	Resources  []json.RawMessage `json:"resources"`
-	Offers     []json.RawMessage `json:"offers,omitempty"`
-}
-
 // DiffBlock is one array's worth of upserts (added or updated items,
 // applied by id) and removals (ids only).
 type DiffBlock struct {
@@ -38,9 +27,8 @@ func (b DiffBlock) IsEmpty() bool { return len(b.Upserts) == 0 && len(b.Removals
 // ChangeFileDoc is the change-file shape for one publish (file spec,
 // "Catalog files and change files"): resources and offers are diffed
 // independently, and Catalog optionally carries catalog-level attribute
-// changes (currently: descriptor, provider -- see the "Deliberately not
-// done" note in catalogpublisher's README for why this is a best-effort
-// subset of that field, not a complete implementation of it).
+// changes (the file spec's own examples: name, validity window) -- any
+// top-level catalog field other than resources/offers, not a fixed list.
 type ChangeFileDoc struct {
 	CatalogID   string          `json:"catalogId"`
 	FromVersion int             `json:"fromVersion"`
@@ -53,8 +41,16 @@ type ChangeFileDoc struct {
 // Apply folds one change file onto catalog's resources/offers arrays
 // (upserts replace by id or append; removals drop by id) and overlays any
 // catalog-level attribute changes, returning the resulting catalog bytes.
+//
+// catalog is parsed as a generic field map, not a fixed struct: a Beckn
+// Catalog object can carry fields beyond id/descriptor/provider/resources/
+// offers (e.g. a catalog-wide validity window), and those must survive a
+// baseline+changes round trip unchanged even when nothing here touches
+// them. An earlier version of this function used a fixed struct and
+// silently dropped every field it didn't know about on every Apply call,
+// not just ones that had changed.
 func Apply(catalog []byte, changeRaw []byte) ([]byte, error) {
-	var doc Doc
+	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(catalog, &doc); err != nil {
 		return nil, fmt.Errorf("catalogfile: parsing catalog: %w", err)
 	}
@@ -63,32 +59,59 @@ func Apply(catalog []byte, changeRaw []byte) ([]byte, error) {
 		return nil, fmt.Errorf("catalogfile: parsing change file: %w", err)
 	}
 
-	resources, err := applyDiffBlock(doc.Resources, change.Resources)
+	resources, err := arrayField(doc, "resources")
+	if err != nil {
+		return nil, fmt.Errorf("catalogfile: parsing resources: %w", err)
+	}
+	resources, err = applyDiffBlock(resources, change.Resources)
 	if err != nil {
 		return nil, fmt.Errorf("catalogfile: applying resources: %w", err)
 	}
-	doc.Resources = resources
-
-	offers, err := applyDiffBlock(doc.Offers, change.Offers)
-	if err != nil {
-		return nil, fmt.Errorf("catalogfile: applying offers: %w", err)
+	if doc["resources"], err = json.Marshal(resources); err != nil {
+		return nil, fmt.Errorf("catalogfile: marshaling resources: %w", err)
 	}
-	doc.Offers = offers
+
+	// offers is optional -- only rewrite it if the catalog already has one
+	// or this change actually touches it, so a catalog with no offers
+	// field doesn't gain an empty "offers": [] out of nowhere.
+	if _, hasOffers := doc["offers"]; hasOffers || !change.Offers.IsEmpty() {
+		offers, err := arrayField(doc, "offers")
+		if err != nil {
+			return nil, fmt.Errorf("catalogfile: parsing offers: %w", err)
+		}
+		offers, err = applyDiffBlock(offers, change.Offers)
+		if err != nil {
+			return nil, fmt.Errorf("catalogfile: applying offers: %w", err)
+		}
+		if doc["offers"], err = json.Marshal(offers); err != nil {
+			return nil, fmt.Errorf("catalogfile: marshaling offers: %w", err)
+		}
+	}
 
 	if len(change.Catalog) > 0 {
 		var attrs map[string]json.RawMessage
 		if err := json.Unmarshal(change.Catalog, &attrs); err != nil {
 			return nil, fmt.Errorf("catalogfile: parsing catalog attribute changes: %w", err)
 		}
-		if v, ok := attrs["descriptor"]; ok {
-			doc.Descriptor = v
-		}
-		if v, ok := attrs["provider"]; ok {
-			doc.Provider = v
+		for field, v := range attrs {
+			doc[field] = v
 		}
 	}
 
 	return json.Marshal(doc)
+}
+
+// arrayField reads doc[field] as a json array, or nil if absent.
+func arrayField(doc map[string]json.RawMessage, field string) ([]json.RawMessage, error) {
+	raw, ok := doc[field]
+	if !ok || len(raw) == 0 {
+		return nil, nil
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 // applyDiffBlock applies one DiffBlock (upserts by id, replacing existing
