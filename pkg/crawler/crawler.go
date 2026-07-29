@@ -36,10 +36,10 @@ type Options struct {
 // wires them to the runner. The returned closer stops the engine and closes the
 // DB; call it after Stop-worthy shutdown.
 //
-// New (and its closer) own the crawler-process daemon lifecycle (§9b,
-// lifecycle=daemon): both drivers get an identical crawler.daemon.{ready,
-// start_failed,stopping,stopped} contract without repeating it, so a start
-// failure reads the same whether it came from the plugin or the standalone cmd.
+// New (and its closer) own the crawler-process daemon component (see
+// docs/crawler-logs.md): both drivers get an identical crawler.daemon.{ready,
+// failed,stopping,stopped} contract without repeating it, so a start failure
+// reads the same whether it came from the plugin or the standalone cmd.
 func New(ctx context.Context, s config.Settings, opts Options) (*runner.Engine, func() error, error) {
 	log := opts.Logger
 	if log == nil {
@@ -48,14 +48,14 @@ func New(ctx context.Context, s config.Settings, opts Options) (*runner.Engine, 
 
 	db, err := store.Open(s.DBDSN)
 	if err != nil {
-		log.Error("crawler.daemon.start_failed",
-			"lifecycle", "daemon", "state", "start_failed", "stage", "db_open", "error", err.Error())
+		log.Error("crawler failed to start while opening the database: "+err.Error(),
+			"component", "daemon", "stage", "failed", "at", "db_open", "error", err.Error())
 		return nil, nil, fmt.Errorf("crawler: opening db: %w", err)
 	}
 	if err := store.Migrate(ctx, db); err != nil {
 		_ = db.Close()
-		log.Error("crawler.daemon.start_failed",
-			"lifecycle", "daemon", "state", "start_failed", "stage", "db_migrate", "error", err.Error())
+		log.Error("crawler failed to start while migrating the database: "+err.Error(),
+			"component", "daemon", "stage", "failed", "at", "db_migrate", "error", err.Error())
 		return nil, nil, fmt.Errorf("crawler: migrate: %w", err)
 	}
 
@@ -85,12 +85,12 @@ func New(ctx context.Context, s config.Settings, opts Options) (*runner.Engine, 
 	})
 
 	closer := func() error {
-		log.Info("crawler.daemon.stopping", "lifecycle", "daemon", "state", "stopping")
+		log.Info("crawler stopping", "component", "daemon", "stage", "stopping")
 		stopErr := eng.Stop()
 		if cerr := db.Close(); cerr != nil && stopErr == nil {
 			stopErr = cerr
 		}
-		log.Info("crawler.daemon.stopped", "lifecycle", "daemon", "state", "stopped")
+		log.Info("crawler stopped", "component", "daemon", "stage", "stopped")
 		return stopErr
 	}
 
@@ -102,12 +102,12 @@ func New(ctx context.Context, s config.Settings, opts Options) (*runner.Engine, 
 	if u, err := url.Parse(s.PushEndpoint); err == nil {
 		pushHost = u.Host
 	}
-	log.Info("crawler.daemon.ready",
-		"lifecycle", "daemon", "state", "ready",
-		"source_mode", sourceMode, "sources_count", len(s.IndexURLs), "networks", s.NetworkIDs,
-		"push_host", pushHost,
+	log.Info(fmt.Sprintf("crawler started — polling %d source(s) every %s, pushing to %s",
+		len(s.IndexURLs), s.IndexInterval.String(), pushHost),
+		"component", "daemon", "stage", "ready",
+		"source_mode", sourceMode, "push_host", pushHost,
+		"sources", len(s.IndexURLs),
 		"index_interval", s.IndexInterval.String(), "catalog_interval", s.CatalogInterval.String(),
-		"max_artifact_bytes", s.MaxArtifactBytes, "max_decompressed_bytes", s.MaxDecompressedBytes,
 		"max_attempts", s.MaxAttempts)
 	return eng, closer, nil
 }

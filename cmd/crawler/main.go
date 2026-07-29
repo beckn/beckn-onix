@@ -27,9 +27,9 @@ func main() {
 	s, err := config.LoadSettings(os.Getenv)
 	if err != nil {
 		// crawler.New owns the rest of the daemon lifecycle; config load happens
-		// before it, so this is the one start_failed the driver still emits.
-		logger.Error("crawler.daemon.start_failed",
-			"lifecycle", "daemon", "state", "start_failed", "stage", "config", "error", err.Error())
+		// before it, so this is the one failed the driver still emits.
+		logger.Error("crawler failed to start while loading config: "+err.Error(),
+			"component", "daemon", "stage", "failed", "at", "config", "error", err.Error())
 		os.Exit(1)
 	}
 
@@ -41,7 +41,7 @@ func main() {
 		metrics = runner.NopMetrics{}
 	}
 
-	// New logs crawler.daemon.ready on success / crawler.daemon.start_failed on
+	// New logs crawler.daemon.ready on success / crawler.daemon.failed on
 	// db open/migrate failure, so the driver just exits on error.
 	eng, closer, err := crawler.New(ctx, s, crawler.Options{
 		Logger:  crawler.NewSlogLogger(logger),
@@ -54,8 +54,8 @@ func main() {
 	defer closer() //nolint:errcheck // best-effort stop + db close on shutdown (logs daemon.stopping/stopped)
 
 	if err := eng.Start(ctx); err != nil {
-		logger.Error("crawler.daemon.start_failed",
-			"lifecycle", "daemon", "state", "start_failed", "stage", "start", "error", err.Error())
+		logger.Error("crawler failed to start while launching the jobs: "+err.Error(),
+			"component", "daemon", "stage", "failed", "at", "start", "error", err.Error())
 		os.Exit(1)
 	}
 

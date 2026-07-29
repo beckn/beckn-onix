@@ -29,10 +29,9 @@ const (
 
 // crawlResult is what one crawlIndex reports back so indexPass can tally the
 // heartbeat: whether the index was actually fetched (fetched — the conditional
-// GET was made, incl. a 304), whether its version advanced (changed), how many
-// catalogs were enqueued, and the terminal IndexOutcome.
+// GET was made, incl. a 304), whether its version advanced (changed), and how
+// many catalogs were enqueued.
 type crawlResult struct {
-	outcome  IndexOutcome
 	fetched  bool
 	changed  bool
 	enqueued int
@@ -45,7 +44,7 @@ func (e *Engine) indexPass(ctx context.Context) {
 	start := e.deps.Now()
 	refs, err := e.deps.Source.IndexRefs(ctx)
 	if err != nil {
-		e.logIndexPassFailed(runID, "source_resolve", err)
+		e.logCrawlFailed(runID, "source_resolve", err)
 		return
 	}
 	var fetched, changed, enqueued int
@@ -62,7 +61,7 @@ func (e *Engine) indexPass(ctx context.Context) {
 		}
 		enqueued += r.enqueued
 	}
-	e.logIndexPassCompleted(runID, fetched, changed, enqueued, e.deps.Now().Sub(start))
+	e.logCrawlFinished(runID, fetched, changed, enqueued, e.deps.Now().Sub(start))
 }
 
 // crawlIndex crawls one publisher index. The steps read top to bottom:
@@ -72,8 +71,8 @@ func (e *Engine) indexPass(ctx context.Context) {
 func (e *Engine) crawlIndex(ctx context.Context, ref source.IndexRef, trig trigger, runID string) crawlResult {
 	prev, err := e.deps.Store.GetIndex(ctx, ref.IndexURL)
 	if err != nil {
-		e.storeUnhealthy(runID, "read_index", "", err)
-		return crawlResult{outcome: IndexFailed}
+		e.storeUnhealthy("crawl", runID, "read_index", "", err)
+		return crawlResult{}
 	}
 	now := e.deps.Now()
 	if !e.dueForCrawl(prev, trig, now) {
@@ -82,8 +81,8 @@ func (e *Engine) crawlIndex(ctx context.Context, ref source.IndexRef, trig trigg
 
 	res, err := e.deps.FetchIndex(ctx, ref.IndexURL, conditionsFrom(prev))
 	if err != nil {
-		e.logIndexFetchFailed(runID, ref.IndexURL, catalog.ClassifyFault(0, err), err)
-		return crawlResult{outcome: IndexFailed}
+		e.logPollFailed(runID, ref.IndexURL, err)
+		return crawlResult{}
 	}
 	if res.NotModified {
 		return e.indexUnchanged(ctx, ref, runID, now)
@@ -116,29 +115,26 @@ func conditionsFrom(prev *store.IndexState) catalog.IndexConditions {
 // — no body downloaded, no parse. Just advance the crawl cadence and record the
 // (cheap) crawl duration.
 func (e *Engine) indexUnchanged(ctx context.Context, ref source.IndexRef, runID string, since time.Time) crawlResult {
-	e.logIndexNotModified(runID, ref.IndexURL)
+	e.logPolled(runID, ref.IndexURL, 0, "not_modified")
 	if err := e.deps.Store.AdvanceIndexCadence(ctx, ref.IndexURL, e.nextIndexCrawl()); err != nil {
-		e.storeUnhealthy(runID, "advance_cadence", "", err)
+		e.storeUnhealthy("crawl", runID, "advance_cadence", "", err)
 	}
 	e.deps.Metrics.ObserveIndexSeconds(e.deps.Now().Sub(since).Seconds())
-	return crawlResult{outcome: IndexUnchanged, fetched: true}
+	return crawlResult{fetched: true}
 }
 
 // processIndex handles a freshly-fetched index body: it always counts as
 // checked, and when the version advanced it decides + enqueues per catalog.
 // A same-version index is logged and left for the per-catalog cursors + queue.
 func (e *Engine) processIndex(ctx context.Context, ref source.IndexRef, prev *store.IndexState, idx catalog.Index, runID string) crawlResult {
-	e.logIndexChecked(runID, ref.IndexURL, idx.Version)
-	out := crawlResult{outcome: IndexUnchanged, fetched: true}
+	out := crawlResult{fetched: true}
 	if prev != nil && prev.IndexVersion == idx.Version {
-		e.logIndexUnchanged(runID, ref.IndexURL, idx.Version)
+		e.logPolled(runID, ref.IndexURL, idx.Version, "unchanged")
 		return out
 	}
+	e.logPolled(runID, ref.IndexURL, idx.Version, "updated")
 	out.changed = true
 	out.enqueued = e.decideCatalogs(ctx, ref, idx, runID)
-	if out.enqueued > 0 {
-		out.outcome = IndexEnqueued
-	}
 	return out
 }
 
@@ -148,7 +144,7 @@ func (e *Engine) processIndex(ctx context.Context, ref source.IndexRef, prev *st
 func (e *Engine) recordIndex(ctx context.Context, ref source.IndexRef, res catalog.IndexResult, runID string, since time.Time) {
 	idx := res.Index
 	if err := e.deps.Store.UpsertIndex(ctx, ref.IndexURL, idx.ParticipantID, ref.Source, idx.Version, publish.SyncOK, e.nextIndexCrawl(), res.ETag, res.LastModified); err != nil {
-		e.storeUnhealthy(runID, "upsert_index", "", err)
+		e.storeUnhealthy("crawl", runID, "upsert_index", "", err)
 	}
 	e.deps.Metrics.ObserveIndexSeconds(e.deps.Now().Sub(since).Seconds())
 }
@@ -173,11 +169,10 @@ func (e *Engine) decideCatalog(ctx context.Context, ref source.IndexRef, entry c
 	take, _ := catalog.ResolveScope(entry, e.cfg.Networks)
 	cursor, seen, err := e.deps.Store.GetCatalogVersion(ctx, entry.CatalogID)
 	if err != nil {
-		e.storeUnhealthy(runID, "read_cursor", entry.CatalogID, err)
+		e.storeUnhealthy("crawl", runID, "read_cursor", entry.CatalogID, err)
 		return false
 	}
 	d := catalog.DetectChange(entry, cursor, seen)
-	e.logCatalogDecided(runID, entry.CatalogID, string(d.Action), cursor, d.ToVersion)
 	switch d.Action {
 	case catalog.ActionSync:
 		if !take {
@@ -187,10 +182,10 @@ func (e *Engine) decideCatalog(ctx context.Context, ref source.IndexRef, entry c
 			CatalogID: entry.CatalogID, IndexURL: ref.IndexURL,
 			FromVersion: cursor, ToVersion: d.ToVersion, Op: "sync",
 		}); err != nil {
-			e.storeUnhealthy(runID, "enqueue", entry.CatalogID, err)
+			e.storeUnhealthy("crawl", runID, "enqueue", entry.CatalogID, err)
 			return false
 		}
-		e.logCatalogEnqueued(runID, entry.CatalogID, d.ToVersion)
+		e.logQueued(runID, entry.CatalogID, "sync", cursor, d.ToVersion)
 		return true
 	case catalog.ActionRetire:
 		if !seen {
@@ -199,13 +194,13 @@ func (e *Engine) decideCatalog(ctx context.Context, ref source.IndexRef, entry c
 		if err := e.deps.Store.Enqueue(ctx, store.QueueItem{
 			CatalogID: entry.CatalogID, IndexURL: ref.IndexURL, ToVersion: cursor, Op: "retire",
 		}); err != nil {
-			e.storeUnhealthy(runID, "enqueue", entry.CatalogID, err)
+			e.storeUnhealthy("crawl", runID, "enqueue", entry.CatalogID, err)
 			return false
 		}
-		e.logCatalogRetireEnqueued(runID, entry.CatalogID)
+		e.logQueued(runID, entry.CatalogID, "retire", cursor, cursor)
 		return true
 	case catalog.ActionRollback:
-		e.logIndexRollback(runID, entry.CatalogID, cursor, d.ToVersion)
+		e.logRollback(runID, entry.CatalogID, cursor, d.ToVersion)
 	case catalog.ActionSkipUnchanged:
 		// nothing to do
 	}
