@@ -515,12 +515,16 @@ func (m *Manager) KeyManager(ctx context.Context, rClient definition.RegistryLoo
 
 // Crawler returns a Crawler instance based on the provided configuration.
 // It reuses the loaded provider.
-func (m *Manager) Crawler(ctx context.Context, validator definition.SchemaValidator, cfg *Config) (definition.Crawler, error) {
+//
+// registry is the crawler's trust anchor: catalog file signatures are verified
+// against the publishing participant's registry key, so an enabled crawler
+// cannot verify anything without it.
+func (m *Manager) Crawler(ctx context.Context, validator definition.SchemaValidator, registry definition.RegistryLookup, cfg *Config) (definition.Crawler, error) {
 	cp, err := provider[definition.CrawlerProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	c, closer, err := cp.New(ctx, validator, cfg.Config)
+	c, closer, err := cp.New(ctx, validator, registry, cfg.Config)
 	if err != nil {
 		return nil, err
 	}

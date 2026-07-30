@@ -89,7 +89,7 @@ func (m *mockPluginManager) PayloadStore(_ context.Context, _ definition.Cache, 
 	return nil, nil
 }
 
-func (m *mockPluginManager) Crawler(_ context.Context, _ definition.SchemaValidator, _ *plugin.Config) (definition.Crawler, error) {
+func (m *mockPluginManager) Crawler(_ context.Context, _ definition.SchemaValidator, _ definition.RegistryLookup, _ *plugin.Config) (definition.Crawler, error) {
 	return nil, nil
 }
 
