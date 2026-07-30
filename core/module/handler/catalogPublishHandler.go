@@ -38,21 +38,30 @@ type catalogPublishHandler struct {
 	// subscriberID is the plain Beckn subscriberId (keyManager.config.
 	// subscriberId) -- the KeyManager.Keyset lookup key, used for signing.
 	subscriberID string
-	// manifestSubscriberID is the DeDi-native namespace/registry/
-	// recordName identifier ManifestLoader.GetBySubscriberID (and
-	// dediregistry.LookupNode underneath it) requires for the manifest
-	// self-lookup (same self-lookup schemaversionmediator does at its own
-	// cold start, via its own separate nodeId config) -- deliberately NOT
-	// subscriberID: DeDi's record path has a different shape than the flat
-	// subscriberId used for keyset lookup, and reusing subscriberId here
-	// would mean setting it to the 3-part path breaks Keyset() lookups
-	// instead (simplekeymanager's keyset is keyed by the plain
-	// subscriberId, not this path). Read from
-	// plugins.catalogPublisher.config.manifestSubscriberId; falls back to
-	// subscriberID when unset (works only if that happens to already be
-	// 3-part).
-	manifestSubscriberID string
+	// keyID is this subscriber's key id, resolved once at construction via
+	// keyManager.Keyset(ctx, subscriberID).UniqueKeyID -- the same signing
+	// keyset catalogpublisher.Publish itself loads. Used together with
+	// subscriberID to build the manifest self-lookup's synthetic
+	// namespace/registry/recordName path (see loadOwnNodeManifest) instead
+	// of requiring a hand-configured manifestSubscriberId: subscriberID and
+	// keyID are the same pair RegistryLookup.Lookup already resolves
+	// signing keys with during ordinary transactions, and were verified
+	// directly against the DeDi registry to resolve to the identical
+	// record a three-part path would. Empty when manifestLoader isn't
+	// configured (never resolved, since nothing needs it).
+	keyID string
 }
+
+// dediSubscriberWildcardRegistry is the DeDi registry service's special
+// "search across all registries" value -- the same one
+// dediregistry.dediAllRegistriesWildcard uses for RegistryLookup.Lookup's
+// signing-key resolution during ordinary transactions. Duplicated here
+// (rather than exporting dediregistry's unexported constant, or adding a
+// dedicated subscriberID+keyID-shaped method to ManifestLoader/
+// RegistryMetadataLookup) to keep this change's footprint small; giving
+// ManifestLoader a proper subscriberID+keyID-shaped lookup method instead
+// of this synthetic-path workaround is a separate, better-scoped follow-up.
+const dediSubscriberWildcardRegistry = "subscribers.beckn.one"
 
 // publishDirective is one entry in publishRequest.Message.PublishDirectives,
 // matched to a submitted catalog by CatalogID -- beckn.yaml's own
@@ -157,20 +166,32 @@ func NewCatalogPublishHandler(ctx context.Context, mgr PluginManager, cfg *Confi
 	if err != nil {
 		return nil, fmt.Errorf("catalogPublish handler %s: %w", moduleName, err)
 	}
-	manifestSubscriberID := cfg.Plugins.CatalogPublisher.Config["manifestSubscriberId"]
-	if manifestSubscriberID == "" {
-		manifestSubscriberID = publisherCfg.Config["subscriberId"]
+
+	subscriberID := publisherCfg.Config["subscriberId"]
+	var keyID string
+	if manifestLoader != nil {
+		// Only resolved when actually needed: the manifest self-lookup is
+		// the sole consumer of keyID. km.Keyset is the same signing keyset
+		// catalogpublisher.Publish itself loads per-request -- resolving it
+		// once here, eagerly, means a bad/missing keyset for subscriberID
+		// fails fast at startup instead of silently at the first publish's
+		// manifest-link check.
+		keyset, err := km.Keyset(ctx, subscriberID)
+		if err != nil {
+			return nil, fmt.Errorf("catalogPublish handler %s: resolving keyset for manifest self-lookup (subscriberId=%s): %w", moduleName, subscriberID, err)
+		}
+		keyID = keyset.UniqueKeyID
 	}
 
 	log.Debugf(ctx, "catalogPublish handler %s initialized, outputRoot=%s", moduleName, cfg.OutputRoot)
 	return &catalogPublishHandler{
-		publisher:            publisher,
-		outputRoot:           cfg.OutputRoot,
-		schemaValidator:      schemaValidator,
-		policyChecker:        policyChecker,
-		manifestLoader:       manifestLoader,
-		subscriberID:         publisherCfg.Config["subscriberId"],
-		manifestSubscriberID: manifestSubscriberID,
+		publisher:       publisher,
+		outputRoot:      cfg.OutputRoot,
+		schemaValidator: schemaValidator,
+		policyChecker:   policyChecker,
+		manifestLoader:  manifestLoader,
+		subscriberID:    subscriberID,
+		keyID:           keyID,
 	}, nil
 }
 
@@ -421,21 +442,20 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 // what's missing. Returns ("", nil) when the link already exists.
 func (h *catalogPublishHandler) checkNodeManifestLinksIndex(ctx context.Context) (string, error) {
 	indexURL := h.publisher.IndexURL()
-	log.Debugf(ctx, "catalogPublish: checking node manifest for %s links catalog index %s", h.manifestSubscriberID, indexURL)
+	log.Debugf(ctx, "catalogPublish: checking node manifest for %s links catalog index %s", h.subscriberID, indexURL)
 
 	nm, err := h.loadOwnNodeManifest(ctx)
 	if err != nil {
 		// Deliberately NOT treated as "no manifest yet, start a skeleton"
-		// -- that would silently mask real failures (GetBySubscriberID
-		// requires subscriberID in DeDi's namespace/registry/recordName
-		// format and errors otherwise; a lookup/parse failure here means
-		// the check is inconclusive, not that the link is missing).
-		return "", fmt.Errorf("fetching/parsing node manifest for %s: %w", h.manifestSubscriberID, err)
+		// -- that would silently mask real failures (a lookup/parse
+		// failure here means the check is inconclusive, not that the
+		// link is missing).
+		return "", fmt.Errorf("fetching/parsing node manifest for %s: %w", h.subscriberID, err)
 	}
 
 	for _, entry := range nm.Catalog.CatalogIndexes {
 		if entry.URL == indexURL {
-			log.Debugf(ctx, "catalogPublish: node manifest for %s already declares catalog index %s", h.manifestSubscriberID, indexURL)
+			log.Debugf(ctx, "catalogPublish: node manifest for %s already declares catalog index %s", h.subscriberID, indexURL)
 			return "", nil
 		}
 	}
@@ -448,7 +468,7 @@ func (h *catalogPublishHandler) checkNodeManifestLinksIndex(ctx context.Context)
 
 	return fmt.Sprintf(
 		"node manifest for %s does not declare catalog index %s; a proposed update was staged at %s -- review and publish it to DeDi yourself",
-		h.manifestSubscriberID, indexURL, localstore.StagedNodeManifestPath(h.outputRoot),
+		h.subscriberID, indexURL, localstore.StagedNodeManifestPath(h.outputRoot),
 	), nil
 }
 
@@ -461,25 +481,31 @@ func (h *catalogPublishHandler) checkNodeManifestLinksIndex(ctx context.Context)
 const noManifestPublishedErrMsg = "subscriber has not published a node manifest"
 
 // loadOwnNodeManifest fetches and parses this node's own manifest via
-// GetBySubscriberID (the same self-lookup schemaversionmediator already
-// uses at cold start). Only the specific "subscriber has never published a
-// manifest at all" case is treated as non-fatal -- a fresh skeleton
-// (SubscriberID/ManifestVersion/ManifestType only) checkNodeManifestLinksIndex
-// can add a catalogIndexes entry to and stage from scratch. Any other
-// failure (wrong subscriberID format, network error, unparseable content)
-// is a real error, surfaced to the caller instead of being mistaken for "no
-// manifest" -- silently swallowing it here previously produced a false
-// "not declared" warning even when the real manifest already listed this
-// index, whenever the underlying fetch failed for an unrelated reason.
+// GetBySubscriberID, addressed by a synthetic
+// subscriberID/dediSubscriberWildcardRegistry/keyID path built from
+// subscriberID+keyID -- the same identifiers RegistryLookup.Lookup already
+// resolves signing keys with during ordinary transactions -- rather than a
+// hand-configured three-part DeDi path. Verified directly against the DeDi
+// registry that this resolves to the identical record a real
+// namespace/registry/recordName lookup would. Only the specific "subscriber
+// has never published a manifest at all" case is treated as non-fatal -- a
+// fresh skeleton (SubscriberID/ManifestVersion/ManifestType only)
+// checkNodeManifestLinksIndex can add a catalogIndexes entry to and stage
+// from scratch. Any other failure (network error, unparseable content) is a
+// real error, surfaced to the caller instead of being mistaken for "no
+// manifest" -- silently swallowing it here previously produced a false "not
+// declared" warning even when the real manifest already listed this index,
+// whenever the underlying fetch failed for an unrelated reason.
 func (h *catalogPublishHandler) loadOwnNodeManifest(ctx context.Context) (*model.NodeManifest, error) {
-	doc, err := h.manifestLoader.GetBySubscriberID(ctx, h.manifestSubscriberID)
+	syntheticNodeID := h.subscriberID + "/" + dediSubscriberWildcardRegistry + "/" + h.keyID
+	doc, err := h.manifestLoader.GetBySubscriberID(ctx, syntheticNodeID)
 	if err != nil {
 		if strings.Contains(err.Error(), noManifestPublishedErrMsg) {
-			log.Debugf(ctx, "catalogPublish: no node manifest published yet for %s, starting from a fresh skeleton", h.manifestSubscriberID)
+			log.Debugf(ctx, "catalogPublish: no node manifest published yet for %s, starting from a fresh skeleton", h.subscriberID)
 			return &model.NodeManifest{
 				ManifestVersion: "1.0",
 				ManifestType:    model.NodeManifestType,
-				SubscriberID:    h.manifestSubscriberID,
+				SubscriberID:    h.subscriberID,
 			}, nil
 		}
 		return nil, err

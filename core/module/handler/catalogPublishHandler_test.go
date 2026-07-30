@@ -23,10 +23,11 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher/localstore"
 )
 
-// fakeKeyManager returns a fixed Ed25519 keyset for any keyID.
+// fakeKeyManager returns a fixed Ed25519 keyset (and keyID) for any subscriberID.
 type fakeKeyManager struct {
-	priv ed25519.PrivateKey
-	pub  ed25519.PublicKey
+	priv  ed25519.PrivateKey
+	pub   ed25519.PublicKey
+	keyID string
 }
 
 func (f *fakeKeyManager) GenerateKeyset() (*model.Keyset, error) { return nil, nil }
@@ -37,6 +38,7 @@ func (f *fakeKeyManager) Keyset(context.Context, string) (*model.Keyset, error) 
 	return &model.Keyset{
 		SigningPrivate: base64.StdEncoding.EncodeToString(f.priv.Seed()),
 		SigningPublic:  base64.StdEncoding.EncodeToString(f.pub),
+		UniqueKeyID:    f.keyID,
 	}, nil
 }
 func (f *fakeKeyManager) LookupNPKeys(context.Context, string, string) (string, string, error) {
@@ -57,11 +59,14 @@ func (fakeRegistry) LookupNode(context.Context, string) (*model.SubscriberRecord
 }
 
 // fakeManifestLoader returns a configurable manifest document (or error)
-// for GetBySubscriberID; GetByNetworkID/GetByMetadata are unused here.
+// for GetBySubscriberID -- the handler calls it with a synthetic
+// subscriberID/dediSubscriberWildcardRegistry/keyID path (see
+// catalogPublishHandler.go's loadOwnNodeManifest), so lastNodeID captures
+// that whole string. GetByNetworkID/GetByMetadata are unused here.
 type fakeManifestLoader struct {
-	doc            *model.ManifestDocument
-	err            error
-	lastSubscriber string
+	doc        *model.ManifestDocument
+	err        error
+	lastNodeID string
 }
 
 func (f *fakeManifestLoader) GetByNetworkID(context.Context, string) (*model.ManifestDocument, error) {
@@ -70,8 +75,8 @@ func (f *fakeManifestLoader) GetByNetworkID(context.Context, string) (*model.Man
 func (f *fakeManifestLoader) GetByMetadata(context.Context, model.ManifestMetadata) (*model.ManifestDocument, error) {
 	panic("unused")
 }
-func (f *fakeManifestLoader) GetBySubscriberID(_ context.Context, subscriberID string) (*model.ManifestDocument, error) {
-	f.lastSubscriber = subscriberID
+func (f *fakeManifestLoader) GetBySubscriberID(_ context.Context, nodeID string) (*model.ManifestDocument, error) {
+	f.lastNodeID = nodeID
 	return f.doc, f.err
 }
 
@@ -197,7 +202,7 @@ func newTestManager(t *testing.T) *catalogPublishTestManager {
 	if err != nil {
 		t.Fatalf("generating key: %v", err)
 	}
-	km := &fakeKeyManager{priv: priv, pub: pub}
+	km := &fakeKeyManager{priv: priv, pub: pub, keyID: "test-key-1"}
 	publisher, _, err := catalogpublisher.New(context.Background(), km, &catalogpublisher.Config{
 		SubscriberID: "k1",
 	})
@@ -757,7 +762,17 @@ func TestCatalogPublishHandler_NoWarningWhenIndexAlreadyLinked(t *testing.T) {
 	}
 }
 
-func TestCatalogPublishHandler_ManifestSubscriberIdOverridesSubscriberIdForManifestLookup(t *testing.T) {
+// TestCatalogPublishHandler_ManifestLookupUsesSubscriberIDAndDerivedKeyID
+// replaces the old manifestSubscriberId-override test: that config field no
+// longer exists. The manifest self-lookup now resolves keyID itself, once
+// at construction, from keyManager.Keyset(subscriberID) -- the same keyset
+// catalogpublisher.Publish signs with -- and calls GetBySubscriberID with a
+// synthetic subscriberID/dediSubscriberWildcardRegistry/keyID path built
+// from those two values, instead of requiring a hand-configured three-part
+// DeDi path. Verified directly against a real DeDi registry that this
+// addressing resolves to the identical record a real
+// namespace/registry/recordName lookup would.
+func TestCatalogPublishHandler_ManifestLookupUsesSubscriberIDAndDerivedKeyID(t *testing.T) {
 	root := t.TempDir()
 	loader := &fakeManifestLoader{}
 	mgr := newTestManager(t)
@@ -765,18 +780,11 @@ func TestCatalogPublishHandler_ManifestSubscriberIdOverridesSubscriberIdForManif
 
 	cfg := newTestConfig(root)
 	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
-	cfg.Plugins.CatalogPublisher.Config = map[string]string{
-		"manifestSubscriberId": "nfh.global/staging-nodes/staging-p-node",
-	}
-	// existing NodeManifest fixture, keyed under the 3-part identity, with
-	// the catalogIndex link already present, so no warning/staged file is
-	// produced -- proving the handler looked it up using
-	// manifestSubscriberId, not subscriberId ("example.test", which would
-	// never match this document if used).
+
 	nm := &model.NodeManifest{
 		ManifestVersion: "1.0",
 		ManifestType:    model.NodeManifestType,
-		SubscriberID:    "nfh.global/staging-nodes/staging-p-node",
+		SubscriberID:    "example.test",
 		Catalog: model.NodeManifestCatalog{
 			CatalogIndexes: []model.CatalogIndexEntry{{URL: "pending-artifact-store://catalog-index.json"}},
 		},
@@ -802,10 +810,11 @@ func TestCatalogPublishHandler_ManifestSubscriberIdOverridesSubscriberIdForManif
 		t.Fatalf("parsing response: %v", err)
 	}
 	if len(resp.Warnings) != 0 {
-		t.Errorf("expected no warnings (manifest lookup should have used manifestSubscriberId), got %+v", resp.Warnings)
+		t.Errorf("expected no warnings, got %+v", resp.Warnings)
 	}
-	if loader.lastSubscriber != "nfh.global/staging-nodes/staging-p-node" {
-		t.Errorf("GetBySubscriberID called with %q, want manifestSubscriberId value", loader.lastSubscriber)
+	wantNodeID := "example.test/" + dediSubscriberWildcardRegistry + "/test-key-1"
+	if loader.lastNodeID != wantNodeID {
+		t.Errorf("GetBySubscriberID called with %q, want synthetic path %q", loader.lastNodeID, wantNodeID)
 	}
 }
 

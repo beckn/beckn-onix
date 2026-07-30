@@ -239,13 +239,6 @@ modules:
             # Left unset here; a "pending-artifact-store://..." placeholder
             # is used until you point it at a real public location.
             # catalogBaseURL: "https://your-tunnel.ngrok-free.app"
-            # manifestSubscriberId: the DeDi-native namespace/registry/
-            # recordName path for this node's manifest record -- NOT the
-            # same as keyManager.config.subscriberId above (a plain Beckn
-            # subscriberId used for keyset lookup/signing; setting *that*
-            # to a 3-part path would break signing instead). Used only by
-            # the manifestLoader check below.
-            # manifestSubscriberId: "namespace/registry/recordName"
         # Validates submitted catalogs before they're published: the
         # request body matches beckn.yaml's real CatalogPublishAction
         # envelope (context/message.catalogs[]/message.publishDirectives[]),
@@ -256,11 +249,12 @@ modules:
           id: schemav2validator
           config:
             cacheTTL: "3600"
-        # Read-only: checks (via dediregistry, using catalogPublisher.
-        # config.manifestSubscriberId above -- same self-lookup
-        # schemaversionmediator already does at cold start, via its own
-        # nodeId config) whether the node manifest already declares this
-        # publisher's catalog index under catalog.catalogIndexes. If not, a
+        # Read-only: checks (via dediregistry, addressed by
+        # keyManager.config.subscriberId + the keyId that keyset resolves
+        # to -- the same identifiers a normal transaction already resolves
+        # signing keys with, no separate manifest-specific config needed)
+        # whether the node manifest already declares this publisher's
+        # catalog index under catalog.catalogIndexes. If not, a
         # proposed updated manifest is staged locally under
         # outputRoot/index/node-manifest.staged.yaml and a warning is
         # returned -- the real manifest on DeDi is never written to by
