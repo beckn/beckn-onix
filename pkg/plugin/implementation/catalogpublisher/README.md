@@ -462,17 +462,18 @@ request (no catalogs submitted, nothing to validate).
 **Optional node-manifest link check, warn-only.** `plugins.manifestLoader`
 (`manifestloader`) can also be wired under the `catalogPublish` module.
 When configured, after every successful publish the handler fetches this
-node's own manifest -- `manifestLoader.GetBySubscriberID(ctx,
-manifestSubscriberID)`, the same self-lookup `schemaversionmediator`
-already does at its own cold start, using `dediregistry` read-only -- and
-checks whether its `catalog.catalogIndexes[]` already lists this
-publisher's own index URL (`CatalogPublisher.IndexURL()`, part of the
-plugin's exported interface precisely so callers like this can ask for it
-without knowing `PublicBaseURL` internals). The real manifest on DeDi is
-**never written to** here, matching this package's manifest policy
-elsewhere (see "The manifest's filename" above) -- if the link is
-missing, the handler instead writes a locally-staged proposal (existing
-manifest content, or a bare skeleton if none exists yet, plus the new
+node's own manifest -- `manifestLoader.GetBySubscriberID(ctx, syntheticID)`,
+where `syntheticID` is a `subscriberId/subscribers.beckn.one/keyId` path
+built from `keyManager.config.subscriberId` and the `keyId` resolved once
+at construction from `keyManager.Keyset(ctx, subscriberId)` -- using
+`dediregistry` read-only -- and checks whether its `catalog.catalogIndexes[]`
+already lists this publisher's own index URL (`CatalogPublisher.IndexURL()`,
+part of the plugin's exported interface precisely so callers like this can
+ask for it without knowing `PublicBaseURL` internals). The real manifest on
+DeDi is **never written to** here, matching this package's manifest policy
+elsewhere (see "The manifest's filename" above) -- if the link is missing,
+the handler instead writes a locally-staged proposal (existing manifest
+content, or a bare skeleton if none exists yet, plus the new
 `catalogIndexes` entry) to `outputRoot/index/node-manifest.staged.yaml`
 (`localstore.WriteStagedNodeManifest`) and returns a `warnings[]` entry in
 the response naming that path -- the publish itself still succeeds; this
@@ -480,17 +481,28 @@ never blocks it. Reviewing and actually pushing the staged file to DeDi is
 a manual, deliberate operator step. Unconfigured (the default) skips this
 check entirely.
 
-**`manifestSubscriberId` is deliberately separate from `subscriberId`.**
-`ManifestLoader.GetBySubscriberID` (and `dediregistry.LookupNode`
-underneath it) require the DeDi-native `namespace/registry/recordName`
-path format (e.g. `nfh.global/staging-nodes/staging-p-node`) and error
-otherwise -- a different shape than the plain Beckn `subscriberId`
-`KeyManager.Keyset` is indexed by. Setting `subscriberId` itself to that
-3-part path would break signing (the keyset lookup would fail), so the
-manifest self-lookup reads its own
-`plugins.catalogPublisher.config.manifestSubscriberId` instead, falling
-back to `subscriberId` only when unset (works only if that value happens
-to already be 3-part).
+**No separate `manifestSubscriberId` config is needed.** An earlier version
+of this handler required a hand-configured DeDi-native
+`namespace/registry/recordName` path (e.g.
+`nfh.global/staging-nodes/staging-p-node`) for the manifest self-lookup,
+reasoning that `ManifestLoader.GetBySubscriberID`/`dediregistry.LookupNode`
+require that three-part shape, a different one than the plain Beckn
+`subscriberId` `KeyManager.Keyset` is indexed by. Verified directly against
+a real DeDi registry, though: a lookup addressed by plain `subscriberId` +
+`keyId` via the registry's wildcard-registry value (`subscribers.beckn.one`
+-- the same one `RegistryLookup.Lookup` already uses to resolve signing
+keys during ordinary transactions) resolves to the exact same underlying
+record a three-part path does -- the record's `record_id` *is* its `keyId`.
+So `catalogPublishHandler.go` builds that synthetic
+`subscriberId/subscribers.beckn.one/keyId` path itself (with `keyId` derived
+from `keyManager.Keyset(ctx, subscriberId)`, the same keyset
+`catalogpublisher.Publish` itself signs with) and passes it to the existing
+`GetBySubscriberID`, instead of asking the operator to separately discover
+and configure an equivalent identifier. Note this duplicates the DeDi
+wildcard-registry value as a local constant in the handler, rather than
+giving `ManifestLoader`/`RegistryMetadataLookup` a proper
+subscriberId+keyId-shaped lookup method -- a smaller-footprint stopgap;
+doing that properly is a separate, better-scoped follow-up.
 
 ## Known open items
 
