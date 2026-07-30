@@ -1,0 +1,20 @@
+{
+  "_comment": [
+    "TEST KEY. NOT A CREDENTIAL. This is a throwaway Ed25519 keypair that exists",
+    "only so install/crawler-fixture carries real, verifiable signatures instead",
+    "of placeholders. It grants nothing, protects nothing, and is trusted by",
+    "nothing outside this fixture.",
+    "",
+    "It is committed deliberately and it is derived deterministically from",
+    "seedLabel (seed = sha256(seedLabel)), so anyone can regenerate it. Never",
+    "reuse it, and never treat a report of it leaking as a security incident.",
+    "",
+    "Regenerate everything with: go run ./install/crawler-fixture/gen"
+  ],
+  "subscriberId": "sunrise-ev.example.org",
+  "keyId": "fixture-key-1",
+  "algorithm": "Ed25519",
+  "seedLabel": "beckn-onix crawler local verification fixture v1",
+  "publicKey": "V6FwanXNHoN2lNmzQVCbpjr4r3fDyopwSoINlSNOqMw=",
+  "privateKey": "tEMIZbwyTT/5vOIWJ6SltkkDYqGAlhSibXHtxjotsENXoXBqdc0eg3aU2bNBUJumOvivd8PKinBKgg2VI06ozA=="
+}

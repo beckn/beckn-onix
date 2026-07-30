@@ -1,0 +1,39 @@
+{
+  "catalogId": "cat-ev-001",
+  "fromVersion": 1,
+  "toVersion": 2,
+  "catalog": {
+    "id": "cat-ev-001",
+    "descriptor": {
+      "name": "Sunrise EV Charging",
+      "shortDesc": "Public DC and AC charging points across Bengaluru"
+    },
+    "provider": {
+      "id": "prov-sunrise",
+      "descriptor": {
+        "name": "Sunrise Mobility"
+      }
+    }
+  },
+  "resources": {
+    "upserts": [
+      {
+        "id": "res-chg-002",
+        "descriptor": {
+          "name": "Sunrise Charger Indiranagar",
+          "shortDesc": "22 kW Type 2 AC charger, now open 24x7"
+        },
+        "categoryIds": ["ev-charging"]
+      },
+      {
+        "id": "res-chg-003",
+        "descriptor": {
+          "name": "Sunrise Charger Whitefield",
+          "shortDesc": "120 kW CCS2 DC ultra fast charger"
+        },
+        "categoryIds": ["ev-charging"]
+      }
+    ]
+  },
+  "offers": {}
+}

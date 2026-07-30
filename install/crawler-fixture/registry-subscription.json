@@ -1,0 +1,13 @@
+{
+  "_comment": [
+    "GENERATED FILE. This is the record the fixture publisher's signing key",
+    "must exist as in whatever network registry the crawler is pointed at.",
+    "There is no CRAWLER_* variable for keys: the crawler looks them up by",
+    "{subscriber_id, key_id} and there is no fallback.",
+    "Registering it is a manual step. This fixture does not automate it."
+  ],
+  "subscriber_id": "sunrise-ev.example.org",
+  "key_id": "fixture-key-1",
+  "signing_public_key": "V6FwanXNHoN2lNmzQVCbpjr4r3fDyopwSoINlSNOqMw=",
+  "status": "SUBSCRIBED"
+}

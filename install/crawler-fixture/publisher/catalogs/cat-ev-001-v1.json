@@ -1,0 +1,39 @@
+{
+  "id": "cat-ev-001",
+  "descriptor": {
+    "name": "Sunrise EV Charging",
+    "shortDesc": "Public DC and AC charging points"
+  },
+  "provider": {
+    "id": "prov-sunrise",
+    "descriptor": {
+      "name": "Sunrise Mobility"
+    }
+  },
+  "resources": [
+    {
+      "id": "res-chg-001",
+      "descriptor": {
+        "name": "Sunrise Charger MG Road",
+        "shortDesc": "60 kW CCS2 DC fast charger"
+      },
+      "categoryIds": ["ev-charging"]
+    },
+    {
+      "id": "res-chg-002",
+      "descriptor": {
+        "name": "Sunrise Charger Indiranagar",
+        "shortDesc": "22 kW Type 2 AC charger"
+      },
+      "categoryIds": ["ev-charging"]
+    }
+  ],
+  "offers": [
+    {
+      "id": "off-launch-01",
+      "descriptor": {
+        "name": "Launch offer: 10 percent off every session"
+      }
+    }
+  ]
+}

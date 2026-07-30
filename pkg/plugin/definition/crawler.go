@@ -17,8 +17,14 @@ type Crawler interface {
 }
 
 // CrawlerProvider initializes a new Crawler. It receives an optional
-// SchemaValidator (Phase-1 catalog schema validation before push) and the
-// plugin's config map.
+// SchemaValidator (Phase-1 catalog schema validation before push), a
+// RegistryLookup, and the plugin's config map.
+//
+// The RegistryLookup is REQUIRED for an enabled crawler. Catalog index and
+// catalog file signatures are verified against the publishing participant's
+// public key as held in the network registry, exactly as signvalidator verifies
+// transport signatures. The registry is the key distribution channel; there is
+// deliberately no per-deployment trusted-key configuration.
 type CrawlerProvider interface {
-	New(ctx context.Context, validator SchemaValidator, config map[string]string) (Crawler, func() error, error)
+	New(ctx context.Context, validator SchemaValidator, registry RegistryLookup, config map[string]string) (Crawler, func() error, error)
 }

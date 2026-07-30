@@ -1,0 +1,105 @@
+# Minimal onix adapter config for local crawler verification.
+#
+# It registers ONE module -- the crawl module -- so the adapter starts the
+# catalog crawler's background jobs (index + catalog) and exposes the
+# DS-internal /crawl trigger, without dragging in the vault, redis and
+# otel-collector dependencies the full BAP/BPP configs need.
+#
+# It CANNOT drop the registry. The crawler verifies every catalog file against
+# the publishing participant's registered signing key, so a registry plugin is
+# required and the crawl handler refuses to construct without one. The registry
+# it points at is NOT part of install/docker-compose-crawler.yml. Read
+# install/crawler-fixture/README.md before running the stack.
+#
+# Used by install/docker-compose-crawler.yml. Every CRAWLER_* value below is a
+# fallback: the plugin reads env first (see pkg/plugin/implementation/crawler/
+# crawler.go), and the compose file sets all of them, so the compose file is the
+# single place to change them. Nothing here configures keys, because keys are
+# not configurable.
+appName: "onix-crawler-verify"
+log:
+  level: debug
+  destinations:
+    - type: stdout
+  contextKeys:
+    - transaction_id
+    - message_id
+    - module_id
+http:
+  port: 8081
+  timeout:
+    read: 30
+    write: 30
+    idle: 30
+pluginManager:
+  root: ./plugins
+
+modules:
+  # /crawl: DS-internal, unsigned on-demand trigger to re-crawl one provider's
+  # index now. The scheduled index + catalog jobs run in the background from
+  # plugin init.
+  - name: crawl
+    path: /crawl
+    handler:
+      type: crawl
+      role: bap
+      httpClientConfig:
+        maxIdleConns: 100
+        maxIdleConnsPerHost: 20
+        idleConnTimeout: 300s
+        responseHeaderTimeout: 5s
+      plugins:
+        # REQUIRED. The crawler's trust anchor. Every catalog file entry names a
+        # keyId, the index names a participantId, and the crawler resolves the
+        # verifying Ed25519 key by looking that pair up here. There is no key
+        # list in env or YAML, and no way to skip verification, so without this
+        # block the adapter will not start.
+        #
+        # The record that has to exist in whichever registry you point this at
+        # is committed as crawler-fixture/registry-subscription.json:
+        #   subscriber_id      sunrise-ev.example.org
+        #   key_id             fixture-key-1
+        #   signing_public_key V6FwanXNHoN2lNmzQVCbpjr4r3fDyopwSoINlSNOqMw=
+        #
+        # The url below is the local registry from
+        # install/docker-compose-registry.yml, resolved by container name. That
+        # registry is NOT started by install/docker-compose-crawler.yml and its
+        # container is not on this stack's networks by default. Until it is
+        # reachable AND holds the record above, every catalog file fails key
+        # resolution: the sync retries with backoff and then parks. Change the
+        # id and url to match the registry your network actually runs.
+        registry:
+          id: registry
+          config:
+            url: "http://registry:3030/subscribers"
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
+        # schemaValidator is deliberately omitted here. It is optional (see
+        # NewCrawlHandler); leaving it out keeps this config lighter, since
+        # schemav2validator resolves the Beckn spec from the network. Add it
+        # back once you want to verify the catalog schema gate too. The action
+        # it validates against is CRAWLER_SCHEMA_ACTION (default
+        # catalog/publish):
+        #
+        #   schemaValidator:
+        #     id: schemav2validator
+        #     config:
+        #       cacheTTL: "3600"
+        #
+        # A `cache` block here would memoise registry lookups. Omitted so the
+        # stack needs no redis; the crawler already caches a resolved key for
+        # 5 minutes in-process.
+        crawler:
+          id: crawler
+          config:
+            # Fallbacks only -- the compose file sets these via env, and env wins.
+            CRAWLER_ENABLED: "true"
+            CRAWLER_STORE_PROVIDER: "postgres"
+            CRAWLER_INDEX_URLS: "http://publisher-origin/catalog-index.json"
+            CRAWLER_NETWORK_IDS: ""
+            CRAWLER_INDEX_INTERVAL: "30s"
+            CRAWLER_CATALOG_INTERVAL: "5s"
+            CRAWLER_FETCH_TIMEOUT: "15s"
+            CRAWLER_MAX_ARTIFACT_BYTES: "10485760"
+            CRAWLER_MAX_ATTEMPTS: "5"

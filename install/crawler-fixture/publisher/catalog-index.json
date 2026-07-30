@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "GENERATED FILE. Do not hand-edit digests, sizes or signatures.",
+    "Regenerate with: go run ./install/crawler-fixture/gen"
+  ],
+  "participantId": "sunrise-ev.example.org",
+  "version": 2,
+  "next_update": "2030-01-01T00:00:00Z",
+  "catalogs": [
+    {
+      "catalogId": "cat-ev-001",
+      "catalogType": "regular",
+      "status": "ACTIVE",
+      "schemaTypes": [
+        "beckn:Catalog"
+      ],
+      "networkIds": [],
+      "baseline": {
+        "version": 1,
+        "url": "http://publisher-origin/catalogs/cat-ev-001-v1.json",
+        "size": 816,
+        "digest": "sha-256:07a6646e9482e196777b75996280b5407c74fda81364f46c95820fc82b1ad128",
+        "encoding": "json",
+        "signature": {
+          "keyId": "fixture-key-1",
+          "value": "siWDX59/0c7DUlBRriYG/EwDah4wUEXZidfYg80hmmZYtCml2PZTdbPpX0p6EA4+gCMEt0znxMjce2+elxJuCQ==",
+          "validUntil": "2030-01-01T00:00:00Z"
+        }
+      },
+      "changes": [
+        {
+          "version": 2,
+          "url": "http://publisher-origin/catalogs/cat-ev-001-v1-to-v2.json",
+          "size": 886,
+          "digest": "sha-256:c7af97b69cf98c87ca00632103628e8e7fe400739f64b4474946d985e357be25",
+          "encoding": "json",
+          "signature": {
+            "keyId": "fixture-key-1",
+            "value": "zO5NMjKFcYB/uvrOvIHElHpvtDbSDRoGTi84QOrhChPiotJrjGko0Uz5jgxmuUnZgCNh6KJNfWszm4DialfHDQ==",
+            "validUntil": "2030-01-01T00:00:00Z"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -190,10 +190,18 @@ modules:
   # /crawl: DS-internal, unsigned on-demand trigger to re-crawl one provider's
   # index now. The crawler's scheduled index + catalog jobs run in the
   # background from plugin init: they resolve each catalog (baseline + change
-  # files), schema-validate the /push body, and push to Discovery with
-  # publishDirectives updateMode=FULL + visibleTo. Secrets + deploy-specific
+  # files), schema-validate the push body, and push to Discovery with
+  # publishDirectives updateMode=MERGE + visibleTo. Secrets + deploy-specific
   # values come from env (CRAWLER_DB_DSN, CRAWLER_PUSH_ENDPOINT); non-secret
-  # config lives here. Env always overrides these keys.
+  # config lives here. Env overrides these keys when it is set to a non-empty
+  # value.
+  #
+  # The crawler is opt-in: it stays inert unless CRAWLER_ENABLED=true, so this
+  # module can be registered without requiring a Postgres. It is left off here.
+  # To see it actually crawl, use the stack in
+  # install/docker-compose-crawler.yml (Postgres + a sample publisher origin)
+  # and read install/crawler-fixture/README.md first: a crawl also needs a
+  # registry that holds the publisher's signing key.
   - name: crawl
     path: /crawl
     handler:
@@ -205,8 +213,37 @@ modules:
         idleConnTimeout: 300s
         responseHeaderTimeout: 5s
       plugins:
-        # Phase-1 catalog schema validation before push (validates the
-        # /push body against the catalog/push action).
+        # REQUIRED for the crawl handler. This is the crawler's trust anchor:
+        # every catalog file it ingests carries a signature over
+        # {catalogId, version, url, digest, validUntil}, and the verifying key
+        # is looked up here by {subscriberId, keyId} -- the index's
+        # participantId and the file entry's keyId. That is the same channel
+        # signvalidator uses for transport signatures. There is no key list in
+        # env or YAML. Without this block NewCrawlHandler refuses to construct,
+        # because a crawler that cannot resolve keys verifies nothing and would
+        # park every catalog it ever saw.
+        #
+        # NOTE: dediregistry requires `url` (the DeDi wrapper API base URL,
+        # including the /dedi path) and fails to initialise without it. The
+        # other two modules in this file omit it; that is a gap in them, not a
+        # default.
+        registry:
+          id: dediregistry
+          config:
+            url: "https://fabric.nfh.global/registry/dedi"
+            timeout: 10
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
+        # Optional. The registry client memoises lookups in this cache, so
+        # resolving one publisher key does not cost one registry call per
+        # catalog file. Drop it and lookups still work, just chattier.
+        cache:
+          id: cache
+          config:
+            addr: localhost:6379
+        # Optional. Validates the catalog push body before it is sent, against
+        # the action in CRAWLER_SCHEMA_ACTION (default catalog/publish).
         schemaValidator:
           id: schemav2validator
           config:
@@ -217,9 +254,20 @@ modules:
         crawler:
           id: crawler
           config:
+            # Off by default. Set CRAWLER_ENABLED=true (here or in env) to make
+            # the plugin open a database and start the jobs. Doing so makes
+            # CRAWLER_DB_DSN, CRAWLER_PUSH_ENDPOINT and CRAWLER_INDEX_URLS
+            # required.
+            CRAWLER_ENABLED: "false"
             # DB DSN + push endpoint come from env (secrets / deploy-specific):
             #   CRAWLER_DB_DSN=postgres://user:pass@host:5432/db?sslmode=disable
             #   CRAWLER_PUSH_ENDPOINT=https://discovery.local/beckn/catalog/push
+            #
+            # CRAWLER_INDEX_URLS is the only source of indexes to crawl, and it
+            # is also the allowlist /crawl checks an incoming indexUrl against.
+            # CRAWLER_REGISTRY_URL (a registry as an INDEX SOURCE, which is a
+            # different thing from the registry plugin above) is not wired and
+            # is rejected at startup, so do not set it.
             CRAWLER_INDEX_URLS: "https://cdn.publisher.example.com/beckn/catalog-index.json"
             CRAWLER_NETWORK_IDS: ""
             CRAWLER_INDEX_INTERVAL: "5m"

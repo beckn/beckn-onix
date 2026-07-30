@@ -29,7 +29,7 @@ type PluginManager interface {
 	TransportWrapper(ctx context.Context, cfg *plugin.Config) (definition.TransportWrapper, error)
 	SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)
 	PayloadStore(ctx context.Context, cache definition.Cache, namespace string, cfg *plugin.Config) (definition.PayloadStore, error)
-	Crawler(ctx context.Context, validator definition.SchemaValidator, cfg *plugin.Config) (definition.Crawler, error)
+	Crawler(ctx context.Context, validator definition.SchemaValidator, registry definition.RegistryLookup, cfg *plugin.Config) (definition.Crawler, error)
 }
 
 // Type defines different handler types for processing requests.
