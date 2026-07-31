@@ -4,16 +4,20 @@ import "context"
 
 // Crawler runs the decentralized-catalog crawl as two scheduled jobs (an
 // index job and a catalog job) that resolve published catalogs and push them
-// to Discovery, plus an on-demand trigger to re-crawl one index immediately.
+// to Discovery, plus an on-demand trigger to re-run registry discovery
+// immediately.
 type Crawler interface {
 	// Start launches the background jobs; it returns immediately.
 	Start(ctx context.Context) error
 	// Stop signals the jobs and waits for the in-flight pass to drain.
 	Stop() error
-	// CrawlNow runs an immediate crawl for one index URL (supportability:
-	// re-pull a stuck provider on demand). It returns a run_id the caller can
-	// use to correlate the crawl's (asynchronous) log lines.
-	CrawlNow(ctx context.Context, indexURL string) (string, error)
+	// CrawlRegistry runs an immediate registry-backed crawl: it discovers the
+	// providers of the given networks under registryURL (via the DeDi /query
+	// endpoint) and crawls each — the same registry-based input the scheduled
+	// pass uses, so a manual trigger and the background pass take one input model.
+	// It returns a run_id the caller can use to correlate the crawl's
+	// (asynchronous) log lines.
+	CrawlRegistry(ctx context.Context, registryURL string, networkIDs []string) (string, error)
 }
 
 // CrawlerProvider initializes a new Crawler. It receives an optional

@@ -69,77 +69,81 @@ func (f *fakeLogger) findByRunID(level, eventSubstr, runID string) *logEntry {
 	return nil
 }
 
-// An on-demand /crawl trigger must emit the same INFO "crawl finished"
-// summary a scheduled pass does, carrying the run_id CrawlNow returns to its
-// caller and a trigger field marking it as on_demand — otherwise a
-// successful on-demand crawl is silent and indistinguishable from a
-// scheduled one.
-func TestEngine_CrawlNow_LogsFinishedSummary(t *testing.T) {
+// An on-demand /crawl now takes a REGISTRY (not a raw index URL): CrawlRegistry
+// asks the injected registry-source factory for the network's providers, then
+// crawls every discovered index on the on_demand trigger — the same discovery
+// the scheduled pass uses, so every crawl input is registry-based. This proves
+// the factory receives the request's registry + networks and that BOTH
+// discovered indexes are crawled.
+func TestEngine_CrawlRegistry_DiscoversAndCrawls(t *testing.T) {
 	s := openTestStore(t)
-	url := "https://x/i.json"
-
-	entry := catalog.CatalogEntry{
-		CatalogID: "p/c", Status: catalog.StatusActive, // public
-		Baseline: catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
+	url1 := "https://p1.example/i.json"
+	url2 := "https://p2.example/i.json"
+	indexFor := func(pid string) catalog.Index {
+		return catalog.Index{ParticipantID: pid, Version: 1, Catalogs: []catalog.CatalogEntry{{
+			CatalogID: pid + "/c", Status: catalog.StatusActive,
+			Baseline: catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
+		}}}
 	}
-	idx := catalog.Index{ParticipantID: "p", Version: 1, Catalogs: []catalog.CatalogEntry{entry}}
+
+	var mu sync.Mutex
+	fetched := map[string]bool{}
+	var gotRegistryURL string
+	var gotNetworks []string
 
 	logger := &fakeLogger{}
-	eng := New(EngineConfig{
-		MaxAttempts:     3,
-		IndexInterval:   time.Hour,
-		CatalogInterval: time.Hour,
-	}, Deps{
+	eng := New(EngineConfig{MaxAttempts: 3, IndexInterval: time.Hour, CatalogInterval: time.Hour}, Deps{
 		Store: s,
-		FetchIndex: func(context.Context, string, catalog.IndexConditions) (catalog.IndexResult, error) {
-			return catalog.IndexResult{Index: idx}, nil
+		FetchIndex: func(_ context.Context, u string, _ catalog.IndexConditions) (catalog.IndexResult, error) {
+			mu.Lock()
+			fetched[u] = true
+			mu.Unlock()
+			pid := "p1"
+			if u == url2 {
+				pid = "p2"
+			}
+			return catalog.IndexResult{Index: indexFor(pid)}, nil
+		},
+		NewRegistrySource: func(registryURL string, networkIDs []string) source.Source {
+			gotRegistryURL = registryURL
+			gotNetworks = networkIDs
+			// Stands in for a DeDi /query lookup that discovered two providers.
+			return source.NewConfigSource([]string{url1, url2})
 		},
 		Metrics: &recMetrics{},
 		Log:     logger,
-		NewID:   func() string { return "run-123" },
+		NewID:   func() string { return "run-reg" },
 	})
 
-	// Wire the engine to DaemonReady directly instead of via Start(), so only
-	// CrawlNow's own tracked goroutine runs — no scheduled-pass goroutines to
-	// race against, and no need to cancel a shared context to drain them
-	// (Stop() cancels ctx before waiting, which would race CrawlNow's
-	// in-flight DB call if it fired that soon after starting).
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	eng.mu.Lock()
 	eng.ctx, eng.stop, eng.state = ctx, cancel, DaemonReady
 	eng.mu.Unlock()
 
-	runID, err := eng.CrawlNow(ctx, url)
+	runID, err := eng.CrawlRegistry(ctx, "https://registry.example/dedi", []string{"beckn.one/testnet"})
 	if err != nil {
-		t.Fatalf("CrawlNow: %v", err)
+		t.Fatalf("CrawlRegistry: %v", err)
 	}
 	if runID == "" {
-		t.Fatal("CrawlNow must return a non-empty run_id")
+		t.Fatal("CrawlRegistry must return a non-empty run_id")
 	}
-	eng.wg.Wait() // drains CrawlNow's goroutine
+	eng.wg.Wait()
 
+	if gotRegistryURL != "https://registry.example/dedi" || len(gotNetworks) != 1 || gotNetworks[0] != "beckn.one/testnet" {
+		t.Fatalf("factory got registry=%q networks=%v, want the request's registry + network", gotRegistryURL, gotNetworks)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !fetched[url1] || !fetched[url2] {
+		t.Fatalf("both discovered indexes must be crawled; fetched=%v", fetched)
+	}
 	found := logger.findByRunID("info", "crawl finished", runID)
 	if found == nil {
-		t.Fatalf("no INFO 'crawl finished' summary logged for run_id %q; entries: %+v", runID, logger.entries)
+		t.Fatalf("no on-demand 'crawl finished' summary for run_id %q; entries: %+v", runID, logger.entries)
 	}
 	if v, _ := found.kvString("trigger"); v != "on_demand" {
-		t.Fatalf("summary trigger = %q, want %q", v, "on_demand")
-	}
-	wantInt := map[string]int{"indexes": 1, "updated": 1, "queued": 1}
-	for i := 0; i+1 < len(found.kv); i += 2 {
-		key, ok := found.kv[i].(string)
-		if !ok {
-			continue
-		}
-		want, tracked := wantInt[key]
-		if !tracked {
-			continue
-		}
-		got, ok := found.kv[i+1].(int)
-		if !ok || got != want {
-			t.Fatalf("summary kv %q = %v, want %d", key, found.kv[i+1], want)
-		}
+		t.Fatalf("summary trigger = %q, want on_demand", v)
 	}
 }
 

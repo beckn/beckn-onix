@@ -120,14 +120,20 @@ type EngineConfig struct {
 
 // Deps are the engine's injected collaborators.
 type Deps struct {
-	Store      Store
-	Source     source.Source
-	FetchIndex IndexFetcher
-	FetchFile  FileFetcher
-	Validate   Validator
-	Push       Pusher
-	Log        Logger
-	Metrics    Metrics
-	Now        func() time.Time
-	NewID      func() string
+	Store  Store
+	Source source.Source
+	// NewRegistrySource builds an ad-hoc registry-backed source for an on-demand
+	// /crawl (a registry URL + networks supplied per request), the same way the
+	// scheduled source is built at composition. It lets CrawlRegistry discover
+	// index URLs via the DeDi /query endpoint without the engine knowing how a
+	// query client is constructed. Injected so tests can stand in a fake.
+	NewRegistrySource func(registryURL string, networkIDs []string) source.Source
+	FetchIndex        IndexFetcher
+	FetchFile         FileFetcher
+	Validate          Validator
+	Push              Pusher
+	Log               Logger
+	Metrics           Metrics
+	Now               func() time.Time
+	NewID             func() string
 }

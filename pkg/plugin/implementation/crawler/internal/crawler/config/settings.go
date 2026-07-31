@@ -25,9 +25,10 @@ type Settings struct {
 	PushEndpoint  string
 	IndexURLs     []string
 	NetworkIDs    []string
-	// RegistryURL is read so LoadSettings can reject it: no registry client
-	// implementation exists yet, so a registry-only crawler would poll nothing.
-	// It is always empty on a Settings that LoadSettings returned.
+	// RegistryURL, when set, is the DeDi registry base URL that enables the
+	// registry-backed index-discovery source: the crawler asks the registry which
+	// providers publish a catalog index for each of NetworkIDs, instead of reading
+	// a fixed IndexURLs list. It is an alternative source, not an addition.
 	RegistryURL          string
 	IndexInterval        time.Duration
 	CatalogInterval      time.Duration
@@ -137,15 +138,15 @@ func LoadSettings(getenv func(string) string) (Settings, error) {
 	if len(missing) > 0 {
 		return Settings{}, fmt.Errorf("crawler: missing required config: %s", strings.Join(missing, ", "))
 	}
-	// The registry source has no client implementation in this phase, so the
-	// composition root can only build a config source. Accepting
-	// CRAWLER_REGISTRY_URL would start a crawler that polls nothing forever, so
-	// reject it here rather than let it look configured.
-	if s.RegistryURL != "" {
-		return Settings{}, fmt.Errorf("crawler: registry source is not wired in this phase, set CRAWLER_INDEX_URLS (unset CRAWLER_REGISTRY_URL)")
-	}
-	if len(s.IndexURLs) == 0 {
-		return Settings{}, fmt.Errorf("crawler: a source is required (CRAWLER_INDEX_URLS)")
+	// A source is required, and there are two: a static index-URL list, or a
+	// registry base URL with at least one network to query. A bare
+	// CRAWLER_REGISTRY_URL with no CRAWLER_NETWORK_IDS is not a usable source (it
+	// names a registry but nothing to look up in it), so it does not satisfy this
+	// on its own.
+	hasConfigSource := len(s.IndexURLs) > 0
+	hasRegistrySource := s.RegistryURL != "" && len(s.NetworkIDs) > 0
+	if !hasConfigSource && !hasRegistrySource {
+		return Settings{}, fmt.Errorf("crawler: a source is required (set CRAWLER_INDEX_URLS, or CRAWLER_REGISTRY_URL with CRAWLER_NETWORK_IDS)")
 	}
 	return s, nil
 }
