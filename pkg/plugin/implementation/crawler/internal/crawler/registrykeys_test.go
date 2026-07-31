@@ -107,13 +107,15 @@ func TestNewRequiresRegistry(t *testing.T) {
 			opts:   func() Options { return Options{Registry: stubRegistry{}} },
 		},
 		{
-			name: "a registry-only source is refused, not silently ignored",
+			name: "a registry-backed source constructs (no static index URLs needed)",
 			mutate: func(s *config.Settings) {
 				s.IndexURLs = nil
-				s.RegistryURL = "https://registry/"
+				s.RegistryURL = "https://registry.example/dedi"
+				s.NetworkIDs = []string{"beckn.one/testnet"}
 			},
-			opts:   func() Options { return Options{Registry: stubRegistry{}} },
-			wantIn: "registry source is not wired",
+			opts: func() Options { return Options{Registry: stubRegistry{}} },
+			// No wantErr / wantIn: the registry source is wired now, so New must
+			// build a crawler without a static CRAWLER_INDEX_URLS list.
 		},
 		{
 			name:   "disabled needs no registry at all",

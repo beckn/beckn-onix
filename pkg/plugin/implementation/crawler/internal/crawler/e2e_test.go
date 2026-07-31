@@ -37,6 +37,7 @@ import (
 const (
 	e2eSubscriberID = "sunrise-ev.example.org"
 	e2eKeyID        = "e2e-key-1"
+	e2eNetworkID    = "beckn.one/testnet"
 )
 
 // uniqueID keeps each run hermetic. The catalog cursor is persisted in Postgres
@@ -196,6 +197,34 @@ func newE2EDiscovery(t *testing.T) *e2eDiscovery {
 	return d
 }
 
+// e2eQueryRegistry is the DeDi /query index-discovery registry: it answers
+// GET /query/{networkId} with one live provider record whose catalog_index_url
+// points at the publisher's index. This is the source under test — the crawler
+// DISCOVERS the index URL here (the same path the scheduled pass uses) rather
+// than being handed it.
+type e2eQueryRegistry struct {
+	srv *httptest.Server
+}
+
+func newE2EQueryRegistry(t *testing.T, networkID, subscriberID, indexURL string) *e2eQueryRegistry {
+	t.Helper()
+	body := `{"message":"ok","data":{"registry_name":"testnet","total_records":1,"records":[` +
+		`{"details":{"subscriber_id":"` + subscriberID + `","type":"BPP"},` +
+		`"meta":{"catalog_index_url":"` + indexURL + `"},"state":"live"}]}}`
+	q := &e2eQueryRegistry{}
+	q.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/query/"+networkID {
+			t.Errorf("unexpected /query path %q", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(q.srv.Close)
+	return q
+}
+
 func e2eSettings(t *testing.T, indexURL, pushURL string) config.Settings {
 	t.Helper()
 	dsn := os.Getenv("CRAWLER_TEST_DB_DSN")
@@ -231,9 +260,14 @@ func TestE2E_SignedCatalogReachesDiscovery(t *testing.T) {
 	publisher := newE2EPublisher(t, catalogID, priv)
 	discovery := newE2EDiscovery(t)
 	reg := &e2eRegistry{pub: pub}
+	queryReg := newE2EQueryRegistry(t, e2eNetworkID, e2eSubscriberID, publisher.indexURL)
 
-	s := e2eSettings(t, publisher.indexURL, discovery.srv.URL+"/catalog/push")
-	_ = pub
+	s := e2eSettings(t, "", discovery.srv.URL+"/catalog/push")
+	// Drive discovery via the registry, not a static list; drain promptly — the
+	// sync job only runs on its tick, and CrawlRegistry enqueues after Start's
+	// immediate tick has already passed.
+	s.IndexURLs = nil
+	s.CatalogInterval = 250 * time.Millisecond
 
 	ctx := context.Background()
 	c, closer, err := crawler.New(ctx, s, crawler.Options{
@@ -252,8 +286,10 @@ func TestE2E_SignedCatalogReachesDiscovery(t *testing.T) {
 	}
 	defer func() { _ = c.Stop() }()
 
-	if _, err := c.CrawlNow(ctx, publisher.indexURL); err != nil {
-		t.Fatalf("CrawlNow: %v", err)
+	// The crawler discovers publisher.indexURL from the /query registry, then
+	// fetches + verifies + pushes it — the whole registry-driven chain.
+	if _, err := c.CrawlRegistry(ctx, queryReg.srv.URL, []string{e2eNetworkID}); err != nil {
+		t.Fatalf("CrawlRegistry: %v", err)
 	}
 
 	select {
@@ -296,8 +332,11 @@ func TestE2E_WrongKeySignatureNeverReachesDiscovery(t *testing.T) {
 	publisher := newE2EPublisher(t, uniqueID("cat-e2e-bad"), attackerPriv)
 	discovery := newE2EDiscovery(t)
 	reg := &e2eRegistry{pub: registeredPub}
+	queryReg := newE2EQueryRegistry(t, e2eNetworkID, e2eSubscriberID, publisher.indexURL)
 
-	s := e2eSettings(t, publisher.indexURL, discovery.srv.URL+"/catalog/push")
+	s := e2eSettings(t, "", discovery.srv.URL+"/catalog/push")
+	s.IndexURLs = nil
+	s.CatalogInterval = 250 * time.Millisecond
 
 	ctx := context.Background()
 	c, closer, err := crawler.New(ctx, s, crawler.Options{
@@ -316,8 +355,8 @@ func TestE2E_WrongKeySignatureNeverReachesDiscovery(t *testing.T) {
 	}
 	defer func() { _ = c.Stop() }()
 
-	if _, err := c.CrawlNow(ctx, publisher.indexURL); err != nil {
-		t.Fatalf("CrawlNow: %v", err)
+	if _, err := c.CrawlRegistry(ctx, queryReg.srv.URL, []string{e2eNetworkID}); err != nil {
+		t.Fatalf("CrawlRegistry: %v", err)
 	}
 
 	select {

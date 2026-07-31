@@ -5,6 +5,8 @@ package source
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -46,5 +48,42 @@ func TestRegistrySource_DedupsByIndexURL(t *testing.T) {
 		if r.Source != KindRegistry {
 			t.Errorf("ref %+v source != registry", r)
 		}
+	}
+}
+
+// errRegistry always fails a lookup — the registry source's only error path.
+type errRegistry struct{ err error }
+
+func (e errRegistry) Providers(context.Context, string) ([]Provider, error) { return nil, e.err }
+
+// A failed network lookup must abort the whole pass with a wrapped error naming
+// the network, not be silently swallowed into an empty (looks-idle) ref set.
+func TestRegistrySource_PropagatesLookupError(t *testing.T) {
+	sentinel := errors.New("registry unreachable")
+	s := NewRegistrySource(errRegistry{err: sentinel}, []string{"beckn.one/net1"})
+	_, err := s.IndexRefs(context.Background())
+	if err == nil {
+		t.Fatal("expected IndexRefs to fail when a network lookup fails")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("error %v does not wrap the underlying lookup error", err)
+	}
+	if !strings.Contains(err.Error(), "beckn.one/net1") {
+		t.Fatalf("error %q should name the failing network", err.Error())
+	}
+}
+
+// The participant id must survive the Provider → IndexRef mapping (it is the
+// publisher identity a signing-enabled build verifies catalog files against).
+func TestRegistrySource_CarriesParticipantIDIntoRef(t *testing.T) {
+	reg := fakeRegistry{byNet: map[string][]Provider{
+		"net1": {{ParticipantID: "prov.one.example", IndexURL: "https://p1/i"}},
+	}}
+	refs, err := NewRegistrySource(reg, []string{"net1"}).IndexRefs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 1 || refs[0].ParticipantID != "prov.one.example" {
+		t.Fatalf("refs = %+v, want ParticipantID carried into the IndexRef", refs)
 	}
 }

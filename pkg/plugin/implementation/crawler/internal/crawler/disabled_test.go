@@ -33,8 +33,8 @@ func TestNewDisabled(t *testing.T) {
 			if err := c.Start(ctx); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
-			if _, err := c.CrawlNow(ctx, "https://x/index.json"); !errors.Is(err, ErrDisabled) {
-				t.Fatalf("CrawlNow error = %v, want %v", err, ErrDisabled)
+			if _, err := c.CrawlRegistry(ctx, "https://registry.example/dedi", []string{"beckn.one/testnet"}); !errors.Is(err, ErrDisabled) {
+				t.Fatalf("CrawlRegistry error = %v, want %v", err, ErrDisabled)
 			}
 			if err := c.Stop(); err != nil {
 				t.Fatalf("Stop: %v", err)

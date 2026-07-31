@@ -49,3 +49,51 @@ func TestLoadSettings_MissingRequired(t *testing.T) {
 		t.Fatal("expected error when no source configured")
 	}
 }
+
+// TestLoadSettings_RegistrySource covers the registry-backed source: a registry
+// base URL plus at least one network is now an accepted source on its own (no
+// CRAWLER_INDEX_URLS), a bare registry URL with no networks is not, and neither
+// source configured still fails.
+func TestLoadSettings_RegistrySource(t *testing.T) {
+	const base = "https://fabric.nfh.global/registry/dedi"
+
+	// Registry URL + networks, no index URLs -> accepted.
+	ok := map[string]string{
+		"CRAWLER_DB_DSN":        "postgres://u:p@h/db",
+		"CRAWLER_PUSH_ENDPOINT": "https://d/push",
+		"CRAWLER_REGISTRY_URL":  base,
+		"CRAWLER_NETWORK_IDS":   "beckn.one/testnet",
+	}
+	s, err := LoadSettings(func(k string) string { return ok[k] })
+	if err != nil {
+		t.Fatalf("registry source should be accepted: %v", err)
+	}
+	if s.RegistryURL != base {
+		t.Fatalf("RegistryURL = %q, want %q", s.RegistryURL, base)
+	}
+	if len(s.NetworkIDs) != 1 || s.NetworkIDs[0] != "beckn.one/testnet" {
+		t.Fatalf("NetworkIDs = %v", s.NetworkIDs)
+	}
+	if len(s.IndexURLs) != 0 {
+		t.Fatalf("IndexURLs = %v, want none", s.IndexURLs)
+	}
+
+	// Registry URL but no networks -> not a usable source.
+	noNets := map[string]string{
+		"CRAWLER_DB_DSN":        "postgres://u:p@h/db",
+		"CRAWLER_PUSH_ENDPOINT": "https://d/push",
+		"CRAWLER_REGISTRY_URL":  base,
+	}
+	if _, err := LoadSettings(func(k string) string { return noNets[k] }); err == nil {
+		t.Fatal("expected error: a registry URL with no networks is not a source")
+	}
+
+	// Neither source configured -> still an error.
+	neither := map[string]string{
+		"CRAWLER_DB_DSN":        "postgres://u:p@h/db",
+		"CRAWLER_PUSH_ENDPOINT": "https://d/push",
+	}
+	if _, err := LoadSettings(func(k string) string { return neither[k] }); err == nil {
+		t.Fatal("expected error when no source configured")
+	}
+}

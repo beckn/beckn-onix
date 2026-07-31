@@ -14,99 +14,155 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
-// stubCrawler records the index URL the handler forwarded, so a test can tell
-// "rejected before the fetch" apart from "accepted and dispatched".
+// stubCrawler records the registry URL + networks the handler forwarded, so a
+// test can tell "rejected before dispatch" apart from "accepted and dispatched".
 type stubCrawler struct {
-	calledWith string
-	runID      string
-	err        error
+	calledURL      string
+	calledNetworks []string
+	runID          string
+	err            error
 }
 
 func (c *stubCrawler) Start(context.Context) error { return nil }
 func (c *stubCrawler) Stop() error                 { return nil }
-func (c *stubCrawler) CrawlNow(_ context.Context, indexURL string) (string, error) {
-	c.calledWith = indexURL
+func (c *stubCrawler) CrawlRegistry(_ context.Context, registryURL string, networkIDs []string) (string, error) {
+	c.calledURL = registryURL
+	c.calledNetworks = networkIDs
 	if c.err != nil {
 		return "", c.err
 	}
 	return c.runID, nil
 }
 
-// TestCrawlHandlerServeHTTP covers the trigger's request validation: any
-// absolute http(s) URL is queued, and malformed input and wrong methods are
-// refused before the crawler is reached.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// jsonStrings converts a decoded JSON array (of strings) into []string.
+func jsonStrings(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		s, _ := e.(string)
+		out = append(out, s)
+	}
+	return out
+}
+
+// TestCrawlHandlerServeHTTP covers the trigger's request validation: a registry
+// URL plus at least one network is discovered + crawled; malformed input, a
+// non-http(s) registry, a missing network, and wrong methods are refused before
+// the crawler is reached.
 func TestCrawlHandlerServeHTTP(t *testing.T) {
-	const someURL = "https://cdn.publisher.example.com/beckn/catalog-index.json"
+	const registryURL = "https://fabric.example.com/registry/dedi"
+	const net1 = "beckn.one/testnet"
+	const net2 = "beckn.one/mainnet"
 
 	tests := []struct {
-		name       string
-		method     string
-		body       string
-		wantStatus int
-		wantCall   string
+		name         string
+		method       string
+		body         string
+		wantStatus   int
+		wantCall     string
+		wantNetworks []string
 	}{
 		{
-			name:       "configured url is accepted",
-			method:     http.MethodPost,
-			body:       `{"indexUrl":"` + someURL + `"}`,
-			wantStatus: http.StatusAccepted,
-			wantCall:   someURL,
+			name:         "registry url + network is accepted",
+			method:       http.MethodPost,
+			body:         `{"registryUrl":"` + registryURL + `","networkId":"` + net1 + `"}`,
+			wantStatus:   http.StatusAccepted,
+			wantCall:     registryURL,
+			wantNetworks: []string{net1},
 		},
 		{
-			name:       "surrounding space is trimmed",
-			method:     http.MethodPost,
-			body:       `{"indexUrl":"  ` + someURL + `  "}`,
-			wantStatus: http.StatusAccepted,
-			wantCall:   someURL,
+			name:         "surrounding space is trimmed",
+			method:       http.MethodPost,
+			body:         `{"registryUrl":"  ` + registryURL + `  ","networkId":"  ` + net1 + `  "}`,
+			wantStatus:   http.StatusAccepted,
+			wantCall:     registryURL,
+			wantNetworks: []string{net1},
 		},
 		{
-			name:       "an index the crawler was not configured with is queued",
-			method:     http.MethodPost,
-			body:       `{"indexUrl":"https://brand-new.example.com/index.json"}`,
-			wantStatus: http.StatusAccepted,
-			wantCall:   "https://brand-new.example.com/index.json",
+			name:         "networkIds list form is accepted",
+			method:       http.MethodPost,
+			body:         `{"registryUrl":"` + registryURL + `","networkIds":["` + net1 + `","` + net2 + `"]}`,
+			wantStatus:   http.StatusAccepted,
+			wantCall:     registryURL,
+			wantNetworks: []string{net1, net2},
 		},
 		{
-			name:       "plain http is accepted",
-			method:     http.MethodPost,
-			body:       `{"indexUrl":"http://publisher-origin/catalog-index.json"}`,
-			wantStatus: http.StatusAccepted,
-			wantCall:   "http://publisher-origin/catalog-index.json",
+			name:         "networkId and networkIds merge and dedup, order preserved",
+			method:       http.MethodPost,
+			body:         `{"registryUrl":"` + registryURL + `","networkId":"` + net1 + `","networkIds":["` + net2 + `","` + net1 + `"]}`,
+			wantStatus:   http.StatusAccepted,
+			wantCall:     registryURL,
+			wantNetworks: []string{net2, net1}, // list first, then networkId; net1 already seen
 		},
 		{
-			name:       "file scheme is rejected",
+			name:         "plain http registry is accepted",
+			method:       http.MethodPost,
+			body:         `{"registryUrl":"http://registry-origin/dedi","networkId":"` + net1 + `"}`,
+			wantStatus:   http.StatusAccepted,
+			wantCall:     "http://registry-origin/dedi",
+			wantNetworks: []string{net1},
+		},
+		{
+			name:       "file scheme registry is rejected",
 			method:     http.MethodPost,
-			body:       `{"indexUrl":"file:///etc/passwd"}`,
+			body:       `{"registryUrl":"file:///etc/passwd","networkId":"` + net1 + `"}`,
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name:       "non http scheme is rejected",
+			name:       "non http scheme registry is rejected",
 			method:     http.MethodPost,
-			body:       `{"indexUrl":"gopher://publisher-origin:70/"}`,
+			body:       `{"registryUrl":"gopher://registry:70/","networkId":"` + net1 + `"}`,
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name:       "relative url is rejected",
+			name:       "relative registry url is rejected",
 			method:     http.MethodPost,
-			body:       `{"indexUrl":"/catalog-index.json"}`,
+			body:       `{"registryUrl":"/dedi","networkId":"` + net1 + `"}`,
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name:       "empty index url is rejected",
+			name:       "empty registry url is rejected",
 			method:     http.MethodPost,
-			body:       `{"indexUrl":""}`,
+			body:       `{"registryUrl":"","networkId":"` + net1 + `"}`,
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name:       "blank index url is rejected",
+			name:       "blank registry url is rejected",
 			method:     http.MethodPost,
-			body:       `{"indexUrl":"   "}`,
+			body:       `{"registryUrl":"   ","networkId":"` + net1 + `"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "missing network is rejected",
+			method:     http.MethodPost,
+			body:       `{"registryUrl":"` + registryURL + `"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "blank network is rejected",
+			method:     http.MethodPost,
+			body:       `{"registryUrl":"` + registryURL + `","networkId":"   "}`,
 			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name:       "malformed body is rejected",
 			method:     http.MethodPost,
-			body:       `{"indexUrl":`,
+			body:       `{"registryUrl":`,
 			wantStatus: http.StatusBadRequest,
 		},
 		{
@@ -118,7 +174,7 @@ func TestCrawlHandlerServeHTTP(t *testing.T) {
 		{
 			name:       "put is not allowed",
 			method:     http.MethodPut,
-			body:       `{"indexUrl":"` + someURL + `"}`,
+			body:       `{"registryUrl":"` + registryURL + `","networkId":"` + net1 + `"}`,
 			wantStatus: http.StatusMethodNotAllowed,
 		},
 	}
@@ -135,18 +191,24 @@ func TestCrawlHandlerServeHTTP(t *testing.T) {
 			if rr.Code != tt.wantStatus {
 				t.Fatalf("status: got %d, want %d (body %q)", rr.Code, tt.wantStatus, rr.Body.String())
 			}
-			if crawler.calledWith != tt.wantCall {
-				t.Errorf("CrawlNow called with %q, want %q", crawler.calledWith, tt.wantCall)
+			if crawler.calledURL != tt.wantCall {
+				t.Errorf("CrawlRegistry called with registry %q, want %q", crawler.calledURL, tt.wantCall)
+			}
+			if !equalStrings(crawler.calledNetworks, tt.wantNetworks) {
+				t.Errorf("CrawlRegistry networks = %v, want %v", crawler.calledNetworks, tt.wantNetworks)
 			}
 			if tt.wantStatus != http.StatusAccepted {
 				return
 			}
-			var resp map[string]string
+			var resp map[string]any
 			if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 				t.Fatalf("decode response: %v", err)
 			}
-			if resp["status"] != "ACCEPTED" || resp["indexUrl"] != tt.wantCall || resp["runId"] != "run-1" {
-				t.Errorf("response: got %v, want status ACCEPTED, indexUrl %q, runId run-1", resp, tt.wantCall)
+			if resp["status"] != "ACCEPTED" || resp["registryUrl"] != tt.wantCall || resp["runId"] != "run-1" {
+				t.Errorf("response: got %v, want status ACCEPTED, registryUrl %q, runId run-1", resp, tt.wantCall)
+			}
+			if got := jsonStrings(resp["networkIds"]); !equalStrings(got, tt.wantNetworks) {
+				t.Errorf("response networkIds = %v, want %v", got, tt.wantNetworks)
 			}
 		})
 	}
@@ -154,10 +216,11 @@ func TestCrawlHandlerServeHTTP(t *testing.T) {
 
 // TestCrawlHandlerCrawlerError checks an engine failure surfaces as 503.
 func TestCrawlHandlerCrawlerError(t *testing.T) {
-	const someURL = "https://cdn.publisher.example.com/beckn/catalog-index.json"
+	const registryURL = "https://fabric.example.com/registry/dedi"
 	h := &crawlHandler{crawler: &stubCrawler{err: errors.New("engine stopped")}}
 
-	req := httptest.NewRequest(http.MethodPost, "/crawl", strings.NewReader(`{"indexUrl":"`+someURL+`"}`))
+	req := httptest.NewRequest(http.MethodPost, "/crawl",
+		strings.NewReader(`{"registryUrl":"`+registryURL+`","networkId":"beckn.one/testnet"}`))
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
@@ -266,7 +329,8 @@ func TestNewCrawlHandlerPassesRegistryToCrawler(t *testing.T) {
 // unbounded body would let one request stream arbitrary bytes into
 // json.Decoder.
 func TestCrawlHandlerBodyCap(t *testing.T) {
-	const allowedURL = "https://cdn.publisher.example.com/beckn/catalog-index.json"
+	const registryURL = "https://fabric.example.com/registry/dedi"
+	const net1 = "beckn.one/testnet"
 
 	tests := []struct {
 		name       string
@@ -276,21 +340,21 @@ func TestCrawlHandlerBodyCap(t *testing.T) {
 	}{
 		{
 			name:       "a normal body is accepted",
-			body:       `{"indexUrl":"` + allowedURL + `"}`,
+			body:       `{"registryUrl":"` + registryURL + `","networkId":"` + net1 + `"}`,
 			wantStatus: http.StatusAccepted,
-			wantCall:   allowedURL,
+			wantCall:   registryURL,
 		},
 		{
 			name: "a body just under the cap is still accepted",
 			// Pad with a field the decoder ignores, keeping the whole body under
 			// maxCrawlRequestBytes.
-			body:       `{"pad":"` + strings.Repeat("x", maxCrawlRequestBytes-200) + `","indexUrl":"` + allowedURL + `"}`,
+			body:       `{"pad":"` + strings.Repeat("x", maxCrawlRequestBytes-200) + `","registryUrl":"` + registryURL + `","networkId":"` + net1 + `"}`,
 			wantStatus: http.StatusAccepted,
-			wantCall:   allowedURL,
+			wantCall:   registryURL,
 		},
 		{
 			name:       "an oversized body is rejected before the crawler is reached",
-			body:       `{"pad":"` + strings.Repeat("x", maxCrawlRequestBytes+1) + `","indexUrl":"` + allowedURL + `"}`,
+			body:       `{"pad":"` + strings.Repeat("x", maxCrawlRequestBytes+1) + `","registryUrl":"` + registryURL + `","networkId":"` + net1 + `"}`,
 			wantStatus: http.StatusBadRequest,
 		},
 	}
@@ -307,8 +371,8 @@ func TestCrawlHandlerBodyCap(t *testing.T) {
 			if rr.Code != tt.wantStatus {
 				t.Fatalf("status: got %d, want %d (body %q)", rr.Code, tt.wantStatus, rr.Body.String())
 			}
-			if crawler.calledWith != tt.wantCall {
-				t.Errorf("CrawlNow called with %q, want %q", crawler.calledWith, tt.wantCall)
+			if crawler.calledURL != tt.wantCall {
+				t.Errorf("CrawlRegistry called with registry %q, want %q", crawler.calledURL, tt.wantCall)
 			}
 		})
 	}

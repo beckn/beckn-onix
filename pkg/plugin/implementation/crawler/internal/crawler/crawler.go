@@ -29,10 +29,14 @@ import (
 type Crawler interface {
 	Start(ctx context.Context) error
 	Stop() error
-	CrawlNow(ctx context.Context, indexURL string) (string, error)
+	// CrawlRegistry runs an immediate registry-backed crawl: discover the
+	// providers of the given networks under registryURL (via the DeDi /query
+	// endpoint) and crawl each — the same registry-based input the scheduled pass
+	// uses. Returns a run_id for correlating the crawl's async log lines.
+	CrawlRegistry(ctx context.Context, registryURL string, networkIDs []string) (string, error)
 }
 
-// ErrDisabled is returned by the disabled crawler's CrawlNow: the plugin is
+// ErrDisabled is returned by the disabled crawler's CrawlRegistry: the plugin is
 // loaded but the operator has not switched the crawler on.
 var ErrDisabled = errors.New("crawler: disabled (set CRAWLER_ENABLED=true to run it)")
 
@@ -67,7 +71,7 @@ type disabledCrawler struct{}
 
 func (disabledCrawler) Start(context.Context) error { return nil }
 func (disabledCrawler) Stop() error                 { return nil }
-func (disabledCrawler) CrawlNow(context.Context, string) (string, error) {
+func (disabledCrawler) CrawlRegistry(context.Context, string, []string) (string, error) {
 	return "", ErrDisabled
 }
 
@@ -107,12 +111,6 @@ func New(ctx context.Context, s config.Settings, opts Options) (Crawler, func() 
 		return nil, nil, ErrNoRegistry
 	}
 
-	// The registry source has no client implementation in this phase; config
-	// rejects CRAWLER_REGISTRY_URL so this can only ever be a config source.
-	if s.RegistryURL != "" {
-		return nil, nil, fmt.Errorf("crawler: registry source is not wired in this phase, set CRAWLER_INDEX_URLS (unset CRAWLER_REGISTRY_URL)")
-	}
-
 	// The backend is chosen by name, so Postgres is one implementation rather
 	// than a hardcoded dependency of the crawler.
 	backend, err := store.NewBackend(s.StoreProvider, store.Config{DSN: s.DBDSN})
@@ -136,6 +134,12 @@ func New(ctx context.Context, s config.Settings, opts Options) (Crawler, func() 
 		fetch.WithTrustedKeys(fetch.RegistryKeys(opts.Registry, opts.KeyCacheTTL)))
 	pc := publish.NewClient(s.FetchTimeout)
 
+	// The source is either the registry-backed discovery source or the static
+	// config list; selectSource picks one and reports the mode + startup count
+	// for the ready log. The DeDi query client is bounded by the same
+	// FetchTimeout as the fetch client.
+	src, sourceMode, sourceCount := selectSource(s)
+
 	eng := runner.New(runner.EngineConfig{
 		Networks:        s.NetworkIDs,
 		BppURI:          s.BppURI,
@@ -145,8 +149,14 @@ func New(ctx context.Context, s config.Settings, opts Options) (Crawler, func() 
 		MaxPushBytes:    s.MaxPushBytes,
 		MergeOnly:       s.MergeOnly,
 	}, runner.Deps{
-		Store:      backend,
-		Source:     source.NewConfigSource(s.IndexURLs),
+		Store:  backend,
+		Source: src,
+		// The on-demand /crawl builds its registry source per request (the registry
+		// URL + networks come in the request body), the same way selectSource builds
+		// the scheduled one — bounded by the same FetchTimeout.
+		NewRegistrySource: func(registryURL string, networkIDs []string) source.Source {
+			return source.NewRegistrySource(source.NewDediQueryClient(registryURL, s.FetchTimeout), networkIDs)
+		},
 		FetchIndex: fc.FetchIndex,
 		FetchFile:  fc.FetchFile,
 		Validate:   opts.Validate,
@@ -168,21 +178,35 @@ func New(ctx context.Context, s config.Settings, opts Options) (Crawler, func() 
 		return stopErr
 	}
 
-	// Only the config source can be built in this phase, so the mode is a
-	// constant rather than a guess from RegistryURL. It stays in the log line so
-	// the field does not appear and disappear when the registry source lands.
-	sourceMode := source.KindConfig
 	pushHost := ""
 	if u, err := url.Parse(s.PushEndpoint); err == nil {
 		pushHost = u.Host
 	}
 	log.Info(fmt.Sprintf("crawler started — polling %d source(s) every %s, pushing to %s",
-		len(s.IndexURLs), s.IndexInterval.String(), pushHost),
+		sourceCount, s.IndexInterval.String(), pushHost),
 		"component", "daemon", "stage", "ready",
 		"source_mode", sourceMode, "push_host", pushHost,
 		"store_provider", s.StoreProvider,
-		"sources", len(s.IndexURLs), "key_source", "registry",
+		"sources", sourceCount, "key_source", "registry",
 		"index_interval", s.IndexInterval.String(), "catalog_interval", s.CatalogInterval.String(),
 		"max_attempts", s.MaxAttempts)
 	return eng, closer, nil
+}
+
+// selectSource picks the crawler's index source from settings and reports the
+// mode + startup count for the ready log. A registry base URL WITH at least one
+// network selects the registry-backed discovery source (its count is the
+// networks it polls); otherwise the static config list is used (its count is the
+// fixed URL list). The `len(NetworkIDs) > 0` guard mirrors config.LoadSettings'
+// source-required check: a registry URL with nothing to look up in it is not a
+// usable source, so a bare CRAWLER_REGISTRY_URL (which LoadSettings only accepts
+// alongside a static list) falls back to that list rather than silently building
+// an empty registry source that discovers nothing. The DeDi query client is
+// bounded by the crawler's FetchTimeout.
+func selectSource(s config.Settings) (source.Source, string, int) {
+	if s.RegistryURL != "" && len(s.NetworkIDs) > 0 {
+		return source.NewRegistrySource(source.NewDediQueryClient(s.RegistryURL, s.FetchTimeout), s.NetworkIDs),
+			source.KindRegistry, len(s.NetworkIDs)
+	}
+	return source.NewConfigSource(s.IndexURLs), source.KindConfig, len(s.IndexURLs)
 }

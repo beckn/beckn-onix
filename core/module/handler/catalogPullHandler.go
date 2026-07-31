@@ -20,32 +20,33 @@ import (
 // string fields), so 64 KiB is generous.
 const maxCrawlRequestBytes = 64 << 10
 
-// crawlHandler serves the DS-internal, unsigned /crawl trigger: it re-crawls
-// one provider's index on demand (basic supportability for a stuck
-// publisher). The crawler's scheduled jobs run in the background from plugin
-// init; this handler only pokes an immediate pass. Same-operator call, so no
-// validateSign/signAck pipeline (see the crawler design).
-// The caller supplies the index URL to crawl: for this phase the crawler API
-// ingests it directly rather than resolving it from the registry, so the URL
-// is not required to be one the crawler was configured with. Verifying the URL
-// against the registry before queueing is the final design and is deferred.
+// crawlHandler serves the DS-internal, unsigned /crawl trigger: it runs an
+// immediate registry-backed crawl on demand (basic supportability). The caller
+// supplies a REGISTRY URL and the network(s) to query in it; the crawler asks
+// the DeDi /query endpoint for that network's providers and crawls each
+// discovered index — the SAME discovery the scheduled jobs run in the
+// background, so every crawl input is registry-based rather than a raw index
+// URL. Same-operator call, so no validateSign/signAck pipeline (see the crawler
+// design).
 //
-// The URL itself is not a trust boundary. Every fetched catalog file is
-// verified against the publishing participant's signing key as held in the
-// registry, so content from an unrecognised index fails verification and parks.
-// Server-side fetch exposure is bounded by the fetch layer's SSRF guard
-// (loopback, private, link-local, CGNAT and reserved ranges are refused at dial
-// time), the fetch timeout, and the artifact and decompression size caps.
+// Neither the registry URL nor the discovered index URLs are a trust boundary.
+// Every fetched catalog file is verified against the publishing participant's
+// signing key as held in the registry, so content from an unrecognised provider
+// fails verification and parks. Server-side fetch exposure is bounded by the
+// fetch layer's SSRF guard (loopback, private, link-local, CGNAT and reserved
+// ranges are refused at dial time), the fetch timeout, and the artifact and
+// decompression size caps.
 type crawlHandler struct {
 	crawler definition.Crawler
 }
 
-// crawlRequest is the /crawl body: the index URL to re-crawl now.
-// participantId is accepted for forward-compatibility with DID resolution
-// but is not yet used.
+// crawlRequest is the /crawl body: the registry to discover catalog indexes
+// from and the network(s) to query in it. networkIds is the canonical list
+// form; networkId is a single-network convenience that is folded into it.
 type crawlRequest struct {
-	IndexURL      string `json:"indexUrl"`
-	ParticipantID string `json:"participantId"`
+	RegistryURL string   `json:"registryUrl"`
+	NetworkID   string   `json:"networkId"`
+	NetworkIDs  []string `json:"networkIds"`
 }
 
 // NewCrawlHandler builds the crawl handler: it loads an optional
@@ -117,8 +118,8 @@ func isHTTPURL(s string) bool {
 	}
 }
 
-// ServeHTTP triggers an immediate crawl of the given index URL and returns
-// 202 Accepted -- the crawl runs asynchronously; results surface through the
+// ServeHTTP triggers an immediate registry-backed crawl and returns 202
+// Accepted -- the crawl runs asynchronously; results surface through the
 // crawler's own telemetry, not this response.
 func (h *crawlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -133,26 +134,54 @@ func (h *crawlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
 		return
 	}
-	indexURL := strings.TrimSpace(req.IndexURL)
-	if indexURL == "" {
-		http.Error(w, "indexUrl is required", http.StatusBadRequest)
+	registryURL := strings.TrimSpace(req.RegistryURL)
+	if registryURL == "" {
+		http.Error(w, "registryUrl is required", http.StatusBadRequest)
 		return
 	}
-	if !isHTTPURL(indexURL) {
-		http.Error(w, "indexUrl must be an absolute http or https URL", http.StatusBadRequest)
+	if !isHTTPURL(registryURL) {
+		http.Error(w, "registryUrl must be an absolute http or https URL", http.StatusBadRequest)
 		return
 	}
-	// CrawlNow returns immediately, launching a tracked goroutine on the
+	networks := resolveNetworks(req)
+	if len(networks) == 0 {
+		http.Error(w, "networkId (or networkIds) is required", http.StatusBadRequest)
+		return
+	}
+	// CrawlRegistry returns immediately, launching a tracked goroutine on the
 	// engine's own context (drained by Stop) — so we don't run a detached crawl
 	// on a context the shutdown path can't reach (avoids DB use-after-close).
-	runID, err := h.crawler.CrawlNow(r.Context(), indexURL)
+	runID, err := h.crawler.CrawlRegistry(r.Context(), registryURL, networks)
 	if err != nil {
-		log.Errorf(r.Context(), err, "crawl: trigger failed for %s", indexURL)
+		log.Errorf(r.Context(), err, "crawl: trigger failed for registry %s", registryURL)
 		http.Error(w, "crawl trigger unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ACCEPTED", "indexUrl": indexURL, "runId": runID})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status": "ACCEPTED", "registryUrl": registryURL, "networkIds": networks, "runId": runID,
+	})
+}
+
+// resolveNetworks collects the network ids from the request — the canonical
+// networkIds list plus the single-network networkId convenience — trimming
+// blanks and de-duplicating while preserving order.
+func resolveNetworks(req crawlRequest) []string {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(n string) {
+		n = strings.TrimSpace(n)
+		if n == "" || seen[n] {
+			return
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	for _, n := range req.NetworkIDs {
+		add(n)
+	}
+	add(req.NetworkID)
+	return out
 }

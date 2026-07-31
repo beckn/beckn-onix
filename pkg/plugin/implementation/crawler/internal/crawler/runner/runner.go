@@ -1,17 +1,16 @@
 package runner
 
 // runner.go — the Engine type and its process supervisor: New (defaults), Start
-// / Stop (launch + drain the two scheduled jobs), CrawlNow (the on-demand /crawl
-// trigger), the ticker loop, and the correlation-id minter. The per-job logic
-// lives in crawl.go / sync.go; the log vocabulary in telemetry.go.
+// / Stop (launch + drain the two scheduled jobs), CrawlRegistry (the on-demand
+// /crawl trigger, which discovers indexes from a registry), the ticker loop, and
+// the correlation-id minter. The per-job logic lives in crawl.go / sync.go; the
+// log vocabulary in telemetry.go.
 
 import (
 	"context"
 	"fmt"
 	"sync"
 	"time"
-
-	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/crawler/internal/crawler/source"
 )
 
 // DaemonState is the crawler process lifecycle — the supervisor (the "driver").
@@ -107,38 +106,53 @@ func (e *Engine) Stop() error {
 	return nil
 }
 
-// CrawlNow runs an immediate index crawl for one index URL (the /crawl
-// supportability trigger). It launches a tracked goroutine on the engine's own
-// context, so Stop() drains it before the DB is closed. It returns the run_id
-// synchronously so the caller can correlate it against the crawl's later
-// (asynchronous) log lines.
-func (e *Engine) CrawlNow(_ context.Context, indexURL string) (string, error) {
+// CrawlRegistry runs an immediate registry-backed crawl: it asks the injected
+// registry-source factory (a DeDi /query client) for the providers of the given
+// networks under registryURL, then crawls every discovered index on the
+// on_demand trigger — the same discovery the scheduled index pass uses, so an
+// on-demand /crawl and the background pass take the SAME registry-based input.
+// Like the scheduled pass it launches one tracked goroutine on the engine's own
+// context (drained by Stop) and returns the run_id synchronously.
+func (e *Engine) CrawlRegistry(_ context.Context, registryURL string, networkIDs []string) (string, error) {
 	e.mu.Lock()
 	if e.state != DaemonReady || e.ctx == nil {
 		e.mu.Unlock()
 		return "", fmt.Errorf("crawler: engine not running")
 	}
+	if e.deps.NewRegistrySource == nil {
+		e.mu.Unlock()
+		return "", fmt.Errorf("crawler: registry source factory not configured")
+	}
 	ctx := e.ctx
 	e.wg.Add(1)
 	e.mu.Unlock()
 
-	// An on-demand crawl is its own single-index run; mint the run_id here (not
-	// inside the goroutine) so it can be returned to the caller before the
-	// crawl completes.
 	runID := e.newID()
 	start := e.deps.Now()
+	src := e.deps.NewRegistrySource(registryURL, networkIDs)
 
 	go func() {
 		defer e.wg.Done()
-		r := e.crawlIndex(ctx, source.IndexRef{IndexURL: indexURL, Source: source.KindOnDemand}, onDemand, runID)
-		indexes, updated := 0, 0
-		if r.fetched {
-			indexes = 1
+		refs, err := src.IndexRefs(ctx)
+		if err != nil {
+			e.logCrawlFailed(runID, onDemand, "source_resolve", err)
+			return
 		}
-		if r.changed {
-			updated = 1
+		fetched, changed, enqueued := 0, 0, 0
+		for _, ref := range refs {
+			if ctx.Err() != nil {
+				return
+			}
+			r := e.crawlIndex(ctx, ref, onDemand, runID)
+			if r.fetched {
+				fetched++
+			}
+			if r.changed {
+				changed++
+			}
+			enqueued += r.enqueued
 		}
-		e.logCrawlFinished(runID, onDemand, indexes, updated, r.enqueued, e.deps.Now().Sub(start))
+		e.logCrawlFinished(runID, onDemand, fetched, changed, enqueued, e.deps.Now().Sub(start))
 	}()
 	return runID, nil
 }
