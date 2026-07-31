@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
@@ -40,29 +38,6 @@ func (p catalogPublisherProvider) parseConfig(config map[string]string) (*catalo
 			return nil, fmt.Errorf("invalid fileValidityIn value '%s': %w", v, err)
 		}
 		cfg.FileValidityIn = d
-	}
-
-	// indexNetworkIds is a comma-separated list -- map[string]string config
-	// has no native list support for simple string slices.
-	if v, exists := config["indexNetworkIds"]; exists && v != "" {
-		cfg.IndexNetworkIds = strings.Split(v, ",")
-	}
-
-	// indexAuthMethods/extraManifestFiles are JSON-encoded arrays -- the
-	// only fields shaped as more than a flat string or comma-list.
-	if v, exists := config["indexAuthMethods"]; exists && v != "" {
-		var methods []definition.AuthMethod
-		if err := json.Unmarshal([]byte(v), &methods); err != nil {
-			return nil, fmt.Errorf("invalid indexAuthMethods value '%s': %w", v, err)
-		}
-		cfg.IndexAuthMethods = methods
-	}
-	if v, exists := config["extraManifestFiles"]; exists && v != "" {
-		var extra []catalogpublisher.ManifestFileRef
-		if err := json.Unmarshal([]byte(v), &extra); err != nil {
-			return nil, fmt.Errorf("invalid extraManifestFiles value '%s': %w", v, err)
-		}
-		cfg.ExtraManifestFiles = extra
 	}
 
 	return cfg, nil

@@ -1,12 +1,21 @@
 # catalogpublisher
 
 Implements `definition.CatalogPublisher`: given a publisher's catalog
-submissions, produces a signed DeDi manifest and a catalog index whose
-wire shape matches **"Decentralized Catalog file spec.md"** exactly. This
-is the producing side of the manifest -> index -> catalog chain a crawler
-walks and verifies -- see the file spec for the full background, and the
-decentralized-catalog design doc's "Publisher tooling" section for why
-this exists as a plugin rather than bespoke per-publisher code.
+submissions, produces a catalog index whose wire shape matches
+**"Decentralized Catalog file spec.md"** exactly. This is the producing
+side of the index -> catalog chain a crawler walks and verifies -- see the
+file spec for the full background, and the decentralized-catalog design
+doc's "Publisher tooling" section for why this exists as a plugin rather
+than bespoke per-publisher code.
+
+This package does not produce a DeDi manifest. The catalog index's
+location is declared directly in the publisher's own DeDi registry
+record (`meta.catalog_index_url`), not via a separate node-manifest
+document's `catalog.catalogIndexes` indirection -- see "Node-manifest
+link check" below for how `catalogPublishHandler.go` checks and reports
+this. An earlier version of this package computed and signed a manifest
+as part of every `Publish` call, but nothing ever consumed it -- see git
+history for that version.
 
 **`catalogcrawler` has not been updated for this shape yet** (tracked as
 the immediate next step -- it still expects the earlier, now-superseded
@@ -63,37 +72,11 @@ test that used to prove the two plugins agree is temporarily skipped; see
    separate from any one catalog's own file versions -- the crawler's
    cursor over the whole index, bumped only when something in this call
    actually changed.
-9. Signs the manifest with a **document-level detached JWS**
-   (`pkg/security/artifactsigner`): JCS-canonicalize the document with
-   `proof` absent, build the RFC 7515 detached-JWS signing input, sign
-   with Ed25519. This is the exact counterpart to `catalogcrawler`'s fixed
-   `verifyDediProof` (see that package's own history: the original
-   verification check was self-referential and never actually
-   authenticated anything -- fixed alongside this package's first version).
-10. Returns `PublishResult{Manifest, Index, IndexVersion, Catalogs,
-    Errors}` as JSON. No I/O happens here -- where these bytes get written
-    and served is a separate concern (an `ArtifactStore`-shaped plugin,
-    not yet built).
+9. Returns `PublishResult{Index, IndexVersion, Catalogs, Errors}` as JSON.
+   No I/O happens here -- where these bytes get written and served is a
+   separate concern (an `ArtifactStore`-shaped plugin, not yet built).
 
 ## Wire shapes, at a glance
-
-**Manifest** (`.well-known/dedi.index.json`):
-```json
-{
-  "dedi_version": "0.1",
-  "type": "dedi-manifest",
-  "domain": "open-economy.nfh.global",
-  "keys": [{ "kid": "key-1", "kty": "OKP", "crv": "Ed25519", "x": "..." }],
-  "updated_at": "...", "next_update": "...",
-  "files": [
-    { "name": "becknCatalogs", "url": "...", "schema": "...", "networkIds": [] }
-  ],
-  "proof": { "verification_method": "key-1", "canonicalization": "JCS", "jws": "..." }
-}
-```
-No digest on the file entry (integrity comes from the index's own
-per-entry signatures, not a manifest-declared hash); `name` replaces
-DeDi's `registry` convention, since this entry references a Beckn file.
 
 **Catalog index** (a plain Beckn file; **not** a DeDi file, and not signed
 as a whole):
@@ -132,7 +115,7 @@ as a whole):
 demo CLI that wraps `Publish` end to end: it reads a catalog JSON file,
 reconstructs prior state (and every other catalog's index entry, to carry
 forward) from whatever it previously wrote to an output directory, calls
-`Publish`, and writes the resulting manifest/index/catalog files to that
+`Publish`, and writes the resulting index/catalog files to that
 directory. It owns a demo-only local signing key and all state
 reconstruction -- none of that lives in this package. Run everything below
 from the repo root.
@@ -161,10 +144,6 @@ find /tmp/catalog-demo -type f
 cat /tmp/catalog-demo/catalogs/CAT-DEMO-1.v1.json          # the baseline -- unchanged Beckn Catalog JSON
 cat /tmp/catalog-demo/index/becknCatalogs.index.json         # participantId/version/catalogs[], per-file signatures
 ```
-Note: `Publish` still computes a signed manifest (`keys[]` + `files[]`
-pointing at the index) as part of `PublishResult`, but `localstore` does
-not currently persist it to `.well-known/dedi.index.json` -- see "The
-manifest's filename" below.
 
 ### 2. Publish an update to the same catalog (change file + version bump)
 
@@ -229,26 +208,10 @@ it and give it a fresh `-out` directory. Edit the file and rerun against
 the same `-out` to see the diff. Delete the `-out` directory to start over
 as a fresh baseline.
 
-### The manifest's filename
-
-The manifest -- `keys[]` + `files[]` pointing at the catalog index --
-belongs at **`.well-known/dedi.index.json`**, matching the file spec's
-stated well-known path exactly, and `Publish` still computes it as part
-of `PublishResult`. **`localstore` deliberately does not persist it there
-right now** -- read or write -- pending a real ArtifactStore/manifest-
-ownership story; see `localstore.Write`. Despite the filename, this is
-**not** the catalog index -- that's the separate
-`index/becknCatalogs.index.json` file. The "index" in `dedi.index.json`
-is just DeDi's own naming convention for "the published record naming
-everything about a domain," a coincidence with the unrelated "catalog
-index" concept, not a hint that they're the same file.
-
 ### Output layout
 
 ```
 <out>/
-  .well-known/                  # NOT currently written -- see above
-    dedi.index.json              # the manifest
   index/
     becknCatalogs.index.json     # the catalog index
   catalogs/
@@ -331,10 +294,8 @@ go test ./pkg/plugin/implementation/catalogpublisher/... -v
 local directory, read it back as prior state" logic -- the same layout
 `catalogpublisherctl` used to write in full (`index/becknCatalogs.index.json`,
 flat `catalogs/<name>.v<version>.json` (baselines) and
-`catalogs/changes/<name>.v<version>.changes.json` (change files); the
-manifest, `.well-known/dedi.index.json`, is deliberately excluded for now,
-see "The manifest's filename" above), extracted so both the CLI and the
-`catalogPublish` HTTP handler
+`catalogs/changes/<name>.v<version>.changes.json` (change files)),
+extracted so both the CLI and the `catalogPublish` HTTP handler
 (below) use one implementation instead of two. `Publish` itself still
 holds no storage-backed state -- `localstore.Load`/`Write` are one
 concrete, filesystem-backed way to supply and persist
@@ -401,16 +362,16 @@ common local directory every generated file goes under; `plugins.catalogPublishe
 wires the core plugin the same way `plugins.crawler` wires `catalogcrawler`
 for `catalogPull`. See `config/local-beckn-one-bap.yaml`'s and
 `config/local-beckn-one-bpp.yaml`'s `catalogPublish` module blocks for
-full working examples (the bpp one also has `schemaValidator`/
-`manifestLoader` active, matching starter-kit's `generic-bpp.yaml`).
+full working examples (the bpp one also has `schemaValidator` active and
+`checkCatalogIndexLink: true` set, matching starter-kit's
+`generic-bpp.yaml`).
 
-**Config has one field: `subscriberId`.** There is no `keyID`/`domain`/
-`indexSchemaURL` in `catalogpublisher.Config` -- `subscriberId` is only
-the `KeyManager.Keyset` lookup key (the same one every other `Keyset`
-caller uses, e.g. `pkg/security/artifactfetcher`,
-`core/module/handler/responsestep.go`). The manifest/signature `kid` and
-the manifest's `domain`/index's `participantId` are read from the
-returned `Keyset`'s `UniqueKeyID`/`SubscriberID` fields instead --
+**Config has one field: `subscriberId`.** There is no `keyID`/`domain` in
+`catalogpublisher.Config` -- `subscriberId` is only the `KeyManager.Keyset`
+lookup key (the same one every other `Keyset` caller uses, e.g.
+`pkg/security/artifactfetcher`, `core/module/handler/responsestep.go`).
+Every file's `signature.keyId` and the index's `participantId` are read
+from the returned `Keyset`'s `UniqueKeyID`/`SubscriberID` fields instead --
 whatever the KeyManager plugin's own config (e.g. `simplekeymanager`'s
 `subscriberId`/`keyId`) already populated them with, not duplicated here.
 This used to be a real gotcha: `simplekeymanager`'s config-loaded keyset
@@ -419,9 +380,6 @@ is indexed by `subscriberId` (see `loadKeysFromConfig` in
 be set to the *subscriberId* value, not the `keyId` string sitting right
 next to it in the same config block -- easy to get backwards. Removing
 the duplicate field removes the chance to get it backwards.
-`indexSchemaURL` is hardcoded (`indexSchemaURL` const in
-`catalogpublisher.go`) rather than configurable, pending a move to a
-shared beckndefaults/becknconstants file.
 
 **The `catalogPublish` handler goes one step further: you don't even set
 `subscriberId` under `catalogPublisher.config` at all.**
@@ -459,53 +417,56 @@ batch (not per catalog); a failure rejects the entire request with `400`
 before `Publish` is ever called, and skips entirely for a retire-only
 request (no catalogs submitted, nothing to validate).
 
-**Optional node-manifest link check, warn-only.** `plugins.manifestLoader`
-(`manifestloader`) can also be wired under the `catalogPublish` module.
-When configured, after every successful publish the handler fetches this
-node's own manifest -- `manifestLoader.GetBySubscriberID(ctx, syntheticID)`,
-where `syntheticID` is a `subscriberId/subscribers.beckn.one/keyId` path
-built from `keyManager.config.subscriberId` and the `keyId` resolved fresh
-on every check from `keyManager.Keyset(ctx, subscriberId)` (re-resolved
+**Optional registry catalog-index link check, warn-only.**
+`catalogPublisher.config.checkCatalogIndexLink: true` enables it -- no
+separate plugin block; this reuses whatever `Registry` plugin is already
+configured, type-asserted to `RegistryMetadataLookup` (no `ManifestLoader`
+plugin instance is ever built for this check). When enabled, after every
+successful publish the handler reads this node's own DeDi registry record
+directly --
+`RegistryMetadataLookup.LookupNode(ctx, syntheticNodeID)`, where
+`syntheticNodeID` is a `subscriberId/subscribers.beckn.one/keyId` path built
+from `keyManager.config.subscriberId` and the `keyId` resolved fresh on
+every check from `keyManager.Keyset(ctx, subscriberId)` (re-resolved
 per-check rather than cached, so a signing-key rotation is picked up
 immediately, matching `catalogpublisher.Publish`'s own per-request
-`Keyset` resolution) -- using `dediregistry` read-only -- and checks
-whether its `catalog.catalogIndexes[]`
-already lists this publisher's own index URL (`CatalogPublisher.IndexURL()`,
-part of the plugin's exported interface precisely so callers like this can
-ask for it without knowing `PublicBaseURL` internals). The real manifest on
-DeDi is **never written to** here, matching this package's manifest policy
-elsewhere (see "The manifest's filename" above) -- if the link is missing,
-the handler instead writes a locally-staged proposal (existing manifest
-content, or a bare skeleton if none exists yet, plus the new
-`catalogIndexes` entry) to `outputRoot/index/node-manifest.staged.yaml`
-(`localstore.WriteStagedNodeManifest`) and returns a `warnings[]` entry in
-the response naming that path -- the publish itself still succeeds; this
-never blocks it. Reviewing and actually pushing the staged file to DeDi is
-a manual, deliberate operator step. Unconfigured (the default) skips this
-check entirely.
+`Keyset` resolution) -- and checks whether the record's
+`meta.catalog_index_url` already matches this publisher's own index URL
+(`CatalogPublisher.IndexURL()`, part of the plugin's exported interface
+precisely so callers like this can ask for it without knowing
+`PublicBaseURL` internals). This directly declares the catalog index in
+the subscriber's own DeDi record instead of the earlier three-level
+indirection (DeDi record -> node manifest -> catalog index) -- there is no
+node-manifest document involved in this check at all anymore, so no
+manifest is fetched, signature-verified, or cached, and `ManifestLoader`
+is never built for this handler. If the link is missing or doesn't match,
+the handler returns a `warnings[]` entry naming the missing meta key and
+the URL it should point at -- the publish itself still succeeds; this
+never blocks it. There is nothing to stage locally: `dediregistry` has no
+write path either way, so getting a value onto a DeDi record's meta is,
+and remains, an external, manual operator action via your own DeDi
+registration tooling. `checkCatalogIndexLink` defaults to `false`, which
+skips this check entirely.
 
-**No separate `manifestSubscriberId` config is needed.** An earlier version
-of this handler required a hand-configured DeDi-native
-`namespace/registry/recordName` path (e.g.
-`nfh.global/staging-nodes/staging-p-node`) for the manifest self-lookup,
-reasoning that `ManifestLoader.GetBySubscriberID`/`dediregistry.LookupNode`
-require that three-part shape, a different one than the plain Beckn
-`subscriberId` `KeyManager.Keyset` is indexed by. Verified directly against
-a real DeDi registry, though: a lookup addressed by plain `subscriberId` +
-`keyId` via the registry's wildcard-registry value (`subscribers.beckn.one`
--- the same one `RegistryLookup.Lookup` already uses to resolve signing
-keys during ordinary transactions) resolves to the exact same underlying
-record a three-part path does -- the record's `record_id` *is* its `keyId`.
-So `catalogPublishHandler.go` builds that synthetic
-`subscriberId/subscribers.beckn.one/keyId` path itself (with `keyId` derived
-from `keyManager.Keyset(ctx, subscriberId)`, the same keyset
-`catalogpublisher.Publish` itself signs with) and passes it to the existing
-`GetBySubscriberID`, instead of asking the operator to separately discover
-and configure an equivalent identifier. Note this duplicates the DeDi
+**Why a synthetic lookup path, not a hand-configured one.**
+`RegistryMetadataLookup.LookupNode` (the method behind this check) takes a
+DeDi-native `namespace/registry/recordName` path, a different shape than
+the plain Beckn `subscriberId` `KeyManager.Keyset` is indexed by. Verified
+directly against a real DeDi registry, though: a lookup addressed by plain
+`subscriberId` + `keyId` via the registry's wildcard-registry value
+(`subscribers.beckn.one` -- the same one `RegistryLookup.Lookup` already
+uses to resolve signing keys during ordinary transactions) resolves to the
+exact same underlying record a three-part path does -- the record's
+`record_id` *is* its `keyId`. So `catalogPublishHandler.go` builds that
+synthetic `subscriberId/subscribers.beckn.one/keyId` path itself (with
+`keyId` derived from `keyManager.Keyset(ctx, subscriberId)`, the same
+keyset `catalogpublisher.Publish` itself signs with) and passes it to
+`LookupNode`, instead of asking the operator to separately discover and
+configure an equivalent identifier. Note this duplicates the DeDi
 wildcard-registry value as a local constant in the handler, rather than
-giving `ManifestLoader`/`RegistryMetadataLookup` a proper
-subscriberId+keyId-shaped lookup method -- a smaller-footprint stopgap;
-doing that properly is a separate, better-scoped follow-up.
+giving `RegistryMetadataLookup` a proper subscriberId+keyId-shaped lookup
+method -- a smaller-footprint stopgap; doing that properly is a separate,
+better-scoped follow-up.
 
 Both halves of the synthetic path are validated before use, since a
 malformed one would otherwise silently and permanently break this

@@ -233,12 +233,20 @@ modules:
             fileValidityIn: "336h"
             # catalogBaseURL: the one public URL prefix outputRoot (/catalog
             # above) is served under -- e.g. an ngrok tunnel onto that
-            # directory. Index/catalog file URLs in the generated manifest
-            # and index are addressed under this base
-            # ({catalogBaseURL}/index/... and {catalogBaseURL}/catalogs/...).
-            # Left unset here; a "pending-artifact-store://..." placeholder
-            # is used until you point it at a real public location.
+            # directory. Index/catalog file URLs are addressed under this
+            # base ({catalogBaseURL}/index/... and
+            # {catalogBaseURL}/catalogs/...). Left unset here; a
+            # "pending-artifact-store://..." placeholder is used until you
+            # point it at a real public location.
             # catalogBaseURL: "https://your-tunnel.ngrok-free.app"
+            # checkCatalogIndexLink: read-only, warn-only check (via
+            # dediregistry, addressed by keyManager.config.subscriberId +
+            # the keyId that keyset resolves to) whether this node's DeDi
+            # registry record already links this publisher's catalog index
+            # via meta.catalog_index_url. Getting that value onto the
+            # record is a manual step via your own DeDi registration
+            # tooling; this only warns, never pushes it automatically.
+            checkCatalogIndexLink: "true"
         # Validates submitted catalogs before they're published: the
         # request body matches beckn.yaml's real CatalogPublishAction
         # envelope (context/message.catalogs[]/message.publishDirectives[]),
@@ -249,17 +257,3 @@ modules:
           id: schemav2validator
           config:
             cacheTTL: "3600"
-        # Read-only: checks (via dediregistry, addressed by
-        # keyManager.config.subscriberId + the keyId that keyset resolves
-        # to -- the same identifiers a normal transaction already resolves
-        # signing keys with, no separate manifest-specific config needed)
-        # whether the node manifest already declares this publisher's
-        # catalog index under catalog.catalogIndexes. If not, a
-        # proposed updated manifest is staged locally under
-        # outputRoot/index/node-manifest.staged.yaml and a warning is
-        # returned -- the real manifest on DeDi is never written to by
-        # this handler; review the staged file and push it yourself.
-        # checkPolicy (opapolicychecker) can be wired the same way as the
-        # other modules above if needed; left out here.
-        manifestLoader:
-          id: manifestloader

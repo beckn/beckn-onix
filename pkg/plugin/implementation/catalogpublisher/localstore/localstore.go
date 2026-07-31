@@ -35,10 +35,7 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/beckn-one/beckn-onix/pkg/catalogfile"
-	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
@@ -52,15 +49,6 @@ const ManifestFilename = "dedi.index.json"
 // files[].name value ("becknCatalogs" -- catalogIndexFileName in
 // catalogpublisher.go).
 const IndexFilename = "becknCatalogs.index.json"
-
-// StagedNodeManifestFilename holds a locally-staged, NOT-yet-published
-// proposal for the node manifest -- written when catalogPublishHandler
-// finds the real node manifest (fetched read-only via ManifestLoader/
-// dediregistry) doesn't yet declare this publisher's catalog index under
-// catalog.catalogIndexes. This is never the real manifest and is never
-// pushed anywhere automatically; it's the operator's copy to review and
-// publish to DeDi themselves.
-const StagedNodeManifestFilename = "node-manifest.staged.yaml"
 
 // CatalogsDirName is the root subdirectory holding every catalog's
 // versioned files, flat -- not one subdirectory per catalogId, matching
@@ -80,10 +68,7 @@ const ChangesDirName = "changes"
 func ManifestPath(root string) string { return filepath.Join(root, ".well-known", ManifestFilename) }
 func IndexPath(root string) string    { return filepath.Join(root, IndexDirName, IndexFilename) }
 func CatalogsDir(root string) string  { return filepath.Join(root, CatalogsDirName) }
-func StagedNodeManifestPath(root string) string {
-	return filepath.Join(root, IndexDirName, StagedNodeManifestFilename)
-}
-func ChangesDir(root string) string { return filepath.Join(CatalogsDir(root), ChangesDirName) }
+func ChangesDir(root string) string   { return filepath.Join(CatalogsDir(root), ChangesDirName) }
 
 // EnsureDirs creates every directory Write will need under root.
 //
@@ -117,25 +102,6 @@ func CatalogFilePath(root, catalogID string, version int, suffix string) string 
 		return filepath.Join(ChangesDir(root), filename)
 	}
 	return filepath.Join(CatalogsDir(root), filename)
-}
-
-// WriteStagedNodeManifest writes manifest as a YAML document to
-// StagedNodeManifestPath, staging a proposed node-manifest update
-// (typically manifest's real content plus one new catalog.catalogIndexes
-// entry) for the operator to review and push to DeDi themselves -- this
-// package never writes the real manifest anywhere (see Write).
-func WriteStagedNodeManifest(root string, manifest *model.NodeManifest) error {
-	if err := EnsureDirs(root); err != nil {
-		return err
-	}
-	raw, err := yaml.Marshal(manifest)
-	if err != nil {
-		return fmt.Errorf("localstore: marshaling staged node manifest: %w", err)
-	}
-	if err := os.WriteFile(StagedNodeManifestPath(root), raw, 0o644); err != nil {
-		return fmt.Errorf("localstore: writing staged node manifest: %w", err)
-	}
-	return nil
 }
 
 // Write persists a PublishResult under root: the index and every catalog

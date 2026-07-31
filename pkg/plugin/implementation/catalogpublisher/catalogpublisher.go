@@ -1,10 +1,17 @@
 // Package catalogpublisher implements definition.CatalogPublisher: given a
-// publisher's catalog submissions, it produces a signed DeDi manifest and a
-// catalog index whose wire shape matches "Decentralized Catalog file
-// spec.md" (the file-spec doc supersedes the earlier DeDi-wrapper-shaped
-// index this package originally produced -- see git history for that
-// version; catalogcrawler has not yet been updated to match this shape,
-// tracked as the immediate next step).
+// publisher's catalog submissions, it produces a catalog index whose wire
+// shape matches "Decentralized Catalog file spec.md" (the file-spec doc
+// supersedes the earlier DeDi-wrapper-shaped index this package originally
+// produced -- see git history for that version; catalogcrawler has not yet
+// been updated to match this shape, tracked as the immediate next step).
+//
+// This package does not produce a DeDi manifest: the catalog index's
+// location is declared directly in the subscriber's own DeDi registry
+// record (meta.catalog_index_url, see core/module/handler/
+// catalogPublishHandler.go's checkRegistryLinksCatalogIndex), not via a
+// separate node-manifest document's catalog.catalogIndexes indirection --
+// an earlier version of this package signed and returned such a manifest,
+// but nothing ever consumed it (see git history).
 //
 // Publish diffs each submission against caller-supplied PriorState (added/
 // updated/removed items in the catalog's "resources" and "offers" arrays)
@@ -16,12 +23,9 @@
 // Compaction beyond ForceBaseline-as-manual-trigger is not implemented yet
 // (see the package README's phased plan).
 //
-// Signing is two different schemes for two different documents, per the
-// file spec: the manifest carries one whole-document detached JWS
-// (pkg/security/artifactsigner, JCS canonicalization per RFC 8785, RFC 7515
-// detached JWS); the catalog index is not signed as a whole -- instead,
-// every baseline/change file entry carries its own signature, a plain
-// Ed25519 signature over the JCS-canonicalized tuple
+// The catalog index is not signed as a whole -- every baseline/change file
+// entry carries its own signature instead, a plain Ed25519 signature
+// (pkg/security/artifactsigner) over the JCS-canonicalized tuple
 // {catalogId, version, url, digest, validUntil}, binding that signature to
 // exactly one file in one role (file spec, "The signed entry is a tuple,
 // not a bare hash").
@@ -47,22 +51,6 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/security/artifactsigner"
 )
 
-// dediVersion matches the file spec's manifest example byte for byte.
-const dediVersion = "0.1"
-
-// catalogIndexFileName is the manifest files[].name value identifying the
-// catalog-index file (file spec's "becknCatalogs" -- the Beckn extension
-// replacing DeDi's registry-name convention with a plain name key, since
-// this entry references a Beckn file, not a DeDi registry).
-const catalogIndexFileName = "becknCatalogs"
-
-// indexSchemaURL is the JSON-Schema URL describing the catalog-index
-// document shape, embedded as the manifest's files[].schema. Hardcoded for
-// now rather than configurable -- this will eventually move to a shared
-// beckndefaults/becknconstants file alongside the other canonical schema
-// URLs, not stay a per-publisher config value.
-const indexSchemaURL = "https://schema.beckn.org/dedi/beckn-catalog-index-schema.json"
-
 // defaultFileValidity is the fallback used when neither Config.FileValidityIn
 // nor Config.NextUpdateIn is set -- see its use in Publish for why zero is
 // unsafe here (unlike next_update, a file's validUntil can't just be
@@ -74,27 +62,16 @@ type Config struct {
 	// SubscriberID is the identifier passed to KeyManager.Keyset to load
 	// the signing keypair -- the same lookup key every other caller of
 	// Keyset uses (see pkg/security/artifactfetcher,
-	// core/module/handler/responsestep.go). The JWK "kid" embedded in the
-	// manifest and every signature.keyId, and the domain embedded as the
-	// manifest's top-level "domain" and the catalog index's
-	// "participantId", both come from the returned Keyset
-	// (UniqueKeyID/SubscriberID) instead of being duplicated here --
-	// that's the keymanager plugin's own config to own, not this one's.
+	// core/module/handler/responsestep.go). Every signature.keyId, and the
+	// domain embedded as the catalog index's "participantId", both come
+	// from the returned Keyset (UniqueKeyID/SubscriberID) instead of being
+	// duplicated here -- that's the keymanager plugin's own config to own,
+	// not this one's.
 	SubscriberID string
 
-	// IndexNetworkIds scopes the catalog index itself (not any one
-	// catalog) to specific networks; embedded as the manifest's
-	// files[].networkIds. Empty/nil means public.
-	IndexNetworkIds []string
-
-	// IndexAuthMethods is only meaningful when IndexNetworkIds is
-	// non-empty (file spec: "A restricted index adds authMethods beside
-	// networkIds").
-	IndexAuthMethods []definition.AuthMethod
-
-	// NextUpdateIn sets how far in the future the manifest's and index's
-	// "next_update" freshness window extends from the moment of
-	// publishing. Zero omits next_update entirely.
+	// NextUpdateIn sets how far in the future the index's "next_update"
+	// freshness window extends from the moment of publishing. Zero omits
+	// next_update entirely.
 	NextUpdateIn time.Duration
 
 	// FileValidityIn sets how far in the future each catalog file's
@@ -116,24 +93,6 @@ type Config struct {
 	// ("pending-artifact-store://...") is used for both when unset -- there
 	// is no ArtifactStore yet to ask for a real location.
 	PublicBaseURL string
-
-	// ExtraManifestFiles are additional manifest files[] entries appended
-	// after the catalog-index entry (the manifest's files[] is a list of
-	// every registry/file the domain offers, of which the catalog index
-	// is only one). These are pass-through references the caller
-	// supplies as-is; Publish never computes a digest for them (the file
-	// spec's manifest file entries never carry one at all).
-	ExtraManifestFiles []ManifestFileRef
-}
-
-// ManifestFileRef is one additional manifest files[] entry, supplied
-// verbatim by the caller (see Config.ExtraManifestFiles).
-type ManifestFileRef struct {
-	Name        string
-	URL         string
-	Schema      string
-	NetworkIds  []string
-	AuthMethods []definition.AuthMethod
 }
 
 // Publisher implements definition.CatalogPublisher.
@@ -155,45 +114,11 @@ func New(ctx context.Context, keyManager definition.KeyManager, cfg *Config) (*P
 	return p, func() error { return nil }, nil
 }
 
-// --- Manifest wire types -----------------------------------------------
-//
-// DeDi's manifest format (file spec: "keys as JWKs, a files list naming
-// each registry the domain offers, freshness fields, and a proof block"),
-// with the file spec's three Beckn extensions on the file entry: no
-// digest, networkIds added, and "name" in place of DeDi's "registry".
-
-type dediManifest struct {
-	DediVersion string     `json:"dedi_version"`
-	Type        string     `json:"type"` // "dedi-manifest"
-	Domain      string     `json:"domain"`
-	Keys        []dediKey  `json:"keys"`
-	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
-	NextUpdate  *time.Time `json:"next_update,omitempty"`
-	Files       []dediFile `json:"files"`
-	Proof       *dediProof `json:"proof,omitempty"`
-}
-
-type dediKey struct {
-	KID string `json:"kid"`
-	Kty string `json:"kty"`
-	Crv string `json:"crv"`
-	X   string `json:"x"`
-}
-
-type dediProof struct {
-	VerificationMethod string `json:"verification_method"`
-	Canonicalization   string `json:"canonicalization"` // always "JCS" here, per file spec
-	Jws                string `json:"jws"`
-}
-
-type dediFile struct {
-	Name        string           `json:"name"`
-	URL         string           `json:"url"`
-	Schema      string           `json:"schema,omitempty"`
-	NetworkIds  []string         `json:"networkIds,omitempty"`
-	AuthMethods []authMethodWire `json:"authMethods,omitempty"`
-}
-
+// authMethodWire is the wire shape for a catalog entry's own AuthMethods
+// (per-catalog, restricted-catalog auth -- see catalogEntry.AuthMethods),
+// carried from definition.CatalogSubmission.AuthMethods via
+// toAuthMethodWire. Not to be confused with restricting the catalog index
+// file itself, which this package no longer supports (see package doc).
 type authMethodWire struct {
 	Method           string   `json:"method"`
 	Algorithm        string   `json:"algorithm"`
@@ -295,7 +220,7 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 	if err != nil {
 		return result, fmt.Errorf("catalogpublisher: loading keyset %q: %w", p.config.SubscriberID, err)
 	}
-	priv, pub, err := decodeKeyset(keyset)
+	priv, _, err := decodeKeyset(keyset)
 	if err != nil {
 		return result, fmt.Errorf("catalogpublisher: decoding keyset %q: %w", p.config.SubscriberID, err)
 	}
@@ -401,42 +326,6 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 	}
 	result.Index = indexBytes
 	log.Debugf(ctx, "catalogpublisher: built catalog index, participantId=%s, version=%d, %d entries, indexURL=%s", domain, indexVersion, len(entries), p.indexURL())
-
-	jwk := dediKey{KID: keyID, Kty: "OKP", Crv: "Ed25519", X: base64.RawURLEncoding.EncodeToString(pub)}
-
-	files := []dediFile{{
-		Name:        catalogIndexFileName,
-		URL:         p.indexURL(),
-		Schema:      indexSchemaURL,
-		NetworkIds:  p.config.IndexNetworkIds,
-		AuthMethods: toAuthMethodWire(p.config.IndexAuthMethods),
-	}}
-	for _, extra := range p.config.ExtraManifestFiles {
-		files = append(files, dediFile{
-			Name:        extra.Name,
-			URL:         extra.URL,
-			Schema:      extra.Schema,
-			NetworkIds:  extra.NetworkIds,
-			AuthMethods: toAuthMethodWire(extra.AuthMethods),
-		})
-	}
-
-	// Per the file spec, the manifest file entry carries no whole-file
-	// digest: index churn never touches the domain root, and integrity
-	// comes from the per-entry signatures inside the index instead.
-	signedManifest, err := p.signManifest(dediManifest{
-		DediVersion: dediVersion,
-		Type:        "dedi-manifest",
-		Domain:      domain,
-		Keys:        []dediKey{jwk},
-		UpdatedAt:   &now,
-		NextUpdate:  nextUpdate,
-		Files:       files,
-	}, priv, keyID)
-	if err != nil {
-		return result, fmt.Errorf("catalogpublisher: signing manifest: %w", err)
-	}
-	result.Manifest = signedManifest
 	log.Debugf(ctx, "catalogpublisher: Publish done, keyId=%s, domain=%s, %d catalog(s) published, %d error(s)", keyID, domain, len(result.Catalogs), len(result.Errors))
 
 	return result, nil
@@ -753,22 +642,6 @@ func jsonEqual(a, b json.RawMessage) bool {
 		return false
 	}
 	return reflect.DeepEqual(av, bv)
-}
-
-// signManifest marshals doc, signs the result (JCS-canonicalize with
-// "proof" absent/removed, detached JWS per RFC 7515), then re-marshals
-// with the proof attached.
-func (p *Publisher) signManifest(doc dediManifest, priv ed25519.PrivateKey, kid string) (json.RawMessage, error) {
-	unsigned, err := json.Marshal(doc)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling manifest: %w", err)
-	}
-	jws, err := artifactsigner.SignDetachedJWS(unsigned, priv)
-	if err != nil {
-		return nil, fmt.Errorf("signing manifest: %w", err)
-	}
-	doc.Proof = &dediProof{VerificationMethod: kid, Canonicalization: "JCS", Jws: jws}
-	return json.Marshal(doc)
 }
 
 // decodeKeyset decodes a model.Keyset's base64-encoded signing keypair into

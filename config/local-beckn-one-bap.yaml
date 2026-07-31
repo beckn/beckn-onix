@@ -236,11 +236,11 @@ modules:
             fileValidityIn: "336h"
             # catalogBaseURL: the one public URL prefix outputRoot (/catalog
             # above) is served under -- e.g. an ngrok tunnel onto that
-            # directory. Index/catalog file URLs in the generated manifest
-            # and index are addressed under this base
-            # ({catalogBaseURL}/index/... and {catalogBaseURL}/catalogs/...).
-            # Left unset here; a "pending-artifact-store://..." placeholder
-            # is used until you point it at a real public location.
+            # directory. Index/catalog file URLs are addressed under this
+            # base ({catalogBaseURL}/index/... and
+            # {catalogBaseURL}/catalogs/...). Left unset here; a
+            # "pending-artifact-store://..." placeholder is used until you
+            # point it at a real public location.
             # catalogBaseURL: "https://your-tunnel.ngrok-free.app"
         # schemaValidator/checkPolicy are both optional -- unset (as here)
         # means catalogPublish skips validation entirely, same as before

@@ -306,21 +306,6 @@ type NodeManifestGovernance struct {
 	EffectiveUntil string `yaml:"effectiveUntil"` // optional — omit for indefinite validity
 }
 
-// CatalogIndexEntry points at one catalog index a node publishes (the
-// decentralized-catalog file spec's catalog index, produced by
-// catalogpublisher.Publish). URL is the same public location the index's
-// own manifest-independent files[] entry would carry.
-type CatalogIndexEntry struct {
-	URL string `yaml:"url"`
-}
-
-// NodeManifestCatalog holds the catalog-index declarations for a node
-// manifest -- the link between a node's identity (this manifest) and the
-// catalog index(es) it publishes.
-type NodeManifestCatalog struct {
-	CatalogIndexes []CatalogIndexEntry `yaml:"catalogIndexes"`
-}
-
 // NodeManifest is the typed YAML schema for a node-manifest document.
 // It is a sibling to NetworkManifest and shares the same DeDi registry
 // placement convention, signing policy, and manifest loader infrastructure.
@@ -333,7 +318,6 @@ type NodeManifest struct {
 	ManifestType    string                 `yaml:"manifestType"`
 	SubscriberID    string                 `yaml:"subscriberId"`
 	Schema          NodeManifestSchema     `yaml:"schema"`
-	Catalog         NodeManifestCatalog    `yaml:"catalog,omitempty"`
 	Governance      NodeManifestGovernance `yaml:"governance"`
 }
 
