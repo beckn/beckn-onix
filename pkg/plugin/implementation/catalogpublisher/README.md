@@ -464,9 +464,12 @@ request (no catalogs submitted, nothing to validate).
 When configured, after every successful publish the handler fetches this
 node's own manifest -- `manifestLoader.GetBySubscriberID(ctx, syntheticID)`,
 where `syntheticID` is a `subscriberId/subscribers.beckn.one/keyId` path
-built from `keyManager.config.subscriberId` and the `keyId` resolved once
-at construction from `keyManager.Keyset(ctx, subscriberId)` -- using
-`dediregistry` read-only -- and checks whether its `catalog.catalogIndexes[]`
+built from `keyManager.config.subscriberId` and the `keyId` resolved fresh
+on every check from `keyManager.Keyset(ctx, subscriberId)` (re-resolved
+per-check rather than cached, so a signing-key rotation is picked up
+immediately, matching `catalogpublisher.Publish`'s own per-request
+`Keyset` resolution) -- using `dediregistry` read-only -- and checks
+whether its `catalog.catalogIndexes[]`
 already lists this publisher's own index URL (`CatalogPublisher.IndexURL()`,
 part of the plugin's exported interface precisely so callers like this can
 ask for it without knowing `PublicBaseURL` internals). The real manifest on
@@ -503,6 +506,13 @@ wildcard-registry value as a local constant in the handler, rather than
 giving `ManifestLoader`/`RegistryMetadataLookup` a proper
 subscriberId+keyId-shaped lookup method -- a smaller-footprint stopgap;
 doing that properly is a separate, better-scoped follow-up.
+
+Both halves of the synthetic path are validated before use, since a
+malformed one would otherwise silently and permanently break this
+warn-only check rather than surfacing clearly: `subscriberId` is checked
+for an embedded `"/"` once at handler construction (it can't change
+afterward); `keyId` is checked for both emptiness and an embedded `"/"`
+on every check, since it's re-resolved fresh each time.
 
 ## Known open items
 

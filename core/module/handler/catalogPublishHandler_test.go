@@ -280,6 +280,19 @@ func TestNewCatalogPublishHandler_RequiresKeyManagerSubscriberID(t *testing.T) {
 	}
 }
 
+func TestNewCatalogPublishHandler_RejectsSlashInSubscriberIDWhenManifestLoaderConfigured(t *testing.T) {
+	cfg := newTestConfig(t.TempDir())
+	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	cfg.Plugins.KeyManager.Config = map[string]string{"subscriberId": "nfh.global/bpp.example.com"}
+	mgr := newTestManager(t)
+	mgr.manifestLoader = &fakeManifestLoader{}
+
+	_, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
+	if err == nil {
+		t.Fatal("expected error for a subscriberId containing \"/\" when manifestLoader is configured -- it would silently produce a malformed manifest self-lookup path on every check")
+	}
+}
+
 // capturingCatalogPublisherManager wraps catalogPublishTestManager to record
 // the *plugin.Config NewCatalogPublishHandler actually passes to
 // mgr.CatalogPublisher, so tests can assert on the derived/merged config
@@ -815,6 +828,80 @@ func TestCatalogPublishHandler_ManifestLookupUsesSubscriberIDAndDerivedKeyID(t *
 	wantNodeID := "example.test/" + dediSubscriberWildcardRegistry + "/test-key-1"
 	if loader.lastNodeID != wantNodeID {
 		t.Errorf("GetBySubscriberID called with %q, want synthetic path %q", loader.lastNodeID, wantNodeID)
+	}
+}
+
+func TestCatalogPublishHandler_EmptyKeyIDFailsManifestCheckLoudly(t *testing.T) {
+	root := t.TempDir()
+	mgr := newTestManager(t)
+	mgr.km.keyID = "" // keyset has no keyId -- can't build the synthetic lookup path
+	mgr.manifestLoader = &fakeManifestLoader{}
+
+	cfg := newTestConfig(root)
+	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	warning, checkErr := h.(*catalogPublishHandler).checkNodeManifestLinksIndex(context.Background())
+	if checkErr == nil {
+		t.Fatalf("expected an error for an empty keyId, got warning=%q", warning)
+	}
+}
+
+func TestCatalogPublishHandler_KeyIDWithSlashFailsManifestCheckLoudly(t *testing.T) {
+	root := t.TempDir()
+	mgr := newTestManager(t)
+	mgr.km.keyID = "has/a/slash"
+	mgr.manifestLoader = &fakeManifestLoader{}
+
+	cfg := newTestConfig(root)
+	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	if _, checkErr := h.(*catalogPublishHandler).checkNodeManifestLinksIndex(context.Background()); checkErr == nil {
+		t.Fatal("expected an error for a keyId containing \"/\"")
+	}
+}
+
+// TestCatalogPublishHandler_ManifestLookupPicksUpKeyRotation guards against
+// the bug this handler previously had: keyID used to be resolved once at
+// construction and cached, so a signing-key rotation after startup would
+// leave the manifest self-lookup silently querying a stale keyID that no
+// longer matches what catalogpublisher.Publish actually signs with. keyID
+// is now re-resolved from KeyManager on every check.
+func TestCatalogPublishHandler_ManifestLookupPicksUpKeyRotation(t *testing.T) {
+	root := t.TempDir()
+	loader := &fakeManifestLoader{err: fmt.Errorf(noManifestPublishedErrMsg)}
+	mgr := newTestManager(t)
+	mgr.manifestLoader = loader
+
+	cfg := newTestConfig(root)
+	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
+	if err != nil {
+		t.Fatalf("NewCatalogPublishHandler: %v", err)
+	}
+
+	if _, err := h.(*catalogPublishHandler).checkNodeManifestLinksIndex(context.Background()); err != nil {
+		t.Fatalf("checkNodeManifestLinksIndex: %v", err)
+	}
+	wantBefore := "example.test/" + dediSubscriberWildcardRegistry + "/test-key-1"
+	if loader.lastNodeID != wantBefore {
+		t.Fatalf("before rotation: GetBySubscriberID called with %q, want %q", loader.lastNodeID, wantBefore)
+	}
+
+	mgr.km.keyID = "rotated-key-2" // simulate a key rotation with no restart
+	if _, err := h.(*catalogPublishHandler).checkNodeManifestLinksIndex(context.Background()); err != nil {
+		t.Fatalf("checkNodeManifestLinksIndex after rotation: %v", err)
+	}
+	wantAfter := "example.test/" + dediSubscriberWildcardRegistry + "/rotated-key-2"
+	if loader.lastNodeID != wantAfter {
+		t.Fatalf("after rotation: GetBySubscriberID called with %q, want %q -- keyID was not re-resolved", loader.lastNodeID, wantAfter)
 	}
 }
 

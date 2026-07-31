@@ -38,18 +38,17 @@ type catalogPublishHandler struct {
 	// subscriberID is the plain Beckn subscriberId (keyManager.config.
 	// subscriberId) -- the KeyManager.Keyset lookup key, used for signing.
 	subscriberID string
-	// keyID is this subscriber's key id, resolved once at construction via
-	// keyManager.Keyset(ctx, subscriberID).UniqueKeyID -- the same signing
-	// keyset catalogpublisher.Publish itself loads. Used together with
-	// subscriberID to build the manifest self-lookup's synthetic
-	// namespace/registry/recordName path (see loadOwnNodeManifest) instead
-	// of requiring a hand-configured manifestSubscriberId: subscriberID and
-	// keyID are the same pair RegistryLookup.Lookup already resolves
-	// signing keys with during ordinary transactions, and were verified
+	// keyManager resolves subscriberID's current signing keyset -- used by
+	// loadOwnNodeManifest to build the manifest self-lookup's synthetic
+	// namespace/registry/recordName path (subscriberID/wildcard/keyID)
+	// fresh on every check, the same pair RegistryLookup.Lookup already
+	// resolves signing keys with during ordinary transactions (verified
 	// directly against the DeDi registry to resolve to the identical
-	// record a three-part path would. Empty when manifestLoader isn't
-	// configured (never resolved, since nothing needs it).
-	keyID string
+	// record a three-part path would). Resolved per-check rather than
+	// cached once at construction so a key rotation is picked up
+	// immediately, matching catalogpublisher.Publish's own per-request
+	// Keyset resolution. Only ever used when manifestLoader is configured.
+	keyManager definition.KeyManager
 }
 
 // dediSubscriberWildcardRegistry is the DeDi registry service's special
@@ -168,19 +167,24 @@ func NewCatalogPublishHandler(ctx context.Context, mgr PluginManager, cfg *Confi
 	}
 
 	subscriberID := publisherCfg.Config["subscriberId"]
-	var keyID string
 	if manifestLoader != nil {
-		// Only resolved when actually needed: the manifest self-lookup is
-		// the sole consumer of keyID. km.Keyset is the same signing keyset
-		// catalogpublisher.Publish itself loads per-request -- resolving it
-		// once here, eagerly, means a bad/missing keyset for subscriberID
-		// fails fast at startup instead of silently at the first publish's
-		// manifest-link check.
-		keyset, err := km.Keyset(ctx, subscriberID)
-		if err != nil {
+		// subscriberID is fixed for the handler's lifetime, so its shape can
+		// be validated once here: the manifest self-lookup's synthetic path
+		// (subscriberID/wildcard/keyID, see loadOwnNodeManifest) requires
+		// exactly 3 non-empty slash-separated parts downstream
+		// (manifestloader.GetBySubscriberID/dediregistry.LookupNode) -- a
+		// "/" inside subscriberID would silently produce a malformed path
+		// on every single check instead of failing loudly here at startup.
+		if strings.Contains(subscriberID, "/") {
+			return nil, fmt.Errorf("catalogPublish handler %s: subscriberId %q cannot contain \"/\" (needed to build the manifest self-lookup's synthetic path)", moduleName, subscriberID)
+		}
+		// Resolve once here too, purely to fail fast at startup on a
+		// missing/broken keyset -- the actual keyID used per-check is
+		// re-resolved fresh in loadOwnNodeManifest (see keyManager's doc
+		// comment), so this result itself is intentionally discarded.
+		if _, err := km.Keyset(ctx, subscriberID); err != nil {
 			return nil, fmt.Errorf("catalogPublish handler %s: resolving keyset for manifest self-lookup (subscriberId=%s): %w", moduleName, subscriberID, err)
 		}
-		keyID = keyset.UniqueKeyID
 	}
 
 	log.Debugf(ctx, "catalogPublish handler %s initialized, outputRoot=%s", moduleName, cfg.OutputRoot)
@@ -191,7 +195,7 @@ func NewCatalogPublishHandler(ctx context.Context, mgr PluginManager, cfg *Confi
 		policyChecker:   policyChecker,
 		manifestLoader:  manifestLoader,
 		subscriberID:    subscriberID,
-		keyID:           keyID,
+		keyManager:      km,
 	}, nil
 }
 
@@ -497,7 +501,19 @@ const noManifestPublishedErrMsg = "subscriber has not published a node manifest"
 // declared" warning even when the real manifest already listed this index,
 // whenever the underlying fetch failed for an unrelated reason.
 func (h *catalogPublishHandler) loadOwnNodeManifest(ctx context.Context) (*model.NodeManifest, error) {
-	syntheticNodeID := h.subscriberID + "/" + dediSubscriberWildcardRegistry + "/" + h.keyID
+	keyset, err := h.keyManager.Keyset(ctx, h.subscriberID)
+	if err != nil {
+		return nil, fmt.Errorf("resolving keyset for manifest self-lookup (subscriberId=%s): %w", h.subscriberID, err)
+	}
+	keyID := keyset.UniqueKeyID
+	if keyID == "" {
+		return nil, fmt.Errorf("keyset for subscriberId=%s has no keyId; cannot build manifest self-lookup path", h.subscriberID)
+	}
+	if strings.Contains(keyID, "/") {
+		return nil, fmt.Errorf("keyId %q for subscriberId=%s cannot contain \"/\" (needed to build the manifest self-lookup's synthetic path)", keyID, h.subscriberID)
+	}
+
+	syntheticNodeID := h.subscriberID + "/" + dediSubscriberWildcardRegistry + "/" + keyID
 	doc, err := h.manifestLoader.GetBySubscriberID(ctx, syntheticNodeID)
 	if err != nil {
 		if strings.Contains(err.Error(), noManifestPublishedErrMsg) {
