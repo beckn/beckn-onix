@@ -14,8 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
@@ -46,38 +44,26 @@ func (f *fakeKeyManager) LookupNPKeys(context.Context, string, string) (string, 
 }
 func (f *fakeKeyManager) DeleteKeyset(context.Context, string) error { return nil }
 
-type fakeRegistry struct{}
-
-func (fakeRegistry) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
-	return nil, nil
-}
-func (fakeRegistry) LookupRegistry(context.Context, string, string) (*model.RegistryMetadata, error) {
-	panic("unused")
-}
-func (fakeRegistry) LookupNode(context.Context, string) (*model.SubscriberRecord, error) {
-	panic("unused")
-}
-
-// fakeManifestLoader returns a configurable manifest document (or error)
-// for GetBySubscriberID -- the handler calls it with a synthetic
+// fakeRegistry is a configurable RegistryLookup + RegistryMetadataLookup
+// double. LookupNode returns nodeRecord/nodeErr and records the nodeID it
+// was called with (lastNodeID) -- the handler calls it with a synthetic
 // subscriberID/dediSubscriberWildcardRegistry/keyID path (see
-// catalogPublishHandler.go's loadOwnNodeManifest), so lastNodeID captures
-// that whole string. GetByNetworkID/GetByMetadata are unused here.
-type fakeManifestLoader struct {
-	doc        *model.ManifestDocument
-	err        error
+// catalogPublishHandler.go's checkRegistryLinksCatalogIndex).
+type fakeRegistry struct {
+	nodeRecord *model.SubscriberRecord
+	nodeErr    error
 	lastNodeID string
 }
 
-func (f *fakeManifestLoader) GetByNetworkID(context.Context, string) (*model.ManifestDocument, error) {
+func (*fakeRegistry) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
+	return nil, nil
+}
+func (*fakeRegistry) LookupRegistry(context.Context, string, string) (*model.RegistryMetadata, error) {
 	panic("unused")
 }
-func (f *fakeManifestLoader) GetByMetadata(context.Context, model.ManifestMetadata) (*model.ManifestDocument, error) {
-	panic("unused")
-}
-func (f *fakeManifestLoader) GetBySubscriberID(_ context.Context, nodeID string) (*model.ManifestDocument, error) {
+func (f *fakeRegistry) LookupNode(_ context.Context, nodeID string) (*model.SubscriberRecord, error) {
 	f.lastNodeID = nodeID
-	return f.doc, f.err
+	return f.nodeRecord, f.nodeErr
 }
 
 type fakeCache struct{}
@@ -95,15 +81,10 @@ func (fakeCache) Clear(context.Context) error          { return nil }
 // invoked.
 type catalogPublishTestManager struct {
 	km              *fakeKeyManager
+	registry        *fakeRegistry
 	publisher       definition.CatalogPublisher
 	schemaValidator definition.SchemaValidator
 	policyChecker   definition.PolicyChecker
-	manifestLoader  definition.ManifestLoader
-	// policyCheckerManifestLoaderArg records whatever ManifestLoader
-	// PolicyChecker(ctx, ml, cfg) was actually called with, so tests can
-	// assert NewCatalogPublishHandler threads the real manifestLoader into
-	// policyChecker construction instead of a hard-coded nil.
-	policyCheckerManifestLoaderArg definition.ManifestLoader
 }
 
 // fakeSchemaValidator records the last payload it was asked to validate and
@@ -138,7 +119,7 @@ func (m *catalogPublishTestManager) Cache(context.Context, *plugin.Config) (defi
 	return fakeCache{}, nil
 }
 func (m *catalogPublishTestManager) Registry(context.Context, definition.Cache, *plugin.Config) (definition.RegistryLookup, error) {
-	return fakeRegistry{}, nil
+	return m.registry, nil
 }
 func (m *catalogPublishTestManager) KeyManager(context.Context, definition.RegistryLookup, *plugin.Config) (definition.KeyManager, error) {
 	return m.km, nil
@@ -167,21 +148,17 @@ func (m *catalogPublishTestManager) Signer(context.Context, *plugin.Config) (def
 func (m *catalogPublishTestManager) Step(context.Context, *plugin.Config) (definition.Step, error) {
 	panic("unused")
 }
-func (m *catalogPublishTestManager) PolicyChecker(_ context.Context, ml definition.ManifestLoader, _ *plugin.Config) (definition.PolicyChecker, error) {
+func (m *catalogPublishTestManager) PolicyChecker(_ context.Context, _ definition.ManifestLoader, _ *plugin.Config) (definition.PolicyChecker, error) {
 	if m.policyChecker == nil {
 		panic("unused")
 	}
-	m.policyCheckerManifestLoaderArg = ml
 	return m.policyChecker, nil
 }
 func (m *catalogPublishTestManager) SchemaVersionMediator(context.Context, definition.ManifestLoader, *plugin.Config) (definition.SchemaVersionMediator, error) {
 	panic("unused")
 }
 func (m *catalogPublishTestManager) ManifestLoader(context.Context, definition.Cache, definition.RegistryMetadataLookup, *plugin.Config) (definition.ManifestLoader, error) {
-	if m.manifestLoader == nil {
-		panic("unused")
-	}
-	return m.manifestLoader, nil
+	panic("unused")
 }
 func (m *catalogPublishTestManager) TransportWrapper(context.Context, *plugin.Config) (definition.TransportWrapper, error) {
 	panic("unused")
@@ -209,7 +186,7 @@ func newTestManager(t *testing.T) *catalogPublishTestManager {
 	if err != nil {
 		t.Fatalf("catalogpublisher.New: %v", err)
 	}
-	return &catalogPublishTestManager{km: km, publisher: publisher}
+	return &catalogPublishTestManager{km: km, registry: &fakeRegistry{}, publisher: publisher}
 }
 
 func newTestConfig(outputRoot string) *Config {
@@ -280,16 +257,15 @@ func TestNewCatalogPublishHandler_RequiresKeyManagerSubscriberID(t *testing.T) {
 	}
 }
 
-func TestNewCatalogPublishHandler_RejectsSlashInSubscriberIDWhenManifestLoaderConfigured(t *testing.T) {
+func TestNewCatalogPublishHandler_RejectsSlashInSubscriberIDWhenCatalogIndexLinkCheckEnabled(t *testing.T) {
 	cfg := newTestConfig(t.TempDir())
-	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	cfg.Plugins.CatalogPublisher.Config = map[string]string{"checkCatalogIndexLink": "true"}
 	cfg.Plugins.KeyManager.Config = map[string]string{"subscriberId": "nfh.global/bpp.example.com"}
 	mgr := newTestManager(t)
-	mgr.manifestLoader = &fakeManifestLoader{}
 
 	_, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
 	if err == nil {
-		t.Fatal("expected error for a subscriberId containing \"/\" when manifestLoader is configured -- it would silently produce a malformed manifest self-lookup path on every check")
+		t.Fatal("expected error for a subscriberId containing \"/\" when the catalog-index link check is enabled -- it would silently produce a malformed registry self-lookup path on every check")
 	}
 }
 
@@ -432,24 +408,6 @@ func TestCatalogPublishHandler_RunsSchemaValidatorAndPolicyCheckerOnEnvelope(t *
 	}
 	if string(schemaValidator.lastBody) != string(policyChecker.lastBody) {
 		t.Errorf("schemaValidator and policyChecker were not given the same envelope")
-	}
-}
-
-func TestNewCatalogPublishHandler_PolicyCheckerReceivesRealManifestLoader(t *testing.T) {
-	root := t.TempDir()
-	mgr := newTestManager(t)
-	mgr.policyChecker = &fakePolicyChecker{}
-	mgr.manifestLoader = &fakeManifestLoader{doc: &model.ManifestDocument{Content: []byte(`{"manifestVersion":"1.0","manifestType":"node","subscriberId":"example.test"}`)}}
-
-	cfg := newTestConfig(root)
-	cfg.Plugins.PolicyChecker = &plugin.Config{ID: "opapolicychecker"}
-	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
-	if _, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test"); err != nil {
-		t.Fatalf("NewCatalogPublishHandler: %v", err)
-	}
-
-	if mgr.policyCheckerManifestLoaderArg == nil {
-		t.Fatal("expected PolicyChecker to be constructed with the real ManifestLoader, got nil -- a manifest-backed policy type can never resolve")
 	}
 }
 
@@ -693,13 +651,20 @@ func TestCatalogPublishHandler_SubmittedAndRetiredSameCatalogID_ReportsOnlyAccep
 	}
 }
 
-func TestCatalogPublishHandler_StagesNodeManifestWhenIndexNotLinked(t *testing.T) {
+// TestCatalogPublishHandler_WarnsWhenRegistryDoesNotLinkIndex replaces the
+// old staged-node-manifest test: staging a proposed manifest update no
+// longer applies now that the catalog index is declared directly in the
+// DeDi record's own meta.catalog_index_url instead of via a node-manifest
+// document -- there is nothing to stage locally either way, since
+// dediregistry has no write path (getting a value into a DeDi record's
+// meta is, and remains, an external, manual operator action).
+func TestCatalogPublishHandler_WarnsWhenRegistryDoesNotLinkIndex(t *testing.T) {
 	root := t.TempDir()
 	mgr := newTestManager(t)
-	mgr.manifestLoader = &fakeManifestLoader{err: fmt.Errorf("subscriber has not published a node manifest")}
+	mgr.registry.nodeRecord = &model.SubscriberRecord{Meta: map[string]string{}}
 
 	cfg := newTestConfig(root)
-	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	cfg.Plugins.CatalogPublisher.Config = map[string]string{"checkCatalogIndexLink": "true"}
 	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
 	if err != nil {
 		t.Fatalf("NewCatalogPublishHandler: %v", err)
@@ -720,39 +685,17 @@ func TestCatalogPublishHandler_StagesNodeManifestWhenIndexNotLinked(t *testing.T
 	if len(resp.Warnings) != 1 {
 		t.Fatalf("expected 1 warning, got %+v", resp.Warnings)
 	}
-
-	staged, err := os.ReadFile(localstore.StagedNodeManifestPath(root))
-	if err != nil {
-		t.Fatalf("expected staged node manifest written: %v", err)
-	}
-	var nm model.NodeManifest
-	if err := yaml.Unmarshal(staged, &nm); err != nil {
-		t.Fatalf("parsing staged manifest: %v", err)
-	}
-	if len(nm.Catalog.CatalogIndexes) != 1 || nm.Catalog.CatalogIndexes[0].URL != "pending-artifact-store://catalog-index.json" {
-		t.Errorf("unexpected staged catalogIndexes: %+v", nm.Catalog.CatalogIndexes)
-	}
 }
 
 func TestCatalogPublishHandler_NoWarningWhenIndexAlreadyLinked(t *testing.T) {
 	root := t.TempDir()
-	existing := &model.NodeManifest{
-		ManifestVersion: "1.0",
-		ManifestType:    model.NodeManifestType,
-		SubscriberID:    "example.test",
-		Catalog: model.NodeManifestCatalog{
-			CatalogIndexes: []model.CatalogIndexEntry{{URL: "pending-artifact-store://catalog-index.json"}},
-		},
-	}
-	raw, err := yaml.Marshal(existing)
-	if err != nil {
-		t.Fatalf("marshaling fixture manifest: %v", err)
-	}
 	mgr := newTestManager(t)
-	mgr.manifestLoader = &fakeManifestLoader{doc: &model.ManifestDocument{Content: raw}}
+	mgr.registry.nodeRecord = &model.SubscriberRecord{
+		Meta: map[string]string{catalogIndexMetaKey: "pending-artifact-store://catalog-index.json"},
+	}
 
 	cfg := newTestConfig(root)
-	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	cfg.Plugins.CatalogPublisher.Config = map[string]string{"checkCatalogIndexLink": "true"}
 	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
 	if err != nil {
 		t.Fatalf("NewCatalogPublishHandler: %v", err)
@@ -770,44 +713,27 @@ func TestCatalogPublishHandler_NoWarningWhenIndexAlreadyLinked(t *testing.T) {
 	if len(resp.Warnings) != 0 {
 		t.Errorf("expected no warnings, got %+v", resp.Warnings)
 	}
-	if _, err := os.Stat(localstore.StagedNodeManifestPath(root)); !os.IsNotExist(err) {
-		t.Errorf("expected no staged manifest written, got err=%v", err)
-	}
 }
 
-// TestCatalogPublishHandler_ManifestLookupUsesSubscriberIDAndDerivedKeyID
+// TestCatalogPublishHandler_RegistryLookupUsesSubscriberIDAndDerivedKeyID
 // replaces the old manifestSubscriberId-override test: that config field no
-// longer exists. The manifest self-lookup now resolves keyID itself, once
-// at construction, from keyManager.Keyset(subscriberID) -- the same keyset
-// catalogpublisher.Publish signs with -- and calls GetBySubscriberID with a
+// longer exists. The registry self-lookup resolves keyID fresh on every
+// check from keyManager.Keyset(subscriberID) -- the same keyset
+// catalogpublisher.Publish signs with -- and calls LookupNode with a
 // synthetic subscriberID/dediSubscriberWildcardRegistry/keyID path built
 // from those two values, instead of requiring a hand-configured three-part
 // DeDi path. Verified directly against a real DeDi registry that this
 // addressing resolves to the identical record a real
 // namespace/registry/recordName lookup would.
-func TestCatalogPublishHandler_ManifestLookupUsesSubscriberIDAndDerivedKeyID(t *testing.T) {
+func TestCatalogPublishHandler_RegistryLookupUsesSubscriberIDAndDerivedKeyID(t *testing.T) {
 	root := t.TempDir()
-	loader := &fakeManifestLoader{}
 	mgr := newTestManager(t)
-	mgr.manifestLoader = loader
+	mgr.registry.nodeRecord = &model.SubscriberRecord{
+		Meta: map[string]string{catalogIndexMetaKey: "pending-artifact-store://catalog-index.json"},
+	}
 
 	cfg := newTestConfig(root)
-	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
-
-	nm := &model.NodeManifest{
-		ManifestVersion: "1.0",
-		ManifestType:    model.NodeManifestType,
-		SubscriberID:    "example.test",
-		Catalog: model.NodeManifestCatalog{
-			CatalogIndexes: []model.CatalogIndexEntry{{URL: "pending-artifact-store://catalog-index.json"}},
-		},
-	}
-	raw, err := yaml.Marshal(nm)
-	if err != nil {
-		t.Fatalf("marshaling fixture manifest: %v", err)
-	}
-	loader.doc = &model.ManifestDocument{Content: raw}
-
+	cfg.Plugins.CatalogPublisher.Config = map[string]string{"checkCatalogIndexLink": "true"}
 	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
 	if err != nil {
 		t.Fatalf("NewCatalogPublishHandler: %v", err)
@@ -826,100 +752,97 @@ func TestCatalogPublishHandler_ManifestLookupUsesSubscriberIDAndDerivedKeyID(t *
 		t.Errorf("expected no warnings, got %+v", resp.Warnings)
 	}
 	wantNodeID := "example.test/" + dediSubscriberWildcardRegistry + "/test-key-1"
-	if loader.lastNodeID != wantNodeID {
-		t.Errorf("GetBySubscriberID called with %q, want synthetic path %q", loader.lastNodeID, wantNodeID)
+	if mgr.registry.lastNodeID != wantNodeID {
+		t.Errorf("LookupNode called with %q, want synthetic path %q", mgr.registry.lastNodeID, wantNodeID)
 	}
 }
 
-func TestCatalogPublishHandler_EmptyKeyIDFailsManifestCheckLoudly(t *testing.T) {
+func TestCatalogPublishHandler_EmptyKeyIDFailsRegistryCheckLoudly(t *testing.T) {
 	root := t.TempDir()
 	mgr := newTestManager(t)
 	mgr.km.keyID = "" // keyset has no keyId -- can't build the synthetic lookup path
-	mgr.manifestLoader = &fakeManifestLoader{}
+	mgr.registry.nodeRecord = &model.SubscriberRecord{}
 
 	cfg := newTestConfig(root)
-	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	cfg.Plugins.CatalogPublisher.Config = map[string]string{"checkCatalogIndexLink": "true"}
 	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
 	if err != nil {
 		t.Fatalf("NewCatalogPublishHandler: %v", err)
 	}
 
-	warning, checkErr := h.(*catalogPublishHandler).checkNodeManifestLinksIndex(context.Background())
+	warning, checkErr := h.(*catalogPublishHandler).checkRegistryLinksCatalogIndex(context.Background())
 	if checkErr == nil {
 		t.Fatalf("expected an error for an empty keyId, got warning=%q", warning)
 	}
 }
 
-func TestCatalogPublishHandler_KeyIDWithSlashFailsManifestCheckLoudly(t *testing.T) {
+func TestCatalogPublishHandler_KeyIDWithSlashFailsRegistryCheckLoudly(t *testing.T) {
 	root := t.TempDir()
 	mgr := newTestManager(t)
 	mgr.km.keyID = "has/a/slash"
-	mgr.manifestLoader = &fakeManifestLoader{}
+	mgr.registry.nodeRecord = &model.SubscriberRecord{}
 
 	cfg := newTestConfig(root)
-	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	cfg.Plugins.CatalogPublisher.Config = map[string]string{"checkCatalogIndexLink": "true"}
 	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
 	if err != nil {
 		t.Fatalf("NewCatalogPublishHandler: %v", err)
 	}
 
-	if _, checkErr := h.(*catalogPublishHandler).checkNodeManifestLinksIndex(context.Background()); checkErr == nil {
+	if _, checkErr := h.(*catalogPublishHandler).checkRegistryLinksCatalogIndex(context.Background()); checkErr == nil {
 		t.Fatal("expected an error for a keyId containing \"/\"")
 	}
 }
 
-// TestCatalogPublishHandler_ManifestLookupPicksUpKeyRotation guards against
+// TestCatalogPublishHandler_RegistryLookupPicksUpKeyRotation guards against
 // the bug this handler previously had: keyID used to be resolved once at
 // construction and cached, so a signing-key rotation after startup would
-// leave the manifest self-lookup silently querying a stale keyID that no
+// leave the registry self-lookup silently querying a stale keyID that no
 // longer matches what catalogpublisher.Publish actually signs with. keyID
 // is now re-resolved from KeyManager on every check.
-func TestCatalogPublishHandler_ManifestLookupPicksUpKeyRotation(t *testing.T) {
+func TestCatalogPublishHandler_RegistryLookupPicksUpKeyRotation(t *testing.T) {
 	root := t.TempDir()
-	loader := &fakeManifestLoader{err: fmt.Errorf(noManifestPublishedErrMsg)}
 	mgr := newTestManager(t)
-	mgr.manifestLoader = loader
+	mgr.registry.nodeRecord = &model.SubscriberRecord{}
 
 	cfg := newTestConfig(root)
-	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	cfg.Plugins.CatalogPublisher.Config = map[string]string{"checkCatalogIndexLink": "true"}
 	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
 	if err != nil {
 		t.Fatalf("NewCatalogPublishHandler: %v", err)
 	}
 
-	if _, err := h.(*catalogPublishHandler).checkNodeManifestLinksIndex(context.Background()); err != nil {
-		t.Fatalf("checkNodeManifestLinksIndex: %v", err)
+	if _, err := h.(*catalogPublishHandler).checkRegistryLinksCatalogIndex(context.Background()); err != nil {
+		t.Fatalf("checkRegistryLinksCatalogIndex: %v", err)
 	}
 	wantBefore := "example.test/" + dediSubscriberWildcardRegistry + "/test-key-1"
-	if loader.lastNodeID != wantBefore {
-		t.Fatalf("before rotation: GetBySubscriberID called with %q, want %q", loader.lastNodeID, wantBefore)
+	if mgr.registry.lastNodeID != wantBefore {
+		t.Fatalf("before rotation: LookupNode called with %q, want %q", mgr.registry.lastNodeID, wantBefore)
 	}
 
 	mgr.km.keyID = "rotated-key-2" // simulate a key rotation with no restart
-	if _, err := h.(*catalogPublishHandler).checkNodeManifestLinksIndex(context.Background()); err != nil {
-		t.Fatalf("checkNodeManifestLinksIndex after rotation: %v", err)
+	if _, err := h.(*catalogPublishHandler).checkRegistryLinksCatalogIndex(context.Background()); err != nil {
+		t.Fatalf("checkRegistryLinksCatalogIndex after rotation: %v", err)
 	}
 	wantAfter := "example.test/" + dediSubscriberWildcardRegistry + "/rotated-key-2"
-	if loader.lastNodeID != wantAfter {
-		t.Fatalf("after rotation: GetBySubscriberID called with %q, want %q -- keyID was not re-resolved", loader.lastNodeID, wantAfter)
+	if mgr.registry.lastNodeID != wantAfter {
+		t.Fatalf("after rotation: LookupNode called with %q, want %q -- keyID was not re-resolved", mgr.registry.lastNodeID, wantAfter)
 	}
 }
 
-// TestCatalogPublishHandler_ManifestFetchErrorDoesNotProduceFalseWarning
-// guards against the bug this handler previously had: any manifest fetch
-// failure (bad subscriberID format, network error, ...) was silently
-// treated the same as "no manifest published yet", producing a staged
-// proposal and a "not declared" warning even when the real manifest
-// already declared the index. Now, a fetch error that isn't specifically
-// "no manifest published" is surfaced via a log only -- no warning, no
-// staged file, since the check is inconclusive, not negative.
-func TestCatalogPublishHandler_ManifestFetchErrorDoesNotProduceFalseWarning(t *testing.T) {
+// TestCatalogPublishHandler_RegistryLookupErrorDoesNotProduceFalseWarning
+// guards against the bug this handler's earlier node-manifest-based check
+// had: any lookup failure was silently treated the same as "not declared",
+// producing a warning even when the check was actually inconclusive. Now, a
+// LookupNode error is surfaced via a log only -- no warning -- since the
+// check couldn't determine whether the link exists at all.
+func TestCatalogPublishHandler_RegistryLookupErrorDoesNotProduceFalseWarning(t *testing.T) {
 	root := t.TempDir()
 	mgr := newTestManager(t)
-	mgr.manifestLoader = &fakeManifestLoader{err: fmt.Errorf(`subscriberID "example.test" must be in namespace/registry/recordName format`)}
+	mgr.registry.nodeErr = fmt.Errorf("DeDi registry request failed with status: 503 Service Unavailable")
 
 	cfg := newTestConfig(root)
-	cfg.Plugins.ManifestLoader = &plugin.Config{ID: "manifestloader"}
+	cfg.Plugins.CatalogPublisher.Config = map[string]string{"checkCatalogIndexLink": "true"}
 	h, err := NewCatalogPublishHandler(context.Background(), mgr, cfg, "test")
 	if err != nil {
 		t.Fatalf("NewCatalogPublishHandler: %v", err)
@@ -935,10 +858,7 @@ func TestCatalogPublishHandler_ManifestFetchErrorDoesNotProduceFalseWarning(t *t
 		t.Fatalf("parsing response: %v", err)
 	}
 	if len(resp.Warnings) != 0 {
-		t.Errorf("expected no warnings on an inconclusive manifest check, got %+v", resp.Warnings)
-	}
-	if _, err := os.Stat(localstore.StagedNodeManifestPath(root)); !os.IsNotExist(err) {
-		t.Errorf("expected no staged manifest written, got err=%v", err)
+		t.Errorf("expected no warnings on an inconclusive registry check, got %+v", resp.Warnings)
 	}
 }
 

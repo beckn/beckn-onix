@@ -5,11 +5,8 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
-	"os"
 	"testing"
 	"time"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
@@ -209,29 +206,3 @@ func TestLoad_RetiredCatalogHasNoPriorState(t *testing.T) {
 	}
 }
 
-func TestWriteStagedNodeManifest_WritesUnderIndexDir(t *testing.T) {
-	root := t.TempDir()
-	nm := &model.NodeManifest{
-		ManifestVersion: "1.0",
-		ManifestType:    model.NodeManifestType,
-		SubscriberID:    "example.test",
-		Catalog: model.NodeManifestCatalog{
-			CatalogIndexes: []model.CatalogIndexEntry{{URL: "https://cdn.test/index/becknCatalogs.index.json"}},
-		},
-	}
-	if err := localstore.WriteStagedNodeManifest(root, nm); err != nil {
-		t.Fatalf("WriteStagedNodeManifest: %v", err)
-	}
-
-	raw, err := os.ReadFile(localstore.StagedNodeManifestPath(root))
-	if err != nil {
-		t.Fatalf("expected staged manifest written: %v", err)
-	}
-	var got model.NodeManifest
-	if err := yaml.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("parsing staged manifest: %v", err)
-	}
-	if got.SubscriberID != "example.test" || len(got.Catalog.CatalogIndexes) != 1 {
-		t.Errorf("unexpected staged manifest: %+v", got)
-	}
-}

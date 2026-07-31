@@ -91,7 +91,7 @@ func TestNew_RequiresKeyManagerAndKeyID(t *testing.T) {
 	}
 }
 
-func TestPublish_SingleCatalog_ProducesManifestAndIndex(t *testing.T) {
+func TestPublish_SingleCatalog_ProducesIndex(t *testing.T) {
 	km := newFakeKeyManager(t, "publisher-key-1")
 	km.domain = "example.test"
 	p, _, err := New(context.Background(), km, &Config{
@@ -126,40 +126,8 @@ func TestPublish_SingleCatalog_ProducesManifestAndIndex(t *testing.T) {
 	if result.IndexVersion != 1 {
 		t.Errorf("IndexVersion = %d, want 1", result.IndexVersion)
 	}
-	if len(result.Manifest) == 0 || len(result.Index) == 0 {
-		t.Fatal("expected non-empty manifest and index")
-	}
-
-	var manifest dediManifest
-	if err := json.Unmarshal(result.Manifest, &manifest); err != nil {
-		t.Fatalf("parsing manifest: %v", err)
-	}
-	if manifest.DediVersion != dediVersion || manifest.Type != "dedi-manifest" {
-		t.Errorf("unexpected manifest dedi_version/type: %+v", manifest)
-	}
-	if manifest.Domain != "example.test" {
-		t.Errorf("manifest.Domain = %q, want example.test", manifest.Domain)
-	}
-	if manifest.UpdatedAt == nil {
-		t.Error("expected manifest.updated_at to be set")
-	}
-	if manifest.NextUpdate == nil || !manifest.NextUpdate.After(*manifest.UpdatedAt) {
-		t.Errorf("expected manifest.next_update to be after updated_at, got %+v", manifest.NextUpdate)
-	}
-	if len(manifest.Keys) != 1 || manifest.Keys[0].KID != "publisher-key-1" {
-		t.Fatalf("unexpected manifest keys: %+v", manifest.Keys)
-	}
-	if manifest.Proof == nil || manifest.Proof.Jws == "" {
-		t.Fatal("expected manifest to carry a proof")
-	}
-	if manifest.Proof.Canonicalization != "JCS" {
-		t.Errorf("manifest.Proof.Canonicalization = %q, want JCS", manifest.Proof.Canonicalization)
-	}
-	if len(manifest.Files) != 1 || manifest.Files[0].Name != catalogIndexFileName {
-		t.Fatalf("unexpected manifest files: %+v", manifest.Files)
-	}
-	if manifest.Files[0].Schema != indexSchemaURL {
-		t.Errorf("manifest.Files[0].Schema = %q, want the hardcoded %q", manifest.Files[0].Schema, indexSchemaURL)
+	if len(result.Index) == 0 {
+		t.Fatal("expected non-empty index")
 	}
 
 	var index catalogIndexDoc
@@ -235,9 +203,9 @@ func TestPublish_InvalidSubmissionIsNonFatal(t *testing.T) {
 	if len(result.Catalogs) != 1 || result.Catalogs[0].CatalogID != "CAT-OK" {
 		t.Fatalf("expected only CAT-OK to succeed, got %+v", result.Catalogs)
 	}
-	// A partial failure must still produce a valid manifest/index.
-	if len(result.Manifest) == 0 || len(result.Index) == 0 {
-		t.Fatal("expected manifest/index to still be produced despite partial failure")
+	// A partial failure must still produce a valid index.
+	if len(result.Index) == 0 {
+		t.Fatal("expected index to still be produced despite partial failure")
 	}
 }
 
@@ -602,38 +570,6 @@ func TestDiffCatalogs_ArbitraryAttributeChangeReportedUnderCatalog(t *testing.T)
 	}
 	if _, ok := attrs["descriptor"]; ok {
 		t.Errorf("expected no descriptor change reported, got %s", changeCatalog)
-	}
-}
-
-func TestPublish_ExtraManifestFiles_AppendedVerbatimNoDigest(t *testing.T) {
-	km := newFakeKeyManager(t, "k1")
-	p, _, err := New(context.Background(), km, &Config{
-		SubscriberID: "k1",
-		ExtraManifestFiles: []ManifestFileRef{
-			{Name: "beckn-subscriber", URL: "https://example.test/dedi/beckn-subscriber.dedi.json", Schema: "https://example.test/schemas/Beckn_subscriber.json"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	result, err := p.Publish(context.Background(), definition.PublishRequest{
-		Catalogs: []definition.CatalogSubmission{{CatalogID: "CAT-1", Catalog: validCatalogJSON("CAT-1")}},
-	})
-	if err != nil {
-		t.Fatalf("Publish: %v", err)
-	}
-
-	var manifest dediManifest
-	if err := json.Unmarshal(result.Manifest, &manifest); err != nil {
-		t.Fatalf("parsing manifest: %v", err)
-	}
-	if len(manifest.Files) != 2 {
-		t.Fatalf("expected 2 manifest files (catalog-index + extra), got %d: %+v", len(manifest.Files), manifest.Files)
-	}
-	extra := manifest.Files[1]
-	if extra.Name != "beckn-subscriber" || extra.URL != "https://example.test/dedi/beckn-subscriber.dedi.json" || extra.Schema != "https://example.test/schemas/Beckn_subscriber.json" {
-		t.Errorf("extra manifest file not passed through verbatim: %+v", extra)
 	}
 }
 

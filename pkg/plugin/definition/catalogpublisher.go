@@ -6,10 +6,11 @@ import (
 	"time"
 )
 
-// AuthMethod is one way a restricted catalog, or the catalog index itself,
-// authenticates a crawler's fetch -- e.g. "signed-challenge" (Decentralized
-// Catalog file spec, "Auth methods for restricted downloads"). A list, not
-// an enum, so new methods extend without changing the shape.
+// AuthMethod is one way a restricted catalog authenticates a crawler's
+// fetch -- e.g. "signed-challenge" (Decentralized Catalog file spec, "Auth
+// methods for restricted downloads"). A list, not an enum, so new methods
+// extend without changing the shape. Per-catalog only: the catalog index
+// itself does not support this (see CatalogPublisher's doc comment).
 type AuthMethod struct {
 	Method           string
 	Algorithm        string
@@ -146,32 +147,35 @@ type PublishError struct {
 	Fatal     bool
 }
 
-// PublishResult is the output of a Publish call: the manifest (signed) and
-// the catalog index (unsigned as a whole; trust rides on each file's own
-// signature -- file spec, "The catalog index"), ready to be handed to a
-// storage layer (not this plugin's concern -- see ArtifactStore, not yet
-// built), plus per-catalog outcomes and errors.
+// PublishResult is the output of a Publish call: the catalog index
+// (unsigned as a whole; trust rides on each file's own signature -- file
+// spec, "The catalog index"), ready to be handed to a storage layer (not
+// this plugin's concern -- see ArtifactStore, not yet built), plus
+// per-catalog outcomes and errors. There is no DeDi manifest here: the
+// index's location is declared directly in the publisher's own DeDi
+// registry record (meta.catalog_index_url, see IndexURL and
+// core/module/handler/catalogPublishHandler.go's
+// checkRegistryLinksCatalogIndex), not via a separate manifest document.
 type PublishResult struct {
 	PublishedAt  time.Time
-	Manifest     json.RawMessage
 	Index        json.RawMessage
 	IndexVersion int
 	Catalogs     []CatalogPublishOutcome
 	Errors       []PublishError
 }
 
-// CatalogPublisher turns a publisher's catalog submissions into a signed
-// manifest and a catalog index whose file entries carry their own
-// signatures. It is the producing side of the chain definition.Crawler
-// consumes and verifies.
+// CatalogPublisher turns a publisher's catalog submissions into a catalog
+// index whose file entries carry their own signatures. It is the producing
+// side of the chain definition.Crawler consumes and verifies.
 type CatalogPublisher interface {
 	Publish(ctx context.Context, req PublishRequest) (PublishResult, error)
 
 	// IndexURL returns the public location this publisher's catalog index
-	// is (or will be) reachable at -- callers use this to check a node
-	// manifest's catalog.catalogIndexes for a matching entry before
-	// publishing (see catalogPublishHandler.go), without this package
-	// knowing anything about manifests itself.
+	// is (or will be) reachable at -- callers use this to check the
+	// publisher's own DeDi registry record for a matching
+	// meta.catalog_index_url before publishing (see
+	// catalogPublishHandler.go), without this package knowing anything
+	// about DeDi or registries itself.
 	IndexURL() string
 }
 
