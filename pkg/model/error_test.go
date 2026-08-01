@@ -253,6 +253,9 @@ func TestSignValidationErr_Unwrap(t *testing.T) {
 	if target.Code != "AUT_SUBSCRIBER_NOT_FOUND" {
 		t.Errorf("target.Code = %s, want AUT_SUBSCRIBER_NOT_FOUND", target.Code)
 	}
+	if target.HTTPStatus() != http.StatusUnauthorized {
+		t.Errorf("target.HTTPStatus() = %d, want %d (status must survive wrapping)", target.HTTPStatus(), http.StatusUnauthorized)
+	}
 }
 
 func TestResolveCode(t *testing.T) {
@@ -269,6 +272,30 @@ func TestResolveCode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.err.resolveCode(); got != tt.want {
 				t.Errorf("resolveCode() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCodedErr_HTTPStatus pins the status each constructor assigns, the
+// mapping nackBecknError relies on.
+func TestCodedErr_HTTPStatus(t *testing.T) {
+	cause := errors.New("boom")
+	tests := []struct {
+		name string
+		err  *CodedErr
+		want int
+	}{
+		{"bad request", NewBadReqErr("", cause), http.StatusBadRequest},
+		{"sign validation", NewSignValidationErr("", cause), http.StatusUnauthorized},
+		{"not found", NewNotFoundErr("", cause), http.StatusNotFound},
+		{"explicit status", NewCodedErr(http.StatusServiceUnavailable, "NET_DOWNSTREAM_UNAVAILABLE", cause), http.StatusServiceUnavailable},
+		{"no status set falls back to 400", &CodedErr{error: cause}, http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.err.HTTPStatus(); got != tt.want {
+				t.Errorf("HTTPStatus() = %d, want %d", got, tt.want)
 			}
 		})
 	}

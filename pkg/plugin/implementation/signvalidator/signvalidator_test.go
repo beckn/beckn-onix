@@ -310,6 +310,9 @@ func TestVerifyFailure(t *testing.T) {
 			if !errors.As(err, &signErr) {
 				t.Fatalf("expected err to be a *model.CodedErr, got: %T (%v)", err, err)
 			}
+			if got := signErr.HTTPStatus(); got != http.StatusUnauthorized {
+				t.Errorf("HTTPStatus() = %d, want %d", got, http.StatusUnauthorized)
+			}
 			if signErr.Code != tt.wantCode {
 				t.Errorf("signErr.Code = %s, want %s", signErr.Code, tt.wantCode)
 			}

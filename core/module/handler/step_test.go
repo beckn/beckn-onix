@@ -804,6 +804,8 @@ func TestValidateSchemaStep_Run_EmptyBodyPost_ReturnsError(t *testing.T) {
 	var badReq *model.CodedErr
 	if !errors.As(err, &badReq) {
 		t.Errorf("expected a bad-request *model.CodedErr, got %T: %v", err, err)
+	} else if got := badReq.HTTPStatus(); got != http.StatusBadRequest {
+		t.Errorf("HTTPStatus() = %d, want %d", got, http.StatusBadRequest)
 	}
 	if mv.gotURL != nil {
 		t.Error("Validate should not have been called for empty-body POST")
