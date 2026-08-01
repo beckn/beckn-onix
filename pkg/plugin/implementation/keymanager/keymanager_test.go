@@ -1071,9 +1071,9 @@ func TestLookupNPKeysFailure(t *testing.T) {
 				t.Errorf("expected error to contain %v, got %v", tt.expectedError, err.Error())
 			}
 			if tt.wantCode != "" {
-				var signErr *model.SignValidationErr
+				var signErr *model.CodedErr
 				if !errors.As(err, &signErr) {
-					t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+					t.Fatalf("expected err to be a *model.CodedErr, got: %T (%v)", err, err)
 				}
 				if signErr.Code != tt.wantCode {
 					t.Errorf("signErr.Code = %s, want %s", signErr.Code, tt.wantCode)

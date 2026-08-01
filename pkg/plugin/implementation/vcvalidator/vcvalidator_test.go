@@ -558,9 +558,9 @@ func TestStepNackErrorTypes(t *testing.T) {
 		vc := loadVC(t)
 		vc["issuer"] = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH" // signer ≠ issuer
 		err := testStep().Run(stepCtx("/bpp/receiver/confirm", becknBody(t, "confirm", vc)))
-		var signErr *model.SignValidationErr
+		var signErr *model.CodedErr
 		if !errors.As(err, &signErr) {
-			t.Fatalf("expected *model.SignValidationErr, got %T: %v", err, err)
+			t.Fatalf("expected *model.CodedErr, got %T: %v", err, err)
 		}
 		if !strings.Contains(err.Error(), string(failIssuer)) {
 			t.Fatalf("failure class missing from error: %v", err)
@@ -575,9 +575,9 @@ func TestStepNackErrorTypes(t *testing.T) {
 			"proof":             map[string]any{"jwt": "a.b.c"},
 		}
 		err := testStep().Run(stepCtx("/bpp/receiver/confirm", becknBody(t, "confirm", vc)))
-		var badReq *model.BadReqErr
+		var badReq *model.CodedErr
 		if !errors.As(err, &badReq) {
-			t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+			t.Fatalf("expected *model.CodedErr, got %T: %v", err, err)
 		}
 		if !strings.Contains(err.Error(), string(failStructure)) {
 			t.Fatalf("failure class missing from error: %v", err)
@@ -612,9 +612,9 @@ func TestStepMaxCredentials(t *testing.T) {
 	}
 
 	runErr := s.Run(stepCtx("/bpp/receiver/confirm", body))
-	var badReq *model.BadReqErr
+	var badReq *model.CodedErr
 	if !errors.As(runErr, &badReq) {
-		t.Fatalf("expected *model.BadReqErr, got %T: %v", runErr, runErr)
+		t.Fatalf("expected *model.CodedErr, got %T: %v", runErr, runErr)
 	}
 	if !strings.Contains(runErr.Error(), "maxCredentials") {
 		t.Fatalf("expected cap rejection, got: %v", runErr)

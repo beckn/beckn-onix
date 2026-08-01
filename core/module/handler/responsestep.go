@@ -75,21 +75,17 @@ func sendAck(ctx context.Context, w http.ResponseWriter) []byte {
 // caller-supplied Status (ACK or NACK).
 func nackBecknError(ctx context.Context, err error) (*model.Error, int, model.Status) {
 	var schemaErr *model.SchemaValidationErr
-	var signErr *model.SignValidationErr
-	var badReqErr *model.BadReqErr
-	var notFoundErr *model.NotFoundErr
+	var codedErr *model.CodedErr
 	var ackNoCallbackErr *model.AckNoCallbackErr
 	var becknErrorer model.BecknErrorer
 
 	switch {
 	case errors.As(err, &schemaErr):
 		return schemaErr.BecknError(), http.StatusBadRequest, model.StatusNACK
-	case errors.As(err, &signErr):
-		return signErr.BecknError(), http.StatusUnauthorized, model.StatusNACK
-	case errors.As(err, &badReqErr):
-		return badReqErr.BecknError(), http.StatusBadRequest, model.StatusNACK
-	case errors.As(err, &notFoundErr):
-		return notFoundErr.BecknError(), http.StatusNotFound, model.StatusNACK
+	case errors.As(err, &codedErr):
+		// Status is whatever the caller set at construction: 400, 401 and 404
+		// for the named constructors, or any status passed to NewCodedErr.
+		return codedErr.BecknError(), codedErr.HTTPStatus(), model.StatusNACK
 	case errors.As(err, &ackNoCallbackErr):
 		if !isAtLeastV2(ctx) {
 			return internalServerError(ctx), http.StatusInternalServerError, model.StatusNACK

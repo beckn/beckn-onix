@@ -68,7 +68,7 @@ func New(ctx context.Context, config *Config) (*validator, func() error, error) 
 func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBase64 string, checkIdentity bool) error {
 	createdTimestamp, expiredTimestamp, signature, subscriberID, err := parseAuthHeader(header)
 	if err != nil {
-		// parseAuthHeader always returns an already-classified *model.SignValidationErr;
+		// parseAuthHeader always returns an already-classified 401 *model.CodedErr;
 		// wrap with plain fmt.Errorf (not model.NewSignValidationErr) so errors.As still
 		// finds that inner classification instead of shadowing it with a new, less
 		// specific wrapper.
@@ -158,7 +158,7 @@ func parseAuthHeader(header string) (int64, int64, string, string, error) {
 func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHeader, outboundAuthSignature, publicKeyBase64 string, checkIdentity bool) error {
 	createdTimestamp, expiredTimestamp, signature, subscriberID, err := parseAuthHeader(signatureHeader)
 	if err != nil {
-		// parseAuthHeader always returns an already-classified *model.SignValidationErr;
+		// parseAuthHeader always returns an already-classified 401 *model.CodedErr;
 		// wrap with plain fmt.Errorf (not model.NewSignValidationErr) so errors.As still
 		// finds that inner classification instead of shadowing it with a new, less
 		// specific wrapper.

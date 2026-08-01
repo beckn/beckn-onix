@@ -238,9 +238,9 @@ func TestPublishFailure(t *testing.T) {
 
 	// A RabbitMQ publish failure is a downstream-infrastructure problem, not
 	// a caller bad-request — classified as NET_DOWNSTREAM_UNAVAILABLE.
-	badReqErr, ok := err.(*model.BadReqErr)
+	badReqErr, ok := err.(*model.CodedErr)
 	if !ok {
-		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+		t.Fatalf("expected *model.CodedErr, got %T: %v", err, err)
 	}
 	if code := badReqErr.BecknError().Code; code != "NET_DOWNSTREAM_UNAVAILABLE" {
 		t.Errorf("BecknError().Code = %s, want NET_DOWNSTREAM_UNAVAILABLE", code)

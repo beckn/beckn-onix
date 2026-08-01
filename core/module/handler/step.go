@@ -194,7 +194,7 @@ func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 		log.Debugf(ctx, "Validating %v Header", model.AuthHeaderGateway)
 		if err := s.validate(ctx, headerValue, "", false); err != nil {
 			ctx.RespHeader.Set(model.UnaAuthorizedHeaderGateway, unauthHeader)
-			// s.validate returns an already-classified *model.SignValidationErr for
+			// s.validate returns an already-classified 401 *model.CodedErr for
 			// most failure paths (keymanager lookup, signvalidator crypto/timestamp
 			// checks) — wrap with plain fmt.Errorf (not model.NewSignValidationErr)
 			// so errors.As still finds that inner classification instead of

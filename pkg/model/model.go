@@ -228,13 +228,13 @@ func ExtractContext(body []byte) (req map[string]interface{}, reqContext map[str
 	return req, reqContext, nil
 }
 
-// WrapExtractContextErr converts an ExtractContext failure into a *BadReqErr
-// carrying becknErr's Code, for callers that need an error value rather than
-// the bare *Error ExtractContext returns. becknErr is wrapped with prefix via
-// %w, so errors.Is/errors.As still reach any cause set on it (via
+// WrapExtractContextErr converts an ExtractContext failure into a 400
+// *CodedErr carrying becknErr's Code, for callers that need an error value
+// rather than the bare *Error ExtractContext returns. becknErr is wrapped with
+// prefix via %w, so errors.Is/errors.As still reach any cause set on it (via
 // Error.Unwrap) as well as becknErr itself. Only call this when becknErr is
 // non-nil.
-func WrapExtractContextErr(prefix string, becknErr *Error) *BadReqErr {
+func WrapExtractContextErr(prefix string, becknErr *Error) *CodedErr {
 	return NewBadReqErr(becknErr.Code, fmt.Errorf("%s: %w", prefix, becknErr))
 }
 

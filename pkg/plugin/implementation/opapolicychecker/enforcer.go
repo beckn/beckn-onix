@@ -642,7 +642,7 @@ func (e *PolicyEnforcer) selectedPolicy(networkID string) *loadedPolicy {
 }
 
 // CheckPolicy evaluates the message body against loaded OPA policies.
-// Returns a BadReqErr (causing NACK) for every failure mode — an
+// Returns a 400 *model.CodedErr (causing NACK) for every failure mode — an
 // uninitialized evaluator, an evaluation failure, or actual violations —
 // each classified with a POL_* code. Violations use the first non-empty
 // per-violation code (falling back to POL_GENERIC_ERROR when the policy only

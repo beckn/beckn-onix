@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -10,19 +11,19 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// NewSignValidationErrf creates a new SignValidationErr with a formatted error message.
-func NewSignValidationErrf(format string, a ...any) *SignValidationErr {
-	return &SignValidationErr{codedErr{Code: defaultSignValidationCode, error: fmt.Errorf(format, a...)}}
+// NewSignValidationErrf creates a sign-validation CodedErr with a formatted error message.
+func NewSignValidationErrf(format string, a ...any) *CodedErr {
+	return NewSignValidationErr(defaultSignValidationCode, fmt.Errorf(format, a...))
 }
 
-// NewNotFoundErrf creates a new NotFoundErr with a formatted error message.
-func NewNotFoundErrf(format string, a ...any) *NotFoundErr {
-	return &NotFoundErr{codedErr{error: fmt.Errorf(format, a...)}}
+// NewNotFoundErrf creates a not-found CodedErr with a formatted error message.
+func NewNotFoundErrf(format string, a ...any) *CodedErr {
+	return NewNotFoundErr("", fmt.Errorf(format, a...))
 }
 
-// NewBadReqErrf creates a new BadReqErr with a formatted error message.
-func NewBadReqErrf(format string, a ...any) *BadReqErr {
-	return &BadReqErr{codedErr{error: fmt.Errorf(format, a...)}}
+// NewBadReqErrf creates a bad-request CodedErr with a formatted error message.
+func NewBadReqErrf(format string, a ...any) *CodedErr {
+	return NewBadReqErr("", fmt.Errorf(format, a...))
 }
 
 func TestNewCodedError(t *testing.T) {
@@ -236,15 +237,6 @@ func TestSignValidationErr_BecknError_WithExplicitCode(t *testing.T) {
 	}
 }
 
-func TestSignValidationErr_BecknError_EmptyCodeFallsBackToDefault(t *testing.T) {
-	signErr := &SignValidationErr{codedErr{error: errors.New("signature failed")}}
-	beErr := signErr.BecknError()
-
-	if beErr.Code != "AUT_SIGNATURE_INVALID" {
-		t.Errorf("beErr.Code = %s, want AUT_SIGNATURE_INVALID when Code is unset", beErr.Code)
-	}
-}
-
 func TestSignValidationErr_Unwrap(t *testing.T) {
 	sentinel := errors.New("sentinel cause")
 	signErr := NewSignValidationErr("AUT_SUBSCRIBER_NOT_FOUND", sentinel)
@@ -253,7 +245,7 @@ func TestSignValidationErr_Unwrap(t *testing.T) {
 		t.Errorf("errors.Is(signErr, sentinel) = false, want true via Unwrap()")
 	}
 
-	var target *SignValidationErr
+	var target *CodedErr
 	wrapped := fmt.Errorf("wrapped: %w", signErr)
 	if !errors.As(wrapped, &target) {
 		t.Fatalf("errors.As(wrapped, &target) = false, want true")
@@ -265,21 +257,37 @@ func TestSignValidationErr_Unwrap(t *testing.T) {
 
 func TestResolveCode(t *testing.T) {
 	tests := []struct {
-		name        string
-		code        string
-		defaultCode string
-		want        string
+		name string
+		err  *CodedErr
+		want string
 	}{
-		{"explicit code wins", "AUT_KEY_EXPIRED_OR_REVOKED", "AUT_SIGNATURE_INVALID", "AUT_KEY_EXPIRED_OR_REVOKED"},
-		{"empty code falls back to default", "", "AUT_SIGNATURE_INVALID", "AUT_SIGNATURE_INVALID"},
+		{"explicit code wins", NewSignValidationErr("AUT_KEY_EXPIRED_OR_REVOKED", errors.New("boom")), "AUT_KEY_EXPIRED_OR_REVOKED"},
+		{"empty code falls back to the flavor default", NewSignValidationErr("", errors.New("boom")), defaultSignValidationCode},
+		{"empty code on the generic constructor falls back to the unclassified bucket", NewCodedErr(http.StatusBadGateway, "", errors.New("boom")), defaultUnclassifiedCode},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := &codedErr{Code: tt.code}
-			if got := e.resolveCode(tt.defaultCode); got != tt.want {
-				t.Errorf("resolveCode(%q, %q) = %s, want %s", tt.code, tt.defaultCode, got, tt.want)
+			if got := tt.err.resolveCode(); got != tt.want {
+				t.Errorf("resolveCode() = %s, want %s", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestNewCodedErr_BecknError checks that the caller's code is reported
+// verbatim and that no message prefix is prepended.
+func TestNewCodedErr_BecknError(t *testing.T) {
+	err := NewCodedErr(http.StatusGatewayTimeout, "NET_TIMEOUT", errors.New("registry lookup timed out"))
+	beErr := err.BecknError()
+
+	if beErr.Code != "NET_TIMEOUT" {
+		t.Errorf("beErr.Code = %s, want NET_TIMEOUT", beErr.Code)
+	}
+	if beErr.Message != "registry lookup timed out" {
+		t.Errorf("beErr.Message = %s, want the cause's text with no prefix", beErr.Message)
+	}
+	if err.HTTPStatus() != http.StatusGatewayTimeout {
+		t.Errorf("HTTPStatus() = %d, want %d", err.HTTPStatus(), http.StatusGatewayTimeout)
 	}
 }
 
@@ -326,15 +334,6 @@ func TestBadReqErr_BecknError_WithExplicitCode(t *testing.T) {
 	expectedMsg := "BAD Request: delivery not offered in this region"
 	if beErr.Message != expectedMsg {
 		t.Errorf("beErr.Message = %s, want %s", beErr.Message, expectedMsg)
-	}
-}
-
-func TestBadReqErr_BecknError_EmptyCodeFallsBackToDefault(t *testing.T) {
-	badReqErr := &BadReqErr{codedErr{error: errors.New("invalid input")}}
-	beErr := badReqErr.BecknError()
-
-	if beErr.Code != "SCH_INVALID_FORMAT" {
-		t.Errorf("beErr.Code = %s, want the SCH_INVALID_FORMAT default when Code is unset", beErr.Code)
 	}
 }
 
