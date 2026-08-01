@@ -210,7 +210,7 @@ func TestFirstNonEmptyCode(t *testing.T) {
 }
 
 func TestSignValidationErr_BecknError(t *testing.T) {
-	signErr := NewSignValidationErr(errors.New("signature failed"))
+	signErr := NewSignValidationErr("", errors.New("signature failed"))
 	beErr := signErr.BecknError()
 
 	expectedMsg := "Signature Validation Error: signature failed"
@@ -223,8 +223,8 @@ func TestSignValidationErr_BecknError(t *testing.T) {
 	}
 }
 
-func TestNewCodedSignValidationErr_BecknError(t *testing.T) {
-	signErr := NewCodedSignValidationErr("AUT_SIGNATURE_MISSING", errors.New("signature missing in header"))
+func TestSignValidationErr_BecknError_WithExplicitCode(t *testing.T) {
+	signErr := NewSignValidationErr("AUT_SIGNATURE_MISSING", errors.New("signature missing in header"))
 	beErr := signErr.BecknError()
 
 	if beErr.Code != "AUT_SIGNATURE_MISSING" {
@@ -247,7 +247,7 @@ func TestSignValidationErr_BecknError_EmptyCodeFallsBackToDefault(t *testing.T) 
 
 func TestSignValidationErr_Unwrap(t *testing.T) {
 	sentinel := errors.New("sentinel cause")
-	signErr := NewCodedSignValidationErr("AUT_SUBSCRIBER_NOT_FOUND", sentinel)
+	signErr := NewSignValidationErr("AUT_SUBSCRIBER_NOT_FOUND", sentinel)
 
 	if !errors.Is(signErr, sentinel) {
 		t.Errorf("errors.Is(signErr, sentinel) = false, want true via Unwrap()")
@@ -294,7 +294,7 @@ func TestNewSignValidationErrf(t *testing.T) {
 
 func TestNewSignValidationErr(t *testing.T) {
 	err := errors.New("signature error")
-	signErr := NewSignValidationErr(err)
+	signErr := NewSignValidationErr("", err)
 
 	if signErr.Error() != err.Error() {
 		t.Errorf("err.Error() = %s, want %s", err.Error(),
@@ -303,7 +303,7 @@ func TestNewSignValidationErr(t *testing.T) {
 }
 
 func TestBadReqErr_BecknError(t *testing.T) {
-	badReqErr := NewBadReqErr(errors.New("invalid input"))
+	badReqErr := NewBadReqErr("", errors.New("invalid input"))
 	beErr := badReqErr.BecknError()
 
 	expectedMsg := "BAD Request: invalid input"
@@ -316,8 +316,8 @@ func TestBadReqErr_BecknError(t *testing.T) {
 	}
 }
 
-func TestNewCodedBadReqErr_BecknError(t *testing.T) {
-	badReqErr := NewCodedBadReqErr("POL_GEO_RESTRICTED", errors.New("delivery not offered in this region"))
+func TestBadReqErr_BecknError_WithExplicitCode(t *testing.T) {
+	badReqErr := NewBadReqErr("POL_GEO_RESTRICTED", errors.New("delivery not offered in this region"))
 	beErr := badReqErr.BecknError()
 
 	if beErr.Code != "POL_GEO_RESTRICTED" {
@@ -340,7 +340,7 @@ func TestBadReqErr_BecknError_EmptyCodeFallsBackToDefault(t *testing.T) {
 
 func TestBadReqErr_Unwrap(t *testing.T) {
 	sentinel := errors.New("sentinel cause")
-	badReqErr := NewCodedBadReqErr("POL_GENERIC_ERROR", sentinel)
+	badReqErr := NewBadReqErr("POL_GENERIC_ERROR", sentinel)
 
 	if !errors.Is(badReqErr, sentinel) {
 		t.Errorf("errors.Is(badReqErr, sentinel) = false, want true via Unwrap()")
@@ -358,7 +358,7 @@ func TestNewBadReqErrf(t *testing.T) {
 
 func TestNewBadReqErr(t *testing.T) {
 	err := errors.New("bad request")
-	badReqErr := NewBadReqErr(err)
+	badReqErr := NewBadReqErr("", err)
 
 	if badReqErr.Error() != err.Error() {
 		t.Errorf("err.Error() = %s, want %s",
@@ -368,7 +368,7 @@ func TestNewBadReqErr(t *testing.T) {
 }
 
 func TestNotFoundErr_BecknError(t *testing.T) {
-	notFoundErr := NewNotFoundErr(errors.New("resource not found"))
+	notFoundErr := NewNotFoundErr("", errors.New("resource not found"))
 	beErr := notFoundErr.BecknError()
 
 	expectedMsg := "Endpoint not found: resource not found"
@@ -381,8 +381,8 @@ func TestNotFoundErr_BecknError(t *testing.T) {
 	}
 }
 
-func TestNewCodedNotFoundErr_BecknError(t *testing.T) {
-	notFoundErr := NewCodedNotFoundErr("NET_ENTITY_NOT_FOUND", errors.New("subscriber not registered"))
+func TestNotFoundErr_BecknError_WithExplicitCode(t *testing.T) {
+	notFoundErr := NewNotFoundErr("NET_ENTITY_NOT_FOUND", errors.New("subscriber not registered"))
 	beErr := notFoundErr.BecknError()
 
 	if beErr.Code != "NET_ENTITY_NOT_FOUND" {
@@ -396,7 +396,7 @@ func TestNewCodedNotFoundErr_BecknError(t *testing.T) {
 
 func TestNotFoundErr_Unwrap(t *testing.T) {
 	sentinel := errors.New("sentinel cause")
-	notFoundErr := NewCodedNotFoundErr("NET_ENTITY_NOT_FOUND", sentinel)
+	notFoundErr := NewNotFoundErr("NET_ENTITY_NOT_FOUND", sentinel)
 
 	if !errors.Is(notFoundErr, sentinel) {
 		t.Errorf("errors.Is(notFoundErr, sentinel) = false, want true via Unwrap()")
@@ -414,7 +414,7 @@ func TestNewNotFoundErrf(t *testing.T) {
 
 func TestNewNotFoundErr(t *testing.T) {
 	err := errors.New("not found")
-	notFoundErr := NewNotFoundErr(err)
+	notFoundErr := NewNotFoundErr("", err)
 
 	if notFoundErr.Error() != err.Error() {
 		t.Errorf("err.Error() = %s, want %s",

@@ -59,14 +59,14 @@ func (v *schemaValidator) Validate(ctx context.Context, reqURL *url.URL, data []
 	var payloadData payload
 	err := json.Unmarshal(data, &payloadData)
 	if err != nil {
-		return model.NewBadReqErr(fmt.Errorf("failed to parse JSON payload: %v", err))
+		return model.NewBadReqErr("", fmt.Errorf("failed to parse JSON payload: %v", err))
 	}
 
 	if payloadData.Context.Domain == "" {
-		return model.NewBadReqErr(fmt.Errorf("missing field Domain in context"))
+		return model.NewBadReqErr("", fmt.Errorf("missing field Domain in context"))
 	}
 	if payloadData.Context.Version == "" {
-		return model.NewBadReqErr(fmt.Errorf("missing field Version in context"))
+		return model.NewBadReqErr("", fmt.Errorf("missing field Version in context"))
 	}
 
 	// Extract domain and version from the payload; use reqURL.Path as the endpoint action.
@@ -85,12 +85,12 @@ func (v *schemaValidator) Validate(ctx context.Context, reqURL *url.URL, data []
 	// Retrieve the schema from the cache.
 	schema, exists := v.schemaCache[schemaFileName]
 	if !exists {
-		return model.NewBadReqErr(fmt.Errorf("schema not found for domain: %s", domain))
+		return model.NewBadReqErr("", fmt.Errorf("schema not found for domain: %s", domain))
 	}
 
 	var jsonData any
 	if err := json.Unmarshal(data, &jsonData); err != nil {
-		return model.NewBadReqErr(fmt.Errorf("failed to parse JSON data: %v", err))
+		return model.NewBadReqErr("", fmt.Errorf("failed to parse JSON data: %v", err))
 	}
 	err = schema.Validate(jsonData)
 	if err != nil {

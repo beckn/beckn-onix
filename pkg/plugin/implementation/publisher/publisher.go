@@ -50,13 +50,13 @@ var (
 // Validate checks whether the provided Config is valid for connecting to RabbitMQ.
 func Validate(cfg *Config) error {
 	if cfg == nil {
-		return model.NewBadReqErr(fmt.Errorf("config is nil"))
+		return model.NewBadReqErr("", fmt.Errorf("config is nil"))
 	}
 	if strings.TrimSpace(cfg.Addr) == "" {
-		return model.NewBadReqErr(fmt.Errorf("missing config.Addr"))
+		return model.NewBadReqErr("", fmt.Errorf("missing config.Addr"))
 	}
 	if strings.TrimSpace(cfg.Exchange) == "" {
-		return model.NewBadReqErr(fmt.Errorf("missing config.Exchange"))
+		return model.NewBadReqErr("", fmt.Errorf("missing config.Exchange"))
 	}
 	return nil
 }
@@ -66,7 +66,7 @@ func GetConnURL(cfg *Config) (string, error) {
 	user := os.Getenv("RABBITMQ_USERNAME")
 	pass := os.Getenv("RABBITMQ_PASSWORD")
 	if user == "" || pass == "" {
-		return "", model.NewBadReqErr(fmt.Errorf("missing RabbitMQ credentials in environment"))
+		return "", model.NewBadReqErr("", fmt.Errorf("missing RabbitMQ credentials in environment"))
 	}
 	parts := strings.SplitN(strings.TrimSpace(cfg.Addr), "/", 2)
 	hostPort := parts[0]
@@ -118,7 +118,7 @@ func (p *Publisher) Publish(ctx context.Context, routingKey string, msg []byte) 
 
 	if err != nil {
 		log.Errorf(ctx, err, "Publish failed for Exchange: %s, RoutingKey: %s", p.Config.Exchange, routingKey)
-		return model.NewCodedBadReqErr("NET_DOWNSTREAM_UNAVAILABLE", fmt.Errorf("publish message failed: %w", err))
+		return model.NewBadReqErr("NET_DOWNSTREAM_UNAVAILABLE", fmt.Errorf("publish message failed: %w", err))
 	}
 
 	log.Infof(ctx, "Message published successfully to Exchange: %s, RoutingKey: %s", p.Config.Exchange, routingKey)

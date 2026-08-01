@@ -259,7 +259,7 @@ func (a *ackSignerStep) RunOnResponse(ctx *model.StepContext, rctx *model.Respon
 		return nil
 	}
 	if len(ctx.SubID) == 0 {
-		return model.NewBadReqErr(fmt.Errorf("subscriberID not set"))
+		return model.NewBadReqErr("", fmt.Errorf("subscriberID not set"))
 	}
 
 	if rctx != nil {

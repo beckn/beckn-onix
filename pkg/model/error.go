@@ -214,17 +214,10 @@ type SignValidationErr struct {
 }
 
 // NewSignValidationErr creates a new instance of SignValidationErr from an
-// error. Code is left unset, so BecknError() falls back to the generic
-// AUT_SIGNATURE_INVALID bucket — mirrors NewBadReqErr's lazy-default
-// convention. Use NewCodedSignValidationErr when the caller knows a more
-// specific AUT_* cause.
-func NewSignValidationErr(e error) *SignValidationErr {
-	return &SignValidationErr{codedErr{error: e}}
-}
-
-// NewCodedSignValidationErr creates a SignValidationErr classified with an
-// explicit AUT_* code, for callers that already know the specific cause.
-func NewCodedSignValidationErr(code string, e error) *SignValidationErr {
+// error. Pass code "" to leave the failure unclassified, so BecknError() falls
+// back to the generic AUT_SIGNATURE_INVALID bucket, or an explicit AUT_* code
+// when the caller already knows the specific cause.
+func NewSignValidationErr(code string, e error) *SignValidationErr {
 	return &SignValidationErr{codedErr{Code: code, error: e}}
 }
 
@@ -234,7 +227,7 @@ func NewCodedSignValidationErr(code string, e error) *SignValidationErr {
 // type's original sole caller (signvalidator.go, exclusively real signature
 // failures). vcvalidator (see #870/#884) also constructs SignValidationErr
 // for non-signature causes — expiry, revocation, DID-resolution failures,
-// issuer mismatch — via NewCodedSignValidationErr, so the human-readable
+// issuer mismatch — so the human-readable
 // message can now read e.g. "Signature Validation Error: CREDENTIAL_EXPIRED:
 // ...". The structured Code field is correct either way; only this message
 // text is misleading for those causes. Deliberately left as-is: fixing it is
@@ -252,22 +245,15 @@ type BadReqErr struct {
 // defaultBadReqCode is used when a BadReqErr carries no more specific
 // classification — the closest generic bucket in the SCH_* taxonomy. Reused
 // across many callers rather than a dedicated bucket, since this fallback is
-// rarely hit once a caller adopts NewCodedBadReqErr.
+// rarely hit once a caller passes an explicit code.
 const defaultBadReqCode = "SCH_INVALID_FORMAT"
 
-// NewBadReqErr creates a new instance of BadReqErr from an error. Code is left
-// unset, so BecknError() falls back to defaultBadReqCode — the many existing
-// callers of this constructor across the codebase keep that behavior
-// unchanged. Use NewCodedBadReqErr when the caller knows a more specific
-// taxonomy code.
-func NewBadReqErr(err error) *BadReqErr {
-	return &BadReqErr{codedErr{error: err}}
-}
-
-// NewCodedBadReqErr creates a BadReqErr classified with an explicit taxonomy
-// code, for callers that already know the specific cause (e.g. a policy
-// checker classifying a denial onto the Beckn v2.0.0 POL_* codes).
-func NewCodedBadReqErr(code string, err error) *BadReqErr {
+// NewBadReqErr creates a new instance of BadReqErr from an error. Pass code ""
+// to leave the failure unclassified, so BecknError() falls back to
+// defaultBadReqCode, or an explicit taxonomy code when the caller already
+// knows the specific cause (e.g. a policy checker classifying a denial onto
+// the Beckn v2.0.0 POL_* codes).
+func NewBadReqErr(code string, err error) *BadReqErr {
 	return &BadReqErr{codedErr{Code: code, error: err}}
 }
 
@@ -285,16 +271,11 @@ type NotFoundErr struct {
 	codedErr
 }
 
-// NewNotFoundErr creates a new instance of NotFoundErr from an error. Code is
-// left unset, so BecknError() falls back to defaultNotFoundCode. Use
-// NewCodedNotFoundErr when the caller knows a more specific taxonomy code.
-func NewNotFoundErr(err error) *NotFoundErr {
-	return &NotFoundErr{codedErr{error: err}}
-}
-
-// NewCodedNotFoundErr creates a NotFoundErr classified with an explicit
-// taxonomy code, for callers that already know the specific cause.
-func NewCodedNotFoundErr(code string, err error) *NotFoundErr {
+// NewNotFoundErr creates a new instance of NotFoundErr from an error. Pass
+// code "" to leave the failure unclassified, so BecknError() falls back to
+// defaultNotFoundCode, or an explicit taxonomy code when the caller already
+// knows the specific cause.
+func NewNotFoundErr(code string, err error) *NotFoundErr {
 	return &NotFoundErr{codedErr{Code: code, error: err}}
 }
 

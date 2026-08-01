@@ -211,7 +211,7 @@ func (r *Role) UnmarshalYAML(unmarshal func(interface{}) error) error {
 // failure onto the Beckn v2.0.0 ErrorCode taxonomy (SCH_INVALID_JSON if body
 // isn't valid JSON, SCH_REQUIRED_FIELD_MISSING if "context" is missing or not
 // an object) so callers can reuse the same Code/Message regardless of how
-// each formats its own response (e.g. wrapping in NewCodedBadReqErr, or
+// each formats its own response (e.g. wrapping in NewBadReqErr, or
 // writing a bare JSON body directly). req and reqContext are nil on failure.
 // becknErr wraps the underlying json.Unmarshal error for the SCH_INVALID_JSON
 // case (via Error.Unwrap; nil for the missing-context case, which has no
@@ -235,7 +235,7 @@ func ExtractContext(body []byte) (req map[string]interface{}, reqContext map[str
 // Error.Unwrap) as well as becknErr itself. Only call this when becknErr is
 // non-nil.
 func WrapExtractContextErr(prefix string, becknErr *Error) *BadReqErr {
-	return NewCodedBadReqErr(becknErr.Code, fmt.Errorf("%s: %w", prefix, becknErr))
+	return NewBadReqErr(becknErr.Code, fmt.Errorf("%s: %w", prefix, becknErr))
 }
 
 // ResolveNetworkID returns context.network_id from a parsed Beckn context map,

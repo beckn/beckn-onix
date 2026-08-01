@@ -682,7 +682,7 @@ func TestServeHTTP_PipelineNack_SignedByAckSigner(t *testing.T) {
 	signer := &mockSigner{returnSig: "nackPipelineSig=="}
 	km := &mockKM{keyset: &model.Keyset{UniqueKeyID: "k1", SigningPrivate: "priv"}}
 
-	failingStep := &mockFailStep{err: model.NewBadReqErr(fmt.Errorf("schema error"))}
+	failingStep := &mockFailStep{err: model.NewBadReqErr("", fmt.Errorf("schema error"))}
 
 	ackSignerConc := &ackSignerStep{signer: signer, km: km}
 	h := &stdHandler{

@@ -45,7 +45,7 @@ func newSignStep(signer definition.Signer, km definition.KeyManager, payloadStor
 // Run executes the signing step.
 func (s *signStep) Run(ctx *model.StepContext) error {
 	if len(ctx.SubID) == 0 {
-		return model.NewBadReqErr(fmt.Errorf("subscriberID not set"))
+		return model.NewBadReqErr("", fmt.Errorf("subscriberID not set"))
 	}
 
 	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
@@ -209,12 +209,12 @@ func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 	headerValue = ctx.Request.Header.Get(model.AuthHeaderSubscriber)
 	if len(headerValue) == 0 {
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
-		return model.NewCodedSignValidationErr("AUT_SIGNATURE_MISSING", fmt.Errorf("%s missing", model.UnaAuthorizedHeaderSubscriber))
+		return model.NewSignValidationErr("AUT_SIGNATURE_MISSING", fmt.Errorf("%s missing", model.UnaAuthorizedHeaderSubscriber))
 	}
 	reqSig, err := s.lookupCallbackRequestSig(ctx, headerValue)
 	if err != nil {
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
-		return model.NewSignValidationErr(err)
+		return model.NewSignValidationErr("", err)
 	}
 	if err := s.validate(ctx, headerValue, reqSig, true); err != nil {
 		ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
@@ -391,7 +391,7 @@ func newValidateSchemaStep(schemaValidator definition.SchemaValidator, basePath 
 func (s *validateSchemaStep) Run(ctx *model.StepContext) error {
 	var err error
 	if len(ctx.Body) == 0 && ctx.Request.Method == http.MethodPost {
-		err = fmt.Errorf("schema validation failed: %w", model.NewBadReqErr(fmt.Errorf("POST request requires a body")))
+		err = fmt.Errorf("schema validation failed: %w", model.NewBadReqErr("", fmt.Errorf("POST request requires a body")))
 	} else {
 		err = s.validator.Validate(ctx, stripBasePath(ctx.Request.URL, s.basePath), ctx.Body)
 		if err != nil {

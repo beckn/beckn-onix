@@ -77,7 +77,7 @@ func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBas
 
 	signatureBytes, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil {
-		return model.NewCodedSignValidationErr(codeSignatureInvalid, fmt.Errorf("error decoding signature: %w", err))
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("error decoding signature: %w", err))
 	}
 
 	if err := checkTimestampWindow("signature", createdTimestamp, expiredTimestamp, v.clockSkewTolerance); err != nil {
@@ -91,11 +91,11 @@ func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBas
 
 	decodedPublicKey, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 	if err != nil {
-		return model.NewCodedSignValidationErr(codeSignatureInvalid, fmt.Errorf("error decoding public key: %w", err))
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("error decoding public key: %w", err))
 	}
 
 	if !ed25519.Verify(ed25519.PublicKey(decodedPublicKey), []byte(signingString), signatureBytes) {
-		return model.NewCodedSignValidationErr(codeSignatureInvalid, fmt.Errorf("signature verification failed"))
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("signature verification failed"))
 	}
 
 	if checkIdentity {
@@ -124,22 +124,22 @@ func parseAuthHeader(header string) (int64, int64, string, string, error) {
 	}
 
 	if signatureMap["algorithm"] != "ed25519" {
-		return 0, 0, "", "", model.NewCodedSignValidationErr(codeSignatureInvalid, fmt.Errorf("unsupported algorithm %q: only ed25519 is permitted", signatureMap["algorithm"]))
+		return 0, 0, "", "", model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("unsupported algorithm %q: only ed25519 is permitted", signatureMap["algorithm"]))
 	}
 
 	createdTimestamp, err := strconv.ParseInt(signatureMap["created"], 10, 64)
 	if err != nil {
-		return 0, 0, "", "", model.NewCodedSignValidationErr(codeSignatureInvalid, fmt.Errorf("invalid created timestamp: %w", err))
+		return 0, 0, "", "", model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("invalid created timestamp: %w", err))
 	}
 
 	expiredTimestamp, err := strconv.ParseInt(signatureMap["expires"], 10, 64)
 	if err != nil {
-		return 0, 0, "", "", model.NewCodedSignValidationErr(codeSignatureInvalid, fmt.Errorf("invalid expires timestamp: %w", err))
+		return 0, 0, "", "", model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("invalid expires timestamp: %w", err))
 	}
 
 	signature := signatureMap["signature"]
 	if signature == "" {
-		return 0, 0, "", "", model.NewCodedSignValidationErr(codeSignatureMissing, fmt.Errorf("signature missing in header"))
+		return 0, 0, "", "", model.NewSignValidationErr(codeSignatureMissing, fmt.Errorf("signature missing in header"))
 	}
 
 	var subscriberID string
@@ -167,7 +167,7 @@ func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHe
 
 	signatureBytes, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil {
-		return model.NewCodedSignValidationErr(codeSignatureInvalid, fmt.Errorf("error decoding signature: %w", err))
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("error decoding signature: %w", err))
 	}
 
 	if err := checkTimestampWindow("AckSignature", createdTimestamp, expiredTimestamp, v.clockSkewTolerance); err != nil {
@@ -178,11 +178,11 @@ func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHe
 
 	decodedPublicKey, err := base64.StdEncoding.DecodeString(publicKeyBase64)
 	if err != nil {
-		return model.NewCodedSignValidationErr(codeSignatureInvalid, fmt.Errorf("error decoding public key: %w", err))
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("error decoding public key: %w", err))
 	}
 
 	if !ed25519.Verify(ed25519.PublicKey(decodedPublicKey), []byte(signingString), signatureBytes) {
-		return model.NewCodedSignValidationErr(codeSignatureInvalid, fmt.Errorf("AckSignature verification failed"))
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("AckSignature verification failed"))
 	}
 
 	if checkIdentity {
@@ -217,7 +217,7 @@ func checkSubscriberIdentity(ctx *model.StepContext, body []byte, signerID strin
 	}
 
 	if signerID != expected {
-		return model.NewCodedSignValidationErr(codeUnauthorizedAction, fmt.Errorf("subscriber identity mismatch: signing subscriber %q does not match declared context identity %q",
+		return model.NewSignValidationErr(codeUnauthorizedAction, fmt.Errorf("subscriber identity mismatch: signing subscriber %q does not match declared context identity %q",
 			signerID, expected))
 	}
 	return nil
@@ -232,7 +232,7 @@ func checkTimestampWindow(prefix string, createdTimestamp, expiredTimestamp int6
 	// Accept created values up to clockSkewTolerance in the future.
 	deadline := now.Add(clockSkewTolerance)
 	if time.Unix(createdTimestamp, 0).UTC().After(deadline) {
-		return model.NewCodedSignValidationErr(codeSignatureInvalid, fmt.Errorf("%s not yet valid: created=%s, server_time=%s, tolerance=%ds, overshoot=%ds",
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("%s not yet valid: created=%s, server_time=%s, tolerance=%ds, overshoot=%ds",
 			prefix,
 			time.Unix(createdTimestamp, 0).UTC().Format(time.RFC3339),
 			now.Format(time.RFC3339),
@@ -242,7 +242,7 @@ func checkTimestampWindow(prefix string, createdTimestamp, expiredTimestamp int6
 	}
 	// expires: zero tolerance — reject without exception.
 	if now.Unix() > expiredTimestamp {
-		return model.NewCodedSignValidationErr(codeSignatureInvalid, fmt.Errorf("%s expired: expires=%s, server_time=%s, expired_by=%ds",
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("%s expired: expires=%s, server_time=%s, expired_by=%ds",
 			prefix,
 			time.Unix(expiredTimestamp, 0).UTC().Format(time.RFC3339),
 			now.Format(time.RFC3339),

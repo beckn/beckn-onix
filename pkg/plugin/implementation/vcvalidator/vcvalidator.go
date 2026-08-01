@@ -118,9 +118,9 @@ func (s *step) Run(ctx *model.StepContext) error {
 // #870/#884's classification-only scope.
 func nackErr(ve *vcError) error {
 	if ve.class == failStructure {
-		return model.NewCodedBadReqErr(ve.code, ve)
+		return model.NewBadReqErr(ve.code, ve)
 	}
-	return model.NewCodedSignValidationErr(ve.code, ve)
+	return model.NewSignValidationErr(ve.code, ve)
 }
 
 func asVCError(err error) *vcError {

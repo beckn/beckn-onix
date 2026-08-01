@@ -439,14 +439,14 @@ func TestValidateHeaders_PreservesClassifiedCode(t *testing.T) {
 	}{
 		{
 			name:     "Validate returns a classified error",
-			sv:       &mockSignValidatorBasic{validateErr: model.NewCodedSignValidationErr("AUT_UNAUTHORIZED_ACTION", errors.New("identity mismatch"))},
+			sv:       &mockSignValidatorBasic{validateErr: model.NewSignValidationErr("AUT_UNAUTHORIZED_ACTION", errors.New("identity mismatch"))},
 			km:       &mockKMBasic{publicKey: "pubKey=="},
 			wantCode: "AUT_UNAUTHORIZED_ACTION",
 		},
 		{
 			name:     "LookupNPKeys returns a classified error",
 			sv:       &mockSignValidatorBasic{},
-			km:       &mockKMBasic{lookupErr: model.NewCodedSignValidationErr("AUT_SUBSCRIBER_NOT_FOUND", errors.New("no subscriber found with given credentials"))},
+			km:       &mockKMBasic{lookupErr: model.NewSignValidationErr("AUT_SUBSCRIBER_NOT_FOUND", errors.New("no subscriber found with given credentials"))},
 			wantCode: "AUT_SUBSCRIBER_NOT_FOUND",
 		},
 	}
