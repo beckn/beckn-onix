@@ -265,7 +265,7 @@ func TestResolveCode(t *testing.T) {
 		want string
 	}{
 		{"explicit code wins", NewSignValidationErr("AUT_KEY_EXPIRED_OR_REVOKED", errors.New("boom")), "AUT_KEY_EXPIRED_OR_REVOKED"},
-		{"empty code falls back to the flavor default", NewSignValidationErr("", errors.New("boom")), defaultSignValidationCode},
+		{"empty code falls back to the constructor default", NewSignValidationErr("", errors.New("boom")), defaultSignValidationCode},
 		{"empty code on the generic constructor falls back to the unclassified bucket", NewCodedErr(http.StatusBadGateway, "", errors.New("boom")), defaultUnclassifiedCode},
 	}
 	for _, tt := range tests {
@@ -291,11 +291,43 @@ func TestCodedErr_HTTPStatus(t *testing.T) {
 		{"not found", NewNotFoundErr("", cause), http.StatusNotFound},
 		{"explicit status", NewCodedErr(http.StatusServiceUnavailable, "NET_DOWNSTREAM_UNAVAILABLE", cause), http.StatusServiceUnavailable},
 		{"no status set falls back to 400", &CodedErr{error: cause}, http.StatusBadRequest},
+		{"a success status falls back to 400", NewCodedErr(http.StatusOK, "NET_INTERNAL_ERROR", cause), http.StatusBadRequest},
+		{"an out-of-range status falls back to 400", NewCodedErr(999, "NET_INTERNAL_ERROR", cause), http.StatusBadRequest},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.err.HTTPStatus(); got != tt.want {
 				t.Errorf("HTTPStatus() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCodedErr_NilCause covers a CodedErr with no wrapped cause, whether built
+// by a constructor or as a bare literal. It must return an empty message and still emit a code without panicking.
+func TestCodedErr_NilCause(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      *CodedErr
+		wantMsg  string
+		wantCode string
+	}{
+		{"constructor with a nil cause", NewBadReqErr("", nil), "BAD Request: ", defaultBadReqCode},
+		{"constructor with a nil cause and a code", NewSignValidationErr("AUT_SIGNATURE_MISSING", nil), "Signature Validation Error: ", "AUT_SIGNATURE_MISSING"},
+		{"bare literal", &CodedErr{}, "", defaultUnclassifiedCode},
+		{"bare literal with only a code", &CodedErr{Code: "POL_GENERIC_ERROR"}, "", "POL_GENERIC_ERROR"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.err.Error(); got != "" {
+				t.Errorf("Error() = %q, want empty for a nil cause", got)
+			}
+			beErr := tt.err.BecknError()
+			if beErr.Message != tt.wantMsg {
+				t.Errorf("BecknError().Message = %q, want %q", beErr.Message, tt.wantMsg)
+			}
+			if beErr.Code != tt.wantCode {
+				t.Errorf("BecknError().Code = %s, want %s", beErr.Code, tt.wantCode)
 			}
 		})
 	}

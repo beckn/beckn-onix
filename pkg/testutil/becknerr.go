@@ -18,8 +18,8 @@ import (
 // (reqmapper, router, reqpreprocessor, encrypter, decrypter, ...) instead of
 // each reimplementing the same assertion locally.
 //
-// The status check carries the bad-request half of the assertion: one
-// CodedErr type covers 400, 401 and 404, so the type alone proves nothing.
+// The status is checked because one CodedErr type now covers 400, 401 and
+// 404, so matching the type alone would also accept the other two.
 func RequireBadReqCode(t *testing.T, err error, wantCode string) {
 	t.Helper()
 

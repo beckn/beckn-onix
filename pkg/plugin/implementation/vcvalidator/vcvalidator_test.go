@@ -550,9 +550,9 @@ func TestStepPassThrough(t *testing.T) {
 }
 
 // TestStepNackErrorTypes asserts that rejections carry the error the handler's
-// NACK mapping understands: a *model.CodedErr statused 401 for authenticity
-// failures and 400 for structurally broken credentials. The failure class must
-// survive in the error message.
+// NACK mapping understands: a *model.CodedErr with HTTP status 401 for
+// authenticity failures and 400 for structurally broken credentials. The
+// failure class must survive in the error message.
 func TestStepNackErrorTypes(t *testing.T) {
 	t.Run("authenticity failure is a 401", func(t *testing.T) {
 		vc := loadVC(t)

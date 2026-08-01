@@ -163,20 +163,20 @@ func FirstNonEmptyCode(errs []Error, defaultCode string) string {
 }
 
 // CodedErr wraps one cause with an optional taxonomy code and the HTTP status
-// to NACK it with. It covers what BadReqErr, SignValidationErr and NotFoundErr
-// used to carry separately: those stored the same fields and differed only in
-// the status nackBecknError (core/module/handler/responsestep.go) picked for
-// each by type switch, so the status is now set at construction instead.
+// to NACK it with. It replaces BadReqErr, SignValidationErr and NotFoundErr,
+// which stored the same fields and differed only in the status
+// nackBecknError (core/module/handler/responsestep.go) picked for each by
+// type switch. That status is now set at construction.
 //
 // Use NewCodedErr, or NewBadReqErr, NewSignValidationErr and NewNotFoundErr
 // for the 400, 401 and 404 cases and their message prefixes. Status, prefix
-// and default code are unexported: a usable value comes from a constructor.
+// and default code are unexported, so a usable value comes from a constructor.
 //
 // SchemaValidationErr and AckNoCallbackErr stay separate. They differ in
 // shape, not just status.
 type CodedErr struct {
 	// Code is the taxonomy value for this failure's specific cause, or ""
-	// if unclassified — BecknError() then reports defaultCode.
+	// if unclassified, in which case BecknError() reports defaultCode.
 	Code string
 
 	// httpStatus is the status nackBecknError responds with.
@@ -190,13 +190,13 @@ type CodedErr struct {
 }
 
 // defaultUnclassifiedCode is reported when a NewCodedErr caller passes no
-// code. Those callers are expected to know their code, so this only keeps an
-// empty one off the wire.
+// code. Callers are expected to pass one, so this only keeps an empty code
+// off the wire.
 const defaultUnclassifiedCode = "NET_INTERNAL_ERROR"
 
 // NewCodedErr creates a CodedErr with an explicit HTTP status and taxonomy
-// code, for callers of any failure flavor. Plugins that classify several
-// kinds of failure — vcvalidator, for one — need only this constructor.
+// code. A plugin that classifies several kinds of failure, such as
+// vcvalidator, needs only this constructor.
 //
 // The status is explicit rather than derived from the code's family prefix,
 // which does not determine it: NET_* alone spans 404, 500, 502 and 503.
@@ -204,11 +204,12 @@ func NewCodedErr(httpStatus int, code string, err error) *CodedErr {
 	return &CodedErr{Code: code, httpStatus: httpStatus, defaultCode: defaultUnclassifiedCode, error: err}
 }
 
-// HTTPStatus returns the status to NACK with, defaulting to 400 for a value
-// built without a constructor — the status core uses for any other
-// BecknErrorer.
+// HTTPStatus returns the status to NACK with. Anything outside the 4xx/5xx
+// range reports 400 instead, since a NACK must not be sent with a success
+// status and a value built without a constructor carries no status at all.
+// 400 is also what core answers for any other BecknErrorer.
 func (e *CodedErr) HTTPStatus() int {
-	if e.httpStatus == 0 {
+	if e.httpStatus < 400 || e.httpStatus > 599 {
 		return http.StatusBadRequest
 	}
 	return e.httpStatus
@@ -220,12 +221,27 @@ func (e *CodedErr) Unwrap() error {
 	return e.error
 }
 
-// resolveCode returns Code if non-empty, else the constructor's default.
+// Error returns the wrapped cause's text, or "" when a CodedErr was built
+// without a cause. BecknError runs while the handler builds the NACK, so a
+// panic here would drop the request instead of answering it.
+func (e *CodedErr) Error() string {
+	if e.error == nil {
+		return ""
+	}
+	return e.error.Error()
+}
+
+// resolveCode returns Code if non-empty, else the constructor's default, else
+// defaultUnclassifiedCode. The last fallback applies only to a CodedErr built
+// without a constructor, and keeps an empty code off the wire.
 func (e *CodedErr) resolveCode() string {
 	if e.Code != "" {
 		return e.Code
 	}
-	return e.defaultCode
+	if e.defaultCode != "" {
+		return e.defaultCode
+	}
+	return defaultUnclassifiedCode
 }
 
 // BecknError builds the *Error NACK payload from the resolved code and the
