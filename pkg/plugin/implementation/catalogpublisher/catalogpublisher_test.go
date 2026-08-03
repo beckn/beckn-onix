@@ -134,8 +134,8 @@ func TestPublish_SingleCatalog_ProducesIndex(t *testing.T) {
 	if err := json.Unmarshal(result.Index, &index); err != nil {
 		t.Fatalf("parsing index: %v", err)
 	}
-	if index.ParticipantID != "example.test" {
-		t.Errorf("index.ParticipantID = %q, want example.test", index.ParticipantID)
+	if index.NodeID != "example.test" {
+		t.Errorf("index.NodeID = %q, want example.test", index.NodeID)
 	}
 	if index.Version != 1 {
 		t.Errorf("index.Version = %d, want 1", index.Version)
@@ -163,18 +163,34 @@ func TestPublish_SingleCatalog_ProducesIndex(t *testing.T) {
 	if entry.Baseline.URL != "https://cdn.example.test/catalogs/CAT-1.v1.json" {
 		t.Errorf("unexpected baseline URL: %q", entry.Baseline.URL)
 	}
-	wantDigest := "sha-256:" + digestOf(validCatalogJSON("CAT-1"))
-	if entry.Baseline.Digest != wantDigest {
-		t.Errorf("baseline.Digest = %q, want %q", entry.Baseline.Digest, wantDigest)
-	}
-	if entry.Baseline.Size != int64(len(validCatalogJSON("CAT-1"))) {
-		t.Errorf("baseline.Size = %d, want %d", entry.Baseline.Size, len(validCatalogJSON("CAT-1")))
-	}
-	if entry.Baseline.Signature.KeyID != "publisher-key-1" || entry.Baseline.Signature.Value == "" {
-		t.Errorf("unexpected baseline signature: %+v", entry.Baseline.Signature)
-	}
 	if len(entry.Changes) != 0 {
 		t.Errorf("expected no changes on a fresh baseline, got %+v", entry.Changes)
+	}
+	if entry.Signature.KeyID != "publisher-key-1" || entry.Signature.Value == "" {
+		t.Errorf("unexpected catalog-entry signature: %+v", entry.Signature)
+	}
+
+	// The baseline file itself is self-signed (file spec v2): its published
+	// content wraps the submitted catalog with its own {keyId,
+	// canonicalization, value} signature, and digest/size are computed over
+	// that final, already-signed content -- not the bare submitted catalog.
+	content := result.Catalogs[0].Content
+	wantDigest := "sha-256:" + digestOf(content)
+	if entry.Baseline.Digest != wantDigest {
+		t.Errorf("baseline.Digest = %q, want sha-256 of the actual published (signed) content %q", entry.Baseline.Digest, wantDigest)
+	}
+	if entry.Baseline.Size != int64(len(content)) {
+		t.Errorf("baseline.Size = %d, want %d", entry.Baseline.Size, len(content))
+	}
+	var file catalogFileDoc
+	if err := json.Unmarshal(content, &file); err != nil {
+		t.Fatalf("parsing baseline file content: %v", err)
+	}
+	if string(file.Catalog) != string(validCatalogJSON("CAT-1")) {
+		t.Errorf("baseline file's wrapped catalog = %s, want %s", file.Catalog, validCatalogJSON("CAT-1"))
+	}
+	if file.Signature.KeyID != "publisher-key-1" || file.Signature.Canonicalization != "JCS" || file.Signature.Value == "" {
+		t.Errorf("unexpected baseline file self-signature: %+v", file.Signature)
 	}
 }
 
@@ -206,33 +222,6 @@ func TestPublish_InvalidSubmissionIsNonFatal(t *testing.T) {
 	// A partial failure must still produce a valid index.
 	if len(result.Index) == 0 {
 		t.Fatal("expected index to still be produced despite partial failure")
-	}
-}
-
-func TestPublish_NoValidityConfigured_FallsBackToDefault_NotAlreadyExpired(t *testing.T) {
-	km := newFakeKeyManager(t, "k1")
-	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"}) // no NextUpdateIn/FileValidityIn set
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	result, err := p.Publish(context.Background(), definition.PublishRequest{
-		Catalogs: []definition.CatalogSubmission{{CatalogID: "CAT-1", Catalog: validCatalogJSON("CAT-1")}},
-	})
-	if err != nil {
-		t.Fatalf("Publish: %v", err)
-	}
-
-	var index catalogIndexDoc
-	if err := json.Unmarshal(result.Index, &index); err != nil {
-		t.Fatalf("parsing index: %v", err)
-	}
-	var entry catalogEntry
-	if err := json.Unmarshal(index.Catalogs[0], &entry); err != nil {
-		t.Fatalf("parsing entry: %v", err)
-	}
-	if !entry.Baseline.Signature.ValidUntil.After(time.Now()) {
-		t.Errorf("expected validUntil (%s) to still be in the future, got a value that's already passed", entry.Baseline.Signature.ValidUntil)
 	}
 }
 
@@ -292,8 +281,15 @@ func TestPublish_Incremental_NoPriorState_IsBaseline(t *testing.T) {
 	if got.Mode != "baseline" || got.Version != 1 || !got.Changed {
 		t.Errorf("unexpected outcome: %+v", got)
 	}
-	if string(got.Content) != string(mustCatalogWithItems("CAT-1", "ITEM-1", "ITEM-2")) {
-		t.Errorf("expected baseline content to equal submitted catalog, got %s", got.Content)
+	var file catalogFileDoc
+	if err := json.Unmarshal(got.Content, &file); err != nil {
+		t.Fatalf("parsing baseline content: %v", err)
+	}
+	if string(file.Catalog) != string(mustCatalogWithItems("CAT-1", "ITEM-1", "ITEM-2")) {
+		t.Errorf("expected baseline content to wrap the submitted catalog, got %s", file.Catalog)
+	}
+	if file.Signature.Value == "" {
+		t.Error("expected baseline content to carry a self-signature")
 	}
 }
 
@@ -573,33 +569,15 @@ func TestDiffCatalogs_ArbitraryAttributeChangeReportedUnderCatalog(t *testing.T)
 	}
 }
 
-func TestToAuthMethodWire(t *testing.T) {
-	if got := toAuthMethodWire(nil); got != nil {
-		t.Errorf("expected nil for no auth methods, got %+v", got)
-	}
-	in := []definition.AuthMethod{{
-		Method: "signature", Algorithm: "ed25519", Header: "Authorization",
-		Challenge: []string{"nonce"}, FreshnessSeconds: 300,
-	}}
-	got := toAuthMethodWire(in)
-	if len(got) != 1 || got[0].Method != "signature" || got[0].Algorithm != "ed25519" ||
-		got[0].Header != "Authorization" || len(got[0].Challenge) != 1 || got[0].FreshnessSeconds != 300 {
-		t.Errorf("toAuthMethodWire did not round-trip fields, got %+v", got)
-	}
-}
-
 func TestFileRefsToWire(t *testing.T) {
 	if got := fileRefsToWire(nil); got != nil {
 		t.Errorf("expected nil for no file refs, got %+v", got)
 	}
-	validUntil := time.Now()
 	in := []definition.FileRef{{
-		Version: 3, URL: "https://example.test/catalogs/CAT-1.v3.json", Size: 42,
-		Digest: "sha-256:abc", SignatureKeyID: "k1", SignatureValue: "sig", SignatureValidUntil: validUntil,
+		Version: 3, URL: "https://example.test/catalogs/CAT-1.v3.json", Size: 42, Digest: "sha-256:abc",
 	}}
 	got := fileRefsToWire(in)
-	if len(got) != 1 || got[0].Version != 3 || got[0].URL != in[0].URL || got[0].Size != 42 ||
-		got[0].Digest != "sha-256:abc" || got[0].Signature.KeyID != "k1" || got[0].Signature.Value != "sig" || !got[0].Signature.ValidUntil.Equal(validUntil) {
+	if len(got) != 1 || got[0].Version != 3 || got[0].URL != in[0].URL || got[0].Size != 42 || got[0].Digest != "sha-256:abc" {
 		t.Errorf("fileRefsToWire did not round-trip fields, got %+v", got)
 	}
 }

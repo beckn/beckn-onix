@@ -23,12 +23,17 @@
 // Compaction beyond ForceBaseline-as-manual-trigger is not implemented yet
 // (see the package README's phased plan).
 //
-// The catalog index is not signed as a whole -- every baseline/change file
-// entry carries its own signature instead, a plain Ed25519 signature
-// (pkg/security/artifactsigner) over the JCS-canonicalized tuple
-// {catalogId, version, url, digest, validUntil}, binding that signature to
-// exactly one file in one role (file spec, "The signed entry is a tuple,
-// not a bare hash").
+// The catalog index is not signed as a whole -- trust rides on two
+// independent, per-catalog signature layers instead (file spec v2):
+// every catalog file (baseline and change file alike) self-signs its own
+// content, a plain Ed25519 signature (pkg/security/artifactsigner) over
+// the JCS-canonicalized file document with its own "signature" field
+// removed; and every catalog-index entry separately self-signs itself as
+// a whole (catalogId, catalogType, status, networkIds, schemaTypes, and
+// every baseline/changes[] file reference together), the same
+// non-circular convention applied one level up. Signatures carry no
+// expiry (no validUntil): the index's own next_update bounds staleness
+// instead.
 package catalogpublisher
 
 import (
@@ -51,20 +56,14 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/security/artifactsigner"
 )
 
-// defaultFileValidity is the fallback used when neither Config.FileValidityIn
-// nor Config.NextUpdateIn is set -- see its use in Publish for why zero is
-// unsafe here (unlike next_update, a file's validUntil can't just be
-// omitted).
-const defaultFileValidity = 24 * time.Hour
-
 // Config controls publish behavior.
 type Config struct {
 	// SubscriberID is the identifier passed to KeyManager.Keyset to load
 	// the signing keypair -- the same lookup key every other caller of
 	// Keyset uses (see pkg/security/artifactfetcher,
 	// core/module/handler/responsestep.go). Every signature.keyId, and the
-	// domain embedded as the catalog index's "participantId", both come
-	// from the returned Keyset (UniqueKeyID/SubscriberID) instead of being
+	// domain embedded as the catalog index's "nodeId", both come from the
+	// returned Keyset (UniqueKeyID/SubscriberID) instead of being
 	// duplicated here -- that's the keymanager plugin's own config to own,
 	// not this one's.
 	SubscriberID string
@@ -73,10 +72,6 @@ type Config struct {
 	// freshness window extends from the moment of publishing. Zero omits
 	// next_update entirely.
 	NextUpdateIn time.Duration
-
-	// FileValidityIn sets how far in the future each catalog file's
-	// signature.validUntil extends. Falls back to NextUpdateIn when zero.
-	FileValidityIn time.Duration
 
 	// PublicBaseURL, if set, is the one public URL prefix everything this
 	// publish writes gets addressed under -- the same root a static file
@@ -114,86 +109,85 @@ func New(ctx context.Context, keyManager definition.KeyManager, cfg *Config) (*P
 	return p, func() error { return nil }, nil
 }
 
-// authMethodWire is the wire shape for a catalog entry's own AuthMethods
-// (per-catalog, restricted-catalog auth -- see catalogEntry.AuthMethods),
-// carried from definition.CatalogSubmission.AuthMethods via
-// toAuthMethodWire. Not to be confused with restricting the catalog index
-// file itself, which this package no longer supports (see package doc).
-type authMethodWire struct {
-	Method           string   `json:"method"`
-	Algorithm        string   `json:"algorithm"`
-	Header           string   `json:"header"`
-	Challenge        []string `json:"challenge,omitempty"`
-	FreshnessSeconds int      `json:"freshnessSeconds,omitempty"`
-}
-
-func toAuthMethodWire(methods []definition.AuthMethod) []authMethodWire {
-	if len(methods) == 0 {
-		return nil
-	}
-	out := make([]authMethodWire, len(methods))
-	for i, m := range methods {
-		out[i] = authMethodWire{
-			Method:           m.Method,
-			Algorithm:        m.Algorithm,
-			Header:           m.Header,
-			Challenge:        m.Challenge,
-			FreshnessSeconds: m.FreshnessSeconds,
-		}
-	}
-	return out
-}
-
 // --- Catalog index wire types -------------------------------------------
 //
 // A plain Beckn file; DeDi never reads it, and it is not required to be
-// signed as a whole -- trust rides on each file entry's own signature
-// tuple (file spec, "The catalog index").
+// signed as a whole -- trust rides on each catalog entry's own signature
+// (file spec v2, "The catalog index").
 
 type catalogIndexDoc struct {
-	ParticipantID string            `json:"participantId"`
-	Version       int               `json:"version"`
-	NextUpdate    *time.Time        `json:"next_update,omitempty"`
-	Catalogs      []json.RawMessage `json:"catalogs"`
+	NodeID     string            `json:"nodeId"`
+	Version    int               `json:"version"`
+	NextUpdate *time.Time        `json:"next_update,omitempty"`
+	Catalogs   []json.RawMessage `json:"catalogs"`
 }
 
+// catalogEntry self-signs as a whole (file spec v2): Signature covers
+// every other field here together, JCS-canonicalized with "signature"
+// itself removed -- see signEntry. Every entry carries one, including
+// retired (tombstone) entries.
 type catalogEntry struct {
-	CatalogID   string           `json:"catalogId"`
-	CatalogType string           `json:"catalogType,omitempty"`
-	Status      string           `json:"status"`
-	NetworkIds  []string         `json:"networkIds,omitempty"`
-	AuthMethods []authMethodWire `json:"authMethods,omitempty"`
-	SchemaTypes []string         `json:"schemaTypes,omitempty"`
-	Baseline    *fileEntry       `json:"baseline,omitempty"`
-	Changes     []fileEntry      `json:"changes,omitempty"`
-	RetiredAt   *time.Time       `json:"retiredAt,omitempty"`
+	CatalogID   string             `json:"catalogId"`
+	CatalogType string             `json:"catalogType,omitempty"`
+	Status      string             `json:"status"`
+	NetworkIds  []string           `json:"networkIds,omitempty"`
+	SchemaTypes []string           `json:"schemaTypes,omitempty"`
+	Baseline    *fileEntry         `json:"baseline,omitempty"`
+	Changes     []fileEntry        `json:"changes,omitempty"`
+	RetiredAt   *time.Time         `json:"retiredAt,omitempty"`
+	Signature   entrySignatureWire `json:"signature"`
 }
 
+// fileEntry points at one already self-signed catalog file (see
+// catalogFileDoc/changeFileDoc) -- digest/size are computed over that
+// file's final, already-signed bytes, so no signature is duplicated here;
+// file-level integrity lives in the file itself.
 type fileEntry struct {
-	Version   int           `json:"version"`
-	URL       string        `json:"url"`
-	Size      int64         `json:"size"`
-	Digest    string        `json:"digest"` // "sha-256:<hex>"
-	Signature signatureWire `json:"signature"`
+	Version int    `json:"version"`
+	URL     string `json:"url"`
+	Size    int64  `json:"size"`
+	Digest  string `json:"digest"` // "sha-256:<hex>"
 }
 
-type signatureWire struct {
-	KeyID      string    `json:"keyId"`
-	Value      string    `json:"value"`
-	ValidUntil time.Time `json:"validUntil"`
+// entrySignatureWire is the catalog-index entry's own self-signature
+// (file spec v2's catalog-index example: `{"keyId": "...", "value": "..."}`
+// -- no canonicalization field, unlike fileSignatureWire below).
+type entrySignatureWire struct {
+	KeyID string `json:"keyId"`
+	Value string `json:"value"`
 }
 
-// changeFileDoc is the change-file shape for one publish, keyed by id never
-// by position (file spec, "Catalog files and change files"). Upserts merge
-// added and updated items into one list -- the receiver replaces by id
-// either way -- and Removals names ids only.
+// fileSignatureWire is a catalog file's (baseline or change file) own
+// self-signature, per the file spec v2's CatalogFile/CatalogChangeFile
+// schemas: `{keyId, canonicalization: "JCS", value}`.
+type fileSignatureWire struct {
+	KeyID            string `json:"keyId"`
+	Canonicalization string `json:"canonicalization"`
+	Value            string `json:"value"`
+}
+
+// catalogFileDoc is the self-signed baseline file (file spec v2's
+// `CatalogFile`): the submitted Catalog object wrapped with its own
+// signature. The wrap never reopens Catalog for changes -- beckn.yaml's
+// Catalog schema still governs the wire format; a crawler unwraps
+// `.catalog` before anything reaches the wire.
+type catalogFileDoc struct {
+	Catalog   json.RawMessage   `json:"catalog"`
+	Signature fileSignatureWire `json:"signature"`
+}
+
+// changeFileDoc is the change-file shape for one publish (file spec v2's
+// `CatalogChangeFile`), keyed by id never by position. Upserts merge added
+// and updated items into one list -- the receiver replaces by id either
+// way -- and Removals names ids only. Self-signed like catalogFileDoc.
 type changeFileDoc struct {
-	CatalogID   string          `json:"catalogId"`
-	FromVersion int             `json:"fromVersion"`
-	ToVersion   int             `json:"toVersion"`
-	Resources   diffBlock       `json:"resources"`
-	Offers      diffBlock       `json:"offers"`
-	Catalog     json.RawMessage `json:"catalog,omitempty"`
+	CatalogID   string            `json:"catalogId"`
+	FromVersion int               `json:"fromVersion"`
+	ToVersion   int               `json:"toVersion"`
+	Resources   diffBlock         `json:"resources"`
+	Offers      diffBlock         `json:"offers"`
+	Catalog     json.RawMessage   `json:"catalog,omitempty"`
+	Signature   fileSignatureWire `json:"signature"`
 }
 
 type diffBlock struct {
@@ -233,19 +227,6 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 		nextUpdate = &t
 	}
 
-	fileValidityIn := p.config.FileValidityIn
-	if fileValidityIn <= 0 {
-		fileValidityIn = p.config.NextUpdateIn
-	}
-	if fileValidityIn <= 0 {
-		// Every file entry's signature.validUntil is a mandatory part of
-		// the signed tuple (unlike next_update, it cannot simply be
-		// omitted) -- silently falling back to now+0 would sign a file
-		// that is already expired the instant a crawler checks it.
-		fileValidityIn = defaultFileValidity
-	}
-	validUntil := now.Add(fileValidityIn)
-
 	submitted := make(map[string]bool, len(req.Catalogs))
 	retireSet := make(map[string]bool, len(req.Retire))
 	for _, id := range req.Retire {
@@ -264,7 +245,7 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 			continue
 		}
 
-		outcome, entry, changed, err := p.publishOne(sub, req.PriorState[sub.CatalogID], req.ForceBaseline, now, validUntil, priv, keyID)
+		outcome, entry, changed, err := p.publishOne(sub, req.PriorState[sub.CatalogID], req.ForceBaseline, priv, keyID)
 		if err != nil {
 			result.Errors = append(result.Errors, definition.PublishError{
 				CatalogID: sub.CatalogID, Stage: "diff", Reason: err.Error(), Fatal: false,
@@ -273,9 +254,9 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 		}
 		log.Debugf(ctx, "catalogpublisher: %s mode=%s version=%d changed=%v", sub.CatalogID, outcome.Mode, outcome.Version, changed)
 
-		raw, err := json.Marshal(entry)
+		raw, err := p.signEntry(entry, keyID, priv)
 		if err != nil {
-			return result, fmt.Errorf("catalogpublisher: marshaling catalog entry %q: %w", sub.CatalogID, err)
+			return result, fmt.Errorf("catalogpublisher: signing catalog entry %q: %w", sub.CatalogID, err)
 		}
 		entries = append(entries, raw)
 		result.Catalogs = append(result.Catalogs, outcome)
@@ -290,10 +271,9 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 			continue // submitting and retiring the same catalogId in one call: submission wins; duplicate retire ids collapse to one tombstone
 		}
 		tombstoned[id] = true
-		tomb := catalogEntry{CatalogID: id, Status: "RETIRED", RetiredAt: &now}
-		raw, err := json.Marshal(tomb)
+		raw, err := p.signEntry(catalogEntry{CatalogID: id, Status: "RETIRED", RetiredAt: &now}, keyID, priv)
 		if err != nil {
-			return result, fmt.Errorf("catalogpublisher: marshaling tombstone %q: %w", id, err)
+			return result, fmt.Errorf("catalogpublisher: signing tombstone %q: %w", id, err)
 		}
 		entries = append(entries, raw)
 		anyChanged = true
@@ -316,16 +296,16 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 	result.IndexVersion = indexVersion
 
 	indexBytes, err := json.Marshal(catalogIndexDoc{
-		ParticipantID: domain,
-		Version:       indexVersion,
-		NextUpdate:    nextUpdate,
-		Catalogs:      entries,
+		NodeID:     domain,
+		Version:    indexVersion,
+		NextUpdate: nextUpdate,
+		Catalogs:   entries,
 	})
 	if err != nil {
 		return result, fmt.Errorf("catalogpublisher: marshaling catalog index: %w", err)
 	}
 	result.Index = indexBytes
-	log.Debugf(ctx, "catalogpublisher: built catalog index, participantId=%s, version=%d, %d entries, indexURL=%s", domain, indexVersion, len(entries), p.indexURL())
+	log.Debugf(ctx, "catalogpublisher: built catalog index, nodeId=%s, version=%d, %d entries, indexURL=%s", domain, indexVersion, len(entries), p.indexURL())
 	log.Debugf(ctx, "catalogpublisher: Publish done, keyId=%s, domain=%s, %d catalog(s) published, %d error(s)", keyID, domain, len(result.Catalogs), len(result.Errors))
 
 	return result, nil
@@ -346,8 +326,9 @@ func currentVersion(prior definition.PriorCatalogState) int {
 
 // publishOne decides baseline vs. change-file vs. no-op for one submission
 // and builds both its definition.CatalogPublishOutcome and its
-// catalogEntry.
-func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definition.PriorCatalogState, forceBaseline bool, now, validUntil time.Time, priv ed25519.PrivateKey, keyID string) (definition.CatalogPublishOutcome, catalogEntry, bool, error) {
+// catalogEntry. The returned entry is not yet signed -- Publish signs
+// every entry uniformly (submitted and tombstoned alike) via signEntry.
+func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definition.PriorCatalogState, forceBaseline bool, priv ed25519.PrivateKey, keyID string) (definition.CatalogPublishOutcome, catalogEntry, bool, error) {
 	hasPrior := prior.Catalog != nil
 	catalogType := sub.CatalogType
 	if catalogType == "" {
@@ -359,7 +340,6 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 		CatalogType: catalogType,
 		Status:      "ACTIVE",
 		NetworkIds:  sub.NetworkIds,
-		AuthMethods: toAuthMethodWire(sub.AuthMethods),
 		SchemaTypes: sub.SchemaTypes,
 	}
 
@@ -370,15 +350,16 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 
 	if !hasPrior || forceBaseline {
 		version := currentVersion(prior) + 1 // 0+1 == 1 for a brand-new catalog
-		fe, err := p.buildFileEntry(sub.CatalogID, version, "json", sub.Catalog, now, validUntil, priv, keyID)
+		content, err := p.signCatalogFile(sub.Catalog, keyID, priv)
 		if err != nil {
 			return definition.CatalogPublishOutcome{}, catalogEntry{}, false, err
 		}
+		fe := p.buildFileEntry(sub.CatalogID, version, "json", content)
 		entry.Baseline = &fe
 		entry.Changes = nil // a fresh baseline (first publish, or a forced compaction) resets the change list
 
 		outcome := definition.CatalogPublishOutcome{
-			CatalogID: sub.CatalogID, Version: version, Changed: true, Digest: fe.Digest, Mode: "baseline", Content: sub.Catalog,
+			CatalogID: sub.CatalogID, Version: version, Changed: true, Digest: fe.Digest, Mode: "baseline", Content: content,
 		}
 		return outcome, entry, true, nil
 	}
@@ -400,15 +381,12 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 		CatalogID: sub.CatalogID, FromVersion: fromVersion, ToVersion: toVersion,
 		Resources: diff.Resources, Offers: diff.Offers, Catalog: changeCatalog,
 	}
-	content, err := json.Marshal(changeDoc)
-	if err != nil {
-		return definition.CatalogPublishOutcome{}, catalogEntry{}, false, fmt.Errorf("marshaling change file: %w", err)
-	}
-
-	fe, err := p.buildFileEntry(sub.CatalogID, toVersion, "changes.json", content, now, validUntil, priv, keyID)
+	content, err := p.signChangeFile(changeDoc, keyID, priv)
 	if err != nil {
 		return definition.CatalogPublishOutcome{}, catalogEntry{}, false, err
 	}
+
+	fe := p.buildFileEntry(sub.CatalogID, toVersion, "changes.json", content)
 	entry.Changes = append(entry.Changes, fe)
 
 	outcome := definition.CatalogPublishOutcome{
@@ -417,31 +395,75 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 	return outcome, entry, true, nil
 }
 
-// buildFileEntry computes a versioned URL, digest, size, and per-entry
-// signature tuple for one catalog file (baseline or change), per the file
-// spec's rules: immutable, versioned URLs, and a signature over
-// {catalogId, version, url, digest, validUntil}.
-func (p *Publisher) buildFileEntry(catalogID string, version int, suffix string, content []byte, now, validUntil time.Time, priv ed25519.PrivateKey, keyID string) (fileEntry, error) {
+// signCatalogFile builds the file spec's self-signed CatalogFile (baseline):
+// {catalog, signature}. "Avoiding circular signing" (file spec): the
+// signing input is the JCS canonicalization of this document with
+// "signature" itself removed, so the pre-signing marshal's placeholder
+// Signature value never matters -- it's stripped before signing anyway.
+// Returns the final, already-signed bytes -- digest/size (buildFileEntry)
+// are computed over these, not the bare catalog content.
+func (p *Publisher) signCatalogFile(catalog json.RawMessage, keyID string, priv ed25519.PrivateKey) ([]byte, error) {
+	unsigned, err := json.Marshal(catalogFileDoc{Catalog: catalog})
+	if err != nil {
+		return nil, fmt.Errorf("marshaling catalog file: %w", err)
+	}
+	sigValue, err := artifactsigner.SignJSON(unsigned, "signature", priv)
+	if err != nil {
+		return nil, fmt.Errorf("signing catalog file: %w", err)
+	}
+	return json.Marshal(catalogFileDoc{
+		Catalog:   catalog,
+		Signature: fileSignatureWire{KeyID: keyID, Canonicalization: "JCS", Value: sigValue},
+	})
+}
+
+// signChangeFile is signCatalogFile's counterpart for a CatalogChangeFile:
+// doc's own fields (catalogId, fromVersion, toVersion, resources, offers,
+// catalog) are signed with "signature" removed, then the signature is
+// attached and the final document re-marshaled.
+func (p *Publisher) signChangeFile(doc changeFileDoc, keyID string, priv ed25519.PrivateKey) ([]byte, error) {
+	unsigned, err := json.Marshal(doc)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling change file: %w", err)
+	}
+	sigValue, err := artifactsigner.SignJSON(unsigned, "signature", priv)
+	if err != nil {
+		return nil, fmt.Errorf("signing change file: %w", err)
+	}
+	doc.Signature = fileSignatureWire{KeyID: keyID, Canonicalization: "JCS", Value: sigValue}
+	return json.Marshal(doc)
+}
+
+// signEntry self-signs a catalog-index entry as a whole (file spec v2):
+// every other field of entry, JCS-canonicalized with "signature" removed.
+// Applies uniformly to ACTIVE and RETIRED (tombstone) entries alike.
+func (p *Publisher) signEntry(entry catalogEntry, keyID string, priv ed25519.PrivateKey) (json.RawMessage, error) {
+	unsigned, err := json.Marshal(entry)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling catalog entry: %w", err)
+	}
+	sigValue, err := artifactsigner.SignJSON(unsigned, "signature", priv)
+	if err != nil {
+		return nil, fmt.Errorf("signing catalog entry: %w", err)
+	}
+	entry.Signature = entrySignatureWire{KeyID: keyID, Value: sigValue}
+	return json.Marshal(entry)
+}
+
+// buildFileEntry computes a versioned URL, digest, and size for one
+// already self-signed catalog file (content -- see signCatalogFile/
+// signChangeFile), per the file spec's rules: immutable, versioned URLs.
+// digest/size are computed over content as given, i.e. the final signed
+// bytes a crawler will actually fetch.
+func (p *Publisher) buildFileEntry(catalogID string, version int, suffix string, content []byte) fileEntry {
 	filename := fmt.Sprintf("%s.v%d.%s", localCatalogName(catalogID), version, suffix)
 	url := p.catalogPartURL(filename, suffix)
-	digest := "sha-256:" + digestOf(content)
-
-	sigValue, err := artifactsigner.SignFileTuple(catalogID, version, url, digest, validUntil, priv)
-	if err != nil {
-		return fileEntry{}, fmt.Errorf("signing file entry for %q v%d: %w", catalogID, version, err)
-	}
-
 	return fileEntry{
 		Version: version,
 		URL:     url,
 		Size:    int64(len(content)),
-		Digest:  digest,
-		Signature: signatureWire{
-			KeyID:      keyID,
-			Value:      sigValue,
-			ValidUntil: validUntil,
-		},
-	}, nil
+		Digest:  "sha-256:" + digestOf(content),
+	}
 }
 
 // localCatalogName returns catalogID with any "domain/" prefix stripped,
@@ -468,11 +490,6 @@ func fileRefValueToWire(fr definition.FileRef) fileEntry {
 		URL:     fr.URL,
 		Size:    fr.Size,
 		Digest:  fr.Digest,
-		Signature: signatureWire{
-			KeyID:      fr.SignatureKeyID,
-			Value:      fr.SignatureValue,
-			ValidUntil: fr.SignatureValidUntil,
-		},
 	}
 }
 

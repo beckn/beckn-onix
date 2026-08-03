@@ -21,15 +21,20 @@ history for that version.
 the immediate next step -- it still expects the earlier, now-superseded
 DeDi-wrapper-shaped index this package used to produce). The round-trip
 test that used to prove the two plugins agree is temporarily skipped; see
-"Known open items."
+"Known open items." This package now also tracks the file spec's v2
+revision (`nodeId` instead of `participantId`, per-catalog-entry and
+per-file self-signing instead of a per-file signed tuple, no restricted
+catalogs) -- widening the gap until `catalogcrawler` catches up.
 
 ## What this package does
 
 1. Takes a `PublishRequest`: one `CatalogSubmission` per `catalogId`
    (participant-scoped, e.g. `"open-economy.nfh.global/electronics-2026"`),
    each carrying a plain Beckn `Catalog` object (no `context`/`message`
-   envelope) plus publisher-declared `NetworkIds` and `AuthMethods` --
-   empty `NetworkIds` means public.
+   envelope) plus publisher-declared `NetworkIds`. Catalogs are public,
+   unconditionally (file spec v2, "Catalog access is public") --
+   `NetworkIds` is a Discovery-service relevance filter only, never an
+   access control; there is no restricted-catalog concept.
 2. Validates each submission with the same shallow structural check
    `catalogcrawler` applies on the way in (`id` + `descriptor` present). A
    bad submission is reported as a non-fatal `PublishError` and skipped --
@@ -51,15 +56,18 @@ test that used to prove the two plugins agree is temporarily skipped; see
    this package's own invention for the earlier wire shape; the file spec
    has no equivalent, and `catalogcrawler` will need updating to fetch
    `baseline`+`changes` directly).
-5. **Signs every catalog file individually**, not the index as a whole:
-   each `baseline`/`changes` entry carries its own `signature.value`, a
-   plain Ed25519 signature over the JCS-canonicalized tuple
-   `{catalogId, version, url, digest, validUntil}` (file spec: "The signed
-   entry is a tuple, not a bare hash" -- binding the signature to exactly
-   one file, in one role, within its validity window). The catalog index
-   document itself is **not signed as a whole** (file spec: trust rides on
-   the per-entry signatures; only the manifest carries a document-level
-   proof).
+5. **Two independent, per-catalog signature layers** (file spec v2), not a
+   whole-index signature: every catalog **file** (baseline and change file
+   alike) self-signs its own content -- a plain Ed25519 signature
+   (`pkg/security/artifactsigner.SignJSON`) over the JCS-canonicalized file
+   document with its own `signature` field removed ("avoiding circular
+   signing") -- and every catalog-index **entry** separately self-signs
+   itself as a whole (`catalogId`, `catalogType`, `status`, `networkIds`,
+   `schemaTypes`, and every `baseline`/`changes[]` file reference
+   together), the same non-circular convention one level up. Neither
+   signature carries an expiry (no `validUntil`); the index's own
+   `next_update` bounds staleness instead. The catalog index document
+   itself is still **not signed as a whole**.
 6. Retires catalogs on request (`PublishRequest.Retire`): a tombstone entry
    (`{catalogId, status: "RETIRED", retiredAt}`, no files) replaces
    whatever was there, so crawlers can tell "gone" apart from "never
@@ -79,10 +87,10 @@ test that used to prove the two plugins agree is temporarily skipped; see
 ## Wire shapes, at a glance
 
 **Catalog index** (a plain Beckn file; **not** a DeDi file, and not signed
-as a whole):
+as a whole -- but every entry self-signs itself):
 ```json
 {
-  "participantId": "open-economy.nfh.global",
+  "nodeId": "open-economy.nfh.global",
   "version": 2,
   "next_update": "...",
   "catalogs": [
@@ -90,22 +98,34 @@ as a whole):
       "catalogId": "open-economy.nfh.global/electronics-2026",
       "catalogType": "REGULAR", "status": "ACTIVE",
       "schemaTypes": ["..."],
-      "baseline": { "version": 1, "url": "...", "size": 413, "digest": "sha-256:...",
-                    "signature": { "keyId": "key-1", "value": "...", "validUntil": "..." } },
-      "changes": [ { "version": 2, "url": "...", "size": 336, "digest": "sha-256:...",
-                     "signature": { "keyId": "key-1", "value": "...", "validUntil": "..." } } ]
+      "baseline": { "version": 1, "url": "...", "size": 413, "digest": "sha-256:..." },
+      "changes": [ { "version": 2, "url": "...", "size": 336, "digest": "sha-256:..." } ],
+      "signature": { "keyId": "key-1", "value": "..." }
     },
-    { "catalogId": "...", "status": "RETIRED", "retiredAt": "..." }
+    { "catalogId": "...", "status": "RETIRED", "retiredAt": "...", "signature": { "keyId": "key-1", "value": "..." } }
   ]
 }
 ```
+`baseline`/`changes[]` entries carry no signature of their own -- their
+`digest`/`size` describe the already self-signed file they point at (see
+below); the catalog-**entry**'s own `signature` covers everything shown
+above it, `signature` itself excluded.
 
-**Change file**:
+**Baseline file** (published at a `baseline` entry's `url`, self-signed):
+```json
+{
+  "catalog": { "id": "...", "descriptor": {...}, "provider": {...}, "resources": [...], "offers": [] },
+  "signature": { "keyId": "key-1", "canonicalization": "JCS", "value": "..." }
+}
+```
+
+**Change file** (published at a `changes[]` entry's `url`, self-signed):
 ```json
 {
   "catalogId": "...", "fromVersion": 1, "toVersion": 2,
   "resources": { "upserts": [ {"id": "...", "descriptor": {...}} ], "removals": ["..."] },
-  "offers": { "upserts": [], "removals": [] }
+  "offers": { "upserts": [], "removals": [] },
+  "signature": { "keyId": "key-1", "canonicalization": "JCS", "value": "..." }
 }
 ```
 
@@ -142,7 +162,7 @@ Inspect what got written:
 ```bash
 find /tmp/catalog-demo -type f
 cat /tmp/catalog-demo/catalogs/CAT-DEMO-1.v1.json          # the baseline -- unchanged Beckn Catalog JSON
-cat /tmp/catalog-demo/index/becknCatalogs.index.json         # participantId/version/catalogs[], per-file signatures
+cat /tmp/catalog-demo/index/becknCatalogs.index.json         # nodeId/version/catalogs[], each entry self-signed
 ```
 
 ### 2. Publish an update to the same catalog (change file + version bump)
@@ -167,7 +187,7 @@ index version 2, artifacts written to /tmp/catalog-demo
 
 ```bash
 cat /tmp/catalog-demo/catalogs/changes/CAT-DEMO-1.v2.changes.json   # {"catalogId":...,"fromVersion":1,"toVersion":2,"resources":{"upserts":[...ITEM-1,ITEM-3],"removals":["ITEM-2"]},"offers":{}}
-cat /tmp/catalog-demo/index/becknCatalogs.index.json          # index version now 2; baseline entry unchanged (same signature); changes[] has one new signed entry
+cat /tmp/catalog-demo/index/becknCatalogs.index.json          # index version now 2; baseline entry unchanged; changes[] has one new file reference; the catalog entry re-signs regardless
 ```
 
 ### 3. Publish the same content again (no-op)
@@ -237,7 +257,6 @@ file spec's own example URLs.
 | `-keyID` | signing key id (auto-generated into `<out>/.keys/` on first use); embedded in the keyset this CLI's file-backed KeyManager returns, and read from there by `catalogpublisher`, not passed to its config directly | `local-publisher-key` |
 | `-domain` | publisher domain -- likewise embedded in the returned keyset (`SubscriberID`), not `catalogpublisher`'s own config | `local.test` |
 | `-nextUpdateDays` | days until `next_update` expires; `0` omits it | `14` |
-| `-fileValidityDays` | days until each file's `signature.validUntil` expires; `0` falls back to `-nextUpdateDays` | `14` |
 | `-retire` | comma-separated catalogIds to mark RETIRED this run | *(empty)* |
 | `-forceBaseline` | publish a fresh baseline for `-catalog`, discarding its change history (also how to trigger compaction) | `false` |
 
@@ -274,19 +293,15 @@ go test ./pkg/plugin/implementation/catalogpublisher/... -v
   only detects changes to `descriptor` and `provider`.
 - **ES256 support.** The file spec accepts both Ed25519 and ES256 keys;
   this package only implements Ed25519 (matching its own examples).
-- **The per-entry signature's exact encoding.** The file spec explicitly
-  allows either a plain signature value (what this package does) or a
-  detached JWS "to match DeDi's proof encoding... the final encoding is a
-  schema decision, not a semantic one." A plain Ed25519 signature over the
-  JCS-canonicalized tuple was chosen as the simpler of the two allowed
-  options.
+- **The signatures' exact encoding.** Both the catalog-entry and the
+  catalog-file self-signatures are plain Ed25519 values, not a detached
+  JWS -- the simpler of the file spec's allowed encodings.
 - **Whole-index signature.** The file spec allows an optional whole-file
   signature for publishers who want membership/ordering covered too; not
   implemented here.
-- **Restricted catalogs/index.** `NetworkIds`/`AuthMethods` pass straight
-  through to the wire format correctly, but nothing here implements the
-  signed-challenge gateway side (that's `catalogcrawler`/a gateway's job,
-  not the publisher's).
+- **Restricted catalogs.** Not a gap -- file spec v2 removed the concept
+  entirely. Catalogs are public, unconditionally; there is no restricted
+  catalog, no download gate, and no per-catalog authentication method.
 
 ## Local persistence: `localstore`
 
@@ -370,7 +385,7 @@ full working examples (the bpp one also has `schemaValidator` active and
 `catalogpublisher.Config` -- `subscriberId` is only the `KeyManager.Keyset`
 lookup key (the same one every other `Keyset` caller uses, e.g.
 `pkg/security/artifactfetcher`, `core/module/handler/responsestep.go`).
-Every file's `signature.keyId` and the index's `participantId` are read
+Every signature's `keyId` and the index's `nodeId` are read
 from the returned `Keyset`'s `UniqueKeyID`/`SubscriberID` fields instead --
 whatever the KeyManager plugin's own config (e.g. `simplekeymanager`'s
 `subscriberId`/`keyId`) already populated them with, not duplicated here.
@@ -391,9 +406,10 @@ kept in sync by hand. An explicit `subscriberId` under
 `catalogPublisher.config` is still honored untouched, for the rare case it
 must legitimately differ from the KeyManager's.
 
-**Restricted catalogs**: `visibleTo` (via `publishDirectives`, see above)
-maps onto `NetworkIds`; `AuthMethods` isn't wired to any request field
-yet -- custom auth for restricted catalogs is a later phase.
+**Relevance filtering**: `visibleTo` (via `publishDirectives`, see above)
+maps onto `NetworkIds` -- a Discovery-service relevance filter, not access
+control (file spec v2, "Catalog access is public"); there is no
+restricted-catalog concept to wire up.
 
 **Optional schema/policy validation, reusing existing plugins as-is, on
 the real request body.** `plugins.schemaValidator` (`schemav2validator`)
@@ -483,9 +499,6 @@ on every check, since it's re-resolved fresh each time.
   `catalogPublish` handler's `outputRoot` only ever holds local files;
   "moving them to wherever they're actually served from" is left to a
   separate, later deployment step.
-- Restricted-catalog support in the `catalogPublish` handler (currently
-  public-only; the core plugin itself already supports `NetworkIds`/
-  `AuthMethods`, just not exposed through this request body yet).
 - A real, signed, async `catalog/publish` Beckn action per beckn.yaml
   (context/action envelope, `validateSign`/`addRoute`/`sign` pipeline,
   `on_publish` callback with `CatalogProcessingResult`) is a materially

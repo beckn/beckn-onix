@@ -24,11 +24,22 @@ const dediJWSHeader = `{"alg":"EdDSA","b64":false,"crit":["b64"]}`
 // but is sufficient here since Go's map marshaling already sorts keys and
 // uses compact separators).
 func CanonicalizeJCS(doc []byte) ([]byte, error) {
+	return CanonicalizeJCSExcluding(doc, "proof")
+}
+
+// CanonicalizeJCSExcluding is CanonicalizeJCS generalized to remove an
+// arbitrary top-level field before canonicalizing, for documents that sign
+// themselves under a different field name than DeDi's "proof" convention --
+// e.g. the decentralized-catalog file spec's self-signed catalog files and
+// catalog-index entries, which both remove "signature" instead (the same
+// non-circularity requirement: a document cannot authentically sign its
+// own eventual signature).
+func CanonicalizeJCSExcluding(doc []byte, excludeField string) ([]byte, error) {
 	var generic map[string]interface{}
 	if err := json.Unmarshal(doc, &generic); err != nil {
 		return nil, fmt.Errorf("canonicalizing document: %w", err)
 	}
-	delete(generic, "proof")
+	delete(generic, excludeField)
 	return marshalSorted(generic)
 }
 

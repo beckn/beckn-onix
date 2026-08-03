@@ -189,7 +189,8 @@ modules:
   # pkg/plugin/implementation/catalogpublisher/README.md). Unsigned,
   # same-operator call -- no validateSign/addRoute/signAck; the handler
   # calls CatalogPublisher.Publish and writes the result under outputRoot.
-  # Public catalogs only in this phase (no networkIds/authMethods).
+  # Catalogs are public unconditionally (file spec v2) -- networkIds is a
+  # Discovery-service relevance filter only, never access control.
   - name: catalogPublish
     path: /catalog/publish
     handler:
@@ -233,7 +234,6 @@ modules:
             # of truth for which keyset gets loaded). Set it explicitly
             # here only if it must legitimately differ from keyManager's.
             nextUpdateIn: "336h"
-            fileValidityIn: "336h"
             # catalogBaseURL: the one public URL prefix outputRoot (/catalog
             # above) is served under -- e.g. an ngrok tunnel onto that
             # directory. Index/catalog file URLs are addressed under this
