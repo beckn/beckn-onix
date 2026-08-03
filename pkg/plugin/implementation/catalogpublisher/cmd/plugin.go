@@ -32,14 +32,6 @@ func (p catalogPublisherProvider) parseConfig(config map[string]string) (*catalo
 		cfg.NextUpdateIn = d
 	}
 
-	if v, exists := config["fileValidityIn"]; exists && v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return nil, fmt.Errorf("invalid fileValidityIn value '%s': %w", v, err)
-		}
-		cfg.FileValidityIn = d
-	}
-
 	return cfg, nil
 }
 

@@ -6,23 +6,13 @@ import (
 	"time"
 )
 
-// AuthMethod is one way a restricted catalog authenticates a crawler's
-// fetch -- e.g. "signed-challenge" (Decentralized Catalog file spec, "Auth
-// methods for restricted downloads"). A list, not an enum, so new methods
-// extend without changing the shape. Per-catalog only: the catalog index
-// itself does not support this (see CatalogPublisher's doc comment).
-type AuthMethod struct {
-	Method           string
-	Algorithm        string
-	Header           string
-	Challenge        []string
-	FreshnessSeconds int
-}
-
 // CatalogSubmission is one catalog's input to a publish call: the plain
 // Beckn Catalog object (no context/message envelope) plus the publisher-
-// declared metadata that only the publisher can know -- NetworkIds and
-// AuthMethods are never derived from the catalog content itself.
+// declared metadata that only the publisher can know -- NetworkIds is
+// never derived from the catalog content itself. Catalogs are public,
+// unconditionally (file spec v2, "Catalog access is public") -- there is
+// no restricted-catalog or per-catalog-auth concept; NetworkIds is a
+// Discovery-service relevance filter only, never an access control.
 type CatalogSubmission struct {
 	// CatalogID is the full participant-scoped id, e.g.
 	// "open-economy.nfh.global/electronics-2026".
@@ -39,26 +29,22 @@ type CatalogSubmission struct {
 	// public (file spec: "networkIds ... Empty or absent means public").
 	NetworkIds []string
 
-	// AuthMethods is only meaningful when NetworkIds is non-empty.
-	AuthMethods []AuthMethod
-
 	Catalog json.RawMessage
 }
 
-// FileRef is a signed pointer to one published catalog file (a baseline or
-// a change file): its own version, where it lives, its size and digest,
-// and the per-file signature tuple binding all of it together (file spec,
-// "The signed entry is a tuple, not a bare hash"). Callers carry these
-// forward across Publish calls -- Publish holds no storage-backed state of
-// its own (see PriorCatalogState).
+// FileRef is a pointer to one published catalog file (a baseline or a
+// change file): its own version, where it lives, its size and digest.
+// Callers carry these forward across Publish calls -- Publish holds no
+// storage-backed state of its own (see PriorCatalogState). File-level
+// integrity now comes from the file's own embedded self-signature (file
+// spec v2, "Catalog files and change files"), not a signature carried
+// here -- trust for the index entry as a whole comes from
+// CatalogPublishOutcome's catalog-entry-level signature instead.
 type FileRef struct {
-	Version             int
-	URL                 string
-	Size                int64
-	Digest              string
-	SignatureKeyID      string
-	SignatureValue      string
-	SignatureValidUntil time.Time
+	Version int
+	URL     string
+	Size    int64
+	Digest  string
 }
 
 // PriorCatalogState is what a caller must supply, per catalogId, to get

@@ -33,7 +33,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/catalogfile"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
@@ -162,15 +161,19 @@ type indexEntry struct {
 }
 
 type wireFileEntry struct {
-	Version   int    `json:"version"`
-	URL       string `json:"url"`
-	Size      int64  `json:"size"`
-	Digest    string `json:"digest"`
-	Signature struct {
-		KeyID      string    `json:"keyId"`
-		Value      string    `json:"value"`
-		ValidUntil time.Time `json:"validUntil"`
-	} `json:"signature"`
+	Version int    `json:"version"`
+	URL     string `json:"url"`
+	Size    int64  `json:"size"`
+	Digest  string `json:"digest"`
+}
+
+// wireCatalogFile unwraps a stored baseline file's self-signed envelope
+// (catalogpublisher's catalogFileDoc: {catalog, signature}) back to the
+// bare catalog content Apply/diffing expect. No signature verification on
+// read for now -- this package only ever reads back its own previously-
+// written output, not externally-fetched content.
+type wireCatalogFile struct {
+	Catalog json.RawMessage `json:"catalog"`
 }
 
 // Load reads the previously-written catalog index (if any) under root and
@@ -233,8 +236,12 @@ func reconstructState(root string, entry indexEntry) (*definition.PriorCatalogSt
 	if err != nil {
 		return nil, fmt.Errorf("localstore: reading %s: %w", baselinePath, err)
 	}
+	var wrapped wireCatalogFile
+	if err := json.Unmarshal(baselineBytes, &wrapped); err != nil {
+		return nil, fmt.Errorf("localstore: parsing %s: %w", baselinePath, err)
+	}
 
-	effective := json.RawMessage(baselineBytes)
+	effective := wrapped.Catalog
 	changeFiles := make([]definition.FileRef, 0, len(entry.Changes))
 	for _, ch := range entry.Changes {
 		path := CatalogFilePath(root, entry.CatalogID, ch.Version, "changes.json")
@@ -259,12 +266,9 @@ func reconstructState(root string, entry indexEntry) (*definition.PriorCatalogSt
 
 func toFileRef(fe wireFileEntry) definition.FileRef {
 	return definition.FileRef{
-		Version:             fe.Version,
-		URL:                 fe.URL,
-		Size:                fe.Size,
-		Digest:              fe.Digest,
-		SignatureKeyID:      fe.Signature.KeyID,
-		SignatureValue:      fe.Signature.Value,
-		SignatureValidUntil: fe.Signature.ValidUntil,
+		Version: fe.Version,
+		URL:     fe.URL,
+		Size:    fe.Size,
+		Digest:  fe.Digest,
 	}
 }

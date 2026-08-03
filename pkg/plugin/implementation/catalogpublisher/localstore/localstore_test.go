@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
@@ -66,8 +65,7 @@ func (f *fakeKeyManager) DeleteKeyset(ctx context.Context, keyID string) error {
 func newTestPublisher(t *testing.T) *catalogpublisher.Publisher {
 	t.Helper()
 	p, _, err := catalogpublisher.New(context.Background(), newFakeKeyManager(t), &catalogpublisher.Config{
-		SubscriberID:   "k1",
-		FileValidityIn: 24 * time.Hour,
+		SubscriberID: "k1",
 	})
 	if err != nil {
 		t.Fatalf("catalogpublisher.New: %v", err)

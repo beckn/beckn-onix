@@ -1,8 +1,8 @@
 // Command catalogpublisherctl is a minimal, throwaway-for-demo CLI around
 // catalogpublisher.Publisher: point it at a catalog JSON file and an output
-// directory, and it writes a signed manifest and a catalog index (whose
-// file entries carry their own signatures) to that directory, plus the
-// catalog's versioned baseline/change files. Running it again with an
+// directory, and it writes a catalog index (whose entries self-sign) to
+// that directory, plus the catalog's versioned baseline/change files
+// (each self-signed too). Running it again with an
 // updated catalog (same catalogId) against the same output directory diffs
 // against what's on disk and produces a change file with a bumped version
 // instead of a fresh baseline.
@@ -45,8 +45,7 @@ func main() {
 	outDir := flag.String("out", "./catalog-publish-out", "output directory for generated artifacts")
 	keyID := flag.String("keyID", "local-publisher-key", "signing key id -- embedded in the keyset this CLI's file-backed KeyManager returns")
 	domain := flag.String("domain", "local.test", "publisher domain -- embedded in the keyset this CLI's file-backed KeyManager returns; catalogpublisher reads it from there, not from its own config")
-	nextUpdateDays := flag.Int("nextUpdateDays", 14, "days until the manifest/index \"next_update\" freshness window expires (0 to omit it)")
-	fileValidityDays := flag.Int("fileValidityDays", 14, "days until each catalog file's signature.validUntil expires (0 falls back to -nextUpdateDays)")
+	nextUpdateDays := flag.Int("nextUpdateDays", 14, "days until the index \"next_update\" freshness window expires (0 to omit it)")
 	retire := flag.String("retire", "", "comma-separated catalogIds to mark RETIRED this run (works with or without -catalog)")
 	forceBaseline := flag.Bool("forceBaseline", false, "publish a fresh baseline for -catalog, discarding its change history (also how to trigger compaction)")
 	publicBaseURL := flag.String("publicBaseURL", "", "if set, embed URLs under this single base instead of file:// (e.g. http://localhost:8000 when serving -out with `python3 -m http.server` from within it) -- must match wherever -out is actually served from. Note: the manifest (.well-known/dedi.index.json) is currently not written to -out at all (see localstore.Write); only the catalog index and catalog files are")
@@ -57,7 +56,7 @@ func main() {
 		retireIDs = strings.Split(*retire, ",")
 	}
 	if *catalogPath == "" && len(retireIDs) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: catalogpublisherctl -catalog <path> [-catalogId id] [-out dir] [-keyID id] [-domain domain] [-nextUpdateDays n] [-fileValidityDays n] [-retire id1,id2] [-forceBaseline] [-publicBaseURL url]")
+		fmt.Fprintln(os.Stderr, "usage: catalogpublisherctl -catalog <path> [-catalogId id] [-out dir] [-keyID id] [-domain domain] [-nextUpdateDays n] [-retire id1,id2] [-forceBaseline] [-publicBaseURL url]")
 		os.Exit(2)
 	}
 
@@ -78,17 +77,12 @@ func main() {
 	if *nextUpdateDays > 0 {
 		nextUpdateIn = time.Duration(*nextUpdateDays) * 24 * time.Hour
 	}
-	var fileValidityIn time.Duration
-	if *fileValidityDays > 0 {
-		fileValidityIn = time.Duration(*fileValidityDays) * 24 * time.Hour
-	}
 
 	ctx := context.Background()
 	publisher, _, err := catalogpublisher.New(ctx, km, &catalogpublisher.Config{
-		SubscriberID:   *keyID,
-		NextUpdateIn:   nextUpdateIn,
-		FileValidityIn: fileValidityIn,
-		PublicBaseURL:  base,
+		SubscriberID:  *keyID,
+		NextUpdateIn:  nextUpdateIn,
+		PublicBaseURL: base,
 	})
 	must(err)
 
