@@ -399,6 +399,31 @@ func TestProofPresentButEmpty(t *testing.T) {
 	assertClassCode(t, err, failProof, codeAutSignatureMissing)
 }
 
+// TestDataIntegrityProofWithoutVerificationMethod asserts that a JSON-LD Data
+// Integrity proof carrying no verificationMethod is rejected even when
+// RequireProof is false. With requireProof disabled the signature itself is
+// deliberately not checked, so the resolvable verificationMethod is the only
+// remaining evidence about the credential; absent it there is nothing left to
+// verify, which is the same situation as the no-proof and empty-proof cases
+// and is classified with the same code.
+func TestDataIntegrityProofWithoutVerificationMethod(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Actions = []string{"confirm"}
+	cfg.RequireProof = false
+
+	vc := map[string]any{
+		"issuer":            "did:web:issuer.example.org",
+		"credentialSubject": map[string]any{"id": "x"},
+		"proof": map[string]any{
+			"type":       "Ed25519Signature2020",
+			"proofValue": "z58DAdFfa9Skq...",
+		},
+	}
+	v := testVerifier(cfg)
+	err := v.verify(context.Background(), vcBytes(t, vc))
+	assertClassCode(t, err, failProof, codeAutSignatureMissing)
+}
+
 // TestUnsupportedDIDMethodIsKeyNotFound asserts a resolution failure caused by
 // a disallowed/unsupported DID method (not a network problem) is classified
 // AUT_KEY_NOT_FOUND rather than a NET_* code.

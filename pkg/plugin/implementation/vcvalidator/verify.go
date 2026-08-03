@@ -220,12 +220,18 @@ func (v *verifier) verify(ctx context.Context, raw json.RawMessage) error {
 					"set requireProof=false to accept on expiry/revocation only",
 				cred.Proof.Type)
 		}
-		// Best-effort: confirm the verification method DID resolves.
-		if vm := cred.Proof.VerificationMethod; vm != "" {
-			if _, err := resolveDID(ctx, vm, "", v.cfg, v.fetch); err != nil {
-				if !v.cfg.FailOpen {
-					return failf(failResolution, resolutionCode(err), "verificationMethod %q did not resolve: %v", vm, err)
-				}
+		// Best-effort: confirm the verification method DID resolves. Without a
+		// verificationMethod there is nothing at all left to check — the same
+		// defect as the two cases above — so reject rather than accept a
+		// credential on which no verification was performed.
+		vm := cred.Proof.VerificationMethod
+		if vm == "" {
+			return failf(failProof, codeAutSignatureMissing,
+				"proof type %q has no verificationMethod to resolve", cred.Proof.Type)
+		}
+		if _, err := resolveDID(ctx, vm, "", v.cfg, v.fetch); err != nil {
+			if !v.cfg.FailOpen {
+				return failf(failResolution, resolutionCode(err), "verificationMethod %q did not resolve: %v", vm, err)
 			}
 		}
 	} else {
