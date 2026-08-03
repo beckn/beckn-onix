@@ -130,7 +130,7 @@ func TestRegisterRejectsPolicyViolation(t *testing.T) {
 			return func(next http.Handler) http.Handler { return next }, nil
 		},
 		policyCheckerFunc: func(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
-			return mockPolicyChecker{err: model.NewBadReqErr(errors.New("blocked by policy"))}, nil
+			return mockPolicyChecker{err: model.NewBadReqErr("", errors.New("blocked by policy"))}, nil
 		},
 	}
 

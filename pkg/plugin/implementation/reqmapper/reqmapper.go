@@ -117,7 +117,7 @@ func parseRequestBody(body []byte) (*parsedRequest, error) {
 
 	action, ok := reqContext["action"].(string)
 	if !ok || action == "" {
-		return nil, model.NewCodedBadReqErr("SCH_REQUIRED_FIELD_MISSING", errors.New("action field not found or invalid"))
+		return nil, model.NewBadReqErr("SCH_REQUIRED_FIELD_MISSING", errors.New("action field not found or invalid"))
 	}
 
 	return &parsedRequest{

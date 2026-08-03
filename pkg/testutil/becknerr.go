@@ -6,24 +6,31 @@ package testutil
 
 import (
 	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
-// RequireBadReqCode asserts that errors.As finds a *model.BadReqErr in err
-// and that its BecknError().Code equals wantCode. Shared by every plugin test
-// suite that classifies failures onto *model.BadReqErr (reqmapper, router,
-// reqpreprocessor, encrypter, decrypter, ...) instead of each reimplementing
-// the same assertion locally.
+// RequireBadReqCode asserts that errors.As finds a *model.CodedErr in err,
+// that its status is 400, and that its BecknError().Code equals wantCode.
+// Shared by every plugin test suite that classifies failures as bad requests
+// (reqmapper, router, reqpreprocessor, encrypter, decrypter, ...) instead of
+// each reimplementing the same assertion locally.
+//
+// The status is checked because one CodedErr type now covers 400, 401 and
+// 404, so matching the type alone would also accept the other two.
 func RequireBadReqCode(t *testing.T, err error, wantCode string) {
 	t.Helper()
 
-	var badReqErr *model.BadReqErr
-	if !errors.As(err, &badReqErr) {
-		t.Fatalf("expected errors.As to find a *model.BadReqErr in %v (%T)", err, err)
+	var codedErr *model.CodedErr
+	if !errors.As(err, &codedErr) {
+		t.Fatalf("expected errors.As to find a *model.CodedErr in %v (%T)", err, err)
 	}
-	if code := badReqErr.BecknError().Code; code != wantCode {
+	if status := codedErr.HTTPStatus(); status != http.StatusBadRequest {
+		t.Errorf("HTTPStatus() = %d, want %d", status, http.StatusBadRequest)
+	}
+	if code := codedErr.BecknError().Code; code != wantCode {
 		t.Errorf("BecknError().Code = %s, want %s", code, wantCode)
 	}
 }

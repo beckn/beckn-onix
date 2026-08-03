@@ -369,7 +369,7 @@ func handleProtocolMapping(route *model.Route, npURI, endpoint, rawQuery string)
 	}
 	targetURL, err := url.Parse(target)
 	if err != nil {
-		return nil, model.NewCodedBadReqErr("SCH_INVALID_FORMAT",
+		return nil, model.NewBadReqErr("SCH_INVALID_FORMAT",
 			fmt.Errorf("invalid %s URI - %s in request body for %s: %w", role, target, endpoint, err))
 	}
 	targetURL.Path = joinPath(targetURL, endpoint)

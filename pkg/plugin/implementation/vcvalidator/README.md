@@ -72,18 +72,18 @@ DEG devkit's docker network) must opt in explicitly with
 
 ## NACK failure classes
 
-A rejection is returned to the handler as one of the standard model error
-types, so the NACK carries the usual `error.code` plus a message that starts
-with the machine-readable failure class:
+A rejection is returned to the handler as a `model.CodedErr` carrying the HTTP
+status below, so the NACK carries the usual `error.code` plus a message that
+starts with the machine-readable failure class:
 
-| failure class | meaning | model error → HTTP |
-|------|---------|------|
-| `INVALID_CREDENTIAL` | malformed credential / missing issuer | `BadReqErr` → 400 |
-| `INVALID_PROOF` | signature invalid, missing, or alg mismatch | `SignValidationErr` → 401 |
-| `ISSUER_MISMATCH` | proof signer ≠ declared issuer | `SignValidationErr` → 401 |
-| `CREDENTIAL_EXPIRED` | outside validity window | `SignValidationErr` → 401 |
-| `DID_RESOLUTION_FAILED` | could not resolve issuer / verification-method DID | `SignValidationErr` → 401 |
-| `CREDENTIAL_REVOKED` | revoked per `credentialStatus` | `SignValidationErr` → 401 |
+| failure class | meaning | constructor → HTTP |
+| ------ | --------- | ------ |
+| `INVALID_CREDENTIAL` | malformed credential / missing issuer | `NewBadReqErr` → 400 |
+| `INVALID_PROOF` | signature invalid, missing, or alg mismatch | `NewSignValidationErr` → 401 |
+| `ISSUER_MISMATCH` | proof signer ≠ declared issuer | `NewSignValidationErr` → 401 |
+| `CREDENTIAL_EXPIRED` | outside validity window | `NewSignValidationErr` → 401 |
+| `DID_RESOLUTION_FAILED` | could not resolve issuer / verification-method DID | `NewSignValidationErr` → 401 |
+| `CREDENTIAL_REVOKED` | revoked per `credentialStatus` | `NewSignValidationErr` → 401 |
 
 The NACK body matches beckn-onix's v2 shape and is signed by the handler
 (`Signature` response header) like every other pipeline NACK:
@@ -129,7 +129,7 @@ modules:
 ```
 
 | key | required | default | meaning |
-|-----|----------|---------|---------|
+| ----- | ---------- | --------- | --------- |
 | `enabled` | no | `true` | when `false`, every request passes through untouched |
 | `actions` | **yes** (when enabled) | — | comma list of gated beckn actions, e.g. `confirm,init` |
 | `allowedDidMethods` | no | `key,jwk,web` | permitted issuer / verification-method DID methods |

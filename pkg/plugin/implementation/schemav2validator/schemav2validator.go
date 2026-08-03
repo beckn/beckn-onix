@@ -133,7 +133,7 @@ func New(ctx context.Context, config *Config) (*schemav2Validator, func() error,
 func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data []byte) error {
 	if len(data) == 0 {
 		if reqURL == nil {
-			return model.NewBadReqErr(fmt.Errorf("request URL is required for bodyless validation"))
+			return model.NewBadReqErr("", fmt.Errorf("request URL is required for bodyless validation"))
 		}
 
 		v.specMutex.RLock()
@@ -142,7 +142,7 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 		v.specMutex.RUnlock()
 
 		if !specsLoaded {
-			return model.NewBadReqErr(fmt.Errorf("no OpenAPI spec loaded"))
+			return model.NewBadReqErr("", fmt.Errorf("no OpenAPI spec loaded"))
 		}
 
 		// reqURL.Path is the clean endpoint action (e.g. "catalog/subscription"),
@@ -151,7 +151,7 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 		// reaching here, so only GET/DELETE arrive at this branch.
 		action := reqURL.Path
 		if _, ok := bodylessActions[action]; !ok {
-			return model.NewBadReqErr(fmt.Errorf("unsupported bodyless request for endpoint: %s", action))
+			return model.NewBadReqErr("", fmt.Errorf("unsupported bodyless request for endpoint: %s", action))
 		}
 
 		log.Debugf(ctx, "bodyless request to %s: skipping body schema validation", action)
@@ -167,7 +167,7 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 	}
 
 	if payloadData.Context.Action == "" {
-		return model.NewBadReqErr(fmt.Errorf("missing field Action in context"))
+		return model.NewBadReqErr("", fmt.Errorf("missing field Action in context"))
 	}
 
 	v.specMutex.RLock()
@@ -176,7 +176,7 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 	v.specMutex.RUnlock()
 
 	if !specsLoaded {
-		return model.NewBadReqErr(fmt.Errorf("no OpenAPI spec loaded"))
+		return model.NewBadReqErr("", fmt.Errorf("no OpenAPI spec loaded"))
 	}
 
 	action := payloadData.Context.Action
@@ -184,7 +184,7 @@ func (v *schemav2Validator) Validate(ctx context.Context, reqURL *url.URL, data 
 	// O(1) lookup from merged action index
 	schema := actionSchemas[action]
 	if schema == nil || schema.Value == nil {
-		return model.NewBadReqErr(fmt.Errorf("unsupported action: %s", action))
+		return model.NewBadReqErr("", fmt.Errorf("unsupported action: %s", action))
 	}
 
 	log.Debugf(ctx, "Validating action: %s", action)

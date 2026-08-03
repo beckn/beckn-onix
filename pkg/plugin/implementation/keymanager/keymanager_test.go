@@ -1071,12 +1071,15 @@ func TestLookupNPKeysFailure(t *testing.T) {
 				t.Errorf("expected error to contain %v, got %v", tt.expectedError, err.Error())
 			}
 			if tt.wantCode != "" {
-				var signErr *model.SignValidationErr
+				var signErr *model.CodedErr
 				if !errors.As(err, &signErr) {
-					t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+					t.Fatalf("expected err to be a *model.CodedErr, got: %T (%v)", err, err)
 				}
 				if signErr.Code != tt.wantCode {
 					t.Errorf("signErr.Code = %s, want %s", signErr.Code, tt.wantCode)
+				}
+				if got := signErr.HTTPStatus(); got != http.StatusUnauthorized {
+					t.Errorf("HTTPStatus() = %d, want %d", got, http.StatusUnauthorized)
 				}
 				if !errors.Is(err, tt.wantSentinel) {
 					t.Errorf("expected errors.Is(err, %v) = true", tt.wantSentinel)

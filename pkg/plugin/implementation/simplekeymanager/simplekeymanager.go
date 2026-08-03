@@ -246,7 +246,7 @@ func (skm *SimpleKeyMgr) Keyset(ctx context.Context, keyID string) (*model.Keyse
 //
 // A zero-result lookup and a matched-but-unusable-status subscriber are both
 // AUT_* authentication failures, so both are returned already classified as
-// *model.SignValidationErr — the caller (signvalidator's validateSignStep)
+// a 401 *model.CodedErr — the caller (signvalidator's validateSignStep)
 // propagates this as-is; it does not need to know keymanager's own sentinel
 // errors to build the correct NACK code.
 func (skm *SimpleKeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueKeyID string) (string, string, error) {
@@ -285,10 +285,10 @@ func (skm *SimpleKeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueK
 			return "", "", fmt.Errorf("failed to lookup registry: %w", err)
 		}
 		if len(subscribers) == 0 {
-			return "", "", model.NewCodedSignValidationErr(codeSubscriberNotFound, ErrSubscriberNotFound)
+			return "", "", model.NewSignValidationErr(codeSubscriberNotFound, ErrSubscriberNotFound)
 		}
 		if !model.IsKeyStatusUsable(subscribers[0].Status) {
-			return "", "", model.NewCodedSignValidationErr(codeKeyExpiredOrRevoked, ErrKeyExpiredOrRevoked)
+			return "", "", model.NewSignValidationErr(codeKeyExpiredOrRevoked, ErrKeyExpiredOrRevoked)
 		}
 	}
 

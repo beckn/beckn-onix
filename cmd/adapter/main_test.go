@@ -364,7 +364,7 @@ func TestNewServerSuccess(t *testing.T) {
 func TestNewServerRejectsPolicyViolation(t *testing.T) {
 	mockMgr := &MockPluginManager{
 		policyCheckerFunc: func(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
-			return stubPolicyChecker{err: model.NewBadReqErr(errors.New("blocked by policy"))}, nil
+			return stubPolicyChecker{err: model.NewBadReqErr("", errors.New("blocked by policy"))}, nil
 		},
 	}
 

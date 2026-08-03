@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -357,12 +358,15 @@ func TestLookupNPKeys_SubscriberNotFound(t *testing.T) {
 	if !strings.Contains(err.Error(), "no subscriber found with given credentials") {
 		t.Errorf("err = %v, want message to contain 'no subscriber found with given credentials'", err)
 	}
-	var signErr *model.SignValidationErr
+	var signErr *model.CodedErr
 	if !errors.As(err, &signErr) {
-		t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+		t.Fatalf("expected err to be a *model.CodedErr, got: %T (%v)", err, err)
 	}
 	if signErr.Code != "AUT_SUBSCRIBER_NOT_FOUND" {
 		t.Errorf("signErr.Code = %s, want AUT_SUBSCRIBER_NOT_FOUND", signErr.Code)
+	}
+	if got := signErr.HTTPStatus(); got != http.StatusUnauthorized {
+		t.Errorf("HTTPStatus() = %d, want %d", got, http.StatusUnauthorized)
 	}
 	if !errors.Is(err, ErrSubscriberNotFound) {
 		t.Error("expected errors.Is(err, ErrSubscriberNotFound) = true")
@@ -396,12 +400,15 @@ func TestLookupNPKeys_KeyExpiredOrRevoked(t *testing.T) {
 			if !strings.Contains(err.Error(), "subscriber key is expired or revoked") {
 				t.Errorf("err = %v, want message to contain 'subscriber key is expired or revoked'", err)
 			}
-			var signErr *model.SignValidationErr
+			var signErr *model.CodedErr
 			if !errors.As(err, &signErr) {
-				t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+				t.Fatalf("expected err to be a *model.CodedErr, got: %T (%v)", err, err)
 			}
 			if signErr.Code != "AUT_KEY_EXPIRED_OR_REVOKED" {
 				t.Errorf("signErr.Code = %s, want AUT_KEY_EXPIRED_OR_REVOKED", signErr.Code)
+			}
+			if got := signErr.HTTPStatus(); got != http.StatusUnauthorized {
+				t.Errorf("HTTPStatus() = %d, want %d", got, http.StatusUnauthorized)
 			}
 			if !errors.Is(err, ErrKeyExpiredOrRevoked) {
 				t.Error("expected errors.Is(err, ErrKeyExpiredOrRevoked) = true")

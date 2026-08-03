@@ -323,9 +323,9 @@ violations contains {"code": "POL_GEO_RESTRICTED", "message": "delivery not offe
 		t.Fatal("expected error (request must be denied), got nil — a coded violation under the bare-set query style must not be silently allowed")
 	}
 
-	badReqErr, ok := err.(*model.BadReqErr)
+	badReqErr, ok := err.(*model.CodedErr)
 	if !ok {
-		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+		t.Fatalf("expected *model.CodedErr, got %T: %v", err, err)
 	}
 	if code := badReqErr.BecknError().Code; code != "POL_GEO_RESTRICTED" {
 		t.Errorf("BecknError().Code = %s, want POL_GEO_RESTRICTED", code)
@@ -396,9 +396,9 @@ violations contains msg if {
 		t.Fatal("expected error (request must be denied), got nil — a non-empty violations set must not be silently allowed just because its item didn't parse")
 	}
 
-	badReqErr, ok := err.(*model.BadReqErr)
+	badReqErr, ok := err.(*model.CodedErr)
 	if !ok {
-		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+		t.Fatalf("expected *model.CodedErr, got %T: %v", err, err)
 	}
 	if code := badReqErr.BecknError().Code; code != "POL_GENERIC_ERROR" {
 		t.Errorf("BecknError().Code = %s, want POL_GENERIC_ERROR", code)
@@ -904,10 +904,10 @@ violations contains "blocked" if { input.context.action == "confirm" }
 		t.Fatal("expected error for non-compliant message, got nil")
 	}
 
-	// Should be a BadReqErr
-	badReqErr, ok := err.(*model.BadReqErr)
+	// Should be a bad-request CodedErr
+	badReqErr, ok := err.(*model.CodedErr)
 	if !ok {
-		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+		t.Fatalf("expected *model.CodedErr, got %T: %v", err, err)
 	}
 
 	// The Rego policy above only emits a plain violation string, so the
@@ -957,9 +957,9 @@ violations contains {"code": "POL_GEO_RESTRICTED", "message": "delivery not offe
 		t.Fatal("expected error for non-compliant message, got nil")
 	}
 
-	badReqErr, ok := err.(*model.BadReqErr)
+	badReqErr, ok := err.(*model.CodedErr)
 	if !ok {
-		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+		t.Fatalf("expected *model.CodedErr, got %T: %v", err, err)
 	}
 	beErr := badReqErr.BecknError()
 	if beErr.Code != "POL_GEO_RESTRICTED" {
@@ -998,9 +998,9 @@ violations contains "blocked" if { input.context.action == "confirm" }
 		t.Fatal("expected error for malformed body, got nil")
 	}
 
-	badReqErr, ok := err.(*model.BadReqErr)
+	badReqErr, ok := err.(*model.CodedErr)
 	if !ok {
-		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+		t.Fatalf("expected *model.CodedErr, got %T: %v", err, err)
 	}
 	if code := badReqErr.BecknError().Code; code != "POL_GENERIC_ERROR" {
 		t.Errorf("BecknError().Code = %s, want POL_GENERIC_ERROR for an evaluation failure", code)
@@ -1029,9 +1029,9 @@ func TestEnforcer_UninitializedEvaluator_UsesGenericCode(t *testing.T) {
 		t.Fatal("expected error when evaluator is nil, got nil")
 	}
 
-	badReqErr, ok := err.(*model.BadReqErr)
+	badReqErr, ok := err.(*model.CodedErr)
 	if !ok {
-		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+		t.Fatalf("expected *model.CodedErr, got %T: %v", err, err)
 	}
 	if code := badReqErr.BecknError().Code; code != "POL_GENERIC_ERROR" {
 		t.Errorf("BecknError().Code = %s, want POL_GENERIC_ERROR", code)
@@ -1091,8 +1091,8 @@ violations contains "blocked" if { input.context.action == "catalog/subscription
 
 	ctx := makeStepCtx("catalog/subscription", `{"context": {"action": "catalog/subscription"}}`)
 	err = enforcer.CheckPolicy(ctx)
-	if _, ok := err.(*model.BadReqErr); !ok {
-		t.Fatalf("expected BadReqErr for compound action violation, got %T: %v", err, err)
+	if _, ok := err.(*model.CodedErr); !ok {
+		t.Fatalf("expected a bad-request *model.CodedErr for compound action violation, got %T: %v", err, err)
 	}
 }
 
@@ -1122,8 +1122,8 @@ violations contains "blocked" if { input.context.action == "confirm" }
 	if err == nil {
 		t.Fatal("expected error from URL-sourced policy, got nil")
 	}
-	if _, ok := err.(*model.BadReqErr); !ok {
-		t.Errorf("expected *model.BadReqErr, got %T", err)
+	if _, ok := err.(*model.CodedErr); !ok {
+		t.Errorf("expected *model.CodedErr, got %T", err)
 	}
 }
 
@@ -1657,9 +1657,9 @@ result := {"violations": [{"code": "POL_KYC_REQUIRED", "message": "kyc required"
 		t.Fatal("expected error (request must be denied), got nil — a structured result missing the \"valid\" key must not be silently allowed")
 	}
 
-	badReqErr, ok := err.(*model.BadReqErr)
+	badReqErr, ok := err.(*model.CodedErr)
 	if !ok {
-		t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+		t.Fatalf("expected *model.CodedErr, got %T: %v", err, err)
 	}
 	if code := badReqErr.BecknError().Code; code != "POL_GENERIC_ERROR" {
 		t.Errorf("BecknError().Code = %s, want POL_GENERIC_ERROR", code)
@@ -2162,8 +2162,8 @@ violations contains "blocked" if {
 	if err == nil {
 		t.Fatal("expected error for non-compliant message, got nil")
 	}
-	if _, ok := err.(*model.BadReqErr); !ok {
-		t.Errorf("expected *model.BadReqErr, got %T: %v", err, err)
+	if _, ok := err.(*model.CodedErr); !ok {
+		t.Errorf("expected *model.CodedErr, got %T: %v", err, err)
 	}
 
 	// Compliant: confirm with provider

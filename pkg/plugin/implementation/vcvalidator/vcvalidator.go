@@ -108,19 +108,17 @@ func (s *step) Run(ctx *model.StepContext) error {
 // machine-readable failure class also stays at the start of the NACK error
 // message (e.g. "CREDENTIAL_REVOKED: …").
 //
-// Known limitation (see #870/#884): every non-failStructure class routes to
-// SignValidationErr, which core/module/handler/responsestep.go always maps
-// to HTTP 401 — including failResolution's NET_TIMEOUT/NET_DOWNSTREAM_UNAVAILABLE
+// Known limitation (see #870/#884): every non-failStructure class is reported
+// as a 401, including failResolution's NET_TIMEOUT/NET_DOWNSTREAM_UNAVAILABLE
 // codes, which then surface under a 401 rather than a network-appropriate
-// status. Splitting the HTTP-status mapping by Code family (not just Go
-// type) would fix this but is a nackBecknError-level change affecting every
-// plugin that returns SignValidationErr, deferred rather than folded into
-// #870/#884's classification-only scope.
+// status. model.NewCodedErr takes a status directly, so remapping a class to
+// 502 or 504 is a local change now. Left to #870/#884, since it changes the
+// status this plugin puts on the wire.
 func nackErr(ve *vcError) error {
 	if ve.class == failStructure {
-		return model.NewCodedBadReqErr(ve.code, ve)
+		return model.NewBadReqErr(ve.code, ve)
 	}
-	return model.NewCodedSignValidationErr(ve.code, ve)
+	return model.NewSignValidationErr(ve.code, ve)
 }
 
 func asVCError(err error) *vcError {
