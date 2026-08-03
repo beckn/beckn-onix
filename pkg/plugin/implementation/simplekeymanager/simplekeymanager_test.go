@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -364,6 +365,9 @@ func TestLookupNPKeys_SubscriberNotFound(t *testing.T) {
 	if signErr.Code != "AUT_SUBSCRIBER_NOT_FOUND" {
 		t.Errorf("signErr.Code = %s, want AUT_SUBSCRIBER_NOT_FOUND", signErr.Code)
 	}
+	if got := signErr.HTTPStatus(); got != http.StatusUnauthorized {
+		t.Errorf("HTTPStatus() = %d, want %d", got, http.StatusUnauthorized)
+	}
 	if !errors.Is(err, ErrSubscriberNotFound) {
 		t.Error("expected errors.Is(err, ErrSubscriberNotFound) = true")
 	}
@@ -402,6 +406,9 @@ func TestLookupNPKeys_KeyExpiredOrRevoked(t *testing.T) {
 			}
 			if signErr.Code != "AUT_KEY_EXPIRED_OR_REVOKED" {
 				t.Errorf("signErr.Code = %s, want AUT_KEY_EXPIRED_OR_REVOKED", signErr.Code)
+			}
+			if got := signErr.HTTPStatus(); got != http.StatusUnauthorized {
+				t.Errorf("HTTPStatus() = %d, want %d", got, http.StatusUnauthorized)
 			}
 			if !errors.Is(err, ErrKeyExpiredOrRevoked) {
 				t.Error("expected errors.Is(err, ErrKeyExpiredOrRevoked) = true")

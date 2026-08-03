@@ -1078,6 +1078,9 @@ func TestLookupNPKeysFailure(t *testing.T) {
 				if signErr.Code != tt.wantCode {
 					t.Errorf("signErr.Code = %s, want %s", signErr.Code, tt.wantCode)
 				}
+				if got := signErr.HTTPStatus(); got != http.StatusUnauthorized {
+					t.Errorf("HTTPStatus() = %d, want %d", got, http.StatusUnauthorized)
+				}
 				if !errors.Is(err, tt.wantSentinel) {
 					t.Errorf("expected errors.Is(err, %v) = true", tt.wantSentinel)
 				}
