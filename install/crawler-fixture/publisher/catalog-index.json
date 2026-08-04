@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "GENERATED FILE. Do not hand-edit digests, sizes or signatures.",
+    "Regenerate with: go run ./install/crawler-fixture/gen"
+  ],
+  "nodeId": "sunrise-ev.example.org",
+  "version": 2,
+  "next_update": "2030-01-01T00:00:00Z",
+  "catalogs": [
+    {
+      "catalogId": "cat-ev-001",
+      "catalogType": "regular",
+      "status": "ACTIVE",
+      "schemaTypes": [
+        "beckn:Catalog"
+      ],
+      "networkIds": [],
+      "baseline": {
+        "version": 1,
+        "url": "http://publisher-origin/catalogs/cat-ev-001-v1.json",
+        "size": 730,
+        "digest": "sha-256:0819dabbc28d0c1e583f400ef219d9ac80ced2cfbb1985a6b0c8b923b8877e1b",
+        "encoding": "json"
+      },
+      "changes": [
+        {
+          "version": 2,
+          "url": "http://publisher-origin/catalogs/cat-ev-001-v1-to-v2.json",
+          "size": 750,
+          "digest": "sha-256:8b210701834d465fa47e98a61b949a63d7c9f628585c02e3890edca62dc13b0b",
+          "encoding": "json"
+        }
+      ],
+      "signature": {
+        "keyId": "fixture-key-1",
+        "value": "XWVbNrk9lEZA5dzJ7Q5xQI8SCBTcnb3Q5MQ8lqcXBbxTP/gptnbBJ9xVENz2z3Cz6ThE1u0G186bXhgTSzN5Cw=="
+      }
+    }
+  ]
+}

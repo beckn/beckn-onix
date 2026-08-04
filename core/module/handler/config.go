@@ -29,7 +29,7 @@ type PluginManager interface {
 	TransportWrapper(ctx context.Context, cfg *plugin.Config) (definition.TransportWrapper, error)
 	SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)
 	PayloadStore(ctx context.Context, cache definition.Cache, namespace string, cfg *plugin.Config) (definition.PayloadStore, error)
-	Crawler(ctx context.Context, signer definition.Signer, km definition.KeyManager, cfg *plugin.Config) (definition.Crawler, error)
+	Crawler(ctx context.Context, validator definition.SchemaValidator, registry definition.RegistryLookup, cfg *plugin.Config) (definition.Crawler, error)
 }
 
 // Type defines different handler types for processing requests.
@@ -38,32 +38,32 @@ type Type string
 const (
 	// HandlerTypeStd represents the standard handler type used for general request processing.
 	HandlerTypeStd Type = "std"
-	// HandlerTypeCatalogPull handles DS-internal, unsigned catalog/pull
-	// triggers: it invokes a Crawler synchronously and returns its result,
-	// bypassing validateSign/signAck since the caller is DS's own backend,
-	// not another network participant.
-	HandlerTypeCatalogPull Type = "catalogPull"
+	// HandlerTypeCrawl handles the DS-internal, unsigned /crawl trigger: it
+	// re-crawls one provider's index on demand. The crawler's scheduled jobs
+	// run in the background from plugin init; this only pokes an immediate
+	// pass. Same-operator call, so no validateSign/signAck pipeline.
+	HandlerTypeCrawl Type = "crawl"
 )
 
 // PluginCfg holds the configuration for various plugins.
 type PluginCfg struct {
-	SchemaValidator  *plugin.Config  `yaml:"schemaValidator,omitempty"`
-	PolicyChecker    *plugin.Config  `yaml:"checkPolicy,omitempty"`
-	PayloadTransformer *plugin.Config `yaml:"payloadTransformer,omitempty"`
-	SignValidator    *plugin.Config  `yaml:"signValidator,omitempty"`
-	Publisher        *plugin.Config  `yaml:"publisher,omitempty"`
-	Signer           *plugin.Config  `yaml:"signer,omitempty"`
-	Router           *plugin.Config  `yaml:"router,omitempty"`
-	Cache            *plugin.Config  `yaml:"cache,omitempty"`
-	Registry         *plugin.Config  `yaml:"registry,omitempty"`
-	KeyManager       *plugin.Config  `yaml:"keyManager,omitempty"`
-	ManifestLoader        *plugin.Config `yaml:"manifestLoader,omitempty"`
-	SchemaVersionMediator *plugin.Config `yaml:"schemaVersionMediator,omitempty"`
-	TransportWrapper      *plugin.Config `yaml:"transportWrapper,omitempty"`
-	PayloadStore     *plugin.Config  `yaml:"payloadStore,omitempty"`
-	Crawler          *plugin.Config  `yaml:"crawler,omitempty"`
-	Middleware       []plugin.Config `yaml:"middleware,omitempty"`
-	Steps            []plugin.Config
+	SchemaValidator       *plugin.Config  `yaml:"schemaValidator,omitempty"`
+	PolicyChecker         *plugin.Config  `yaml:"checkPolicy,omitempty"`
+	PayloadTransformer    *plugin.Config  `yaml:"payloadTransformer,omitempty"`
+	SignValidator         *plugin.Config  `yaml:"signValidator,omitempty"`
+	Publisher             *plugin.Config  `yaml:"publisher,omitempty"`
+	Signer                *plugin.Config  `yaml:"signer,omitempty"`
+	Router                *plugin.Config  `yaml:"router,omitempty"`
+	Cache                 *plugin.Config  `yaml:"cache,omitempty"`
+	Registry              *plugin.Config  `yaml:"registry,omitempty"`
+	KeyManager            *plugin.Config  `yaml:"keyManager,omitempty"`
+	ManifestLoader        *plugin.Config  `yaml:"manifestLoader,omitempty"`
+	SchemaVersionMediator *plugin.Config  `yaml:"schemaVersionMediator,omitempty"`
+	TransportWrapper      *plugin.Config  `yaml:"transportWrapper,omitempty"`
+	PayloadStore          *plugin.Config  `yaml:"payloadStore,omitempty"`
+	Crawler               *plugin.Config  `yaml:"crawler,omitempty"`
+	Middleware            []plugin.Config `yaml:"middleware,omitempty"`
+	Steps                 []plugin.Config
 }
 
 // PluginEntries returns a flat list of all configured plugins in this PluginCfg.
@@ -90,6 +90,7 @@ func (p *PluginCfg) PluginEntries() []telemetry.PluginEntry {
 	add("payload_transformer", p.PayloadTransformer)
 	add("key_manager", p.KeyManager)
 	add("payload_store", p.PayloadStore)
+	add("crawler", p.Crawler)
 	for i := range p.Steps {
 		if p.Steps[i].ID != "" {
 			entries = append(entries, telemetry.PluginEntry{Type: "step", ID: p.Steps[i].ID})
@@ -124,10 +125,10 @@ type HttpClientConfig struct {
 
 // Config holds the configuration for request processing handlers.
 type Config struct {
-	Plugins          PluginCfg        `yaml:"plugins"`
+	Plugins          PluginCfg `yaml:"plugins"`
 	Steps            []string
 	Type             Type
-	RegistryURL      string           `yaml:"registryUrl"`
+	RegistryURL      string `yaml:"registryUrl"`
 	Role             model.Role
 	SubscriberID     string           `yaml:"subscriberId"`
 	HttpClientConfig HttpClientConfig `yaml:"httpClientConfig"`

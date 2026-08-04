@@ -1,0 +1,29 @@
+package catalog
+
+// status_test.go — pins the stable wire values of the persisted status/outcome
+// enums (SyncOutcome, CatalogStatus) that the store and logs depend on.
+
+import "testing"
+
+// The persisted/rendered wire values are the contract the store and logs speak;
+// pin them so a rename can't silently change what lands in push_status.
+func TestSyncOutcomeWireValues(t *testing.T) {
+	cases := map[SyncOutcome]string{
+		OutcomePushed:  "pushed",
+		OutcomePartial: "partial",
+		OutcomeSkipped: "skipped",
+		OutcomeRetired: "retired",
+		OutcomeFaulted: "faulted",
+	}
+	for o, want := range cases {
+		if o.String() != want {
+			t.Errorf("SyncOutcome %v String() = %q, want %q", o, o.String(), want)
+		}
+	}
+}
+
+func TestCatalogStatusWireValues(t *testing.T) {
+	if CatalogActive.String() != "active" || CatalogRetired.String() != "retired" {
+		t.Errorf("CatalogStatus wire values drifted: %q / %q", CatalogActive, CatalogRetired)
+	}
+}

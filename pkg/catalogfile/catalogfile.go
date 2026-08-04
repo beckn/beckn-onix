@@ -3,7 +3,7 @@
 // changed between two consecutive versions, keyed by id never by
 // position, as upserts (added or updated items, replaced by id) and
 // removals (ids only). Both catalogpublisher's CLI (reconstructing prior
-// state to diff against) and catalogcrawler (composing a catalog's
+// state to diff against) and crawler (composing a catalog's
 // current content from its baseline plus every change file since) apply
 // change files the same way, so the logic lives here once rather than
 // being duplicated on both sides of that chain.

@@ -5,176 +5,183 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
-	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
-// catalogPullHandler serves a DS-internal, unsigned catalog/pull trigger: it
-// invokes a Crawler synchronously and returns a CatalogPullCallbackAction-
-// shaped body ({status, catalogs, error}, matching beckn.yaml exactly), no
-// other crawler-internal metadata. Unlike stdHandler, there is no
-// validateSign/addRoute/signAck pipeline here -- the caller is the DS's own
-// backend on the same trust domain, not another network participant (see
-// onix-catalog-crawler-plugin-requirements.md and the catalog-crawler
-// design discussion for why this is a distinct handler type rather than a
-// std module).
-type catalogPullHandler struct {
+// maxCrawlRequestBytes caps the /crawl request body. The endpoint is
+// DS-internal and unsigned, so nothing authenticates the caller before the
+// decode; without a cap a single request could stream unbounded bytes into
+// json.Decoder and exhaust memory. The body is one small JSON object (two short
+// string fields), so 64 KiB is generous.
+const maxCrawlRequestBytes = 64 << 10
+
+// crawlHandler serves the DS-internal, unsigned /crawl trigger: it runs an
+// immediate registry-backed crawl on demand (basic supportability). The caller
+// supplies a REGISTRY URL and the network(s) to query in it; the crawler asks
+// the DeDi /query endpoint for that network's providers and crawls each
+// discovered index — the SAME discovery the scheduled jobs run in the
+// background, so every crawl input is registry-based rather than a raw index
+// URL. Same-operator call, so no validateSign/signAck pipeline (see the crawler
+// design).
+//
+// Neither the registry URL nor the discovered index URLs are a trust boundary.
+// Every fetched catalog file is verified against the publishing participant's
+// signing key as held in the registry, so content from an unrecognised provider
+// fails verification and parks. Server-side fetch exposure is bounded by the
+// fetch layer's SSRF guard (loopback, private, link-local, CGNAT and reserved
+// ranges are refused at dial time), the fetch timeout, and the artifact and
+// decompression size caps.
+type crawlHandler struct {
 	crawler definition.Crawler
 }
 
-// pullRequest is the DS-facing catalog/pull request body. ReceiverID
-// mirrors Context.receiverId from beckn.yaml (the PN's DID) -- but for now
-// its value is treated as a literal domain/URI, the same way bppUri was
-// before this rename, since DID resolution isn't implemented yet. This is
-// a field-name alignment with the spec, not yet real DID resolution.
-type pullRequest struct {
-	ReceiverID string `json:"receiverId"`
-	NetworkID  string `json:"networkId"`
-	Mode       string `json:"mode"`
+// crawlRequest is the /crawl body: the registry to discover catalog indexes
+// from and the network(s) to query in it. networkIds is the canonical list
+// form; networkId is a single-network convenience that is folded into it.
+type crawlRequest struct {
+	RegistryURL string   `json:"registryUrl"`
+	NetworkID   string   `json:"networkId"`
+	NetworkIDs  []string `json:"networkIds"`
 }
 
-// NewCatalogPullHandler builds the catalogPull handler type: it loads a
-// Signer, KeyManager, and Crawler from cfg.Plugins and returns an
-// http.Handler that serves POST requests by invoking Crawler.CrawlSubscriber.
-func NewCatalogPullHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleName string) (http.Handler, error) {
+// NewCrawlHandler builds the crawl handler: it loads an optional
+// SchemaValidator, the REQUIRED Registry (the crawler's trust anchor for
+// publisher signing keys) and the Cache that registry lookups are memoised in,
+// constructs + starts the crawler engine via the plugin manager, and returns an
+// http.Handler for the on-demand trigger.
+func NewCrawlHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleName string) (http.Handler, error) {
 	if cfg == nil {
-		return nil, fmt.Errorf("catalogPull handler %s: config is required", moduleName)
+		return nil, fmt.Errorf("crawl handler %s: config is required", moduleName)
+	}
+	if cfg.Plugins.Crawler == nil {
+		return nil, fmt.Errorf("crawl handler %s: crawler plugin not configured", moduleName)
+	}
+	// The registry is not optional here. Every catalog file the crawler ingests
+	// is verified against the publishing participant's public key as held in the
+	// network registry, so without a registry plugin the crawler can verify
+	// nothing and would park every catalog it saw. Refuse to construct rather
+	// than start a crawler that is silently inert.
+	if cfg.Plugins.Registry == nil {
+		return nil, fmt.Errorf("crawl handler %s: registry plugin is required (catalog signatures are verified against the publisher's registry key)", moduleName)
 	}
 
-	signer, err := loadPlugin(ctx, "Signer", cfg.Plugins.Signer, mgr.Signer)
-	if err != nil {
-		return nil, err
+	var validator definition.SchemaValidator
+	if cfg.Plugins.SchemaValidator != nil {
+		v, err := mgr.SchemaValidator(ctx, cfg.Plugins.SchemaValidator)
+		if err != nil {
+			return nil, fmt.Errorf("crawl handler %s: failed to load schema validator (%s): %w", moduleName, cfg.Plugins.SchemaValidator.ID, err)
+		}
+		validator = v
 	}
 
+	// mgr.Registry takes a Cache (the registry client memoises lookups in it),
+	// so load the cache first — the same order stdHandler.initPlugins uses. The
+	// cache is optional: a nil cache means the registry client simply does not
+	// memoise, which is correct but chattier.
 	cache, err := loadPlugin(ctx, "Cache", cfg.Plugins.Cache, mgr.Cache)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("crawl handler %s: %w", moduleName, err)
 	}
-
-	registry, err := loadRegistryForCatalogPull(ctx, mgr, cache, cfg)
+	registry, err := loadPlugin(ctx, "Registry", cfg.Plugins.Registry, func(ctx context.Context, c *plugin.Config) (definition.RegistryLookup, error) {
+		return mgr.Registry(ctx, cache, c)
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("crawl handler %s: %w", moduleName, err)
 	}
 
-	km, err := loadKeyManager(ctx, mgr, registry, cfg.Plugins.KeyManager)
+	crawler, err := mgr.Crawler(ctx, validator, registry, cfg.Plugins.Crawler)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("crawl handler %s: failed to load crawler plugin (%s): %w", moduleName, cfg.Plugins.Crawler.ID, err)
 	}
 
-	if cfg.Plugins.Crawler == nil {
-		return nil, fmt.Errorf("catalogPull handler %s: crawler plugin not configured", moduleName)
-	}
-	crawler, err := mgr.Crawler(ctx, signer, km, cfg.Plugins.Crawler)
-	if err != nil {
-		return nil, fmt.Errorf("catalogPull handler %s: failed to load crawler plugin (%s): %w", moduleName, cfg.Plugins.Crawler.ID, err)
-	}
-
-	log.Debugf(ctx, "catalogPull handler %s initialized", moduleName)
-	return &catalogPullHandler{crawler: crawler}, nil
+	log.Debugf(ctx, "crawl handler %s initialized", moduleName)
+	return &crawlHandler{crawler: crawler}, nil
 }
 
-// loadRegistryForCatalogPull loads a RegistryLookup purely to satisfy
-// KeyManager's constructor -- catalog-crawler itself never calls it, since
-// it resolves the PN domain directly from the DS-supplied receiverId, not
-// via registry lookup. This mirrors every other module's local-dev config
-// (e.g. bppTxnReceiver/bppTxnCaller in config/local-beckn-one-bpp.yaml),
-// which configures a registry+cache alongside keyManager even when using
-// static keys, because KeyManagerProvider.New always requires one.
-func loadRegistryForCatalogPull(ctx context.Context, mgr PluginManager, cache definition.Cache, cfg *Config) (definition.RegistryLookup, error) {
-	if cfg.Plugins.Registry == nil {
-		log.Debug(ctx, "Skipping Registry plugin: not configured")
-		return nil, nil
+// isHTTPURL reports whether s is an absolute URL over http or https. Any other
+// scheme (file, gopher, ftp, a bare host) is not something the crawler fetches.
+func isHTTPURL(s string) bool {
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" {
+		return false
 	}
-	registry, err := mgr.Registry(ctx, cache, cfg.Plugins.Registry)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load Registry plugin (%s): %w", cfg.Plugins.Registry.ID, err)
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return true
+	default:
+		return false
 	}
-	return registry, nil
 }
 
-// pullStatus mirrors beckn.yaml CatalogPullCallbackAction's status enum.
-type pullStatus string
-
-const (
-	pullStatusCompleted pullStatus = "COMPLETED"
-	pullStatusFailed    pullStatus = "FAILED"
-)
-
-// pullResponse matches beckn.yaml's CatalogPullCallbackAction shape exactly:
-// "status" is required (COMPLETED|FAILED); "catalogs" is present when
-// COMPLETED; "error" is present when FAILED. No crawler-internal
-// bookkeeping (catalogId, version, digests, verification outcomes) is
-// included -- those are logged, not returned.
-type pullResponse struct {
-	Status   pullStatus        `json:"status"`
-	Catalogs []json.RawMessage `json:"catalogs,omitempty"`
-	Error    *model.Error      `json:"error,omitempty"`
-}
-
-// ServeHTTP parses the DS-internal request body, runs the crawl, and
-// returns a CatalogPullCallbackAction-shaped body. There is no
-// ACK/callback split -- crawl latency is bounded by the crawler's own
-// fetch-timeout config, so a single synchronous response suffices.
-//
-// A malformed request (bad body, missing receiverId) is a transport-level 400,
-// not a CatalogPullCallbackAction concept. Once the crawl itself runs,
-// every outcome -- including a fatal crawl failure -- is reported as a 200
-// with status COMPLETED/FAILED in the body, matching how the original
-// on_pull callback always carried its own status regardless of the HTTP
-// transport result.
-func (h *catalogPullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// ServeHTTP triggers an immediate registry-backed crawl and returns 202
+// Accepted -- the crawl runs asynchronously; results surface through the
+// crawler's own telemetry, not this response.
+func (h *crawlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	var req pullRequest
+	// Bound the body before decoding it: see maxCrawlRequestBytes. An over-cap
+	// body surfaces as a decode error, which is already a 400.
+	r.Body = http.MaxBytesReader(w, r.Body, maxCrawlRequestBytes)
+	var req crawlRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
 		return
 	}
-	if req.ReceiverID == "" {
-		http.Error(w, "receiverId is required", http.StatusBadRequest)
+	registryURL := strings.TrimSpace(req.RegistryURL)
+	if registryURL == "" {
+		http.Error(w, "registryUrl is required", http.StatusBadRequest)
 		return
 	}
-
-	result, err := h.crawler.CrawlSubscriber(r.Context(), definition.CrawlRequest{
-		SubscriberID: req.ReceiverID,
-		NetworkID:    req.NetworkID,
-		Mode:         definition.CrawlMode(req.Mode),
-	})
+	if !isHTTPURL(registryURL) {
+		http.Error(w, "registryUrl must be an absolute http or https URL", http.StatusBadRequest)
+		return
+	}
+	networks := resolveNetworks(req)
+	if len(networks) == 0 {
+		http.Error(w, "networkId (or networkIds) is required", http.StatusBadRequest)
+		return
+	}
+	// CrawlRegistry returns immediately, launching a tracked goroutine on the
+	// engine's own context (drained by Stop) — so we don't run a detached crawl
+	// on a context the shutdown path can't reach (avoids DB use-after-close).
+	runID, err := h.crawler.CrawlRegistry(r.Context(), registryURL, networks)
 	if err != nil {
-		log.Errorf(r.Context(), err, "catalogPull: crawl failed for %s", req.ReceiverID)
-		writeJSON(w, r, pullResponse{
-			Status: pullStatusFailed,
-			Error:  model.NewCodedError("BIZ_CRAWL_FAILED", err.Error()),
-		})
+		log.Errorf(r.Context(), err, "crawl: trigger failed for registry %s", registryURL)
+		http.Error(w, "crawl trigger unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
-	for _, e := range result.Errors {
-		log.Warnf(r.Context(), "catalogPull: %s crawl error for catalog %s at stage %s: %s", req.ReceiverID, e.CatalogID, e.Stage, e.Reason)
-	}
-	for _, c := range result.Catalogs {
-		log.Debugf(r.Context(), "catalogPull: %s catalog %s v%d status=%s digestMatch=%t",
-			req.ReceiverID, c.CatalogID, c.Version, c.Status, c.Verification.DigestMatch)
-	}
-
-	catalogs := make([]json.RawMessage, 0, len(result.Catalogs))
-	for _, c := range result.Catalogs {
-		if len(c.Catalog) > 0 {
-			catalogs = append(catalogs, c.Catalog)
-		}
-	}
-
-	writeJSON(w, r, pullResponse{Status: pullStatusCompleted, Catalogs: catalogs})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status": "ACCEPTED", "registryUrl": registryURL, "networkIds": networks, "runId": runID,
+	})
 }
 
-func writeJSON(w http.ResponseWriter, r *http.Request, body pullResponse) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(body); err != nil {
-		log.Errorf(r.Context(), err, "catalogPull handler: failed to encode response")
+// resolveNetworks collects the network ids from the request — the canonical
+// networkIds list plus the single-network networkId convenience — trimming
+// blanks and de-duplicating while preserving order.
+func resolveNetworks(req crawlRequest) []string {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(n string) {
+		n = strings.TrimSpace(n)
+		if n == "" || seen[n] {
+			return
+		}
+		seen[n] = true
+		out = append(out, n)
 	}
+	for _, n := range req.NetworkIDs {
+		add(n)
+	}
+	add(req.NetworkID)
+	return out
 }

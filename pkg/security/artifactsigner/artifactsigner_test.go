@@ -2,6 +2,7 @@ package artifactsigner
 
 import (
 	"crypto/ed25519"
+	"encoding/base64"
 	"testing"
 	"time"
 
@@ -108,6 +109,56 @@ func TestSignFileTuple_RoundTripsWithVerifier(t *testing.T) {
 
 func TestSignFileTuple_InvalidKeyLength(t *testing.T) {
 	if _, err := SignFileTuple("CAT-1", 1, "url", "digest", time.Now(), make(ed25519.PrivateKey, 10)); err == nil {
+		t.Fatal("expected error for invalid private key length")
+	}
+}
+
+func TestSignJSON_RoundTrips(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+
+	// "signature" is present but not yet meaningful -- SignJSON must strip
+	// it before canonicalizing, the same non-circularity convention
+	// SignDetachedJWS uses for "proof".
+	doc := []byte(`{"catalogId":"CAT-1","status":"ACTIVE","signature":{}}`)
+
+	sig, err := SignJSON(doc, "signature", priv)
+	if err != nil {
+		t.Fatalf("signing: %v", err)
+	}
+	if sig == "" {
+		t.Fatal("expected a non-empty signature")
+	}
+
+	canonical, err := artifactverifier.CanonicalizeJCSExcluding(doc, "signature")
+	if err != nil {
+		t.Fatalf("canonicalizing: %v", err)
+	}
+	sigBytes, err := base64.StdEncoding.DecodeString(sig)
+	if err != nil {
+		t.Fatalf("decoding signature: %v", err)
+	}
+	if !ed25519.Verify(pub, canonical, sigBytes) {
+		t.Fatal("expected signature to verify against the canonicalized document")
+	}
+
+	// Changing a sibling field (with "signature" still present but empty)
+	// must invalidate the signature -- proves the whole document minus
+	// "signature" is bound, not some fixed subset.
+	tampered := []byte(`{"catalogId":"CAT-1","status":"RETIRED","signature":{}}`)
+	tamperedCanonical, err := artifactverifier.CanonicalizeJCSExcluding(tampered, "signature")
+	if err != nil {
+		t.Fatalf("canonicalizing tampered doc: %v", err)
+	}
+	if ed25519.Verify(pub, tamperedCanonical, sigBytes) {
+		t.Fatal("expected signature verification to fail for a tampered document")
+	}
+}
+
+func TestSignJSON_InvalidKeyLength(t *testing.T) {
+	if _, err := SignJSON([]byte(`{}`), "signature", make(ed25519.PrivateKey, 10)); err == nil {
 		t.Fatal("expected error for invalid private key length")
 	}
 }

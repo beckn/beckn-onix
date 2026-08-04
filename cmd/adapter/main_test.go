@@ -103,7 +103,7 @@ func (m *MockPluginManager) PayloadStore(_ context.Context, _ definition.Cache, 
 }
 
 // Crawler returns a mock implementation of the Crawler interface.
-func (m *MockPluginManager) Crawler(_ context.Context, _ definition.Signer, _ definition.KeyManager, _ *plugin.Config) (definition.Crawler, error) {
+func (m *MockPluginManager) Crawler(_ context.Context, _ definition.SchemaValidator, _ definition.RegistryLookup, _ *plugin.Config) (definition.Crawler, error) {
 	return nil, nil
 }
 
