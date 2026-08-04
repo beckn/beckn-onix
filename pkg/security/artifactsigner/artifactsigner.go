@@ -44,6 +44,26 @@ func SignDetachedJWS(doc []byte, priv ed25519.PrivateKey) (string, error) {
 	return headerB64 + ".." + sigB64, nil
 }
 
+// SignJSON signs the JCS canonicalization of doc with excludeField removed
+// (the file spec's self-signing convention for catalog files and
+// catalog-index entries: "the signing input is the JCS canonicalization of
+// this document with the `signature` field itself removed" -- avoiding
+// circular signing, the same non-circularity convention SignDetachedJWS
+// already uses for "proof"). Returns the base64-standard-encoded Ed25519
+// signature -- a plain signature, not a detached JWS, per the file spec's
+// catalog-file/catalog-index-entry examples.
+func SignJSON(doc []byte, excludeField string, priv ed25519.PrivateKey) (string, error) {
+	if len(priv) != ed25519.PrivateKeySize {
+		return "", fmt.Errorf("artifactsigner: invalid Ed25519 private key length %d", len(priv))
+	}
+	canonical, err := artifactverifier.CanonicalizeJCSExcluding(doc, excludeField)
+	if err != nil {
+		return "", err
+	}
+	sig := ed25519.Sign(priv, canonical)
+	return base64.StdEncoding.EncodeToString(sig), nil
+}
+
 // SignFileTuple signs a catalog-index file entry's tuple
 // {catalogId, version, url, digest, validUntil} for the file spec's
 // per-entry signature model ("The signed entry is a tuple, not a bare

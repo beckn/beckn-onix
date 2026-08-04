@@ -1,9 +1,11 @@
 package fetch
 
-// verify_test.go — the per-file signature gate: a well-formed tuple passes, and
-// every way of not being one (tampered field, wrong key, unknown keyId, expired,
-// absent, no trust anchor at all) is rejected as a PERMANENT fault so the runner
-// parks and alerts instead of retrying forever.
+// verify_test.go — the two self-signature gates: verifyEntrySignature (a
+// catalog index entry signing itself) and verifyFileSignature (a fetched
+// baseline/change file signing its own content). Every way of not being
+// validly signed (tampered field, wrong key, unknown keyId, absent, no trust
+// anchor at all) is rejected as a PERMANENT fault so the runner parks and
+// alerts instead of retrying forever.
 //
 // It also covers the registry-backed KeySource, where the park-vs-retry
 // distinction actually lives: a registry that ANSWERED "no such key" is a
@@ -13,6 +15,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -24,8 +27,8 @@ import (
 )
 
 // testSigner is a publisher identity for tests: a key pair, the KeySource that
-// trusts it, and a helper that signs a file entry the way a publisher's index
-// would. Shared with client_test.go.
+// trusts it, and helpers that self-sign a document the way a publisher would.
+// Shared with client_test.go.
 type testSigner struct {
 	keyID string
 	pub   ed25519.PublicKey
@@ -47,190 +50,222 @@ func (s testSigner) source() KeySource {
 	return StaticKeys(map[string]ed25519.PublicKey{s.keyID: s.pub})
 }
 
-// sign returns f with a signature over its own {catalogId, version, url,
-// digest, validUntil}, valid for an hour.
-func (s testSigner) sign(t *testing.T, catalogID string, f catalog.FileEntry) catalog.FileEntry {
+// signDoc self-signs fields the way the file spec requires: sign the JCS
+// canonicalization of the document with "signature" removed, then embed
+// {keyId, value} back under "signature". Returns the final raw JSON.
+func (s testSigner) signDoc(t *testing.T, fields map[string]any) []byte {
 	t.Helper()
-	return s.signAs(t, catalogID, f, f, time.Now().Add(time.Hour).UTC().Truncate(time.Second))
-}
-
-// signAs signs the tuple of `signed` but attaches the signature to `f`, so a
-// test can present a file entry whose fields no longer match what was signed.
-func (s testSigner) signAs(t *testing.T, catalogID string, f, signed catalog.FileEntry, validUntil time.Time) catalog.FileEntry {
-	t.Helper()
-	value, err := artifactsigner.SignFileTuple(catalogID, int(signed.Version), signed.URL, signed.Digest, validUntil, s.priv)
+	body, err := json.Marshal(fields)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.Signature = catalog.Signature{
-		KeyID:      s.keyID,
-		Value:      value,
-		ValidUntil: validUntil.Format(time.RFC3339),
-		CatalogID:  catalogID,
+	val, err := artifactsigner.SignJSON(body, "signature", s.priv)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return f
+	fields["signature"] = map[string]string{"keyId": s.keyID, "value": val}
+	out, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
-func TestTupleVerifier(t *testing.T) {
+// signChangeFile signs a flat (unenveloped) change-file-shaped document.
+func (s testSigner) signChangeFile(t *testing.T, catalogID string, fromV, toV int) []byte {
+	t.Helper()
+	return s.signDoc(t, map[string]any{
+		"catalogId":   catalogID,
+		"fromVersion": fromV,
+		"toVersion":   toV,
+		"resources":   map[string]any{"upserts": []any{}, "removals": []any{}},
+		"offers":      map[string]any{"upserts": []any{}, "removals": []any{}},
+	})
+}
+
+// signBaseline signs an enveloped {catalog, signature} baseline file.
+func (s testSigner) signBaseline(t *testing.T, catalog map[string]any) []byte {
+	t.Helper()
+	return s.signDoc(t, map[string]any{"catalog": catalog})
+}
+
+// signEntry signs a catalog index entry the way the index itself would.
+func (s testSigner) signEntry(t *testing.T, catalogID string) json.RawMessage {
+	t.Helper()
+	raw := s.signDoc(t, map[string]any{
+		"catalogId": catalogID,
+		"status":    "ACTIVE",
+		"baseline":  map[string]any{"version": 1, "url": "https://pub.example/c/v1.json", "size": 10, "digest": "sha-256:abc"},
+		"changes":   []any{},
+	})
+	return json.RawMessage(raw)
+}
+
+func TestVerifyFileSignature(t *testing.T) {
 	signer := newTestSigner(t)
 	other := newTestSigner(t)
-	const catalogID = "p/c"
-	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
-	future := now.Add(time.Hour)
-	past := now.Add(-time.Hour)
+	const nodeID = "publisher.example.com"
 
-	base := catalog.FileEntry{Version: 3, URL: "https://pub.example/c/v3.json", Digest: "sha-256:abc123"}
+	t.Run("valid change file passes and needs no unwrap", func(t *testing.T) {
+		raw := signer.signChangeFile(t, "p/c", 1, 2)
+		out, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", raw)
+		if err != nil {
+			t.Fatalf("verifyFileSignature() = %v, want nil", err)
+		}
+		if string(out) != string(raw) {
+			t.Fatalf("change file must not be unwrapped: got %q, want %q", out, raw)
+		}
+	})
 
-	tests := []struct {
-		name    string
-		keys    KeySource
-		entry   catalog.FileEntry
-		wantErr bool
-	}{
-		{
-			name:  "valid tuple passes",
-			keys:  signer.source(),
-			entry: signer.signAs(t, catalogID, base, base, future),
-		},
-		{
-			name: "tampered digest fails",
-			keys: signer.source(),
-			entry: func() catalog.FileEntry {
-				e := signer.signAs(t, catalogID, base, base, future)
-				e.Digest = "sha-256:deadbeef" // swapped after signing
-				return e
-			}(),
-			wantErr: true,
-		},
-		{
-			name: "tampered url fails",
-			keys: signer.source(),
-			entry: func() catalog.FileEntry {
-				e := signer.signAs(t, catalogID, base, base, future)
-				e.URL = "https://attacker.example/c/v3.json"
-				return e
-			}(),
-			wantErr: true,
-		},
-		{
-			name: "tampered version fails",
-			keys: signer.source(),
-			entry: func() catalog.FileEntry {
-				e := signer.signAs(t, catalogID, base, base, future)
-				e.Version = 4
-				return e
-			}(),
-			wantErr: true,
-		},
-		{
-			name:    "wrong key fails",
-			keys:    signer.source(), // trusts signer, but `other` signed it under the same keyId
-			entry:   other.signAs(t, catalogID, base, base, future),
-			wantErr: true,
-		},
-		{
-			name:    "unknown keyId fails",
-			keys:    other.source(), // trusts a different keyId entirely
-			entry:   signer.signAs(t, catalogID, base, base, future),
-			wantErr: true,
-		},
-		{
-			name:    "expired validUntil fails",
-			keys:    signer.source(),
-			entry:   signer.signAs(t, catalogID, base, base, past),
-			wantErr: true,
-		},
-		{
-			name:    "missing signature fails closed",
-			keys:    signer.source(),
-			entry:   base, // no Signature at all
-			wantErr: true,
-		},
-		{
-			name: "missing keyId fails closed",
-			keys: signer.source(),
-			entry: func() catalog.FileEntry {
-				e := signer.signAs(t, catalogID, base, base, future)
-				e.Signature.KeyID = ""
-				return e
-			}(),
-			wantErr: true,
-		},
-		{
-			name: "missing validUntil fails closed",
-			keys: signer.source(),
-			entry: func() catalog.FileEntry {
-				e := signer.signAs(t, catalogID, base, base, future)
-				e.Signature.ValidUntil = ""
-				return e
-			}(),
-			wantErr: true,
-		},
-		{
-			name: "malformed validUntil fails closed",
-			keys: signer.source(),
-			entry: func() catalog.FileEntry {
-				e := signer.signAs(t, catalogID, base, base, future)
-				e.Signature.ValidUntil = "next tuesday"
-				return e
-			}(),
-			wantErr: true,
-		},
-		{
-			name: "unbound catalogId fails closed",
-			keys: signer.source(),
-			entry: func() catalog.FileEntry {
-				e := signer.signAs(t, catalogID, base, base, future)
-				e.Signature.CatalogID = "" // index decoder never stamped it
-				return e
-			}(),
-			wantErr: true,
-		},
-		{
-			name: "signature replayed onto another catalog fails",
-			keys: signer.source(),
-			entry: func() catalog.FileEntry {
-				e := signer.signAs(t, catalogID, base, base, future)
-				e.Signature.CatalogID = "p/other"
-				return e
-			}(),
-			wantErr: true,
-		},
-		{
-			name:    "no key source fails closed",
-			keys:    nil,
-			entry:   signer.signAs(t, catalogID, base, base, future),
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			v := tupleVerifier{keys: tt.keys, now: func() time.Time { return now }}
-			err := v.verify(context.Background(), tt.entry)
-			if !tt.wantErr {
-				if err != nil {
-					t.Fatalf("verify() = %v, want nil", err)
-				}
-				return
-			}
-			// Every rejection must park + alert, not retry: an unsigned or forged
-			// entry stays that way however often it is re-fetched.
-			assertPermanentFault(t, err, faultSignature)
+	// Regression: a change file's optional catalog-level attribute patch is a
+	// non-empty "catalog" field too, but it must NOT trigger the baseline
+	// unwrap -- that would silently strip the change file down to just the
+	// patch and drop its resources/offers. fromVersion (required on a change
+	// file, absent from a baseline) is what tells them apart, not whether
+	// "catalog" happens to be non-empty.
+	t.Run("change file with a non-empty catalog patch still isn't unwrapped", func(t *testing.T) {
+		raw := signer.signDoc(t, map[string]any{
+			"catalogId":   "p/c",
+			"fromVersion": 1,
+			"toVersion":   2,
+			"catalog":     map[string]any{"descriptor": map[string]any{"name": "renamed"}},
+			"resources":   map[string]any{"upserts": []any{}, "removals": []any{}},
+			"offers":      map[string]any{"upserts": []any{}, "removals": []any{}},
 		})
-	}
+		out, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", raw)
+		if err != nil {
+			t.Fatalf("verifyFileSignature() = %v, want nil", err)
+		}
+		if string(out) != string(raw) {
+			t.Fatalf("change file with a catalog patch must not be unwrapped: got %q, want %q", out, raw)
+		}
+	})
+
+	t.Run("valid baseline unwraps to the bare catalog", func(t *testing.T) {
+		cat := map[string]any{"id": "p/c", "resources": []any{}}
+		raw := signer.signBaseline(t, cat)
+		out, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/b.json", raw)
+		if err != nil {
+			t.Fatalf("verifyFileSignature() = %v, want nil", err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatalf("unwrapped bytes must parse as the bare catalog: %v", err)
+		}
+		if got["id"] != "p/c" {
+			t.Fatalf("unwrapped catalog = %+v, want id p/c", got)
+		}
+	})
+
+	t.Run("tampered content after signing fails", func(t *testing.T) {
+		raw := signer.signChangeFile(t, "p/c", 1, 2)
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatal(err)
+		}
+		doc["toVersion"] = json.RawMessage(`99`)
+		tampered, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", tampered); err == nil {
+			t.Fatal("want an error on tampered content")
+		} else {
+			assertPermanentFault(t, err, faultSignature)
+		}
+	})
+
+	t.Run("wrong signer under the same keyId fails", func(t *testing.T) {
+		raw := other.signChangeFile(t, "p/c", 1, 2)
+		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", raw)
+		assertPermanentFault(t, err, faultSignature)
+	})
+
+	t.Run("unknown keyId fails", func(t *testing.T) {
+		raw := signer.signChangeFile(t, "p/c", 1, 2)
+		_, err := verifyFileSignature(context.Background(), other.source(), nodeID, "https://x/c.json", raw)
+		assertPermanentFault(t, err, faultSignature)
+	})
+
+	t.Run("missing signature fails closed", func(t *testing.T) {
+		raw := []byte(`{"catalogId":"p/c","fromVersion":1,"toVersion":2}`)
+		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", raw)
+		assertPermanentFault(t, err, faultSignature)
+	})
+
+	t.Run("baseline with no catalog content fails closed", func(t *testing.T) {
+		raw := signer.signDoc(t, map[string]any{})
+		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/b.json", raw)
+		if err == nil || !catalog.IsPermanent(err) {
+			t.Fatalf("want a permanent fault, got %v", err)
+		}
+	})
+
+	t.Run("not a JSON object fails closed", func(t *testing.T) {
+		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", []byte("not json"))
+		if err == nil || !catalog.IsPermanent(err) {
+			t.Fatalf("want a permanent fault, got %v", err)
+		}
+	})
+
+	t.Run("no key source fails closed", func(t *testing.T) {
+		raw := signer.signChangeFile(t, "p/c", 1, 2)
+		_, err := verifyFileSignature(context.Background(), nil, nodeID, "https://x/c.json", raw)
+		assertPermanentFault(t, err, faultSignature)
+	})
 }
 
 // A key of the wrong length must be rejected rather than handed to
 // ed25519.Verify, which panics on a mis-sized key.
-func TestTupleVerifier_MalformedTrustedKey(t *testing.T) {
+func TestVerifyFileSignature_MalformedTrustedKey(t *testing.T) {
 	signer := newTestSigner(t)
-	entry := signer.sign(t, "p/c", catalog.FileEntry{Version: 1, URL: "https://pub.example/c/v1.json", Digest: "sha-256:abc"})
-	v := tupleVerifier{
-		keys: StaticKeys(map[string]ed25519.PublicKey{signer.keyID: []byte("too short")}),
-		now:  time.Now,
-	}
-	assertPermanentFault(t, v.verify(context.Background(), entry), faultSignature)
+	raw := signer.signChangeFile(t, "p/c", 1, 2)
+	keys := StaticKeys(map[string]ed25519.PublicKey{signer.keyID: []byte("too short")})
+	_, err := verifyFileSignature(context.Background(), keys, "publisher.example.com", "https://x/c.json", raw)
+	assertPermanentFault(t, err, faultSignature)
+}
+
+func TestVerifyEntrySignature(t *testing.T) {
+	signer := newTestSigner(t)
+	const nodeID = "publisher.example.com"
+
+	t.Run("valid entry passes", func(t *testing.T) {
+		raw := signer.signEntry(t, "p/c")
+		var entry catalog.CatalogEntry
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyEntrySignature(context.Background(), signer.source(), nodeID, raw, entry.Signature); err != nil {
+			t.Fatalf("verifyEntrySignature() = %v, want nil", err)
+		}
+	})
+
+	t.Run("tampered entry fails", func(t *testing.T) {
+		raw := signer.signEntry(t, "p/c")
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatal(err)
+		}
+		doc["status"] = json.RawMessage(`"RETIRED"`)
+		tampered, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var entry catalog.CatalogEntry
+		if err := json.Unmarshal(tampered, &entry); err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyEntrySignature(context.Background(), signer.source(), nodeID, tampered, entry.Signature); err == nil {
+			t.Fatal("want an error on a tampered entry")
+		} else {
+			assertPermanentFault(t, err, faultSignature)
+		}
+	})
+
+	t.Run("missing signature fails closed", func(t *testing.T) {
+		err := verifyEntrySignature(context.Background(), signer.source(), nodeID, []byte(`{"catalogId":"p/c"}`), catalog.EntrySignature{})
+		assertPermanentFault(t, err, faultSignature)
+	})
 }
 
 // --- registry-backed key source -------------------------------------------
@@ -242,7 +277,7 @@ type fakeRegistry struct {
 	err   error
 	calls int
 	// gotSubscriberID / gotKeyID record the last lookup's inputs, so a test can
-	// assert the participantId really is what the crawler asks the registry for.
+	// assert the nodeId really is what the crawler asks the registry for.
 	gotSubscriberID string
 	gotKeyID        string
 }
@@ -280,28 +315,28 @@ func TestRegistryKeys(t *testing.T) {
 	tests := []struct {
 		name          string
 		reg           *fakeRegistry
-		participantID string
+		nodeID        string
 		wantKey       ed25519.PublicKey
 		wantErr       bool
 		wantPermanent bool
 		wantIn        string
 	}{
 		{
-			name:          "a subscribed key resolves",
-			reg:           &fakeRegistry{subs: []model.Subscription{registrySub("SUBSCRIBED", good)}},
-			participantID: "publisher.example.com",
-			wantKey:       good,
+			name:    "a subscribed key resolves",
+			reg:     &fakeRegistry{subs: []model.Subscription{registrySub("SUBSCRIBED", good)}},
+			nodeID:  "publisher.example.com",
+			wantKey: good,
 		},
 		{
-			name:          "an under-subscription key still resolves",
-			reg:           &fakeRegistry{subs: []model.Subscription{registrySub("UNDER_SUBSCRIPTION", good)}},
-			participantID: "publisher.example.com",
-			wantKey:       good,
+			name:    "an under-subscription key still resolves",
+			reg:     &fakeRegistry{subs: []model.Subscription{registrySub("UNDER_SUBSCRIPTION", good)}},
+			nodeID:  "publisher.example.com",
+			wantKey: good,
 		},
 		{
 			name:          "a registry error is TRANSIENT so the runner retries",
 			reg:           &fakeRegistry{err: errors.New("connection refused")},
-			participantID: "publisher.example.com",
+			nodeID:        "publisher.example.com",
 			wantErr:       true,
 			wantPermanent: false,
 			wantIn:        "registry lookup",
@@ -309,7 +344,7 @@ func TestRegistryKeys(t *testing.T) {
 		{
 			name:          "an unknown keyId is PERMANENT so the runner parks",
 			reg:           &fakeRegistry{subs: nil},
-			participantID: "publisher.example.com",
+			nodeID:        "publisher.example.com",
 			wantErr:       true,
 			wantPermanent: true,
 			wantIn:        "has no key",
@@ -317,7 +352,7 @@ func TestRegistryKeys(t *testing.T) {
 		{
 			name:          "an expired subscription is rejected",
 			reg:           &fakeRegistry{subs: []model.Subscription{registrySub("EXPIRED", good)}},
-			participantID: "publisher.example.com",
+			nodeID:        "publisher.example.com",
 			wantErr:       true,
 			wantPermanent: true,
 			wantIn:        "unusable status",
@@ -325,7 +360,7 @@ func TestRegistryKeys(t *testing.T) {
 		{
 			name:          "an unsubscribed (revoked) subscription is rejected",
 			reg:           &fakeRegistry{subs: []model.Subscription{registrySub("UNSUBSCRIBED", good)}},
-			participantID: "publisher.example.com",
+			nodeID:        "publisher.example.com",
 			wantErr:       true,
 			wantPermanent: true,
 			wantIn:        "unusable status",
@@ -333,7 +368,7 @@ func TestRegistryKeys(t *testing.T) {
 		{
 			name:          "an invalid-ssl subscription is rejected",
 			reg:           &fakeRegistry{subs: []model.Subscription{registrySub("INVALID_SSL", good)}},
-			participantID: "publisher.example.com",
+			nodeID:        "publisher.example.com",
 			wantErr:       true,
 			wantPermanent: true,
 			wantIn:        "unusable status",
@@ -341,7 +376,7 @@ func TestRegistryKeys(t *testing.T) {
 		{
 			name:          "an empty signing key is rejected",
 			reg:           &fakeRegistry{subs: []model.Subscription{registrySub("SUBSCRIBED", nil)}},
-			participantID: "publisher.example.com",
+			nodeID:        "publisher.example.com",
 			wantErr:       true,
 			wantPermanent: true,
 			wantIn:        "no signing public key",
@@ -351,7 +386,7 @@ func TestRegistryKeys(t *testing.T) {
 			reg: &fakeRegistry{subs: []model.Subscription{{
 				KeyID: "pub-key-1", Status: "SUBSCRIBED", SigningPublicKey: "not!base64!",
 			}}},
-			participantID: "publisher.example.com",
+			nodeID:        "publisher.example.com",
 			wantErr:       true,
 			wantPermanent: true,
 			wantIn:        "not valid base64",
@@ -359,25 +394,25 @@ func TestRegistryKeys(t *testing.T) {
 		{
 			name:          "a wrong-length key is rejected before ed25519.Verify can panic",
 			reg:           &fakeRegistry{subs: []model.Subscription{registrySub("SUBSCRIBED", []byte("too short"))}},
-			participantID: "publisher.example.com",
+			nodeID:        "publisher.example.com",
 			wantErr:       true,
 			wantPermanent: true,
 			wantIn:        "want 32",
 		},
 		{
-			name:          "an index with no participantId cannot resolve anything",
+			name:          "an index with no nodeId cannot resolve anything",
 			reg:           &fakeRegistry{subs: []model.Subscription{registrySub("SUBSCRIBED", good)}},
-			participantID: "",
+			nodeID:        "",
 			wantErr:       true,
 			wantPermanent: true,
-			wantIn:        "no participantId",
+			wantIn:        "no nodeId",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			src := RegistryKeys(tt.reg, time.Minute)
-			key, err := src(context.Background(), tt.participantID, "pub-key-1")
+			key, err := src(context.Background(), tt.nodeID, "pub-key-1")
 			if !tt.wantErr {
 				if err != nil {
 					t.Fatalf("RegistryKeys = %v, want a key", err)
@@ -385,8 +420,8 @@ func TestRegistryKeys(t *testing.T) {
 				if !key.Equal(tt.wantKey) {
 					t.Fatalf("resolved the wrong key")
 				}
-				if tt.reg.gotSubscriberID != tt.participantID {
-					t.Errorf("registry asked for subscriber %q, want the index participantId %q", tt.reg.gotSubscriberID, tt.participantID)
+				if tt.reg.gotSubscriberID != tt.nodeID {
+					t.Errorf("registry asked for subscriber %q, want the index nodeId %q", tt.reg.gotSubscriberID, tt.nodeID)
 				}
 				if tt.reg.gotKeyID != "pub-key-1" {
 					t.Errorf("registry asked for keyId %q, want %q", tt.reg.gotKeyID, "pub-key-1")
@@ -450,17 +485,17 @@ func TestRegistryKeys_Caches(t *testing.T) {
 		t.Fatalf("registry called %d times for 50 files, want 1 (lookups must be cached)", reg.calls)
 	}
 
-	// A different participant is a different cache entry, even for the same
-	// keyId string: two subscribers may both call their key "pub-key-1".
+	// A different node is a different cache entry, even for the same keyId
+	// string: two publishers may both call their key "pub-key-1".
 	if _, err := src(ctx, "other.example.com", "pub-key-1"); err != nil {
-		t.Fatalf("second participant: %v", err)
+		t.Fatalf("second node: %v", err)
 	}
 	if reg.calls != 2 {
-		t.Fatalf("registry called %d times, want 2 (participant is part of the cache key)", reg.calls)
+		t.Fatalf("registry called %d times, want 2 (node is part of the cache key)", reg.calls)
 	}
 
-	// A different keyId under the same participant is also its own entry, so a
-	// key rotation is picked up rather than served from the old entry.
+	// A different keyId under the same node is also its own entry, so a key
+	// rotation is picked up rather than served from the old entry.
 	if _, err := src(ctx, "publisher.example.com", "pub-key-2"); err != nil {
 		t.Fatalf("rotated keyId: %v", err)
 	}
@@ -516,21 +551,14 @@ func TestRegistryKeys_Expires(t *testing.T) {
 	}
 }
 
-// TestVerifyWithRegistryKeys is the end-to-end shape of the production path: a
-// publisher whose key the registry vouches for verifies, and the same file
-// fails once that key's subscription is revoked or the registry is down.
-func TestVerifyWithRegistryKeys(t *testing.T) {
+// TestVerifyFileSignatureWithRegistryKeys is the end-to-end shape of the
+// production path: a publisher whose key the registry vouches for verifies,
+// and the same file fails once that key's subscription is revoked or the
+// registry is down.
+func TestVerifyFileSignatureWithRegistryKeys(t *testing.T) {
 	signer := newTestSigner(t)
-	const participant = "publisher.example.com"
-	const catalogID = "p/c"
-	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
-
-	entry := signer.signAs(t, catalogID,
-		catalog.FileEntry{Version: 3, URL: "https://pub.example/c/v3.json", Digest: "sha-256:abc123"},
-		catalog.FileEntry{Version: 3, URL: "https://pub.example/c/v3.json", Digest: "sha-256:abc123"},
-		now.Add(time.Hour))
-	// StampCatalogIDs would have set this from the index; set it directly here.
-	entry.Signature.ParticipantID = participant
+	const nodeID = "publisher.example.com"
+	raw := signer.signChangeFile(t, "p/c", 1, 2)
 
 	tests := []struct {
 		name          string
@@ -564,17 +592,14 @@ func TestVerifyWithRegistryKeys(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			v := tupleVerifier{
-				keys: RegistryKeys(tt.reg, time.Minute),
-				now:  func() time.Time { return now },
-			}
-			err := v.verify(context.Background(), entry)
+			keys := RegistryKeys(tt.reg, time.Minute)
+			_, err := verifyFileSignature(context.Background(), keys, nodeID, "https://x/c.json", raw)
 			if !tt.wantErr {
 				if err != nil {
-					t.Fatalf("verify() = %v, want nil", err)
+					t.Fatalf("verifyFileSignature() = %v, want nil", err)
 				}
-				if tt.reg.gotSubscriberID != participant {
-					t.Errorf("registry asked for subscriber %q, want the index participantId %q", tt.reg.gotSubscriberID, participant)
+				if tt.reg.gotSubscriberID != nodeID {
+					t.Errorf("registry asked for subscriber %q, want the index nodeId %q", tt.reg.gotSubscriberID, nodeID)
 				}
 				return
 			}

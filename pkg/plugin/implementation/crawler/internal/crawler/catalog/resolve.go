@@ -98,13 +98,22 @@ func ResolveWithChangeset(entry CatalogEntry, cursor int64, seen bool, toVersion
 	return current, cs, nil
 }
 
-// ResolveDelta builds a MERGE payload for an incremental update WITHOUT fetching
-// the baseline: it takes the catalog envelope (id/descriptor/provider) from a
-// change file's `catalog` block and the union of resource/offer upserts across
-// the change files in (cursor, toVersion] (latest wins per id, order preserved).
-// Removals are recorded in the changeset but NOT applied (deferred to the
-// FULL/removals version). Returns ok=false when no change file carried the
-// metadata envelope, so the caller can fall back to a full resolve.
+// ResolveDelta builds a MERGE payload for an incremental update: it takes the
+// catalog envelope (id/descriptor/provider) from a change file's `catalog`
+// block when one carries it, and the union of resource/offer upserts across
+// the change files in (cursor, toVersion] (latest wins per id, order
+// preserved). Removals are recorded in the changeset but NOT applied
+// (deferred to the FULL/removals version).
+//
+// When NO change file in range carries the metadata envelope, this falls back
+// to a ONE-TIME baseline fetch for id/descriptor/provider only -- catalogpublisher
+// may legitimately omit the envelope on every change file (nothing in the file
+// spec requires it on each one), so treating that as a permanent content fault
+// was the crawler's own wrong assumption, not a publisher defect. The baseline's
+// resources/offers are discarded; only its envelope fields are used, and the
+// push still carries just the changed resources/offers, exactly as when a
+// change file supplied the envelope itself. The returned bool is always true on
+// a nil error; kept for call-site compatibility.
 //
 // Continuity is enforced exactly as ResolveWithChangeset enforces it: the first
 // change file in the range must start at the cursor and each later one must
@@ -172,13 +181,23 @@ func ResolveDelta(entry CatalogEntry, cursor, toVersion int64, fetch FetchFunc) 
 		}
 		running = int64(cf.ToVersion)
 	}
-	if len(envelope) == 0 {
-		return nil, cs, false, nil // no metadata envelope -> caller treats it as a content fault (no baseline fallback)
-	}
-
 	var doc catalogfile.Doc
-	if err := json.Unmarshal(envelope, &doc); err != nil {
-		return nil, cs, false, Permanentf("crawler: reading change catalog envelope: %v", err)
+	if len(envelope) > 0 {
+		if err := json.Unmarshal(envelope, &doc); err != nil {
+			return nil, cs, false, Permanentf("crawler: reading change catalog envelope: %v", err)
+		}
+	} else {
+		// No change file in range carried the metadata envelope: fetch the
+		// baseline once, for its id/descriptor/provider ONLY -- its
+		// resources/offers are discarded below, so this is not a re-baseline,
+		// just the one-time cost of learning what the catalog IS.
+		baselineBytes, err := fetch(entry.Baseline)
+		if err != nil {
+			return nil, cs, false, fmt.Errorf("crawler: fetching baseline v%d for catalog metadata fallback: %w", entry.Baseline.Version, err)
+		}
+		if err := json.Unmarshal(baselineBytes, &doc); err != nil {
+			return nil, cs, false, Permanentf("crawler: parsing baseline v%d for catalog metadata fallback: %v", entry.Baseline.Version, err)
+		}
 	}
 	doc.Resources = orderedValues(resByID, resOrder)
 	doc.Offers = orderedValues(offByID, offOrder)

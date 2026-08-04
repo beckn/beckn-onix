@@ -52,11 +52,20 @@ func TestResolveDelta(t *testing.T) {
 		t.Fatalf("cs removals = %+v, want HasRemovals + 1 removed", cs)
 	}
 
-	// No metadata envelope in the change file -> ok=false (caller falls back).
+	// No metadata envelope in the change file -> falls back to a one-time
+	// baseline fetch for id/descriptor/provider only; the baseline's own
+	// resources (r1, r2) must NOT appear, only the change file's upsert (r5).
 	files["nometa"] = []byte(`{"catalogId":"p/c","fromVersion":1,"toVersion":2,"resources":{"upserts":[{"id":"r5"}]},"offers":{}}`)
 	noMeta := CatalogEntry{Baseline: FileEntry{Version: 1, URL: "base"}, Changes: []FileEntry{{Version: 2, URL: "nometa"}}}
-	if _, _, ok2, err := ResolveDelta(noMeta, 1, 2, fetch); err != nil || ok2 {
-		t.Fatalf("no-envelope should give ok=false, got ok=%v err=%v", ok2, err)
+	doc2, _, ok2, err := ResolveDelta(noMeta, 1, 2, fetch)
+	if err != nil || !ok2 {
+		t.Fatalf("no-envelope fallback should succeed, got ok=%v err=%v", ok2, err)
+	}
+	if ids := resourceIDs(t, doc2); !reflect.DeepEqual(ids, []string{"r5"}) {
+		t.Fatalf("no-envelope fallback resources = %v, want [r5] (not the baseline's r1/r2)", ids)
+	}
+	if !bytes.Contains(doc2, []byte(`"provider"`)) || !bytes.Contains(doc2, []byte(`"prov"`)) {
+		t.Fatalf("no-envelope fallback must carry the baseline's provider metadata, got %s", doc2)
 	}
 }
 
