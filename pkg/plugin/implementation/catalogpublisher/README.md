@@ -491,6 +491,110 @@ for an embedded `"/"` once at handler construction (it can't change
 afterward); `keyId` is checked for both emptiness and an embedded `"/"`
 on every check, since it's re-resolved fresh each time.
 
+## Migrating from the old catalog/publish API to the decentralized catalog
+
+If you're publishing catalogs today via `catalog/publish` with ACK/NACK
+responses, subscription CRUD (`catalog/subscription`), or a central
+Cataloging Service, this section is for you. The model this plugin
+implements is a different shape entirely: you publish plain files to your
+own storage, and DeDi + a crawler do the rest. Nothing about your actual
+catalog *content* (the `Catalog`, `Resource`, `Offer` schemas) changes --
+what changes is how it gets from you to a Discovery Service.
+
+### The conceptual shift
+
+**Before:** you called a network API (`catalog/publish`) and got an
+ACK/NACK back. A central Cataloging Service stored your catalog, handled
+subscriptions, and served `catalog/pull`/`catalog/search` to consumers.
+
+**Now:** you publish immutable JSON files to storage you already control
+(any CDN, object store, or static host) via this plugin's `Publish` call,
+exposed here as a DS-internal `catalog/publish` trigger with no ACK/NACK
+envelope at all -- see "HTTP handler: `catalog/publish`" above. Once your
+files are on your storage and your DeDi record's `meta.catalog_index_url`
+points at your index, crawlers discover and pull your catalogs on their
+own schedule. There is no central service to call, subscribe to, or wait
+on.
+
+### What you need to do
+
+Short version: **point your existing signing key at some storage, call
+`Publish` once, and set one field on a record you already have.** That's
+the whole migration -- there's no server to stand up, no subscription
+list to manage, and no ACK/NACK handshake to get right.
+
+1. **Pick storage you already have.** Any static host works -- S3, a CDN,
+   GitHub Pages, even an ngrok tunnel for local testing. You're not
+   building a new service; you're pointing this plugin at a folder.
+2. **Reuse the signing key your adapter already has.** No new keypair, no
+   new registration -- the same `KeyManager` keyset that signs your
+   transactions today signs your catalog files and index too.
+3. **Call `Publish` (or the DS-internal `catalog/publish` trigger) with
+   your catalog JSON, unchanged.** That's it -- no ACK/NACK to parse, no
+   MERGE/FULL mode to pick. The plugin looks at what you last published
+   and figures out on its own whether this is a fresh baseline or an
+   incremental change; a resubmission of identical content is simply a
+   no-op. Upload the handful of files it hands back to your storage.
+4. **Set one field on your existing DeDi Subscriber record:
+   `meta.catalog_index_url`.** That's the entire "registration" step --
+   no separate pointer file, no new registry to onboard into. The plugin
+   can even check this for you after every publish and warn you if it's
+   missing (see "Optional registry catalog-index link check" above).
+
+Everything else -- subscriptions, restricted-catalog auth, a central
+Cataloging Service, waiting on callbacks -- simply isn't part of this
+model anymore, so there's nothing to configure for it, only things to
+delete from your existing integration (see "What you no longer need,"
+below).
+
+### What you no longer need
+
+- **`catalog/publish` request/ACK/NACK.** Replaced by files on your own
+  storage plus this plugin's synchronous `Publish` call (or the
+  `catalogPublish` HTTP trigger, if you're not embedding the plugin
+  directly).
+- **`catalog/subscription` CRUD.** A crawler's scope is its own
+  configuration now -- you don't manage subscriber lists.
+- **`catalog/search`.** Removed from the publish/pull surface; a
+  Discovery Service may still offer search over its own store, but
+  that's not something you interact with as a publisher.
+- **`catalog/push`/`/on_pull` callbacks.** Consolidated into the crawler
+  pulling from you and pushing into the Discovery Service's own `/push`
+  -- you never receive a callback for this.
+- **Restricted catalogs, download gates, `authMethods`.** Catalogs are
+  public, unconditionally, in this design. If you relied on
+  `publishDirectives.visibleTo` as an access gate, note that its
+  replacement (`networkIds` in the index) is a **relevance filter only**,
+  never an access control -- anyone with a file's URL can fetch it.
+
+### Field-by-field mapping
+
+| Old (CATALG / DISCOVR) | New |
+| :---- | :---- |
+| `catalog/publish` with ACK/NACK | Files saved to storage; validation happens up front, results in a feedback log |
+| `publishDirectives.visibleTo` | Per-catalog `networkIds` in the index -- relevance filter, not access gate |
+| `publishDirectives.updateMode: MERGE` | A change file (id-keyed upserts/removals) |
+| `publishDirectives.updateMode: FULL` | A fresh baseline |
+| `catalog/pull`, mode FULL | The baseline file |
+| `catalog/pull`, mode DELTA | Change files after the crawler's cursor |
+| `downloadManifest` (sha256, sizeBytes) | `digest`/`size` in the index, verified against each self-signed file |
+| Subscription filters (`networkIds`, `schemaTypes`) | Crawler-side filtering on the index |
+| Subscription CRUD (`catalog/subscription`) | Not needed -- a crawler's scope is its own config |
+| `catalog/search` | Removed from this surface |
+| `catalog/push` | Crawler pull, with an optional change signal as an accelerator |
+| `/on_pull` callback | Consolidated into the Discovery Service's internal `/push` |
+| `subscriberId` | `nodeId`, a domain |
+| Restricted catalogs / download gate / `authMethods` | **Removed.** Catalogs are public-only; no per-catalog auth exists |
+| Offer-only catalogs, query-time attachment | Unchanged -- still lives behind `/discover` |
+
+### What stays exactly the same
+
+- Your `Catalog`/`Resource`/`Offer` JSON content and its schema.
+- `catalogType: MASTER`/`REGULAR` and `resourceDirectives[].extends` --
+  unchanged, just resolved by the Discovery Service at index time instead
+  of centrally at publish time.
+- Offer-only catalogs and query-time attachment behind `/discover`.
+
 ## Known open items
 
 - Compaction scheduling and grace-period cleanup (see above).
