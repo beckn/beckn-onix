@@ -1,0 +1,110 @@
+# Onix adapter config for local crawler verification, on the starter-kit's
+# BAP shape (config/local-beckn-one-bap.yaml) rather than a bespoke minimal
+# one: same appName/log/http/pluginManager conventions, and the crawl
+# module's registry plugin is the starter-kit's `dediregistry` (pointed at
+# the real DeDi wrapper API), not a bare local `registry` plugin.
+#
+# It registers ONE module -- crawl -- so the adapter starts the catalog
+# crawler's background jobs (index + catalog) and exposes the DS-internal
+# /crawl trigger, without dragging in the vault/redis/otel-collector
+# dependencies the full BAP config needs.
+#
+# It CANNOT drop the registry. The crawler verifies every catalog file
+# against the publishing participant's registered signing key, so a registry
+# plugin is required and the crawl handler refuses to construct without one.
+# Read install/crawler-fixture/README.md before running the stack.
+#
+# Used by install/docker-compose-crawler2.yml. Every CRAWLER_* value below is
+# a fallback: the plugin reads env first (see
+# pkg/plugin/implementation/crawler/crawler.go), and the compose file sets
+# all of them, so the compose file is the single place to change them.
+# Nothing here configures keys, because keys are not configurable.
+appName: "onix-crawler-verify"
+log:
+  level: debug
+  destinations:
+    - type: stdout
+  contextKeys:
+    - transaction_id
+    - message_id
+    - subscriber_id
+    - module_id
+http:
+  port: 8091
+  timeout:
+    read: 30
+    write: 30
+    idle: 30
+pluginManager:
+  root: ./plugins
+
+modules:
+  # /crawl: DS-internal, unsigned on-demand trigger to discover + re-crawl a
+  # registry's provider indexes now. The scheduled index + catalog jobs run
+  # in the background from plugin init.
+  - name: crawl
+    path: /crawl
+    handler:
+      type: crawl
+      role: bap
+      httpClientConfig:
+        maxIdleConns: 1000
+        maxIdleConnsPerHost: 200
+        idleConnTimeout: 300s
+        responseHeaderTimeout: 5s
+      plugins:
+        # REQUIRED for the crawl handler. This is the crawler's trust anchor:
+        # every catalog INDEX ENTRY and every catalog FILE self-signs its own
+        # content, and the verifying key is looked up here by
+        # {index nodeId, signature keyId} -- the same channel signvalidator
+        # uses for transport signatures. There is no key list in env or YAML.
+        # Without this block NewCrawlHandler refuses to construct, because a
+        # crawler that cannot resolve keys verifies nothing and would park
+        # every catalog it ever saw.
+        #
+        # This is the starter-kit's own registry plugin (see the crawl module
+        # in config/local-beckn-one-bap.yaml) -- dediregistry against the real
+        # DeDi wrapper API, not a local stand-in. That means this fixture's
+        # throwaway key (crawler-fixture/registry-subscription.json:
+        #   subscriber_id      sunrise-ev.example.org
+        #   key_id             fixture-key-1
+        #   signing_public_key V6FwanXNHoN2lNmzQVCbpjr4r3fDyopwSoINlSNOqMw=
+        # ) has to actually be registered in THIS registry before any catalog
+        # file resolves a key -- it is not, by default, so expect key
+        # resolution to fail (retry, then park) until it is registered there.
+        registry:
+          id: dediregistry
+          config:
+            url: "https://fabric.nfh.global/registry/dedi"
+            timeout: 10
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
+        # schemaValidator is deliberately omitted here. It is optional (see
+        # NewCrawlHandler); leaving it out keeps this config lighter, since
+        # schemav2validator resolves the Beckn spec from the network. Add it
+        # back once you want to verify the catalog schema gate too. The action
+        # it validates against is CRAWLER_SCHEMA_ACTION (default
+        # catalog/publish):
+        #
+        #   schemaValidator:
+        #     id: schemav2validator
+        #     config:
+        #       cacheTTL: "3600"
+        #
+        # A `cache` block here would memoise registry lookups. Omitted so the
+        # stack needs no redis; the crawler already caches a resolved key for
+        # 5 minutes in-process.
+        crawler:
+          id: crawler
+          config:
+            # Fallbacks only -- the compose file sets these via env, and env wins.
+            CRAWLER_ENABLED: "true"
+            CRAWLER_STORE_PROVIDER: "postgres"
+            CRAWLER_INDEX_URLS: "http://publisher-origin/catalog-index.json"
+            CRAWLER_NETWORK_IDS: ""
+            CRAWLER_INDEX_INTERVAL: "30s"
+            CRAWLER_CATALOG_INTERVAL: "5s"
+            CRAWLER_FETCH_TIMEOUT: "15s"
+            CRAWLER_MAX_ARTIFACT_BYTES: "10485760"
+            CRAWLER_MAX_ATTEMPTS: "5"

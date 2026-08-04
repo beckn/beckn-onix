@@ -50,8 +50,10 @@ type Store interface {
 // If-None-Match / If-Modified-Since so an unchanged index can answer 304.
 type IndexFetcher func(ctx context.Context, indexURL string, cond catalog.IndexConditions) (catalog.IndexResult, error)
 
-// FileFetcher fetches + verifies + decodes one catalog file.
-type FileFetcher func(ctx context.Context, f catalog.FileEntry) ([]byte, error)
+// FileFetcher fetches + verifies + decodes one catalog file. nodeID is the
+// enclosing index's publishing-node identity, used to resolve the file's
+// self-signature against the registry.
+type FileFetcher func(ctx context.Context, nodeID string, f catalog.FileEntry) ([]byte, error)
 
 // Validator schema-validates the /push request body before it is sent (Phase 1;
 // reuses onix's schemav2validator). A nil error means valid.

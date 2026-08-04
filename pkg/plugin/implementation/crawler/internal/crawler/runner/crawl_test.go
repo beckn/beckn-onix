@@ -80,7 +80,7 @@ func TestEngine_CrawlRegistry_DiscoversAndCrawls(t *testing.T) {
 	url1 := "https://p1.example/i.json"
 	url2 := "https://p2.example/i.json"
 	indexFor := func(pid string) catalog.Index {
-		return catalog.Index{ParticipantID: pid, Version: 1, Catalogs: []catalog.CatalogEntry{{
+		return catalog.Index{NodeID: pid, Version: 1, Catalogs: []catalog.CatalogEntry{{
 			CatalogID: pid + "/c", Status: catalog.StatusActive,
 			Baseline: catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
 		}}}
@@ -235,7 +235,7 @@ func TestEngine_CrawlIndex_LocksPerIndex(t *testing.T) {
 			eng := New(EngineConfig{IndexInterval: time.Hour}, Deps{
 				Store: gate,
 				FetchIndex: func(context.Context, string, catalog.IndexConditions) (catalog.IndexResult, error) {
-					return catalog.IndexResult{Index: catalog.Index{ParticipantID: "p", Version: 1}}, nil
+					return catalog.IndexResult{Index: catalog.Index{NodeID: "p", Version: 1}}, nil
 				},
 			})
 
@@ -300,7 +300,7 @@ func TestEngine_CrawlIndex_CancelledWhileWaitingForLock(t *testing.T) {
 	eng := New(EngineConfig{IndexInterval: time.Hour}, Deps{
 		Store: gate,
 		FetchIndex: func(context.Context, string, catalog.IndexConditions) (catalog.IndexResult, error) {
-			return catalog.IndexResult{Index: catalog.Index{ParticipantID: "p", Version: 1}}, nil
+			return catalog.IndexResult{Index: catalog.Index{NodeID: "p", Version: 1}}, nil
 		},
 	})
 
@@ -539,7 +539,7 @@ func newCrawlHarness(t *testing.T, urls []string, idx catalog.Index, fetchErr er
 // whose latest version is also 5.
 func oneCatalogIndex() catalog.Index {
 	return catalog.Index{
-		ParticipantID: "p", Version: 5,
+		NodeID: "p", Version: 5,
 		Catalogs: []catalog.CatalogEntry{{
 			CatalogID: "p/c", Status: catalog.StatusActive, // public
 			Baseline: catalog.FileEntry{Version: 5, URL: "base", Digest: "d"},

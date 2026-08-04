@@ -12,25 +12,28 @@
 # THIS STACK IS NOT SELF-CONTAINED. It cannot be, and pretending otherwise
 # would waste your afternoon. Two things it does not provide:
 #
-# 1. A REGISTRY. The crawler verifies every catalog file against the publishing
-#    participant's signing key AS HELD IN THE NETWORK REGISTRY. There is no
-#    trusted-key environment variable any more and no way to turn verification
-#    off. The adapter will not even start without a registry plugin block (it is
-#    in crawler-fixture/onix-crawl.yaml), and until that registry is reachable
-#    and holds the record in crawler-fixture/registry-subscription.json, every
-#    catalog file fails key resolution: the sync retries with backoff and then
-#    parks. Everything up to key resolution still runs and is worth watching.
+# 1. A working REGISTRY record. The crawler verifies every catalog INDEX ENTRY
+#    and every catalog FILE against the publishing node's signing key AS HELD
+#    IN THE NETWORK REGISTRY. There is no trusted-key environment variable any
+#    more and no way to turn verification off. The adapter will not even start
+#    without a registry plugin block (it is in
+#    crawler-fixture/adapter-crawler.yaml, using the starter-kit's own
+#    `dediregistry` against the real DeDi wrapper API, not a local stand-in).
+#    Until crawler-fixture/registry-subscription.json's fixture key is actually
+#    registered THERE, every catalog file fails key resolution: the sync
+#    retries with backoff and then parks. Everything up to key resolution
+#    still runs and is worth watching.
 #
-# 2. The DISCOVERY SERVICE. Discovery lives in a different repo (beckn-discovr)
-#    and runs its own Postgres, Kafka and Elasticsearch, so duplicating it here
-#    would be wrong. This stack joins the external 'beckn-network' that
-#    beckn-discovr also joins, and defaults CRAWLER_PUSH_ENDPOINT to Discovery's
-#    /catalog/push on that network. Bring beckn-discovr up first.
+# 2. The DISCOVERY SERVICE. Discovery is expected on the HOST (not in this
+#    compose file), reached via host.docker.internal (see CRAWLER_PUSH_ENDPOINT
+#    below). If Discovery instead runs as its own compose stack on
+#    'beckn-network', point CRAWLER_PUSH_ENDPOINT at its container hostname
+#    instead and drop the beckn-network dependency's host.docker.internal note.
 #
 # Read install/crawler-fixture/README.md for what to stand up and in what order.
 #
 #   docker network create beckn-network     # one time, if it does not exist
-#   docker compose -f install/docker-compose-crawler.yml up --build
+#   docker compose -f install/docker-compose-crawler2.yml up --build
 #
 # Note on the fixture network's subnet: the crawler's fetch layer refuses any
 # publisher URL that resolves to a loopback/private/link-local/CGNAT address
@@ -42,7 +45,7 @@
 # treats as private). That is what lets a real crawl of publisher-origin
 # succeed without weakening the guard.
 
-name: beckn-onix-crawler-verify
+name: beckn-onix-crawler2-verify
 
 services:
   # ============================================
@@ -51,7 +54,7 @@ services:
   # ============================================
   crawler-postgres:
     image: postgres:16-alpine
-    container_name: crawler-postgres
+    container_name: crawler2-postgres
     environment:
       POSTGRES_DB: ${CRAWLER_DB_NAME:-crawler}
       POSTGRES_USER: ${CRAWLER_DB_USER:-crawler}
@@ -86,16 +89,16 @@ services:
   # ============================================
   publisher-origin:
     image: nginx:alpine
-    container_name: crawler-publisher-origin
+    container_name: crawler2-publisher-origin
     volumes:
       - ./crawler-fixture/publisher:/usr/share/nginx/html:ro
     ports:
-      # Host port for eyeballing the fixture: curl localhost:8088/catalog-index.json
-      - "${PUBLISHER_HOST_PORT:-8088}:80"
+      # Host port for eyeballing the fixture: curl localhost:8089/catalog-index.json
+      - "${PUBLISHER_HOST_PORT:-8089}:80"
     networks:
       crawler-fixture:
         # Static address in the documentation range so the SSRF guard accepts it
-        # (see the note at the top of this file).
+        # (see docker-compose-crawler.yml's note on the fixture subnet).
         ipv4_address: 203.0.113.10
     healthcheck:
       test:
@@ -113,24 +116,24 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile.adapter-with-plugins
-    image: beckn-onix/adapter-with-plugins:crawler-verify
-    container_name: onix-crawler
+    image: beckn/onix-adapter-crawler:test
+    container_name: onix-crawler2
     depends_on:
       crawler-postgres:
         condition: service_healthy
       publisher-origin:
         condition: service_healthy
     ports:
-      - "${ONIX_HOST_PORT:-8081}:8081"
+      - "${ONIX_HOST_PORT:-8091}:8091"
     environment:
-      CONFIG_FILE: /app/config/onix-crawl.yaml
+      CONFIG_FILE: /app/config/adapter-crawler.yaml
 
       # --- crawler: on/off and persistence -------------------------------
       # CRAWLER_ENABLED defaults to false in the crawler's own config loader
       # (it is opt-in), so this fixture has to switch it on explicitly.
       CRAWLER_ENABLED: "true"
       CRAWLER_STORE_PROVIDER: "${CRAWLER_STORE_PROVIDER:-postgres}"
-      CRAWLER_DB_DSN: "${CRAWLER_DB_DSN:-postgres://crawler:crawler@crawler-postgres:5432/crawler?sslmode=disable}"
+      CRAWLER_DB_DSN: "${CRAWLER_DB_DSN:-postgres://crawler:crawler@crawler2-postgres:5432/crawler?sslmode=disable}"
 
       # --- crawler: the publisher trust anchor ----------------------------
       # There is nothing to set here, and that is the point.
@@ -143,13 +146,17 @@ services:
       # self-signature.
       #
       # The registry is configured as a PLUGIN, in
-      # crawler-fixture/onix-crawl.yaml, and it is required: the crawl handler
-      # refuses to construct without it. The record the fixture publisher's key
-      # has to exist as is crawler-fixture/registry-subscription.json:
+      # crawler-fixture/adapter-crawler.yaml -- the starter-kit's `dediregistry`
+      # against the real DeDi wrapper API (config/local-beckn-one-bap.yaml's own
+      # crawl module uses the same plugin), not a local stand-in. It is
+      # required: the crawl handler refuses to construct without it. The record
+      # the fixture publisher's key has to exist as, in THAT registry, is
+      # crawler-fixture/registry-subscription.json:
       #   subscriber_id      sunrise-ev.example.org
       #   key_id             fixture-key-1
       #   signing_public_key V6FwanXNHoN2lNmzQVCbpjr4r3fDyopwSoINlSNOqMw=
-      # Registering it is manual and this stack does not do it.
+      # Registering it is manual and this stack does not do it -- until it is,
+      # every catalog file fails key resolution (retries, then parks).
       #
       # Do NOT set CRAWLER_REGISTRY_URL. That variable is a registry as a source
       # of INDEXES to crawl, which is a different feature, is not implemented,
@@ -166,12 +173,17 @@ services:
       CRAWLER_PUSH_ENDPOINT: "${CRAWLER_PUSH_ENDPOINT:-http://host.docker.internal:8085/beckn/catalog/push}"
 
       # --- crawler: where catalogs come from -----------------------------
-      CRAWLER_INDEX_URLS: "${CRAWLER_INDEX_URLS:-http://publisher-origin/catalog-index.json}"
-      # Empty: the sample catalog is public (no networkIds), so it is taken by
-      # any crawler and pushed with no visibleTo restriction.
-      CRAWLER_NETWORK_IDS: "${CRAWLER_NETWORK_IDS:-}"
+      # Config-driven (config/settings.go's splitCSV supports a comma-separated
+      # list, but there's just the one source for now). Polled on the scheduled
+      # index job's own cadence (CRAWLER_INDEX_INTERVAL below) -- no /crawl call
+      # needed, since this is config-driven, not registry-driven.
+      CRAWLER_INDEX_URLS: "${CRAWLER_INDEX_URLS:-https://angular-absently-gab.ngrok-free.dev/beckn/index/becknCatalogs.index.json}"
+      # becknCatalogs.index.json's catalog declares networkIds
+      # ["beckn.one/testnet", "nfh.global/testnet"] -- not public, so it is only
+      # taken (enqueued) if it intersects what this crawler is configured for.
+      CRAWLER_NETWORK_IDS: "${CRAWLER_NETWORK_IDS:-beckn.one/testnet}"
       # Identity this crawler puts on the /push context as bppUri.
-      CRAWLER_BPP_URI: "${CRAWLER_BPP_URI:-http://onix-crawler:8081}"
+      CRAWLER_BPP_URI: "${CRAWLER_BPP_URI:-http://onix-crawler:8091}"
 
       # --- crawler: cadence + caps ---------------------------------------
       # Tighter than production defaults (5m / 30s) so a local run finishes
@@ -186,7 +198,7 @@ services:
       CRAWLER_MERGE_ONLY: "${CRAWLER_MERGE_ONLY:-true}"
       CRAWLER_LOG_LEVEL: "${CRAWLER_LOG_LEVEL:-debug}"
     volumes:
-      - ./crawler-fixture/onix-crawl.yaml:/app/config/onix-crawl.yaml:ro
+      - ./crawler-fixture/adapter-crawler.yaml:/app/config/adapter-crawler.yaml:ro
     networks:
       # Both: the fixture network to reach publisher-origin and its Postgres,
       # and beckn-network to reach Discovery.
@@ -195,7 +207,7 @@ services:
 
 networks:
   crawler-fixture:
-    name: beckn-onix-crawler-fixture
+    name: beckn-onix-crawler2-fixture
     driver: bridge
     ipam:
       config:
@@ -209,4 +221,4 @@ networks:
 
 volumes:
   crawler_postgres_data:
-    name: beckn-onix-crawler-postgres-data
+    name: beckn-onix-crawler2-postgres-data

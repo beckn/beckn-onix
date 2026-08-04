@@ -254,7 +254,7 @@ func (e *Engine) recordIndex(ctx context.Context, ref source.IndexRef, prev *cat
 		version, status, etag, lastModified = storedVersion(prev), publish.SyncFailed, "", ""
 	}
 	ok := true
-	if err := e.deps.Store.UpsertIndex(ctx, ref.IndexURL, idx.ParticipantID, ref.Source, version, status, e.nextIndexCrawl(), etag, lastModified); err != nil {
+	if err := e.deps.Store.UpsertIndex(ctx, ref.IndexURL, idx.NodeID, ref.Source, version, status, e.nextIndexCrawl(), etag, lastModified); err != nil {
 		e.storeUnhealthy("crawl", runID, "upsert_index", "", err)
 		ok = false
 	}

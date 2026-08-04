@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -77,7 +78,7 @@ func TestEngine_IndexThenCatalogPass(t *testing.T) {
 		CatalogID: "p/c", Status: catalog.StatusActive, // public
 		Baseline: catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
 	}
-	idx := catalog.Index{ParticipantID: "p", Version: 1, Catalogs: []catalog.CatalogEntry{entry}}
+	idx := catalog.Index{NodeID: "p", Version: 1, Catalogs: []catalog.CatalogEntry{entry}}
 	files := map[string][]byte{"base": []byte(`{"id":"p/c","resources":[{"id":"r1"}]}`)}
 
 	var pushed [][]byte
@@ -91,7 +92,7 @@ func TestEngine_IndexThenCatalogPass(t *testing.T) {
 		FetchIndex: func(context.Context, string, catalog.IndexConditions) (catalog.IndexResult, error) {
 			return catalog.IndexResult{Index: idx}, nil
 		},
-		FetchFile: func(_ context.Context, f catalog.FileEntry) ([]byte, error) { return files[f.URL], nil },
+		FetchFile: func(_ context.Context, _ string, f catalog.FileEntry) ([]byte, error) { return files[f.URL], nil },
 		Validate:  func(context.Context, []byte) error { return nil },
 		Push: func(_ context.Context, body []byte) (publish.BatchOutcome, error) {
 			pushed = append(pushed, body)
@@ -253,7 +254,7 @@ func TestCrawlIndex_NotModified_TouchesCadence(t *testing.T) {
 			sawCond = cond.ETag
 			return catalog.IndexResult{NotModified: true}, nil
 		},
-		FetchFile: func(_ context.Context, f catalog.FileEntry) ([]byte, error) { return nil, nil },
+		FetchFile: func(_ context.Context, _ string, f catalog.FileEntry) ([]byte, error) { return nil, nil },
 		Push: func(context.Context, []byte) (publish.BatchOutcome, error) {
 			return publish.BatchOutcome{Acked: true, HTTPStatus: 200}, nil
 		},
@@ -293,7 +294,7 @@ func TestEngine_MergeOnly_DeltaPush(t *testing.T) {
 		Baseline: catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
 		Changes:  []catalog.FileEntry{{Version: 2, URL: "chg2", Digest: "d"}},
 	}
-	idx := catalog.Index{ParticipantID: "p", Version: 2, Catalogs: []catalog.CatalogEntry{entry}}
+	idx := catalog.Index{NodeID: "p", Version: 2, Catalogs: []catalog.CatalogEntry{entry}}
 	files := map[string][]byte{
 		"base": []byte(`{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"prov"},"resources":[{"id":"r1"}]}`),
 		"chg2": []byte(`{"catalogId":"p/c","fromVersion":1,"toVersion":2,"catalog":{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"prov"}},"resources":{"upserts":[{"id":"rNew","descriptor":{"name":"New"}}]},"offers":{}}`),
@@ -312,7 +313,7 @@ func TestEngine_MergeOnly_DeltaPush(t *testing.T) {
 		FetchIndex: func(context.Context, string, catalog.IndexConditions) (catalog.IndexResult, error) {
 			return catalog.IndexResult{Index: idx}, nil
 		},
-		FetchFile: func(_ context.Context, f catalog.FileEntry) ([]byte, error) {
+		FetchFile: func(_ context.Context, _ string, f catalog.FileEntry) ([]byte, error) {
 			fetched = append(fetched, f.URL)
 			return files[f.URL], nil
 		},
@@ -383,7 +384,7 @@ func TestIndexPass_ReCrawlsPersistedIndexes(t *testing.T) {
 		Source: source.NewConfigSource([]string{configURL}),
 		FetchIndex: func(_ context.Context, indexURL string, _ catalog.IndexConditions) (catalog.IndexResult, error) {
 			fetched = append(fetched, indexURL)
-			return catalog.IndexResult{Index: catalog.Index{ParticipantID: "p", Version: 1}}, nil
+			return catalog.IndexResult{Index: catalog.Index{NodeID: "p", Version: 1}}, nil
 		},
 		Metrics: &recMetrics{},
 		NewID:   func() string { return "id" },
@@ -403,11 +404,12 @@ func TestIndexPass_ReCrawlsPersistedIndexes(t *testing.T) {
 }
 
 // On an incremental update, a change file that omits the catalog metadata
-// envelope is malformed — the crawler must NOT fall back to re-fetching the
-// baseline. It is a permanent content fault: the baseline is not fetched,
-// nothing is pushed, and the cursor does not advance (the item parks until the
-// publisher republishes a compliant change file).
-func TestEngine_MergeOnly_NoEnvelope_ParksNoBaselineFallback(t *testing.T) {
+// envelope is NOT malformed — catalogpublisher may legitimately never carry it
+// on a change file, since nothing in the file spec requires that. The crawler
+// falls back to a ONE-TIME baseline fetch for id/descriptor/provider only: the
+// push still carries just the changed resources (rNew), never the baseline's
+// own (r1), and the cursor advances normally.
+func TestEngine_MergeOnly_NoEnvelope_FallsBackToBaselineMetadata(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 	url := "https://x/i.json"
@@ -417,7 +419,7 @@ func TestEngine_MergeOnly_NoEnvelope_ParksNoBaselineFallback(t *testing.T) {
 		Baseline: catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
 		Changes:  []catalog.FileEntry{{Version: 2, URL: "chg2", Digest: "d"}},
 	}
-	idx := catalog.Index{ParticipantID: "p", Version: 2, Catalogs: []catalog.CatalogEntry{entry}}
+	idx := catalog.Index{NodeID: "p", Version: 2, Catalogs: []catalog.CatalogEntry{entry}}
 	files := map[string][]byte{
 		"base": []byte(`{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"prov"},"resources":[{"id":"r1"}]}`),
 		// change file WITHOUT a "catalog" metadata envelope:
@@ -438,7 +440,7 @@ func TestEngine_MergeOnly_NoEnvelope_ParksNoBaselineFallback(t *testing.T) {
 		FetchIndex: func(context.Context, string, catalog.IndexConditions) (catalog.IndexResult, error) {
 			return catalog.IndexResult{Index: idx}, nil
 		},
-		FetchFile: func(_ context.Context, f catalog.FileEntry) ([]byte, error) {
+		FetchFile: func(_ context.Context, _ string, f catalog.FileEntry) ([]byte, error) {
 			fetched = append(fetched, f.URL)
 			return files[f.URL], nil
 		},
@@ -453,16 +455,22 @@ func TestEngine_MergeOnly_NoEnvelope_ParksNoBaselineFallback(t *testing.T) {
 	eng.indexPass(ctx)
 	eng.catalogPass(ctx)
 
-	if slices.Contains(fetched, "base") {
-		t.Errorf("must NOT fall back to the baseline when the change file lacks the envelope; fetched=%v", fetched)
+	if !slices.Contains(fetched, "base") {
+		t.Errorf("must fall back to the baseline for its metadata when the change file lacks the envelope; fetched=%v", fetched)
 	}
-	if len(pushed) != 0 {
-		t.Errorf("nothing should be pushed for a malformed change file; got %d push(es)", len(pushed))
+	if len(pushed) != 1 {
+		t.Fatalf("want exactly 1 push, got %d", len(pushed))
 	}
-	if v, _, _ := s.GetCatalogVersion(ctx, "p/c"); v != 1 {
-		t.Errorf("cursor must not advance on a permanent content fault; got %d, want 1", v)
+	if bytes.Contains(pushed[0], []byte(`"r1"`)) {
+		t.Errorf("must push only the changed resource (rNew), never the baseline's own (r1): %s", pushed[0])
 	}
-	if rec.failed != 1 {
-		t.Errorf("expected 1 faulted outcome recorded, got %d", rec.failed)
+	if !bytes.Contains(pushed[0], []byte(`"rNew"`)) || !bytes.Contains(pushed[0], []byte(`"prov"`)) {
+		t.Errorf("push must carry the change's upsert (rNew) and the baseline's provider metadata: %s", pushed[0])
+	}
+	if v, _, _ := s.GetCatalogVersion(ctx, "p/c"); v != 2 {
+		t.Errorf("cursor must advance on a successful push; got %d, want 2", v)
+	}
+	if rec.pushed != 1 {
+		t.Errorf("expected 1 pushed outcome recorded, got %d", rec.pushed)
 	}
 }

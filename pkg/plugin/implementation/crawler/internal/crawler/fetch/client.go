@@ -27,18 +27,19 @@ type Client struct {
 	maxBytes        int64         // cap on the fetched (compressed, at-rest) artifact
 	maxDecompressed int64         // cap on the decoded output (decompression-bomb guard)
 	allowPrivate    bool          // allow loopback/private hosts (tests only)
-	verifier        tupleVerifier
+	keys            KeySource
 }
 
 // Option customizes a Client at construction. Nothing is mutated after NewClient
 // returns, so a built client is safe to share.
 type Option func(*Client)
 
-// WithTrustedKeys injects the publisher keys catalog-file signatures are
-// verified against. Without it the client has no trust anchor and FetchFile
-// rejects every file (fail closed) — see tupleVerifier.verify.
+// WithTrustedKeys injects the publisher keys entry/file self-signatures are
+// verified against. Without it the client has no trust anchor and FetchIndex
+// drops every entry and FetchFile rejects every file (fail closed) — see
+// verify.go.
 func WithTrustedKeys(keys KeySource) Option {
-	return func(c *Client) { c.verifier.keys = keys }
+	return func(c *Client) { c.keys = keys }
 }
 
 // NewClient builds a retrieval client. allowPrivate must be false in production
@@ -50,7 +51,6 @@ func NewClient(timeout time.Duration, maxBytes, maxDecompressed int64, allowPriv
 		maxBytes:        maxBytes,
 		maxDecompressed: maxDecompressed,
 		allowPrivate:    allowPrivate,
-		verifier:        tupleVerifier{now: time.Now},
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -100,33 +100,46 @@ func (c *Client) FetchIndex(ctx context.Context, indexURL string, cond catalog.I
 	if err != nil {
 		return catalog.IndexResult{}, err
 	}
-	var idx catalog.Index
-	if err := json.Unmarshal(decoded, &idx); err != nil {
+	// Parsed generically first, so each catalog entry's self-signature (file
+	// spec: "each catalog entry signs itself") is verified against its OWN raw
+	// JSON bytes as received — never a Go-struct re-marshal, which can
+	// silently drop/reorder fields and break canonicalization.
+	var raw struct {
+		NodeID     string            `json:"nodeId"`
+		Version    int64             `json:"version"`
+		NextUpdate string            `json:"next_update"`
+		Catalogs   []json.RawMessage `json:"catalogs"`
+	}
+	if err := json.Unmarshal(decoded, &raw); err != nil {
 		return catalog.IndexResult{}, fmt.Errorf("crawler: parsing index %s: %w", indexURL, err)
 	}
-	// Bind every file entry to its catalog before the entries travel on their own:
-	// catalogId is part of each entry's signed tuple, but the wire format leaves it
-	// implicit in the nesting.
-	catalog.StampCatalogIDs(&idx)
+	idx := catalog.Index{NodeID: raw.NodeID, Version: raw.Version, NextUpdate: raw.NextUpdate}
+	for _, entryRaw := range raw.Catalogs {
+		var entry catalog.CatalogEntry
+		if err := json.Unmarshal(entryRaw, &entry); err != nil {
+			continue // malformed entry: not trustworthy, drop it (fail closed)
+		}
+		if err := verifyEntrySignature(ctx, c.keys, raw.NodeID, entryRaw, entry.Signature); err != nil {
+			continue // unverifiable entry: drop it rather than trust an unsigned/forged one
+		}
+		idx.Catalogs = append(idx.Catalogs, entry)
+	}
 	return catalog.IndexResult{Index: idx, ETag: meta.etag, LastModified: meta.lastModified}, nil
 }
 
-// FetchFile GETs one file and verifies it end to end: the index entry's signed
-// tuple first, then the fetched bytes against the declared digest. Both are
-// mandatory and both fail closed — the signature says the publisher really
-// declared this {url, digest, version} pair, the digest says the bytes are the
-// ones that pair named. A digest alone would let anyone who can serve the URL
-// (or edit the index) swap in their own content.
-func (c *Client) FetchFile(ctx context.Context, f catalog.FileEntry) ([]byte, error) {
+// FetchFile GETs one file and verifies it end to end: the fetched bytes
+// against the declared digest, then the file's OWN embedded self-signature
+// (file spec: baseline and change files alike sign their own content). Both
+// are mandatory and both fail closed — the digest says these are the bytes
+// the index named, the signature says the publisher genuinely produced them.
+// A digest alone would let anyone who can serve the URL swap in their own
+// signed-by-nobody content.
+//
+// nodeID is the publishing node's identity (the enclosing index's nodeId),
+// used to resolve the file's signing key through the registry.
+func (c *Client) FetchFile(ctx context.Context, nodeID string, f catalog.FileEntry) ([]byte, error) {
 	if f.Digest == "" {
 		return nil, catalog.Permanentf("crawler: %s has no digest (integrity check required)", f.URL)
-	}
-	// Signature gate BEFORE the GET: the tuple covers the URL and digest we are
-	// about to trust, so an unsigned, expired, or wrongly-keyed entry is rejected
-	// without spending a fetch at all. Bounded on its own budget because a
-	// KeySource can do I/O (a manifest lookup) and must not hang the queue drain.
-	if err := c.verifyBounded(ctx, f); err != nil {
-		return nil, err
 	}
 	b, err := c.get(ctx, f.URL)
 	if err != nil {
@@ -138,12 +151,19 @@ func (c *Client) FetchFile(ctx context.Context, f catalog.FileEntry) ([]byte, er
 	// Permanent, not transient: re-fetching the same URL yields the same bad
 	// bytes. This is the spec's "treat as tampering and flag it" signal, so it
 	// must park + alert (ERROR) rather than retry on a 5-minute loop forever,
-	// logged as a network blip. Same policy as the missing-digest and
-	// signature branches above.
+	// logged as a network blip.
 	if !digestMatches(b, f.Digest) {
 		return nil, catalog.PermanentFaultf(catalog.FaultDigestMismatch, "crawler: digest mismatch for %s", f.URL)
 	}
-	return decode.Decode(decode.EncodingFor(f.Encoding, f.URL), b, c.maxDecompressed)
+	decoded, err := decode.Decode(decode.EncodingFor(f.Encoding, f.URL), b, c.maxDecompressed)
+	if err != nil {
+		return nil, err
+	}
+	// Signature gate AFTER decode, on the decoded (plain-JSON) content: the
+	// embedded signature covers the document as authored, not its at-rest
+	// packaging. Bounded on its own budget because a KeySource can do I/O (a
+	// registry lookup) and must not hang the queue drain.
+	return c.verifyFileBounded(ctx, nodeID, f.URL, decoded)
 }
 
 // respMeta carries conditional-GET response metadata.
@@ -173,12 +193,13 @@ func (c *Client) bounded(ctx context.Context) (context.Context, context.CancelFu
 	return context.WithTimeout(ctx, c.timeout)
 }
 
-// verifyBounded runs the signature gate under its own FetchTimeout budget, so a
-// KeySource that never answers cannot block the caller indefinitely.
-func (c *Client) verifyBounded(ctx context.Context, f catalog.FileEntry) error {
+// verifyFileBounded runs the file self-signature gate under its own
+// FetchTimeout budget, so a KeySource that never answers cannot block the
+// caller indefinitely.
+func (c *Client) verifyFileBounded(ctx context.Context, nodeID, url string, decoded []byte) ([]byte, error) {
 	ctx, cancel := c.bounded(ctx)
 	defer cancel()
-	return c.verifier.verify(ctx, f)
+	return verifyFileSignature(ctx, c.keys, nodeID, url, decoded)
 }
 
 // get performs a size-capped GET after the SSRF guard (unconditional).

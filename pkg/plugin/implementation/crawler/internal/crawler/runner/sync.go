@@ -107,7 +107,7 @@ type syncState struct {
 	runID, passID string
 
 	entry         catalog.CatalogEntry
-	participantID string
+	nodeID        string
 	pushDoc       []byte
 	mode          string
 	cs            catalog.Changeset
@@ -174,15 +174,15 @@ func (e *Engine) resolveEntry(ctx context.Context, s *syncState) (catalog.SyncOu
 		return catalog.OutcomeFaulted, true
 	}
 	s.entry = entry
-	s.participantID = res.Index.ParticipantID
+	s.nodeID = res.Index.NodeID
 	return "", false
 }
 
 // fetchContent (resolving): pull the baseline/change files and unpack them into
-// the push doc + updateMode. Each file's digest is verified inside FetchFile as
-// it is pulled.
+// the push doc + updateMode. Each file's digest and self-signature are verified
+// inside FetchFile as it is pulled.
 func (e *Engine) fetchContent(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
-	fetch := func(f catalog.FileEntry) ([]byte, error) { return e.deps.FetchFile(ctx, f) }
+	fetch := func(f catalog.FileEntry) ([]byte, error) { return e.deps.FetchFile(ctx, s.nodeID, f) }
 	pushDoc, mode, cs, err := e.buildPushDoc(s.entry, s.item, fetch)
 	if err != nil {
 		e.routeFailure(ctx, s.item, e.newFailureReport(s.item, 0, "resolve: "+err.Error()), err, s.runID, s.passID)
@@ -211,7 +211,7 @@ func (e *Engine) verifyContent(ctx context.Context, s *syncState) (catalog.SyncO
 				catalog.FaultContentInvalid, s.runID, s.passID)
 			return catalog.OutcomeFaulted, true
 		}
-		e.completeSkipped(ctx, s.item, s.participantID, s.mode, skipReason(s.cs), s.runID, s.passID)
+		e.completeSkipped(ctx, s.item, s.nodeID, s.mode, skipReason(s.cs), s.runID, s.passID)
 		return catalog.OutcomeSkipped, true
 	}
 	return "", false
@@ -281,7 +281,7 @@ func (e *Engine) publish(ctx context.Context, s *syncState) (catalog.SyncOutcome
 	ackedSoFar := 0 // batches Discovery has durably applied in THIS pass, so far
 	for _, b := range s.batches {
 		body, err := publish.BuildPushBody(publish.PushMeta{
-			ParticipantID: s.participantID, BppURI: e.cfg.BppURI,
+			ParticipantID: s.nodeID, BppURI: e.cfg.BppURI,
 			MessageID: e.newID(), TransactionID: e.newID(),
 			Timestamp:  e.deps.Now().UTC().Format(time.RFC3339),
 			UpdateMode: b.UpdateMode, CatalogType: s.entry.CatalogType,
@@ -353,7 +353,7 @@ func (e *Engine) publishFailureReport(s *syncState, acked, httpStatus int, reaso
 // complete (publishing): settle a fully-acked sync — advance the cursor, record
 // the pushed pass report, and emit the success terminal.
 func (e *Engine) complete(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
-	if err := e.settle(ctx, s.item, s.participantID, catalog.CatalogActive, catalog.PassReport{
+	if err := e.settle(ctx, s.item, s.nodeID, catalog.CatalogActive, catalog.PassReport{
 		At: e.deps.Now().UTC(), FromVersion: s.item.FromVersion, ToVersion: s.item.ToVersion,
 		Mode: s.mode, Resources: s.resCount, Offers: s.offCount,
 		Removals:     s.cs.RemovedResources + s.cs.RemovedOffers,
@@ -374,10 +374,12 @@ func (e *Engine) complete(ctx context.Context, s *syncState) (catalog.SyncOutcom
 // buildPushDoc produces the push doc + updateMode for a claimed catalog.
 //
 // This version (MergeOnly) always MERGEs: an incremental update is built as a
-// delta straight from the change files (no baseline fetch) when they carry the
-// catalog metadata envelope; a first sync — or a change set without that
-// envelope — falls back to a full resolve, still pushed as MERGE. Removals are
-// recorded in the changeset but not applied (deferred).
+// delta straight from the change files, fetching the baseline only for its
+// id/descriptor/provider (never its resources/offers) on the one-time case
+// where no change file in range carries that metadata itself (see
+// catalog.ResolveDelta). A first sync (cursor behind the baseline) always
+// falls back to a full resolve, still pushed as MERGE. Removals are recorded
+// in the changeset but not applied (deferred).
 //
 // With MergeOnly=false the dormant mode-by-changeset path runs: only-upserts ->
 // MERGE (just the changed resources); any removal / new / re-baseline -> FULL.
@@ -394,22 +396,25 @@ func (e *Engine) buildPushDoc(entry catalog.CatalogEntry, item *catalog.ClaimedI
 		return filtered, publish.UpdateModeMerge, cs, err
 	}
 
-	// Incremental update: try the delta straight from the change files (no
-	// baseline fetch). firstSync (cursor behind the baseline) can't — the
-	// baseline is the only content — so it falls through to the full resolve.
+	// Incremental update: try the delta straight from the change files first.
+	// If none of them carry the catalog metadata envelope (id/descriptor/
+	// provider), ResolveDelta itself falls back to a one-time baseline fetch
+	// for that envelope only — still pushed as MERGE, still just the changed
+	// resources/offers, never the baseline's own. firstSync (cursor behind the
+	// baseline) can't use this path at all — the baseline is the only content —
+	// so it falls through to the full resolve below.
 	if item.FromVersion >= entry.Baseline.Version {
 		delta, cs, ok, err := catalog.ResolveDelta(entry, item.FromVersion, item.ToVersion, fetch)
 		if err != nil {
 			return nil, "", cs, err
 		}
 		if !ok {
-			// The change file(s) carry no catalog metadata envelope. An incremental
-			// MERGE requires it (id/descriptor/provider), so a missing envelope is a
-			// malformed change file — NOT a reason to re-download the baseline. Park
-			// it as a permanent content fault until the publisher republishes a
-			// compliant change file.
+			// Defensive only: ResolveDelta returns ok=false exclusively alongside a
+			// non-nil error now that it self-resolves the metadata envelope, so this
+			// should be unreachable. Guard it anyway rather than push a doc whose
+			// envelope was never actually verified as present.
 			return nil, "", cs, catalog.PermanentFaultf(catalog.FaultContentInvalid,
-				"crawler: change file(s) for %s carry no catalog metadata envelope (required for an incremental MERGE)", entry.CatalogID)
+				"crawler: could not resolve a catalog metadata envelope for %s", entry.CatalogID)
 		}
 		return delta, publish.UpdateModeMerge, cs, nil
 	}

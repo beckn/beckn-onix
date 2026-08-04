@@ -12,7 +12,7 @@ import (
 // a baseline + one change file, a network-scoped catalog with a signed-request
 // download gate, and a retired tombstone) using neutral placeholder names.
 const exampleIndex = `{
-  "participantId": "publisher.example.com",
+  "nodeId": "publisher.example.com",
   "version": 2,
   "next_update": "2026-02-06T09:00:00Z",
   "catalogs": [
@@ -24,18 +24,17 @@ const exampleIndex = `{
         "version": 1,
         "url": "https://cdn.publisher.example.com/beckn/electronics-2026.v1.json",
         "size": 1848320,
-        "digest": "sha-256:9f2c",
-        "signature": { "keyId": "key-1", "value": "abc", "validUntil": "2026-07-30T09:00:00Z" }
+        "digest": "sha-256:9f2c"
       },
       "changes": [
         {
           "version": 2,
           "url": "https://cdn.publisher.example.com/beckn/electronics-2026.v2.changes.json",
           "size": 18240,
-          "digest": "sha-256:5b1a",
-          "signature": { "keyId": "key-1", "value": "def", "validUntil": "2026-07-30T09:00:00Z" }
+          "digest": "sha-256:5b1a"
         }
-      ]
+      ],
+      "signature": { "keyId": "key-1", "value": "abc" }
     },
     {
       "catalogId": "publisher.example.com/partner-catalog-2026",
@@ -44,13 +43,15 @@ const exampleIndex = `{
       "authMethods": [
         { "method": "signed-request", "header": "Authorization", "signedHeaders": ["(created)","(expires)","(request-target)","host","digest"], "freshnessSeconds": 60 }
       ],
-      "baseline": { "version": 12, "url": "https://cdn.publisher.example.com/beckn/partner-catalog-2026.v12.json", "size": 202400, "digest": "sha-256:1c9a", "signature": { "keyId": "key-1" } },
-      "changes": []
+      "baseline": { "version": 12, "url": "https://cdn.publisher.example.com/beckn/partner-catalog-2026.v12.json", "size": 202400, "digest": "sha-256:1c9a" },
+      "changes": [],
+      "signature": { "keyId": "key-1", "value": "ghi" }
     },
     {
       "catalogId": "publisher.example.com/electronics-2025",
       "status": "RETIRED",
-      "retiredAt": "2026-01-31T00:00:00Z"
+      "retiredAt": "2026-01-31T00:00:00Z",
+      "signature": { "keyId": "key-1", "value": "jkl" }
     }
   ]
 }`
@@ -60,7 +61,7 @@ func TestModel_ParsesSpecExampleIndex(t *testing.T) {
 	if err := json.Unmarshal([]byte(exampleIndex), &idx); err != nil {
 		t.Fatalf("unmarshal index: %v", err)
 	}
-	if idx.ParticipantID != "publisher.example.com" || idx.Version != 2 {
+	if idx.NodeID != "publisher.example.com" || idx.Version != 2 {
 		t.Fatalf("index header = %+v", idx)
 	}
 	if len(idx.Catalogs) != 3 {
@@ -75,8 +76,8 @@ func TestModel_ParsesSpecExampleIndex(t *testing.T) {
 	if pub.LatestVersion() != 2 {
 		t.Errorf("catalog 0 LatestVersion = %d, want 2", pub.LatestVersion())
 	}
-	if pub.Baseline.Signature.KeyID != "key-1" {
-		t.Errorf("baseline signature keyId = %q, want key-1", pub.Baseline.Signature.KeyID)
+	if pub.Signature.KeyID != "key-1" {
+		t.Errorf("entry signature keyId = %q, want key-1", pub.Signature.KeyID)
 	}
 	if len(pub.Changes) != 1 || pub.Changes[0].Digest != "sha-256:5b1a" {
 		t.Errorf("change entry = %+v", pub.Changes)

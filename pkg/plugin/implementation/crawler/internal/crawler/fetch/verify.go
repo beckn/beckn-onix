@@ -1,21 +1,31 @@
 package fetch
 
-// verify.go — the per-file signature gate. Before a catalog file's bytes are
-// fetched or used, its index entry's signed tuple
-// {catalogId, version, url, digest, validUntil} is verified against the
-// publisher's public key AS PUBLISHED IN THE NETWORK REGISTRY. That is the same
-// key distribution channel signvalidator uses for transport signatures: the
-// registry is the trust anchor, and there is no per-deployment key list for an
-// operator to configure or rotate by hand.
+// verify.go — the two self-signature gates the v2 file spec requires:
 //
-// The gate fails CLOSED. No key source, no signature, no expiry, an unknown
-// keyId, a revoked subscription, or undecodable key material all reject the
+//   - verifyEntrySignature checks a catalog index ENTRY's own signature
+//     (over catalogId, catalogType, status, networkIds, schemaTypes, and
+//     every baseline/changes[] reference together) before any of its file
+//     references are trusted.
+//   - verifyFileSignature checks a fetched catalog FILE's (baseline or
+//     change file) own embedded signature over its own content, and unwraps
+//     the baseline's {catalog, signature} envelope down to the bare catalog
+//     document once verified.
+//
+// Both verify against the publisher's public key AS PUBLISHED IN THE NETWORK
+// REGISTRY — the same key distribution channel signvalidator uses for
+// transport signatures. The registry is a cache of the DeDi manifest that is
+// the real trust anchor (file spec: "every registry copy is a cache of it"),
+// so there is no per-deployment key list for an operator to configure.
+//
+// Both gates fail CLOSED. No key source, no signature, an unknown keyId, a
+// revoked subscription, or undecodable key material all reject the entry or
 // file.
 
 import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -38,19 +48,19 @@ import (
 const faultSignature = catalog.FaultSignature
 
 // KeySource resolves the public Ed25519 key a publisher signed with, given the
-// participant that published the index and the keyId the index entry names. It
-// is injected rather than derived, so this layer never trusts a key carried by
-// the same untrusted file it is checking.
+// node (domain identity) that published the index and the keyId the signing
+// entity named. It is injected rather than derived, so this layer never trusts
+// a key carried by the same untrusted content it is checking.
 //
-// An error means "this file cannot be verified", and the error's class decides
-// park vs retry:
+// An error means "this cannot be verified", and the error's class decides park
+// vs retry:
 //   - a catalog.PermanentError of class catalog.FaultSignature is a definitive
 //     verdict (no such key, revoked key, unusable key material) and parks;
 //   - any other error is transient (the registry could not be reached) and is
 //     retried.
 //
 // An unknown keyId must return an error, never a zero key.
-type KeySource func(ctx context.Context, participantID, keyID string) (ed25519.PublicKey, error)
+type KeySource func(ctx context.Context, nodeID, keyID string) (ed25519.PublicKey, error)
 
 // KeyRegistry is the crawler's port onto the network registry. It is declared
 // here, structurally identical to definition.RegistryLookup, so the fetch layer
@@ -65,7 +75,7 @@ type KeyRegistry interface {
 const DefaultKeyCacheTTL = 5 * time.Minute
 
 // StaticKeys adapts an already-resolved keyId -> public key map to a KeySource,
-// ignoring the participant.
+// ignoring the node.
 //
 // TEST HELPER ONLY. The production path is RegistryKeys: keys come from the
 // registry, never from deployment config. Nothing in the composition root
@@ -84,17 +94,14 @@ func StaticKeys(keys map[string]ed25519.PublicKey) KeySource {
 // RegistryKeys is the production KeySource: it resolves a signing key through
 // the network registry, exactly as the transport signature path does.
 //
-// The subscriber id it looks up is the index's participantId, which is
-// PUBLISHER-ASSERTED. The index document itself is not signature-verified (only
-// the per-file tuples inside it are), so a publisher — or anyone who can serve
-// that URL — can write any participantId they like.
-//
-// That is safe, and the reasoning must be written down because it is not
-// obvious. A forged participantId resolves to THAT participant's real
-// registered key, and the file's signature then fails to verify under it. The
-// forgery converts into a closed failure rather than into trust. participantId
-// is therefore a HINT for key resolution only. Anything that later starts
-// trusting participantId for authorization, scoping, or attribution would break
+// The nodeId it looks up under is PUBLISHER-ASSERTED (it comes from the index
+// document itself, which is not signature-verified as a whole -- only its
+// per-entry and per-file self-signatures are). That is safe, and the reasoning
+// must be written down because it is not obvious: a forged nodeId resolves to
+// THAT node's real registered key, and the signature then fails to verify
+// under it. The forgery converts into a closed failure rather than into trust.
+// nodeId is therefore a HINT for key resolution only. Anything that later
+// starts trusting it for authorization, scoping, or attribution would break
 // this property and needs its own verified source.
 //
 // ttl <= 0 uses DefaultKeyCacheTTL.
@@ -106,11 +113,11 @@ func RegistryKeys(reg KeyRegistry, ttl time.Duration) KeySource {
 	return c.get
 }
 
-// keyCacheKey identifies one resolved key. The participant is part of the key
-// because the same keyId string may exist under more than one subscriber.
+// keyCacheKey identifies one resolved key. The node is part of the key because
+// the same keyId string may exist under more than one publisher.
 type keyCacheKey struct {
-	participantID string
-	keyID         string
+	nodeID string
+	keyID  string
 }
 
 // keyCacheEntry is one resolved key and the instant it stops being reusable.
@@ -120,7 +127,7 @@ type keyCacheEntry struct {
 }
 
 // keyCache memoises successful registry resolutions so an index of thousands of
-// files costs one registry call per (participant, keyId), not one per file.
+// files costs one registry call per (node, keyId), not one per file.
 //
 // Only successes are cached. A failure is never cached: a transient registry
 // outage must be retried on the next pass rather than pinned for the whole TTL,
@@ -136,20 +143,20 @@ type keyCache struct {
 	entries map[keyCacheKey]keyCacheEntry
 }
 
-func (c *keyCache) get(ctx context.Context, participantID, keyID string) (ed25519.PublicKey, error) {
+func (c *keyCache) get(ctx context.Context, nodeID, keyID string) (ed25519.PublicKey, error) {
 	if c.reg == nil {
 		// Fail closed. A crawler wired without a registry has no way to learn any
 		// publisher key, so it can verify nothing.
 		return nil, catalog.PermanentFaultf(faultSignature,
 			"crawler: no registry configured, cannot resolve publisher key %q", keyID)
 	}
-	if participantID == "" {
-		// Without a subscriber id there is nothing to look the key up under. An
-		// index that omits participantId is unusable, not permissive.
+	if nodeID == "" {
+		// Without a node id there is nothing to look the key up under. An index
+		// that omits nodeId is unusable, not permissive.
 		return nil, catalog.PermanentFaultf(faultSignature,
-			"crawler: index declares no participantId, cannot resolve publisher key %q", keyID)
+			"crawler: index declares no nodeId, cannot resolve publisher key %q", keyID)
 	}
-	ck := keyCacheKey{participantID: participantID, keyID: keyID}
+	ck := keyCacheKey{nodeID: nodeID, keyID: keyID}
 	if key, ok := c.lookupCached(ck); ok {
 		return key, nil
 	}
@@ -177,7 +184,7 @@ func (c *keyCache) lookupCached(ck keyCacheKey) (ed25519.PublicKey, bool) {
 // a usable Ed25519 key, or into a correctly classified failure.
 func (c *keyCache) resolve(ctx context.Context, ck keyCacheKey) (ed25519.PublicKey, error) {
 	subs, err := c.reg.Lookup(ctx, &model.Subscription{
-		Subscriber: model.Subscriber{SubscriberID: ck.participantID},
+		Subscriber: model.Subscriber{SubscriberID: ck.nodeID},
 		KeyID:      ck.keyID,
 	})
 	if err != nil {
@@ -186,13 +193,13 @@ func (c *keyCache) resolve(ctx context.Context, ck keyCacheKey) (ed25519.PublicK
 		// this file. Parking the catalog on it would strand a healthy publisher
 		// until a human noticed. Returned unclassified, so ClassifyFault reports
 		// FaultTransient and the runner retries with backoff.
-		return nil, fmt.Errorf("crawler: registry lookup for subscriber %q key %q: %w", ck.participantID, ck.keyID, err)
+		return nil, fmt.Errorf("crawler: registry lookup for node %q key %q: %w", ck.nodeID, ck.keyID, err)
 	}
 	if len(subs) == 0 {
 		// PERMANENT: the registry answered, and the answer is that this key does
-		// not exist for this participant. Retrying cannot change that.
+		// not exist for this node. Retrying cannot change that.
 		return nil, catalog.PermanentFaultf(faultSignature,
-			"crawler: registry has no key %q for subscriber %q", ck.keyID, ck.participantID)
+			"crawler: registry has no key %q for node %q", ck.keyID, ck.nodeID)
 	}
 	sub := subs[0]
 	// Revoked, expired and invalid-SSL subscriptions must not verify anything.
@@ -200,89 +207,114 @@ func (c *keyCache) resolve(ctx context.Context, ck keyCacheKey) (ed25519.PublicK
 	// transport signature path applies exactly the same one.
 	if !model.IsKeyStatusUsable(sub.Status) {
 		return nil, catalog.PermanentFaultf(faultSignature,
-			"crawler: registry key %q for subscriber %q has unusable status %q", ck.keyID, ck.participantID, sub.Status)
+			"crawler: registry key %q for node %q has unusable status %q", ck.keyID, ck.nodeID, sub.Status)
 	}
 	if sub.SigningPublicKey == "" {
 		return nil, catalog.PermanentFaultf(faultSignature,
-			"crawler: registry key %q for subscriber %q has no signing public key", ck.keyID, ck.participantID)
+			"crawler: registry key %q for node %q has no signing public key", ck.keyID, ck.nodeID)
 	}
 	raw, err := base64.StdEncoding.DecodeString(sub.SigningPublicKey)
 	if err != nil {
 		return nil, catalog.PermanentFaultf(faultSignature,
-			"crawler: registry key %q for subscriber %q is not valid base64: %v", ck.keyID, ck.participantID, err)
+			"crawler: registry key %q for node %q is not valid base64: %v", ck.keyID, ck.nodeID, err)
 	}
 	if len(raw) != ed25519.PublicKeySize {
 		// Guard before ed25519.Verify, which panics on a mis-sized key.
 		return nil, catalog.PermanentFaultf(faultSignature,
-			"crawler: registry key %q for subscriber %q decodes to %d bytes, want %d",
-			ck.keyID, ck.participantID, len(raw), ed25519.PublicKeySize)
+			"crawler: registry key %q for node %q decodes to %d bytes, want %d",
+			ck.keyID, ck.nodeID, len(raw), ed25519.PublicKeySize)
 	}
 	return ed25519.PublicKey(raw), nil
 }
 
-// tupleVerifier checks one file entry's signed tuple. now is injected so the
-// expiry check is testable without sleeping.
-type tupleVerifier struct {
-	keys KeySource
-	now  func() time.Time
-}
-
-// verify reports whether f's signed tuple is present, unexpired, keyed to a key
-// the registry vouches for, and valid over
-// {catalogId, version, url, digest, validUntil}.
-//
-// Every verdict about the file is PERMANENT (catalog.FaultSignature): an
-// unsigned, expired or forged entry stays that way however often it is
-// re-fetched, so the runner parks and alerts rather than retrying on a
-// 5-minute loop. The single exception is a KeySource that could not reach the
-// registry, which is passed through unclassified so it retries.
-func (v tupleVerifier) verify(ctx context.Context, f catalog.FileEntry) error {
-	if v.keys == nil {
+// resolveSigningKey is the shared "look up sig.keyId under nodeID, park on any
+// definitive verdict, retry on a registry outage" step both self-signature
+// gates below use.
+func resolveSigningKey(ctx context.Context, keys KeySource, nodeID, keyID, what string) (ed25519.PublicKey, error) {
+	if keys == nil {
 		// Fail closed: with no key source there is nothing to verify against, so
 		// the signature gate would otherwise silently degrade to "digest only".
-		return catalog.PermanentFaultf(faultSignature,
-			"crawler: no key source configured, refusing unverifiable file %s", f.URL)
+		return nil, catalog.PermanentFaultf(faultSignature,
+			"crawler: no key source configured, refusing unverifiable %s", what)
 	}
-	sig := f.Signature
-	if sig.Value == "" || sig.KeyID == "" {
-		return catalog.PermanentFaultf(faultSignature,
-			"crawler: %s has no signature (signature verification required)", f.URL)
-	}
-	if sig.CatalogID == "" {
-		// The tuple covers catalogId; without the binding the entry cannot be
-		// verified at all (see catalog.StampCatalogIDs).
-		return catalog.PermanentFaultf(faultSignature,
-			"crawler: %s signature is not bound to a catalog", f.URL)
-	}
-	validUntil, err := sig.ValidUntilTime()
-	if err != nil {
-		return catalog.PermanentFaultf(faultSignature, "crawler: %s: %v", f.URL, err)
-	}
-	if v.now().After(validUntil) {
-		return catalog.PermanentFaultf(faultSignature,
-			"crawler: %s signature expired at %s", f.URL, sig.ValidUntil)
-	}
-	pub, err := v.keys(ctx, sig.ParticipantID, sig.KeyID)
+	pub, err := keys(ctx, nodeID, keyID)
 	if err != nil {
 		if catalog.IsPermanent(err) {
-			// A definitive verdict from the key source: no such key, revoked key,
-			// unusable key material. Park.
-			return catalog.PermanentFaultf(faultSignature,
-				"crawler: %s resolving signing key %q: %v", f.URL, sig.KeyID, err)
+			return nil, catalog.PermanentFaultf(faultSignature,
+				"crawler: %s resolving signing key %q: %v", what, keyID, err)
 		}
 		// The key source could not answer (registry unreachable). Stay transient so
 		// the runner retries instead of parking a healthy catalog.
-		return fmt.Errorf("crawler: %s resolving signing key %q: %w", f.URL, sig.KeyID, err)
+		return nil, fmt.Errorf("crawler: %s resolving signing key %q: %w", what, keyID, err)
 	}
 	if len(pub) != ed25519.PublicKeySize {
-		return catalog.PermanentFaultf(faultSignature,
-			"crawler: %s key %q is not a %d-byte Ed25519 key", f.URL, sig.KeyID, ed25519.PublicKeySize)
+		return nil, catalog.PermanentFaultf(faultSignature,
+			"crawler: %s key %q is not a %d-byte Ed25519 key", what, keyID, ed25519.PublicKeySize)
 	}
-	// The digest is passed exactly as published (prefix included) — the tuple is
-	// signed over the declared string, not over the parsed hash.
-	if err := artifactverifier.VerifyFileTuple(sig.CatalogID, int(f.Version), f.URL, f.Digest, validUntil, sig.Value, pub); err != nil {
-		return catalog.PermanentFaultf(faultSignature,
-			"crawler: %s signature verification failed: %v", f.URL, err)
+	return pub, nil
+}
+
+// verifyEntrySignature verifies a catalog index entry's own self-signature
+// (file spec: "each catalog entry signs itself" over catalogId, catalogType,
+// status, networkIds, schemaTypes, and every baseline/changes[] reference,
+// together, as one unit). entryRaw is the entry's own raw JSON exactly as
+// received on the wire — verification MUST run against those bytes, never a
+// Go-struct re-marshal, since a struct round-trip can drop/add fields (e.g.
+// omitempty) and silently break canonicalization.
+func verifyEntrySignature(ctx context.Context, keys KeySource, nodeID string, entryRaw json.RawMessage, sig catalog.EntrySignature) error {
+	if sig.Value == "" || sig.KeyID == "" {
+		return catalog.PermanentFaultf(faultSignature, "crawler: catalog entry has no signature")
+	}
+	pub, err := resolveSigningKey(ctx, keys, nodeID, sig.KeyID, "catalog entry")
+	if err != nil {
+		return err
+	}
+	if err := artifactverifier.VerifyJSON(entryRaw, "signature", sig.Value, pub); err != nil {
+		return catalog.PermanentFaultf(faultSignature, "crawler: catalog entry signature verification failed: %v", err)
 	}
 	return nil
+}
+
+// signedDoc is the shape both self-signed catalog files share on the wire: a
+// baseline (CatalogFile) wraps its content as exactly {catalog, signature}; a
+// change file (CatalogChangeFile) is flat -- catalogId/fromVersion/toVersion
+// alongside resources/offers/an OPTIONAL catalog attribute patch/signature.
+// FromVersion is what tells them apart: it is required on a change file and
+// absent from a baseline, so it is a reliable discriminator. Catalog being
+// non-empty is NOT: a change file legitimately carries a non-empty "catalog"
+// block too (its optional attribute patch), so unwrapping on that alone would
+// wrongly strip a change file down to just its patch and drop resources/offers.
+type signedDoc struct {
+	FromVersion *int                   `json:"fromVersion"`
+	Catalog     json.RawMessage        `json:"catalog"`
+	Signature   catalog.EntrySignature `json:"signature"`
+}
+
+// verifyFileSignature verifies a fetched catalog file's (baseline or change
+// file) own embedded self-signature over its own content, then returns the
+// bytes downstream code should use: for a baseline (which wraps its content as
+// {catalog, signature}) that is the unwrapped .catalog object; for a change
+// file (flat, fromVersion present) that is raw unchanged.
+func verifyFileSignature(ctx context.Context, keys KeySource, nodeID, url string, raw []byte) ([]byte, error) {
+	var doc signedDoc
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, catalog.PermanentFaultf(catalog.FaultContentInvalid, "crawler: %s: not a JSON object: %v", url, err)
+	}
+	if doc.Signature.Value == "" || doc.Signature.KeyID == "" {
+		return nil, catalog.PermanentFaultf(faultSignature, "crawler: %s has no signature (signature verification required)", url)
+	}
+	pub, err := resolveSigningKey(ctx, keys, nodeID, doc.Signature.KeyID, url)
+	if err != nil {
+		return nil, err
+	}
+	if err := artifactverifier.VerifyJSON(raw, "signature", doc.Signature.Value, pub); err != nil {
+		return nil, catalog.PermanentFaultf(faultSignature, "crawler: %s signature verification failed: %v", url, err)
+	}
+	if doc.FromVersion == nil {
+		if len(doc.Catalog) == 0 {
+			return nil, catalog.PermanentFaultf(catalog.FaultContentInvalid, "crawler: %s: baseline has no catalog content", url)
+		}
+		return doc.Catalog, nil // baseline envelope: unwrap to the bare catalog document
+	}
+	return raw, nil // change file (fromVersion present): signature is a sibling field, nothing to unwrap
 }

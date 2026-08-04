@@ -40,10 +40,11 @@ func sha256Prefixed(s string) string {
 }
 
 func TestHTTPClient_FetchIndexAndFile(t *testing.T) {
-	cat := `{"id":"p/c","resources":[{"id":"r1"}]}`
+	signer := newTestSigner(t)
+	cat := string(signer.signChangeFile(t, "p/c", 0, 1))
 	mux := http.NewServeMux()
 	mux.HandleFunc("/index", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`{"participantId":"p","version":7,"catalogs":[]}`))
+		w.Write([]byte(`{"nodeId":"p","version":7,"catalogs":[]}`))
 	})
 	mux.HandleFunc("/file", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte(cat))
@@ -51,7 +52,6 @@ func TestHTTPClient_FetchIndexAndFile(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	signer := newTestSigner(t)
 	// allowPrivate for httptest (127.0.0.1); the trusted key is the signature gate's anchor.
 	c := NewClient(5*time.Second, 1<<20, 1<<20, true, WithTrustedKeys(signer.source()))
 	ctx := context.Background()
@@ -60,12 +60,12 @@ func TestHTTPClient_FetchIndexAndFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Index.ParticipantID != "p" || res.Index.Version != 7 {
-		t.Fatalf("index = %+v, want participantId p version 7", res.Index)
+	if res.Index.NodeID != "p" || res.Index.Version != 7 {
+		t.Fatalf("index = %+v, want nodeId p version 7", res.Index)
 	}
 
-	good := signer.sign(t, "p/c", catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(cat)})
-	body, err := c.FetchFile(ctx, good)
+	good := catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(cat)}
+	body, err := c.FetchFile(ctx, "p", good)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,73 +74,72 @@ func TestHTTPClient_FetchIndexAndFile(t *testing.T) {
 	}
 
 	// A digest the bytes don't match, correctly signed: the digest gate still bites.
-	bad := signer.sign(t, "p/c", catalog.FileEntry{URL: srv.URL + "/file", Digest: "sha-256:deadbeef"})
-	if _, err := c.FetchFile(ctx, bad); err == nil {
+	bad := catalog.FileEntry{URL: srv.URL + "/file", Digest: "sha-256:deadbeef"}
+	if _, err := c.FetchFile(ctx, "p", bad); err == nil {
 		t.Fatal("expected digest-mismatch error")
 	}
 }
 
-// FetchIndex stamps each file entry with its enclosing catalog's id: the signed
-// tuple covers catalogId, but the wire format leaves it implicit in the nesting,
-// so an unstamped entry could never be verified once it travels on its own.
-func TestHTTPClient_FetchIndex_StampsCatalogID(t *testing.T) {
-	index := `{"participantId":"p","version":2,"catalogs":[
-		{"catalogId":"p/c1","baseline":{"version":1,"url":"https://x/b.json"},
-		 "changes":[{"version":2,"url":"https://x/c.json"}]}]}`
+// FetchIndex drops any catalog entry whose own self-signature does not verify
+// -- fail closed rather than trust an unsigned or forged index entry, per the
+// file spec's "each catalog entry signs itself".
+func TestHTTPClient_FetchIndex_DropsUnverifiedEntries(t *testing.T) {
+	signer := newTestSigner(t)
+	good := string(signer.signEntry(t, "p/c1"))
+	bad := `{"catalogId":"p/c2","status":"ACTIVE","baseline":{"version":1,"url":"https://x/b.json"},"changes":[],"signature":{"keyId":"pub-key-1","value":"forged"}}`
+	index := `{"nodeId":"p","version":2,"catalogs":[` + good + `,` + bad + `]}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte(index))
 	}))
 	defer srv.Close()
 
-	c := NewClient(5*time.Second, 1<<20, 1<<20, true)
+	c := NewClient(5*time.Second, 1<<20, 1<<20, true, WithTrustedKeys(signer.source()))
 	res, err := c.FetchIndex(context.Background(), srv.URL, catalog.IndexConditions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := res.Index.Catalogs[0]
-	if got := entry.Baseline.Signature.CatalogID; got != "p/c1" {
-		t.Errorf("baseline CatalogID = %q, want %q", got, "p/c1")
-	}
-	if got := entry.Changes[0].Signature.CatalogID; got != "p/c1" {
-		t.Errorf("change CatalogID = %q, want %q", got, "p/c1")
+	if len(res.Index.Catalogs) != 1 || res.Index.Catalogs[0].CatalogID != "p/c1" {
+		t.Fatalf("catalogs = %+v, want only the validly-signed p/c1 entry", res.Index.Catalogs)
 	}
 }
 
-// The signature gate runs BEFORE the GET, and fails closed: an unsigned entry —
-// or any entry when no trusted keys were injected — is rejected without the
-// server ever being contacted.
+// The signature gate runs AFTER decode (the embedded signature covers the
+// document as authored, not its at-rest packaging), and fails closed: an
+// unsigned file — or any file when no trusted keys were injected — is
+// rejected.
 func TestHTTPClient_FetchFile_SignatureGate(t *testing.T) {
-	cat := `{"id":"p/c","resources":[{"id":"r1"}]}`
+	unsigned := `{"catalogId":"p/c","fromVersion":0,"toVersion":1,"resources":{},"offers":{}}`
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
-		w.Write([]byte(cat))
+		w.Write([]byte(unsigned))
 	}))
 	defer srv.Close()
 
 	signer := newTestSigner(t)
 	ctx := context.Background()
-	plain := catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(cat)}
+	plain := catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(unsigned)}
 
-	t.Run("unsigned entry", func(t *testing.T) {
+	t.Run("unsigned file", func(t *testing.T) {
 		c := NewClient(5*time.Second, 1<<20, 1<<20, true, WithTrustedKeys(signer.source()))
-		_, err := c.FetchFile(ctx, plain)
+		_, err := c.FetchFile(ctx, "p", plain)
 		assertPermanentFault(t, err, faultSignature)
 	})
 
 	t.Run("no trusted keys injected", func(t *testing.T) {
 		c := NewClient(5*time.Second, 1<<20, 1<<20, true)
-		_, err := c.FetchFile(ctx, signer.sign(t, "p/c", plain))
+		_, err := c.FetchFile(ctx, "p", plain)
 		assertPermanentFault(t, err, faultSignature)
 	})
 
-	if hits.Load() != 0 {
-		t.Fatalf("server was contacted %d times; the signature gate must reject before the GET", hits.Load())
+	if hits.Load() != 2 {
+		t.Fatalf("server was contacted %d times, want 2 (the signature gate runs after the GET, on the decoded content)", hits.Load())
 	}
 }
 
 func TestHTTPClient_FetchGzipFile(t *testing.T) {
-	cat := `{"id":"p/c","resources":[{"id":"r1"}]}`
+	signer := newTestSigner(t)
+	cat := string(signer.signChangeFile(t, "p/c", 0, 1))
 	compressed := gz(t, []byte(cat))
 	// The digest covers the artifact AT REST — the compressed bytes we hash
 	// before spending CPU inflating.
@@ -152,12 +151,11 @@ func TestHTTPClient_FetchGzipFile(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	signer := newTestSigner(t)
 	c := NewClient(5*time.Second, 1<<20, 1<<20, true, WithTrustedKeys(signer.source()))
 	ctx := context.Background()
 
 	// Encoding inferred from the .json.gzip suffix.
-	body, err := c.FetchFile(ctx, signer.sign(t, "p/c", catalog.FileEntry{URL: srv.URL + "/c.json.gzip", Digest: digest}))
+	body, err := c.FetchFile(ctx, "p", catalog.FileEntry{URL: srv.URL + "/c.json.gzip", Digest: digest})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +164,7 @@ func TestHTTPClient_FetchGzipFile(t *testing.T) {
 	}
 
 	// Encoding taken from the explicit FileEntry.Encoding on a plain URL.
-	body, err = c.FetchFile(ctx, signer.sign(t, "p/c", catalog.FileEntry{URL: srv.URL + "/c", Encoding: "gzip", Digest: digest}))
+	body, err = c.FetchFile(ctx, "p", catalog.FileEntry{URL: srv.URL + "/c", Encoding: "gzip", Digest: digest})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +179,7 @@ func TestHTTPClient_FetchGzipFile(t *testing.T) {
 func TestHTTPClient_FetchIndex_Conditional(t *testing.T) {
 	const etag = `W/"v7"`
 	const lastMod = "Wed, 21 Oct 2026 07:28:00 GMT"
-	index := `{"participantId":"p","version":7,"catalogs":[]}`
+	index := `{"nodeId":"p","version":7,"catalogs":[]}`
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/index", func(w http.ResponseWriter, r *http.Request) {
@@ -229,7 +227,7 @@ func TestHTTPClient_FetchIndex_Conditional(t *testing.T) {
 func TestHTTPClient_FetchIndex_NoValidators(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/index", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`{"participantId":"p","version":3,"catalogs":[]}`))
+		w.Write([]byte(`{"nodeId":"p","version":3,"catalogs":[]}`))
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -307,10 +305,10 @@ func TestClient_FetchTimeoutBoundsHungResolver(t *testing.T) {
 	signer := newTestSigner(t)
 	// allowPrivate=false so the URL-level pre-check (and its DNS lookup) runs.
 	c := NewClient(50*time.Millisecond, 1<<20, 1<<20, false, WithTrustedKeys(signer.source()))
-	entry := signer.sign(t, "p/c", catalog.FileEntry{
+	entry := catalog.FileEntry{
 		URL:    "https://hung.example/c/v1.json",
 		Digest: sha256Prefixed("anything"),
-	})
+	}
 
 	tests := []struct {
 		name string
@@ -326,7 +324,7 @@ func TestClient_FetchTimeoutBoundsHungResolver(t *testing.T) {
 		{
 			name: "FetchFile",
 			call: func(ctx context.Context) error {
-				_, err := c.FetchFile(ctx, entry)
+				_, err := c.FetchFile(ctx, "p", entry)
 				return err
 			},
 		},
@@ -356,16 +354,16 @@ func TestClient_FetchTimeoutBoundsHungResolver(t *testing.T) {
 // A non-positive timeout means "no limit", matching http.Client.Timeout, and
 // must not turn into an instantly-expired deadline that fails every fetch.
 func TestClient_ZeroTimeoutMeansNoDeadline(t *testing.T) {
-	cat := `{"id":"p/c","resources":[{"id":"r1"}]}`
+	signer := newTestSigner(t)
+	cat := string(signer.signChangeFile(t, "p/c", 0, 1))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte(cat))
 	}))
 	defer srv.Close()
 
-	signer := newTestSigner(t)
 	c := NewClient(0, 1<<20, 1<<20, true, WithTrustedKeys(signer.source()))
-	f := signer.sign(t, "p/c", catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(cat)})
-	body, err := c.FetchFile(context.Background(), f)
+	f := catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(cat)}
+	body, err := c.FetchFile(context.Background(), "p", f)
 	if err != nil {
 		t.Fatalf("FetchFile with timeout 0 = %v, want it to succeed", err)
 	}
@@ -380,26 +378,26 @@ func TestClient_ZeroTimeoutMeansNoDeadline(t *testing.T) {
 // alerting) and mislabeled the cause — for a digest mismatch, the only integrity
 // gate Phase 1 has.
 func TestFetchFaults_ArePermanentAndClassified(t *testing.T) {
-	cat := `{"id":"p/c","resources":[{"id":"r1"}]}`
+	signer := newTestSigner(t)
+	cat := string(signer.signChangeFile(t, "p/c", 0, 1))
 	mux := http.NewServeMux()
 	mux.HandleFunc("/file", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte(cat)) })
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	ctx := context.Background()
-	signer := newTestSigner(t)
 	keys := WithTrustedKeys(signer.source())
 
 	t.Run("digest mismatch", func(t *testing.T) {
 		c := NewClient(5*time.Second, 1<<20, 1<<20, true, keys)
-		f := signer.sign(t, "p/c", catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed("something else")})
-		_, err := c.FetchFile(ctx, f)
+		f := catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed("something else")}
+		_, err := c.FetchFile(ctx, "p", f)
 		assertPermanentFault(t, err, catalog.FaultDigestMismatch)
 	})
 
 	t.Run("artifact over the compressed cap", func(t *testing.T) {
 		c := NewClient(5*time.Second, 8, 1<<20, true, keys) // maxBytes=8 < len(cat)
-		f := signer.sign(t, "p/c", catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(cat)})
-		_, err := c.FetchFile(ctx, f)
+		f := catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(cat)}
+		_, err := c.FetchFile(ctx, "p", f)
 		assertPermanentFault(t, err, catalog.FaultOversize)
 	})
 
@@ -415,8 +413,8 @@ func TestFetchFaults_ArePermanentAndClassified(t *testing.T) {
 		}))
 		defer down.Close()
 		c := NewClient(5*time.Second, 1<<20, 1<<20, true, keys)
-		f := signer.sign(t, "p/c", catalog.FileEntry{URL: down.URL, Digest: sha256Prefixed(cat)})
-		_, err := c.FetchFile(ctx, f)
+		f := catalog.FileEntry{URL: down.URL, Digest: sha256Prefixed(cat)}
+		_, err := c.FetchFile(ctx, "p", f)
 		if err == nil {
 			t.Fatal("want an error on 503")
 		}

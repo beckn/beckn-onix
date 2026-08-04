@@ -7,7 +7,10 @@
 package catalog
 
 // FileEntry is one baseline or change file listed in the index: an immutable,
-// versioned URL with its size, digest, and signed tuple.
+// versioned URL with its size and digest. It carries no signature of its own
+// -- per the v2 file spec, the file it points at self-signs its own content,
+// and the enclosing CatalogEntry self-signs the whole set of file references
+// together (see CatalogEntry.Signature).
 type FileEntry struct {
 	Version int64  `json:"version"`
 	URL     string `json:"url"`
@@ -16,8 +19,7 @@ type FileEntry struct {
 	// Encoding names the artifact packaging: "" / "json" = plain JSON, "gzip"
 	// = gzipped JSON (and future codecs). Falls back to the URL suffix when
 	// absent. It is a lookup key into the decode registry.
-	Encoding  string    `json:"encoding,omitempty"`
-	Signature Signature `json:"signature"`
+	Encoding string `json:"encoding,omitempty"`
 }
 
 // AuthMethod describes how a restricted file's bytes are fetched (the spec's
@@ -31,26 +33,30 @@ type AuthMethod struct {
 }
 
 // CatalogEntry is one catalog's record in the index: identity, status,
-// visibility, and its baseline + change files.
+// visibility, its baseline + change files, and the entry's own self-signature
+// over all of the above (file spec: "each catalog entry signs itself").
 type CatalogEntry struct {
-	CatalogID   string       `json:"catalogId"`
-	CatalogType string       `json:"catalogType"`
-	Status      string       `json:"status"` // ACTIVE | RETIRED (index/ION wire)
-	SchemaTypes []string     `json:"schemaTypes"`
-	NetworkIDs  []string     `json:"networkIds"` // absent/empty => public
-	AuthMethods []AuthMethod `json:"authMethods,omitempty"`
-	Baseline    FileEntry    `json:"baseline"`
-	Changes     []FileEntry  `json:"changes"`
-	RetiredAt   string       `json:"retiredAt,omitempty"`
+	CatalogID   string          `json:"catalogId"`
+	CatalogType string          `json:"catalogType"`
+	Status      string          `json:"status"` // ACTIVE | RETIRED (index/ION wire)
+	SchemaTypes []string        `json:"schemaTypes"`
+	NetworkIDs  []string        `json:"networkIds"` // absent/empty => public
+	AuthMethods []AuthMethod    `json:"authMethods,omitempty"`
+	Baseline    FileEntry       `json:"baseline"`
+	Changes     []FileEntry     `json:"changes"`
+	RetiredAt   string          `json:"retiredAt,omitempty"`
+	Signature   EntrySignature  `json:"signature"`
 }
 
 // Index is a publisher's catalog index (File Specifications: "a plain Beckn
-// file listing the catalogs; DeDi never ingests it").
+// file listing the catalogs; DeDi never ingests it"). NodeID is the
+// publishing node's domain identity (file spec's nodeId collapse -- this
+// prototype's former participantId).
 type Index struct {
-	ParticipantID string         `json:"participantId"`
-	Version       int64          `json:"version"`
-	NextUpdate    string         `json:"next_update"`
-	Catalogs      []CatalogEntry `json:"catalogs"`
+	NodeID     string         `json:"nodeId"`
+	Version    int64          `json:"version"`
+	NextUpdate string         `json:"next_update"`
+	Catalogs   []CatalogEntry `json:"catalogs"`
 }
 
 // Index entry status values (ION wire — distinct from the stored CatalogStatus

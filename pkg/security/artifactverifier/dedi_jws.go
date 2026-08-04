@@ -24,11 +24,22 @@ const dediJWSHeader = `{"alg":"EdDSA","b64":false,"crit":["b64"]}`
 // but is sufficient here since Go's map marshaling already sorts keys and
 // uses compact separators).
 func CanonicalizeJCS(doc []byte) ([]byte, error) {
+	return CanonicalizeJCSExcluding(doc, "proof")
+}
+
+// CanonicalizeJCSExcluding is CanonicalizeJCS generalized to remove an
+// arbitrary top-level field before canonicalizing, for documents that sign
+// themselves under a different field name than DeDi's "proof" convention --
+// e.g. the decentralized-catalog file spec's self-signed catalog files and
+// catalog-index entries, which both remove "signature" instead (the same
+// non-circularity requirement: a document cannot authentically sign its
+// own eventual signature).
+func CanonicalizeJCSExcluding(doc []byte, excludeField string) ([]byte, error) {
 	var generic map[string]interface{}
 	if err := json.Unmarshal(doc, &generic); err != nil {
 		return nil, fmt.Errorf("canonicalizing document: %w", err)
 	}
-	delete(generic, "proof")
+	delete(generic, excludeField)
 	return marshalSorted(generic)
 }
 
@@ -87,6 +98,27 @@ func VerifyDetachedJWS(doc []byte, jws string, pub ed25519.PublicKey) error {
 
 	if !ed25519.Verify(pub, input, sig) {
 		return fmt.Errorf("Ed25519 detached-JWS verification failed")
+	}
+	return nil
+}
+
+// VerifyJSON verifies the file spec's self-signing convention: a plain
+// Ed25519 signature over the JCS canonicalization of doc with excludeField
+// removed (the matching counterpart to artifactsigner.SignJSON). Used for
+// both self-signed catalog files/change files and self-signed catalog-index
+// entries -- both sign "the document with `signature` removed", never a
+// derived tuple.
+func VerifyJSON(doc []byte, excludeField, sigValueB64 string, pub ed25519.PublicKey) error {
+	sig, err := base64.StdEncoding.DecodeString(sigValueB64)
+	if err != nil {
+		return fmt.Errorf("decoding signature: %w", err)
+	}
+	canonical, err := CanonicalizeJCSExcluding(doc, excludeField)
+	if err != nil {
+		return err
+	}
+	if !ed25519.Verify(pub, canonical, sig) {
+		return fmt.Errorf("Ed25519 signature verification failed")
 	}
 	return nil
 }

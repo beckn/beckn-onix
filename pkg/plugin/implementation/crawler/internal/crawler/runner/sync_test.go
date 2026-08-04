@@ -385,7 +385,7 @@ func TestPublish_LocalFailureMidBatch_RoutesOnAckedCount(t *testing.T) {
 					FromVersion: 1, ToVersion: 2, Op: "sync", Attempts: tt.priorAttempts,
 				},
 				runID: "run", passID: "pass",
-				participantID: "p", mode: publish.UpdateModeMerge,
+				nodeID: "p", mode: publish.UpdateModeMerge,
 				resCount: 2, batches: batches,
 			}
 
@@ -661,7 +661,7 @@ func TestVerifyContent_ZeroCountGate(t *testing.T) {
 					FromVersion: 1, ToVersion: 2, Op: "sync",
 				},
 				runID: "run", passID: "pass",
-				participantID: "p", mode: publish.UpdateModeMerge,
+				nodeID: "p", mode: publish.UpdateModeMerge,
 				pushDoc: []byte(tt.doc), cs: tt.cs,
 			}
 
