@@ -518,24 +518,26 @@ on.
 
 ### What you need to do
 
-Short version: **point your existing signing key at some storage, call
-`Publish` once, and set one field on a record you already have.** That's
-the whole migration -- there's no server to stand up, no subscription
-list to manage, and no ACK/NACK handshake to get right.
+Short version: **pick some storage, call `catalog/publish` against your
+own adapter instead of a central service, and set one field on a record
+you already have.** That's the whole migration -- there's no server to
+stand up, no subscription list to manage, and no ACK/NACK handshake to
+get right.
 
 1. **Pick storage you already have.** Any static host works -- S3, a CDN,
    GitHub Pages, even an ngrok tunnel for local testing. You're not
    building a new service; you're pointing this plugin at a folder.
-2. **Reuse the signing key your adapter already has.** No new keypair, no
-   new registration -- the same `KeyManager` keyset that signs your
-   transactions today signs your catalog files and index too.
-3. **Call `Publish` (or the DS-internal `catalog/publish` trigger) with
-   your catalog JSON, unchanged.** That's it -- no ACK/NACK to parse, no
-   MERGE/FULL mode to pick. The plugin looks at what you last published
-   and figures out on its own whether this is a fresh baseline or an
-   incremental change; a resubmission of identical content is simply a
-   no-op. Upload the handful of files it hands back to your storage.
-4. **Set one field on your existing DeDi Subscriber record:
+2. **Call `catalog/publish` -- but against your own adapter, not a
+   central Cataloging Service.** The request body (your catalog JSON) is
+   unchanged, but the endpoint you hit is now this DS-internal,
+   same-operator trigger on your own node instead of a network call to
+   someone else's service, and there's no ACK/NACK to parse in response:
+   a synchronous call returns the catalog files and index, ready to
+   upload. No MERGE/FULL mode to pick either -- the plugin looks at what
+   you last published and figures out on its own whether this is a fresh
+   baseline or an incremental change; a resubmission of identical content
+   is simply a no-op.
+3. **Set one field on your existing DeDi Subscriber record:
    `meta.catalog_index_url`.** That's the entire "registration" step --
    no separate pointer file, no new registry to onboard into. The plugin
    can even check this for you after every publish and warn you if it's
@@ -549,10 +551,12 @@ below).
 
 ### What you no longer need
 
-- **`catalog/publish` request/ACK/NACK.** Replaced by files on your own
-  storage plus this plugin's synchronous `Publish` call (or the
-  `catalogPublish` HTTP trigger, if you're not embedding the plugin
-  directly).
+- **A `catalog/publish` call to a shared, network-facing Cataloging
+  Service, with an ACK/NACK response.** You still call `catalog/publish`
+  -- but it's now a DS-internal, same-operator trigger on your own
+  adapter, not a network call to someone else's service, and it responds
+  synchronously with your catalog files and index instead of an ACK/NACK
+  envelope.
 - **`catalog/subscription` CRUD.** A crawler's scope is its own
   configuration now -- you don't manage subscriber lists.
 - **`catalog/search`.** Removed from the publish/pull surface; a
