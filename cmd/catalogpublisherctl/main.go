@@ -112,13 +112,13 @@ func main() {
 
 	var loadIDs []string
 	if id != "" {
-		loadIDs = []string{id}
+		loadIDs = append(loadIDs, id)
 	}
+	loadIDs = append(loadIDs, retireIDs...) // tombstones need the retired catalog's prior CatalogType/NetworkIds/SchemaTypes/EntryVersion too
 	state, err := localstore.Load(*outDir, loadIDs)
 	must(err)
 	req.PriorState = state.PriorState
 	req.CarryForward = state.CarryForward
-	req.PriorIndexVersion = state.PriorIndexVersion
 
 	result, err := publisher.Publish(ctx, req)
 	must(err)
@@ -132,12 +132,14 @@ func main() {
 	for _, outcome := range result.Catalogs {
 		switch outcome.Mode {
 		case "baseline":
-			fmt.Printf("catalog %s: published baseline, version %d\n", outcome.CatalogID, outcome.Version)
+			fmt.Printf("catalog %s: published baseline, version %d (entryVersion %d)\n", outcome.CatalogID, outcome.Version, outcome.EntryVersion)
 		case "change":
-			fmt.Printf("catalog %s: published change file, version %d\n", outcome.CatalogID, outcome.Version)
+			fmt.Printf("catalog %s: published change file, version %d (entryVersion %d)\n", outcome.CatalogID, outcome.Version, outcome.EntryVersion)
 			printChangeSummary(outcome.Content)
+		case "metadata":
+			fmt.Printf("catalog %s: metadata-only update, entryVersion %d\n", outcome.CatalogID, outcome.EntryVersion)
 		default:
-			fmt.Printf("catalog %s: unchanged, still version %d\n", outcome.CatalogID, outcome.Version)
+			fmt.Printf("catalog %s: unchanged, still version %d (entryVersion %d)\n", outcome.CatalogID, outcome.Version, outcome.EntryVersion)
 		}
 		fmt.Printf("  digest: %s\n", outcome.Digest)
 	}
@@ -145,7 +147,7 @@ func main() {
 		fmt.Printf("catalog %s: marked RETIRED\n", rid)
 	}
 
-	fmt.Printf("index version %d, artifacts written to %s\n", result.IndexVersion, *outDir)
+	fmt.Printf("artifacts written to %s\n", *outDir)
 }
 
 func printChangeSummary(content json.RawMessage) {

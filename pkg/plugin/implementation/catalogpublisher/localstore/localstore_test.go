@@ -102,8 +102,8 @@ func TestWriteThenLoad_RoundTripsBaseline(t *testing.T) {
 	if prior.BaselineFile == nil || prior.BaselineFile.Version != 1 {
 		t.Errorf("unexpected baseline file ref: %+v", prior.BaselineFile)
 	}
-	if state.PriorIndexVersion != 1 {
-		t.Errorf("PriorIndexVersion = %d, want 1", state.PriorIndexVersion)
+	if prior.EntryVersion != 1 {
+		t.Errorf("EntryVersion = %d, want 1", prior.EntryVersion)
 	}
 	if len(state.CarryForward) != 0 {
 		t.Errorf("expected no carry-forward entries, got %+v", state.CarryForward)
@@ -116,7 +116,7 @@ func TestLoad_NoPriorIndex_ReturnsEmptyState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(state.PriorState) != 0 || len(state.CarryForward) != 0 || state.PriorIndexVersion != 0 {
+	if len(state.PriorState) != 0 || len(state.CarryForward) != 0 {
 		t.Errorf("expected empty state, got %+v", state)
 	}
 }
@@ -152,10 +152,9 @@ func TestWriteThenLoad_IncrementalAndCarryForward(t *testing.T) {
 
 	catA2 := json.RawMessage(`{"id":"CAT-A","descriptor":{"name":"A"},"provider":{},"resources":[{"id":"ITEM-1","descriptor":{"name":"one-updated"}}]}`)
 	result2, err := p.Publish(context.Background(), definition.PublishRequest{
-		Catalogs:          []definition.CatalogSubmission{{CatalogID: "example.test/CAT-A", Catalog: catA2}},
-		PriorState:        state.PriorState,
-		CarryForward:      state.CarryForward,
-		PriorIndexVersion: state.PriorIndexVersion,
+		Catalogs:     []definition.CatalogSubmission{{CatalogID: "example.test/CAT-A", Catalog: catA2}},
+		PriorState:   state.PriorState,
+		CarryForward: state.CarryForward,
 	})
 	if err != nil {
 		t.Fatalf("Publish (v2): %v", err)
@@ -178,8 +177,8 @@ func TestWriteThenLoad_IncrementalAndCarryForward(t *testing.T) {
 	if !jsonEqual(t, finalState.PriorState["example.test/CAT-B"].Catalog, catB) {
 		t.Errorf("CAT-B reconstruction mismatch:\ngot:  %s\nwant: %s", finalState.PriorState["example.test/CAT-B"].Catalog, catB)
 	}
-	if finalState.PriorIndexVersion != result2.IndexVersion {
-		t.Errorf("PriorIndexVersion = %d, want %d", finalState.PriorIndexVersion, result2.IndexVersion)
+	if finalState.PriorState["example.test/CAT-A"].EntryVersion != result2.Catalogs[0].EntryVersion {
+		t.Errorf("CAT-A reloaded EntryVersion = %d, want %d", finalState.PriorState["example.test/CAT-A"].EntryVersion, result2.Catalogs[0].EntryVersion)
 	}
 }
 

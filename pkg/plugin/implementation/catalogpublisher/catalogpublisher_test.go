@@ -120,11 +120,8 @@ func TestPublish_SingleCatalog_ProducesIndex(t *testing.T) {
 	if len(result.Errors) != 0 {
 		t.Fatalf("expected no errors, got %+v", result.Errors)
 	}
-	if len(result.Catalogs) != 1 || !result.Catalogs[0].Changed || result.Catalogs[0].Version != 1 {
+	if len(result.Catalogs) != 1 || !result.Catalogs[0].Changed || result.Catalogs[0].Version != 1 || result.Catalogs[0].EntryVersion != 1 {
 		t.Fatalf("unexpected catalog outcomes: %+v", result.Catalogs)
-	}
-	if result.IndexVersion != 1 {
-		t.Errorf("IndexVersion = %d, want 1", result.IndexVersion)
 	}
 	if len(result.Index) == 0 {
 		t.Fatal("expected non-empty index")
@@ -137,9 +134,6 @@ func TestPublish_SingleCatalog_ProducesIndex(t *testing.T) {
 	if index.NodeID != "example.test" {
 		t.Errorf("index.NodeID = %q, want example.test", index.NodeID)
 	}
-	if index.Version != 1 {
-		t.Errorf("index.Version = %d, want 1", index.Version)
-	}
 	if index.NextUpdate == nil {
 		t.Error("expected index.next_update to be set")
 	}
@@ -151,8 +145,14 @@ func TestPublish_SingleCatalog_ProducesIndex(t *testing.T) {
 	if err := json.Unmarshal(index.Catalogs[0], &entry); err != nil {
 		t.Fatalf("parsing catalog entry: %v", err)
 	}
-	if entry.CatalogID != "example.test/CAT-1" || entry.Status != "ACTIVE" || entry.CatalogType != "REGULAR" {
+	if entry.CatalogID != "example.test/CAT-1" || entry.CatalogType != "REGULAR" {
 		t.Fatalf("unexpected catalog entry: %+v", entry)
+	}
+	if entry.EntryVersion != 1 {
+		t.Errorf("entry.EntryVersion = %d, want 1", entry.EntryVersion)
+	}
+	if entry.IsActive == nil || !*entry.IsActive {
+		t.Errorf("expected entry.IsActive = true (default), got %+v", entry.IsActive)
 	}
 	if entry.Baseline == nil {
 		t.Fatal("expected a baseline file entry")
@@ -191,6 +191,9 @@ func TestPublish_SingleCatalog_ProducesIndex(t *testing.T) {
 	}
 	if file.Signature.KeyID != "publisher-key-1" || file.Signature.Canonicalization != "JCS" || file.Signature.Value == "" {
 		t.Errorf("unexpected baseline file self-signature: %+v", file.Signature)
+	}
+	if file.CatalogID == "" || file.Version != 1 || file.NextUpdate.IsZero() {
+		t.Errorf("baseline file missing required identity/freshness fields: %+v", file)
 	}
 }
 
@@ -304,12 +307,14 @@ func TestPublish_Incremental_UnchangedProducesNoOp(t *testing.T) {
 	prior := definition.PriorCatalogState{
 		Catalog:      catalog,
 		BaselineFile: &definition.FileRef{Version: 1, URL: "file://baseline.json", Digest: "sha-256:abc"},
+		EntryVersion: 1,
+		CatalogType:  "REGULAR",
+		IsActive:     true,
 	}
 
 	result, err := p.Publish(context.Background(), definition.PublishRequest{
-		Catalogs:          []definition.CatalogSubmission{{CatalogID: "CAT-1", Catalog: catalog}},
-		PriorState:        map[string]definition.PriorCatalogState{"CAT-1": prior},
-		PriorIndexVersion: 1,
+		Catalogs:   []definition.CatalogSubmission{{CatalogID: "CAT-1", Catalog: catalog}},
+		PriorState: map[string]definition.PriorCatalogState{"CAT-1": prior},
 	})
 	if err != nil {
 		t.Fatalf("Publish: %v", err)
@@ -318,8 +323,8 @@ func TestPublish_Incremental_UnchangedProducesNoOp(t *testing.T) {
 	if got.Mode != "unchanged" || got.Changed || got.Version != 1 || got.Content != nil {
 		t.Errorf("expected a no-op outcome, got %+v", got)
 	}
-	if result.IndexVersion != 1 {
-		t.Errorf("expected index version to stay 1 on a total no-op, got %d", result.IndexVersion)
+	if got.EntryVersion != prior.EntryVersion {
+		t.Errorf("expected entryVersion to stay %d on a total no-op, got %d", prior.EntryVersion, got.EntryVersion)
 	}
 
 	var index catalogIndexDoc
@@ -372,6 +377,9 @@ func TestPublish_Incremental_ProducesChangeFile(t *testing.T) {
 	if change.CatalogID != "CAT-1" || change.FromVersion != 1 || change.ToVersion != 2 {
 		t.Errorf("unexpected change file header: %+v", change)
 	}
+	if change.NextUpdate.IsZero() {
+		t.Error("expected change file's next_update to be set")
+	}
 	if len(change.Resources.Upserts) != 2 || len(change.Resources.Removals) != 1 {
 		t.Fatalf("unexpected change contents: %+v", change.Resources)
 	}
@@ -403,6 +411,112 @@ func TestPublish_Incremental_ProducesChangeFile(t *testing.T) {
 	}
 }
 
+// TestPublish_MetadataOnlyChange_BumpsEntryVersionWithoutNewFile proves the
+// NFH-014 §Versioning fix: editing only NetworkIds (no resource/offer/
+// catalog-attribute change) must still bump EntryVersion and re-sign the
+// entry, without producing a new baseline/change file or touching the
+// file-lineage Version.
+func TestPublish_MetadataOnlyChange_BumpsEntryVersionWithoutNewFile(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	catalog := mustCatalogWithItems("CAT-1", "ITEM-1")
+	prior := definition.PriorCatalogState{
+		Catalog:      catalog,
+		BaselineFile: &definition.FileRef{Version: 1, URL: "file://baseline.json", Digest: "sha-256:abc"},
+		EntryVersion: 3,
+		CatalogType:  "REGULAR",
+		IsActive:     true,
+		NetworkIds:   []string{"old.network"},
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs:   []definition.CatalogSubmission{{CatalogID: "CAT-1", Catalog: catalog, NetworkIds: []string{"new.network"}}},
+		PriorState: map[string]definition.PriorCatalogState{"CAT-1": prior},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	got := result.Catalogs[0]
+	if got.Mode != "metadata" || !got.Changed || got.Content != nil || got.Version != 1 {
+		t.Fatalf("expected a metadata-only outcome, got %+v", got)
+	}
+	if got.EntryVersion != 4 {
+		t.Errorf("EntryVersion = %d, want 4 (bumped from prior 3)", got.EntryVersion)
+	}
+
+	var index catalogIndexDoc
+	if err := json.Unmarshal(result.Index, &index); err != nil {
+		t.Fatalf("parsing index: %v", err)
+	}
+	var entry catalogEntry
+	if err := json.Unmarshal(index.Catalogs[0], &entry); err != nil {
+		t.Fatalf("parsing entry: %v", err)
+	}
+	if len(entry.NetworkIds) != 1 || entry.NetworkIds[0] != "new.network" {
+		t.Errorf("expected the new NetworkIds in the re-signed entry, got %+v", entry.NetworkIds)
+	}
+	if entry.Baseline == nil || entry.Baseline.Version != 1 {
+		t.Errorf("expected the baseline file reference to stay unchanged, got %+v", entry.Baseline)
+	}
+}
+
+// TestPublish_ForceBaseline_KeepsPriorChangesListed proves the compaction
+// grace-period fix (NFH-014 CON-TBD-32): a forced re-baseline must not
+// reset Changes to nil -- the pre-compaction change files stay listed
+// (not just hosted) so a DS mid-lineage can still reach equivalent content
+// by applying them. How long to keep passing them is the caller's own
+// policy (PriorCatalogState's doc comment); Publish itself just doesn't
+// discard what it's handed.
+func TestPublish_ForceBaseline_KeepsPriorChangesListed(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	catalog := mustCatalogWithItems("CAT-1", "ITEM-1")
+	priorChange := definition.FileRef{Version: 2, URL: "file://v2.changes.json", Digest: "sha-256:def"}
+	prior := definition.PriorCatalogState{
+		Catalog:      catalog,
+		BaselineFile: &definition.FileRef{Version: 1, URL: "file://v1.json", Digest: "sha-256:abc"},
+		ChangeFiles:  []definition.FileRef{priorChange},
+		EntryVersion: 2,
+		CatalogType:  "REGULAR",
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs:      []definition.CatalogSubmission{{CatalogID: "CAT-1", Catalog: catalog}},
+		PriorState:    map[string]definition.PriorCatalogState{"CAT-1": prior},
+		ForceBaseline: true,
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	got := result.Catalogs[0]
+	if got.Mode != "baseline" || got.Version != 3 {
+		t.Fatalf("unexpected outcome: %+v", got)
+	}
+
+	var index catalogIndexDoc
+	if err := json.Unmarshal(result.Index, &index); err != nil {
+		t.Fatalf("parsing index: %v", err)
+	}
+	var entry catalogEntry
+	if err := json.Unmarshal(index.Catalogs[0], &entry); err != nil {
+		t.Fatalf("parsing entry: %v", err)
+	}
+	if entry.Baseline == nil || entry.Baseline.Version != 3 {
+		t.Fatalf("expected the new baseline at version 3, got %+v", entry.Baseline)
+	}
+	if len(entry.Changes) != 1 || entry.Changes[0].Version != 2 || entry.Changes[0].URL != priorChange.URL {
+		t.Errorf("expected the pre-compaction change file to stay listed, got %+v", entry.Changes)
+	}
+}
+
 func TestPublish_Retire_ProducesTombstone(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"})
@@ -428,11 +542,57 @@ func TestPublish_Retire_ProducesTombstone(t *testing.T) {
 	if err := json.Unmarshal(index.Catalogs[0], &entry); err != nil {
 		t.Fatalf("parsing entry: %v", err)
 	}
-	if entry.CatalogID != "CAT-OLD" || entry.Status != "RETIRED" || entry.RetiredAt == nil {
+	if entry.CatalogID != "CAT-OLD" || entry.RetiredAt == nil || entry.EntryVersion != 1 {
 		t.Errorf("unexpected tombstone: %+v", entry)
 	}
-	if entry.Baseline != nil || len(entry.Changes) != 0 {
-		t.Errorf("expected no files on a tombstone, got %+v", entry)
+	if entry.Baseline != nil || len(entry.Changes) != 0 || entry.IsActive != nil {
+		t.Errorf("expected no files/isActive on a tombstone, got %+v", entry)
+	}
+}
+
+// TestPublish_RetireWithPriorState_KeepsMetadataAndBumpsEntryVersion
+// proves NFH-014 Appendix A Example 4's retired entry shape: catalogType/
+// networkIds/schemaTypes survive retirement (only isActive/baseline/
+// changes are dropped), and EntryVersion continues its lineage from the
+// catalog's prior EntryVersion rather than resetting to 1.
+func TestPublish_RetireWithPriorState_KeepsMetadataAndBumpsEntryVersion(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Retire: []string{"CAT-OLD"},
+		PriorState: map[string]definition.PriorCatalogState{
+			"CAT-OLD": {
+				EntryVersion: 5,
+				CatalogType:  "REGULAR",
+				NetworkIds:   []string{"ion.example"},
+				SchemaTypes:  []string{"https://schema.example/1.0.0/context.jsonld"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	var index catalogIndexDoc
+	if err := json.Unmarshal(result.Index, &index); err != nil {
+		t.Fatalf("parsing index: %v", err)
+	}
+	var entry catalogEntry
+	if err := json.Unmarshal(index.Catalogs[0], &entry); err != nil {
+		t.Fatalf("parsing entry: %v", err)
+	}
+	if entry.EntryVersion != 6 {
+		t.Errorf("EntryVersion = %d, want 6 (bumped from prior 5)", entry.EntryVersion)
+	}
+	if entry.CatalogType != "REGULAR" || len(entry.NetworkIds) != 1 || len(entry.SchemaTypes) != 1 {
+		t.Errorf("expected prior metadata to survive retirement, got %+v", entry)
+	}
+	if entry.IsActive != nil || entry.Baseline != nil || len(entry.Changes) != 0 {
+		t.Errorf("expected isActive/baseline/changes dropped on retirement, got %+v", entry)
 	}
 }
 
