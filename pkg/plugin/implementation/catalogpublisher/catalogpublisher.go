@@ -56,6 +56,12 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/security/artifactsigner"
 )
 
+// defaultFileValidity is the fallback used for a catalog file's own
+// required next_update when Config.NextUpdateIn is unset (zero) -- unlike
+// the index's next_update (optional, omitted when unset), the file spec
+// v2 schemas require next_update on every CatalogFile/CatalogChangeFile.
+const defaultFileValidity = 24 * time.Hour
+
 // Config controls publish behavior.
 type Config struct {
 	// SubscriberID is the identifier passed to KeyManager.Keyset to load
@@ -115,27 +121,57 @@ func New(ctx context.Context, keyManager definition.KeyManager, cfg *Config) (*P
 // signed as a whole -- trust rides on each catalog entry's own signature
 // (file spec v2, "The catalog index").
 
+// catalogIndexDoc carries no top-level version field (NFH-014
+// §Versioning, "There is no whole-index version field") -- a catalog
+// index as a whole is unsigned, so a document-level counter would be
+// forgeable; a DS detects that the index changed via conditional HTTP
+// (ETag/If-Modified-Since) instead, at no extra cost.
 type catalogIndexDoc struct {
 	NodeID     string            `json:"nodeId"`
-	Version    int               `json:"version"`
 	NextUpdate *time.Time        `json:"next_update,omitempty"`
 	Catalogs   []json.RawMessage `json:"catalogs"`
 }
 
-// catalogEntry self-signs as a whole (file spec v2): Signature covers
-// every other field here together, JCS-canonicalized with "signature"
-// itself removed -- see signEntry. Every entry carries one, including
-// retired (tombstone) entries.
+// catalogEntry self-signs as a whole (NFH-014 §Schema Changes, "Catalog
+// Index"): Signature covers every other field here together, JCS-
+// canonicalized with "signature" itself removed -- see signEntry. Every
+// entry carries one, including retired (tombstone) entries.
+//
+// EntryVersion is distinct from Baseline/Changes' own file-lineage
+// versions (§Versioning): it bumps on *any* entry change, content or
+// metadata (NetworkIds/SchemaTypes/CatalogType/Dependencies/IsActive/
+// RetiredAt), giving a DS a cheap first check independent of whether a
+// new file was actually published.
+//
+// IsActive is *bool, not bool: omitempty on a plain bool would also
+// drop an explicit PAUSED (false) entry, indistinguishable from RETIRED
+// (which omits IsActive entirely, per NFH-014's Catalog Index examples).
 type catalogEntry struct {
-	CatalogID   string             `json:"catalogId"`
-	CatalogType string             `json:"catalogType,omitempty"`
-	Status      string             `json:"status"`
-	NetworkIds  []string           `json:"networkIds,omitempty"`
-	SchemaTypes []string           `json:"schemaTypes,omitempty"`
-	Baseline    *fileEntry         `json:"baseline,omitempty"`
-	Changes     []fileEntry        `json:"changes,omitempty"`
-	RetiredAt   *time.Time         `json:"retiredAt,omitempty"`
-	Signature   entrySignatureWire `json:"signature"`
+	CatalogID    string             `json:"catalogId"`
+	EntryVersion int                `json:"entryVersion"`
+	CatalogType  string             `json:"catalogType,omitempty"`
+	Dependencies *dependenciesWire  `json:"dependencies,omitempty"`
+	NetworkIds   []string           `json:"networkIds,omitempty"`
+	SchemaTypes  []string           `json:"schemaTypes,omitempty"`
+	IsActive     *bool              `json:"isActive,omitempty"`
+	Baseline     *fileEntry         `json:"baseline,omitempty"`
+	Changes      []fileEntry        `json:"changes,omitempty"`
+	RetiredAt    *time.Time         `json:"retiredAt,omitempty"`
+	CrawlHint    string             `json:"crawlHint,omitempty"`
+	Signature    entrySignatureWire `json:"signature"`
+}
+
+// dependenciesWire is a REGULAR catalog entry's declared MASTER
+// dependencies (NFH-014 §10.3); wrapped in an object (not a bare
+// masters[] array) so a future dependency kind can be added without a
+// breaking schema change.
+type dependenciesWire struct {
+	Masters []masterDependencyWire `json:"masters,omitempty"`
+}
+
+type masterDependencyWire struct {
+	CatalogID string `json:"catalogId"`
+	IndexURL  string `json:"indexUrl"`
 }
 
 // fileEntry points at one already self-signed catalog file (see
@@ -168,22 +204,31 @@ type fileSignatureWire struct {
 
 // catalogFileDoc is the self-signed baseline file (file spec v2's
 // `CatalogFile`): the submitted Catalog object wrapped with its own
-// signature. The wrap never reopens Catalog for changes -- beckn.yaml's
-// Catalog schema still governs the wire format; a crawler unwraps
-// `.catalog` before anything reaches the wire.
+// signature, plus the file-level identity/freshness fields the schema now
+// requires as siblings of "catalog" (CatalogID/Version/NextUpdate) so the
+// file is independently verifiable without the index entry that points at
+// it. The wrap never reopens Catalog for changes -- beckn.yaml's Catalog
+// schema still governs the wire format; a crawler unwraps `.catalog`
+// before anything reaches the wire.
 type catalogFileDoc struct {
-	Catalog   json.RawMessage   `json:"catalog"`
-	Signature fileSignatureWire `json:"signature"`
+	CatalogID  string            `json:"catalogId"`
+	Version    int               `json:"version"`
+	NextUpdate time.Time         `json:"next_update"`
+	Catalog    json.RawMessage   `json:"catalog"`
+	Signature  fileSignatureWire `json:"signature"`
 }
 
 // changeFileDoc is the change-file shape for one publish (file spec v2's
 // `CatalogChangeFile`), keyed by id never by position. Upserts merge added
 // and updated items into one list -- the receiver replaces by id either
-// way -- and Removals names ids only. Self-signed like catalogFileDoc.
+// way -- and Removals names ids only. NextUpdate is required here too
+// (same freshness rationale as catalogFileDoc). Self-signed like
+// catalogFileDoc.
 type changeFileDoc struct {
 	CatalogID   string            `json:"catalogId"`
 	FromVersion int               `json:"fromVersion"`
 	ToVersion   int               `json:"toVersion"`
+	NextUpdate  time.Time         `json:"next_update"`
 	Resources   diffBlock         `json:"resources"`
 	Offers      diffBlock         `json:"offers"`
 	Catalog     json.RawMessage   `json:"catalog,omitempty"`
@@ -207,8 +252,8 @@ func (b diffBlock) isEmpty() bool { return len(b.Upserts) == 0 && len(b.Removals
 func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) (definition.PublishResult, error) {
 	now := time.Now()
 	result := definition.PublishResult{PublishedAt: now}
-	log.Debugf(ctx, "catalogpublisher: Publish called, subscriberId=%s, %d catalog(s), %d retire(s), forceBaseline=%v, priorIndexVersion=%d",
-		p.config.SubscriberID, len(req.Catalogs), len(req.Retire), req.ForceBaseline, req.PriorIndexVersion)
+	log.Debugf(ctx, "catalogpublisher: Publish called, subscriberId=%s, %d catalog(s), %d retire(s), forceBaseline=%v",
+		p.config.SubscriberID, len(req.Catalogs), len(req.Retire), req.ForceBaseline)
 
 	keyset, err := p.keyManager.Keyset(ctx, p.config.SubscriberID)
 	if err != nil {
@@ -222,9 +267,13 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 	domain := keyset.SubscriberID
 
 	var nextUpdate *time.Time
+	fileValidityIn := p.config.NextUpdateIn
+	if fileValidityIn <= 0 {
+		fileValidityIn = defaultFileValidity
+	}
+	fileNextUpdate := now.Add(fileValidityIn)
 	if p.config.NextUpdateIn > 0 {
-		t := now.Add(p.config.NextUpdateIn)
-		nextUpdate = &t
+		nextUpdate = &fileNextUpdate
 	}
 
 	submitted := make(map[string]bool, len(req.Catalogs))
@@ -233,7 +282,6 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 		retireSet[id] = true
 	}
 
-	anyChanged := false
 	var entries []json.RawMessage
 
 	for _, sub := range req.Catalogs {
@@ -245,14 +293,14 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 			continue
 		}
 
-		outcome, entry, changed, err := p.publishOne(sub, req.PriorState[sub.CatalogID], req.ForceBaseline, priv, keyID)
+		outcome, entry, err := p.publishOne(sub, req.PriorState[sub.CatalogID], req.ForceBaseline, priv, keyID, fileNextUpdate)
 		if err != nil {
 			result.Errors = append(result.Errors, definition.PublishError{
 				CatalogID: sub.CatalogID, Stage: "diff", Reason: err.Error(), Fatal: false,
 			})
 			continue
 		}
-		log.Debugf(ctx, "catalogpublisher: %s mode=%s version=%d changed=%v", sub.CatalogID, outcome.Mode, outcome.Version, changed)
+		log.Debugf(ctx, "catalogpublisher: %s mode=%s version=%d entryVersion=%d changed=%v", sub.CatalogID, outcome.Mode, outcome.Version, outcome.EntryVersion, outcome.Changed)
 
 		raw, err := p.signEntry(entry, keyID, priv)
 		if err != nil {
@@ -260,9 +308,6 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 		}
 		entries = append(entries, raw)
 		result.Catalogs = append(result.Catalogs, outcome)
-		if changed {
-			anyChanged = true
-		}
 	}
 
 	tombstoned := make(map[string]bool, len(req.Retire))
@@ -271,12 +316,19 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 			continue // submitting and retiring the same catalogId in one call: submission wins; duplicate retire ids collapse to one tombstone
 		}
 		tombstoned[id] = true
-		raw, err := p.signEntry(catalogEntry{CatalogID: id, Status: "RETIRED", RetiredAt: &now}, keyID, priv)
+		prior := req.PriorState[id]
+		raw, err := p.signEntry(catalogEntry{
+			CatalogID:    id,
+			EntryVersion: prior.EntryVersion + 1,
+			CatalogType:  prior.CatalogType,
+			NetworkIds:   prior.NetworkIds,
+			SchemaTypes:  prior.SchemaTypes,
+			RetiredAt:    &now,
+		}, keyID, priv)
 		if err != nil {
 			return result, fmt.Errorf("catalogpublisher: signing tombstone %q: %w", id, err)
 		}
 		entries = append(entries, raw)
-		anyChanged = true
 	}
 
 	for _, raw := range req.CarryForward {
@@ -289,15 +341,8 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 		entries = append(entries, raw)
 	}
 
-	indexVersion := req.PriorIndexVersion
-	if anyChanged || indexVersion == 0 {
-		indexVersion = req.PriorIndexVersion + 1
-	}
-	result.IndexVersion = indexVersion
-
 	indexBytes, err := json.Marshal(catalogIndexDoc{
 		NodeID:     domain,
-		Version:    indexVersion,
 		NextUpdate: nextUpdate,
 		Catalogs:   entries,
 	})
@@ -305,7 +350,7 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 		return result, fmt.Errorf("catalogpublisher: marshaling catalog index: %w", err)
 	}
 	result.Index = indexBytes
-	log.Debugf(ctx, "catalogpublisher: built catalog index, nodeId=%s, version=%d, %d entries, indexURL=%s", domain, indexVersion, len(entries), p.indexURL())
+	log.Debugf(ctx, "catalogpublisher: built catalog index, nodeId=%s, %d entries, indexURL=%s", domain, len(entries), p.indexURL())
 	log.Debugf(ctx, "catalogpublisher: Publish done, keyId=%s, domain=%s, %d catalog(s) published, %d error(s)", keyID, domain, len(result.Catalogs), len(result.Errors))
 
 	return result, nil
@@ -324,24 +369,42 @@ func currentVersion(prior definition.PriorCatalogState) int {
 	return 0
 }
 
-// publishOne decides baseline vs. change-file vs. no-op for one submission
-// and builds both its definition.CatalogPublishOutcome and its
-// catalogEntry. The returned entry is not yet signed -- Publish signs
-// every entry uniformly (submitted and tombstoned alike) via signEntry.
-func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definition.PriorCatalogState, forceBaseline bool, priv ed25519.PrivateKey, keyID string) (definition.CatalogPublishOutcome, catalogEntry, bool, error) {
+// publishOne decides baseline vs. change-file vs. metadata-only vs. no-op
+// for one submission and builds both its definition.CatalogPublishOutcome
+// and its catalogEntry. The returned entry is not yet signed -- Publish
+// signs every entry uniformly (submitted and tombstoned alike) via
+// signEntry.
+//
+// entryVersion (NFH-014 §Versioning) bumps whenever *anything* about the
+// entry changes -- content (a new baseline/change file) or metadata
+// (CatalogType/NetworkIds/SchemaTypes/IsActive/Dependencies/CrawlHint) --
+// independent of Baseline/Changes' own file-lineage versions, which bump
+// only when a file is actually (re)published.
+func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definition.PriorCatalogState, forceBaseline bool, priv ed25519.PrivateKey, keyID string, fileNextUpdate time.Time) (definition.CatalogPublishOutcome, catalogEntry, error) {
 	hasPrior := prior.Catalog != nil
 	catalogType := sub.CatalogType
 	if catalogType == "" {
 		catalogType = "REGULAR"
 	}
+	isActive := catalogIsActive(sub.Catalog)
 
 	entry := catalogEntry{
-		CatalogID:   sub.CatalogID,
-		CatalogType: catalogType,
-		Status:      "ACTIVE",
-		NetworkIds:  sub.NetworkIds,
-		SchemaTypes: sub.SchemaTypes,
+		CatalogID:    sub.CatalogID,
+		CatalogType:  catalogType,
+		Dependencies: dependenciesToWire(sub.Dependencies),
+		NetworkIds:   sub.NetworkIds,
+		SchemaTypes:  sub.SchemaTypes,
+		IsActive:     &isActive,
+		CrawlHint:    sub.CrawlHint,
 	}
+
+	metadataChanged := !hasPrior ||
+		prior.CatalogType != catalogType ||
+		prior.IsActive != isActive ||
+		!stringSlicesEqual(prior.NetworkIds, sub.NetworkIds) ||
+		!stringSlicesEqual(prior.SchemaTypes, sub.SchemaTypes) ||
+		!masterDependenciesEqual(prior.Dependencies, sub.Dependencies) ||
+		prior.CrawlHint != sub.CrawlHint
 
 	if hasPrior {
 		entry.Baseline = fileRefToWire(prior.BaselineFile)
@@ -350,49 +413,115 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 
 	if !hasPrior || forceBaseline {
 		version := currentVersion(prior) + 1 // 0+1 == 1 for a brand-new catalog
-		content, err := p.signCatalogFile(sub.Catalog, keyID, priv)
+		content, err := p.signCatalogFile(sub.CatalogID, version, fileNextUpdate, sub.Catalog, keyID, priv)
 		if err != nil {
-			return definition.CatalogPublishOutcome{}, catalogEntry{}, false, err
+			return definition.CatalogPublishOutcome{}, catalogEntry{}, err
 		}
 		fe := p.buildFileEntry(sub.CatalogID, version, "json", content)
 		entry.Baseline = &fe
-		entry.Changes = nil // a fresh baseline (first publish, or a forced compaction) resets the change list
+		// entry.Changes is deliberately left as whatever prior.ChangeFiles
+		// carried (set above), not reset to nil: on a forced re-baseline
+		// (compaction), NFH-014 CON-TBD-32 requires the change files that
+		// led up to the new baseline to stay *listed* -- not merely
+		// hosted -- for a grace period, so a DS mid-lineage can still
+		// reach equivalent content by applying them instead of fetching
+		// the baseline. Publish holds no timer of its own (PriorCatalogState's
+		// doc comment); how long to keep passing them here is the
+		// caller's own policy.
+		entry.EntryVersion = prior.EntryVersion + 1
 
 		outcome := definition.CatalogPublishOutcome{
-			CatalogID: sub.CatalogID, Version: version, Changed: true, Digest: fe.Digest, Mode: "baseline", Content: content,
+			CatalogID: sub.CatalogID, Version: version, EntryVersion: entry.EntryVersion, Changed: true, Digest: fe.Digest, Mode: "baseline", Content: content,
 		}
-		return outcome, entry, true, nil
+		return outcome, entry, nil
 	}
 
 	diff, changeCatalog, err := diffCatalogs(prior.Catalog, sub.Catalog)
 	if err != nil {
-		return definition.CatalogPublishOutcome{}, catalogEntry{}, false, err
+		return definition.CatalogPublishOutcome{}, catalogEntry{}, err
 	}
+	contentChanged := !diff.Resources.isEmpty() || !diff.Offers.isEmpty() || changeCatalog != nil
 
-	if diff.Resources.isEmpty() && diff.Offers.isEmpty() && changeCatalog == nil {
+	if !contentChanged {
 		version := currentVersion(prior)
-		outcome := definition.CatalogPublishOutcome{CatalogID: sub.CatalogID, Version: version, Changed: false, Mode: "unchanged"}
-		return outcome, entry, false, nil
+		if !metadataChanged {
+			entry.EntryVersion = prior.EntryVersion
+			outcome := definition.CatalogPublishOutcome{CatalogID: sub.CatalogID, Version: version, EntryVersion: entry.EntryVersion, Changed: false, Mode: "unchanged"}
+			return outcome, entry, nil
+		}
+		entry.EntryVersion = prior.EntryVersion + 1
+		outcome := definition.CatalogPublishOutcome{CatalogID: sub.CatalogID, Version: version, EntryVersion: entry.EntryVersion, Changed: true, Mode: "metadata"}
+		return outcome, entry, nil
 	}
 
 	fromVersion := currentVersion(prior)
 	toVersion := fromVersion + 1
 	changeDoc := changeFileDoc{
-		CatalogID: sub.CatalogID, FromVersion: fromVersion, ToVersion: toVersion,
+		CatalogID: sub.CatalogID, FromVersion: fromVersion, ToVersion: toVersion, NextUpdate: fileNextUpdate,
 		Resources: diff.Resources, Offers: diff.Offers, Catalog: changeCatalog,
 	}
 	content, err := p.signChangeFile(changeDoc, keyID, priv)
 	if err != nil {
-		return definition.CatalogPublishOutcome{}, catalogEntry{}, false, err
+		return definition.CatalogPublishOutcome{}, catalogEntry{}, err
 	}
 
 	fe := p.buildFileEntry(sub.CatalogID, toVersion, "changes.json", content)
 	entry.Changes = append(entry.Changes, fe)
+	entry.EntryVersion = prior.EntryVersion + 1
 
 	outcome := definition.CatalogPublishOutcome{
-		CatalogID: sub.CatalogID, Version: toVersion, Changed: true, Digest: fe.Digest, Mode: "change", Content: content,
+		CatalogID: sub.CatalogID, Version: toVersion, EntryVersion: entry.EntryVersion, Changed: true, Digest: fe.Digest, Mode: "change", Content: content,
 	}
-	return outcome, entry, true, nil
+	return outcome, entry, nil
+}
+
+// catalogIsActive reads the submitted Catalog's own pre-existing
+// "isActive" field (NFH-014: the entry's isActive mirrors catalog.isActive,
+// it is never a second, independently-supplied input) -- defaulting to
+// true when absent, matching Catalog's public-by-default posture.
+func catalogIsActive(catalog json.RawMessage) bool {
+	var probe struct {
+		IsActive *bool `json:"isActive"`
+	}
+	if json.Unmarshal(catalog, &probe) != nil || probe.IsActive == nil {
+		return true
+	}
+	return *probe.IsActive
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func masterDependenciesEqual(a, b []definition.MasterDependency) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func dependenciesToWire(deps []definition.MasterDependency) *dependenciesWire {
+	if len(deps) == 0 {
+		return nil
+	}
+	masters := make([]masterDependencyWire, len(deps))
+	for i, d := range deps {
+		masters[i] = masterDependencyWire{CatalogID: d.CatalogID, IndexURL: d.IndexURL}
+	}
+	return &dependenciesWire{Masters: masters}
 }
 
 // signCatalogFile builds the file spec's self-signed CatalogFile (baseline):
@@ -402,8 +531,9 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 // Signature value never matters -- it's stripped before signing anyway.
 // Returns the final, already-signed bytes -- digest/size (buildFileEntry)
 // are computed over these, not the bare catalog content.
-func (p *Publisher) signCatalogFile(catalog json.RawMessage, keyID string, priv ed25519.PrivateKey) ([]byte, error) {
-	unsigned, err := json.Marshal(catalogFileDoc{Catalog: catalog})
+func (p *Publisher) signCatalogFile(catalogID string, version int, nextUpdate time.Time, catalog json.RawMessage, keyID string, priv ed25519.PrivateKey) ([]byte, error) {
+	doc := catalogFileDoc{CatalogID: catalogID, Version: version, NextUpdate: nextUpdate, Catalog: catalog}
+	unsigned, err := json.Marshal(doc)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling catalog file: %w", err)
 	}
@@ -411,10 +541,8 @@ func (p *Publisher) signCatalogFile(catalog json.RawMessage, keyID string, priv 
 	if err != nil {
 		return nil, fmt.Errorf("signing catalog file: %w", err)
 	}
-	return json.Marshal(catalogFileDoc{
-		Catalog:   catalog,
-		Signature: fileSignatureWire{KeyID: keyID, Canonicalization: "JCS", Value: sigValue},
-	})
+	doc.Signature = fileSignatureWire{KeyID: keyID, Canonicalization: "JCS", Value: sigValue}
+	return json.Marshal(doc)
 }
 
 // signChangeFile is signCatalogFile's counterpart for a CatalogChangeFile:

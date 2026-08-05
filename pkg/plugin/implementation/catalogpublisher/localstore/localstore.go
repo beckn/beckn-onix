@@ -138,26 +138,41 @@ func Write(root string, result definition.PublishResult) error {
 // State is what Load reconstructs from root, ready to drop straight into
 // a definition.PublishRequest.
 type State struct {
-	PriorState        map[string]definition.PriorCatalogState
-	CarryForward      []json.RawMessage
-	PriorIndexVersion int
+	PriorState   map[string]definition.PriorCatalogState
+	CarryForward []json.RawMessage
 }
 
 // wire types mirror the subset of the catalog index's shape this package
 // needs to read back (duplicated rather than imported from
 // catalogpublisher: this is a wire-format contract, not Go code the two
 // should share, matching the convention already used elsewhere in this
-// project).
+// project). No top-level index version (NFH-014, "There is no whole-index
+// version field").
 type indexDoc struct {
-	Version  int               `json:"version"`
 	Catalogs []json.RawMessage `json:"catalogs"`
 }
 
 type indexEntry struct {
-	CatalogID string          `json:"catalogId"`
-	Status    string          `json:"status"`
-	Baseline  *wireFileEntry  `json:"baseline"`
-	Changes   []wireFileEntry `json:"changes"`
+	CatalogID    string             `json:"catalogId"`
+	EntryVersion int                `json:"entryVersion"`
+	CatalogType  string             `json:"catalogType"`
+	Dependencies *wireDependencies  `json:"dependencies"`
+	NetworkIds   []string           `json:"networkIds"`
+	SchemaTypes  []string           `json:"schemaTypes"`
+	IsActive     *bool              `json:"isActive"`
+	Baseline     *wireFileEntry     `json:"baseline"`
+	Changes      []wireFileEntry    `json:"changes"`
+	RetiredAt    *string            `json:"retiredAt"`
+	CrawlHint    string             `json:"crawlHint"`
+}
+
+type wireDependencies struct {
+	Masters []wireMasterDependency `json:"masters"`
+}
+
+type wireMasterDependency struct {
+	CatalogID string `json:"catalogId"`
+	IndexURL  string `json:"indexUrl"`
 }
 
 type wireFileEntry struct {
@@ -201,7 +216,6 @@ func Load(root string, catalogIDs []string) (*State, error) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, fmt.Errorf("localstore: parsing existing index: %w", err)
 	}
-	state.PriorIndexVersion = doc.Version
 
 	for _, rawEntry := range doc.Catalogs {
 		var probe struct {
@@ -215,7 +229,7 @@ func Load(root string, catalogIDs []string) (*State, error) {
 			if err := json.Unmarshal(rawEntry, &entry); err != nil {
 				return nil, fmt.Errorf("localstore: parsing entry for %s: %w", probe.CatalogID, err)
 			}
-			if entry.Status == "RETIRED" || entry.Baseline == nil {
+			if entry.RetiredAt != nil || entry.Baseline == nil {
 				continue // no publishable prior state; this run starts a fresh baseline
 			}
 			prior, err := reconstructState(root, entry)
@@ -256,12 +270,34 @@ func reconstructState(root string, entry indexEntry) (*definition.PriorCatalogSt
 		changeFiles = append(changeFiles, toFileRef(ch))
 	}
 
+	isActive := true
+	if entry.IsActive != nil {
+		isActive = *entry.IsActive
+	}
 	baselineRef := toFileRef(*entry.Baseline)
 	return &definition.PriorCatalogState{
 		Catalog:      effective,
 		BaselineFile: &baselineRef,
 		ChangeFiles:  changeFiles,
+		EntryVersion: entry.EntryVersion,
+		CatalogType:  entry.CatalogType,
+		NetworkIds:   entry.NetworkIds,
+		SchemaTypes:  entry.SchemaTypes,
+		IsActive:     isActive,
+		Dependencies: toMasterDependencies(entry.Dependencies),
+		CrawlHint:    entry.CrawlHint,
 	}, nil
+}
+
+func toMasterDependencies(deps *wireDependencies) []definition.MasterDependency {
+	if deps == nil || len(deps.Masters) == 0 {
+		return nil
+	}
+	out := make([]definition.MasterDependency, len(deps.Masters))
+	for i, m := range deps.Masters {
+		out[i] = definition.MasterDependency{CatalogID: m.CatalogID, IndexURL: m.IndexURL}
+	}
+	return out
 }
 
 func toFileRef(fe wireFileEntry) definition.FileRef {

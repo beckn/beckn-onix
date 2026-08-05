@@ -376,9 +376,15 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 			catalogIDs = append(catalogIDs, probe.ID)
 		}
 	}
+	// Retired catalogIds need their prior state loaded too -- the
+	// tombstone Publish builds for them carries forward their prior
+	// CatalogType/NetworkIds/SchemaTypes and bumps their EntryVersion
+	// (NFH-014 Appendix A, Example 4's retired entry still carries those
+	// fields), not just retiredAt.
+	loadIDs := append(append([]string{}, catalogIDs...), req.Retire...)
 
-	log.Debugf(r.Context(), "catalogPublish: loading prior state for %v from %s", catalogIDs, h.outputRoot)
-	state, err := localstore.Load(h.outputRoot, catalogIDs)
+	log.Debugf(r.Context(), "catalogPublish: loading prior state for %v from %s", loadIDs, h.outputRoot)
+	state, err := localstore.Load(h.outputRoot, loadIDs)
 	if err != nil {
 		log.Errorf(r.Context(), err, "catalogPublish: loading prior state from %s", h.outputRoot)
 		writePublishJSON(w, r, publishResponse{
@@ -388,14 +394,13 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	log.Debugf(r.Context(), "catalogPublish: calling Publish, priorIndexVersion=%d, carryForward=%d", state.PriorIndexVersion, len(state.CarryForward))
+	log.Debugf(r.Context(), "catalogPublish: calling Publish, carryForward=%d", len(state.CarryForward))
 	result, err := h.publisher.Publish(r.Context(), definition.PublishRequest{
-		Catalogs:          submissions,
-		PriorState:        state.PriorState,
-		CarryForward:      state.CarryForward,
-		PriorIndexVersion: state.PriorIndexVersion,
-		Retire:            req.Retire,
-		ForceBaseline:     req.ForceBaseline,
+		Catalogs:      submissions,
+		PriorState:    state.PriorState,
+		CarryForward:  state.CarryForward,
+		Retire:        req.Retire,
+		ForceBaseline: req.ForceBaseline,
 	})
 	if err != nil {
 		log.Errorf(r.Context(), err, "catalogPublish: publish failed")
@@ -406,7 +411,7 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	log.Debugf(r.Context(), "catalogPublish: writing result to %s, indexVersion=%d, %d catalog outcome(s), %d error(s)", h.outputRoot, result.IndexVersion, len(result.Catalogs), len(result.Errors))
+	log.Debugf(r.Context(), "catalogPublish: writing result to %s, %d catalog outcome(s), %d error(s)", h.outputRoot, len(result.Catalogs), len(result.Errors))
 	if err := localstore.Write(h.outputRoot, result); err != nil {
 		log.Errorf(r.Context(), err, "catalogPublish: writing result to %s", h.outputRoot)
 		writePublishJSON(w, r, publishResponse{

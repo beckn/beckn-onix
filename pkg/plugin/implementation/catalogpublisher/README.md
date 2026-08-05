@@ -56,53 +56,70 @@ catalogs) -- widening the gap until `catalogcrawler` catches up.
    this package's own invention for the earlier wire shape; the file spec
    has no equivalent, and `catalogcrawler` will need updating to fetch
    `baseline`+`changes` directly).
-5. **Two independent, per-catalog signature layers** (file spec v2), not a
+5. **Two independent, per-catalog signature layers** (RFC NFH-014), not a
    whole-index signature: every catalog **file** (baseline and change file
    alike) self-signs its own content -- a plain Ed25519 signature
    (`pkg/security/artifactsigner.SignJSON`) over the JCS-canonicalized file
    document with its own `signature` field removed ("avoiding circular
    signing") -- and every catalog-index **entry** separately self-signs
-   itself as a whole (`catalogId`, `catalogType`, `status`, `networkIds`,
-   `schemaTypes`, and every `baseline`/`changes[]` file reference
+   itself as a whole (`catalogId`, `entryVersion`, `catalogType`,
+   `dependencies`, `networkIds`, `schemaTypes`, `isActive`, every
+   `baseline`/`changes[]` file reference, `retiredAt`, and `crawlHint`
    together), the same non-circular convention one level up. Neither
    signature carries an expiry (no `validUntil`); the index's own
    `next_update` bounds staleness instead. The catalog index document
-   itself is still **not signed as a whole**.
-6. Retires catalogs on request (`PublishRequest.Retire`): a tombstone entry
-   (`{catalogId, status: "RETIRED", retiredAt}`, no files) replaces
-   whatever was there, so crawlers can tell "gone" apart from "never
-   existed" (file spec: "A retired catalog stays as a tombstone").
-7. Carries forward every other catalog untouched by this call
+   itself is still **not signed as a whole** -- NFH-014 deliberately has no
+   whole-index version field either: a DS detects index change via
+   conditional HTTP, not a forgeable document-level counter.
+6. Tracks an **entry-level version** (`entryVersion`, on every
+   `CatalogPublishOutcome.EntryVersion`), distinct from `baseline`/
+   `changes[]`'s own file-lineage versions: it bumps on *any* entry
+   change, content or metadata (`networkIds`/`schemaTypes`/`catalogType`/
+   `dependencies`/`isActive`/`crawlHint`), so a caller can detect and
+   propagate even a metadata-only edit (`CatalogPublishOutcome.Mode ==
+   "metadata"`) without a new file being published.
+7. Retires catalogs on request (`PublishRequest.Retire`): a tombstone
+   entry (`{catalogId, entryVersion, catalogType, networkIds,
+   schemaTypes, retiredAt}`, no `isActive`/files) replaces whatever was
+   there -- its prior metadata survives retirement, only `isActive` and
+   the file references are dropped -- so crawlers can tell "gone" apart
+   from "never existed" (NFH-014 §10.4, "a retired catalog stays as a
+   tombstone").
+8. Carries forward every other catalog untouched by this call
    (`PublishRequest.CarryForward`, raw entries the caller supplies) --
    the catalog index lists every catalog a publisher has, not just the
    ones touched in one `Publish` call.
-8. Tracks an **index-level version** (`PublishResult.IndexVersion`),
-   separate from any one catalog's own file versions -- the crawler's
-   cursor over the whole index, bumped only when something in this call
-   actually changed.
-9. Returns `PublishResult{Index, IndexVersion, Catalogs, Errors}` as JSON.
-   No I/O happens here -- where these bytes get written and served is a
-   separate concern (an `ArtifactStore`-shaped plugin, not yet built).
+9. On a forced re-baseline (compaction), keeps the pre-compaction change
+   files **listed**, not just hosted (NFH-014 CON-TBD-32) -- `Publish`
+   never resets `changes[]` to empty on its own; how long a caller keeps
+   passing them back in `PriorCatalogState.ChangeFiles` is that caller's
+   own grace-period policy (`Publish` holds no timer or storage of its
+   own).
+10. Returns `PublishResult{Index, Catalogs, Errors}` as JSON. No I/O
+    happens here -- where these bytes get written and served is a
+    separate concern (an `ArtifactStore`-shaped plugin, not yet built).
 
 ## Wire shapes, at a glance
 
 **Catalog index** (a plain Beckn file; **not** a DeDi file, and not signed
-as a whole -- but every entry self-signs itself):
+as a whole -- but every entry self-signs itself; no whole-index `version`
+field, see point 5 above):
 ```json
 {
   "nodeId": "open-economy.nfh.global",
-  "version": 2,
   "next_update": "...",
   "catalogs": [
     {
       "catalogId": "open-economy.nfh.global/electronics-2026",
-      "catalogType": "REGULAR", "status": "ACTIVE",
+      "entryVersion": 7,
+      "catalogType": "REGULAR",
       "schemaTypes": ["..."],
+      "isActive": true,
       "baseline": { "version": 1, "url": "...", "size": 413, "digest": "sha-256:..." },
       "changes": [ { "version": 2, "url": "...", "size": 336, "digest": "sha-256:..." } ],
       "signature": { "keyId": "key-1", "value": "..." }
     },
-    { "catalogId": "...", "status": "RETIRED", "retiredAt": "...", "signature": { "keyId": "key-1", "value": "..." } }
+    { "catalogId": "...", "entryVersion": 21, "catalogType": "REGULAR", "retiredAt": "...", "signature": { "keyId": "key-1", "value": "..." } }
   ]
 }
 ```
@@ -114,6 +131,7 @@ above it, `signature` itself excluded.
 **Baseline file** (published at a `baseline` entry's `url`, self-signed):
 ```json
 {
+  "catalogId": "...", "version": 1, "next_update": "2026-08-05T00:00:00Z",
   "catalog": { "id": "...", "descriptor": {...}, "provider": {...}, "resources": [...], "offers": [] },
   "signature": { "keyId": "key-1", "canonicalization": "JCS", "value": "..." }
 }
@@ -122,12 +140,19 @@ above it, `signature` itself excluded.
 **Change file** (published at a `changes[]` entry's `url`, self-signed):
 ```json
 {
-  "catalogId": "...", "fromVersion": 1, "toVersion": 2,
+  "catalogId": "...", "fromVersion": 1, "toVersion": 2, "next_update": "2026-08-05T00:00:00Z",
   "resources": { "upserts": [ {"id": "...", "descriptor": {...}} ], "removals": ["..."] },
   "offers": { "upserts": [], "removals": [] },
   "signature": { "keyId": "key-1", "canonicalization": "JCS", "value": "..." }
 }
 ```
+`catalogId`/`version`/`next_update` on the file itself mirror the index
+entry's own identity/freshness fields, so each file is independently
+verifiable without needing the index entry that points at it.
+`next_update` here comes from the same `nextUpdateIn` config as the
+index's own `next_update`, falling back to a fixed 24h when unset (the
+index's is optional and simply omitted in that case; a catalog file's is
+required by the schema, so it always gets a value).
 
 ## Try it yourself: `catalogpublisherctl`
 
@@ -150,9 +175,9 @@ go run ./cmd/catalogpublisherctl \
 
 Expected output:
 ```
-catalog open-economy.nfh.global/CAT-DEMO-1: published baseline, version 1
+catalog open-economy.nfh.global/CAT-DEMO-1: published baseline, version 1 (entryVersion 1)
   digest: sha-256:...
-index version 1, artifacts written to /tmp/catalog-demo
+artifacts written to /tmp/catalog-demo
 ```
 
 (`-catalogId` defaults to `{domain}/{the catalog's own top-level "id"}` --
@@ -162,7 +187,7 @@ Inspect what got written:
 ```bash
 find /tmp/catalog-demo -type f
 cat /tmp/catalog-demo/catalogs/CAT-DEMO-1.v1.json          # the baseline -- unchanged Beckn Catalog JSON
-cat /tmp/catalog-demo/index/becknCatalogs.index.json         # nodeId/version/catalogs[], each entry self-signed
+cat /tmp/catalog-demo/index/becknCatalogs.index.json         # nodeId/catalogs[], each entry self-signed with its own entryVersion
 ```
 
 ### 2. Publish an update to the same catalog (change file + version bump)
@@ -179,15 +204,15 @@ go run ./cmd/catalogpublisherctl \
 
 Expected output:
 ```
-catalog open-economy.nfh.global/CAT-DEMO-1: published change file, version 2
+catalog open-economy.nfh.global/CAT-DEMO-1: published change file, version 2 (entryVersion 2)
   resources: 2 upserts, 1 removals; offers: 0 upserts, 0 removals
   digest: sha-256:...
-index version 2, artifacts written to /tmp/catalog-demo
+artifacts written to /tmp/catalog-demo
 ```
 
 ```bash
-cat /tmp/catalog-demo/catalogs/changes/CAT-DEMO-1.v2.changes.json   # {"catalogId":...,"fromVersion":1,"toVersion":2,"resources":{"upserts":[...ITEM-1,ITEM-3],"removals":["ITEM-2"]},"offers":{}}
-cat /tmp/catalog-demo/index/becknCatalogs.index.json          # index version now 2; baseline entry unchanged; changes[] has one new file reference; the catalog entry re-signs regardless
+cat /tmp/catalog-demo/catalogs/changes/CAT-DEMO-1.v2.changes.json   # {"catalogId":...,"fromVersion":1,"toVersion":2,"next_update":"...","resources":{"upserts":[...ITEM-1,ITEM-3],"removals":["ITEM-2"]},"offers":{}}
+cat /tmp/catalog-demo/index/becknCatalogs.index.json          # entryVersion now 2; baseline entry unchanged; changes[] has one new file reference; the catalog entry re-signs regardless
 ```
 
 ### 3. Publish the same content again (no-op)
@@ -198,12 +223,12 @@ go run ./cmd/catalogpublisherctl \
   -out /tmp/catalog-demo -domain open-economy.nfh.global
 ```
 ```
-catalog open-economy.nfh.global/CAT-DEMO-1: unchanged, still version 2
+catalog open-economy.nfh.global/CAT-DEMO-1: unchanged, still version 2 (entryVersion 2)
   digest:
-index version 2, artifacts written to /tmp/catalog-demo
+artifacts written to /tmp/catalog-demo
 ```
-No new file is written, and the index-level version also stays at 2 (it
-only bumps when something actually changed).
+No new file is written, and `entryVersion` also stays at 2 -- it only
+bumps when something in the entry (content or metadata) actually changed.
 
 ### 4. Retire a catalog
 
@@ -212,10 +237,10 @@ go run ./cmd/catalogpublisherctl -retire "open-economy.nfh.global/CAT-DEMO-1" -o
 ```
 ```
 catalog open-economy.nfh.global/CAT-DEMO-1: marked RETIRED
-index version 3, artifacts written to /tmp/catalog-demo
+artifacts written to /tmp/catalog-demo
 ```
 ```bash
-cat /tmp/catalog-demo/index/becknCatalogs.index.json   # {"catalogId":"...","status":"RETIRED","retiredAt":"..."} -- no files, a tombstone
+cat /tmp/catalog-demo/index/becknCatalogs.index.json   # {"catalogId":"...","entryVersion":3,"catalogType":"REGULAR","retiredAt":"..."} -- no isActive/files, a tombstone
 ```
 `-retire` works with or without `-catalog` in the same invocation, and
 accepts a comma-separated list.
