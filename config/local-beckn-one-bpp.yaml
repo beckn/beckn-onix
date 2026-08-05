@@ -182,3 +182,77 @@ modules:
         - validateSchema
         - storePayload
         - validateAckSign
+
+  # catalog/publish: DS-internal trigger (see
+  # pkg/plugin/implementation/catalogpublisher/README.md). Unsigned,
+  # same-operator call -- no validateSign/addRoute/signAck; the handler
+  # calls CatalogPublisher.Publish and writes the result under outputRoot.
+  - name: catalogPublish
+    path: /catalog/publish
+    handler:
+      type: catalogPublish
+      role: bpp
+      outputRoot: /catalog
+      httpClientConfig:
+        maxIdleConns: 1000
+        maxIdleConnsPerHost: 200
+        idleConnTimeout: 300s
+        responseHeaderTimeout: 5s
+      plugins:
+        # registry+cache exist only to satisfy keyManager's constructor
+        # (KeyManagerProvider.New always requires a RegistryLookup); the
+        # publisher itself never calls either.
+        registry:
+          id: dediregistry
+          config:
+            timeout: 10
+            retry_max: 3
+            retry_wait_min: 100ms
+            retry_wait_max: 500ms
+        cache:
+          id: cache
+          config:
+            addr: redis:6379
+        keyManager:
+          id: simplekeymanager
+          config:
+            subscriberId: bpp.example.com
+            keyId: 76EU7ofwRCF1aobQkShARrf1PAUsNpHqWUJoynPu9w45YFKmzqaPmy
+            signingPrivateKey: 393fVJJsfqssJCRAjedKR2cKAjSLrjU3t+bICQ5KzYM=
+            signingPublicKey: CqVy97DW45bcZPPrWIYGe2ldl9C93NFeVciiAEYsvR0=
+            encrPrivateKey: 393fVJJsfqssJCRAjedKR2cKAjSLrjU3t+bICQ5KzYM=
+            encrPublicKey: CqVy97DW45bcZPPrWIYGe2ldl9C93NFeVciiAEYsvR0=
+        catalogPublisher:
+          id: catalogpublisher
+          config:
+            # No subscriberId here -- the handler derives it automatically
+            # from keyManager.config.subscriberId above (the single source
+            # of truth for which keyset gets loaded). Set it explicitly
+            # here only if it must legitimately differ from keyManager's.
+            nextUpdateIn: "336h"
+            # catalogBaseURL: the one public URL prefix outputRoot (/catalog
+            # above) is served under -- e.g. an ngrok tunnel onto that
+            # directory. Index/catalog file URLs are addressed under this
+            # base ({catalogBaseURL}/index/... and
+            # {catalogBaseURL}/catalogs/...). Left unset here; a
+            # "pending-artifact-store://..." placeholder is used until you
+            # point it at a real public location.
+            # catalogBaseURL: "https://your-tunnel.ngrok-free.app"
+            # checkCatalogIndexLink: read-only, warn-only check (via
+            # dediregistry, addressed by keyManager.config.subscriberId +
+            # the keyId that keyset resolves to) whether this node's DeDi
+            # registry record already links this publisher's catalog index
+            # via meta.catalog_index_url. Getting that value onto the
+            # record is a manual step via your own DeDi registration
+            # tooling; this only warns, never pushes it automatically.
+            checkCatalogIndexLink: "true"
+        # Validates submitted catalogs before they're published: the
+        # request body matches beckn.yaml's real CatalogPublishAction
+        # envelope (context/message.catalogs[]/message.publishDirectives[]),
+        # so this validates for real against catalog/publish's actual
+        # schema. No type/location set, so it resolves the canonical
+        # protocol-specifications-v2 beckn.yaml via becknConstants.
+        schemaValidator:
+          id: schemav2validator
+          config:
+            cacheTTL: "3600"
