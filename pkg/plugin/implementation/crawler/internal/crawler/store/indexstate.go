@@ -31,7 +31,8 @@ func (s *Store) GetIndex(ctx context.Context, indexURL string) (*catalog.IndexSt
 	if err != nil {
 		return nil, fmt.Errorf("store: GetIndex: %w", err)
 	}
-	st.IndexVersion, st.SyncStatus, st.NextCrawlAt = v.Int64, ss.String, nca.Time
+	_ = v
+	st.SyncStatus, st.NextCrawlAt = ss.String, nca.Time
 	st.ETag, st.LastModified = etag.String, lm.String
 	return &st, nil
 }
@@ -65,25 +66,28 @@ func (s *Store) KnownIndexes(ctx context.Context) ([]catalog.KnownIndex, error) 
 	return out, nil
 }
 
-// UpsertIndex records an index's last-seen version + sync outcome, plus the
-// conditional-GET validators (etag / lastModified) the host returned this fetch
-// (empty string when it sent none).
-func (s *Store) UpsertIndex(ctx context.Context, indexURL, participantID, source string, version int64, syncStatus string, nextCrawlAt time.Time, etag, lastModified string) error {
+// UpsertIndex records an index's sync outcome plus the conditional-GET
+// validators (etag / lastModified) the host returned this fetch (empty string
+// when it sent none). There is no index-level version to record any more (RFC
+// NFH-014 §Versioning: "there is no whole-index version field") -- the
+// index_version column is left NULL; whether the index changed at all is
+// answered purely by conditional HTTP, and per-catalog change detection runs
+// off each entry's own entryVersion (catalog/change.go), not this table.
+func (s *Store) UpsertIndex(ctx context.Context, indexURL, participantID, source string, syncStatus string, nextCrawlAt time.Time, etag, lastModified string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO crawler_index
-		   (index_url, participant_id, source, index_version, sync_status, last_crawled_at, next_crawl_at, etag, last_modified, updated_at)
-		 VALUES ($1,$2,$3,$4,$5, now(), $6, $7, $8, now())
+		   (index_url, participant_id, source, sync_status, last_crawled_at, next_crawl_at, etag, last_modified, updated_at)
+		 VALUES ($1,$2,$3,$4, now(), $5, $6, $7, now())
 		 ON CONFLICT (index_url) DO UPDATE SET
 		   participant_id = EXCLUDED.participant_id,
 		   source         = EXCLUDED.source,
-		   index_version  = EXCLUDED.index_version,
 		   sync_status    = EXCLUDED.sync_status,
 		   last_crawled_at = now(),
 		   next_crawl_at  = EXCLUDED.next_crawl_at,
 		   etag           = EXCLUDED.etag,
 		   last_modified  = EXCLUDED.last_modified,
 		   updated_at     = now()`,
-		indexURL, nullStr(participantID), nullStr(source), version, nullStr(syncStatus), nullTime(nextCrawlAt), nullStr(etag), nullStr(lastModified))
+		indexURL, nullStr(participantID), nullStr(source), nullStr(syncStatus), nullTime(nextCrawlAt), nullStr(etag), nullStr(lastModified))
 	if err != nil {
 		return fmt.Errorf("store: UpsertIndex: %w", err)
 	}

@@ -237,8 +237,8 @@ func (s *recordingStore) RecordFailure(_ context.Context, _, _, _ string, report
 	return nil
 }
 
-func (s *recordingStore) GetCatalogVersion(context.Context, string) (int64, bool, error) {
-	return 0, false, nil
+func (s *recordingStore) GetCatalogVersion(context.Context, string) (int64, int64, bool, error) {
+	return 0, 0, false, nil
 }
 func (s *recordingStore) UpsertCatalog(context.Context, catalog.CatalogState) error { return nil }
 func (s *recordingStore) CountParked(context.Context) (int, error)                  { return 0, nil }
@@ -252,7 +252,7 @@ func (s *recordingStore) GetIndex(context.Context, string) (*catalog.IndexState,
 func (s *recordingStore) KnownIndexes(context.Context) ([]catalog.KnownIndex, error) {
 	return nil, nil
 }
-func (s *recordingStore) UpsertIndex(context.Context, string, string, string, int64, string, time.Time, string, string) error {
+func (s *recordingStore) UpsertIndex(context.Context, string, string, string, string, time.Time, string, string) error {
 	return nil
 }
 func (s *recordingStore) AdvanceIndexCadence(context.Context, string, time.Time) error { return nil }
@@ -558,7 +558,7 @@ func TestBuildPushDoc_ContentIntegrity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			entry := catalog.CatalogEntry{
-				CatalogID: "p/c", Status: catalog.StatusActive,
+				CatalogID: "p/c",
 				Baseline: catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
 				Changes:  tt.changes,
 			}

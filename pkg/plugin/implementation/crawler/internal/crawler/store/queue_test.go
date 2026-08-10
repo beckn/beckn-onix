@@ -167,7 +167,7 @@ func TestComplete(t *testing.T) {
 	} else if depth != 0 {
 		t.Fatalf("depth = %d, want 0 after complete", depth)
 	}
-	v, seen, err := s.GetCatalogVersion(ctx, "p/c")
+	v, _, seen, err := s.GetCatalogVersion(ctx, "p/c")
 	must(t, err)
 	if !seen || v != 42 {
 		t.Fatalf("cursor = %d seen=%v, want 42 true", v, seen)
@@ -200,7 +200,7 @@ func TestEnqueue_PreservesInProgressClaim(t *testing.T) {
 	must(t, s.Complete(ctx, it.ID, it.ClaimID, 5, catalog.CatalogState{
 		CatalogID: "p/c", IndexURL: "i", Version: 5, Status: "active", Report: catalog.PassReport{Outcome: "pushed"},
 	}))
-	if v, seen, _ := s.GetCatalogVersion(ctx, "p/c"); !seen || v != 5 {
+	if v, _, seen, _ := s.GetCatalogVersion(ctx, "p/c"); !seen || v != 5 {
 		t.Fatalf("cursor = %d seen=%v, want 5", v, seen)
 	}
 	if d, _ := s.QueueDepth(ctx); d != 1 {

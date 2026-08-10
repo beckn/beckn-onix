@@ -75,11 +75,6 @@ const (
 	// (file spec: "a crawler past it re-fetches before relying").
 	nextUpdateRFC3339 = "2030-01-01T00:00:00Z"
 
-	// indexVersion is the index's own version. The crawler's change detection
-	// compares it against the stored one, so bump it if you want a running
-	// crawler to notice an edit.
-	indexVersion = 2
-
 	catalogID = "cat-ev-001"
 )
 
@@ -189,23 +184,28 @@ type fileEntry struct {
 	Encoding string `json:"encoding"`
 }
 
-// catalogEntry is one catalog's index record: self-signed as a whole (file
-// spec: "each catalog entry signs itself").
+// catalogEntry is one catalog's index record: self-signed as a whole (RFC
+// NFH-014: "each catalog entry signs itself"). isActive (a pointer, per
+// NFH-014: nil is meaningfully different from an explicit false) mirrors the
+// catalog's own isActive; there is no separate status/ACTIVE-RETIRED field.
 type catalogEntry struct {
-	CatalogID   string      `json:"catalogId"`
-	CatalogType string      `json:"catalogType"`
-	Status      string      `json:"status"`
-	SchemaTypes []string    `json:"schemaTypes"`
-	NetworkIDs  []string    `json:"networkIds"`
-	Baseline    fileEntry   `json:"baseline"`
-	Changes     []fileEntry `json:"changes"`
-	Signature   signature   `json:"signature"`
+	CatalogID    string      `json:"catalogId"`
+	EntryVersion int64       `json:"entryVersion"`
+	CatalogType  string      `json:"catalogType"`
+	SchemaTypes  []string    `json:"schemaTypes"`
+	NetworkIDs   []string    `json:"networkIds"`
+	IsActive     *bool       `json:"isActive,omitempty"`
+	Baseline     fileEntry   `json:"baseline"`
+	Changes      []fileEntry `json:"changes"`
+	Signature    signature   `json:"signature"`
 }
 
+// indexDoc carries no top-level version (RFC NFH-014 §Versioning: "there is
+// no whole-index version field") -- whether the index changed at all is
+// answered by conditional HTTP, not a document-level counter.
 type indexDoc struct {
 	Comment    []string       `json:"_comment"`
 	NodeID     string         `json:"nodeId"`
-	Version    int64          `json:"version"`
 	NextUpdate string         `json:"next_update"`
 	Catalogs   []catalogEntry `json:"catalogs"`
 }
@@ -306,14 +306,16 @@ func run(dir string) error {
 	}
 	changeBytes = append(changeBytes, '\n')
 
+	active := true
 	entry := &catalogEntry{
-		CatalogID:   catalogID,
-		CatalogType: "regular",
-		Status:      "ACTIVE",
-		SchemaTypes: []string{"beckn:Catalog"},
-		NetworkIDs:  []string{}, // empty => public, taken by any crawler
-		Baseline:    fileEntryFor(baselineURL, 1, baselineBytes),
-		Changes:     []fileEntry{fileEntryFor(changeURL, 2, changeBytes)},
+		CatalogID:    catalogID,
+		EntryVersion: 1,
+		CatalogType:  "regular",
+		SchemaTypes:  []string{"beckn:Catalog"},
+		NetworkIDs:   []string{}, // empty => public, taken by any crawler
+		IsActive:     &active,
+		Baseline:     fileEntryFor(baselineURL, 1, baselineBytes),
+		Changes:      []fileEntry{fileEntryFor(changeURL, 2, changeBytes)},
 	}
 	entryBytes, err := signInPlace(entry, &entry.Signature, priv)
 	if err != nil {
@@ -329,7 +331,6 @@ func run(dir string) error {
 			"Regenerate with: go run ./install/crawler-fixture/gen",
 		},
 		NodeID:     nodeID,
-		Version:    indexVersion,
 		NextUpdate: nextUpdateRFC3339,
 		Catalogs:   []catalogEntry{*entry},
 	}

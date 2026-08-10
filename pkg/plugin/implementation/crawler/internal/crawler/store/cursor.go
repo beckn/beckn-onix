@@ -13,18 +13,19 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/crawler/internal/crawler/catalog"
 )
 
-// GetCatalogVersion returns a catalog's applied-version cursor and whether it
-// has ever been synced.
-func (s *Store) GetCatalogVersion(ctx context.Context, catalogID string) (version int64, seen bool, err error) {
-	var v sql.NullInt64
-	err = s.db.QueryRowContext(ctx, `SELECT version FROM crawler_catalog WHERE catalog_id=$1`, catalogID).Scan(&v)
+// GetCatalogVersion returns a catalog's applied content-lineage version and
+// entry-level cursors, and whether it has ever been synced. The two cursors
+// are independent (RFC NFH-014 §Versioning) -- see catalog/change.go.
+func (s *Store) GetCatalogVersion(ctx context.Context, catalogID string) (version, entryVersion int64, seen bool, err error) {
+	var v, ev sql.NullInt64
+	err = s.db.QueryRowContext(ctx, `SELECT version, entry_version FROM crawler_catalog WHERE catalog_id=$1`, catalogID).Scan(&v, &ev)
 	if err == sql.ErrNoRows {
-		return 0, false, nil
+		return 0, 0, false, nil
 	}
 	if err != nil {
-		return 0, false, fmt.Errorf("store: GetCatalogVersion: %w", err)
+		return 0, 0, false, fmt.Errorf("store: GetCatalogVersion: %w", err)
 	}
-	return v.Int64, true, nil
+	return v.Int64, ev.Int64, true, nil
 }
 
 // appendPassClause is the ON CONFLICT expression that appends the incoming
@@ -44,19 +45,20 @@ func upsertCatalog(ctx context.Context, ex execer, c catalog.CatalogState) error
 	}
 	_, err = ex.ExecContext(ctx,
 		`INSERT INTO crawler_catalog
-		   (catalog_id, index_url, participant_id, version, status, push_status, reason, http_status, last_pushed_at, updated_at)
-		 VALUES ($1,$2,$3,$4,$5, jsonb_build_array($6::jsonb), $7, $8, now(), now())
+		   (catalog_id, index_url, participant_id, version, entry_version, status, push_status, reason, http_status, last_pushed_at, updated_at)
+		 VALUES ($1,$2,$3,$4,$5,$6, jsonb_build_array($7::jsonb), $8, $9, now(), now())
 		 ON CONFLICT (catalog_id) DO UPDATE SET
 		   index_url      = EXCLUDED.index_url,
 		   participant_id = EXCLUDED.participant_id,
 		   version        = EXCLUDED.version,
+		   entry_version  = EXCLUDED.entry_version,
 		   status         = EXCLUDED.status,
 		   push_status    = `+appendPassClause+`,
 		   reason         = EXCLUDED.reason,
 		   http_status    = EXCLUDED.http_status,
 		   last_pushed_at = now(),
 		   updated_at     = now()`,
-		c.CatalogID, c.IndexURL, nullStr(c.ParticipantID), c.Version, c.Status,
+		c.CatalogID, c.IndexURL, nullStr(c.ParticipantID), c.Version, c.EntryVersion, c.Status,
 		string(rep), nullStr(c.Report.Reason), nullIntZero(c.Report.HTTPStatus))
 	if err != nil {
 		return fmt.Errorf("store: upsertCatalog: %w", err)

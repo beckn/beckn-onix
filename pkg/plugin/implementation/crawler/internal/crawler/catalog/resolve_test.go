@@ -21,7 +21,7 @@ func TestResolveDelta(t *testing.T) {
 		"v3":   []byte(`{"catalogId":"p/c","fromVersion":2,"toVersion":3,` + env + `,"resources":{"upserts":[{"id":"r3"},{"id":"r2","descriptor":{"name":"R2b"}}],"removals":["r9"]},"offers":{}}`),
 	}
 	entry := CatalogEntry{
-		CatalogID: "p/c", Status: StatusActive,
+		CatalogID: "p/c",
 		Baseline: FileEntry{Version: 1, URL: "base"},
 		Changes:  []FileEntry{{Version: 2, URL: "v2"}, {Version: 3, URL: "v3"}},
 	}
@@ -93,7 +93,7 @@ func TestResolve(t *testing.T) {
 		"v42":  []byte(`{"catalogId":"p/c","fromVersion":41,"toVersion":42,"resources":{"upserts":[{"id":"r3"}],"removals":["r1"]},"offers":{}}`),
 	}
 	entry := CatalogEntry{
-		CatalogID: "p/c", Status: StatusActive,
+		CatalogID: "p/c",
 		Baseline: FileEntry{Version: 40, URL: "base", Digest: "d"},
 		Changes:  []FileEntry{{Version: 41, URL: "v41", Digest: "d"}, {Version: 42, URL: "v42", Digest: "d"}},
 	}
@@ -139,7 +139,7 @@ func TestResolveWithChangeset(t *testing.T) {
 		"v42":  []byte(`{"catalogId":"p/c","fromVersion":41,"toVersion":42,"resources":{"upserts":[{"id":"r3"}],"removals":["r1"]},"offers":{}}`),
 	}
 	entry := CatalogEntry{
-		CatalogID: "p/c", Status: StatusActive,
+		CatalogID: "p/c",
 		Baseline: FileEntry{Version: 40, URL: "base"},
 		Changes:  []FileEntry{{Version: 41, URL: "v41"}, {Version: 42, URL: "v42"}},
 	}
@@ -287,7 +287,7 @@ func TestResolveWithChangeset_BaselineShape(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			files := map[string][]byte{"base": []byte(tt.baseline), "v41": []byte(change)}
 			entry := CatalogEntry{
-				CatalogID: "p/c", Status: StatusActive,
+				CatalogID: "p/c",
 				Baseline: FileEntry{Version: 40, URL: "base"},
 				Changes:  []FileEntry{{Version: 41, URL: "v41"}},
 			}
@@ -379,7 +379,7 @@ func TestResolveDelta_Continuity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			entry := CatalogEntry{
-				CatalogID: "p/c", Status: StatusActive,
+				CatalogID: "p/c",
 				Baseline: FileEntry{Version: 1, URL: "base"},
 				Changes:  tt.changes,
 			}

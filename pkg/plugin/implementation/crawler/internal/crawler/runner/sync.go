@@ -432,7 +432,7 @@ func (e *Engine) buildPushDoc(entry catalog.CatalogEntry, item *catalog.ClaimedI
 func (e *Engine) settle(ctx context.Context, item *catalog.ClaimedItem, participantID string, status catalog.CatalogStatus, report catalog.PassReport) error {
 	return e.deps.Store.Complete(ctx, item.ID, item.ClaimID, item.ToVersion, catalog.CatalogState{
 		CatalogID: item.CatalogID, IndexURL: item.IndexURL, ParticipantID: participantID,
-		Version: item.ToVersion, Status: string(status), Report: report,
+		Version: item.ToVersion, EntryVersion: item.EntryVersion, Status: string(status), Report: report,
 	})
 }
 
