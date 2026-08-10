@@ -1,10 +1,14 @@
 package catalogpublisher
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,6 +198,145 @@ func TestPublish_SingleCatalog_ProducesIndex(t *testing.T) {
 	}
 	if file.CatalogID == "" || file.Version != 1 || file.NextUpdate.IsZero() {
 		t.Errorf("baseline file missing required identity/freshness fields: %+v", file)
+	}
+}
+
+// TestPublish_PublishLatest_AddsOverwrittenPointer proves the NFH-014
+// "latest" pointer: when Config.PublishLatest is on, every publishOne call
+// -- including ones that don't produce a new baseline/change file --
+// regenerates a full, self-signed CatalogFile at a fixed, non-versioned
+// URL, and stamps entry.Latest.Version with the catalog's current
+// content-lineage version.
+func TestPublish_PublishLatest_AddsOverwrittenPointer(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1", PublicBaseURL: "https://cdn.test", PublishLatest: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{{CatalogID: "CAT-1", Catalog: validCatalogJSON("CAT-1")}},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	got := result.Catalogs[0]
+	if got.LatestContent == nil || got.LatestDigest == "" {
+		t.Fatalf("expected LatestContent/LatestDigest to be set, got %+v", got)
+	}
+
+	var index catalogIndexDoc
+	if err := json.Unmarshal(result.Index, &index); err != nil {
+		t.Fatalf("parsing index: %v", err)
+	}
+	var entry catalogEntry
+	if err := json.Unmarshal(index.Catalogs[0], &entry); err != nil {
+		t.Fatalf("parsing entry: %v", err)
+	}
+	if entry.Latest == nil || entry.Latest.Version != 1 {
+		t.Fatalf("expected entry.Latest at version 1, got %+v", entry.Latest)
+	}
+	if entry.Latest.URL != "https://cdn.test/catalogs/CAT-1.latest.json" {
+		t.Errorf("unexpected latest URL: %q", entry.Latest.URL)
+	}
+	if entry.Latest.Digest != got.LatestDigest {
+		t.Errorf("entry.Latest.Digest = %q, want %q", entry.Latest.Digest, got.LatestDigest)
+	}
+
+	var file catalogFileDoc
+	if err := json.Unmarshal(got.LatestContent, &file); err != nil {
+		t.Fatalf("parsing latest content: %v", err)
+	}
+	if file.Signature.Value == "" {
+		t.Error("expected latest content to carry a self-signature")
+	}
+}
+
+// TestPublish_PublishLatestDisabled_OmitsPointer proves latest is opt-in.
+func TestPublish_PublishLatestDisabled_OmitsPointer(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{{CatalogID: "CAT-1", Catalog: validCatalogJSON("CAT-1")}},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if result.Catalogs[0].LatestContent != nil {
+		t.Error("expected no LatestContent when PublishLatest is off")
+	}
+	var index catalogIndexDoc
+	if err := json.Unmarshal(result.Index, &index); err != nil {
+		t.Fatalf("parsing index: %v", err)
+	}
+	var entry catalogEntry
+	if err := json.Unmarshal(index.Catalogs[0], &entry); err != nil {
+		t.Fatalf("parsing entry: %v", err)
+	}
+	if entry.Latest != nil {
+		t.Errorf("expected no latest field, got %+v", entry.Latest)
+	}
+}
+
+// TestPublish_Gzip_CompressesServedContentAndURL proves NFH-014 §10.1
+// compression: when Config.Gzip is on, the baseline's URL/filename carry
+// a ".json.gz" extension, ServedContent is gzip-compressed relative to
+// Content, and -- critically -- the digest and Content itself stay the
+// canonical, decompressed bytes (CON-TBD-29: never compute digest/
+// signature against compressed bytes).
+func TestPublish_Gzip_CompressesServedContentAndURL(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1", PublicBaseURL: "https://cdn.test", Gzip: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{{CatalogID: "CAT-1", Catalog: validCatalogJSON("CAT-1")}},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	got := result.Catalogs[0]
+	if !got.Compressed {
+		t.Fatal("expected Compressed = true")
+	}
+	if got.ServedContent == nil || string(got.ServedContent) == string(got.Content) {
+		t.Fatalf("expected ServedContent to be compressed and differ from Content")
+	}
+	gr, err := gzip.NewReader(bytes.NewReader(got.ServedContent))
+	if err != nil {
+		t.Fatalf("ServedContent is not valid gzip: %v", err)
+	}
+	decompressed, err := io.ReadAll(gr)
+	if err != nil {
+		t.Fatalf("decompressing ServedContent: %v", err)
+	}
+	if string(decompressed) != string(got.Content) {
+		t.Errorf("decompressed ServedContent = %s, want %s", decompressed, got.Content)
+	}
+	wantDigest := "sha-256:" + digestOf(got.Content)
+	if got.Digest != wantDigest {
+		t.Errorf("Digest = %q, want sha-256 of the canonical (decompressed) content %q", got.Digest, wantDigest)
+	}
+
+	var index catalogIndexDoc
+	if err := json.Unmarshal(result.Index, &index); err != nil {
+		t.Fatalf("parsing index: %v", err)
+	}
+	var entry catalogEntry
+	if err := json.Unmarshal(index.Catalogs[0], &entry); err != nil {
+		t.Fatalf("parsing entry: %v", err)
+	}
+	if entry.Baseline == nil || !strings.HasSuffix(entry.Baseline.URL, ".json.gz") {
+		t.Errorf("expected baseline URL to end in .json.gz, got %+v", entry.Baseline)
+	}
+	if entry.Baseline.Size != int64(len(got.ServedContent)) {
+		t.Errorf("baseline.Size = %d, want the compressed served size %d", entry.Baseline.Size, len(got.ServedContent))
 	}
 }
 

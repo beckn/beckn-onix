@@ -37,6 +37,8 @@
 package catalogpublisher
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -94,6 +96,28 @@ type Config struct {
 	// ("pending-artifact-store://...") is used for both when unset -- there
 	// is no ArtifactStore yet to ask for a real location.
 	PublicBaseURL string
+
+	// PublishLatest opts into publishing/maintaining each catalog's
+	// "latest" entry (NFH-014 §Schema Changes): a full CatalogFile
+	// overwritten in place at a stable URL, for consumers who want
+	// fully-current content without ever applying changes[]. Off by
+	// default -- it changes storage semantics (overwrite-in-place,
+	// explicitly exempt from the immutable-URL rule every other file
+	// here follows), so a caller opts in deliberately rather than getting
+	// it for free.
+	PublishLatest bool
+
+	// Gzip opts into serving every CatalogFile/CatalogChangeFile (and
+	// "latest", if enabled) gzip-compressed (NFH-014 §10.1,
+	// "Compression"), signaled purely by the file's URL/filename extension
+	// (".json.gz" vs ".json") -- never a content-type header or
+	// negotiation. Off by default for direct programmatic callers
+	// (catalogpublisher.Config's own zero value); the plugin/CLI entry
+	// points default it on. Digest/signature are always computed over the
+	// canonical, decompressed content regardless of this setting -- only
+	// the served bytes and the index entry's reported size (the actual
+	// served size) change.
+	Gzip bool
 }
 
 // Publisher implements definition.CatalogPublisher.
@@ -156,6 +180,7 @@ type catalogEntry struct {
 	IsActive     *bool              `json:"isActive,omitempty"`
 	Baseline     *fileEntry         `json:"baseline,omitempty"`
 	Changes      []fileEntry        `json:"changes,omitempty"`
+	Latest       *fileEntry         `json:"latest,omitempty"`
 	RetiredAt    *time.Time         `json:"retiredAt,omitempty"`
 	CrawlHint    string             `json:"crawlHint,omitempty"`
 	Signature    entrySignatureWire `json:"signature"`
@@ -417,7 +442,10 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 		if err != nil {
 			return definition.CatalogPublishOutcome{}, catalogEntry{}, err
 		}
-		fe := p.buildFileEntry(sub.CatalogID, version, "json", content)
+		fe, served, err := p.buildFileEntry(sub.CatalogID, version, "json", content)
+		if err != nil {
+			return definition.CatalogPublishOutcome{}, catalogEntry{}, err
+		}
 		entry.Baseline = &fe
 		// entry.Changes is deliberately left as whatever prior.ChangeFiles
 		// carried (set above), not reset to nil: on a forced re-baseline
@@ -431,9 +459,10 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 		entry.EntryVersion = prior.EntryVersion + 1
 
 		outcome := definition.CatalogPublishOutcome{
-			CatalogID: sub.CatalogID, Version: version, EntryVersion: entry.EntryVersion, Changed: true, Digest: fe.Digest, Mode: "baseline", Content: content,
+			CatalogID: sub.CatalogID, Version: version, EntryVersion: entry.EntryVersion, Changed: true, Digest: fe.Digest, Mode: "baseline",
+			Content: content, ServedContent: served, Compressed: p.config.Gzip,
 		}
-		return outcome, entry, nil
+		return p.finishEntry(sub, entry, outcome, priv, keyID, fileNextUpdate)
 	}
 
 	diff, changeCatalog, err := diffCatalogs(prior.Catalog, sub.Catalog)
@@ -447,11 +476,11 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 		if !metadataChanged {
 			entry.EntryVersion = prior.EntryVersion
 			outcome := definition.CatalogPublishOutcome{CatalogID: sub.CatalogID, Version: version, EntryVersion: entry.EntryVersion, Changed: false, Mode: "unchanged"}
-			return outcome, entry, nil
+			return p.finishEntry(sub, entry, outcome, priv, keyID, fileNextUpdate)
 		}
 		entry.EntryVersion = prior.EntryVersion + 1
 		outcome := definition.CatalogPublishOutcome{CatalogID: sub.CatalogID, Version: version, EntryVersion: entry.EntryVersion, Changed: true, Mode: "metadata"}
-		return outcome, entry, nil
+		return p.finishEntry(sub, entry, outcome, priv, keyID, fileNextUpdate)
 	}
 
 	fromVersion := currentVersion(prior)
@@ -465,13 +494,43 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 		return definition.CatalogPublishOutcome{}, catalogEntry{}, err
 	}
 
-	fe := p.buildFileEntry(sub.CatalogID, toVersion, "changes.json", content)
+	fe, served, err := p.buildFileEntry(sub.CatalogID, toVersion, "changes.json", content)
+	if err != nil {
+		return definition.CatalogPublishOutcome{}, catalogEntry{}, err
+	}
 	entry.Changes = append(entry.Changes, fe)
 	entry.EntryVersion = prior.EntryVersion + 1
 
 	outcome := definition.CatalogPublishOutcome{
-		CatalogID: sub.CatalogID, Version: toVersion, EntryVersion: entry.EntryVersion, Changed: true, Digest: fe.Digest, Mode: "change", Content: content,
+		CatalogID: sub.CatalogID, Version: toVersion, EntryVersion: entry.EntryVersion, Changed: true, Digest: fe.Digest, Mode: "change",
+		Content: content, ServedContent: served, Compressed: p.config.Gzip,
 	}
+	return p.finishEntry(sub, entry, outcome, priv, keyID, fileNextUpdate)
+}
+
+// finishEntry adds a "latest" full-CatalogFile pointer (NFH-014 §Schema
+// Changes) when Config.PublishLatest is on -- regenerated from sub.Catalog
+// on every call regardless of Mode, since "latest" always mirrors current
+// content, not a specific lineage step. A no-op when PublishLatest is off,
+// which every publishOne return path funnels through so "latest" (or its
+// absence) is applied uniformly rather than duplicated at each call site.
+func (p *Publisher) finishEntry(sub definition.CatalogSubmission, entry catalogEntry, outcome definition.CatalogPublishOutcome, priv ed25519.PrivateKey, keyID string, fileNextUpdate time.Time) (definition.CatalogPublishOutcome, catalogEntry, error) {
+	if !p.config.PublishLatest {
+		return outcome, entry, nil
+	}
+	content, err := p.signCatalogFile(sub.CatalogID, outcome.Version, fileNextUpdate, sub.Catalog, keyID, priv)
+	if err != nil {
+		return definition.CatalogPublishOutcome{}, catalogEntry{}, err
+	}
+	fe, served, err := p.buildLatestFileEntry(sub.CatalogID, outcome.Version, content)
+	if err != nil {
+		return definition.CatalogPublishOutcome{}, catalogEntry{}, err
+	}
+	entry.Latest = &fe
+	outcome.LatestContent = content
+	outcome.LatestServedContent = served
+	outcome.LatestDigest = fe.Digest
+	outcome.Compressed = p.config.Gzip
 	return outcome, entry, nil
 }
 
@@ -580,18 +639,64 @@ func (p *Publisher) signEntry(entry catalogEntry, keyID string, priv ed25519.Pri
 
 // buildFileEntry computes a versioned URL, digest, and size for one
 // already self-signed catalog file (content -- see signCatalogFile/
-// signChangeFile), per the file spec's rules: immutable, versioned URLs.
-// digest/size are computed over content as given, i.e. the final signed
-// bytes a crawler will actually fetch.
-func (p *Publisher) buildFileEntry(catalogID string, version int, suffix string, content []byte) fileEntry {
-	filename := fmt.Sprintf("%s.v%d.%s", localCatalogName(catalogID), version, suffix)
-	url := p.catalogPartURL(filename, suffix)
+// signChangeFile), per NFH-014's §10.1 compression rule: digest is always
+// computed over content as given (the canonical, decompressed bytes a DS
+// must verify against, CON-TBD-29) -- content is never mutated -- while
+// the returned served bytes and Size reflect what's actually written to
+// storage, gzip-compressed with a ".gz"-suffixed filename/URL when
+// Config.Gzip is on.
+func (p *Publisher) buildFileEntry(catalogID string, version int, suffix string, content []byte) (fileEntry, []byte, error) {
+	served, fileSuffix, err := p.maybeCompress(content, suffix)
+	if err != nil {
+		return fileEntry{}, nil, err
+	}
+	filename := fmt.Sprintf("%s.v%d.%s", localCatalogName(catalogID), version, fileSuffix)
+	url := p.catalogPartURL(filename, fileSuffix)
 	return fileEntry{
 		Version: version,
 		URL:     url,
-		Size:    int64(len(content)),
+		Size:    int64(len(served)),
 		Digest:  "sha-256:" + digestOf(content),
+	}, served, nil
+}
+
+// buildLatestFileEntry is buildFileEntry's counterpart for the "latest"
+// pointer (NFH-014 §Schema Changes): unlike a baseline/change file, its
+// filename carries no version number at all -- it is the one file this
+// package overwrites in place on every publish, explicitly exempt from
+// the immutable-URL rule every other file here follows.
+func (p *Publisher) buildLatestFileEntry(catalogID string, version int, content []byte) (fileEntry, []byte, error) {
+	served, fileSuffix, err := p.maybeCompress(content, "json")
+	if err != nil {
+		return fileEntry{}, nil, err
 	}
+	filename := fmt.Sprintf("%s.latest.%s", localCatalogName(catalogID), fileSuffix)
+	url := p.catalogPartURL(filename, fileSuffix)
+	return fileEntry{
+		Version: version,
+		URL:     url,
+		Size:    int64(len(served)),
+		Digest:  "sha-256:" + digestOf(content),
+	}, served, nil
+}
+
+// maybeCompress gzip-compresses content and appends ".gz" to suffix when
+// Config.Gzip is on, or returns content/suffix unchanged otherwise --
+// shared by buildFileEntry and buildLatestFileEntry so the served-bytes/
+// filename convention stays identical for every kind of catalog file.
+func (p *Publisher) maybeCompress(content []byte, suffix string) ([]byte, string, error) {
+	if !p.config.Gzip {
+		return content, suffix, nil
+	}
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	if _, err := gw.Write(content); err != nil {
+		return nil, "", fmt.Errorf("gzip-compressing catalog file: %w", err)
+	}
+	if err := gw.Close(); err != nil {
+		return nil, "", fmt.Errorf("gzip-compressing catalog file: %w", err)
+	}
+	return buf.Bytes(), suffix + ".gz", nil
 }
 
 // localCatalogName returns catalogID with any "domain/" prefix stripped,
@@ -873,7 +978,7 @@ func (p *Publisher) catalogPartURL(filename, suffix string) string {
 	if p.config.PublicBaseURL == "" {
 		return "pending-artifact-store://catalog/" + filename
 	}
-	if suffix == "changes.json" {
+	if strings.HasPrefix(suffix, "changes.json") { // "changes.json" or gzip's "changes.json.gz"
 		return joinURL(p.config.PublicBaseURL, localstore.CatalogsDirName, localstore.ChangesDirName, filename)
 	}
 	return joinURL(p.config.PublicBaseURL, localstore.CatalogsDirName, filename)

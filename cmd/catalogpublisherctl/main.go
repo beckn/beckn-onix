@@ -49,6 +49,8 @@ func main() {
 	retire := flag.String("retire", "", "comma-separated catalogIds to mark RETIRED this run (works with or without -catalog)")
 	forceBaseline := flag.Bool("forceBaseline", false, "publish a fresh baseline for -catalog, discarding its change history (also how to trigger compaction)")
 	publicBaseURL := flag.String("publicBaseURL", "", "if set, embed URLs under this single base instead of file:// (e.g. http://localhost:8000 when serving -out with `python3 -m http.server` from within it) -- must match wherever -out is actually served from. Note: the manifest (.well-known/dedi.index.json) is currently not written to -out at all (see localstore.Write); only the catalog index and catalog files are")
+	publishLatest := flag.Bool("publishLatest", true, "publish/maintain a \"latest\" pointer (NFH-014): a full CatalogFile overwritten in place at a stable URL, for consumers who never apply changes[]. On by default; pass -publishLatest=false to opt out")
+	gzipEnabled := flag.Bool("gzip", true, "serve catalog files gzip-compressed, signaled by a \".json.gz\" URL extension (NFH-014 §10.1). On by default; pass -gzip=false to opt out")
 	flag.Parse()
 
 	var retireIDs []string
@@ -83,6 +85,8 @@ func main() {
 		SubscriberID:  *keyID,
 		NextUpdateIn:  nextUpdateIn,
 		PublicBaseURL: base,
+		PublishLatest: *publishLatest,
+		Gzip:          *gzipEnabled,
 	})
 	must(err)
 
@@ -142,6 +146,9 @@ func main() {
 			fmt.Printf("catalog %s: unchanged, still version %d (entryVersion %d)\n", outcome.CatalogID, outcome.Version, outcome.EntryVersion)
 		}
 		fmt.Printf("  digest: %s\n", outcome.Digest)
+		if outcome.LatestContent != nil {
+			fmt.Printf("  latest: %s\n", outcome.LatestDigest)
+		}
 	}
 	for _, rid := range retireIDs {
 		fmt.Printf("catalog %s: marked RETIRED\n", rid)

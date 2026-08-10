@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
@@ -19,6 +20,13 @@ func (p catalogPublisherProvider) parseConfig(config map[string]string) (*catalo
 	cfg := &catalogpublisher.Config{
 		SubscriberID:  config["subscriberId"],
 		PublicBaseURL: config["catalogBaseURL"],
+		// PublishLatest/Gzip default to on for this plugin entry point --
+		// callers who want either off set publishLatest/gzip: "false"
+		// explicitly. catalogpublisher.Config's own zero value stays false
+		// for direct programmatic callers; these defaults belong to how
+		// the plugin is wired, not the library itself.
+		PublishLatest: true,
+		Gzip:          true,
 	}
 	if cfg.SubscriberID == "" {
 		return nil, fmt.Errorf("subscriberId is required")
@@ -30,6 +38,22 @@ func (p catalogPublisherProvider) parseConfig(config map[string]string) (*catalo
 			return nil, fmt.Errorf("invalid nextUpdateIn value '%s': %w", v, err)
 		}
 		cfg.NextUpdateIn = d
+	}
+
+	if v, exists := config["publishLatest"]; exists && v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid publishLatest value '%s': %w", v, err)
+		}
+		cfg.PublishLatest = b
+	}
+
+	if v, exists := config["gzip"]; exists && v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid gzip value '%s': %w", v, err)
+		}
+		cfg.Gzip = b
 	}
 
 	return cfg, nil

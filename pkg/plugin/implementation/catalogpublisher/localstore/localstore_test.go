@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
@@ -179,6 +180,204 @@ func TestWriteThenLoad_IncrementalAndCarryForward(t *testing.T) {
 	}
 	if finalState.PriorState["example.test/CAT-A"].EntryVersion != result2.Catalogs[0].EntryVersion {
 		t.Errorf("CAT-A reloaded EntryVersion = %d, want %d", finalState.PriorState["example.test/CAT-A"].EntryVersion, result2.Catalogs[0].EntryVersion)
+	}
+}
+
+// TestLoad_CompactionKeepsSupersededChangesWithinGracePeriod proves the
+// NFH-014 CON-TBD-32 minimum: right after a forced re-baseline
+// (compaction), the change file(s) that led up to it must still be
+// reconstructed as prior state -- Load must not drop them before the new
+// baseline's own next_update has passed.
+func TestLoad_CompactionKeepsSupersededChangesWithinGracePeriod(t *testing.T) {
+	root := t.TempDir()
+	p := newTestPublisher(t)
+
+	cat1 := json.RawMessage(`{"id":"CAT-1","descriptor":{"name":"A"},"provider":{},"resources":[{"id":"ITEM-1","descriptor":{"name":"one"}}]}`)
+	result1, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: cat1}},
+	})
+	if err != nil {
+		t.Fatalf("Publish (baseline): %v", err)
+	}
+	if err := localstore.Write(root, result1); err != nil {
+		t.Fatalf("Write (baseline): %v", err)
+	}
+
+	state1, err := localstore.Load(root, []string{"example.test/CAT-1"})
+	if err != nil {
+		t.Fatalf("Load (v1): %v", err)
+	}
+	cat2 := json.RawMessage(`{"id":"CAT-1","descriptor":{"name":"A"},"provider":{},"resources":[{"id":"ITEM-1","descriptor":{"name":"one-updated"}}]}`)
+	result2, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs:   []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: cat2}},
+		PriorState: state1.PriorState,
+	})
+	if err != nil {
+		t.Fatalf("Publish (change): %v", err)
+	}
+	if err := localstore.Write(root, result2); err != nil {
+		t.Fatalf("Write (change): %v", err)
+	}
+
+	state2, err := localstore.Load(root, []string{"example.test/CAT-1"})
+	if err != nil {
+		t.Fatalf("Load (v2): %v", err)
+	}
+	result3, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs:      []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: cat2}},
+		PriorState:    state2.PriorState,
+		ForceBaseline: true, // compaction
+	})
+	if err != nil {
+		t.Fatalf("Publish (compaction): %v", err)
+	}
+	if result3.Catalogs[0].Version != 3 {
+		t.Fatalf("expected compacted baseline at version 3, got %+v", result3.Catalogs[0])
+	}
+	if err := localstore.Write(root, result3); err != nil {
+		t.Fatalf("Write (compaction): %v", err)
+	}
+
+	state3, err := localstore.Load(root, []string{"example.test/CAT-1"})
+	if err != nil {
+		t.Fatalf("Load (post-compaction): %v", err)
+	}
+	prior := state3.PriorState["example.test/CAT-1"]
+	if prior.BaselineFile == nil || prior.BaselineFile.Version != 3 {
+		t.Fatalf("expected baseline at version 3, got %+v", prior.BaselineFile)
+	}
+	if len(prior.ChangeFiles) != 1 || prior.ChangeFiles[0].Version != 2 {
+		t.Errorf("expected the superseded v2 change file still listed within the grace period, got %+v", prior.ChangeFiles)
+	}
+}
+
+// TestLoad_CompactionDropsSupersededChangesAfterGracePeriod proves the
+// other half of CON-TBD-32: once the compacted baseline's own next_update
+// has passed, Load stops listing the change files that led into it.
+func TestLoad_CompactionDropsSupersededChangesAfterGracePeriod(t *testing.T) {
+	root := t.TempDir()
+	km := newFakeKeyManager(t)
+	p, _, err := catalogpublisher.New(context.Background(), km, &catalogpublisher.Config{
+		SubscriberID: "k1",
+		NextUpdateIn: 1, // effectively already-elapsed by the time Load runs
+	})
+	if err != nil {
+		t.Fatalf("catalogpublisher.New: %v", err)
+	}
+
+	cat1 := json.RawMessage(`{"id":"CAT-1","descriptor":{"name":"A"},"provider":{},"resources":[{"id":"ITEM-1","descriptor":{"name":"one"}}]}`)
+	result1, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: cat1}},
+	})
+	if err != nil {
+		t.Fatalf("Publish (baseline): %v", err)
+	}
+	if err := localstore.Write(root, result1); err != nil {
+		t.Fatalf("Write (baseline): %v", err)
+	}
+	state1, err := localstore.Load(root, []string{"example.test/CAT-1"})
+	if err != nil {
+		t.Fatalf("Load (v1): %v", err)
+	}
+
+	cat2 := json.RawMessage(`{"id":"CAT-1","descriptor":{"name":"A"},"provider":{},"resources":[{"id":"ITEM-1","descriptor":{"name":"one-updated"}}]}`)
+	result2, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs:   []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: cat2}},
+		PriorState: state1.PriorState,
+	})
+	if err != nil {
+		t.Fatalf("Publish (change): %v", err)
+	}
+	if err := localstore.Write(root, result2); err != nil {
+		t.Fatalf("Write (change): %v", err)
+	}
+	state2, err := localstore.Load(root, []string{"example.test/CAT-1"})
+	if err != nil {
+		t.Fatalf("Load (v2): %v", err)
+	}
+
+	result3, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs:      []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: cat2}},
+		PriorState:    state2.PriorState,
+		ForceBaseline: true,
+	})
+	if err != nil {
+		t.Fatalf("Publish (compaction): %v", err)
+	}
+	if err := localstore.Write(root, result3); err != nil {
+		t.Fatalf("Write (compaction): %v", err)
+	}
+
+	state3, err := localstore.Load(root, []string{"example.test/CAT-1"})
+	if err != nil {
+		t.Fatalf("Load (post-compaction): %v", err)
+	}
+	prior := state3.PriorState["example.test/CAT-1"]
+	if len(prior.ChangeFiles) != 0 {
+		t.Errorf("expected the superseded change file dropped once the grace period elapsed, got %+v", prior.ChangeFiles)
+	}
+}
+
+// TestWriteThenLoad_Gzip_RoundTrips proves NFH-014 §10.1 end to end
+// through localstore: a baseline and a subsequent change file, both
+// published gzip-compressed, are written under ".gz"-suffixed filenames
+// matching their declared URLs, and Load decompresses them correctly when
+// reconstructing prior state -- content and change application must be
+// unaffected by compression.
+func TestWriteThenLoad_Gzip_RoundTrips(t *testing.T) {
+	root := t.TempDir()
+	km := newFakeKeyManager(t)
+	p, _, err := catalogpublisher.New(context.Background(), km, &catalogpublisher.Config{
+		SubscriberID: "k1",
+		Gzip:         true,
+	})
+	if err != nil {
+		t.Fatalf("catalogpublisher.New: %v", err)
+	}
+
+	catA1 := json.RawMessage(`{"id":"CAT-1","descriptor":{"name":"A"},"provider":{},"resources":[{"id":"ITEM-1","descriptor":{"name":"one"}}]}`)
+	result1, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: catA1}},
+	})
+	if err != nil {
+		t.Fatalf("Publish (baseline): %v", err)
+	}
+	if err := localstore.Write(root, result1); err != nil {
+		t.Fatalf("Write (baseline): %v", err)
+	}
+	if _, err := os.Stat(localstore.CatalogFilePath(root, "example.test/CAT-1", 1, "json.gz")); err != nil {
+		t.Fatalf("expected baseline written under a .json.gz filename: %v", err)
+	}
+
+	state1, err := localstore.Load(root, []string{"example.test/CAT-1"})
+	if err != nil {
+		t.Fatalf("Load (v1): %v", err)
+	}
+	if string(state1.PriorState["example.test/CAT-1"].Catalog) != string(catA1) {
+		t.Fatalf("reconstructed baseline mismatch:\ngot:  %s\nwant: %s", state1.PriorState["example.test/CAT-1"].Catalog, catA1)
+	}
+
+	catA2 := json.RawMessage(`{"id":"CAT-1","descriptor":{"name":"A"},"provider":{},"resources":[{"id":"ITEM-1","descriptor":{"name":"one-updated"}}]}`)
+	result2, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs:   []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: catA2}},
+		PriorState: state1.PriorState,
+	})
+	if err != nil {
+		t.Fatalf("Publish (change): %v", err)
+	}
+	if err := localstore.Write(root, result2); err != nil {
+		t.Fatalf("Write (change): %v", err)
+	}
+	if _, err := os.Stat(localstore.CatalogFilePath(root, "example.test/CAT-1", 2, "changes.json.gz")); err != nil {
+		t.Fatalf("expected change file written under a .changes.json.gz filename: %v", err)
+	}
+
+	state2, err := localstore.Load(root, []string{"example.test/CAT-1"})
+	if err != nil {
+		t.Fatalf("Load (v2): %v", err)
+	}
+	if !jsonEqual(t, state2.PriorState["example.test/CAT-1"].Catalog, catA2) {
+		t.Errorf("reconstructed post-change catalog mismatch:\ngot:  %s\nwant: %s", state2.PriorState["example.test/CAT-1"].Catalog, catA2)
 	}
 }
 

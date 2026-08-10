@@ -178,10 +178,37 @@ type CatalogPublishOutcome struct {
 	// compaction), "change" (a diffed delta was produced), "metadata" (no
 	// file republished, but NetworkIds/SchemaTypes/CatalogType/IsActive/
 	// Dependencies/CrawlHint changed, so EntryVersion still bumped), or
-	// "unchanged". Content holds the new file's bytes for "baseline"/
-	// "change" and is nil otherwise.
+	// "unchanged". Content holds the new file's canonical (never
+	// compressed) bytes for "baseline"/"change" and is nil otherwise --
+	// digest/signature verification and any programmatic inspection always
+	// use this, never ServedContent.
 	Mode    string
 	Content json.RawMessage
+
+	// ServedContent is what a caller should actually write to storage for
+	// Content above -- identical to Content when Compressed is false, or
+	// its gzip-compressed bytes when Compressed is true (NFH-014 §10.1,
+	// "Compression"). Nil whenever Content is nil.
+	ServedContent []byte
+
+	// Compressed reports whether ServedContent (and LatestServedContent
+	// below) are gzip-compressed relative to Content/LatestContent --
+	// mirrors Config.Gzip at the time of this Publish call. The index
+	// entry's own file reference URLs already carry the matching ".gz"
+	// extension; a caller writing ServedContent to a filename derived from
+	// that URL needs no separate bookkeeping.
+	Compressed bool
+
+	// LatestContent/LatestServedContent/LatestDigest are set whenever
+	// Config.PublishLatest is on (NFH-014 §Schema Changes, "latest"): a
+	// full CatalogFile mirroring this catalog's current content,
+	// regenerated on every call regardless of Mode -- a caller writes
+	// LatestServedContent to the same fixed, overwritten-in-place URL
+	// every time (never a new, versioned one like Content above). Nil/
+	// empty when PublishLatest is off.
+	LatestContent       json.RawMessage
+	LatestServedContent []byte
+	LatestDigest        string
 }
 
 // PublishError is a non-fatal, per-catalog failure -- one bad submission

@@ -27,12 +27,16 @@
 package localstore
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/catalogfile"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
@@ -93,14 +97,26 @@ func LocalName(catalogID string) string {
 }
 
 // CatalogFilePath returns the local path for one catalog file: a baseline
-// (suffix "json") sits directly under catalogs/, a change file (suffix
-// "changes.json") under catalogs/changes/.
+// (suffix "json", or gzip's "json.gz") sits directly under catalogs/, a
+// change file (suffix "changes.json"/"changes.json.gz") under
+// catalogs/changes/ -- the suffix must match the compression this file was
+// actually written/served with (NFH-014 §10.1), same as its declared URL.
 func CatalogFilePath(root, catalogID string, version int, suffix string) string {
 	filename := fmt.Sprintf("%s.v%d.%s", LocalName(catalogID), version, suffix)
-	if suffix == "changes.json" {
+	if strings.HasPrefix(suffix, "changes.json") {
 		return filepath.Join(ChangesDir(root), filename)
 	}
 	return filepath.Join(CatalogsDir(root), filename)
+}
+
+// LatestFilePath returns the local path for a catalog's "latest" pointer
+// (NFH-014 §Schema Changes): unlike CatalogFilePath, its filename carries
+// no version number -- Write overwrites this same path in place on every
+// publish, matching latest's explicit exemption from the immutable-URL
+// rule every other catalog file here follows. suffix is "json" or gzip's
+// "json.gz", matching the compression this file was actually served with.
+func LatestFilePath(root, catalogID, suffix string) string {
+	return filepath.Join(CatalogsDir(root), fmt.Sprintf("%s.latest.%s", LocalName(catalogID), suffix))
 }
 
 // Write persists a PublishResult under root: the index and every catalog
@@ -127,8 +143,32 @@ func Write(root string, result definition.PublishResult) error {
 		if outcome.Mode == "change" {
 			suffix = "changes.json"
 		}
+		if outcome.Compressed {
+			suffix += ".gz"
+		}
+		served := outcome.ServedContent
+		if served == nil {
+			served = outcome.Content // Compressed is false: ServedContent and Content are identical
+		}
 		path := CatalogFilePath(root, outcome.CatalogID, outcome.Version, suffix)
-		if err := os.WriteFile(path, outcome.Content, 0o644); err != nil {
+		if err := os.WriteFile(path, served, 0o644); err != nil {
+			return fmt.Errorf("localstore: writing %s: %w", path, err)
+		}
+	}
+	for _, outcome := range result.Catalogs {
+		if outcome.LatestContent == nil {
+			continue
+		}
+		suffix := "json"
+		if outcome.Compressed {
+			suffix += ".gz"
+		}
+		served := outcome.LatestServedContent
+		if served == nil {
+			served = outcome.LatestContent
+		}
+		path := LatestFilePath(root, outcome.CatalogID, suffix)
+		if err := os.WriteFile(path, served, 0o644); err != nil {
 			return fmt.Errorf("localstore: writing %s: %w", path, err)
 		}
 	}
@@ -162,6 +202,7 @@ type indexEntry struct {
 	IsActive     *bool              `json:"isActive"`
 	Baseline     *wireFileEntry     `json:"baseline"`
 	Changes      []wireFileEntry    `json:"changes"`
+	Latest       *wireFileEntry     `json:"latest"`
 	RetiredAt    *string            `json:"retiredAt"`
 	CrawlHint    string             `json:"crawlHint"`
 }
@@ -183,12 +224,15 @@ type wireFileEntry struct {
 }
 
 // wireCatalogFile unwraps a stored baseline file's self-signed envelope
-// (catalogpublisher's catalogFileDoc: {catalog, signature}) back to the
-// bare catalog content Apply/diffing expect. No signature verification on
-// read for now -- this package only ever reads back its own previously-
-// written output, not externally-fetched content.
+// (catalogpublisher's catalogFileDoc: {catalogId, version, next_update,
+// catalog, signature}) back to the bare catalog content Apply/diffing
+// expect, plus NextUpdate -- used to decide when a compaction's grace
+// period (NFH-014 CON-TBD-32) has elapsed, see reconstructState. No
+// signature verification on read for now -- this package only ever reads
+// back its own previously-written output, not externally-fetched content.
 type wireCatalogFile struct {
-	Catalog json.RawMessage `json:"catalog"`
+	NextUpdate time.Time       `json:"next_update"`
+	Catalog    json.RawMessage `json:"catalog"`
 }
 
 // Load reads the previously-written catalog index (if any) under root and
@@ -245,27 +289,65 @@ func Load(root string, catalogIDs []string) (*State, error) {
 }
 
 func reconstructState(root string, entry indexEntry) (*definition.PriorCatalogState, error) {
-	baselinePath := CatalogFilePath(root, entry.CatalogID, entry.Baseline.Version, "json")
+	baselineSuffix := "json"
+	if isGzipURL(entry.Baseline.URL) {
+		baselineSuffix = "json.gz"
+	}
+	baselinePath := CatalogFilePath(root, entry.CatalogID, entry.Baseline.Version, baselineSuffix)
 	baselineBytes, err := os.ReadFile(baselinePath)
 	if err != nil {
 		return nil, fmt.Errorf("localstore: reading %s: %w", baselinePath, err)
+	}
+	if baselineSuffix == "json.gz" {
+		if baselineBytes, err = gunzip(baselineBytes); err != nil {
+			return nil, fmt.Errorf("localstore: decompressing %s: %w", baselinePath, err)
+		}
 	}
 	var wrapped wireCatalogFile
 	if err := json.Unmarshal(baselineBytes, &wrapped); err != nil {
 		return nil, fmt.Errorf("localstore: parsing %s: %w", baselinePath, err)
 	}
 
+	// A change file's Version is only ever <= the current baseline's own
+	// Version right after a forced re-baseline (compaction): every other
+	// baseline is created once, before any of its changes[], so all of
+	// its changes carry strictly higher versions. Such a "superseded"
+	// change's content is already folded into the baseline itself --
+	// applying it again is a harmless no-op (upserts/removals/attribute
+	// overlays are all idempotent, id-keyed replacements, not diffs
+	// relative to a specific prior state) -- but NFH-014 CON-TBD-32 only
+	// requires it to stay *listed* for one full next_update cycle after
+	// the compaction, measured against the next_update stamped on the new
+	// baseline at compaction time (wrapped.NextUpdate here). Once that's
+	// elapsed, dropping it from the returned ChangeFiles is what actually
+	// realizes compaction's index-payload benefit -- Publish itself never
+	// does this trimming on its own (PriorCatalogState's doc comment).
+	gracePeriodElapsed := time.Now().After(wrapped.NextUpdate)
+
 	effective := wrapped.Catalog
 	changeFiles := make([]definition.FileRef, 0, len(entry.Changes))
 	for _, ch := range entry.Changes {
-		path := CatalogFilePath(root, entry.CatalogID, ch.Version, "changes.json")
+		chSuffix := "changes.json"
+		if isGzipURL(ch.URL) {
+			chSuffix = "changes.json.gz"
+		}
+		path := CatalogFilePath(root, entry.CatalogID, ch.Version, chSuffix)
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("localstore: reading %s: %w", path, err)
 		}
+		if chSuffix == "changes.json.gz" {
+			if raw, err = gunzip(raw); err != nil {
+				return nil, fmt.Errorf("localstore: decompressing %s: %w", path, err)
+			}
+		}
 		effective, err = catalogfile.Apply(effective, raw)
 		if err != nil {
 			return nil, fmt.Errorf("localstore: applying %s: %w", path, err)
+		}
+		superseded := ch.Version <= entry.Baseline.Version
+		if superseded && gracePeriodElapsed {
+			continue // grace period over: stop listing this pre-compaction change file
 		}
 		changeFiles = append(changeFiles, toFileRef(ch))
 	}
@@ -298,6 +380,23 @@ func toMasterDependencies(deps *wireDependencies) []definition.MasterDependency 
 		out[i] = definition.MasterDependency{CatalogID: m.CatalogID, IndexURL: m.IndexURL}
 	}
 	return out
+}
+
+// isGzipURL reports whether a stored file reference's declared URL is
+// gzip-compressed (NFH-014 §10.1: signaled purely by a ".gz" URL
+// extension) -- read back from the entry itself rather than from the
+// current Config.Gzip, since a catalog's files may have been published
+// under a different compression setting than whatever is running now.
+func isGzipURL(url string) bool { return strings.HasSuffix(url, ".gz") }
+
+// gunzip decompresses data written by catalogpublisher's own gzip.Writer.
+func gunzip(data []byte) ([]byte, error) {
+	r, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return io.ReadAll(r)
 }
 
 func toFileRef(fe wireFileEntry) definition.FileRef {

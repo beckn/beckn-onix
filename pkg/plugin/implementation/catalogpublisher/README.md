@@ -91,11 +91,39 @@ catalogs) -- widening the gap until `catalogcrawler` catches up.
    ones touched in one `Publish` call.
 9. On a forced re-baseline (compaction), keeps the pre-compaction change
    files **listed**, not just hosted (NFH-014 CON-TBD-32) -- `Publish`
-   never resets `changes[]` to empty on its own; how long a caller keeps
-   passing them back in `PriorCatalogState.ChangeFiles` is that caller's
-   own grace-period policy (`Publish` holds no timer or storage of its
-   own).
-10. Returns `PublishResult{Index, Catalogs, Errors}` as JSON. No I/O
+   never resets `changes[]` to empty on its own; a caller decides how
+   long to keep passing them back in `PriorCatalogState.ChangeFiles`
+   (`Publish` holds no timer or storage of its own). `localstore`'s own
+   policy (see below) implements CON-TBD-32's concrete minimum: it keeps
+   listing them until the compacted baseline's own `next_update` has
+   passed, then stops.
+10. Maintains a **`latest` pointer** (`Config.PublishLatest`) -- a full,
+    self-signed `CatalogFile` overwritten in place at one stable,
+    non-versioned URL, for consumers who want fully-current content
+    without ever applying `changes[]`. Regenerated from the submitted
+    catalog on every call regardless of `Mode`, unlike `baseline`/
+    `changes[]` which are only written when content actually changes.
+    Explicitly exempt from the immutable-URL rule every other catalog
+    file here follows (NFH-014 CON-TBD-36). On by default for the
+    `catalogpublisherctl` CLI and the `catalogPublish` plugin config
+    (opt out with `-publishLatest=false` / `publishLatest: "false"`);
+    `catalogpublisher.Config`'s own zero value stays off for direct
+    programmatic callers.
+11. Serves every catalog file **gzip-compressed** (`Config.Gzip`), signaled
+    purely by a `.json.gz`/`.changes.json.gz` URL extension (NFH-014
+    §10.1) -- never a header or content negotiation. Digest and signature
+    are always computed over the canonical, decompressed bytes
+    (`CatalogPublishOutcome.Content`/`LatestContent`); the compressed
+    bytes to actually write are `ServedContent`/`LatestServedContent`, and
+    the index entry's reported `size` is the compressed, actually-served
+    size. `localstore` reads a stored file's own declared URL to decide
+    whether to decompress it, not the current `Config.Gzip` -- so mixed
+    compression history (some files compressed, some not, across
+    different past publishes) reconstructs correctly regardless. On by
+    default for the CLI and plugin config (opt out with `-gzip=false` /
+    `gzip: "false"`); `catalogpublisher.Config`'s own zero value stays off
+    for direct programmatic callers.
+12. Returns `PublishResult{Index, Catalogs, Errors}` as JSON. No I/O
     happens here -- where these bytes get written and served is a
     separate concern (an `ArtifactStore`-shaped plugin, not yet built).
 
@@ -117,6 +145,7 @@ field, see point 5 above):
       "isActive": true,
       "baseline": { "version": 1, "url": "...", "size": 413, "digest": "sha-256:..." },
       "changes": [ { "version": 2, "url": "...", "size": 336, "digest": "sha-256:..." } ],
+      "latest": { "version": 2, "url": "...CAT-DEMO-1.latest.json", "size": 420, "digest": "sha-256:..." },
       "signature": { "keyId": "key-1", "value": "..." }
     },
     { "catalogId": "...", "entryVersion": 21, "catalogType": "REGULAR", "retiredAt": "...", "signature": { "keyId": "key-1", "value": "..." } }
@@ -284,6 +313,8 @@ file spec's own example URLs.
 | `-nextUpdateDays` | days until `next_update` expires; `0` omits it | `14` |
 | `-retire` | comma-separated catalogIds to mark RETIRED this run | *(empty)* |
 | `-forceBaseline` | publish a fresh baseline for `-catalog`, discarding its change history (also how to trigger compaction) | `false` |
+| `-publishLatest` | publish/maintain a `latest` pointer (NFH-014); pass `-publishLatest=false` to opt out | `true` |
+| `-gzip` | serve catalog files gzip-compressed (NFH-014 §10.1); pass `-gzip=false` to opt out | `true` |
 
 At least one of `-catalog` or `-retire` is required.
 
@@ -297,9 +328,9 @@ go test ./pkg/plugin/implementation/catalogpublisher/... -v
 
 - **No compaction scheduling.** `-forceBaseline` triggers it manually;
   automatic triggers (change-list size/count threshold, or a schedule) are
-  a follow-up.
-- **No grace-period deletion of superseded files** after compaction (file
-  spec: "Old files remain for a grace period... then are deleted").
+  a follow-up. Grace-period expiry of superseded change files (NFH-014
+  CON-TBD-32) *is* implemented, in `localstore.Load`/`reconstructState` --
+  see the package doc above and `localstore`'s own tests.
 - **No storage wiring.** `Config.PublicBaseURL` is read straight from
   config -- one URL prefix for everything a publish writes, mirroring
   wherever `outputRoot` (see `localstore`) is actually served from
@@ -626,7 +657,8 @@ below).
 
 ## Known open items
 
-- Compaction scheduling and grace-period cleanup (see above).
+- Compaction scheduling (see above) -- grace-period cleanup itself is
+  implemented (`localstore`).
 - `ArtifactStore` wiring once a storage plugin exists, to replace the
   placeholder URLs with real published locations -- until then, the
   `catalogPublish` handler's `outputRoot` only ever holds local files;
