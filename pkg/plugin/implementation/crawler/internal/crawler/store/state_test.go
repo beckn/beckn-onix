@@ -62,26 +62,26 @@ func TestIndexState(t *testing.T) {
 		t.Fatalf("absent index should be nil, got %+v", got)
 	}
 
-	if err := s.UpsertIndex(ctx, "https://x/index.json", "p", "config", 42, "ok", time.Now().Add(time.Minute), `W/"42"`, "Wed, 21 Oct 2026 07:28:00 GMT"); err != nil {
+	if err := s.UpsertIndex(ctx, "https://x/index.json", "p", "config", "ok", time.Now().Add(time.Minute), `W/"42"`, "Wed, 21 Oct 2026 07:28:00 GMT"); err != nil {
 		t.Fatal(err)
 	}
 	got, err = s.GetIndex(ctx, "https://x/index.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == nil || got.IndexVersion != 42 || got.SyncStatus != "ok" {
-		t.Fatalf("GetIndex = %+v, want {42 ok}", got)
+	if got == nil || got.SyncStatus != "ok" {
+		t.Fatalf("GetIndex = %+v, want {ok}", got)
 	}
 	if got.ETag != `W/"42"` || got.LastModified != "Wed, 21 Oct 2026 07:28:00 GMT" {
 		t.Fatalf("GetIndex validators = %q / %q, want the stored ETag/Last-Modified", got.ETag, got.LastModified)
 	}
 
-	if err := s.UpsertIndex(ctx, "https://x/index.json", "p", "config", 43, "partial", time.Now(), `W/"43"`, ""); err != nil {
+	if err := s.UpsertIndex(ctx, "https://x/index.json", "p", "config", "partial", time.Now(), `W/"43"`, ""); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.GetIndex(ctx, "https://x/index.json")
-	if got.IndexVersion != 43 || got.SyncStatus != "partial" || got.ETag != `W/"43"` {
-		t.Fatalf("after re-upsert = %+v, want {43 partial W/\"43\"}", got)
+	if got.SyncStatus != "partial" || got.ETag != `W/"43"` {
+		t.Fatalf("after re-upsert = %+v, want {partial W/\"43\"}", got)
 	}
 }
 
@@ -91,15 +91,15 @@ func TestAdvanceIndexCadence(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	url := "https://x/index.json"
-	must(t, s.UpsertIndex(ctx, url, "p", "config", 7, "ok", time.Now().Add(-time.Hour), "etag-7", "lm-7"))
+	must(t, s.UpsertIndex(ctx, url, "p", "config", "ok", time.Now().Add(-time.Hour), "etag-7", "lm-7"))
 
 	later := time.Now().Add(30 * time.Minute)
 	must(t, s.AdvanceIndexCadence(ctx, url, later))
 
 	got, err := s.GetIndex(ctx, url)
 	must(t, err)
-	if got.IndexVersion != 7 || got.ETag != "etag-7" || got.LastModified != "lm-7" {
-		t.Fatalf("AdvanceIndexCadence must preserve version + validators, got %+v", got)
+	if got.ETag != "etag-7" || got.LastModified != "lm-7" {
+		t.Fatalf("AdvanceIndexCadence must preserve validators, got %+v", got)
 	}
 	if !got.NextCrawlAt.After(time.Now()) {
 		t.Fatalf("AdvanceIndexCadence must advance next_crawl_at, got %v", got.NextCrawlAt)
@@ -156,10 +156,10 @@ func TestPassReportRecordsPartial(t *testing.T) {
 		t.Fatalf("partial report = %+v, want partial 1/3 resources 10", r)
 	}
 	// Failure must NOT advance the cursor.
-	if _, seen, _ := s.GetCatalogVersion(ctx, cid); !seen {
+	if _, _, seen, _ := s.GetCatalogVersion(ctx, cid); !seen {
 		t.Fatal("row should exist after RecordFailure")
 	}
-	if v, _, _ := s.GetCatalogVersion(ctx, cid); v != 0 {
+	if v, _, _, _ := s.GetCatalogVersion(ctx, cid); v != 0 {
 		t.Fatalf("version = %d, want 0 (failure must not advance cursor)", v)
 	}
 }
@@ -168,7 +168,7 @@ func TestCatalogCursor(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 
-	if _, seen, err := s.GetCatalogVersion(ctx, "p/c"); err != nil {
+	if _, _, seen, err := s.GetCatalogVersion(ctx, "p/c"); err != nil {
 		t.Fatal(err)
 	} else if seen {
 		t.Fatal("unseen catalog reported as seen")
@@ -181,7 +181,7 @@ func TestCatalogCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v, seen, err := s.GetCatalogVersion(ctx, "p/c")
+	v, _, seen, err := s.GetCatalogVersion(ctx, "p/c")
 	if err != nil {
 		t.Fatal(err)
 	}

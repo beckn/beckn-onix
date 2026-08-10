@@ -30,16 +30,17 @@ func (s *Store) Enqueue(ctx context.Context, item catalog.QueueItem) error {
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO crawler_queue
-		   (catalog_id, index_url, from_version, to_version, op, status, attempts, next_attempt_at, claimed_at, claim_id, enqueued_at)
-		 VALUES ($1,$2,$3,$4,$5,'queued',0, now(), NULL, NULL, now())
+		   (catalog_id, index_url, from_version, to_version, entry_version, op, status, attempts, next_attempt_at, claimed_at, claim_id, enqueued_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,'queued',0, now(), NULL, NULL, now())
 		 ON CONFLICT (catalog_id) DO UPDATE SET
 		   index_url    = EXCLUDED.index_url,
 		   to_version   = GREATEST(crawler_queue.to_version, EXCLUDED.to_version),
+		   entry_version = EXCLUDED.entry_version,
 		   op           = EXCLUDED.op,
 		   status       = CASE WHEN crawler_queue.claimed_at IS NULL THEN 'queued' ELSE crawler_queue.status END,
 		   attempts     = CASE WHEN crawler_queue.claimed_at IS NULL THEN 0 ELSE crawler_queue.attempts END,
 		   next_attempt_at = CASE WHEN crawler_queue.claimed_at IS NULL THEN now() ELSE crawler_queue.next_attempt_at END`,
-		item.CatalogID, item.IndexURL, nullInt64Zero(item.FromVersion), item.ToVersion, op)
+		item.CatalogID, item.IndexURL, nullInt64Zero(item.FromVersion), item.ToVersion, nullInt64Zero(item.EntryVersion), op)
 	if err != nil {
 		return fmt.Errorf("store: Enqueue: %w", err)
 	}
@@ -53,6 +54,7 @@ func (s *Store) ClaimNext(ctx context.Context) (*catalog.ClaimedItem, error) {
 	var (
 		it  catalog.ClaimedItem
 		fv  sql.NullInt64
+		ev  sql.NullInt64
 		cid sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx,
@@ -65,16 +67,16 @@ func (s *Store) ClaimNext(ctx context.Context) (*catalog.ClaimedItem, error) {
 		     ORDER BY next_attempt_at
 		     FOR UPDATE SKIP LOCKED
 		     LIMIT 1)
-		 RETURNING id, claim_id, catalog_id, index_url, from_version, to_version, op, attempts, enqueued_at`,
+		 RETURNING id, claim_id, catalog_id, index_url, from_version, to_version, entry_version, op, attempts, enqueued_at`,
 		claimLease.String()).
-		Scan(&it.ID, &cid, &it.CatalogID, &it.IndexURL, &fv, &it.ToVersion, &it.Op, &it.Attempts, &it.EnqueuedAt)
+		Scan(&it.ID, &cid, &it.CatalogID, &it.IndexURL, &fv, &it.ToVersion, &ev, &it.Op, &it.Attempts, &it.EnqueuedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("store: ClaimNext: %w", err)
 	}
-	it.FromVersion, it.ClaimID = fv.Int64, cid.String
+	it.FromVersion, it.ClaimID, it.EntryVersion = fv.Int64, cid.String, ev.Int64
 	return &it, nil
 }
 

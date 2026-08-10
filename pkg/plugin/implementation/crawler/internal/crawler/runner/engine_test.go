@@ -75,10 +75,10 @@ func TestEngine_IndexThenCatalogPass(t *testing.T) {
 	ctx := context.Background()
 
 	entry := catalog.CatalogEntry{
-		CatalogID: "p/c", Status: catalog.StatusActive, // public
+		CatalogID: "p/c", EntryVersion: 1, // public
 		Baseline: catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
 	}
-	idx := catalog.Index{NodeID: "p", Version: 1, Catalogs: []catalog.CatalogEntry{entry}}
+	idx := catalog.Index{NodeID: "p", Catalogs: []catalog.CatalogEntry{entry}}
 	files := map[string][]byte{"base": []byte(`{"id":"p/c","resources":[{"id":"r1"}]}`)}
 
 	var pushed [][]byte
@@ -119,7 +119,7 @@ func TestEngine_IndexThenCatalogPass(t *testing.T) {
 	if d, _ := s.QueueDepth(ctx); d != 0 {
 		t.Fatalf("queue depth after catalog pass = %d, want 0", d)
 	}
-	v, seen, _ := s.GetCatalogVersion(ctx, "p/c")
+	v, _, seen, _ := s.GetCatalogVersion(ctx, "p/c")
 	if !seen || v != 1 {
 		t.Fatalf("cursor = %d seen=%v, want 1 true", v, seen)
 	}
@@ -240,7 +240,7 @@ func TestCrawlIndex_NotModified_TouchesCadence(t *testing.T) {
 	url := "https://x/i.json"
 
 	// Seed a prior crawl so there is a stored validator to send and the row is due.
-	if err := s.UpsertIndex(ctx, url, "p", "config", 5, "ok", time.Now().Add(-time.Hour), "etag5", ""); err != nil {
+	if err := s.UpsertIndex(ctx, url, "p", "config", "ok", time.Now().Add(-time.Hour), "etag5", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -274,9 +274,6 @@ func TestCrawlIndex_NotModified_TouchesCadence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.IndexVersion != 5 {
-		t.Fatalf("version must stay 5 on 304, got %d", got.IndexVersion)
-	}
 	if !got.NextCrawlAt.After(time.Now()) {
 		t.Fatalf("304 must advance next_crawl_at, got %v", got.NextCrawlAt)
 	}
@@ -290,18 +287,18 @@ func TestEngine_MergeOnly_DeltaPush(t *testing.T) {
 	url := "https://x/i.json"
 
 	entry := catalog.CatalogEntry{
-		CatalogID: "p/c", Status: catalog.StatusActive,
+		CatalogID: "p/c", EntryVersion: 2,
 		Baseline: catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
 		Changes:  []catalog.FileEntry{{Version: 2, URL: "chg2", Digest: "d"}},
 	}
-	idx := catalog.Index{NodeID: "p", Version: 2, Catalogs: []catalog.CatalogEntry{entry}}
+	idx := catalog.Index{NodeID: "p", Catalogs: []catalog.CatalogEntry{entry}}
 	files := map[string][]byte{
 		"base": []byte(`{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"prov"},"resources":[{"id":"r1"}]}`),
 		"chg2": []byte(`{"catalogId":"p/c","fromVersion":1,"toVersion":2,"catalog":{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"prov"}},"resources":{"upserts":[{"id":"rNew","descriptor":{"name":"New"}}]},"offers":{}}`),
 	}
 
-	// Seed the cursor at the baseline version → the next pass is incremental.
-	if err := s.UpsertCatalog(ctx, catalog.CatalogState{CatalogID: "p/c", IndexURL: url, Version: 1, Status: "active", Report: catalog.PassReport{Outcome: "pushed"}}); err != nil {
+	// Seed the cursor at the baseline version, entryVersion 1 → the next pass is incremental.
+	if err := s.UpsertCatalog(ctx, catalog.CatalogState{CatalogID: "p/c", IndexURL: url, Version: 1, EntryVersion: 1, Status: "active", Report: catalog.PassReport{Outcome: "pushed"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -351,7 +348,7 @@ func TestEngine_MergeOnly_DeltaPush(t *testing.T) {
 	if ids := resourceIDs(t, body.Message.Catalogs[0]); len(ids) != 1 || ids[0] != "rNew" {
 		t.Fatalf("pushed resources = %v, want [rNew] (delta only)", ids)
 	}
-	if v, _, _ := s.GetCatalogVersion(ctx, "p/c"); v != 2 {
+	if v, _, _, _ := s.GetCatalogVersion(ctx, "p/c"); v != 2 {
 		t.Fatalf("cursor = %d, want 2", v)
 	}
 }
@@ -368,12 +365,12 @@ func TestIndexPass_ReCrawlsPersistedIndexes(t *testing.T) {
 	const onDemandURL = "https://y/on-demand-index.json"
 
 	// A prior on-demand crawl left a persisted row, now due again (next_crawl_at in the past).
-	if err := s.UpsertIndex(ctx, onDemandURL, "p2", source.KindOnDemand, 1, "ok",
+	if err := s.UpsertIndex(ctx, onDemandURL, "p2", source.KindOnDemand, "ok",
 		time.Now().Add(-time.Hour), "", ""); err != nil {
 		t.Fatal(err)
 	}
 	// The configured URL is ALSO persisted → it must be crawled once, not twice (deduped).
-	if err := s.UpsertIndex(ctx, configURL, "p", source.KindConfig, 1, "ok",
+	if err := s.UpsertIndex(ctx, configURL, "p", source.KindConfig, "ok",
 		time.Now().Add(-time.Hour), "", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +381,7 @@ func TestIndexPass_ReCrawlsPersistedIndexes(t *testing.T) {
 		Source: source.NewConfigSource([]string{configURL}),
 		FetchIndex: func(_ context.Context, indexURL string, _ catalog.IndexConditions) (catalog.IndexResult, error) {
 			fetched = append(fetched, indexURL)
-			return catalog.IndexResult{Index: catalog.Index{NodeID: "p", Version: 1}}, nil
+			return catalog.IndexResult{Index: catalog.Index{NodeID: "p"}}, nil
 		},
 		Metrics: &recMetrics{},
 		NewID:   func() string { return "id" },
@@ -415,19 +412,19 @@ func TestEngine_MergeOnly_NoEnvelope_FallsBackToBaselineMetadata(t *testing.T) {
 	url := "https://x/i.json"
 
 	entry := catalog.CatalogEntry{
-		CatalogID: "p/c", Status: catalog.StatusActive,
+		CatalogID: "p/c", EntryVersion: 2,
 		Baseline: catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
 		Changes:  []catalog.FileEntry{{Version: 2, URL: "chg2", Digest: "d"}},
 	}
-	idx := catalog.Index{NodeID: "p", Version: 2, Catalogs: []catalog.CatalogEntry{entry}}
+	idx := catalog.Index{NodeID: "p", Catalogs: []catalog.CatalogEntry{entry}}
 	files := map[string][]byte{
 		"base": []byte(`{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"prov"},"resources":[{"id":"r1"}]}`),
 		// change file WITHOUT a "catalog" metadata envelope:
 		"chg2": []byte(`{"catalogId":"p/c","fromVersion":1,"toVersion":2,"resources":{"upserts":[{"id":"rNew"}]},"offers":{}}`),
 	}
 
-	// Seed the cursor at the baseline version → the next pass is incremental.
-	if err := s.UpsertCatalog(ctx, catalog.CatalogState{CatalogID: "p/c", IndexURL: url, Version: 1, Status: "active", Report: catalog.PassReport{Outcome: "pushed"}}); err != nil {
+	// Seed the cursor at the baseline version, entryVersion 1 → the next pass is incremental.
+	if err := s.UpsertCatalog(ctx, catalog.CatalogState{CatalogID: "p/c", IndexURL: url, Version: 1, EntryVersion: 1, Status: "active", Report: catalog.PassReport{Outcome: "pushed"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -467,7 +464,7 @@ func TestEngine_MergeOnly_NoEnvelope_FallsBackToBaselineMetadata(t *testing.T) {
 	if !bytes.Contains(pushed[0], []byte(`"rNew"`)) || !bytes.Contains(pushed[0], []byte(`"prov"`)) {
 		t.Errorf("push must carry the change's upsert (rNew) and the baseline's provider metadata: %s", pushed[0])
 	}
-	if v, _, _ := s.GetCatalogVersion(ctx, "p/c"); v != 2 {
+	if v, _, _, _ := s.GetCatalogVersion(ctx, "p/c"); v != 2 {
 		t.Errorf("cursor must advance on a successful push; got %d, want 2", v)
 	}
 	if rec.pushed != 1 {

@@ -23,7 +23,7 @@ import (
 // deleted. Like the port, every signature is in domain terms (catalog.*) only.
 type Backend interface {
 	// Catalog cursor + pass history.
-	GetCatalogVersion(ctx context.Context, catalogID string) (version int64, seen bool, err error)
+	GetCatalogVersion(ctx context.Context, catalogID string) (version, entryVersion int64, seen bool, err error)
 	UpsertCatalog(ctx context.Context, c catalog.CatalogState) error
 	CountParked(ctx context.Context) (int, error)
 	CountTracked(ctx context.Context) (int, error)
@@ -33,7 +33,7 @@ type Backend interface {
 	// Per-index state: the change gate, the conditional-GET validators, cadence.
 	GetIndex(ctx context.Context, indexURL string) (*catalog.IndexState, error)
 	KnownIndexes(ctx context.Context) ([]catalog.KnownIndex, error)
-	UpsertIndex(ctx context.Context, indexURL, participantID, source string, version int64, syncStatus string, nextCrawlAt time.Time, etag, lastModified string) error
+	UpsertIndex(ctx context.Context, indexURL, participantID, source string, syncStatus string, nextCrawlAt time.Time, etag, lastModified string) error
 	AdvanceIndexCadence(ctx context.Context, indexURL string, nextCrawlAt time.Time) error
 
 	// Work queue: coalescing enqueue, atomic claim, retry/park, settle.

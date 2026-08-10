@@ -60,8 +60,8 @@ func TestHTTPClient_FetchIndexAndFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Index.NodeID != "p" || res.Index.Version != 7 {
-		t.Fatalf("index = %+v, want nodeId p version 7", res.Index)
+	if res.Index.NodeID != "p" {
+		t.Fatalf("index = %+v, want nodeId p", res.Index)
 	}
 
 	good := catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(cat)}
@@ -205,7 +205,7 @@ func TestHTTPClient_FetchIndex_Conditional(t *testing.T) {
 	if res.NotModified {
 		t.Fatal("first fetch must not be NotModified")
 	}
-	if res.Index.Version != 7 || res.ETag != etag || res.LastModified != lastMod {
+	if res.ETag != etag || res.LastModified != lastMod {
 		t.Fatalf("first fetch = %+v, want version 7 + captured ETag/Last-Modified", res)
 	}
 
@@ -237,7 +237,7 @@ func TestHTTPClient_FetchIndex_NoValidators(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.NotModified || res.Index.Version != 3 || res.ETag != "" {
+	if res.NotModified || res.Index.NodeID != "p" || res.ETag != "" {
 		t.Fatalf("no-validator host = %+v, want a plain 200 (version 3, empty ETag)", res)
 	}
 }

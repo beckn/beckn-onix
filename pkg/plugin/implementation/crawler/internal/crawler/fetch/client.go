@@ -106,14 +106,13 @@ func (c *Client) FetchIndex(ctx context.Context, indexURL string, cond catalog.I
 	// silently drop/reorder fields and break canonicalization.
 	var raw struct {
 		NodeID     string            `json:"nodeId"`
-		Version    int64             `json:"version"`
 		NextUpdate string            `json:"next_update"`
 		Catalogs   []json.RawMessage `json:"catalogs"`
 	}
 	if err := json.Unmarshal(decoded, &raw); err != nil {
 		return catalog.IndexResult{}, fmt.Errorf("crawler: parsing index %s: %w", indexURL, err)
 	}
-	idx := catalog.Index{NodeID: raw.NodeID, Version: raw.Version, NextUpdate: raw.NextUpdate}
+	idx := catalog.Index{NodeID: raw.NodeID, NextUpdate: raw.NextUpdate}
 	for _, entryRaw := range raw.Catalogs {
 		var entry catalog.CatalogEntry
 		if err := json.Unmarshal(entryRaw, &entry); err != nil {

@@ -164,8 +164,8 @@ func (e *Engine) crawlIndex(ctx context.Context, ref source.IndexRef, trig trigg
 		return e.indexUnchanged(ctx, ref, trig, runID, now)
 	}
 
-	out := e.processIndex(ctx, ref, trig, prev, res.Index, runID)
-	if !e.recordIndex(ctx, ref, prev, res, !out.degraded, runID, now) {
+	out := e.processIndex(ctx, ref, trig, res.Index, runID)
+	if !e.recordIndex(ctx, ref, res, !out.degraded, runID, now) {
 		out.degraded = true
 	}
 	return out
@@ -204,72 +204,52 @@ func (e *Engine) indexUnchanged(ctx context.Context, ref source.IndexRef, trig t
 	return res
 }
 
-// processIndex handles a freshly-fetched index body: it always counts as
-// checked, and when the version advanced it decides + enqueues per catalog.
-// A same-version index is logged and left for the per-catalog cursors + queue.
+// processIndex handles a freshly-fetched index body (a 200, not a 304): it
+// always decides + enqueues per catalog. There is no index-level version to
+// compare against any more (RFC NFH-014 §Versioning: "there is no whole-index
+// version field") -- a body only reaches here when conditional HTTP already
+// determined the index changed at all (indexUnchanged handles the 304 case
+// upstream), and per-catalog change detection runs entirely off each entry's
+// own entryVersion (catalog/change.go), which decideCatalog compares to the
+// stored cursor itself.
 //
 // It sets degraded when ANY catalog in the index could not be decided or
 // enqueued because the store failed. That flag is the caller's signal that this
 // was a PARTIAL pass, not a complete one.
-func (e *Engine) processIndex(ctx context.Context, ref source.IndexRef, trig trigger, prev *catalog.IndexState, idx catalog.Index, runID string) crawlResult {
-	out := crawlResult{fetched: true}
-	if prev != nil && prev.IndexVersion == idx.Version {
-		e.logPolled(runID, trig, ref.IndexURL, idx.Version, "unchanged")
-		e.deps.Metrics.RecordIndexPoll("unchanged")
-		return out
-	}
-	e.logPolled(runID, trig, ref.IndexURL, idx.Version, "updated")
+func (e *Engine) processIndex(ctx context.Context, ref source.IndexRef, trig trigger, idx catalog.Index, runID string) crawlResult {
+	out := crawlResult{fetched: true, changed: true}
+	e.logPolled(runID, trig, ref.IndexURL, 0, "updated")
 	e.deps.Metrics.RecordIndexPoll("updated")
-	out.changed = true
 	out.enqueued, out.degraded = e.decideCatalogs(ctx, ref, trig, idx, runID)
 	return out
 }
 
-// recordIndex persists the crawled index's new state — version, participant,
+// recordIndex persists the crawled index's new state — participant,
 // conditional-GET validators, and the next crawl time — and records the crawl
 // duration. It reports whether the write itself succeeded.
 //
 // complete says every catalog in this index was decided and enqueued. When it
-// is false the pass was PARTIAL, and the new version and the conditional-GET
-// validators are BOTH withheld:
+// is false the pass was PARTIAL, and the conditional-GET validators are
+// withheld: a stored ETag turns every later poll into a 304, and the 304 path
+// skips decideCatalogs entirely, so a recorded validator here would wedge the
+// catalog whose Enqueue failed shut until the publisher happens to republish.
 //
-//   - Withholding the version keeps the change gate open. Recording it would
-//     close the gate on work that was never queued: the next pass reads
-//     prev.IndexVersion == idx.Version, calls the index unchanged, and skips
-//     decideCatalogs entirely. The catalog whose Enqueue failed then stays at
-//     its old version until the publisher happens to bump the index again,
-//     which can be days.
-//   - Withholding the validators keeps the next poll a real GET. A stored ETag
-//     turns every later poll into a 304, and the 304 path never decides
-//     anything either, so a recorded validator would wedge the same update shut
-//     even harder.
-//
-// The row is still written, with the PREVIOUS version and a non-OK sync status,
-// so the failed pass is visible to an operator and next_crawl_at still advances
-// (one retry per cadence, not a hot loop).
-func (e *Engine) recordIndex(ctx context.Context, ref source.IndexRef, prev *catalog.IndexState, res catalog.IndexResult, complete bool, runID string, since time.Time) bool {
+// The row is still written, with a non-OK sync status, so the failed pass is
+// visible to an operator and next_crawl_at still advances (one retry per
+// cadence, not a hot loop).
+func (e *Engine) recordIndex(ctx context.Context, ref source.IndexRef, res catalog.IndexResult, complete bool, runID string, since time.Time) bool {
 	idx := res.Index
-	version, status, etag, lastModified := idx.Version, publish.SyncOK, res.ETag, res.LastModified
+	status, etag, lastModified := publish.SyncOK, res.ETag, res.LastModified
 	if !complete {
-		version, status, etag, lastModified = storedVersion(prev), publish.SyncFailed, "", ""
+		status, etag, lastModified = publish.SyncFailed, "", ""
 	}
 	ok := true
-	if err := e.deps.Store.UpsertIndex(ctx, ref.IndexURL, idx.NodeID, ref.Source, version, status, e.nextIndexCrawl(), etag, lastModified); err != nil {
+	if err := e.deps.Store.UpsertIndex(ctx, ref.IndexURL, idx.NodeID, ref.Source, status, e.nextIndexCrawl(), etag, lastModified); err != nil {
 		e.storeUnhealthy("crawl", runID, "upsert_index", "", err)
 		ok = false
 	}
 	e.deps.Metrics.ObserveIndexSeconds(e.deps.Now().Sub(since).Seconds())
 	return ok
-}
-
-// storedVersion is the index version already on record — 0 when this index has
-// never been crawled, which keeps the change gate open against any real
-// publisher version.
-func storedVersion(prev *catalog.IndexState) int64 {
-	if prev == nil {
-		return 0
-	}
-	return prev.IndexVersion
 }
 
 // decideCatalogs walks an advanced index and, per catalog, decides + enqueues.
@@ -305,14 +285,14 @@ func (e *Engine) decideCatalogs(ctx context.Context, ref source.IndexRef, trig t
 // is nothing lost, so the index version may advance.
 func (e *Engine) decideCatalog(ctx context.Context, ref source.IndexRef, trig trigger, entry catalog.CatalogEntry, runID string) (queued, failed bool) {
 	take, _ := catalog.ResolveScope(entry, e.cfg.Networks)
-	cursor, seen, err := e.deps.Store.GetCatalogVersion(ctx, entry.CatalogID)
+	cursor, entryCursor, seen, err := e.deps.Store.GetCatalogVersion(ctx, entry.CatalogID)
 	if err != nil {
 		// We do not know this catalog's cursor, so we cannot know whether it
 		// needed work. Treat it as unfinished, never as "nothing to do".
 		e.storeUnhealthy("crawl", runID, "read_cursor", entry.CatalogID, err)
 		return false, true
 	}
-	d := catalog.DetectChange(entry, cursor, seen)
+	d := catalog.DetectChange(entry, entryCursor, cursor, seen)
 	switch d.Action {
 	case catalog.ActionSync:
 		if !take {
@@ -320,7 +300,7 @@ func (e *Engine) decideCatalog(ctx context.Context, ref source.IndexRef, trig tr
 		}
 		if err := e.deps.Store.Enqueue(ctx, catalog.QueueItem{
 			CatalogID: entry.CatalogID, IndexURL: ref.IndexURL,
-			FromVersion: cursor, ToVersion: d.ToVersion, Op: "sync",
+			FromVersion: cursor, ToVersion: d.ToVersion, EntryVersion: d.EntryVersion, Op: "sync",
 		}); err != nil {
 			e.storeUnhealthy("crawl", runID, "enqueue", entry.CatalogID, err)
 			return false, true
@@ -332,7 +312,7 @@ func (e *Engine) decideCatalog(ctx context.Context, ref source.IndexRef, trig tr
 			return false, false // never had it; nothing to retire
 		}
 		if err := e.deps.Store.Enqueue(ctx, catalog.QueueItem{
-			CatalogID: entry.CatalogID, IndexURL: ref.IndexURL, ToVersion: cursor, Op: "retire",
+			CatalogID: entry.CatalogID, IndexURL: ref.IndexURL, ToVersion: cursor, EntryVersion: d.EntryVersion, Op: "retire",
 		}); err != nil {
 			e.storeUnhealthy("crawl", runID, "enqueue", entry.CatalogID, err)
 			return false, true

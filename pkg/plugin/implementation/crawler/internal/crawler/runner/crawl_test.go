@@ -80,8 +80,8 @@ func TestEngine_CrawlRegistry_DiscoversAndCrawls(t *testing.T) {
 	url1 := "https://p1.example/i.json"
 	url2 := "https://p2.example/i.json"
 	indexFor := func(pid string) catalog.Index {
-		return catalog.Index{NodeID: pid, Version: 1, Catalogs: []catalog.CatalogEntry{{
-			CatalogID: pid + "/c", Status: catalog.StatusActive,
+		return catalog.Index{NodeID: pid, Catalogs: []catalog.CatalogEntry{{
+			CatalogID: pid + "/c", EntryVersion: 1,
 			Baseline: catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
 		}}}
 	}
@@ -183,8 +183,8 @@ func (g *gateStore) entries() []string {
 	return append([]string(nil), g.urls...)
 }
 
-func (g *gateStore) GetCatalogVersion(context.Context, string) (int64, bool, error) {
-	return 0, false, nil
+func (g *gateStore) GetCatalogVersion(context.Context, string) (int64, int64, bool, error) {
+	return 0, 0, false, nil
 }
 func (g *gateStore) UpsertCatalog(context.Context, catalog.CatalogState) error { return nil }
 func (g *gateStore) CountParked(context.Context) (int, error)                  { return 0, nil }
@@ -196,7 +196,7 @@ func (g *gateStore) RecordFailure(context.Context, string, string, string, catal
 	return nil
 }
 func (g *gateStore) KnownIndexes(context.Context) ([]catalog.KnownIndex, error) { return nil, nil }
-func (g *gateStore) UpsertIndex(context.Context, string, string, string, int64, string, time.Time, string, string) error {
+func (g *gateStore) UpsertIndex(context.Context, string, string, string, string, time.Time, string, string) error {
 	return nil
 }
 func (g *gateStore) AdvanceIndexCadence(context.Context, string, time.Time) error { return nil }
@@ -235,7 +235,7 @@ func TestEngine_CrawlIndex_LocksPerIndex(t *testing.T) {
 			eng := New(EngineConfig{IndexInterval: time.Hour}, Deps{
 				Store: gate,
 				FetchIndex: func(context.Context, string, catalog.IndexConditions) (catalog.IndexResult, error) {
-					return catalog.IndexResult{Index: catalog.Index{NodeID: "p", Version: 1}}, nil
+					return catalog.IndexResult{Index: catalog.Index{NodeID: "p"}}, nil
 				},
 			})
 
@@ -300,7 +300,7 @@ func TestEngine_CrawlIndex_CancelledWhileWaitingForLock(t *testing.T) {
 	eng := New(EngineConfig{IndexInterval: time.Hour}, Deps{
 		Store: gate,
 		FetchIndex: func(context.Context, string, catalog.IndexConditions) (catalog.IndexResult, error) {
-			return catalog.IndexResult{Index: catalog.Index{NodeID: "p", Version: 1}}, nil
+			return catalog.IndexResult{Index: catalog.Index{NodeID: "p"}}, nil
 		},
 	})
 
@@ -352,11 +352,10 @@ var (
 	errKnown      = errors.New("list_indexes: server closed the connection")
 )
 
-// indexUpsert is one recorded UpsertIndex call — the fields that decide whether
-// the change gate closes: the version the crawl claims to have finished, the
-// sync status, and the conditional-GET validators the next poll will echo.
+// indexUpsert is one recorded UpsertIndex call — the fields that decide
+// whether the next poll gets a real GET or a 304: the sync status and the
+// conditional-GET validators the next poll will echo.
 type indexUpsert struct {
-	version      int64
 	status       string
 	etag         string
 	lastModified string
@@ -372,7 +371,12 @@ type memStore struct {
 
 	index    *catalog.IndexState // nil until the first UpsertIndex
 	cursors  map[string]int64    // catalog id -> version already synced
-	enqueued []catalog.QueueItem
+	// enqueued mirrors the real store's coalescing Enqueue (UNIQUE catalog_id,
+	// ON CONFLICT DO UPDATE) -- a naive append here would inflate a call-count
+	// assertion every time the index job re-decides an already-queued catalog,
+	// which it now does on every full fetch (there is no more index-level
+	// version to skip re-deciding on).
+	enqueued map[string]catalog.QueueItem
 	upserts  []indexUpsert
 
 	cursorErr   error
@@ -382,7 +386,9 @@ type memStore struct {
 	upsertErr   error
 }
 
-func newMemStore() *memStore { return &memStore{cursors: map[string]int64{}} }
+func newMemStore() *memStore {
+	return &memStore{cursors: map[string]int64{}, enqueued: map[string]catalog.QueueItem{}}
+}
 
 // heal clears every injected error, so a test can run a second pass against a
 // recovered store — the realistic sequence, since a blip is transient.
@@ -426,28 +432,28 @@ func (m *memStore) GetIndex(context.Context, string) (*catalog.IndexState, error
 	return &cp, nil
 }
 
-func (m *memStore) UpsertIndex(_ context.Context, _, _, _ string, version int64, syncStatus string, nextCrawlAt time.Time, etag, lastModified string) error {
+func (m *memStore) UpsertIndex(_ context.Context, _, _, _ string, syncStatus string, nextCrawlAt time.Time, etag, lastModified string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.upsertErr != nil {
 		return m.upsertErr
 	}
-	m.upserts = append(m.upserts, indexUpsert{version: version, status: syncStatus, etag: etag, lastModified: lastModified})
+	m.upserts = append(m.upserts, indexUpsert{status: syncStatus, etag: etag, lastModified: lastModified})
 	m.index = &catalog.IndexState{
-		IndexVersion: version, SyncStatus: syncStatus,
+		SyncStatus:  syncStatus,
 		NextCrawlAt: nextCrawlAt, ETag: etag, LastModified: lastModified,
 	}
 	return nil
 }
 
-func (m *memStore) GetCatalogVersion(_ context.Context, catalogID string) (int64, bool, error) {
+func (m *memStore) GetCatalogVersion(_ context.Context, catalogID string) (int64, int64, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.cursorErr != nil {
-		return 0, false, m.cursorErr
+		return 0, 0, false, m.cursorErr
 	}
 	v, seen := m.cursors[catalogID]
-	return v, seen, nil
+	return v, 0, seen, nil
 }
 
 func (m *memStore) Enqueue(_ context.Context, item catalog.QueueItem) error {
@@ -456,7 +462,7 @@ func (m *memStore) Enqueue(_ context.Context, item catalog.QueueItem) error {
 	if m.enqueueErr != nil {
 		return m.enqueueErr
 	}
-	m.enqueued = append(m.enqueued, item)
+	m.enqueued[item.CatalogID] = item
 	return nil
 }
 
@@ -535,43 +541,39 @@ func newCrawlHarness(t *testing.T, urls []string, idx catalog.Index, fetchErr er
 	return h
 }
 
-// oneCatalogIndex is a publisher index at version 5 carrying one public catalog
-// whose latest version is also 5.
+// oneCatalogIndex is a publisher index carrying one public catalog at
+// entryVersion 1, content version 5.
 func oneCatalogIndex() catalog.Index {
 	return catalog.Index{
-		NodeID: "p", Version: 5,
+		NodeID: "p",
 		Catalogs: []catalog.CatalogEntry{{
-			CatalogID: "p/c", Status: catalog.StatusActive, // public
+			CatalogID: "p/c", EntryVersion: 1, // public
 			Baseline: catalog.FileEntry{Version: 5, URL: "base", Digest: "d"},
 		}},
 	}
 }
 
-// A crawl pass that could not decide or enqueue EVERY catalog in the index must
-// not record the new index version, and must not record the conditional-GET
-// validators either.
+// A crawl pass that could not decide or enqueue EVERY catalog in the index
+// must not record the conditional-GET validators.
 //
 // This is the silent-loss bug. decideCatalog logs a failed cursor read or a
-// failed Enqueue and moves on; if the index version is then written anyway, the
-// next pass reads prev.IndexVersion == idx.Version, calls the index unchanged,
-// and never runs decideCatalogs again. The catalog whose Enqueue failed sits at
-// its old version until the publisher bumps the index — days, possibly. Storing
-// the ETag makes it worse: every later poll answers 304, which skips the decide
-// step outright.
+// failed Enqueue and moves on; if the ETag is then written anyway, the next
+// pass echoes it, the host answers 304, and decideCatalogs never runs again —
+// the catalog whose Enqueue failed sits at its old version until the
+// publisher republishes, possibly days.
 //
 // So each case asserts the whole loop: what pass 1 recorded, what validators
 // pass 2 sends, and whether pass 2 (against a healed store) actually re-decides
 // and enqueues the work pass 1 lost. The clean pass is the control — it DOES
-// advance, and pass 2 correctly finds nothing to do.
-func TestIndexPass_PartialFailure_WithholdsIndexVersion(t *testing.T) {
+// record the validators, and pass 2 correctly finds nothing new to do (the one
+// item pass 1 already queued).
+func TestIndexPass_PartialFailure_WithholdsValidators(t *testing.T) {
 	tests := []struct {
 		name string
 		// stage installs the store failure for pass 1.
-		stage func(*memStore)
-		// what pass 1 must have persisted for the index row.
-		wantVersion int64
-		wantStatus  string
-		wantETag    string
+		stage      func(*memStore)
+		wantStatus string
+		wantETag   string
 		// validators pass 2 must send, and work it must (re-)enqueue.
 		wantPass2ETag     string
 		wantPass2Enqueued int
@@ -579,7 +581,6 @@ func TestIndexPass_PartialFailure_WithholdsIndexVersion(t *testing.T) {
 		{
 			name:              "enqueue fails mid-pass",
 			stage:             func(m *memStore) { m.enqueueErr = errEnqueue },
-			wantVersion:       0,
 			wantStatus:        publish.SyncFailed,
 			wantETag:          "",
 			wantPass2ETag:     "",
@@ -588,7 +589,6 @@ func TestIndexPass_PartialFailure_WithholdsIndexVersion(t *testing.T) {
 		{
 			name:              "cursor read fails mid-pass",
 			stage:             func(m *memStore) { m.cursorErr = errCursorRead },
-			wantVersion:       0,
 			wantStatus:        publish.SyncFailed,
 			wantETag:          "",
 			wantPass2ETag:     "",
@@ -597,7 +597,6 @@ func TestIndexPass_PartialFailure_WithholdsIndexVersion(t *testing.T) {
 		{
 			name:              "fully successful pass",
 			stage:             func(*memStore) {},
-			wantVersion:       5,
 			wantStatus:        publish.SyncOK,
 			wantETag:          "e5",
 			wantPass2ETag:     "e5",
@@ -614,9 +613,6 @@ func TestIndexPass_PartialFailure_WithholdsIndexVersion(t *testing.T) {
 			got, ok := h.store.lastUpsert()
 			if !ok {
 				t.Fatal("pass 1 recorded no index row at all; the failed pass must still be persisted (with a non-OK status)")
-			}
-			if got.version != tt.wantVersion {
-				t.Fatalf("pass 1 recorded index_version = %d, want %d; recording the new version on a partial pass closes the change gate on work that was never queued", got.version, tt.wantVersion)
 			}
 			if got.status != tt.wantStatus {
 				t.Fatalf("pass 1 recorded sync_status = %q, want %q", got.status, tt.wantStatus)
@@ -654,7 +650,7 @@ func TestIndexPass_PartialFailure_WithholdsIndexVersion(t *testing.T) {
 // RecordIndexPoll("unreachable") signal, and blanking liveness on it would page
 // on someone else's outage.
 func TestIndexPass_MarkPassSuccess(t *testing.T) {
-	future := catalog.IndexState{IndexVersion: 5, NextCrawlAt: time.Date(2026, 7, 29, 23, 0, 0, 0, time.UTC), ETag: "e5"}
+	future := catalog.IndexState{NextCrawlAt: time.Date(2026, 7, 29, 23, 0, 0, 0, time.UTC), ETag: "e5"}
 
 	tests := []struct {
 		name     string

@@ -35,8 +35,8 @@ func init() {
 // exercise construction, not persistence.
 type fakeBackend struct{}
 
-func (fakeBackend) GetCatalogVersion(context.Context, string) (int64, bool, error) {
-	return 0, false, nil
+func (fakeBackend) GetCatalogVersion(context.Context, string) (int64, int64, bool, error) {
+	return 0, 0, false, nil
 }
 func (fakeBackend) UpsertCatalog(context.Context, catalog.CatalogState) error { return nil }
 func (fakeBackend) CountParked(context.Context) (int, error)                  { return 0, nil }
@@ -49,7 +49,7 @@ func (fakeBackend) RecordFailure(context.Context, string, string, string, catalo
 }
 func (fakeBackend) GetIndex(context.Context, string) (*catalog.IndexState, error) { return nil, nil }
 func (fakeBackend) KnownIndexes(context.Context) ([]catalog.KnownIndex, error)    { return nil, nil }
-func (fakeBackend) UpsertIndex(context.Context, string, string, string, int64, string, time.Time, string, string) error {
+func (fakeBackend) UpsertIndex(context.Context, string, string, string, string, time.Time, string, string) error {
 	return nil
 }
 func (fakeBackend) AdvanceIndexCadence(context.Context, string, time.Time) error { return nil }

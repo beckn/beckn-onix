@@ -30,23 +30,29 @@ type PassReport struct {
 
 // CatalogState is the settled per-catalog outcome to persist. Report is
 // appended to the push_status history array; Reason/HTTPStatus mirror the
-// latest pass for cheap top-level queries.
+// latest pass for cheap top-level queries. EntryVersion and Version are the
+// two independent cursors RFC NFH-014's §Versioning defines: EntryVersion is
+// the entry-level "did anything change" cursor, Version is the content-
+// lineage cursor (baseline/changes[].version) -- see catalog/change.go.
 type CatalogState struct {
 	CatalogID     string
 	IndexURL      string
 	ParticipantID string
 	Version       int64
+	EntryVersion  int64
 	Status        string // active | retired (CatalogStatus wire value)
 	Report        PassReport
 }
 
-// IndexState is the stored state for one index (the change gate + cadence).
-// ETag / LastModified are the last conditional-GET validators the host gave us
-// (empty if it sends none) — echoed back to try for a 304 next time.
+// IndexState is the stored state for one index (the cadence + conditional-GET
+// change gate). There is no index-level version (RFC NFH-014 §Versioning:
+// "there is no whole-index version field") -- ETag / LastModified are the
+// last conditional-GET validators the host gave us (empty if it sends none),
+// echoed back to try for a 304 next time; per-catalog change detection runs
+// off each entry's own entryVersion instead (catalog/change.go).
 type IndexState struct {
-	IndexVersion int64
-	SyncStatus   string
-	NextCrawlAt  time.Time
+	SyncStatus  string
+	NextCrawlAt time.Time
 	ETag         string
 	LastModified string
 }
@@ -60,25 +66,30 @@ type KnownIndex struct {
 }
 
 // QueueItem is a unit of work the index job enqueues: sync a catalog to a
-// target version (the catalog job reads the index for the actual files).
+// target content version (the catalog job reads the index for the actual
+// files). EntryVersion rides along so the catalog job can persist it as the
+// new entry-level cursor once the sync settles, without re-fetching the
+// index entry just for that number.
 type QueueItem struct {
-	CatalogID   string
-	IndexURL    string
-	FromVersion int64 // 0 => baseline / new
-	ToVersion   int64
-	Op          string // "sync" | "retire" (defaults to "sync")
+	CatalogID    string
+	IndexURL     string
+	FromVersion  int64 // 0 => baseline / new
+	ToVersion    int64
+	EntryVersion int64
+	Op           string // "sync" | "retire" (defaults to "sync")
 }
 
 // ClaimedItem is a queue row a worker has claimed for processing. ClaimID is
 // the token that authorises this worker to settle the row.
 type ClaimedItem struct {
-	ID          string
-	ClaimID     string
-	CatalogID   string
-	IndexURL    string
-	FromVersion int64
-	ToVersion   int64
-	Op          string
-	Attempts    int
-	EnqueuedAt  time.Time
+	ID           string
+	ClaimID      string
+	CatalogID    string
+	IndexURL     string
+	FromVersion  int64
+	ToVersion    int64
+	EntryVersion int64
+	Op           string
+	Attempts     int
+	EnqueuedAt   time.Time
 }
