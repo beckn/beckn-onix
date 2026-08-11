@@ -2,7 +2,7 @@ package source
 
 // dediquery_test.go — covers the DeDi registry /query RegistryClient against an
 // httptest server returning fixtures in the live response shape: happy path,
-// record filtering (non-live / no catalog_index_url / null meta), dedup across
+// record filtering (non-live / no catalog_index_urls / null meta), dedup across
 // networks via NewRegistrySource, empty records, and error paths.
 
 import (
@@ -24,10 +24,10 @@ const happyBody = `{
     "total_records": 2,
     "records": [
       {"details": {"subscriber_id": "staging.p1.example", "type": "BPP", "signing_public_key": "k1"},
-       "meta": {"catalog_index_url": "https://p1.example/beckn/index/becknCatalogs.index.json", "manifestUrl": "https://p1.example/manifest"},
+       "meta": {"catalog_index_urls":[{"url":"https://p1.example/beckn/index/becknCatalogs.index.json"}], "manifestUrl": "https://p1.example/manifest"},
        "state": "live"},
       {"details": {"subscriber_id": "staging.p2.example", "type": "BPP", "signing_public_key": "k2"},
-       "meta": {"catalog_index_url": "https://p2.example/beckn/index/becknCatalogs.index.json"},
+       "meta": {"catalog_index_urls":[{"url":"https://p2.example/beckn/index/becknCatalogs.index.json"}]},
        "state": "live"}
     ]
   }
@@ -60,8 +60,8 @@ func TestDediQueryClient_Providers(t *testing.T) {
 }
 
 // mixedBody exercises the record filter: only the first record (live + a
-// catalog_index_url) is a provider. The rest must be skipped without panicking:
-// a BAP with no catalog_index_url, a not-yet-live provider, a record whose meta
+// catalog_index_urls) is a provider. The rest must be skipped without panicking:
+// a BAP with no catalog_index_urls, a not-yet-live provider, a record whose meta
 // is null, and a record whose details are null (still a valid index → emitted
 // with an empty ParticipantID).
 const mixedBody = `{
@@ -69,19 +69,19 @@ const mixedBody = `{
   "data": {
     "records": [
       {"details": {"subscriber_id": "prov.live.example", "type": "BPP"},
-       "meta": {"catalog_index_url": "https://prov.live.example/i.json"},
+       "meta": {"catalog_index_urls":[{"url":"https://prov.live.example/i.json"}]},
        "state": "live"},
       {"details": {"subscriber_id": "bap.example", "type": "BAP"},
        "meta": {"manifestUrl": "https://bap.example/m"},
        "state": "live"},
       {"details": {"subscriber_id": "prov.pending.example", "type": "BPP"},
-       "meta": {"catalog_index_url": "https://prov.pending.example/i.json"},
+       "meta": {"catalog_index_urls":[{"url":"https://prov.pending.example/i.json"}]},
        "state": "created"},
       {"details": {"subscriber_id": "prov.nometa.example", "type": "BPP"},
        "meta": null,
        "state": "live"},
       {"details": null,
-       "meta": {"catalog_index_url": "https://prov.nodetails.example/i.json"},
+       "meta": {"catalog_index_urls":[{"url":"https://prov.nodetails.example/i.json"}]},
        "state": "live"}
     ]
   }
@@ -121,11 +121,11 @@ func TestRegistrySource_DedupsAcrossNetworks_ViaDediQuery(t *testing.T) {
 	const shared = "https://shared.example/i.json"
 	byPath := map[string]string{
 		"/query/beckn.one/net1": `{"data":{"records":[
-			{"details":{"subscriber_id":"a"},"meta":{"catalog_index_url":"` + shared + `"},"state":"live"},
-			{"details":{"subscriber_id":"b"},"meta":{"catalog_index_url":"https://b.example/i.json"},"state":"live"}]}}`,
+			{"details":{"subscriber_id":"a"},"meta":{"catalog_index_urls":[{"url":"` + shared + `"}]},"state":"live"},
+			{"details":{"subscriber_id":"b"},"meta":{"catalog_index_urls":[{"url":"https://b.example/i.json"}]},"state":"live"}]}}`,
 		"/query/beckn.one/net2": `{"data":{"records":[
-			{"details":{"subscriber_id":"a"},"meta":{"catalog_index_url":"` + shared + `"},"state":"live"},
-			{"details":{"subscriber_id":"c"},"meta":{"catalog_index_url":"https://c.example/i.json"},"state":"live"}]}}`,
+			{"details":{"subscriber_id":"a"},"meta":{"catalog_index_urls":[{"url":"` + shared + `"}]},"state":"live"},
+			{"details":{"subscriber_id":"c"},"meta":{"catalog_index_urls":[{"url":"https://c.example/i.json"}]},"state":"live"}]}}`,
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, ok := byPath[r.URL.Path]
@@ -138,7 +138,7 @@ func TestRegistrySource_DedupsAcrossNetworks_ViaDediQuery(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	src := NewRegistrySource(NewDediQueryClient(srv.URL, 5*time.Second), []string{"beckn.one/net1", "beckn.one/net2"})
+	src := NewRegistrySource(NewDediQueryClient(srv.URL, 5*time.Second), []string{"beckn.one/net1", "beckn.one/net2"}, nil)
 	refs, err := src.IndexRefs(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -156,6 +156,37 @@ func TestRegistrySource_DedupsAcrossNetworks_ViaDediQuery(t *testing.T) {
 	}
 	if seen[shared] != 1 {
 		t.Fatalf("shared index URL appears %d times, want 1", seen[shared])
+	}
+}
+
+// RFC NFH-014: "a node may host more than one catalog index" -- meta.
+// catalog_index_urls is a LIST for exactly this reason. One record with two
+// URLs must yield two Providers, both carrying that record's participant id.
+func TestDediQueryClient_MultipleIndexesPerNode(t *testing.T) {
+	const body = `{"data":{"records":[
+		{"details":{"subscriber_id":"multi.example"},
+		 "meta":{"catalog_index_urls":[{"url":"https://multi.example/retail.json"},{"url":"https://multi.example/mobility.json"}]},
+		 "state":"live"}]}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := NewDediQueryClient(srv.URL, 5*time.Second)
+	provs, err := c.Providers(context.Background(), "beckn.one/testnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(provs) != 2 {
+		t.Fatalf("got %d providers, want 2 (one per declared index): %+v", len(provs), provs)
+	}
+	for _, p := range provs {
+		if p.ParticipantID != "multi.example" {
+			t.Errorf("provider %+v should carry the node's participant id", p)
+		}
+	}
+	if provs[0].IndexURL != "https://multi.example/retail.json" || provs[1].IndexURL != "https://multi.example/mobility.json" {
+		t.Fatalf("index URLs = %+v, want both in declared order", provs)
 	}
 }
 
@@ -271,11 +302,11 @@ func TestDediQueryClient_ZeroTimeoutNoLimit(t *testing.T) {
 	}
 }
 
-// A catalog_index_url that is only whitespace is not a usable URL and must be
+// A catalog_index_urls[].url that is only whitespace is not a usable URL and must be
 // trimmed to empty and skipped, exactly like a missing field.
 func TestDediQueryClient_SkipsWhitespaceOnlyIndexURL(t *testing.T) {
 	const body = `{"data":{"records":[
-		{"details":{"subscriber_id":"ws.example"},"meta":{"catalog_index_url":"   "},"state":"live"}]}}`
+		{"details":{"subscriber_id":"ws.example"},"meta":{"catalog_index_urls":[{"url":"   "}]},"state":"live"}]}}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(body))
 	}))
@@ -287,6 +318,6 @@ func TestDediQueryClient_SkipsWhitespaceOnlyIndexURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(provs) != 0 {
-		t.Fatalf("whitespace-only catalog_index_url must be skipped, got %+v", provs)
+		t.Fatalf("whitespace-only catalog_index_urls[].url must be skipped, got %+v", provs)
 	}
 }

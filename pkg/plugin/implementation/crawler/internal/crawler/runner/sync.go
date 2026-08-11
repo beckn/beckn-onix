@@ -182,7 +182,7 @@ func (e *Engine) resolveEntry(ctx context.Context, s *syncState) (catalog.SyncOu
 // the push doc + updateMode. Each file's digest and self-signature are verified
 // inside FetchFile as it is pulled.
 func (e *Engine) fetchContent(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
-	fetch := func(f catalog.FileEntry) ([]byte, error) { return e.deps.FetchFile(ctx, s.nodeID, f) }
+	fetch := func(f catalog.FileEntry) ([]byte, error) { return e.deps.FetchFile(ctx, s.nodeID, s.entry.CatalogID, f) }
 	pushDoc, mode, cs, err := e.buildPushDoc(s.entry, s.item, fetch)
 	if err != nil {
 		e.routeFailure(ctx, s.item, e.newFailureReport(s.item, 0, "resolve: "+err.Error()), err, s.runID, s.passID)

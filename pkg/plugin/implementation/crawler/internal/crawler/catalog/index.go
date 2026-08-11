@@ -49,18 +49,29 @@ type MasterDependency struct {
 // carries it as an explicit false. Collapsing those to a plain bool would
 // make "never set" and "explicitly paused" indistinguishable.
 type CatalogEntry struct {
-	CatalogID    string         `json:"catalogId"`
-	EntryVersion int64          `json:"entryVersion"`
-	CatalogType  string         `json:"catalogType"`
-	Dependencies *Dependencies  `json:"dependencies,omitempty"`
-	SchemaTypes  []string       `json:"schemaTypes"`
-	NetworkIDs   []string       `json:"networkIds"` // absent/empty => public
-	IsActive     *bool          `json:"isActive,omitempty"`
-	Baseline     FileEntry      `json:"baseline"`
-	Changes      []FileEntry    `json:"changes"`
-	RetiredAt    string         `json:"retiredAt,omitempty"`
-	CrawlHint    string         `json:"crawlHint,omitempty"`
-	Signature    EntrySignature `json:"signature"`
+	CatalogID    string        `json:"catalogId"`
+	EntryVersion int64         `json:"entryVersion"`
+	CatalogType  string        `json:"catalogType"`
+	Dependencies *Dependencies `json:"dependencies,omitempty"`
+	SchemaTypes  []string      `json:"schemaTypes"`
+	NetworkIDs   []string      `json:"networkIds"` // absent/empty => public
+	IsActive     *bool         `json:"isActive,omitempty"`
+	Baseline     FileEntry     `json:"baseline"`
+	Changes      []FileEntry   `json:"changes"`
+	// Latest is the optional full-file pointer (NFH-014 CON-TBD-36/37): a
+	// CatalogFile a PN overwrites in place at a stable URL, for a full-file-
+	// only consumer that never applies Changes -- an alternative resolution
+	// strategy this crawler's own incremental (baseline+changes+entryVersion
+	// cursor) pipeline doesn't need and doesn't currently read. Parsed here so
+	// it round-trips rather than being silently dropped. Unlike Baseline/
+	// Changes, Latest.URL is explicitly exempt from the immutable-URL rule --
+	// a fetch landing mid-overwrite MAY digest-mismatch as a transient publish
+	// race rather than tampering. Dropped once RetiredAt is set, same as
+	// Baseline/Changes.
+	Latest    *FileEntry     `json:"latest,omitempty"`
+	RetiredAt string         `json:"retiredAt,omitempty"`
+	CrawlHint string         `json:"crawlHint,omitempty"`
+	Signature EntrySignature `json:"signature"`
 }
 
 // Index is a publisher's catalog index (NFH-014: "a plain Beckn file listing

@@ -285,17 +285,27 @@ func verifyEntrySignature(ctx context.Context, keys KeySource, nodeID string, en
 // block too (its optional attribute patch), so unwrapping on that alone would
 // wrongly strip a change file down to just its patch and drop resources/offers.
 type signedDoc struct {
+	CatalogID   string                 `json:"catalogId"`
+	Version     *int64                 `json:"version"` // baseline only
 	FromVersion *int                   `json:"fromVersion"`
+	ToVersion   *int64                 `json:"toVersion"` // change file only
 	Catalog     json.RawMessage        `json:"catalog"`
 	Signature   catalog.EntrySignature `json:"signature"`
 }
 
 // verifyFileSignature verifies a fetched catalog file's (baseline or change
-// file) own embedded self-signature over its own content, then returns the
-// bytes downstream code should use: for a baseline (which wraps its content as
-// {catalog, signature}) that is the unwrapped .catalog object; for a change
-// file (flat, fromVersion present) that is raw unchanged.
-func verifyFileSignature(ctx context.Context, keys KeySource, nodeID, url string, raw []byte) ([]byte, error) {
+// file) own embedded self-signature over its own content, cross-checks its
+// own internal catalogId/version against what the index entry declared
+// (RFC NFH-014 CON-TBD-12: a mismatch here is treated exactly like a digest
+// mismatch -- discard, don't index, log; neither side is authoritative), then
+// returns the bytes downstream code should use: for a baseline (which wraps
+// its content as {catalog, signature}) that is the unwrapped .catalog object;
+// for a change file (flat, fromVersion present) that is raw unchanged.
+//
+// wantCatalogID/wantVersion are the index entry's own declared catalogId and
+// this FileEntry's declared version (baseline.version, or the change's own
+// toVersion) -- what the file's internal fields are checked against.
+func verifyFileSignature(ctx context.Context, keys KeySource, nodeID, url string, raw []byte, wantCatalogID string, wantVersion int64) ([]byte, error) {
 	var doc signedDoc
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, catalog.PermanentFaultf(catalog.FaultContentInvalid, "crawler: %s: not a JSON object: %v", url, err)
@@ -309,6 +319,21 @@ func verifyFileSignature(ctx context.Context, keys KeySource, nodeID, url string
 	}
 	if err := artifactverifier.VerifyJSON(raw, "signature", doc.Signature.Value, pub); err != nil {
 		return nil, catalog.PermanentFaultf(faultSignature, "crawler: %s signature verification failed: %v", url, err)
+	}
+	// CON-TBD-12: the file's own internal catalogId/version must agree with
+	// what the index entry declared for it. Checked AFTER signature
+	// verification (so this is the file's genuine, authored identity, not
+	// something an attacker without the signing key could forge) but treated
+	// exactly like a digest mismatch, not a signature failure -- the content is
+	// authentic, just not the content this reference claims it is.
+	gotVersion := doc.Version
+	if doc.FromVersion != nil {
+		gotVersion = doc.ToVersion
+	}
+	if doc.CatalogID != wantCatalogID || gotVersion == nil || *gotVersion != wantVersion {
+		return nil, catalog.PermanentFaultf(catalog.FaultDigestMismatch,
+			"crawler: %s declares catalogId=%q version=%v, index entry expected catalogId=%q version=%d",
+			url, doc.CatalogID, gotVersion, wantCatalogID, wantVersion)
 	}
 	if doc.FromVersion == nil {
 		if len(doc.Catalog) == 0 {

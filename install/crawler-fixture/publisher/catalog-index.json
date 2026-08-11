@@ -18,8 +18,8 @@
       "baseline": {
         "version": 1,
         "url": "http://publisher-origin/catalogs/cat-ev-001-v1.json",
-        "size": 730,
-        "digest": "sha-256:0819dabbc28d0c1e583f400ef219d9ac80ced2cfbb1985a6b0c8b923b8877e1b",
+        "size": 767,
+        "digest": "sha-256:ce78ccf122e5a7a987168ee00032b66bdef03f41d56ab0f5b10fa315acf56882",
         "encoding": "json"
       },
       "changes": [
@@ -33,7 +33,7 @@
       ],
       "signature": {
         "keyId": "fixture-key-1",
-        "value": "teI9hdeccl3Vyzpwf+YAHiAq9hGxr8NhFnKpKkONbIHM7RDZ1eY/xTD/E4MHZ4LLzluDho7/lbxn/iALTP2aDg=="
+        "value": "yEuAsl2VYaKtkVy4fXw58E6ZojQcHgv6HeCP6bJx++hJjLL1ur+N3vW9lTwq4+8DSpR/7qRjDQZBaUA+cPwJAg=="
       }
     }
   ]

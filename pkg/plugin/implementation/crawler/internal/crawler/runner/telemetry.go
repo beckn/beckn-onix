@@ -80,6 +80,35 @@ func (e *Engine) logPollFailed(runID string, trig trigger, indexURL string, err 
 		"index_url", indexURL, "result", "unreachable", "error", errStr(err))
 }
 
+// logEntryDropped fires once per catalog entry a fetched index excluded from
+// processing (WARN — a poll that looks clean at the "index finished" summary
+// can still be silently missing entries, and this is the only place that
+// says why: a malformed entry, or one whose self-signature didn't verify).
+func (e *Engine) logEntryDropped(runID string, trig trigger, indexURL string, d catalog.DroppedEntry) {
+	e.deps.Log.Warn("catalog entry dropped from the index — "+d.Reason,
+		"component", "crawl", "stage", "polled", "run_id", runID, "trigger", triggerStr(trig),
+		"index_url", indexURL, "catalog_id", d.CatalogID, "result", "dropped", "reason", d.Reason)
+}
+
+// logOutOfScope (DEBUG) records that a catalog entry's networkIds don't
+// intersect this crawler's configured networks, so it queued nothing —
+// otherwise indistinguishable in the logs from "nothing changed".
+func (e *Engine) logOutOfScope(runID string, trig trigger, catalogID string, networkIDs []string) {
+	e.deps.Log.Debug("catalog not in this crawler's networks — skipped",
+		"component", "crawl", "stage", "polled", "run_id", runID, "trigger", triggerStr(trig),
+		"catalog_id", catalogID, "result", "out_of_scope", "network_ids", networkIDs)
+}
+
+// logSkipUnchanged (DEBUG) records that a catalog's entryVersion still matches
+// the stored cursor, so nothing was re-evaluated. Distinct from "dropped" or
+// "out of scope" — this is the expected, common case, logged only for anyone
+// actively tracing why a specific catalog didn't move.
+func (e *Engine) logSkipUnchanged(runID string, trig trigger, catalogID string, entryVersion int64) {
+	e.deps.Log.Debug(fmt.Sprintf("catalog unchanged at entryVersion %d — skipped", entryVersion),
+		"component", "crawl", "stage", "polled", "run_id", runID, "trigger", triggerStr(trig),
+		"catalog_id", catalogID, "result", "unchanged", "entry_version", entryVersion)
+}
+
 // logRollback flags a catalog whose index version went backwards — not applied,
 // recorded for an operator (WARN).
 func (e *Engine) logRollback(runID string, trig trigger, catalogID string, cursorVersion, indexVersion int64) {

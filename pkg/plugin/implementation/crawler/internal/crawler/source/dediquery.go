@@ -64,18 +64,32 @@ type queryDetails struct {
 	SubscriberID string `json:"subscriber_id"`
 }
 
+// queryMeta is the registry's generic, schema-agnostic meta object (RFC
+// NFH-014 CON-TBD-33: "a PN MUST place catalog_index_urls in its Beckn
+// Subscriber record's meta object, and a DS MUST look for it there"). It is a
+// LIST of {url} objects, not a single URL string -- a node may host more than
+// one catalog index (e.g. separating a fast-moving retail catalog from a
+// slow-moving mobility one).
 type queryMeta struct {
-	CatalogIndexURL string `json:"catalog_index_url"`
+	CatalogIndexURLs []catalogIndexURLEntry `json:"catalog_index_urls"`
 }
 
-// Providers GETs {base}/query/{networkID} and returns one Provider per live
-// record that publishes a catalog index. networkID is used verbatim as the
-// "{namespace}/{registry}" path segment (e.g. "beckn.one/testnet").
+type catalogIndexURLEntry struct {
+	URL string `json:"url"`
+}
+
+// Providers GETs {base}/query/{networkID} and returns one Provider per
+// catalog index URL any live record declares in meta.catalog_index_urls (a
+// record with more than one URL yields more than one Provider, one per
+// catalog per node -- see NFH-014 "a node may host more than one catalog
+// index"). networkID is used verbatim as the "{namespace}/{registry}" path
+// segment (e.g. "beckn.one/testnet").
 //
-// A record is skipped unless it is state=="live" AND carries a non-empty
-// meta.catalog_index_url — that is what distinguishes a provider node that
-// publishes catalogs from a BAP/DS/CS or a provider with no index. Records with
-// a null meta or details are handled gracefully (skipped / empty ParticipantID).
+// A record is skipped unless it is state=="live" AND carries at least one
+// non-empty meta.catalog_index_urls[].url — that is what distinguishes a
+// provider node that publishes catalogs from a BAP/DS/CS or a provider with
+// no index. Records with a null meta or details are handled gracefully
+// (skipped / empty ParticipantID).
 func (c *DediQueryClient) Providers(ctx context.Context, networkID string) ([]Provider, error) {
 	ctx, cancel := c.bounded(ctx)
 	defer cancel()
@@ -111,15 +125,17 @@ func (c *DediQueryClient) Providers(ctx context.Context, networkID string) ([]Pr
 		if rec.State != "live" || rec.Meta == nil {
 			continue
 		}
-		idx := strings.TrimSpace(rec.Meta.CatalogIndexURL)
-		if idx == "" {
-			continue
-		}
 		var id string
 		if rec.Details != nil {
 			id = rec.Details.SubscriberID
 		}
-		provs = append(provs, Provider{ParticipantID: id, IndexURL: idx})
+		for _, entry := range rec.Meta.CatalogIndexURLs {
+			idx := strings.TrimSpace(entry.URL)
+			if idx == "" {
+				continue
+			}
+			provs = append(provs, Provider{ParticipantID: id, IndexURL: idx})
+		}
 	}
 	return provs, nil
 }

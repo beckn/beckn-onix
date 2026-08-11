@@ -164,7 +164,7 @@ func (e *Engine) crawlIndex(ctx context.Context, ref source.IndexRef, trig trigg
 		return e.indexUnchanged(ctx, ref, trig, runID, now)
 	}
 
-	out := e.processIndex(ctx, ref, trig, res.Index, runID)
+	out := e.processIndex(ctx, ref, trig, res, runID)
 	if !e.recordIndex(ctx, ref, res, !out.degraded, runID, now) {
 		out.degraded = true
 	}
@@ -216,11 +216,14 @@ func (e *Engine) indexUnchanged(ctx context.Context, ref source.IndexRef, trig t
 // It sets degraded when ANY catalog in the index could not be decided or
 // enqueued because the store failed. That flag is the caller's signal that this
 // was a PARTIAL pass, not a complete one.
-func (e *Engine) processIndex(ctx context.Context, ref source.IndexRef, trig trigger, idx catalog.Index, runID string) crawlResult {
+func (e *Engine) processIndex(ctx context.Context, ref source.IndexRef, trig trigger, res catalog.IndexResult, runID string) crawlResult {
 	out := crawlResult{fetched: true, changed: true}
 	e.logPolled(runID, trig, ref.IndexURL, 0, "updated")
 	e.deps.Metrics.RecordIndexPoll("updated")
-	out.enqueued, out.degraded = e.decideCatalogs(ctx, ref, trig, idx, runID)
+	for _, d := range res.Dropped {
+		e.logEntryDropped(runID, trig, ref.IndexURL, d)
+	}
+	out.enqueued, out.degraded = e.decideCatalogs(ctx, ref, trig, res.Index, runID)
 	return out
 }
 
@@ -296,6 +299,7 @@ func (e *Engine) decideCatalog(ctx context.Context, ref source.IndexRef, trig tr
 	switch d.Action {
 	case catalog.ActionSync:
 		if !take {
+			e.logOutOfScope(runID, trig, entry.CatalogID, entry.NetworkIDs)
 			return false, false // not for this crawler's networks
 		}
 		if err := e.deps.Store.Enqueue(ctx, catalog.QueueItem{
@@ -322,7 +326,7 @@ func (e *Engine) decideCatalog(ctx context.Context, ref source.IndexRef, trig tr
 	case catalog.ActionRollback:
 		e.logRollback(runID, trig, entry.CatalogID, cursor, d.ToVersion)
 	case catalog.ActionSkipUnchanged:
-		// nothing to do
+		e.logSkipUnchanged(runID, trig, entry.CatalogID, d.EntryVersion)
 	}
 	return false, false
 }

@@ -22,7 +22,7 @@ func TestSelectSource_RegistryURLWithoutNetworks_FallsBackToConfig(t *testing.T)
 		NetworkIDs:  nil,                              // ...nothing to look up in it
 		IndexURLs:   []string{"https://p/index.json"}, // the operator's actual source
 	}
-	src, mode, count := selectSource(s)
+	src, mode, count := selectSource(s, nil)
 	if mode != source.KindConfig || count != 1 {
 		t.Fatalf("mode=%q count=%d, want config/1 (registry URL with no networks is not a source)", mode, count)
 	}
@@ -41,7 +41,7 @@ func TestSelectSource_RegistryURLWithNetworks_SelectsRegistry(t *testing.T) {
 		NetworkIDs:  []string{"beckn.one/testnet"},
 		IndexURLs:   []string{"https://p/index.json"}, // present, but a usable registry source wins
 	}
-	_, mode, count := selectSource(s)
+	_, mode, count := selectSource(s, nil)
 	if mode != source.KindRegistry || count != 1 {
 		t.Fatalf("mode=%q count=%d, want registry/1", mode, count)
 	}
@@ -51,7 +51,7 @@ func TestSelectSource_NoRegistry_UsesConfig(t *testing.T) {
 	s := config.Settings{
 		IndexURLs: []string{"https://a/i.json", "https://b/i.json"},
 	}
-	_, mode, count := selectSource(s)
+	_, mode, count := selectSource(s, nil)
 	if mode != source.KindConfig || count != 2 {
 		t.Fatalf("mode=%q count=%d, want config/2", mode, count)
 	}
