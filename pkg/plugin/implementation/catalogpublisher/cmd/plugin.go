@@ -56,6 +56,26 @@ func (p catalogPublisherProvider) parseConfig(config map[string]string) (*catalo
 		cfg.Gzip = b
 	}
 
+	// CompactionChangeCountThreshold/CompactionSizeRatioThreshold default
+	// to 0 (disabled) here too, unlike PublishLatest/Gzip -- triggering
+	// compaction changes write/version behavior, so it stays opt-in rather
+	// than on by default.
+	if v, exists := config["compactionChangeCountThreshold"]; exists && v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid compactionChangeCountThreshold value '%s': %w", v, err)
+		}
+		cfg.CompactionChangeCountThreshold = n
+	}
+
+	if v, exists := config["compactionSizeRatioThreshold"]; exists && v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid compactionSizeRatioThreshold value '%s': %w", v, err)
+		}
+		cfg.CompactionSizeRatioThreshold = f
+	}
+
 	return cfg, nil
 }
 

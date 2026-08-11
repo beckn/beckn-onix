@@ -324,9 +324,11 @@ file spec's own example URLs.
 | `-domain` | publisher domain -- likewise embedded in the returned keyset (`SubscriberID`), not `catalogpublisher`'s own config | `local.test` |
 | `-nextUpdateDays` | days until `next_update` expires; `0` omits it | `14` |
 | `-retire` | comma-separated catalogIds to mark RETIRED this run | *(empty)* |
-| `-forceBaseline` | publish a fresh baseline for `-catalog`, discarding its change history (also how to trigger compaction) | `false` |
+| `-forceBaseline` | publish a fresh baseline for `-catalog`, discarding its change history (also how to trigger compaction manually) | `false` |
 | `-publishLatest` | publish/maintain a `latest` pointer (NFH-014); pass `-publishLatest=false` to opt out | `true` |
 | `-gzip` | serve catalog files gzip-compressed (NFH-014 §10.1); pass `-gzip=false` to opt out | `true` |
+| `-compactionChangeCountThreshold` | auto-compact (fresh baseline) once a catalog already has this many pending change files, instead of adding another (NFH-014 §10.1); `0` disables | `0` |
+| `-compactionSizeRatioThreshold` | auto-compact once combined pending-change-file size ÷ baseline size reaches this fraction (e.g. `0.5` for 50%); `0` disables | `0` |
 
 At least one of `-catalog` or `-retire` is required.
 
@@ -338,11 +340,21 @@ go test ./pkg/plugin/implementation/catalogpublisher/... -v
 
 ## Deliberately not done in this package
 
-- **No compaction scheduling.** `-forceBaseline` triggers it manually;
-  automatic triggers (change-list size/count threshold, or a schedule) are
-  a follow-up. Grace-period expiry of superseded change files (NFH-014
-  CON-TBD-32) *is* implemented, in `localstore.Load`/`reconstructState` --
-  see the package doc above and `localstore`'s own tests.
+- **Compaction scheduling is partially done.** Automatic baseline
+  compaction by change-file count (`Config.CompactionChangeCountThreshold`)
+  or combined change-file size relative to baseline
+  (`Config.CompactionSizeRatioThreshold`) is implemented -- either
+  threshold, checked against `PriorCatalogState.ChangeFiles` before a new
+  change file would be created, substitutes a fresh baseline (same as
+  `ForceBaseline`) for what would otherwise be one more change file. A
+  fixed-schedule trigger is not implemented (no timer of its own --
+  `Publish` is a pure function). **Change-file-only compaction** (NFH-014
+  §10.1's other compaction type: squashing several change files into one
+  spanning the same range, without touching the baseline) is also not
+  implemented -- only baseline compaction. Grace-period expiry of
+  superseded change files after a baseline compaction (CON-TBD-32) *is*
+  implemented, in `localstore.Load`/`reconstructState` -- see the package
+  doc above and `localstore`'s own tests.
 - **No storage wiring.** `Config.PublicBaseURL` is read straight from
   config -- one URL prefix for everything a publish writes, mirroring
   wherever `outputRoot` (see `localstore`) is actually served from

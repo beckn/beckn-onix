@@ -118,6 +118,24 @@ type Config struct {
 	// the served bytes and the index entry's reported size (the actual
 	// served size) change.
 	Gzip bool
+
+	// CompactionChangeCountThreshold and CompactionSizeRatioThreshold
+	// (NFH-014 §10.1, "Compaction") opt into automatically compacting a
+	// catalog's baseline instead of publishing yet another change file.
+	// Both default to 0 (disabled) -- fully manual (ForceBaseline-only)
+	// compaction, matching prior behavior, unless a caller sets one.
+	// Checked against prior.ChangeFiles only, before the new change file
+	// would be created (see publishOne):
+	//   - CompactionChangeCountThreshold: compact once the catalog already
+	//     has this many pending change files (len(prior.ChangeFiles) >=
+	//     threshold), rather than adding one more.
+	//   - CompactionSizeRatioThreshold: compact once the combined size of
+	//     pending change files, divided by the baseline's own size, is at
+	//     least this fraction (e.g. 0.5 for 50%).
+	// Either threshold alone can trigger compaction; ForceBaseline still
+	// always triggers it regardless of these.
+	CompactionChangeCountThreshold int
+	CompactionSizeRatioThreshold   float64
 }
 
 // Publisher implements definition.CatalogPublisher.
@@ -448,6 +466,30 @@ func currentVersion(prior definition.PriorCatalogState) int {
 	return 0
 }
 
+// compactionDue reports whether an automatic compaction trigger
+// (Config.CompactionChangeCountThreshold/CompactionSizeRatioThreshold,
+// NFH-014 §10.1) fires for prior -- checked against prior.ChangeFiles as
+// they stand before this call's own new change file would be added, so
+// deciding whether to compact never needs that not-yet-created file's
+// size. Both thresholds default to 0 (disabled); either alone can trigger
+// compaction. False whenever there's no baseline to compare against yet.
+func (p *Publisher) compactionDue(prior definition.PriorCatalogState) bool {
+	if p.config.CompactionChangeCountThreshold > 0 && len(prior.ChangeFiles) >= p.config.CompactionChangeCountThreshold {
+		return true
+	}
+	if p.config.CompactionSizeRatioThreshold > 0 && prior.BaselineFile != nil && prior.BaselineFile.Size > 0 {
+		var changesSize int64
+		for _, cf := range prior.ChangeFiles {
+			changesSize += cf.Size
+		}
+		ratio := float64(changesSize) / float64(prior.BaselineFile.Size)
+		if ratio >= p.config.CompactionSizeRatioThreshold {
+			return true
+		}
+	}
+	return false
+}
+
 // publishOne decides baseline vs. change-file vs. metadata-only vs. no-op
 // for one submission and builds both its definition.CatalogPublishOutcome
 // and its catalogEntry. The returned entry is not yet signed -- Publish
@@ -494,7 +536,28 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 		entry.Changes = changeFileRefsToWire(baselineVersion, prior.ChangeFiles)
 	}
 
-	if !hasPrior || forceBaseline {
+	// diff/changeCatalog are only meaningful once hasPrior && !forceBaseline
+	// (an unconditional baseline republish below never needs them); computed
+	// here, ahead of the baseline-vs-change decision, so an automatic
+	// compaction trigger (below) can be gated on contentChanged -- it must
+	// never force a baseline republish on a call that changed nothing at
+	// all content-wise.
+	var diff catalogDiff
+	var changeCatalog json.RawMessage
+	contentChanged := true
+	if hasPrior && !forceBaseline {
+		var err error
+		diff, changeCatalog, err = diffCatalogs(prior.Catalog, sub.Catalog)
+		if err != nil {
+			return definition.CatalogPublishOutcome{}, catalogEntry{}, err
+		}
+		contentChanged = !diff.Resources.isEmpty() || !diff.Offers.isEmpty() || changeCatalog != nil
+	}
+
+	// compactionDue (NFH-014 §10.1) only ever substitutes a baseline
+	// republish for what would otherwise be a new change file -- gated on
+	// contentChanged so a call with nothing to publish never triggers it.
+	if !hasPrior || forceBaseline || (contentChanged && p.compactionDue(prior)) {
 		version := currentVersion(prior) + 1 // 0+1 == 1 for a brand-new catalog
 		content, err := p.signCatalogFile(sub.CatalogID, version, fileNextUpdate, sub.Catalog, keyID, priv, nil)
 		if err != nil {
@@ -522,12 +585,6 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 		}
 		return p.finishEntry(sub, entry, outcome, priv, keyID, fileNextUpdate)
 	}
-
-	diff, changeCatalog, err := diffCatalogs(prior.Catalog, sub.Catalog)
-	if err != nil {
-		return definition.CatalogPublishOutcome{}, catalogEntry{}, err
-	}
-	contentChanged := !diff.Resources.isEmpty() || !diff.Offers.isEmpty() || changeCatalog != nil
 
 	if !contentChanged {
 		version := currentVersion(prior)

@@ -51,6 +51,8 @@ func main() {
 	publicBaseURL := flag.String("publicBaseURL", "", "if set, embed URLs under this single base instead of file:// (e.g. http://localhost:8000 when serving -out with `python3 -m http.server` from within it) -- must match wherever -out is actually served from. Note: the manifest (.well-known/dedi.index.json) is currently not written to -out at all (see localstore.Write); only the catalog index and catalog files are")
 	publishLatest := flag.Bool("publishLatest", true, "publish/maintain a \"latest\" pointer (NFH-014): a full CatalogFile overwritten in place at a stable URL, for consumers who never apply changes[]. On by default; pass -publishLatest=false to opt out")
 	gzipEnabled := flag.Bool("gzip", true, "serve catalog files gzip-compressed, signaled by a \".json.gz\" URL extension (NFH-014 §10.1). On by default; pass -gzip=false to opt out")
+	compactionChangeCountThreshold := flag.Int("compactionChangeCountThreshold", 0, "auto-compact (fresh baseline) once a catalog already has this many pending change files, instead of adding another (NFH-014 §10.1). 0 disables")
+	compactionSizeRatioThreshold := flag.Float64("compactionSizeRatioThreshold", 0, "auto-compact once combined pending-change-file size / baseline size reaches this fraction (e.g. 0.5 for 50%). 0 disables")
 	flag.Parse()
 
 	var retireIDs []string
@@ -82,11 +84,13 @@ func main() {
 
 	ctx := context.Background()
 	publisher, _, err := catalogpublisher.New(ctx, km, &catalogpublisher.Config{
-		SubscriberID:  *keyID,
-		NextUpdateIn:  nextUpdateIn,
-		PublicBaseURL: base,
-		PublishLatest: *publishLatest,
-		Gzip:          *gzipEnabled,
+		SubscriberID:                   *keyID,
+		NextUpdateIn:                   nextUpdateIn,
+		PublicBaseURL:                  base,
+		PublishLatest:                  *publishLatest,
+		Gzip:                           *gzipEnabled,
+		CompactionChangeCountThreshold: *compactionChangeCountThreshold,
+		CompactionSizeRatioThreshold:   *compactionSizeRatioThreshold,
 	})
 	must(err)
 

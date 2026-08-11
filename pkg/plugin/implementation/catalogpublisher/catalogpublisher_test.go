@@ -699,6 +699,154 @@ func TestPublish_ForceBaseline_KeepsPriorChangesListed(t *testing.T) {
 	}
 }
 
+// TestPublish_CompactionChangeCountThreshold_TriggersBaseline proves
+// NFH-014 §10.1's automatic compaction trigger: once a catalog already
+// has at least CompactionChangeCountThreshold pending change files, the
+// next content-changing publish emits a fresh baseline (keeping the
+// pre-compaction changes listed, same as ForceBaseline) instead of one
+// more change file.
+func TestPublish_CompactionChangeCountThreshold_TriggersBaseline(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1", CompactionChangeCountThreshold: 2})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	priorCatalog := mustCatalogWithItems("CAT-1", "ITEM-1")
+	nextCatalog := mustCatalogWithItems("CAT-1", "ITEM-1", "ITEM-2")
+	prior := definition.PriorCatalogState{
+		Catalog:      priorCatalog,
+		BaselineFile: &definition.FileRef{Version: 1, URL: "file://v1.json", Digest: "sha-256:abc"},
+		ChangeFiles: []definition.FileRef{
+			{Version: 2, URL: "file://v2.changes.json", Digest: "sha-256:def"},
+			{Version: 3, URL: "file://v3.changes.json", Digest: "sha-256:ghi"},
+		},
+		EntryVersion: 3,
+		CatalogType:  "REGULAR",
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs:   []definition.CatalogSubmission{{CatalogID: "CAT-1", Catalog: nextCatalog}},
+		PriorState: map[string]definition.PriorCatalogState{"CAT-1": prior},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	got := result.Catalogs[0]
+	if got.Mode != "baseline" || got.Version != 4 {
+		t.Fatalf("expected auto-compaction to emit a fresh baseline at version 4, got %+v", got)
+	}
+
+	var index catalogIndexDoc
+	if err := json.Unmarshal(result.Index, &index); err != nil {
+		t.Fatalf("parsing index: %v", err)
+	}
+	var entry catalogEntry
+	if err := json.Unmarshal(index.Catalogs[0], &entry); err != nil {
+		t.Fatalf("parsing entry: %v", err)
+	}
+	if len(entry.Changes) != 2 {
+		t.Errorf("expected the 2 pre-compaction change files to stay listed, got %+v", entry.Changes)
+	}
+}
+
+// TestPublish_CompactionChangeCountThreshold_NotYetReached proves the
+// trigger doesn't fire early: one pending change file against a
+// threshold of 2 must still produce an ordinary change file.
+func TestPublish_CompactionChangeCountThreshold_NotYetReached(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1", CompactionChangeCountThreshold: 2})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	priorCatalog := mustCatalogWithItems("CAT-1", "ITEM-1")
+	nextCatalog := mustCatalogWithItems("CAT-1", "ITEM-1", "ITEM-2")
+	prior := definition.PriorCatalogState{
+		Catalog:      priorCatalog,
+		BaselineFile: &definition.FileRef{Version: 1, URL: "file://v1.json", Digest: "sha-256:abc"},
+		ChangeFiles:  []definition.FileRef{{Version: 2, URL: "file://v2.changes.json", Digest: "sha-256:def"}},
+		EntryVersion: 2,
+		CatalogType:  "REGULAR",
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs:   []definition.CatalogSubmission{{CatalogID: "CAT-1", Catalog: nextCatalog}},
+		PriorState: map[string]definition.PriorCatalogState{"CAT-1": prior},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if got := result.Catalogs[0]; got.Mode != "change" {
+		t.Errorf("expected an ordinary change file below threshold, got %+v", got)
+	}
+}
+
+// TestPublish_CompactionSizeRatioThreshold_TriggersBaseline covers the
+// size-based trigger: combined pending-change size / baseline size at or
+// above the configured ratio compacts instead of adding another change.
+func TestPublish_CompactionSizeRatioThreshold_TriggersBaseline(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1", CompactionSizeRatioThreshold: 0.5})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	priorCatalog := mustCatalogWithItems("CAT-1", "ITEM-1")
+	nextCatalog := mustCatalogWithItems("CAT-1", "ITEM-1", "ITEM-2")
+	prior := definition.PriorCatalogState{
+		Catalog:      priorCatalog,
+		BaselineFile: &definition.FileRef{Version: 1, URL: "file://v1.json", Digest: "sha-256:abc", Size: 100},
+		ChangeFiles:  []definition.FileRef{{Version: 2, URL: "file://v2.changes.json", Digest: "sha-256:def", Size: 60}},
+		EntryVersion: 2,
+		CatalogType:  "REGULAR",
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs:   []definition.CatalogSubmission{{CatalogID: "CAT-1", Catalog: nextCatalog}},
+		PriorState: map[string]definition.PriorCatalogState{"CAT-1": prior},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if got := result.Catalogs[0]; got.Mode != "baseline" {
+		t.Errorf("expected the size ratio (60/100 = 0.6 >= 0.5) to trigger compaction, got %+v", got)
+	}
+}
+
+// TestPublish_CompactionThreshold_NeverForcesBaselineOnNoOp proves the
+// trigger is gated on an actual content change: a catalog already over
+// threshold, resubmitted with unchanged content, must stay a no-op --
+// never a spurious baseline republish.
+func TestPublish_CompactionThreshold_NeverForcesBaselineOnNoOp(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1", CompactionChangeCountThreshold: 1})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	catalog := mustCatalogWithItems("CAT-1", "ITEM-1")
+	prior := definition.PriorCatalogState{
+		Catalog:      catalog,
+		BaselineFile: &definition.FileRef{Version: 1, URL: "file://v1.json", Digest: "sha-256:abc"},
+		ChangeFiles:  []definition.FileRef{{Version: 2, URL: "file://v2.changes.json", Digest: "sha-256:def"}},
+		EntryVersion: 2,
+		CatalogType:  "REGULAR",
+		IsActive:     true,
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs:   []definition.CatalogSubmission{{CatalogID: "CAT-1", Catalog: catalog}},
+		PriorState: map[string]definition.PriorCatalogState{"CAT-1": prior},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if got := result.Catalogs[0]; got.Mode != "unchanged" || got.Changed {
+		t.Errorf("expected a no-op despite being over the compaction threshold, got %+v", got)
+	}
+}
+
 func TestPublish_Retire_ProducesTombstone(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"})
