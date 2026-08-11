@@ -201,28 +201,57 @@ func (c *DeDiRegistryClient) parseSubscriptionFromData(ctx context.Context, data
 	}, nil
 }
 
-// parseMetaFromData extracts the node manifest metadata map from a DeDi response data map.
-// Returns an empty map (not an error) when the meta field is absent or null — the participant
-// has simply not published a node manifest yet.
-func parseMetaFromData(ctx context.Context, data map[string]any) map[string]string {
+// parseMetaFromData extracts the node manifest metadata from a DeDi response
+// data map, split into two maps: plain string values (meta), and
+// array-shaped values (metaArrays) -- e.g. NFH-014's
+// meta.catalog_index_urls: [{url: "..."}]. Returns empty maps (not an
+// error) when the meta field is absent or null — the participant has
+// simply not published a node manifest yet.
+func parseMetaFromData(ctx context.Context, data map[string]any) (map[string]string, map[string][]string) {
 	meta := make(map[string]string)
+	metaArrays := make(map[string][]string)
 	rawMetaValue, ok := data["meta"]
 	if !ok || rawMetaValue == nil {
-		return meta
+		return meta, metaArrays
 	}
 	rawMetaMap, ok := rawMetaValue.(map[string]any)
 	if !ok {
-		return meta
+		return meta, metaArrays
 	}
 	for key, value := range rawMetaMap {
-		strValue, ok := value.(string)
+		switch v := value.(type) {
+		case string:
+			meta[key] = v
+		case []any:
+			metaArrays[key] = extractURLObjectArray(ctx, key, v)
+		default:
+			log.Warnf(ctx, "Ignoring subscriber metadata value of unsupported shape for key %q: got %T", key, value)
+		}
+	}
+	return meta, metaArrays
+}
+
+// extractURLObjectArray extracts the "url" field from each element of a
+// meta array shaped like NFH-014's catalog_index_urls: an array of
+// {"url": "..."} objects. An element that isn't such an object, or whose
+// "url" isn't a non-empty string, is skipped with a warning rather than
+// failing the whole lookup.
+func extractURLObjectArray(ctx context.Context, fieldName string, items []any) []string {
+	out := make([]string, 0, len(items))
+	for i, item := range items {
+		obj, ok := item.(map[string]any)
 		if !ok {
-			log.Warnf(ctx, "Ignoring non-string subscriber metadata value for key %q: got %T", key, value)
+			log.Warnf(ctx, "Ignoring invalid %s entry at index %d: expected a {url} object, got %T", fieldName, i, item)
 			continue
 		}
-		meta[key] = strValue
+		url, ok := obj["url"].(string)
+		if !ok || url == "" {
+			log.Warnf(ctx, "Ignoring invalid %s entry at index %d: missing or non-string \"url\" field", fieldName, i)
+			continue
+		}
+		out = append(out, url)
 	}
-	return meta
+	return out
 }
 
 // Lookup implements RegistryLookup interface — calls the DeDi wrapper lookup endpoint and returns Subscription.
@@ -402,12 +431,13 @@ func (c *DeDiRegistryClient) LookupNode(ctx context.Context, nodeID string) (*mo
 		return nil, err
 	}
 
-	meta := parseMetaFromData(ctx, data)
+	meta, metaArrays := parseMetaFromData(ctx, data)
 
 	log.Debugf(ctx, "DeDi node lookup successful for nodeID: %s, subscriber: %s, url: %s", nodeID, subscription.SubscriberID, subscription.URL)
 	return &model.SubscriberRecord{
 		Subscription: *subscription,
 		Meta:         meta,
+		MetaArrays:   metaArrays,
 	}, nil
 }
 

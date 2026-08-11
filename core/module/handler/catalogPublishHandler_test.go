@@ -691,7 +691,7 @@ func TestCatalogPublishHandler_NoWarningWhenIndexAlreadyLinked(t *testing.T) {
 	root := t.TempDir()
 	mgr := newTestManager(t)
 	mgr.registry.nodeRecord = &model.SubscriberRecord{
-		Meta: map[string]string{catalogIndexMetaKey: "pending-artifact-store://catalog-index.json"},
+		MetaArrays: map[string][]string{catalogIndexMetaKey: {"pending-artifact-store://catalog-index.json"}},
 	}
 
 	cfg := newTestConfig(root)
@@ -729,7 +729,7 @@ func TestCatalogPublishHandler_RegistryLookupUsesSubscriberIDAndDerivedKeyID(t *
 	root := t.TempDir()
 	mgr := newTestManager(t)
 	mgr.registry.nodeRecord = &model.SubscriberRecord{
-		Meta: map[string]string{catalogIndexMetaKey: "pending-artifact-store://catalog-index.json"},
+		MetaArrays: map[string][]string{catalogIndexMetaKey: {"pending-artifact-store://catalog-index.json"}},
 	}
 
 	cfg := newTestConfig(root)

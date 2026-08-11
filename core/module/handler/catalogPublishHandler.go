@@ -37,7 +37,7 @@ type catalogPublishHandler struct {
 	policyChecker   definition.PolicyChecker
 	// registryMetadata is the DeDi-native RegistryMetadataLookup used to
 	// read this node's own registry record (read-only) and check whether
-	// its meta[catalog_index_url] already links this publisher's catalog
+	// its meta.catalog_index_urls already links this publisher's catalog
 	// index -- see checkRegistryLinksCatalogIndex. Replaces the earlier
 	// node-manifest-based link check: the file spec's three-level
 	// indirection (DeDi record -> node manifest -> catalog index) is
@@ -78,10 +78,13 @@ const dediSubscriberWildcardRegistry = "subscribers.beckn.one"
 
 // catalogIndexMetaKey is the DeDi registry record's meta field this handler
 // checks: the direct link from a subscriber's own DeDi record to the
-// catalog index it publishes. Replaces the earlier three-level indirection
-// (DeDi record -> node manifest -> catalog index) with a two-level one
-// (DeDi record -> catalog index directly).
-const catalogIndexMetaKey = "catalog_index_url"
+// catalog index(es) it publishes. Replaces the earlier three-level
+// indirection (DeDi record -> node manifest -> catalog index) with a
+// two-level one (DeDi record -> catalog index directly). Plural, an array
+// of {url} objects, per NFH-014 §Schema Changes ("Beckn_subscriber
+// (unmodified) + meta.catalog_index_urls") -- a node MAY host more than
+// one catalog index, so this is never a single-value field.
+const catalogIndexMetaKey = "catalog_index_urls"
 
 // publishDirective is one entry in publishRequest.Message.PublishDirectives,
 // matched to a submitted catalog by CatalogID -- beckn.yaml's own
@@ -477,14 +480,15 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 // checkRegistryLinksCatalogIndex reads this node's own DeDi registry record
 // (read-only, via RegistryMetadataLookup.LookupNode -- dediregistry has no
 // write path, so there is nothing this handler could push even if it
-// wanted to) and checks whether its meta[catalog_index_url] already
-// matches this publisher's index URL (h.publisher.IndexURL()). Unlike the
+// wanted to) and checks whether its meta.catalog_index_urls already
+// includes this publisher's index URL (h.publisher.IndexURL()) -- plural,
+// since a node MAY host more than one catalog index, so the match is
+// membership in the array, not equality against a single value. Unlike the
 // earlier node-manifest-based check, there is no local artifact to stage:
 // getting a value into a DeDi record's meta is, and remains, an external,
 // manual operator action (e.g. via DeDi's own registration tooling) -- a
-// missing/mismatched link is reported as a warning naming the meta key and
-// the URL it should point at. Returns ("", nil) when the link already
-// matches.
+// missing link is reported as a warning naming the meta key and the URL it
+// should be added to. Returns ("", nil) when the link already matches.
 func (h *catalogPublishHandler) checkRegistryLinksCatalogIndex(ctx context.Context) (string, error) {
 	indexURL := h.publisher.IndexURL()
 	log.Debugf(ctx, "catalogPublish: checking DeDi record for %s links catalog index %s", h.subscriberID, indexURL)
@@ -507,13 +511,15 @@ func (h *catalogPublishHandler) checkRegistryLinksCatalogIndex(ctx context.Conte
 		return "", fmt.Errorf("looking up DeDi record for %s: %w", h.subscriberID, err)
 	}
 
-	if record.Meta[catalogIndexMetaKey] == indexURL {
-		log.Debugf(ctx, "catalogPublish: DeDi record for %s already links catalog index %s", h.subscriberID, indexURL)
-		return "", nil
+	for _, url := range record.MetaArrays[catalogIndexMetaKey] {
+		if url == indexURL {
+			log.Debugf(ctx, "catalogPublish: DeDi record for %s already links catalog index %s", h.subscriberID, indexURL)
+			return "", nil
+		}
 	}
 
 	return fmt.Sprintf(
-		"DeDi record for %s does not link catalog index %s; set meta.%s to this URL on your DeDi record",
+		"DeDi record for %s does not link catalog index %s; add this URL to meta.%s on your DeDi record",
 		h.subscriberID, indexURL, catalogIndexMetaKey,
 	), nil
 }
