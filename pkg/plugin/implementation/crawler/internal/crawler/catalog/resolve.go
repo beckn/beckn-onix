@@ -208,6 +208,52 @@ func ResolveDelta(entry CatalogEntry, cursor, toVersion int64, fetch FetchFunc) 
 	return out, cs, true, nil
 }
 
+// StampIsActive sets the pushed doc's isActive to match the index entry's own
+// (nil leaves it unset, so Discovery's own schema default (true) applies
+// rather than us inventing one). This is the one place isActive crosses from
+// index-entry metadata into the pushed catalog content -- resolve/apply never
+// set it themselves, since no baseline or change file carries it.
+func StampIsActive(doc []byte, isActive *bool) ([]byte, error) {
+	if isActive == nil {
+		return doc, nil
+	}
+	var d catalogfile.Doc
+	if err := json.Unmarshal(doc, &d); err != nil {
+		return nil, Permanentf("crawler: reading catalog to stamp isActive: %v", err)
+	}
+	d.IsActive = isActive
+	return json.Marshal(d)
+}
+
+// BuildRetireDoc builds the Discovery wipe doc for a retired catalog: id plus
+// the envelope captured from its last successful sync, with no resources/
+// offers container at all -- Discovery's Catalog schema only requires id/
+// descriptor/provider, so a FULL push of exactly this, naming no other
+// content for catalogID, replaces the catalog's content with nothing.
+func BuildRetireDoc(catalogID string, descriptor, provider []byte) ([]byte, error) {
+	id, err := json.Marshal(catalogID)
+	if err != nil {
+		return nil, err
+	}
+	// Resources marshals as [] rather than nil/null (Doc.Resources has no
+	// omitempty) -- an explicitly empty array reads as "delete everything"
+	// unambiguously, matching Discovery's null-safe iterableResources.
+	return json.Marshal(catalogfile.Doc{ID: id, Descriptor: descriptor, Provider: provider, Resources: []json.RawMessage{}})
+}
+
+// ExtractEnvelope reads a resolved catalog doc's descriptor/provider -- the
+// two fields a later retire needs to build a Discovery wipe push, captured
+// here (at every successful sync) rather than re-fetched at retire time,
+// since a retired index entry drops every file reference (see
+// catalog.CatalogState.Descriptor).
+func ExtractEnvelope(doc []byte) (descriptor, provider []byte, err error) {
+	var d catalogfile.Doc
+	if err := json.Unmarshal(doc, &d); err != nil {
+		return nil, nil, Permanentf("crawler: reading catalog to extract envelope: %v", err)
+	}
+	return d.Descriptor, d.Provider, nil
+}
+
 func orderedValues(m map[string]json.RawMessage, order []string) []json.RawMessage {
 	out := make([]json.RawMessage, 0, len(order))
 	for _, id := range order {

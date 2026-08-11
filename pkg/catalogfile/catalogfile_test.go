@@ -37,6 +37,54 @@ func TestApply_UpsertsAndRemovals(t *testing.T) {
 	}
 }
 
+func TestDoc_IsActiveRoundTrips(t *testing.T) {
+	active := false
+	doc := Doc{ID: json.RawMessage(`"CAT-1"`), Descriptor: json.RawMessage(`{}`), Provider: json.RawMessage(`{}`), IsActive: &active}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got Doc
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.IsActive == nil || *got.IsActive != false {
+		t.Fatalf("IsActive = %v, want false", got.IsActive)
+	}
+}
+
+func TestDoc_IsActiveOmittedWhenNil(t *testing.T) {
+	doc := Doc{ID: json.RawMessage(`"CAT-1"`), Descriptor: json.RawMessage(`{}`), Provider: json.RawMessage(`{}`)}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if _, ok := raw["isActive"]; ok {
+		t.Fatalf("expected isActive omitted when nil, got %s", b)
+	}
+}
+
+func TestApply_PreservesIsActive(t *testing.T) {
+	catalog := []byte(`{"id":"CAT-1","descriptor":{"name":"Old"},"provider":{},"resources":[],"isActive":false}`)
+	change := []byte(`{"catalogId":"CAT-1","fromVersion":1,"toVersion":2,"resources":{},"offers":{}}`)
+
+	result, err := Apply(catalog, change)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	var doc Doc
+	if err := json.Unmarshal(result, &doc); err != nil {
+		t.Fatalf("parsing result: %v", err)
+	}
+	if doc.IsActive == nil || *doc.IsActive != false {
+		t.Fatalf("IsActive = %v, want false to survive Apply unchanged", doc.IsActive)
+	}
+}
+
 func TestApply_CatalogAttributeOverlay(t *testing.T) {
 	catalog := []byte(`{"id":"CAT-1","descriptor":{"name":"Old Name"},"provider":{"id":"P1"},"resources":[]}`)
 	change := []byte(`{"catalogId":"CAT-1","fromVersion":1,"toVersion":2,"resources":{},"offers":{},"catalog":{"descriptor":{"name":"New Name"}}}`)

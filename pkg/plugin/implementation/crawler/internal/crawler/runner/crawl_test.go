@@ -195,6 +195,9 @@ func (g *gateStore) GetCatalogReports(context.Context, string) ([]catalog.PassRe
 func (g *gateStore) RecordFailure(context.Context, string, string, string, catalog.PassReport) error {
 	return nil
 }
+func (g *gateStore) GetCatalogEnvelope(context.Context, string) ([]byte, []byte, string, string, bool, error) {
+	return nil, nil, "", "", false, nil
+}
 func (g *gateStore) KnownIndexes(context.Context) ([]catalog.KnownIndex, error) { return nil, nil }
 func (g *gateStore) UpsertIndex(context.Context, string, string, string, string, time.Time, string, string) error {
 	return nil
@@ -495,6 +498,9 @@ func (m *memStore) GetCatalogReports(context.Context, string) ([]catalog.PassRep
 }
 func (m *memStore) RecordFailure(context.Context, string, string, string, catalog.PassReport) error {
 	return nil
+}
+func (m *memStore) GetCatalogEnvelope(context.Context, string) ([]byte, []byte, string, string, bool, error) {
+	return nil, nil, "", "", false, nil
 }
 func (m *memStore) ClaimNext(context.Context) (*catalog.ClaimedItem, error) { return nil, nil }
 func (m *memStore) RescheduleQueueItem(context.Context, string, string, time.Time) error {

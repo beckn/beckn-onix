@@ -14,6 +14,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/crawler/internal/crawler/catalog"
@@ -78,24 +79,90 @@ func (e *Engine) catalogPass(ctx context.Context) {
 	}
 }
 
-// handleQueueItem dispatches a claimed item: a retire settles immediately; a
-// sync goes through the full resolve+push flow. It mints one pass_id for the
-// claimed item and returns the terminal SyncOutcome so the pass can tally.
+// handleQueueItem dispatches a claimed item: a retire wipes the catalog from
+// Discovery then settles; a sync goes through the full resolve+push flow. It
+// mints one pass_id for the claimed item and returns the terminal SyncOutcome
+// so the pass can tally.
 func (e *Engine) handleQueueItem(ctx context.Context, item *catalog.ClaimedItem, runID string) catalog.SyncOutcome {
 	passID := e.newID()
 	if item.Op == "retire" {
-		if err := e.settle(ctx, item, "", catalog.CatalogRetired, catalog.PassReport{
-			At: e.deps.Now().UTC(), FromVersion: item.FromVersion, ToVersion: item.ToVersion,
-			Outcome: string(catalog.OutcomeRetired),
-		}); err != nil {
-			e.storeUnhealthy("sync", runID, "complete", item.CatalogID, err)
-			return catalog.OutcomeFaulted
-		}
-		e.deps.Metrics.RecordSyncOutcome(string(catalog.OutcomeRetired), "")
-		e.logRetired(runID, passID, item)
-		return catalog.OutcomeRetired
+		return e.retireCatalog(ctx, item, runID, passID)
 	}
 	return e.syncCatalog(ctx, item, runID, passID)
+}
+
+// retireCatalog wipes a retired catalog from Discovery: a FULL push naming
+// only id/descriptor/provider (no resources/offers container at all) replaces
+// its content with nothing. The envelope comes from GetCatalogEnvelope, not a
+// fresh fetch -- RFC NFH-014 drops every file reference (baseline/changes/
+// latest) from a retired index entry, so there is nothing left in the index to
+// fetch from by the time a retire reaches here.
+//
+// Settling as CatalogRetired only happens AFTER Discovery acks the wipe (or
+// after confirming there's nothing to wipe): a push failure goes through the
+// same routeFailure/routeClassified park-vs-retry policy a normal sync failure
+// does, so a failed wipe retries rather than silently marking the catalog
+// retired while Discovery still serves its last-known content.
+func (e *Engine) retireCatalog(ctx context.Context, item *catalog.ClaimedItem, runID, passID string) catalog.SyncOutcome {
+	descriptor, provider, catalogType, participantID, ok, err := e.deps.Store.GetCatalogEnvelope(ctx, item.CatalogID)
+	if err != nil {
+		e.storeUnhealthy("sync", runID, "read_envelope", item.CatalogID, err)
+		return catalog.OutcomeFaulted
+	}
+	if !ok {
+		// No envelope was ever captured -- shouldn't reach here in practice
+		// (decideCatalog's !seen guard already refuses to enqueue a retire for a
+		// catalog never synced), but defensively: nothing is known about what
+		// Discovery holds for this catalogId, so there is nothing safe to wipe.
+		return e.settleRetired(ctx, item, runID, passID, "", 0, "no stored envelope to wipe")
+	}
+
+	doc, err := catalog.BuildRetireDoc(item.CatalogID, descriptor, provider)
+	if err != nil {
+		e.routeClassified(ctx, item, e.newFailureReport(item, 0, "retire_build: "+err.Error()), catalog.FaultContentInvalid, runID, passID)
+		return catalog.OutcomeFaulted
+	}
+	body, err := publish.BuildPushBody(publish.PushMeta{
+		ParticipantID: participantID, BppURI: e.cfg.BppURI,
+		MessageID: e.newID(), TransactionID: e.newID(),
+		Timestamp:  e.deps.Now().UTC().Format(time.RFC3339),
+		UpdateMode: publish.UpdateModeFull, CatalogType: catalogType,
+	}, doc)
+	if err != nil {
+		e.routeClassified(ctx, item, e.newFailureReport(item, 0, "retire_build: "+err.Error()), catalog.FaultContentInvalid, runID, passID)
+		return catalog.OutcomeFaulted
+	}
+	if e.deps.Validate != nil {
+		if err := e.deps.Validate(ctx, body); err != nil {
+			e.routeClassified(ctx, item, e.newFailureReport(item, 0, "retire_schema: "+err.Error()), catalog.FaultPushSchema, runID, passID)
+			return catalog.OutcomeFaulted
+		}
+	}
+	out, err := e.deps.Push(ctx, body)
+	if err != nil {
+		out = publish.BatchOutcome{HTTPStatus: out.HTTPStatus, Reason: err.Error()}
+	}
+	if !out.Acked {
+		e.routeFailure(ctx, item, e.newFailureReport(item, out.HTTPStatus, "retire_push: "+out.Reason), errors.New(out.Reason), runID, passID)
+		return catalog.OutcomeFaulted
+	}
+	return e.settleRetired(ctx, item, runID, passID, participantID, out.HTTPStatus, "")
+}
+
+// settleRetired is retireCatalog's single settle path, reached either after a
+// wipe push is acked or when there was nothing to wipe. reason is recorded on
+// the pass report only for the latter (empty otherwise).
+func (e *Engine) settleRetired(ctx context.Context, item *catalog.ClaimedItem, runID, passID, participantID string, httpStatus int, reason string) catalog.SyncOutcome {
+	if err := e.settle(ctx, item, participantID, catalog.CatalogRetired, catalog.PassReport{
+		At: e.deps.Now().UTC(), FromVersion: item.FromVersion, ToVersion: item.ToVersion,
+		Outcome: string(catalog.OutcomeRetired), HTTPStatus: httpStatus, Reason: reason,
+	}, nil, nil, ""); err != nil {
+		e.storeUnhealthy("sync", runID, "complete", item.CatalogID, err)
+		return catalog.OutcomeFaulted
+	}
+	e.deps.Metrics.RecordSyncOutcome(string(catalog.OutcomeRetired), "")
+	e.logRetired(runID, passID, item, reason == "")
+	return catalog.OutcomeRetired
 }
 
 // syncState carries the values a Catalog Sync accumulates as it moves through
@@ -106,17 +173,17 @@ type syncState struct {
 	item          *catalog.ClaimedItem
 	runID, passID string
 
-	entry         catalog.CatalogEntry
-	nodeID        string
-	pushDoc       []byte
-	mode          string
-	cs            catalog.Changeset
-	resCount      int
-	offCount      int
-	visibleTo     []string
-	batches       []publish.CatalogBatch
-	outcomes      []publish.BatchOutcome
-	acked         int
+	entry     catalog.CatalogEntry
+	nodeID    string
+	pushDoc   []byte
+	mode      string
+	cs        catalog.Changeset
+	resCount  int
+	offCount  int
+	visibleTo []string
+	batches   []publish.CatalogBatch
+	outcomes  []publish.BatchOutcome
+	acked     int
 }
 
 // stageFn is one step in the Catalog Sync pipeline. It does the step against the
@@ -182,7 +249,9 @@ func (e *Engine) resolveEntry(ctx context.Context, s *syncState) (catalog.SyncOu
 // the push doc + updateMode. Each file's digest and self-signature are verified
 // inside FetchFile as it is pulled.
 func (e *Engine) fetchContent(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
-	fetch := func(f catalog.FileEntry) ([]byte, error) { return e.deps.FetchFile(ctx, s.nodeID, s.entry.CatalogID, f) }
+	fetch := func(f catalog.FileEntry) ([]byte, error) {
+		return e.deps.FetchFile(ctx, s.nodeID, s.entry.CatalogID, f)
+	}
 	pushDoc, mode, cs, err := e.buildPushDoc(s.entry, s.item, fetch)
 	if err != nil {
 		e.routeFailure(ctx, s.item, e.newFailureReport(s.item, 0, "resolve: "+err.Error()), err, s.runID, s.passID)
@@ -353,13 +422,19 @@ func (e *Engine) publishFailureReport(s *syncState, acked, httpStatus int, reaso
 // complete (publishing): settle a fully-acked sync — advance the cursor, record
 // the pushed pass report, and emit the success terminal.
 func (e *Engine) complete(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
+	// Best-effort: a doc that fails to re-parse here already pushed
+	// successfully (verifyContent validated it earlier), so an extraction
+	// error must not fail an otherwise-successful sync -- it only means this
+	// pass doesn't refresh the retire envelope, and upsertCatalog's COALESCE
+	// leaves whatever envelope was captured last time untouched.
+	descriptor, provider, _ := catalog.ExtractEnvelope(s.pushDoc)
 	if err := e.settle(ctx, s.item, s.nodeID, catalog.CatalogActive, catalog.PassReport{
 		At: e.deps.Now().UTC(), FromVersion: s.item.FromVersion, ToVersion: s.item.ToVersion,
 		Mode: s.mode, Resources: s.resCount, Offers: s.offCount,
 		Removals:     s.cs.RemovedResources + s.cs.RemovedOffers,
 		BatchesAcked: s.acked, BatchesTotal: len(s.batches),
 		Outcome: string(catalog.OutcomePushed), HTTPStatus: s.outcomes[len(s.outcomes)-1].HTTPStatus,
-	}); err != nil {
+	}, descriptor, provider, s.entry.CatalogType); err != nil {
 		e.storeUnhealthy("sync", s.runID, "complete", s.item.CatalogID, err)
 		return catalog.OutcomeFaulted, true
 	}
@@ -384,6 +459,22 @@ func (e *Engine) complete(ctx context.Context, s *syncState) (catalog.SyncOutcom
 // With MergeOnly=false the dormant mode-by-changeset path runs: only-upserts ->
 // MERGE (just the changed resources); any removal / new / re-baseline -> FULL.
 func (e *Engine) buildPushDoc(entry catalog.CatalogEntry, item *catalog.ClaimedItem, fetch catalog.FetchFunc) ([]byte, string, catalog.Changeset, error) {
+	doc, mode, cs, err := e.resolvePushDoc(entry, item, fetch)
+	if err != nil {
+		return nil, mode, cs, err
+	}
+	stamped, err := catalog.StampIsActive(doc, entry.IsActive)
+	if err != nil {
+		return nil, mode, cs, err
+	}
+	return stamped, mode, cs, nil
+}
+
+// resolvePushDoc is buildPushDoc's actual mode/content resolution, kept
+// separate so buildPushDoc has one place -- after every branch below -- to
+// stamp isActive onto whatever doc comes out, instead of repeating it at each
+// of this function's four success returns.
+func (e *Engine) resolvePushDoc(entry catalog.CatalogEntry, item *catalog.ClaimedItem, fetch catalog.FetchFunc) ([]byte, string, catalog.Changeset, error) {
 	if !e.cfg.MergeOnly {
 		full, cs, err := catalog.ResolveWithChangeset(entry, item.FromVersion, item.FromVersion > 0, item.ToVersion, fetch)
 		if err != nil {
@@ -429,10 +520,11 @@ func (e *Engine) buildPushDoc(entry catalog.CatalogEntry, item *catalog.ClaimedI
 // item's ToVersion and the pass report is appended. It is the single write path
 // shared by the three terminal sites — the caller handles the returned error
 // (all currently via storeUnhealthy("complete")).
-func (e *Engine) settle(ctx context.Context, item *catalog.ClaimedItem, participantID string, status catalog.CatalogStatus, report catalog.PassReport) error {
+func (e *Engine) settle(ctx context.Context, item *catalog.ClaimedItem, participantID string, status catalog.CatalogStatus, report catalog.PassReport, descriptor, provider []byte, catalogType string) error {
 	return e.deps.Store.Complete(ctx, item.ID, item.ClaimID, item.ToVersion, catalog.CatalogState{
 		CatalogID: item.CatalogID, IndexURL: item.IndexURL, ParticipantID: participantID,
 		Version: item.ToVersion, EntryVersion: item.EntryVersion, Status: string(status), Report: report,
+		Descriptor: descriptor, Provider: provider, CatalogType: catalogType,
 	})
 }
 
@@ -444,7 +536,7 @@ func (e *Engine) completeSkipped(ctx context.Context, item *catalog.ClaimedItem,
 		At: e.deps.Now().UTC(), FromVersion: item.FromVersion, ToVersion: item.ToVersion,
 		Mode: mode, Outcome: string(catalog.OutcomeSkipped), Reason: reason,
 	}
-	if err := e.settle(ctx, item, participantID, catalog.CatalogActive, rep); err != nil {
+	if err := e.settle(ctx, item, participantID, catalog.CatalogActive, rep, nil, nil, ""); err != nil {
 		e.storeUnhealthy("sync", runID, "complete", item.CatalogID, err)
 		return
 	}

@@ -42,6 +42,17 @@ type CatalogState struct {
 	EntryVersion  int64
 	Status        string // active | retired (CatalogStatus wire value)
 	Report        PassReport
+	// Descriptor/Provider/CatalogType are the minimal envelope a later retire
+	// needs to build a Discovery wipe push (id + descriptor + provider, FULL,
+	// no resources/offers) once the index entry itself no longer carries any
+	// file reference to fetch content from (RFC NFH-014: a retired entry drops
+	// baseline/changes/latest). Captured from the resolved push doc on every
+	// successful ACTIVE settle, so it survives independently of the index.
+	// Empty/nil on a settle that doesn't carry them (e.g. a skip) leaves the
+	// last-written envelope untouched -- see store.upsertCatalog.
+	Descriptor  []byte
+	Provider    []byte
+	CatalogType string
 }
 
 // IndexState is the stored state for one index (the cadence + conditional-GET

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -211,6 +212,12 @@ type recordingStore struct {
 	rescheduled int
 	reports     []catalog.PassReport
 	completed   []completedCall
+
+	// envelope* configure GetCatalogEnvelope's canned response, for the retire
+	// tests: envelopeOK false is "never synced with an envelope captured".
+	envelopeOK                                 bool
+	envelopeDescriptor, envelopeProvider       []byte
+	envelopeCatalogType, envelopeParticipantID string
 }
 
 // completedCall is one settle: the version the cursor advanced to and the
@@ -245,6 +252,9 @@ func (s *recordingStore) CountParked(context.Context) (int, error)              
 func (s *recordingStore) CountTracked(context.Context) (int, error)                 { return 0, nil }
 func (s *recordingStore) GetCatalogReports(context.Context, string) ([]catalog.PassReport, error) {
 	return nil, nil
+}
+func (s *recordingStore) GetCatalogEnvelope(context.Context, string) ([]byte, []byte, string, string, bool, error) {
+	return s.envelopeDescriptor, s.envelopeProvider, s.envelopeCatalogType, s.envelopeParticipantID, s.envelopeOK, nil
 }
 func (s *recordingStore) GetIndex(context.Context, string) (*catalog.IndexState, error) {
 	return nil, nil
@@ -284,6 +294,140 @@ func failValidateOn(n int) Validator {
 			return errors.New("schema: resources[0].id is required")
 		}
 		return nil
+	}
+}
+
+// retireCatalog must build a Discovery wipe (FULL, id+descriptor+provider,
+// empty resources) from the stored envelope, push it, and only settle
+// CatalogRetired once it's acked -- never before, and never at all if the push
+// fails (a failed wipe must retry/park like any other sync failure, not
+// silently mark the catalog retired while Discovery still serves it).
+func TestRetireCatalog_WipesFromStoredEnvelope(t *testing.T) {
+	st := &recordingStore{
+		envelopeOK:            true,
+		envelopeDescriptor:    json.RawMessage(`{"name":"Old Catalog"}`),
+		envelopeProvider:      json.RawMessage(`{"id":"prov-1"}`),
+		envelopeCatalogType:   "REGULAR",
+		envelopeParticipantID: "bpp.example.com",
+	}
+	var pushedBodies [][]byte
+	push := func(_ context.Context, body []byte) (publish.BatchOutcome, error) {
+		pushedBodies = append(pushedBodies, body)
+		return publish.BatchOutcome{Acked: true, HTTPStatus: 200}, nil
+	}
+	eng := New(EngineConfig{MaxAttempts: 3}, Deps{
+		Store: st, Push: push, Log: &fakeLogger{}, Metrics: NopMetrics{},
+		Now: time.Now, NewID: func() string { return "id" },
+	})
+	item := &catalog.ClaimedItem{
+		ID: "q1", ClaimID: "c1", CatalogID: "p/c", IndexURL: "https://x/i.json",
+		FromVersion: 3, ToVersion: 3, Op: "retire",
+	}
+
+	outcome := eng.handleQueueItem(context.Background(), item, "run")
+
+	if outcome != catalog.OutcomeRetired {
+		t.Fatalf("outcome = %v, want OutcomeRetired", outcome)
+	}
+	if len(pushedBodies) != 1 {
+		t.Fatalf("push calls = %d, want 1", len(pushedBodies))
+	}
+	var body struct {
+		Message struct {
+			Catalogs []struct {
+				ID         string            `json:"id"`
+				Descriptor json.RawMessage   `json:"descriptor"`
+				Provider   json.RawMessage   `json:"provider"`
+				Resources  []json.RawMessage `json:"resources"`
+				Offers     []json.RawMessage `json:"offers"`
+			} `json:"catalogs"`
+			PublishDirectives []struct {
+				CatalogID   string `json:"catalogId"`
+				CatalogType string `json:"catalogType"`
+				UpdateMode  string `json:"updateMode"`
+			} `json:"publishDirectives"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(pushedBodies[0], &body); err != nil {
+		t.Fatalf("parsing pushed body: %v", err)
+	}
+	if len(body.Message.Catalogs) != 1 {
+		t.Fatalf("catalogs = %d, want 1", len(body.Message.Catalogs))
+	}
+	c := body.Message.Catalogs[0]
+	if c.ID != "p/c" || string(c.Descriptor) != `{"name":"Old Catalog"}` || string(c.Provider) != `{"id":"prov-1"}` {
+		t.Fatalf("catalog = %+v, want id=p/c with the stored descriptor/provider", c)
+	}
+	if len(c.Resources) != 0 || c.Offers != nil {
+		t.Fatalf("resources/offers = %v/%v, want empty/absent (a genuine wipe)", c.Resources, c.Offers)
+	}
+	if len(body.Message.PublishDirectives) != 1 || body.Message.PublishDirectives[0].UpdateMode != publish.UpdateModeFull {
+		t.Fatalf("directives = %+v, want one FULL directive", body.Message.PublishDirectives)
+	}
+	if len(st.completed) != 1 || st.completed[0].state.Status != string(catalog.CatalogRetired) {
+		t.Fatalf("completed = %+v, want one CatalogRetired settle", st.completed)
+	}
+}
+
+// A push that isn't acked must NOT settle the retire -- it goes through the
+// same park-vs-retry policy a normal sync failure does.
+func TestRetireCatalog_PushFailureDoesNotSettle(t *testing.T) {
+	st := &recordingStore{envelopeOK: true, envelopeDescriptor: json.RawMessage(`{}`), envelopeProvider: json.RawMessage(`{}`)}
+	push := func(context.Context, []byte) (publish.BatchOutcome, error) {
+		return publish.BatchOutcome{Acked: false, HTTPStatus: 500, Reason: "discovery unavailable"}, nil
+	}
+	eng := New(EngineConfig{MaxAttempts: 3}, Deps{
+		Store: st, Push: push, Log: &fakeLogger{}, Metrics: NopMetrics{},
+		Now: time.Now, NewID: func() string { return "id" },
+	})
+	item := &catalog.ClaimedItem{
+		ID: "q1", ClaimID: "c1", CatalogID: "p/c", IndexURL: "https://x/i.json",
+		FromVersion: 3, ToVersion: 3, Op: "retire",
+	}
+
+	outcome := eng.handleQueueItem(context.Background(), item, "run")
+
+	if outcome != catalog.OutcomeFaulted {
+		t.Fatalf("outcome = %v, want OutcomeFaulted", outcome)
+	}
+	if len(st.completed) != 0 {
+		t.Fatalf("completed = %+v, want none — a failed wipe must not settle as retired", st.completed)
+	}
+	if st.rescheduled == 0 && st.parked == 0 {
+		t.Fatalf("expected the failure routed to either reschedule or park")
+	}
+}
+
+// A catalog retired with no envelope ever captured (shouldn't reach here in
+// practice — decideCatalog's !seen guard refuses to enqueue this — but
+// defensively) settles as retired with no push, rather than sending a
+// malformed wipe.
+func TestRetireCatalog_NoEnvelopeSettlesWithoutPush(t *testing.T) {
+	st := &recordingStore{envelopeOK: false}
+	pushed := false
+	push := func(context.Context, []byte) (publish.BatchOutcome, error) {
+		pushed = true
+		return publish.BatchOutcome{Acked: true, HTTPStatus: 200}, nil
+	}
+	eng := New(EngineConfig{}, Deps{
+		Store: st, Push: push, Log: &fakeLogger{}, Metrics: NopMetrics{},
+		Now: time.Now, NewID: func() string { return "id" },
+	})
+	item := &catalog.ClaimedItem{
+		ID: "q1", ClaimID: "c1", CatalogID: "p/c", IndexURL: "https://x/i.json",
+		FromVersion: 3, ToVersion: 3, Op: "retire",
+	}
+
+	outcome := eng.handleQueueItem(context.Background(), item, "run")
+
+	if outcome != catalog.OutcomeRetired {
+		t.Fatalf("outcome = %v, want OutcomeRetired", outcome)
+	}
+	if pushed {
+		t.Fatal("expected no push when there is no stored envelope")
+	}
+	if len(st.completed) != 1 || st.completed[0].state.Status != string(catalog.CatalogRetired) {
+		t.Fatalf("completed = %+v, want one CatalogRetired settle", st.completed)
 	}
 }
 
@@ -559,8 +703,8 @@ func TestBuildPushDoc_ContentIntegrity(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			entry := catalog.CatalogEntry{
 				CatalogID: "p/c",
-				Baseline: catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
-				Changes:  tt.changes,
+				Baseline:  catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
+				Changes:   tt.changes,
 			}
 			fetch := func(f catalog.FileEntry) ([]byte, error) {
 				if f.URL == "base" {
@@ -596,6 +740,68 @@ func TestBuildPushDoc_ContentIntegrity(t *testing.T) {
 			}
 			if got := catalog.ClassifyFault(0, err); got != tt.wantFault {
 				t.Fatalf("fault class = %q, want %q (err: %v)", got, tt.wantFault, err)
+			}
+		})
+	}
+}
+
+// buildPushDoc must carry the index entry's isActive through to the pushed
+// doc, across both the MergeOnly delta path and the full-resolve path -- and
+// leave it unset (not forced true) when the entry never stamped one, so
+// Discovery's own schema default applies instead of the crawler inventing one.
+func TestBuildPushDoc_StampsIsActive(t *testing.T) {
+	fetch := func(f catalog.FileEntry) ([]byte, error) {
+		if f.URL == "base" {
+			return []byte(baselineOK), nil
+		}
+		return nil, nil
+	}
+	paused := false
+	active := true
+
+	tests := []struct {
+		name        string
+		mergeOnly   bool
+		fromVersion int64
+		isActive    *bool
+	}{
+		{name: "first sync (full resolve), paused", mergeOnly: true, fromVersion: 0, isActive: &paused},
+		{name: "first sync (full resolve), active", mergeOnly: true, fromVersion: 0, isActive: &active},
+		{name: "first sync (full resolve), unset", mergeOnly: true, fromVersion: 0, isActive: nil},
+		{name: "incremental delta, paused", mergeOnly: true, fromVersion: 1, isActive: &paused},
+		{name: "mode-by-changeset full resolve, paused", mergeOnly: false, fromVersion: 0, isActive: &paused},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := catalog.CatalogEntry{
+				CatalogID: "p/c",
+				Baseline:  catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
+				IsActive:  tt.isActive,
+			}
+			item := &catalog.ClaimedItem{
+				ID: "q1", ClaimID: "c1", CatalogID: "p/c", IndexURL: "https://x/i.json",
+				FromVersion: tt.fromVersion, ToVersion: 1, Op: "sync",
+			}
+			eng := &Engine{cfg: EngineConfig{MergeOnly: tt.mergeOnly}}
+
+			doc, _, _, err := eng.buildPushDoc(entry, item, fetch)
+			if err != nil {
+				t.Fatalf("buildPushDoc error = %v", err)
+			}
+			var got struct {
+				IsActive *bool `json:"isActive"`
+			}
+			if err := json.Unmarshal(doc, &got); err != nil {
+				t.Fatalf("parsing doc: %v", err)
+			}
+			if tt.isActive == nil {
+				if got.IsActive != nil {
+					t.Fatalf("isActive = %v, want omitted", *got.IsActive)
+				}
+				return
+			}
+			if got.IsActive == nil || *got.IsActive != *tt.isActive {
+				t.Fatalf("isActive = %v, want %v", got.IsActive, *tt.isActive)
 			}
 		})
 	}

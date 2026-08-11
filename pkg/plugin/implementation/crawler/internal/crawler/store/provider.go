@@ -29,6 +29,7 @@ type Backend interface {
 	CountTracked(ctx context.Context) (int, error)
 	GetCatalogReports(ctx context.Context, catalogID string) ([]catalog.PassReport, error)
 	RecordFailure(ctx context.Context, catalogID, indexURL, participantID string, report catalog.PassReport) error
+	GetCatalogEnvelope(ctx context.Context, catalogID string) (descriptor, provider []byte, catalogType, participantID string, ok bool, err error)
 
 	// Per-index state: the change gate, the conditional-GET validators, cadence.
 	GetIndex(ctx context.Context, indexURL string) (*catalog.IndexState, error)
