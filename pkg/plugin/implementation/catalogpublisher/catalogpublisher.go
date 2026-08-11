@@ -179,7 +179,7 @@ type catalogEntry struct {
 	SchemaTypes  []string           `json:"schemaTypes,omitempty"`
 	IsActive     *bool              `json:"isActive,omitempty"`
 	Baseline     *fileEntry         `json:"baseline,omitempty"`
-	Changes      []fileEntry        `json:"changes,omitempty"`
+	Changes      []changeFileEntry  `json:"changes,omitempty"`
 	Latest       *fileEntry         `json:"latest,omitempty"`
 	RetiredAt    *time.Time         `json:"retiredAt,omitempty"`
 	CrawlHint    string             `json:"crawlHint,omitempty"`
@@ -194,20 +194,40 @@ type dependenciesWire struct {
 	Masters []masterDependencyWire `json:"masters,omitempty"`
 }
 
+// masterDependencyWire's Version is the MASTER's baseline.version last
+// validated against -- a caller keeps it current as that changes
+// (definition.MasterDependency's doc comment); Publish only writes it
+// through.
 type masterDependencyWire struct {
 	CatalogID string `json:"catalogId"`
+	Version   int    `json:"version"`
 	IndexURL  string `json:"indexUrl"`
 }
 
 // fileEntry points at one already self-signed catalog file (see
-// catalogFileDoc/changeFileDoc) -- digest/size are computed over that
-// file's final, already-signed bytes, so no signature is duplicated here;
-// file-level integrity lives in the file itself.
+// catalogFileDoc) -- digest/size are computed over that file's final,
+// already-signed bytes, so no signature is duplicated here; file-level
+// integrity lives in the file itself. Used for baseline and latest, both
+// of which have one file-lineage Version; a change entry uses
+// changeFileEntry instead (a fromVersion/toVersion range, not a single
+// version).
 type fileEntry struct {
 	Version int    `json:"version"`
 	URL     string `json:"url"`
 	Size    int64  `json:"size"`
 	Digest  string `json:"digest"` // "sha-256:<hex>"
+}
+
+// changeFileEntry points at one already self-signed CatalogChangeFile.
+// FromVersion/ToVersion mirror the file's own fields (§Versioning), so a
+// DS can confirm a chain of changes[] connects contiguously to its stored
+// cursor directly from the index, before fetching anything.
+type changeFileEntry struct {
+	FromVersion int    `json:"fromVersion"`
+	ToVersion   int    `json:"toVersion"`
+	URL         string `json:"url"`
+	Size        int64  `json:"size"`
+	Digest      string `json:"digest"` // "sha-256:<hex>"
 }
 
 // entrySignatureWire is the catalog-index entry's own self-signature
@@ -235,11 +255,16 @@ type fileSignatureWire struct {
 // it. The wrap never reopens Catalog for changes -- beckn.yaml's Catalog
 // schema still governs the wire format; a crawler unwraps `.catalog`
 // before anything reaches the wire.
+// RetiredAt is optional and, in this package, only ever populated on the
+// final write to a retired catalog's "latest" URL (CON-TBD-38) -- an
+// ordinary baseline is an immutable, versioned snapshot nobody expects to
+// reflect events after its own publish time, so it never carries one.
 type catalogFileDoc struct {
 	CatalogID  string            `json:"catalogId"`
 	Version    int               `json:"version"`
 	NextUpdate time.Time         `json:"next_update"`
 	Catalog    json.RawMessage   `json:"catalog"`
+	RetiredAt  *time.Time        `json:"retiredAt,omitempty"`
 	Signature  fileSignatureWire `json:"signature"`
 }
 
@@ -354,6 +379,35 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 			return result, fmt.Errorf("catalogpublisher: signing tombstone %q: %w", id, err)
 		}
 		entries = append(entries, raw)
+
+		// CON-TBD-38: a catalog that had "latest" published needs one
+		// final write to that same stable URL, populating
+		// CatalogFile.retiredAt -- otherwise a consumer that only ever
+		// fetches "latest" directly, never revisiting the index, has no
+		// way to learn the catalog is gone. Independent of today's
+		// Config.PublishLatest: this is cleaning up a file that already
+		// exists, not deciding whether to start publishing a new one.
+		if prior.LatestPublished {
+			if prior.Catalog == nil {
+				result.Errors = append(result.Errors, definition.PublishError{
+					CatalogID: id, Stage: "retire",
+					Reason: "LatestPublished is set but PriorState.Catalog is empty; cannot write the final \"latest\" tombstone",
+					Fatal:  false,
+				})
+				continue
+			}
+			content, err := p.signCatalogFile(id, currentVersion(prior), fileNextUpdate, prior.Catalog, keyID, priv, &now)
+			if err != nil {
+				return result, fmt.Errorf("catalogpublisher: signing final \"latest\" tombstone %q: %w", id, err)
+			}
+			served, _, err := p.maybeCompress(content, "json")
+			if err != nil {
+				return result, fmt.Errorf("catalogpublisher: compressing final \"latest\" tombstone %q: %w", id, err)
+			}
+			result.RetiredLatest = append(result.RetiredLatest, definition.RetiredCatalogFile{
+				CatalogID: id, Content: content, ServedContent: served, Compressed: p.config.Gzip,
+			})
+		}
 	}
 
 	for _, raw := range req.CarryForward {
@@ -433,12 +487,16 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 
 	if hasPrior {
 		entry.Baseline = fileRefToWire(prior.BaselineFile)
-		entry.Changes = fileRefsToWire(prior.ChangeFiles)
+		baselineVersion := 0
+		if prior.BaselineFile != nil {
+			baselineVersion = prior.BaselineFile.Version
+		}
+		entry.Changes = changeFileRefsToWire(baselineVersion, prior.ChangeFiles)
 	}
 
 	if !hasPrior || forceBaseline {
 		version := currentVersion(prior) + 1 // 0+1 == 1 for a brand-new catalog
-		content, err := p.signCatalogFile(sub.CatalogID, version, fileNextUpdate, sub.Catalog, keyID, priv)
+		content, err := p.signCatalogFile(sub.CatalogID, version, fileNextUpdate, sub.Catalog, keyID, priv, nil)
 		if err != nil {
 			return definition.CatalogPublishOutcome{}, catalogEntry{}, err
 		}
@@ -498,7 +556,9 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 	if err != nil {
 		return definition.CatalogPublishOutcome{}, catalogEntry{}, err
 	}
-	entry.Changes = append(entry.Changes, fe)
+	entry.Changes = append(entry.Changes, changeFileEntry{
+		FromVersion: fromVersion, ToVersion: toVersion, URL: fe.URL, Size: fe.Size, Digest: fe.Digest,
+	})
 	entry.EntryVersion = prior.EntryVersion + 1
 
 	outcome := definition.CatalogPublishOutcome{
@@ -518,7 +578,7 @@ func (p *Publisher) finishEntry(sub definition.CatalogSubmission, entry catalogE
 	if !p.config.PublishLatest {
 		return outcome, entry, nil
 	}
-	content, err := p.signCatalogFile(sub.CatalogID, outcome.Version, fileNextUpdate, sub.Catalog, keyID, priv)
+	content, err := p.signCatalogFile(sub.CatalogID, outcome.Version, fileNextUpdate, sub.Catalog, keyID, priv, nil)
 	if err != nil {
 		return definition.CatalogPublishOutcome{}, catalogEntry{}, err
 	}
@@ -578,7 +638,7 @@ func dependenciesToWire(deps []definition.MasterDependency) *dependenciesWire {
 	}
 	masters := make([]masterDependencyWire, len(deps))
 	for i, d := range deps {
-		masters[i] = masterDependencyWire{CatalogID: d.CatalogID, IndexURL: d.IndexURL}
+		masters[i] = masterDependencyWire{CatalogID: d.CatalogID, Version: d.Version, IndexURL: d.IndexURL}
 	}
 	return &dependenciesWire{Masters: masters}
 }
@@ -590,8 +650,11 @@ func dependenciesToWire(deps []definition.MasterDependency) *dependenciesWire {
 // Signature value never matters -- it's stripped before signing anyway.
 // Returns the final, already-signed bytes -- digest/size (buildFileEntry)
 // are computed over these, not the bare catalog content.
-func (p *Publisher) signCatalogFile(catalogID string, version int, nextUpdate time.Time, catalog json.RawMessage, keyID string, priv ed25519.PrivateKey) ([]byte, error) {
-	doc := catalogFileDoc{CatalogID: catalogID, Version: version, NextUpdate: nextUpdate, Catalog: catalog}
+// retiredAt is nil for an ordinary baseline or "latest" refresh; it is set
+// only for the one-time final write to a retired catalog's "latest" URL
+// (CON-TBD-38) -- see Publish's retire loop.
+func (p *Publisher) signCatalogFile(catalogID string, version int, nextUpdate time.Time, catalog json.RawMessage, keyID string, priv ed25519.PrivateKey, retiredAt *time.Time) ([]byte, error) {
+	doc := catalogFileDoc{CatalogID: catalogID, Version: version, NextUpdate: nextUpdate, Catalog: catalog, RetiredAt: retiredAt}
 	unsigned, err := json.Marshal(doc)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling catalog file: %w", err)
@@ -726,13 +789,24 @@ func fileRefValueToWire(fr definition.FileRef) fileEntry {
 	}
 }
 
-func fileRefsToWire(frs []definition.FileRef) []fileEntry {
+// changeFileRefsToWire converts a catalog's carried-forward change-file
+// lineage into changeFileEntry wire entries, reconstructing each one's
+// FromVersion from the sequence itself: definition.FileRef only stores one
+// version per change file (matching the file spec's own toVersion), but
+// versions are always contiguous by construction (each is the prior
+// current version + 1), so FromVersion is just "whatever came immediately
+// before it" -- baselineVersion for the first entry, the previous entry's
+// ToVersion for every one after. No new stored field is needed to recover
+// this.
+func changeFileRefsToWire(baselineVersion int, frs []definition.FileRef) []changeFileEntry {
 	if len(frs) == 0 {
 		return nil
 	}
-	out := make([]fileEntry, len(frs))
+	out := make([]changeFileEntry, len(frs))
+	prevVersion := baselineVersion
 	for i, fr := range frs {
-		out[i] = fileRefValueToWire(fr)
+		out[i] = changeFileEntry{FromVersion: prevVersion, ToVersion: fr.Version, URL: fr.URL, Size: fr.Size, Digest: fr.Digest}
+		prevVersion = fr.Version
 	}
 	return out
 }

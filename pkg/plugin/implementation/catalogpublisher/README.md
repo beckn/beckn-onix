@@ -84,7 +84,13 @@ catalogs) -- widening the gap until `catalogcrawler` catches up.
    there -- its prior metadata survives retirement, only `isActive` and
    the file references are dropped -- so crawlers can tell "gone" apart
    from "never existed" (NFH-014 §10.4, "a retired catalog stays as a
-   tombstone").
+   tombstone"). If `PriorCatalogState.LatestPublished` was set for that
+   catalog, also makes one final write to its "latest" URL (via
+   `PublishResult.RetiredLatest`), a self-signed `CatalogFile` now
+   carrying `retiredAt` -- so a consumer that only ever fetches `latest`
+   directly, never revisiting the index, can still learn the catalog is
+   gone (NFH-014 CON-TBD-38). Independent of whether `Config.PublishLatest`
+   is on for this call.
 8. Carries forward every other catalog untouched by this call
    (`PublishRequest.CarryForward`, raw entries the caller supplies) --
    the catalog index lists every catalog a publisher has, not just the
@@ -143,8 +149,9 @@ field, see point 5 above):
       "catalogType": "REGULAR",
       "schemaTypes": ["..."],
       "isActive": true,
+      "dependencies": { "masters": [ { "catalogId": "...", "version": 12, "indexUrl": "..." } ] },
       "baseline": { "version": 1, "url": "...", "size": 413, "digest": "sha-256:..." },
-      "changes": [ { "version": 2, "url": "...", "size": 336, "digest": "sha-256:..." } ],
+      "changes": [ { "fromVersion": 1, "toVersion": 2, "url": "...", "size": 336, "digest": "sha-256:..." } ],
       "latest": { "version": 2, "url": "...CAT-DEMO-1.latest.json", "size": 420, "digest": "sha-256:..." },
       "signature": { "keyId": "key-1", "value": "..." }
     },
@@ -155,7 +162,12 @@ field, see point 5 above):
 `baseline`/`changes[]` entries carry no signature of their own -- their
 `digest`/`size` describe the already self-signed file they point at (see
 below); the catalog-**entry**'s own `signature` covers everything shown
-above it, `signature` itself excluded.
+above it, `signature` itself excluded. `changes[]` entries carry
+`fromVersion`/`toVersion` (mirroring the change file's own fields), not a
+single `version` -- so a DS can confirm the chain is contiguous with its
+stored cursor directly from the index, before fetching anything.
+`dependencies.masters[].version` is the MASTER's `baseline.version` last
+validated against, kept current by the caller as that changes.
 
 **Baseline file** (published at a `baseline` entry's `url`, self-signed):
 ```json

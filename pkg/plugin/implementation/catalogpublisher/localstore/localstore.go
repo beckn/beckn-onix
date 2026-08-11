@@ -172,6 +172,20 @@ func Write(root string, result definition.PublishResult) error {
 			return fmt.Errorf("localstore: writing %s: %w", path, err)
 		}
 	}
+	for _, rl := range result.RetiredLatest {
+		suffix := "json"
+		if rl.Compressed {
+			suffix += ".gz"
+		}
+		served := rl.ServedContent
+		if served == nil {
+			served = rl.Content
+		}
+		path := LatestFilePath(root, rl.CatalogID, suffix)
+		if err := os.WriteFile(path, served, 0o644); err != nil {
+			return fmt.Errorf("localstore: writing %s: %w", path, err)
+		}
+	}
 	return nil
 }
 
@@ -193,18 +207,18 @@ type indexDoc struct {
 }
 
 type indexEntry struct {
-	CatalogID    string             `json:"catalogId"`
-	EntryVersion int                `json:"entryVersion"`
-	CatalogType  string             `json:"catalogType"`
-	Dependencies *wireDependencies  `json:"dependencies"`
-	NetworkIds   []string           `json:"networkIds"`
-	SchemaTypes  []string           `json:"schemaTypes"`
-	IsActive     *bool              `json:"isActive"`
-	Baseline     *wireFileEntry     `json:"baseline"`
-	Changes      []wireFileEntry    `json:"changes"`
-	Latest       *wireFileEntry     `json:"latest"`
-	RetiredAt    *string            `json:"retiredAt"`
-	CrawlHint    string             `json:"crawlHint"`
+	CatalogID    string                `json:"catalogId"`
+	EntryVersion int                   `json:"entryVersion"`
+	CatalogType  string                `json:"catalogType"`
+	Dependencies *wireDependencies     `json:"dependencies"`
+	NetworkIds   []string              `json:"networkIds"`
+	SchemaTypes  []string              `json:"schemaTypes"`
+	IsActive     *bool                 `json:"isActive"`
+	Baseline     *wireFileEntry        `json:"baseline"`
+	Changes      []wireChangeFileEntry `json:"changes"`
+	Latest       *wireFileEntry        `json:"latest"`
+	RetiredAt    *string               `json:"retiredAt"`
+	CrawlHint    string                `json:"crawlHint"`
 }
 
 type wireDependencies struct {
@@ -213,14 +227,27 @@ type wireDependencies struct {
 
 type wireMasterDependency struct {
 	CatalogID string `json:"catalogId"`
+	Version   int    `json:"version"`
 	IndexURL  string `json:"indexUrl"`
 }
 
+// wireFileEntry is baseline/latest's shape -- one file-lineage version.
 type wireFileEntry struct {
 	Version int    `json:"version"`
 	URL     string `json:"url"`
 	Size    int64  `json:"size"`
 	Digest  string `json:"digest"`
+}
+
+// wireChangeFileEntry is a changes[] entry's shape -- a fromVersion/
+// toVersion range, mirroring CatalogChangeFile's own fields (NFH-014
+// §Versioning), not a single version.
+type wireChangeFileEntry struct {
+	FromVersion int    `json:"fromVersion"`
+	ToVersion   int    `json:"toVersion"`
+	URL         string `json:"url"`
+	Size        int64  `json:"size"`
+	Digest      string `json:"digest"`
 }
 
 // wireCatalogFile unwraps a stored baseline file's self-signed envelope
@@ -331,7 +358,7 @@ func reconstructState(root string, entry indexEntry) (*definition.PriorCatalogSt
 		if isGzipURL(ch.URL) {
 			chSuffix = "changes.json.gz"
 		}
-		path := CatalogFilePath(root, entry.CatalogID, ch.Version, chSuffix)
+		path := CatalogFilePath(root, entry.CatalogID, ch.ToVersion, chSuffix)
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("localstore: reading %s: %w", path, err)
@@ -345,11 +372,11 @@ func reconstructState(root string, entry indexEntry) (*definition.PriorCatalogSt
 		if err != nil {
 			return nil, fmt.Errorf("localstore: applying %s: %w", path, err)
 		}
-		superseded := ch.Version <= entry.Baseline.Version
+		superseded := ch.ToVersion <= entry.Baseline.Version
 		if superseded && gracePeriodElapsed {
 			continue // grace period over: stop listing this pre-compaction change file
 		}
-		changeFiles = append(changeFiles, toFileRef(ch))
+		changeFiles = append(changeFiles, toChangeFileRef(ch))
 	}
 
 	isActive := true
@@ -358,16 +385,17 @@ func reconstructState(root string, entry indexEntry) (*definition.PriorCatalogSt
 	}
 	baselineRef := toFileRef(*entry.Baseline)
 	return &definition.PriorCatalogState{
-		Catalog:      effective,
-		BaselineFile: &baselineRef,
-		ChangeFiles:  changeFiles,
-		EntryVersion: entry.EntryVersion,
-		CatalogType:  entry.CatalogType,
-		NetworkIds:   entry.NetworkIds,
-		SchemaTypes:  entry.SchemaTypes,
-		IsActive:     isActive,
-		Dependencies: toMasterDependencies(entry.Dependencies),
-		CrawlHint:    entry.CrawlHint,
+		Catalog:         effective,
+		BaselineFile:    &baselineRef,
+		ChangeFiles:     changeFiles,
+		EntryVersion:    entry.EntryVersion,
+		CatalogType:     entry.CatalogType,
+		NetworkIds:      entry.NetworkIds,
+		SchemaTypes:     entry.SchemaTypes,
+		IsActive:        isActive,
+		Dependencies:    toMasterDependencies(entry.Dependencies),
+		CrawlHint:       entry.CrawlHint,
+		LatestPublished: entry.Latest != nil,
 	}, nil
 }
 
@@ -377,7 +405,7 @@ func toMasterDependencies(deps *wireDependencies) []definition.MasterDependency 
 	}
 	out := make([]definition.MasterDependency, len(deps.Masters))
 	for i, m := range deps.Masters {
-		out[i] = definition.MasterDependency{CatalogID: m.CatalogID, IndexURL: m.IndexURL}
+		out[i] = definition.MasterDependency{CatalogID: m.CatalogID, Version: m.Version, IndexURL: m.IndexURL}
 	}
 	return out
 }
@@ -405,5 +433,18 @@ func toFileRef(fe wireFileEntry) definition.FileRef {
 		URL:     fe.URL,
 		Size:    fe.Size,
 		Digest:  fe.Digest,
+	}
+}
+
+// toChangeFileRef converts a changes[] entry back to a definition.FileRef:
+// only ToVersion is kept (matching FileRef's single Version field) --
+// FromVersion is always reconstructible from the sequence itself (see
+// catalogpublisher.changeFileRefsToWire), so it never needs to round-trip.
+func toChangeFileRef(ch wireChangeFileEntry) definition.FileRef {
+	return definition.FileRef{
+		Version: ch.ToVersion,
+		URL:     ch.URL,
+		Size:    ch.Size,
+		Digest:  ch.Digest,
 	}
 }

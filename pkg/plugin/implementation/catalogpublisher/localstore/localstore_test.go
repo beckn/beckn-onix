@@ -381,6 +381,72 @@ func TestWriteThenLoad_Gzip_RoundTrips(t *testing.T) {
 	}
 }
 
+// TestWriteThenLoad_LatestPublished_RoundTripsAndRetireWritesTombstone
+// covers CON-TBD-38 end to end through localstore: publishing with
+// "latest" enabled sets PriorState.LatestPublished on reload, and
+// retiring that catalog afterwards writes a final, retiredAt-carrying
+// CatalogFile to the same stable "latest" path.
+func TestWriteThenLoad_LatestPublished_RoundTripsAndRetireWritesTombstone(t *testing.T) {
+	root := t.TempDir()
+	km := newFakeKeyManager(t)
+	p, _, err := catalogpublisher.New(context.Background(), km, &catalogpublisher.Config{
+		SubscriberID:  "k1",
+		PublishLatest: true,
+	})
+	if err != nil {
+		t.Fatalf("catalogpublisher.New: %v", err)
+	}
+
+	catalog := json.RawMessage(`{"id":"CAT-1","descriptor":{"name":"A"},"provider":{},"resources":[{"id":"ITEM-1","descriptor":{"name":"one"}}]}`)
+	result1, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: catalog}},
+	})
+	if err != nil {
+		t.Fatalf("Publish (baseline): %v", err)
+	}
+	if err := localstore.Write(root, result1); err != nil {
+		t.Fatalf("Write (baseline): %v", err)
+	}
+
+	state, err := localstore.Load(root, []string{"example.test/CAT-1"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	prior, ok := state.PriorState["example.test/CAT-1"]
+	if !ok || !prior.LatestPublished {
+		t.Fatalf("expected LatestPublished = true after a PublishLatest publish, got %+v", prior)
+	}
+
+	result2, err := p.Publish(context.Background(), definition.PublishRequest{
+		Retire:     []string{"example.test/CAT-1"},
+		PriorState: state.PriorState,
+	})
+	if err != nil {
+		t.Fatalf("Publish (retire): %v", err)
+	}
+	if len(result2.RetiredLatest) != 1 {
+		t.Fatalf("expected 1 RetiredLatest entry, got %+v", result2.RetiredLatest)
+	}
+	if err := localstore.Write(root, result2); err != nil {
+		t.Fatalf("Write (retire): %v", err)
+	}
+
+	latestPath := localstore.LatestFilePath(root, "example.test/CAT-1", "json")
+	written, err := os.ReadFile(latestPath)
+	if err != nil {
+		t.Fatalf("expected the final tombstone written to %s: %v", latestPath, err)
+	}
+	var doc struct {
+		RetiredAt *string `json:"retiredAt"`
+	}
+	if err := json.Unmarshal(written, &doc); err != nil {
+		t.Fatalf("parsing final tombstone: %v", err)
+	}
+	if doc.RetiredAt == nil {
+		t.Error("expected the final tombstone at the stable latest URL to carry retiredAt")
+	}
+}
+
 func TestLoad_RetiredCatalogHasNoPriorState(t *testing.T) {
 	root := t.TempDir()
 	p := newTestPublisher(t)

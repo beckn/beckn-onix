@@ -57,9 +57,12 @@ type CatalogSubmission struct {
 // extend, per NFH-014 §10.3's dependencies.masters[]. IndexURL is an
 // unauthenticated locator hint only (CON-TBD-31) -- a crawler still
 // verifies whatever it fetches from it exactly as it would via ordinary
-// discovery.
+// discovery. Version is the MASTER's baseline.version last validated
+// against -- the caller's responsibility to keep current as that changes,
+// same as the rest of this struct (Publish only writes it through).
 type MasterDependency struct {
 	CatalogID string
+	Version   int
 	IndexURL  string
 }
 
@@ -114,6 +117,16 @@ type PriorCatalogState struct {
 	IsActive     bool
 	Dependencies []MasterDependency
 	CrawlHint    string
+
+	// LatestPublished reports whether a "latest" full-CatalogFile pointer
+	// was previously published for this catalog (NFH-014 §Schema Changes,
+	// CON-TBD-38) -- independent of whether Config.PublishLatest is
+	// currently on, since retiring a catalog that had one MUST make one
+	// final write to that same stable URL populating CatalogFile.retiredAt,
+	// regardless of today's config. False (the zero value) for a catalog
+	// that never had one, in which case retiring it touches no "latest"
+	// file at all.
+	LatestPublished bool
 }
 
 // PublishRequest is the input to CatalogPublisher.Publish.
@@ -237,6 +250,29 @@ type PublishResult struct {
 	Index       json.RawMessage
 	Catalogs    []CatalogPublishOutcome
 	Errors      []PublishError
+
+	// RetiredLatest carries the final, self-signed CatalogFile write
+	// CON-TBD-38 requires for each retired catalogId whose PriorState had
+	// LatestPublished set: the same stable "latest" URL as before, now
+	// carrying CatalogFile.retiredAt, so a consumer that only ever fetches
+	// "latest" directly (never revisiting the index) can still learn the
+	// catalog is gone. Deliberately separate from Catalogs -- Catalogs
+	// reports outcomes for submitted catalogs only; retirement is a
+	// different kind of event with no Version/EntryVersion/Mode of its own
+	// to report there.
+	RetiredLatest []RetiredCatalogFile
+}
+
+// RetiredCatalogFile is one retired catalog's final "latest" write (see
+// PublishResult.RetiredLatest). Content is the canonical (uncompressed)
+// signed bytes; ServedContent is what a caller should actually write to
+// the "latest" URL -- identical to Content unless Compressed is true, same
+// convention as CatalogPublishOutcome's Content/ServedContent pair.
+type RetiredCatalogFile struct {
+	CatalogID     string
+	Content       json.RawMessage
+	ServedContent []byte
+	Compressed    bool
 }
 
 // CatalogPublisher turns a publisher's catalog submissions into a catalog

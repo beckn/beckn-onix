@@ -201,6 +201,45 @@ func TestPublish_SingleCatalog_ProducesIndex(t *testing.T) {
 	}
 }
 
+// TestPublish_Dependencies_IncludesMasterVersion proves
+// dependencies.masters[] carries the caller-supplied Version through to
+// the wire (NFH-014: "the MASTER's baseline.version last validated
+// against").
+func TestPublish_Dependencies_IncludesMasterVersion(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{{
+			CatalogID: "CAT-1", Catalog: validCatalogJSON("CAT-1"),
+			Dependencies: []definition.MasterDependency{
+				{CatalogID: "CAT-MASTER", Version: 12, IndexURL: "https://cdn.test/catalog-index.json"},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	var index catalogIndexDoc
+	if err := json.Unmarshal(result.Index, &index); err != nil {
+		t.Fatalf("parsing index: %v", err)
+	}
+	var entry catalogEntry
+	if err := json.Unmarshal(index.Catalogs[0], &entry); err != nil {
+		t.Fatalf("parsing entry: %v", err)
+	}
+	if entry.Dependencies == nil || len(entry.Dependencies.Masters) != 1 {
+		t.Fatalf("expected 1 master dependency, got %+v", entry.Dependencies)
+	}
+	m := entry.Dependencies.Masters[0]
+	if m.CatalogID != "CAT-MASTER" || m.Version != 12 || m.IndexURL != "https://cdn.test/catalog-index.json" {
+		t.Errorf("unexpected master dependency: %+v", m)
+	}
+}
+
 // TestPublish_PublishLatest_AddsOverwrittenPointer proves the NFH-014
 // "latest" pointer: when Config.PublishLatest is on, every publishOne call
 // -- including ones that don't produce a new baseline/change file --
@@ -549,7 +588,7 @@ func TestPublish_Incremental_ProducesChangeFile(t *testing.T) {
 	if entry.Baseline.URL != "https://cdn.test/catalogs/CAT-1.v1.json" {
 		t.Errorf("expected baseline carried forward unchanged, got %+v", entry.Baseline)
 	}
-	if len(entry.Changes) != 1 || entry.Changes[0].Version != 2 || entry.Changes[0].URL != "https://cdn.test/catalogs/changes/CAT-1.v2.changes.json" {
+	if len(entry.Changes) != 1 || entry.Changes[0].FromVersion != 1 || entry.Changes[0].ToVersion != 2 || entry.Changes[0].URL != "https://cdn.test/catalogs/changes/CAT-1.v2.changes.json" {
 		t.Errorf("unexpected change entry: %+v", entry.Changes)
 	}
 }
@@ -655,7 +694,7 @@ func TestPublish_ForceBaseline_KeepsPriorChangesListed(t *testing.T) {
 	if entry.Baseline == nil || entry.Baseline.Version != 3 {
 		t.Fatalf("expected the new baseline at version 3, got %+v", entry.Baseline)
 	}
-	if len(entry.Changes) != 1 || entry.Changes[0].Version != 2 || entry.Changes[0].URL != priorChange.URL {
+	if len(entry.Changes) != 1 || entry.Changes[0].FromVersion != 1 || entry.Changes[0].ToVersion != 2 || entry.Changes[0].URL != priorChange.URL {
 		t.Errorf("expected the pre-compaction change file to stay listed, got %+v", entry.Changes)
 	}
 }
@@ -736,6 +775,57 @@ func TestPublish_RetireWithPriorState_KeepsMetadataAndBumpsEntryVersion(t *testi
 	}
 	if entry.IsActive != nil || entry.Baseline != nil || len(entry.Changes) != 0 {
 		t.Errorf("expected isActive/baseline/changes dropped on retirement, got %+v", entry)
+	}
+	if len(result.RetiredLatest) != 0 {
+		t.Errorf("expected no RetiredLatest when the catalog never had \"latest\" published, got %+v", result.RetiredLatest)
+	}
+}
+
+// TestPublish_RetireWithLatestPublished_WritesFinalTombstone proves
+// CON-TBD-38: retiring a catalog whose PriorState.LatestPublished is set
+// must produce a final, self-signed CatalogFile carrying retiredAt for
+// PublishResult.RetiredLatest -- regardless of whether Config.PublishLatest
+// is on for this call, since this is cleaning up a file that already
+// exists, not deciding whether to start publishing a new one.
+func TestPublish_RetireWithLatestPublished_WritesFinalTombstone(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	p, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"}) // PublishLatest deliberately off
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	catalog := mustCatalogWithItems("CAT-OLD", "ITEM-1")
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Retire: []string{"CAT-OLD"},
+		PriorState: map[string]definition.PriorCatalogState{
+			"CAT-OLD": {
+				Catalog:         catalog,
+				BaselineFile:    &definition.FileRef{Version: 3, URL: "file://v3.json", Digest: "sha-256:abc"},
+				EntryVersion:    5,
+				CatalogType:     "REGULAR",
+				LatestPublished: true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if len(result.RetiredLatest) != 1 {
+		t.Fatalf("expected 1 RetiredLatest entry, got %+v", result.RetiredLatest)
+	}
+	rl := result.RetiredLatest[0]
+	if rl.CatalogID != "CAT-OLD" || rl.Content == nil {
+		t.Fatalf("unexpected RetiredLatest entry: %+v", rl)
+	}
+	var file catalogFileDoc
+	if err := json.Unmarshal(rl.Content, &file); err != nil {
+		t.Fatalf("parsing RetiredLatest content: %v", err)
+	}
+	if file.CatalogID != "CAT-OLD" || file.Version != 3 || file.RetiredAt == nil {
+		t.Errorf("expected the final tombstone to carry catalogId/version/retiredAt, got %+v", file)
+	}
+	if file.Signature.Value == "" {
+		t.Error("expected the final tombstone to be self-signed")
 	}
 }
 
@@ -872,16 +962,23 @@ func TestDiffCatalogs_ArbitraryAttributeChangeReportedUnderCatalog(t *testing.T)
 	}
 }
 
-func TestFileRefsToWire(t *testing.T) {
-	if got := fileRefsToWire(nil); got != nil {
+func TestChangeFileRefsToWire(t *testing.T) {
+	if got := changeFileRefsToWire(1, nil); got != nil {
 		t.Errorf("expected nil for no file refs, got %+v", got)
 	}
-	in := []definition.FileRef{{
-		Version: 3, URL: "https://example.test/catalogs/CAT-1.v3.json", Size: 42, Digest: "sha-256:abc",
-	}}
-	got := fileRefsToWire(in)
-	if len(got) != 1 || got[0].Version != 3 || got[0].URL != in[0].URL || got[0].Size != 42 || got[0].Digest != "sha-256:abc" {
-		t.Errorf("fileRefsToWire did not round-trip fields, got %+v", got)
+	in := []definition.FileRef{
+		{Version: 2, URL: "https://example.test/catalogs/changes/CAT-1.v2.changes.json", Size: 42, Digest: "sha-256:abc"},
+		{Version: 3, URL: "https://example.test/catalogs/changes/CAT-1.v3.changes.json", Size: 50, Digest: "sha-256:def"},
+	}
+	got := changeFileRefsToWire(1, in)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 entries, got %+v", got)
+	}
+	if got[0].FromVersion != 1 || got[0].ToVersion != 2 || got[0].URL != in[0].URL || got[0].Size != 42 || got[0].Digest != "sha-256:abc" {
+		t.Errorf("changeFileRefsToWire did not round-trip fields for entry 0, got %+v", got[0])
+	}
+	if got[1].FromVersion != 2 || got[1].ToVersion != 3 || got[1].URL != in[1].URL {
+		t.Errorf("expected entry 1's FromVersion reconstructed from entry 0's ToVersion, got %+v", got[1])
 	}
 }
 
