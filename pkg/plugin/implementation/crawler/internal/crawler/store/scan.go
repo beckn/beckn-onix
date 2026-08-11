@@ -28,6 +28,13 @@ func nullInt64Zero(n int64) any {
 	return n
 }
 
+func nullBytes(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return string(b)
+}
+
 func nullTime(t time.Time) any {
 	if t.IsZero() {
 		return nil

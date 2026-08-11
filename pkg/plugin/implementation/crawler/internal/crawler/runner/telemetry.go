@@ -168,11 +168,15 @@ func (e *Engine) logSkipped(runID, passID string, item *catalog.ClaimedItem, rea
 	e.deps.Log.Debug("nothing to send — this update only removed items, and removals aren't applied yet", kv...)
 }
 
-// logRetired is the terminal for a retire settle: recorded locally, Discovery
-// not notified yet (Phase 2) (DEBUG).
-func (e *Engine) logRetired(runID, passID string, item *catalog.ClaimedItem) {
-	e.deps.Log.Debug("recorded the catalog as retired locally — Discovery not notified yet (Phase 2)",
-		syncKV("retired", runID, passID, item)...)
+// logRetired is the terminal for a retire settle (DEBUG). wiped is true when a
+// Discovery wipe push was acked; false when there was nothing stored to wipe
+// (no envelope was ever captured for this catalog).
+func (e *Engine) logRetired(runID, passID string, item *catalog.ClaimedItem, wiped bool) {
+	msg := "removed the catalog from Discovery"
+	if !wiped {
+		msg = "recorded the catalog as retired locally — nothing stored to wipe from Discovery"
+	}
+	e.deps.Log.Debug(msg, syncKV("retired", runID, passID, item)...)
 }
 
 // logFailed is the single failure terminal. It explains WHERE it broke (from

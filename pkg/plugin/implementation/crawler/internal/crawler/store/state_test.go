@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/crawler/internal/crawler/catalog"
 	"os"
 	"strings"
@@ -188,4 +189,72 @@ func TestCatalogCursor(t *testing.T) {
 	if !seen || v != 42 {
 		t.Fatalf("cursor = %d seen=%v, want 42 true", v, seen)
 	}
+}
+
+// GetCatalogEnvelope is what a later retire reads to build a Discovery wipe
+// push. It must reflect the LAST successful ACTIVE settle that carried one,
+// and a settle that doesn't carry one (a skip, or RecordFailure's failure
+// path) must not blank out an envelope written earlier -- see upsertCatalog's
+// COALESCE.
+func TestCatalogEnvelope(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	cid := "p/envelope"
+
+	if _, _, _, _, ok, err := s.GetCatalogEnvelope(ctx, cid); err != nil {
+		t.Fatal(err)
+	} else if ok {
+		t.Fatal("unseen catalog should have no envelope")
+	}
+
+	must(t, s.UpsertCatalog(ctx, catalog.CatalogState{
+		CatalogID: cid, IndexURL: "https://x/index.json", ParticipantID: "bpp.example.com",
+		Version: 1, Status: "active", Report: catalog.PassReport{Outcome: "pushed"},
+		Descriptor: []byte(`{"name":"Catalog v1"}`), Provider: []byte(`{"id":"prov-1"}`), CatalogType: "REGULAR",
+	}))
+
+	descriptor, provider, catalogType, participantID, ok, err := s.GetCatalogEnvelope(ctx, cid)
+	must(t, err)
+	if !ok || descriptorName(t, descriptor) != "Catalog v1" || string(provider) != `{"id": "prov-1"}` ||
+		catalogType != "REGULAR" || participantID != "bpp.example.com" {
+		t.Fatalf("envelope = descriptor=%s provider=%s type=%s participant=%s ok=%v, want v1/prov-1/REGULAR/bpp.example.com/true",
+			descriptor, provider, catalogType, participantID, ok)
+	}
+
+	// A skip settle (no envelope carried) must leave the stored one untouched.
+	must(t, s.UpsertCatalog(ctx, catalog.CatalogState{
+		CatalogID: cid, IndexURL: "https://x/index.json", ParticipantID: "bpp.example.com",
+		Version: 1, Status: "active", Report: catalog.PassReport{Outcome: "skipped"},
+	}))
+	descriptor, _, _, _, ok, err = s.GetCatalogEnvelope(ctx, cid)
+	must(t, err)
+	if !ok || descriptorName(t, descriptor) != "Catalog v1" {
+		t.Fatalf("envelope after a skip settle = %s (ok=%v), want the v1 envelope preserved", descriptor, ok)
+	}
+
+	// A newer successful settle overwrites it with the newer content.
+	must(t, s.UpsertCatalog(ctx, catalog.CatalogState{
+		CatalogID: cid, IndexURL: "https://x/index.json", ParticipantID: "bpp.example.com",
+		Version: 2, Status: "active", Report: catalog.PassReport{Outcome: "pushed"},
+		Descriptor: []byte(`{"name":"Catalog v2"}`), Provider: []byte(`{"id":"prov-1"}`), CatalogType: "REGULAR",
+	}))
+	descriptor, _, _, _, ok, err = s.GetCatalogEnvelope(ctx, cid)
+	must(t, err)
+	if !ok || descriptorName(t, descriptor) != "Catalog v2" {
+		t.Fatalf("envelope after v2 settle = %s (ok=%v), want v2 (last-known-good wins)", descriptor, ok)
+	}
+}
+
+// descriptorName reads back {"name": ...} from a stored descriptor. Comparing
+// through this (rather than raw bytes) tolerates jsonb's own whitespace
+// canonicalization on round-trip.
+func descriptorName(t *testing.T, descriptor []byte) string {
+	t.Helper()
+	var d struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(descriptor, &d); err != nil {
+		t.Fatalf("parsing descriptor %s: %v", descriptor, err)
+	}
+	return d.Name
 }

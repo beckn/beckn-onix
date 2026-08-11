@@ -23,6 +23,12 @@ type Doc struct {
 	Provider   json.RawMessage   `json:"provider"`
 	Resources  []json.RawMessage `json:"resources"`
 	Offers     []json.RawMessage `json:"offers,omitempty"`
+	// IsActive mirrors the pushed Catalog schema's own isActive (default true
+	// there). It is a pointer so nil (never stamped) stays omitted on the wire
+	// rather than us inventing a default -- see catalog.StampIsActive, the only
+	// writer of this field; nothing in a baseline/change file ever sets it,
+	// since isActive is index-entry metadata, not catalog content.
+	IsActive *bool `json:"isActive,omitempty"`
 }
 
 // DiffBlock is one array's worth of upserts (added or updated items,

@@ -32,6 +32,12 @@ type Store interface {
 	CountTracked(ctx context.Context) (int, error)
 	GetCatalogReports(ctx context.Context, catalogID string) ([]catalog.PassReport, error)
 	RecordFailure(ctx context.Context, catalogID, indexURL, participantID string, report catalog.PassReport) error
+	// GetCatalogEnvelope returns the id/descriptor/provider/catalogType/
+	// participantID captured from this catalog's last successful ACTIVE
+	// settle -- see catalog.CatalogState.Descriptor. Retire uses this to build
+	// a Discovery wipe push once the index entry itself no longer carries any
+	// file reference to fetch content from.
+	GetCatalogEnvelope(ctx context.Context, catalogID string) (descriptor, provider []byte, catalogType, participantID string, ok bool, err error)
 
 	// Per-index state: the change gate, the conditional-GET validators, cadence.
 	GetIndex(ctx context.Context, indexURL string) (*catalog.IndexState, error)

@@ -434,3 +434,58 @@ func TestFilterCatalog(t *testing.T) {
 		t.Fatal("descriptor (metadata) must be preserved")
 	}
 }
+
+func TestStampIsActive(t *testing.T) {
+	catalog := []byte(`{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"p"},"resources":[]}`)
+
+	t.Run("nil leaves the doc untouched", func(t *testing.T) {
+		out, err := StampIsActive(catalog, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(out) != string(catalog) {
+			t.Fatalf("expected doc unchanged, got %s", out)
+		}
+	})
+
+	t.Run("false is stamped onto the doc", func(t *testing.T) {
+		active := false
+		out, err := StampIsActive(catalog, &active)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			IsActive *bool `json:"isActive"`
+		}
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.IsActive == nil || *got.IsActive {
+			t.Fatalf("isActive = %v, want false", got.IsActive)
+		}
+	})
+
+	t.Run("true is stamped onto the doc", func(t *testing.T) {
+		active := true
+		out, err := StampIsActive(catalog, &active)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			IsActive *bool `json:"isActive"`
+		}
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.IsActive == nil || !*got.IsActive {
+			t.Fatalf("isActive = %v, want true", got.IsActive)
+		}
+	})
+
+	t.Run("malformed doc is a permanent error", func(t *testing.T) {
+		active := false
+		if _, err := StampIsActive([]byte("not json"), &active); err == nil {
+			t.Fatal("expected an error for malformed doc")
+		}
+	})
+}

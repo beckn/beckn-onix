@@ -47,6 +47,9 @@ func (fakeBackend) GetCatalogReports(context.Context, string) ([]catalog.PassRep
 func (fakeBackend) RecordFailure(context.Context, string, string, string, catalog.PassReport) error {
 	return nil
 }
+func (fakeBackend) GetCatalogEnvelope(context.Context, string) ([]byte, []byte, string, string, bool, error) {
+	return nil, nil, "", "", false, nil
+}
 func (fakeBackend) GetIndex(context.Context, string) (*catalog.IndexState, error) { return nil, nil }
 func (fakeBackend) KnownIndexes(context.Context) ([]catalog.KnownIndex, error)    { return nil, nil }
 func (fakeBackend) UpsertIndex(context.Context, string, string, string, string, time.Time, string, string) error {

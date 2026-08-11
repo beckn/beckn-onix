@@ -43,10 +43,15 @@ func upsertCatalog(ctx context.Context, ex execer, c catalog.CatalogState) error
 	if err != nil {
 		return fmt.Errorf("store: upsertCatalog marshal report: %w", err)
 	}
+	// descriptor/provider/catalog_type use COALESCE(EXCLUDED, existing) rather
+	// than a plain overwrite: a skip or a recorded failure settles through this
+	// same path without ever populating them, and must not blank out the
+	// envelope a previous successful sync wrote -- that envelope is what a
+	// later retire needs once the index stops carrying any content to refetch.
 	_, err = ex.ExecContext(ctx,
 		`INSERT INTO crawler_catalog
-		   (catalog_id, index_url, participant_id, version, entry_version, status, push_status, reason, http_status, last_pushed_at, updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6, jsonb_build_array($7::jsonb), $8, $9, now(), now())
+		   (catalog_id, index_url, participant_id, version, entry_version, status, push_status, reason, http_status, descriptor, provider, catalog_type, last_pushed_at, updated_at)
+		 VALUES ($1,$2,$3,$4,$5,$6, jsonb_build_array($7::jsonb), $8, $9, $10, $11, $12, now(), now())
 		 ON CONFLICT (catalog_id) DO UPDATE SET
 		   index_url      = EXCLUDED.index_url,
 		   participant_id = EXCLUDED.participant_id,
@@ -56,14 +61,42 @@ func upsertCatalog(ctx context.Context, ex execer, c catalog.CatalogState) error
 		   push_status    = `+appendPassClause+`,
 		   reason         = EXCLUDED.reason,
 		   http_status    = EXCLUDED.http_status,
+		   descriptor     = COALESCE(EXCLUDED.descriptor, crawler_catalog.descriptor),
+		   provider       = COALESCE(EXCLUDED.provider, crawler_catalog.provider),
+		   catalog_type   = COALESCE(EXCLUDED.catalog_type, crawler_catalog.catalog_type),
 		   last_pushed_at = now(),
 		   updated_at     = now()`,
 		c.CatalogID, c.IndexURL, nullStr(c.ParticipantID), c.Version, c.EntryVersion, c.Status,
-		string(rep), nullStr(c.Report.Reason), nullIntZero(c.Report.HTTPStatus))
+		string(rep), nullStr(c.Report.Reason), nullIntZero(c.Report.HTTPStatus),
+		nullBytes(c.Descriptor), nullBytes(c.Provider), nullStr(c.CatalogType))
 	if err != nil {
 		return fmt.Errorf("store: upsertCatalog: %w", err)
 	}
 	return nil
+}
+
+// GetCatalogEnvelope returns the minimal envelope (id is the caller's own
+// catalogID; descriptor/provider/catalogType/participantID) captured from this
+// catalog's last successful ACTIVE settle -- what a retire needs to build a
+// Discovery wipe push once the index entry no longer carries any content to
+// fetch. ok is false if the catalog was never settled, or settled without ever
+// carrying an envelope (e.g. every pass so far was a content-invalid skip).
+func (s *Store) GetCatalogEnvelope(ctx context.Context, catalogID string) (descriptor, provider []byte, catalogType, participantID string, ok bool, err error) {
+	var d, p sql.NullString
+	var ct, pid sql.NullString
+	err = s.db.QueryRowContext(ctx,
+		`SELECT descriptor, provider, catalog_type, participant_id FROM crawler_catalog WHERE catalog_id=$1`,
+		catalogID).Scan(&d, &p, &ct, &pid)
+	if err == sql.ErrNoRows {
+		return nil, nil, "", "", false, nil
+	}
+	if err != nil {
+		return nil, nil, "", "", false, fmt.Errorf("store: GetCatalogEnvelope: %w", err)
+	}
+	if !d.Valid || !p.Valid {
+		return nil, nil, "", "", false, nil
+	}
+	return []byte(d.String), []byte(p.String), ct.String, pid.String, true, nil
 }
 
 // UpsertCatalog writes a catalog's settled state (cursor + push outcome).
