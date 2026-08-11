@@ -175,7 +175,7 @@ func (c *Client) FetchFile(ctx context.Context, nodeID, catalogID string, f cata
 	// covers the document as authored, not its at-rest packaging. Bounded on its
 	// own budget because a KeySource can do I/O (a registry lookup) and must not
 	// hang the queue drain.
-	return c.verifyFileBounded(ctx, nodeID, catalogID, f.URL, decoded, f.Version)
+	return c.verifyFileBounded(ctx, nodeID, catalogID, f.URL, decoded, f.EffectiveVersion())
 }
 
 // respMeta carries conditional-GET response metadata.

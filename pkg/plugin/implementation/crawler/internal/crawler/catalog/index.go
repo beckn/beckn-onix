@@ -6,20 +6,40 @@
 // (Decentralized Catalog Publishing and Discovery).
 package catalog
 
-// FileEntry is one baseline or change file listed in the index: an immutable,
-// versioned URL with its size and digest. It carries no signature of its own
-// -- per NFH-014, the file it points at self-signs its own content, and the
-// enclosing CatalogEntry self-signs the whole set of file references
-// together (see CatalogEntry.Signature).
+// FileEntry is one baseline, change, or latest file listed in the index: an
+// immutable (except `latest`), versioned URL with its size and digest. It
+// carries no signature of its own -- per NFH-014, the file it points at
+// self-signs its own content, and the enclosing CatalogEntry self-signs the
+// whole set of file references together (see CatalogEntry.Signature).
+//
+// Version and FromVersion/ToVersion are mutually exclusive, mirroring the RFC's
+// two distinct shapes: baseline/latest carry a single `version` (Version);
+// a changes[] entry instead carries the exact range it covers, `fromVersion`/
+// `toVersion` (FromVersion/ToVersion), matching CatalogChangeFile's own
+// fields -- letting a DS confirm the chain is contiguous from the index
+// alone, before fetching anything. Use EffectiveVersion for "this file's
+// content-lineage version" without caring which shape produced it.
 type FileEntry struct {
-	Version int64  `json:"version"`
-	URL     string `json:"url"`
-	Size    int64  `json:"size"`
-	Digest  string `json:"digest"`
+	Version     int64  `json:"version,omitempty"`
+	FromVersion int64  `json:"fromVersion,omitempty"`
+	ToVersion   int64  `json:"toVersion,omitempty"`
+	URL         string `json:"url"`
+	Size        int64  `json:"size"`
+	Digest      string `json:"digest"`
 	// Encoding names the artifact packaging: "" / "json" = plain JSON, "gzip"
 	// = gzipped JSON (and future codecs). Falls back to the URL suffix when
 	// absent. It is a lookup key into the decode registry.
 	Encoding string `json:"encoding,omitempty"`
+}
+
+// EffectiveVersion is this file's content-lineage version regardless of which
+// shape carries it: ToVersion for a changes[] entry, Version for baseline/
+// latest.
+func (f FileEntry) EffectiveVersion() int64 {
+	if f.ToVersion != 0 {
+		return f.ToVersion
+	}
+	return f.Version
 }
 
 // Dependencies lists a REGULAR catalog entry's declared MASTER dependencies
@@ -104,8 +124,8 @@ func (e CatalogEntry) IsPaused() bool { return !e.IsRetired() && e.IsActive != n
 func (e CatalogEntry) LatestVersion() int64 {
 	v := e.Baseline.Version
 	for _, c := range e.Changes {
-		if c.URL != "" && c.Version > v {
-			v = c.Version
+		if c.URL != "" && c.EffectiveVersion() > v {
+			v = c.EffectiveVersion()
 		}
 	}
 	return v

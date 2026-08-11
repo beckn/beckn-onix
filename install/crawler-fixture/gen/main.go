@@ -182,12 +182,18 @@ type changeFile struct {
 // its own -- the file it points at self-signs (see baselineFile/changeFile
 // above), and the enclosing catalogEntry self-signs the reference together
 // with everything else.
+// Version and FromVersion/ToVersion are mutually exclusive: baseline/latest
+// use Version (single "version"); a changes[] entry instead carries the exact
+// range it covers, FromVersion/ToVersion ("fromVersion"/"toVersion"),
+// mirroring changeFile's own fields.
 type fileEntry struct {
-	Version  int    `json:"version"`
-	URL      string `json:"url"`
-	Size     int64  `json:"size"`
-	Digest   string `json:"digest"`
-	Encoding string `json:"encoding"`
+	Version     int    `json:"version,omitempty"`
+	FromVersion int    `json:"fromVersion,omitempty"`
+	ToVersion   int    `json:"toVersion,omitempty"`
+	URL         string `json:"url"`
+	Size        int64  `json:"size"`
+	Digest      string `json:"digest"`
+	Encoding    string `json:"encoding"`
 }
 
 // catalogEntry is one catalog's index record: self-signed as a whole (RFC
@@ -323,7 +329,7 @@ func run(dir string) error {
 		NetworkIDs:   []string{}, // empty => public, taken by any crawler
 		IsActive:     &active,
 		Baseline:     fileEntryFor(baselineURL, 1, baselineBytes),
-		Changes:      []fileEntry{fileEntryFor(changeURL, 2, changeBytes)},
+		Changes:      []fileEntry{changeFileEntryFor(changeURL, 1, 2, changeBytes)},
 	}
 	entryBytes, err := signInPlace(entry, &entry.Signature, priv)
 	if err != nil {
@@ -418,6 +424,20 @@ func fileEntryFor(url string, version int, signedBytes []byte) fileEntry {
 		Size:     int64(len(signedBytes)),
 		Digest:   "sha-256:" + fmt.Sprintf("%x", sum[:]),
 		Encoding: "json",
+	}
+}
+
+// changeFileEntryFor builds the index's reference to a signed change file:
+// fromVersion/toVersion (not version) mirror the change file's own fields.
+func changeFileEntryFor(url string, fromVersion, toVersion int, signedBytes []byte) fileEntry {
+	sum := sha256.Sum256(signedBytes)
+	return fileEntry{
+		FromVersion: fromVersion,
+		ToVersion:   toVersion,
+		URL:         url,
+		Size:        int64(len(signedBytes)),
+		Digest:      "sha-256:" + fmt.Sprintf("%x", sum[:]),
+		Encoding:    "json",
 	}
 }
 
