@@ -23,7 +23,7 @@ func TestResolveDelta(t *testing.T) {
 	entry := CatalogEntry{
 		CatalogID: "p/c",
 		Baseline: FileEntry{Version: 1, URL: "base"},
-		Changes:  []FileEntry{{Version: 2, URL: "v2"}, {Version: 3, URL: "v3"}},
+		Changes:  []FileEntry{{FromVersion: 1, ToVersion: 2, URL: "v2"}, {FromVersion: 2, ToVersion: 3, URL: "v3"}},
 	}
 	var fetched []string
 	fetch := func(f FileEntry) ([]byte, error) { fetched = append(fetched, f.URL); return files[f.URL], nil }
@@ -56,7 +56,7 @@ func TestResolveDelta(t *testing.T) {
 	// baseline fetch for id/descriptor/provider only; the baseline's own
 	// resources (r1, r2) must NOT appear, only the change file's upsert (r5).
 	files["nometa"] = []byte(`{"catalogId":"p/c","fromVersion":1,"toVersion":2,"resources":{"upserts":[{"id":"r5"}]},"offers":{}}`)
-	noMeta := CatalogEntry{Baseline: FileEntry{Version: 1, URL: "base"}, Changes: []FileEntry{{Version: 2, URL: "nometa"}}}
+	noMeta := CatalogEntry{Baseline: FileEntry{Version: 1, URL: "base"}, Changes: []FileEntry{{FromVersion: 1, ToVersion: 2, URL: "nometa"}}}
 	doc2, _, ok2, err := ResolveDelta(noMeta, 1, 2, fetch)
 	if err != nil || !ok2 {
 		t.Fatalf("no-envelope fallback should succeed, got ok=%v err=%v", ok2, err)
@@ -95,7 +95,7 @@ func TestResolve(t *testing.T) {
 	entry := CatalogEntry{
 		CatalogID: "p/c",
 		Baseline: FileEntry{Version: 40, URL: "base", Digest: "d"},
-		Changes:  []FileEntry{{Version: 41, URL: "v41", Digest: "d"}, {Version: 42, URL: "v42", Digest: "d"}},
+		Changes:  []FileEntry{{FromVersion: 40, ToVersion: 41, URL: "v41", Digest: "d"}, {FromVersion: 41, ToVersion: 42, URL: "v42", Digest: "d"}},
 	}
 	fetch := func(f FileEntry) ([]byte, error) { return files[f.URL], nil }
 
@@ -141,7 +141,7 @@ func TestResolveWithChangeset(t *testing.T) {
 	entry := CatalogEntry{
 		CatalogID: "p/c",
 		Baseline: FileEntry{Version: 40, URL: "base"},
-		Changes:  []FileEntry{{Version: 41, URL: "v41"}, {Version: 42, URL: "v42"}},
+		Changes:  []FileEntry{{FromVersion: 40, ToVersion: 41, URL: "v41"}, {FromVersion: 41, ToVersion: 42, URL: "v42"}},
 	}
 	fetch := func(f FileEntry) ([]byte, error) { return files[f.URL], nil }
 
@@ -289,7 +289,7 @@ func TestResolveWithChangeset_BaselineShape(t *testing.T) {
 			entry := CatalogEntry{
 				CatalogID: "p/c",
 				Baseline: FileEntry{Version: 40, URL: "base"},
-				Changes:  []FileEntry{{Version: 41, URL: "v41"}},
+				Changes:  []FileEntry{{FromVersion: 40, ToVersion: 41, URL: "v41"}},
 			}
 			fetch := func(f FileEntry) ([]byte, error) { return files[f.URL], nil }
 
@@ -342,37 +342,37 @@ func TestResolveDelta_Continuity(t *testing.T) {
 	}{
 		{
 			name:       "contiguous delta composes every version in the range",
-			changes:    []FileEntry{{Version: 6, URL: "v6"}, {Version: 7, URL: "v7"}, {Version: 8, URL: "v8"}},
+			changes:    []FileEntry{{FromVersion: 5, ToVersion: 6, URL: "v6"}, {FromVersion: 6, ToVersion: 7, URL: "v7"}, {FromVersion: 7, ToVersion: 8, URL: "v8"}},
 			wantResIDs: []string{"r6", "r7", "r8"},
 		},
 		{
 			name:       "a placeholder outside the range is ignored, not a gap",
-			changes:    []FileEntry{{Version: 6, URL: "v6"}, {Version: 7, URL: "v7"}, {Version: 8, URL: "v8"}, {Version: 9, URL: ""}},
+			changes:    []FileEntry{{FromVersion: 5, ToVersion: 6, URL: "v6"}, {FromVersion: 6, ToVersion: 7, URL: "v7"}, {FromVersion: 7, ToVersion: 8, URL: "v8"}, {FromVersion: 8, ToVersion: 9, URL: ""}},
 			wantResIDs: []string{"r6", "r7", "r8"},
 		},
 		{
 			name:      "a missing intermediate version parks as a gap",
-			changes:   []FileEntry{{Version: 7, URL: "v7"}, {Version: 8, URL: "v8"}},
+			changes:   []FileEntry{{FromVersion: 6, ToVersion: 7, URL: "v7"}, {FromVersion: 7, ToVersion: 8, URL: "v8"}},
 			wantFault: FaultGap,
 		},
 		{
 			name:      "a url-less placeholder inside the range is a gap, not a skip",
-			changes:   []FileEntry{{Version: 6, URL: ""}, {Version: 7, URL: "v7"}, {Version: 8, URL: "v8"}},
+			changes:   []FileEntry{{FromVersion: 5, ToVersion: 6, URL: ""}, {FromVersion: 6, ToVersion: 7, URL: "v7"}, {FromVersion: 7, ToVersion: 8, URL: "v8"}},
 			wantFault: FaultGap,
 		},
 		{
 			name:       "one wide change file that starts at the cursor is contiguous",
-			changes:    []FileEntry{{Version: 7, URL: "v7wide"}, {Version: 8, URL: "v8"}},
+			changes:    []FileEntry{{FromVersion: 5, ToVersion: 7, URL: "v7wide"}, {FromVersion: 7, ToVersion: 8, URL: "v8"}},
 			wantResIDs: []string{"r7", "r8"},
 		},
 		{
 			name:      "a first change file that starts before the cursor is a gap",
-			changes:   []FileEntry{{Version: 6, URL: "v6early"}, {Version: 7, URL: "v7"}, {Version: 8, URL: "v8"}},
+			changes:   []FileEntry{{FromVersion: 4, ToVersion: 6, URL: "v6early"}, {FromVersion: 6, ToVersion: 7, URL: "v7"}, {FromVersion: 7, ToVersion: 8, URL: "v8"}},
 			wantFault: FaultGap,
 		},
 		{
 			name:      "a hole in the middle of the fold is a gap",
-			changes:   []FileEntry{{Version: 6, URL: "v6"}, {Version: 8, URL: "v8"}},
+			changes:   []FileEntry{{FromVersion: 5, ToVersion: 6, URL: "v6"}, {FromVersion: 7, ToVersion: 8, URL: "v8"}},
 			wantFault: FaultGap,
 		},
 	}

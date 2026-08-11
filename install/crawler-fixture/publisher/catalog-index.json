@@ -24,7 +24,8 @@
       },
       "changes": [
         {
-          "version": 2,
+          "fromVersion": 1,
+          "toVersion": 2,
           "url": "http://publisher-origin/catalogs/cat-ev-001-v1-to-v2.json",
           "size": 750,
           "digest": "sha-256:8b210701834d465fa47e98a61b949a63d7c9f628585c02e3890edca62dc13b0b",
@@ -33,7 +34,7 @@
       ],
       "signature": {
         "keyId": "fixture-key-1",
-        "value": "yEuAsl2VYaKtkVy4fXw58E6ZojQcHgv6HeCP6bJx++hJjLL1ur+N3vW9lTwq4+8DSpR/7qRjDQZBaUA+cPwJAg=="
+        "value": "vO7Qx/0oSPT0N12Be4NyOnq07LGKU/i3XmfgfLi/LbIK0m5uf2xPj82V/E1ngAevM2NrN0swL2OjFqMgk8WmBw=="
       }
     }
   ]

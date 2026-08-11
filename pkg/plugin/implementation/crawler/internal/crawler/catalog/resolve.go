@@ -62,36 +62,48 @@ func ResolveWithChangeset(entry CatalogEntry, cursor int64, seen bool, toVersion
 	}
 
 	changes := append([]FileEntry(nil), entry.Changes...)
-	sort.SliceStable(changes, func(i, j int) bool { return changes[i].Version < changes[j].Version })
+	sort.SliceStable(changes, func(i, j int) bool { return changes[i].ToVersion < changes[j].ToVersion })
 
 	running := entry.Baseline.Version
 	for _, c := range changes {
 		if c.URL == "" {
 			continue // not-yet-published placeholder entry (no content)
 		}
-		if c.Version <= entry.Baseline.Version || c.Version > toVersion {
+		if c.ToVersion <= entry.Baseline.Version || c.ToVersion > toVersion {
 			continue
+		}
+		// Continuity, cheaply, from the index's own declared fromVersion/toVersion
+		// (RFC NFH-014 §Schema Changes: "lets a DS confirm the chain is contiguous
+		// from the index alone, before fetching anything") -- authenticated by the
+		// entry's own signature, so this is trustworthy before a single byte of the
+		// file itself is fetched. The fetched file's OWN fromVersion is still
+		// cross-checked below; this just catches a gap for free, one HTTP call
+		// earlier.
+		if c.FromVersion != running {
+			return nil, cs, PermanentFaultf(FaultGap, "crawler: change v%d declares fromVersion=%d, expected %d (gap in change files)", c.ToVersion, c.FromVersion, running)
 		}
 		b, err := fetch(c)
 		if err != nil {
-			return nil, cs, fmt.Errorf("crawler: fetching change v%d: %w", c.Version, err)
+			return nil, cs, fmt.Errorf("crawler: fetching change v%d: %w", c.ToVersion, err)
 		}
 		var cf catalogfile.ChangeFileDoc
 		if err := json.Unmarshal(b, &cf); err != nil {
-			return nil, cs, Permanentf("crawler: parsing change v%d: %v", c.Version, err)
+			return nil, cs, Permanentf("crawler: parsing change v%d: %v", c.ToVersion, err)
 		}
-		// Continuity: each change must start where the previous one ended, or the
-		// fold silently mis-composes (a gap => a wrong catalog). A gap is a
-		// publisher-side data problem — it won't fix on retry, so it's permanent.
+		// Continuity again, now against the file's OWN declared fromVersion: the
+		// index-level check above is authenticated but still just a declaration:
+		// this confirms the fetched content agrees with what the index promised.
+		// A gap here is a publisher-side data problem — it won't fix on retry, so
+		// it's permanent.
 		if int64(cf.FromVersion) != running {
-			return nil, cs, PermanentFaultf(FaultGap, "crawler: change v%d fromVersion=%d, expected %d (gap in change files)", c.Version, cf.FromVersion, running)
+			return nil, cs, PermanentFaultf(FaultGap, "crawler: change v%d fromVersion=%d, expected %d (gap in change files)", c.ToVersion, cf.FromVersion, running)
 		}
-		if c.Version > cursor { // accumulate the changeset only past our cursor
+		if c.ToVersion > cursor { // accumulate the changeset only past our cursor
 			accumulateChangeset(&cs, cf)
 		}
 		current, err = catalogfile.Apply(current, b)
 		if err != nil {
-			return nil, cs, Permanentf("crawler: folding change v%d: %v", c.Version, err)
+			return nil, cs, Permanentf("crawler: folding change v%d: %v", c.ToVersion, err)
 		}
 		running = int64(cf.ToVersion)
 	}
@@ -124,7 +136,7 @@ func ResolveWithChangeset(entry CatalogEntry, cursor int64, seen bool, toVersion
 func ResolveDelta(entry CatalogEntry, cursor, toVersion int64, fetch FetchFunc) ([]byte, Changeset, bool, error) {
 	cs := Changeset{UpsertedResources: map[string]bool{}, UpsertedOffers: map[string]bool{}}
 	changes := append([]FileEntry(nil), entry.Changes...)
-	sort.SliceStable(changes, func(i, j int) bool { return changes[i].Version < changes[j].Version })
+	sort.SliceStable(changes, func(i, j int) bool { return changes[i].ToVersion < changes[j].ToVersion })
 
 	resByID, offByID := map[string]json.RawMessage{}, map[string]json.RawMessage{}
 	var resOrder, offOrder []string
@@ -132,7 +144,7 @@ func ResolveDelta(entry CatalogEntry, cursor, toVersion int64, fetch FetchFunc) 
 
 	running := cursor
 	for _, c := range changes {
-		if c.Version <= cursor || c.Version > toVersion {
+		if c.ToVersion <= cursor || c.ToVersion > toVersion {
 			continue
 		}
 		if c.URL == "" {
@@ -141,19 +153,27 @@ func ResolveDelta(entry CatalogEntry, cursor, toVersion int64, fetch FetchFunc) 
 			// delta that is missing that version's upserts, which is the same silent
 			// divergence a gap causes, so it is reported as one.
 			return nil, cs, false, PermanentFaultf(FaultGap,
-				"crawler: change v%d has no url (unpublished placeholder inside the delta range %d..%d)", c.Version, cursor, toVersion)
+				"crawler: change v%d has no url (unpublished placeholder inside the delta range %d..%d)", c.ToVersion, cursor, toVersion)
+		}
+		// Continuity, cheaply, from the index's own declared fromVersion/toVersion
+		// (RFC NFH-014 §Schema Changes) -- see ResolveWithChangeset's identical
+		// check for why this is trustworthy before a fetch, and why the fetched
+		// file's own fromVersion is still cross-checked below regardless.
+		if c.FromVersion != running {
+			return nil, cs, false, PermanentFaultf(FaultGap,
+				"crawler: change v%d declares fromVersion=%d, expected %d (gap in change files)", c.ToVersion, c.FromVersion, running)
 		}
 		b, err := fetch(c)
 		if err != nil {
-			return nil, cs, false, fmt.Errorf("crawler: fetching change v%d: %w", c.Version, err)
+			return nil, cs, false, fmt.Errorf("crawler: fetching change v%d: %w", c.ToVersion, err)
 		}
 		var cf catalogfile.ChangeFileDoc
 		if err := json.Unmarshal(b, &cf); err != nil {
-			return nil, cs, false, Permanentf("crawler: parsing change v%d: %v", c.Version, err)
+			return nil, cs, false, Permanentf("crawler: parsing change v%d: %v", c.ToVersion, err)
 		}
 		if int64(cf.FromVersion) != running {
 			return nil, cs, false, PermanentFaultf(FaultGap,
-				"crawler: change v%d fromVersion=%d, expected %d (gap in change files)", c.Version, cf.FromVersion, running)
+				"crawler: change v%d fromVersion=%d, expected %d (gap in change files)", c.ToVersion, cf.FromVersion, running)
 		}
 		if len(cf.Catalog) > 0 {
 			envelope = cf.Catalog // metadata envelope; latest wins

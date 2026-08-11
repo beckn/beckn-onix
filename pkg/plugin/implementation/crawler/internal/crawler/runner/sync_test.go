@@ -640,7 +640,7 @@ func TestBuildPushDoc_ContentIntegrity(t *testing.T) {
 		"v2": []byte(`{"catalogId":"p/c","fromVersion":1,"toVersion":2,` + changeEnvelope + `,"resources":{"upserts":[{"id":"r2"}]},"offers":{}}`),
 		"v3": []byte(`{"catalogId":"p/c","fromVersion":2,"toVersion":3,` + changeEnvelope + `,"resources":{"upserts":[{"id":"r3"}]},"offers":{}}`),
 	}
-	allChanges := []catalog.FileEntry{{Version: 2, URL: "v2"}, {Version: 3, URL: "v3"}}
+	allChanges := []catalog.FileEntry{{FromVersion: 1, ToVersion: 2, URL: "v2"}, {FromVersion: 2, ToVersion: 3, URL: "v3"}}
 
 	tests := []struct {
 		name        string
@@ -689,13 +689,13 @@ func TestBuildPushDoc_ContentIntegrity(t *testing.T) {
 		},
 		{
 			name: "incremental delta with a missing intermediate version is a gap", mergeOnly: true,
-			fromVersion: 1, baseline: baselineOK, changes: []catalog.FileEntry{{Version: 3, URL: "v3"}},
+			fromVersion: 1, baseline: baselineOK, changes: []catalog.FileEntry{{FromVersion: 2, ToVersion: 3, URL: "v3"}},
 			wantFault: catalog.FaultGap,
 		},
 		{
 			name: "incremental delta with an unpublished placeholder mid-range is a gap", mergeOnly: true,
 			fromVersion: 1, baseline: baselineOK,
-			changes:   []catalog.FileEntry{{Version: 2, URL: ""}, {Version: 3, URL: "v3"}},
+			changes:   []catalog.FileEntry{{FromVersion: 1, ToVersion: 2, URL: ""}, {FromVersion: 2, ToVersion: 3, URL: "v3"}},
 			wantFault: catalog.FaultGap,
 		},
 	}
