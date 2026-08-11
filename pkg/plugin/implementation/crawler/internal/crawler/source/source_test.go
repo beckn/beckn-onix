@@ -35,7 +35,7 @@ func TestRegistrySource_DedupsByIndexURL(t *testing.T) {
 		"net1": {{ParticipantID: "p1", IndexURL: "https://p1/i"}},
 		"net2": {{ParticipantID: "p2", IndexURL: "https://p2/i"}, {ParticipantID: "p1", IndexURL: "https://p1/i"}},
 	}}
-	s := NewRegistrySource(reg, []string{"net1", "net2"})
+	s := NewRegistrySource(reg, []string{"net1", "net2"}, nil)
 	refs, err := s.IndexRefs(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func (e errRegistry) Providers(context.Context, string) ([]Provider, error) { re
 // the network, not be silently swallowed into an empty (looks-idle) ref set.
 func TestRegistrySource_PropagatesLookupError(t *testing.T) {
 	sentinel := errors.New("registry unreachable")
-	s := NewRegistrySource(errRegistry{err: sentinel}, []string{"beckn.one/net1"})
+	s := NewRegistrySource(errRegistry{err: sentinel}, []string{"beckn.one/net1"}, nil)
 	_, err := s.IndexRefs(context.Background())
 	if err == nil {
 		t.Fatal("expected IndexRefs to fail when a network lookup fails")
@@ -79,7 +79,7 @@ func TestRegistrySource_CarriesParticipantIDIntoRef(t *testing.T) {
 	reg := fakeRegistry{byNet: map[string][]Provider{
 		"net1": {{ParticipantID: "prov.one.example", IndexURL: "https://p1/i"}},
 	}}
-	refs, err := NewRegistrySource(reg, []string{"net1"}).IndexRefs(context.Background())
+	refs, err := NewRegistrySource(reg, []string{"net1"}, nil).IndexRefs(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -138,7 +138,7 @@ func New(ctx context.Context, s config.Settings, opts Options) (Crawler, func() 
 	// config list; selectSource picks one and reports the mode + startup count
 	// for the ready log. The DeDi query client is bounded by the same
 	// FetchTimeout as the fetch client.
-	src, sourceMode, sourceCount := selectSource(s)
+	src, sourceMode, sourceCount := selectSource(s, log)
 
 	eng := runner.New(runner.EngineConfig{
 		Networks:        s.NetworkIDs,
@@ -155,7 +155,7 @@ func New(ctx context.Context, s config.Settings, opts Options) (Crawler, func() 
 		// URL + networks come in the request body), the same way selectSource builds
 		// the scheduled one — bounded by the same FetchTimeout.
 		NewRegistrySource: func(registryURL string, networkIDs []string) source.Source {
-			return source.NewRegistrySource(source.NewDediQueryClient(registryURL, s.FetchTimeout), networkIDs)
+			return source.NewRegistrySource(source.NewDediQueryClient(registryURL, s.FetchTimeout), networkIDs, log)
 		},
 		FetchIndex: fc.FetchIndex,
 		FetchFile:  fc.FetchFile,
@@ -203,9 +203,9 @@ func New(ctx context.Context, s config.Settings, opts Options) (Crawler, func() 
 // alongside a static list) falls back to that list rather than silently building
 // an empty registry source that discovers nothing. The DeDi query client is
 // bounded by the crawler's FetchTimeout.
-func selectSource(s config.Settings) (source.Source, string, int) {
+func selectSource(s config.Settings, log runner.Logger) (source.Source, string, int) {
 	if s.RegistryURL != "" && len(s.NetworkIDs) > 0 {
-		return source.NewRegistrySource(source.NewDediQueryClient(s.RegistryURL, s.FetchTimeout), s.NetworkIDs),
+		return source.NewRegistrySource(source.NewDediQueryClient(s.RegistryURL, s.FetchTimeout), s.NetworkIDs, log),
 			source.KindRegistry, len(s.NetworkIDs)
 	}
 	return source.NewConfigSource(s.IndexURLs), source.KindConfig, len(s.IndexURLs)

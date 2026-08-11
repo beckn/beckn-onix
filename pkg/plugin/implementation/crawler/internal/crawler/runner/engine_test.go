@@ -92,7 +92,7 @@ func TestEngine_IndexThenCatalogPass(t *testing.T) {
 		FetchIndex: func(context.Context, string, catalog.IndexConditions) (catalog.IndexResult, error) {
 			return catalog.IndexResult{Index: idx}, nil
 		},
-		FetchFile: func(_ context.Context, _ string, f catalog.FileEntry) ([]byte, error) { return files[f.URL], nil },
+		FetchFile: func(_ context.Context, _, _ string, f catalog.FileEntry) ([]byte, error) { return files[f.URL], nil },
 		Validate:  func(context.Context, []byte) error { return nil },
 		Push: func(_ context.Context, body []byte) (publish.BatchOutcome, error) {
 			pushed = append(pushed, body)
@@ -254,7 +254,7 @@ func TestCrawlIndex_NotModified_TouchesCadence(t *testing.T) {
 			sawCond = cond.ETag
 			return catalog.IndexResult{NotModified: true}, nil
 		},
-		FetchFile: func(_ context.Context, _ string, f catalog.FileEntry) ([]byte, error) { return nil, nil },
+		FetchFile: func(_ context.Context, _, _ string, f catalog.FileEntry) ([]byte, error) { return nil, nil },
 		Push: func(context.Context, []byte) (publish.BatchOutcome, error) {
 			return publish.BatchOutcome{Acked: true, HTTPStatus: 200}, nil
 		},
@@ -310,7 +310,7 @@ func TestEngine_MergeOnly_DeltaPush(t *testing.T) {
 		FetchIndex: func(context.Context, string, catalog.IndexConditions) (catalog.IndexResult, error) {
 			return catalog.IndexResult{Index: idx}, nil
 		},
-		FetchFile: func(_ context.Context, _ string, f catalog.FileEntry) ([]byte, error) {
+		FetchFile: func(_ context.Context, _, _ string, f catalog.FileEntry) ([]byte, error) {
 			fetched = append(fetched, f.URL)
 			return files[f.URL], nil
 		},
@@ -437,7 +437,7 @@ func TestEngine_MergeOnly_NoEnvelope_FallsBackToBaselineMetadata(t *testing.T) {
 		FetchIndex: func(context.Context, string, catalog.IndexConditions) (catalog.IndexResult, error) {
 			return catalog.IndexResult{Index: idx}, nil
 		},
-		FetchFile: func(_ context.Context, _ string, f catalog.FileEntry) ([]byte, error) {
+		FetchFile: func(_ context.Context, _, _ string, f catalog.FileEntry) ([]byte, error) {
 			fetched = append(fetched, f.URL)
 			return files[f.URL], nil
 		},

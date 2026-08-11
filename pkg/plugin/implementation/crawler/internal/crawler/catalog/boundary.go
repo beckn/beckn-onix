@@ -14,10 +14,22 @@ type IndexConditions struct {
 
 // IndexResult is one index fetch. NotModified is true when the host answered
 // 304 (the index is unchanged and Index is zero — skip it). ETag/LastModified
-// are the validators to store for next time (echoed back on a 304).
+// are the validators to store for next time (echoed back on a 304). Dropped
+// names every catalog entry the parser saw but excluded from Index.Catalogs
+// (malformed JSON, or a self-signature that failed to verify) — fail-closed
+// silently drops the entry from processing, but the caller needs this to log
+// WHY a poll that fetched fine still queued nothing, rather than looking
+// identical to "nothing changed".
 type IndexResult struct {
 	Index        Index
 	NotModified  bool
 	ETag         string
 	LastModified string
+	Dropped      []DroppedEntry
+}
+
+// DroppedEntry is one catalog entry excluded from a fetched index, and why.
+type DroppedEntry struct {
+	CatalogID string // best-effort: empty if the entry didn't even parse enough to have one
+	Reason    string
 }

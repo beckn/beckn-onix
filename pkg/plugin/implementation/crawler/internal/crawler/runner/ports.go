@@ -54,8 +54,10 @@ type IndexFetcher func(ctx context.Context, indexURL string, cond catalog.IndexC
 
 // FileFetcher fetches + verifies + decodes one catalog file. nodeID is the
 // enclosing index's publishing-node identity, used to resolve the file's
-// self-signature against the registry.
-type FileFetcher func(ctx context.Context, nodeID string, f catalog.FileEntry) ([]byte, error)
+// self-signature against the registry. catalogID is the enclosing index
+// entry's own catalogId, cross-checked against the file's internal
+// catalogId/version (RFC NFH-014 CON-TBD-12).
+type FileFetcher func(ctx context.Context, nodeID, catalogID string, f catalog.FileEntry) ([]byte, error)
 
 // Validator schema-validates the /push request body before it is sent (Phase 1;
 // reuses onix's schemav2validator). A nil error means valid.

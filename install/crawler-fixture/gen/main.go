@@ -136,7 +136,13 @@ type catalogDoc struct {
 
 // baselineFile is a self-signed `CatalogFile` (file spec): the catalog
 // wrapped with its own signature, nothing else.
+// baselineFile mirrors catalogpublisher's actual catalogFileDoc shape:
+// catalogId/version are siblings of catalog/signature (RFC NFH-014's
+// CatalogFile, CON-TBD-12 -- a crawler cross-checks these against what the
+// index entry declared).
 type baselineFile struct {
+	CatalogID string     `json:"catalogId"`
+	Version   int        `json:"version"`
 	Catalog   catalogDoc `json:"catalog"`
 	Signature signature  `json:"signature"`
 }
@@ -258,6 +264,8 @@ func run(dir string) error {
 	changeURL := originBase + "cat-ev-001-v1-to-v2.json"
 
 	baseline := &baselineFile{
+		CatalogID: catalogID,
+		Version:   1,
 		Catalog: catalogDoc{
 			ID:         catalogID,
 			Descriptor: descriptor{Name: "Sunrise EV Charging", ShortDesc: "Public DC and AC charging points"},

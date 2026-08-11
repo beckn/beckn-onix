@@ -64,8 +64,8 @@ func TestHTTPClient_FetchIndexAndFile(t *testing.T) {
 		t.Fatalf("index = %+v, want nodeId p", res.Index)
 	}
 
-	good := catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(cat)}
-	body, err := c.FetchFile(ctx, "p", good)
+	good := catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(cat), Version: 1}
+	body, err := c.FetchFile(ctx, "p", "p/c", good)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestHTTPClient_FetchIndexAndFile(t *testing.T) {
 
 	// A digest the bytes don't match, correctly signed: the digest gate still bites.
 	bad := catalog.FileEntry{URL: srv.URL + "/file", Digest: "sha-256:deadbeef"}
-	if _, err := c.FetchFile(ctx, "p", bad); err == nil {
+	if _, err := c.FetchFile(ctx, "p", "p/c", bad); err == nil {
 		t.Fatal("expected digest-mismatch error")
 	}
 }
@@ -122,13 +122,13 @@ func TestHTTPClient_FetchFile_SignatureGate(t *testing.T) {
 
 	t.Run("unsigned file", func(t *testing.T) {
 		c := NewClient(5*time.Second, 1<<20, 1<<20, true, WithTrustedKeys(signer.source()))
-		_, err := c.FetchFile(ctx, "p", plain)
+		_, err := c.FetchFile(ctx, "p", "p/c", plain)
 		assertPermanentFault(t, err, faultSignature)
 	})
 
 	t.Run("no trusted keys injected", func(t *testing.T) {
 		c := NewClient(5*time.Second, 1<<20, 1<<20, true)
-		_, err := c.FetchFile(ctx, "p", plain)
+		_, err := c.FetchFile(ctx, "p", "p/c", plain)
 		assertPermanentFault(t, err, faultSignature)
 	})
 
@@ -141,9 +141,9 @@ func TestHTTPClient_FetchGzipFile(t *testing.T) {
 	signer := newTestSigner(t)
 	cat := string(signer.signChangeFile(t, "p/c", 0, 1))
 	compressed := gz(t, []byte(cat))
-	// The digest covers the artifact AT REST — the compressed bytes we hash
-	// before spending CPU inflating.
-	digest := sha256Prefixed(string(compressed))
+	// RFC NFH-014 CON-TBD-29: the digest covers the canonical DECOMPRESSED
+	// content, never the compressed bytes at rest.
+	digest := sha256Prefixed(cat)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/c.json.gzip", func(w http.ResponseWriter, _ *http.Request) { w.Write(compressed) })
@@ -155,7 +155,7 @@ func TestHTTPClient_FetchGzipFile(t *testing.T) {
 	ctx := context.Background()
 
 	// Encoding inferred from the .json.gzip suffix.
-	body, err := c.FetchFile(ctx, "p", catalog.FileEntry{URL: srv.URL + "/c.json.gzip", Digest: digest})
+	body, err := c.FetchFile(ctx, "p", "p/c", catalog.FileEntry{URL: srv.URL + "/c.json.gzip", Digest: digest, Version: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,13 +164,33 @@ func TestHTTPClient_FetchGzipFile(t *testing.T) {
 	}
 
 	// Encoding taken from the explicit FileEntry.Encoding on a plain URL.
-	body, err = c.FetchFile(ctx, "p", catalog.FileEntry{URL: srv.URL + "/c", Encoding: "gzip", Digest: digest})
+	body, err = c.FetchFile(ctx, "p", "p/c", catalog.FileEntry{URL: srv.URL + "/c", Encoding: "gzip", Digest: digest, Version: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(body) != cat {
 		t.Fatalf("explicit-encoding decoded = %q, want %q", body, cat)
 	}
+}
+
+// Regression: a digest computed over the compressed bytes at rest (the old,
+// spec-violating behavior) must be REJECTED, not accepted — CON-TBD-29
+// requires the digest to cover the decompressed content only. This is the
+// exact bug where every gzip-served file digest-mismatched (or, if the
+// digest were wrongly computed the same wrong way on both sides, silently
+// verified against the wrong thing).
+func TestHTTPClient_FetchGzipFile_DigestOverCompressedBytesRejected(t *testing.T) {
+	signer := newTestSigner(t)
+	cat := string(signer.signChangeFile(t, "p/c", 0, 1))
+	compressed := gz(t, []byte(cat))
+	wrongDigest := sha256Prefixed(string(compressed)) // over compressed bytes -- wrong per CON-TBD-29
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Write(compressed) }))
+	defer srv.Close()
+
+	c := NewClient(5*time.Second, 1<<20, 1<<20, true, WithTrustedKeys(signer.source()))
+	_, err := c.FetchFile(context.Background(), "p", "p/c", catalog.FileEntry{URL: srv.URL + "/c.json.gz", Digest: wrongDigest, Version: 1})
+	assertPermanentFault(t, err, catalog.FaultDigestMismatch)
 }
 
 // The conditional-GET round-trip: a 200 captures the host's validators; echoing
@@ -324,7 +344,7 @@ func TestClient_FetchTimeoutBoundsHungResolver(t *testing.T) {
 		{
 			name: "FetchFile",
 			call: func(ctx context.Context) error {
-				_, err := c.FetchFile(ctx, "p", entry)
+				_, err := c.FetchFile(ctx, "p", "p/c", entry)
 				return err
 			},
 		},
@@ -362,8 +382,8 @@ func TestClient_ZeroTimeoutMeansNoDeadline(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(0, 1<<20, 1<<20, true, WithTrustedKeys(signer.source()))
-	f := catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(cat)}
-	body, err := c.FetchFile(context.Background(), "p", f)
+	f := catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(cat), Version: 1}
+	body, err := c.FetchFile(context.Background(), "p", "p/c", f)
 	if err != nil {
 		t.Fatalf("FetchFile with timeout 0 = %v, want it to succeed", err)
 	}
@@ -390,14 +410,14 @@ func TestFetchFaults_ArePermanentAndClassified(t *testing.T) {
 	t.Run("digest mismatch", func(t *testing.T) {
 		c := NewClient(5*time.Second, 1<<20, 1<<20, true, keys)
 		f := catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed("something else")}
-		_, err := c.FetchFile(ctx, "p", f)
+		_, err := c.FetchFile(ctx, "p", "p/c", f)
 		assertPermanentFault(t, err, catalog.FaultDigestMismatch)
 	})
 
 	t.Run("artifact over the compressed cap", func(t *testing.T) {
 		c := NewClient(5*time.Second, 8, 1<<20, true, keys) // maxBytes=8 < len(cat)
 		f := catalog.FileEntry{URL: srv.URL + "/file", Digest: sha256Prefixed(cat)}
-		_, err := c.FetchFile(ctx, "p", f)
+		_, err := c.FetchFile(ctx, "p", "p/c", f)
 		assertPermanentFault(t, err, catalog.FaultOversize)
 	})
 
@@ -414,7 +434,7 @@ func TestFetchFaults_ArePermanentAndClassified(t *testing.T) {
 		defer down.Close()
 		c := NewClient(5*time.Second, 1<<20, 1<<20, true, keys)
 		f := catalog.FileEntry{URL: down.URL, Digest: sha256Prefixed(cat)}
-		_, err := c.FetchFile(ctx, "p", f)
+		_, err := c.FetchFile(ctx, "p", "p/c", f)
 		if err == nil {
 			t.Fatal("want an error on 503")
 		}

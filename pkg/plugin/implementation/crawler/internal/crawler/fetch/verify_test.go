@@ -83,10 +83,17 @@ func (s testSigner) signChangeFile(t *testing.T, catalogID string, fromV, toV in
 	})
 }
 
-// signBaseline signs an enveloped {catalog, signature} baseline file.
-func (s testSigner) signBaseline(t *testing.T, catalog map[string]any) []byte {
+// signBaseline signs an enveloped {catalogId, version, catalog, signature}
+// baseline file, matching catalogpublisher's actual catalogFileDoc shape
+// (catalogId/version are siblings of catalog/signature, not nested inside
+// catalog).
+func (s testSigner) signBaseline(t *testing.T, catalogID string, version int, catalog map[string]any) []byte {
 	t.Helper()
-	return s.signDoc(t, map[string]any{"catalog": catalog})
+	return s.signDoc(t, map[string]any{
+		"catalogId": catalogID,
+		"version":   version,
+		"catalog":   catalog,
+	})
 }
 
 // signEntry signs a catalog index entry the way the index itself would.
@@ -108,7 +115,7 @@ func TestVerifyFileSignature(t *testing.T) {
 
 	t.Run("valid change file passes and needs no unwrap", func(t *testing.T) {
 		raw := signer.signChangeFile(t, "p/c", 1, 2)
-		out, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", raw)
+		out, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", raw, "p/c", 2)
 		if err != nil {
 			t.Fatalf("verifyFileSignature() = %v, want nil", err)
 		}
@@ -132,7 +139,7 @@ func TestVerifyFileSignature(t *testing.T) {
 			"resources":   map[string]any{"upserts": []any{}, "removals": []any{}},
 			"offers":      map[string]any{"upserts": []any{}, "removals": []any{}},
 		})
-		out, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", raw)
+		out, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", raw, "p/c", 2)
 		if err != nil {
 			t.Fatalf("verifyFileSignature() = %v, want nil", err)
 		}
@@ -143,8 +150,8 @@ func TestVerifyFileSignature(t *testing.T) {
 
 	t.Run("valid baseline unwraps to the bare catalog", func(t *testing.T) {
 		cat := map[string]any{"id": "p/c", "resources": []any{}}
-		raw := signer.signBaseline(t, cat)
-		out, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/b.json", raw)
+		raw := signer.signBaseline(t, "p/c", 1, cat)
+		out, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/b.json", raw, "p/c", 1)
 		if err != nil {
 			t.Fatalf("verifyFileSignature() = %v, want nil", err)
 		}
@@ -168,7 +175,7 @@ func TestVerifyFileSignature(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", tampered); err == nil {
+		if _, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", tampered, "p/c", 2); err == nil {
 			t.Fatal("want an error on tampered content")
 		} else {
 			assertPermanentFault(t, err, faultSignature)
@@ -177,32 +184,32 @@ func TestVerifyFileSignature(t *testing.T) {
 
 	t.Run("wrong signer under the same keyId fails", func(t *testing.T) {
 		raw := other.signChangeFile(t, "p/c", 1, 2)
-		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", raw)
+		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", raw, "p/c", 2)
 		assertPermanentFault(t, err, faultSignature)
 	})
 
 	t.Run("unknown keyId fails", func(t *testing.T) {
 		raw := signer.signChangeFile(t, "p/c", 1, 2)
-		_, err := verifyFileSignature(context.Background(), other.source(), nodeID, "https://x/c.json", raw)
+		_, err := verifyFileSignature(context.Background(), other.source(), nodeID, "https://x/c.json", raw, "p/c", 2)
 		assertPermanentFault(t, err, faultSignature)
 	})
 
 	t.Run("missing signature fails closed", func(t *testing.T) {
 		raw := []byte(`{"catalogId":"p/c","fromVersion":1,"toVersion":2}`)
-		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", raw)
+		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", raw, "p/c", 2)
 		assertPermanentFault(t, err, faultSignature)
 	})
 
 	t.Run("baseline with no catalog content fails closed", func(t *testing.T) {
 		raw := signer.signDoc(t, map[string]any{})
-		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/b.json", raw)
+		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/b.json", raw, "p/c", 1)
 		if err == nil || !catalog.IsPermanent(err) {
 			t.Fatalf("want a permanent fault, got %v", err)
 		}
 	})
 
 	t.Run("not a JSON object fails closed", func(t *testing.T) {
-		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", []byte("not json"))
+		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", []byte("not json"), "p/c", 2)
 		if err == nil || !catalog.IsPermanent(err) {
 			t.Fatalf("want a permanent fault, got %v", err)
 		}
@@ -210,8 +217,31 @@ func TestVerifyFileSignature(t *testing.T) {
 
 	t.Run("no key source fails closed", func(t *testing.T) {
 		raw := signer.signChangeFile(t, "p/c", 1, 2)
-		_, err := verifyFileSignature(context.Background(), nil, nodeID, "https://x/c.json", raw)
+		_, err := verifyFileSignature(context.Background(), nil, nodeID, "https://x/c.json", raw, "p/c", 2)
 		assertPermanentFault(t, err, faultSignature)
+	})
+
+	// RFC NFH-014 CON-TBD-12: a mismatch between the file's own internal
+	// catalogId/version and what the index entry declared is treated exactly
+	// like a digest mismatch -- discard, don't index -- even though the
+	// signature itself verifies fine (the content really is genuinely signed,
+	// just not the reference this index entry claims it is).
+	t.Run("catalogId mismatch against the index entry's declared catalogId fails as a digest mismatch", func(t *testing.T) {
+		raw := signer.signChangeFile(t, "p/c", 1, 2) // signed content says catalogId "p/c"
+		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", raw, "p/other", 2)
+		assertPermanentFault(t, err, catalog.FaultDigestMismatch)
+	})
+
+	t.Run("version mismatch against the index entry's declared version fails as a digest mismatch", func(t *testing.T) {
+		raw := signer.signChangeFile(t, "p/c", 1, 2) // signed content says toVersion 2
+		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/c.json", raw, "p/c", 99)
+		assertPermanentFault(t, err, catalog.FaultDigestMismatch)
+	})
+
+	t.Run("baseline version mismatch fails as a digest mismatch", func(t *testing.T) {
+		raw := signer.signBaseline(t, "p/c", 1, map[string]any{"id": "p/c", "resources": []any{}})
+		_, err := verifyFileSignature(context.Background(), signer.source(), nodeID, "https://x/b.json", raw, "p/c", 2)
+		assertPermanentFault(t, err, catalog.FaultDigestMismatch)
 	})
 }
 
@@ -221,7 +251,7 @@ func TestVerifyFileSignature_MalformedTrustedKey(t *testing.T) {
 	signer := newTestSigner(t)
 	raw := signer.signChangeFile(t, "p/c", 1, 2)
 	keys := StaticKeys(map[string]ed25519.PublicKey{signer.keyID: []byte("too short")})
-	_, err := verifyFileSignature(context.Background(), keys, "publisher.example.com", "https://x/c.json", raw)
+	_, err := verifyFileSignature(context.Background(), keys, "publisher.example.com", "https://x/c.json", raw, "p/c", 2)
 	assertPermanentFault(t, err, faultSignature)
 }
 
@@ -593,7 +623,7 @@ func TestVerifyFileSignatureWithRegistryKeys(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			keys := RegistryKeys(tt.reg, time.Minute)
-			_, err := verifyFileSignature(context.Background(), keys, nodeID, "https://x/c.json", raw)
+			_, err := verifyFileSignature(context.Background(), keys, nodeID, "https://x/c.json", raw, "p/c", 2)
 			if !tt.wantErr {
 				if err != nil {
 					t.Fatalf("verifyFileSignature() = %v, want nil", err)
