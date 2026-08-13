@@ -30,6 +30,15 @@ type Changeset struct {
 	RemovedOffers     int
 	HasRemovals       bool
 	FromBaseline      bool
+	// HasAttributeChange is true when any change file in range carried a
+	// non-empty catalog-level attribute patch (its "catalog" block -- e.g.
+	// isActive, descriptor, provider) -- see accumulateChangeset. A change can
+	// be real with zero resource/offer upserts: a publisher toggling isActive
+	// alone legitimately produces a minimal delta with empty resources/offers
+	// and just that one field under "catalog". Without this signal, verifyContent
+	// sees resCount==offCount==0 and skips the pass entirely, silently dropping
+	// the attribute change instead of pushing it.
+	HasAttributeChange bool
 }
 
 // Resolve builds the complete catalog at toVersion (baseline + change files
@@ -297,6 +306,9 @@ func accumulateChangeset(cs *Changeset, cf catalogfile.ChangeFileDoc) {
 	cs.RemovedOffers += len(cf.Offers.Removals)
 	if cs.RemovedResources > 0 || cs.RemovedOffers > 0 {
 		cs.HasRemovals = true
+	}
+	if len(cf.Catalog) > 0 {
+		cs.HasAttributeChange = true
 	}
 }
 

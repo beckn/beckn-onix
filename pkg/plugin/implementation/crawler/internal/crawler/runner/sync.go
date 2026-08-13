@@ -272,9 +272,17 @@ func (e *Engine) fetchContent(ctx context.Context, s *syncState) (catalog.SyncOu
 // and no alert. So before a zero-count doc may settle, its shape is confirmed:
 // corrupt content is a permanent content_invalid fault that parks, while a doc
 // that really does carry an empty catalog skips cleanly.
+//
+// Zero resources AND zero offers is NOT "nothing changed" on its own: a change
+// file legitimately carries zero upserts while still patching a catalog-level
+// attribute (isActive, descriptor, provider) via its own "catalog" block --
+// e.g. a publisher toggling isActive alone produces exactly this minimal delta.
+// cs.HasAttributeChange is how that's told apart from a genuinely-empty catalog;
+// without it this stage skipped the pass and silently dropped the attribute
+// change instead of pushing it.
 func (e *Engine) verifyContent(ctx context.Context, s *syncState) (catalog.SyncOutcome, bool) {
 	s.resCount, s.offCount = publish.DocCounts(s.pushDoc)
-	if s.resCount == 0 && s.offCount == 0 {
+	if s.resCount == 0 && s.offCount == 0 && !s.cs.HasAttributeChange {
 		if err := catalog.ValidateCatalogDoc(s.pushDoc); err != nil {
 			e.routeClassified(ctx, s.item, e.newFailureReport(s.item, 0, "verify: "+err.Error()),
 				catalog.FaultContentInvalid, s.runID, s.passID)

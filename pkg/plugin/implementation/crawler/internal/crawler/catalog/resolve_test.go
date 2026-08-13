@@ -69,6 +69,82 @@ func TestResolveDelta(t *testing.T) {
 	}
 }
 
+// A change file legitimately carries zero resource/offer upserts while still
+// patching a catalog-level attribute (e.g. isActive) via its "catalog" block
+// -- a publisher toggling isActive alone produces exactly this minimal delta.
+// The changeset must flag that as a real change (HasAttributeChange), not
+// look identical to "nothing happened": that flag is what stops verifyContent
+// from silently skipping the push and dropping the attribute change.
+func TestResolveDelta_AttributeOnlyChangeIsFlagged(t *testing.T) {
+	files := map[string][]byte{
+		"base": []byte(`{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"prov"},"isActive":true,"resources":[{"id":"r1"}],"offers":[{"id":"o1"}]}`),
+		"v5":   []byte(`{"catalogId":"p/c","fromVersion":4,"toVersion":5,"resources":{},"offers":{},"catalog":{"isActive":false}}`),
+	}
+	entry := CatalogEntry{
+		CatalogID: "p/c",
+		Baseline:  FileEntry{Version: 4, URL: "base"},
+		Changes:   []FileEntry{{FromVersion: 4, ToVersion: 5, URL: "v5"}},
+	}
+	fetch := func(f FileEntry) ([]byte, error) { return files[f.URL], nil }
+
+	doc, cs, ok, err := ResolveDelta(entry, 4, 5, fetch)
+	if err != nil || !ok {
+		t.Fatalf("ResolveDelta ok=%v err=%v", ok, err)
+	}
+	if !cs.HasAttributeChange {
+		t.Fatal("expected HasAttributeChange=true for a catalog-only patch with zero upserts")
+	}
+	if len(cs.UpsertedResources) != 0 || len(cs.UpsertedOffers) != 0 {
+		t.Fatalf("expected zero upserts, got resources=%v offers=%v", cs.UpsertedResources, cs.UpsertedOffers)
+	}
+	var got struct {
+		IsActive *bool `json:"isActive"`
+	}
+	if err := json.Unmarshal(doc, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.IsActive == nil || *got.IsActive {
+		t.Fatalf("isActive = %v, want false (from the change file's catalog block)", got.IsActive)
+	}
+}
+
+// ResolveDelta must not lose an arbitrary catalog-level attribute (anything
+// beyond descriptor/provider/isActive) named in a change file's envelope --
+// catalogfile.Doc's Extra round-trip carries it through with no crawler-side
+// change needed.
+func TestResolveDelta_PreservesArbitraryEnvelopeField(t *testing.T) {
+	files := map[string][]byte{
+		"base": []byte(`{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"prov"},"resources":[{"id":"r1"}]}`),
+		"v5": []byte(`{"catalogId":"p/c","fromVersion":4,"toVersion":5,"resources":{},"offers":{},` +
+			`"catalog":{"validity":{"endDate":"2027-01-01T00:00:00Z"}}}`),
+	}
+	entry := CatalogEntry{
+		CatalogID: "p/c",
+		Baseline:  FileEntry{Version: 4, URL: "base"},
+		Changes:   []FileEntry{{FromVersion: 4, ToVersion: 5, URL: "v5"}},
+	}
+	fetch := func(f FileEntry) ([]byte, error) { return files[f.URL], nil }
+
+	doc, cs, ok, err := ResolveDelta(entry, 4, 5, fetch)
+	if err != nil || !ok {
+		t.Fatalf("ResolveDelta ok=%v err=%v", ok, err)
+	}
+	if !cs.HasAttributeChange {
+		t.Fatal("expected HasAttributeChange=true")
+	}
+	var got struct {
+		Validity struct {
+			EndDate string `json:"endDate"`
+		} `json:"validity"`
+	}
+	if err := json.Unmarshal(doc, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Validity.EndDate != "2027-01-01T00:00:00Z" {
+		t.Fatalf("validity.endDate = %q, want 2027-01-01T00:00:00Z (doc = %s)", got.Validity.EndDate, doc)
+	}
+}
+
 func resourceIDs(t *testing.T, catalog []byte) []string {
 	t.Helper()
 	var doc struct {
