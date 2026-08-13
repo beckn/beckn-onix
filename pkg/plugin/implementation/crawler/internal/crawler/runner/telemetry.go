@@ -109,13 +109,45 @@ func (e *Engine) logSkipUnchanged(runID string, trig trigger, catalogID string, 
 		"catalog_id", catalogID, "result", "unchanged", "entry_version", entryVersion)
 }
 
-// logRollback flags a catalog whose index version went backwards — not applied,
-// recorded for an operator (WARN).
-func (e *Engine) logRollback(runID string, trig trigger, catalogID string, cursorVersion, indexVersion int64) {
-	e.deps.Log.Warn("index version went backwards — ignored",
+// logRollback flags a catalog whose entryVersion or content-lineage version
+// went backwards relative to our stored cursor — not applied. This is an
+// operator-actionable anomaly (a publisher republishing an old snapshot, a
+// corrupted/rolled-back publish pipeline, or a forged/misbehaving index), so
+// it is logged as an ERROR, not a WARN: it will not resolve itself, and
+// nothing else in the crawl surfaces it.
+func (e *Engine) logRollback(runID string, trig trigger, catalogID string, cursorVersion, indexVersion, entryCursor, foundEntryVersion int64) {
+	e.deps.Log.Error(fmt.Sprintf(
+		"version went backwards for this catalog — ignored (found entryVersion %d / content v%d, have entryVersion %d / content v%d locally)",
+		foundEntryVersion, indexVersion, entryCursor, cursorVersion),
 		"component", "crawl", "stage", "polled", "run_id", runID, "trigger", triggerStr(trig),
 		"catalog_id", catalogID, "result", "rollback",
-		"cursor_version", cursorVersion, "index_version", indexVersion)
+		"cursor_version", cursorVersion, "index_version", indexVersion,
+		"entry_cursor", entryCursor, "found_entry_version", foundEntryVersion)
+}
+
+// logCrawlingIndex (DEBUG) traces the moment a poll actually reaches out to an
+// index — as distinct from logPolled's AFTER-the-fact result — so an operator
+// tracing a specific index can see it was attempted at all, which URL, and
+// which participant/source it resolved from, before waiting on the network.
+func (e *Engine) logCrawlingIndex(runID string, trig trigger, indexURL, participantID, src string) {
+	e.deps.Log.Debug("crawling index",
+		"component", "crawl", "stage", "polling", "run_id", runID, "trigger", triggerStr(trig),
+		"index_url", indexURL, "participant_id", participantID, "source", src)
+}
+
+// logCatalogEvaluated (DEBUG) is the per-catalog comparison trace: what the
+// freshly-fetched index entry declares versus what this crawler has stored
+// locally, logged unconditionally for every entry regardless of the decision
+// that follows -- so tracing why one specific catalog did or didn't move
+// doesn't require inferring it from whichever of logQueued/logSkipUnchanged/
+// logRollback/logOutOfScope happened to fire.
+func (e *Engine) logCatalogEvaluated(runID string, trig trigger, catalogID string, foundEntryVersion, foundVersion, entryCursor, cursor int64, seen bool) {
+	e.deps.Log.Debug(fmt.Sprintf(
+		"catalog evaluated — found entryVersion %d / content v%d, have entryVersion %d / content v%d locally (seen=%t)",
+		foundEntryVersion, foundVersion, entryCursor, cursor, seen),
+		"component", "crawl", "stage", "polled", "run_id", runID, "trigger", triggerStr(trig),
+		"catalog_id", catalogID, "found_entry_version", foundEntryVersion, "found_version", foundVersion,
+		"entry_cursor", entryCursor, "cursor_version", cursor, "seen", seen)
 }
 
 // logQueued (DEBUG) records that the crawl enqueued one catalog: op is `sync`
