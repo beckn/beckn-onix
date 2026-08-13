@@ -74,11 +74,20 @@ type MasterDependency struct {
 // spec v2, "Catalog files and change files"), not a signature carried
 // here -- trust for the index entry as a whole comes from
 // CatalogPublishOutcome's catalog-entry-level signature instead.
+// FromVersion is meaningful for a change file only (mirroring
+// CatalogChangeFile's own fromVersion) -- zero for a baseline/latest
+// FileRef. It must be carried explicitly rather than reconstructed from
+// sequence order: once a catalog has been compacted, PriorCatalogState.
+// ChangeFiles legitimately contains superseded (pre-compaction) entries
+// alongside live (post-baseline) ones for the CON-TBD-32 grace period,
+// so "whatever came immediately before it in the slice" is no longer a
+// safe way to infer a change file's real FromVersion.
 type FileRef struct {
-	Version int
-	URL     string
-	Size    int64
-	Digest  string
+	FromVersion int
+	Version     int
+	URL         string
+	Size        int64
+	Digest      string
 }
 
 // PriorCatalogState is what a caller must supply, per catalogId, to get

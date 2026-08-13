@@ -324,6 +324,126 @@ func TestLoad_CompactionDropsSupersededChangesAfterGracePeriod(t *testing.T) {
 // matching their declared URLs, and Load decompresses them correctly when
 // reconstructing prior state -- content and change application must be
 // unaffected by compression.
+// TestWriteThenLoad_RepeatedCompaction_DoesNotStickInBaselineMode is an
+// end-to-end regression test for a real production bug: after an
+// automatic compaction, prior.ChangeFiles legitimately still lists the
+// superseded (pre-compaction) entries for the CON-TBD-32 grace period.
+// Before the fix, currentVersion/compactionDue treated the whole slice as
+// still live, which pinned the content version at the compacted baseline
+// forever and re-triggered compaction on every single subsequent call
+// (mode stuck at "baseline"). It also corrupted the first surviving
+// change entry's FromVersion once re-serialized (chained from the new
+// baseline's version instead of its own real value).
+func TestWriteThenLoad_RepeatedCompaction_DoesNotStickInBaselineMode(t *testing.T) {
+	root := t.TempDir()
+	km := newFakeKeyManager(t)
+	p, _, err := catalogpublisher.New(context.Background(), km, &catalogpublisher.Config{
+		SubscriberID:                   "k1",
+		CompactionChangeCountThreshold: 2,
+	})
+	if err != nil {
+		t.Fatalf("catalogpublisher.New: %v", err)
+	}
+
+	publish := func(t *testing.T, prior definition.PriorCatalogState, catalog json.RawMessage) definition.CatalogPublishOutcome {
+		t.Helper()
+		req := definition.PublishRequest{Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: catalog}}}
+		if prior.Catalog != nil {
+			req.PriorState = map[string]definition.PriorCatalogState{"example.test/CAT-1": prior}
+		}
+		result, err := p.Publish(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Publish: %v", err)
+		}
+		if err := localstore.Write(root, result); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		return result.Catalogs[0]
+	}
+	load := func(t *testing.T) definition.PriorCatalogState {
+		t.Helper()
+		state, err := localstore.Load(root, []string{"example.test/CAT-1"})
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		return state.PriorState["example.test/CAT-1"]
+	}
+
+	cat := func(item string) json.RawMessage {
+		return json.RawMessage(`{"id":"CAT-1","descriptor":{"name":"A"},"provider":{},"resources":[{"id":"` + item + `","descriptor":{"name":"one"}}]}`)
+	}
+
+	// v1: baseline.
+	got := publish(t, definition.PriorCatalogState{}, cat("ITEM-1"))
+	if got.Mode != "baseline" || got.Version != 1 {
+		t.Fatalf("v1: expected baseline v1, got %+v", got)
+	}
+
+	// v2, v3: ordinary change files (threshold is 2, checked before adding
+	// the new one -- so neither of these should compact).
+	prior := load(t)
+	got = publish(t, prior, cat("ITEM-2"))
+	if got.Mode != "change" || got.Version != 2 {
+		t.Fatalf("v2: expected an ordinary change file, got %+v", got)
+	}
+	prior = load(t)
+	got = publish(t, prior, cat("ITEM-3"))
+	if got.Mode != "change" || got.Version != 3 {
+		t.Fatalf("v3: expected an ordinary change file, got %+v", got)
+	}
+
+	// v4: prior.ChangeFiles now has 2 entries (v2, v3) -- meets the
+	// threshold, so this call must auto-compact to a fresh baseline.
+	prior = load(t)
+	if len(prior.ChangeFiles) != 2 {
+		t.Fatalf("expected 2 pending change files before compaction, got %+v", prior.ChangeFiles)
+	}
+	got = publish(t, prior, cat("ITEM-4"))
+	if got.Mode != "baseline" || got.Version != 4 {
+		t.Fatalf("v4: expected auto-compaction to a fresh baseline v4, got %+v", got)
+	}
+
+	// The critical assertion: immediately after compaction, with the
+	// grace period nowhere near elapsed, the superseded v2/v3 change
+	// files are still listed (by design), but must not be mistaken for
+	// "live" -- and their FromVersion must not have been corrupted.
+	prior = load(t)
+	if prior.BaselineFile == nil || prior.BaselineFile.Version != 4 {
+		t.Fatalf("expected baseline at version 4 after compaction, got %+v", prior.BaselineFile)
+	}
+	if len(prior.ChangeFiles) != 2 {
+		t.Fatalf("expected the 2 superseded change files to stay listed within the grace period, got %+v", prior.ChangeFiles)
+	}
+	if prior.ChangeFiles[0].FromVersion != 1 || prior.ChangeFiles[0].Version != 2 {
+		t.Errorf("expected the first superseded change file's FromVersion/Version to survive uncorrupted, got %+v", prior.ChangeFiles[0])
+	}
+
+	// v5, v6: this is the regression itself -- two ordinary content
+	// changes in a row must NOT re-trigger compaction (only 0 *live*
+	// change files exist yet -- the 2 listed ones are superseded), and
+	// the version must advance from the baseline (4), not stay pinned at
+	// 4 forever as the original bug did.
+	for i, item := range []string{"ITEM-5", "ITEM-6"} {
+		wantVersion := 5 + i
+		got = publish(t, prior, cat(item))
+		if got.Mode != "change" {
+			t.Fatalf("publish #%d: expected an ordinary change file (not a re-triggered compaction), got %+v", i, got)
+		}
+		if got.Version != wantVersion {
+			t.Fatalf("publish #%d: expected version %d, got %+v", i, wantVersion, got)
+		}
+		prior = load(t)
+	}
+
+	// v7: 2 *live* change files have now genuinely accumulated again
+	// (v5, v6) -- this legitimately meets the threshold a second time, so
+	// re-compacting here is correct, not a repeat of the bug.
+	got = publish(t, prior, cat("ITEM-7"))
+	if got.Mode != "baseline" || got.Version != 7 {
+		t.Fatalf("v7: expected a legitimate second compaction to baseline v7, got %+v", got)
+	}
+}
+
 func TestWriteThenLoad_Gzip_RoundTrips(t *testing.T) {
 	root := t.TempDir()
 	km := newFakeKeyManager(t)

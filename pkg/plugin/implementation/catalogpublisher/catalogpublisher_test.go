@@ -661,7 +661,7 @@ func TestPublish_ForceBaseline_KeepsPriorChangesListed(t *testing.T) {
 	}
 
 	catalog := mustCatalogWithItems("CAT-1", "ITEM-1")
-	priorChange := definition.FileRef{Version: 2, URL: "file://v2.changes.json", Digest: "sha-256:def"}
+	priorChange := definition.FileRef{FromVersion: 1, Version: 2, URL: "file://v2.changes.json", Digest: "sha-256:def"}
 	prior := definition.PriorCatalogState{
 		Catalog:      catalog,
 		BaselineFile: &definition.FileRef{Version: 1, URL: "file://v1.json", Digest: "sha-256:abc"},
@@ -765,7 +765,7 @@ func TestPublish_CompactionChangeCountThreshold_NotYetReached(t *testing.T) {
 	prior := definition.PriorCatalogState{
 		Catalog:      priorCatalog,
 		BaselineFile: &definition.FileRef{Version: 1, URL: "file://v1.json", Digest: "sha-256:abc"},
-		ChangeFiles:  []definition.FileRef{{Version: 2, URL: "file://v2.changes.json", Digest: "sha-256:def"}},
+		ChangeFiles:  []definition.FileRef{{FromVersion: 1, Version: 2, URL: "file://v2.changes.json", Digest: "sha-256:def"}},
 		EntryVersion: 2,
 		CatalogType:  "REGULAR",
 	}
@@ -797,7 +797,7 @@ func TestPublish_CompactionSizeRatioThreshold_TriggersBaseline(t *testing.T) {
 	prior := definition.PriorCatalogState{
 		Catalog:      priorCatalog,
 		BaselineFile: &definition.FileRef{Version: 1, URL: "file://v1.json", Digest: "sha-256:abc", Size: 100},
-		ChangeFiles:  []definition.FileRef{{Version: 2, URL: "file://v2.changes.json", Digest: "sha-256:def", Size: 60}},
+		ChangeFiles:  []definition.FileRef{{FromVersion: 1, Version: 2, URL: "file://v2.changes.json", Digest: "sha-256:def", Size: 60}},
 		EntryVersion: 2,
 		CatalogType:  "REGULAR",
 	}
@@ -829,7 +829,7 @@ func TestPublish_CompactionThreshold_NeverForcesBaselineOnNoOp(t *testing.T) {
 	prior := definition.PriorCatalogState{
 		Catalog:      catalog,
 		BaselineFile: &definition.FileRef{Version: 1, URL: "file://v1.json", Digest: "sha-256:abc"},
-		ChangeFiles:  []definition.FileRef{{Version: 2, URL: "file://v2.changes.json", Digest: "sha-256:def"}},
+		ChangeFiles:  []definition.FileRef{{FromVersion: 1, Version: 2, URL: "file://v2.changes.json", Digest: "sha-256:def"}},
 		EntryVersion: 2,
 		CatalogType:  "REGULAR",
 		IsActive:     true,
@@ -1110,23 +1110,28 @@ func TestDiffCatalogs_ArbitraryAttributeChangeReportedUnderCatalog(t *testing.T)
 	}
 }
 
-func TestChangeFileRefsToWire(t *testing.T) {
-	if got := changeFileRefsToWire(1, nil); got != nil {
+// TestChangeFileRefsToWire_RoundTripsExplicitFromVersion proves
+// FromVersion is taken directly from each FileRef, not reconstructed from
+// sequence order -- deliberately exercised with a non-contiguous pair
+// (mimicking a superseded pre-compaction entry sitting next to a live
+// one) to prove chaining is never applied.
+func TestChangeFileRefsToWire_RoundTripsExplicitFromVersion(t *testing.T) {
+	if got := changeFileRefsToWire(nil); got != nil {
 		t.Errorf("expected nil for no file refs, got %+v", got)
 	}
 	in := []definition.FileRef{
-		{Version: 2, URL: "https://example.test/catalogs/changes/CAT-1.v2.changes.json", Size: 42, Digest: "sha-256:abc"},
-		{Version: 3, URL: "https://example.test/catalogs/changes/CAT-1.v3.changes.json", Size: 50, Digest: "sha-256:def"},
+		{FromVersion: 1, Version: 2, URL: "https://example.test/catalogs/changes/CAT-1.v2.changes.json", Size: 42, Digest: "sha-256:abc"},
+		{FromVersion: 9, Version: 10, URL: "https://example.test/catalogs/changes/CAT-1.v10.changes.json", Size: 50, Digest: "sha-256:def"},
 	}
-	got := changeFileRefsToWire(1, in)
+	got := changeFileRefsToWire(in)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 entries, got %+v", got)
 	}
 	if got[0].FromVersion != 1 || got[0].ToVersion != 2 || got[0].URL != in[0].URL || got[0].Size != 42 || got[0].Digest != "sha-256:abc" {
 		t.Errorf("changeFileRefsToWire did not round-trip fields for entry 0, got %+v", got[0])
 	}
-	if got[1].FromVersion != 2 || got[1].ToVersion != 3 || got[1].URL != in[1].URL {
-		t.Errorf("expected entry 1's FromVersion reconstructed from entry 0's ToVersion, got %+v", got[1])
+	if got[1].FromVersion != 9 || got[1].ToVersion != 10 || got[1].URL != in[1].URL {
+		t.Errorf("expected entry 1's FromVersion taken as-is (9), not chained from entry 0's ToVersion (2), got %+v", got[1])
 	}
 }
 

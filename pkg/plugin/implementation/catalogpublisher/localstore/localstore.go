@@ -436,15 +436,18 @@ func toFileRef(fe wireFileEntry) definition.FileRef {
 	}
 }
 
-// toChangeFileRef converts a changes[] entry back to a definition.FileRef:
-// only ToVersion is kept (matching FileRef's single Version field) --
-// FromVersion is always reconstructible from the sequence itself (see
-// catalogpublisher.changeFileRefsToWire), so it never needs to round-trip.
+// toChangeFileRef converts a changes[] entry back to a definition.FileRef,
+// carrying FromVersion through explicitly -- it is NOT safe to reconstruct
+// from sequence order once a compaction has happened, since a superseded
+// (pre-compaction) entry retained for the CON-TBD-32 grace period predates
+// the current baseline and breaks the "contiguous chain" assumption that
+// reconstruction relied on.
 func toChangeFileRef(ch wireChangeFileEntry) definition.FileRef {
 	return definition.FileRef{
-		Version: ch.ToVersion,
-		URL:     ch.URL,
-		Size:    ch.Size,
-		Digest:  ch.Digest,
+		FromVersion: ch.FromVersion,
+		Version:     ch.ToVersion,
+		URL:         ch.URL,
+		Size:        ch.Size,
+		Digest:      ch.Digest,
 	}
 }

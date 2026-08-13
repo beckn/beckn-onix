@@ -456,14 +456,28 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 // currentVersion returns a catalog's implicit current version: the last
 // change file's version, or the baseline's version if there are no change
 // files yet. Zero if there is no prior state at all.
+// currentVersion returns a catalog's implicit current content-lineage
+// version: the last change file's version, or the baseline's version if
+// there are no change files yet. Zero if there is no prior state at all.
+//
+// Only "live" change files -- those published after the current baseline
+// (Version > baseline's own Version) -- count. Once a catalog has been
+// compacted, prior.ChangeFiles legitimately still lists superseded (pre-
+// compaction) entries for the CON-TBD-32 grace period; their versions
+// predate the current baseline and must never be mistaken for the
+// catalog's current version, or every subsequent call recomputes a stale,
+// already-passed version instead of advancing from the baseline.
 func currentVersion(prior definition.PriorCatalogState) int {
-	if n := len(prior.ChangeFiles); n > 0 {
-		return prior.ChangeFiles[n-1].Version
-	}
+	baselineVersion := 0
 	if prior.BaselineFile != nil {
-		return prior.BaselineFile.Version
+		baselineVersion = prior.BaselineFile.Version
 	}
-	return 0
+	if n := len(prior.ChangeFiles); n > 0 {
+		if last := prior.ChangeFiles[n-1].Version; last > baselineVersion {
+			return last
+		}
+	}
+	return baselineVersion
 }
 
 // compactionDue reports whether an automatic compaction trigger
@@ -473,16 +487,31 @@ func currentVersion(prior definition.PriorCatalogState) int {
 // deciding whether to compact never needs that not-yet-created file's
 // size. Both thresholds default to 0 (disabled); either alone can trigger
 // compaction. False whenever there's no baseline to compare against yet.
+//
+// Counts only "live" change files (Version > baseline's own Version),
+// same rationale as currentVersion: a superseded entry retained only for
+// the CON-TBD-32 grace period must never count toward triggering another
+// compaction -- otherwise, once triggered, compaction would refire on
+// every single subsequent call for as long as those entries stay listed.
 func (p *Publisher) compactionDue(prior definition.PriorCatalogState) bool {
-	if p.config.CompactionChangeCountThreshold > 0 && len(prior.ChangeFiles) >= p.config.CompactionChangeCountThreshold {
+	baselineVersion, baselineSize := 0, int64(0)
+	if prior.BaselineFile != nil {
+		baselineVersion = prior.BaselineFile.Version
+		baselineSize = prior.BaselineFile.Size
+	}
+	liveCount := 0
+	var liveSize int64
+	for _, cf := range prior.ChangeFiles {
+		if cf.Version > baselineVersion {
+			liveCount++
+			liveSize += cf.Size
+		}
+	}
+	if p.config.CompactionChangeCountThreshold > 0 && liveCount >= p.config.CompactionChangeCountThreshold {
 		return true
 	}
-	if p.config.CompactionSizeRatioThreshold > 0 && prior.BaselineFile != nil && prior.BaselineFile.Size > 0 {
-		var changesSize int64
-		for _, cf := range prior.ChangeFiles {
-			changesSize += cf.Size
-		}
-		ratio := float64(changesSize) / float64(prior.BaselineFile.Size)
+	if p.config.CompactionSizeRatioThreshold > 0 && baselineSize > 0 {
+		ratio := float64(liveSize) / float64(baselineSize)
 		if ratio >= p.config.CompactionSizeRatioThreshold {
 			return true
 		}
@@ -529,11 +558,7 @@ func (p *Publisher) publishOne(sub definition.CatalogSubmission, prior definitio
 
 	if hasPrior {
 		entry.Baseline = fileRefToWire(prior.BaselineFile)
-		baselineVersion := 0
-		if prior.BaselineFile != nil {
-			baselineVersion = prior.BaselineFile.Version
-		}
-		entry.Changes = changeFileRefsToWire(baselineVersion, prior.ChangeFiles)
+		entry.Changes = changeFileRefsToWire(prior.ChangeFiles)
 	}
 
 	// diff/changeCatalog are only meaningful once hasPrior && !forceBaseline
@@ -847,23 +872,22 @@ func fileRefValueToWire(fr definition.FileRef) fileEntry {
 }
 
 // changeFileRefsToWire converts a catalog's carried-forward change-file
-// lineage into changeFileEntry wire entries, reconstructing each one's
-// FromVersion from the sequence itself: definition.FileRef only stores one
-// version per change file (matching the file spec's own toVersion), but
-// versions are always contiguous by construction (each is the prior
-// current version + 1), so FromVersion is just "whatever came immediately
-// before it" -- baselineVersion for the first entry, the previous entry's
-// ToVersion for every one after. No new stored field is needed to recover
-// this.
-func changeFileRefsToWire(baselineVersion int, frs []definition.FileRef) []changeFileEntry {
+// lineage into changeFileEntry wire entries. FromVersion/ToVersion are
+// taken directly from each FileRef as given -- not reconstructed from
+// sequence order. An earlier version of this function rebuilt FromVersion
+// by chaining from the baseline's version forward, which silently
+// corrupted the first surviving entry's FromVersion after a compaction:
+// prior.ChangeFiles legitimately retains superseded (pre-compaction)
+// entries alongside live ones during the CON-TBD-32 grace period, so
+// "whatever came before it" is only true for entries published after the
+// current baseline, not for ones that predate it.
+func changeFileRefsToWire(frs []definition.FileRef) []changeFileEntry {
 	if len(frs) == 0 {
 		return nil
 	}
 	out := make([]changeFileEntry, len(frs))
-	prevVersion := baselineVersion
 	for i, fr := range frs {
-		out[i] = changeFileEntry{FromVersion: prevVersion, ToVersion: fr.Version, URL: fr.URL, Size: fr.Size, Digest: fr.Digest}
-		prevVersion = fr.Version
+		out[i] = changeFileEntry{FromVersion: fr.FromVersion, ToVersion: fr.Version, URL: fr.URL, Size: fr.Size, Digest: fr.Digest}
 	}
 	return out
 }
