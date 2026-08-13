@@ -882,6 +882,14 @@ func TestVerifyContent_ZeroCountGate(t *testing.T) {
 			wantSettled: true, wantReason: "no upserts (removals deferred)",
 		},
 		{
+			// A publisher toggling isActive alone produces exactly this: a change
+			// file with zero resource/offer upserts but a real "catalog" attribute
+			// patch. This must NOT skip -- the attribute change still has to reach
+			// Discovery, even with nothing to upsert.
+			name: "an attribute-only change (e.g. isActive) does not skip",
+			doc:  baselineEmpty, cs: catalog.Changeset{HasAttributeChange: true}, wantStop: false,
+		},
+		{
 			name: "a corrupt doc parks instead of settling as a skip",
 			doc:  baselineCorrupt, wantOutcome: catalog.OutcomeFaulted, wantStop: true,
 			wantParked: true,
