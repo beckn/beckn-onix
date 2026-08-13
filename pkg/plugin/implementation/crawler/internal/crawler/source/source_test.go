@@ -24,6 +24,22 @@ func TestConfigSource(t *testing.T) {
 	}
 }
 
+// A repeated URL in CRAWLER_INDEX_URLS (typo, copy-paste, a templated config
+// concatenation) must not reach the crawl loop twice.
+func TestConfigSource_DedupsByIndexURL(t *testing.T) {
+	s := NewConfigSource([]string{"https://a/i.json", "https://b/i.json", "https://a/i.json"})
+	refs, err := s.IndexRefs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("got %d refs, want 2 (deduped): %+v", len(refs), refs)
+	}
+	if refs[0].IndexURL != "https://a/i.json" || refs[1].IndexURL != "https://b/i.json" {
+		t.Fatalf("refs = %+v, want [a b] in first-seen order", refs)
+	}
+}
+
 type fakeRegistry struct{ byNet map[string][]Provider }
 
 func (f fakeRegistry) Providers(_ context.Context, net string) ([]Provider, error) {
