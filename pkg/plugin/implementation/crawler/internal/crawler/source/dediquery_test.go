@@ -190,6 +190,79 @@ func TestDediQueryClient_MultipleIndexesPerNode(t *testing.T) {
 	}
 }
 
+// Some records double-encode catalog_index_urls as a JSON string containing
+// the array, instead of a native array (whatever wrote the record serialized
+// it twice). Providers must tolerate both shapes.
+func TestDediQueryClient_FlattenedStringCatalogIndexURLs(t *testing.T) {
+	const body = `{"data":{"records":[
+		{"details":{"subscriber_id":"flat.example"},
+		 "meta":{"catalog_index_urls":"[{\"url\": \"https://flat.example/i.json\"}]"},
+		 "state":"live"}]}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := NewDediQueryClient(srv.URL, 5*time.Second)
+	provs, err := c.Providers(context.Background(), "beckn.one/testnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(provs) != 1 {
+		t.Fatalf("got %d providers, want 1: %+v", len(provs), provs)
+	}
+	if provs[0].ParticipantID != "flat.example" || provs[0].IndexURL != "https://flat.example/i.json" {
+		t.Fatalf("provs[0] = %+v", provs[0])
+	}
+}
+
+// A flattened string carrying multiple URLs must still yield one Provider per
+// declared index, same as the native-array case.
+func TestDediQueryClient_FlattenedStringMultipleIndexes(t *testing.T) {
+	const body = `{"data":{"records":[
+		{"details":{"subscriber_id":"flat.example"},
+		 "meta":{"catalog_index_urls":"[{\"url\": \"https://flat.example/retail.json\"},{\"url\": \"https://flat.example/mobility.json\"}]"},
+		 "state":"live"}]}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := NewDediQueryClient(srv.URL, 5*time.Second)
+	provs, err := c.Providers(context.Background(), "beckn.one/testnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(provs) != 2 {
+		t.Fatalf("got %d providers, want 2: %+v", len(provs), provs)
+	}
+}
+
+// Neither a native array nor a valid flattened string: garbage must be
+// skipped (0 providers), not fail the whole /query lookup.
+func TestDediQueryClient_MalformedCatalogIndexURLsIsSkipped(t *testing.T) {
+	const body = `{"data":{"records":[
+		{"details":{"subscriber_id":"bad.example"},
+		 "meta":{"catalog_index_urls":"not json at all"},
+		 "state":"live"},
+		{"details":{"subscriber_id":"bad2.example"},
+		 "meta":{"catalog_index_urls":12345},
+		 "state":"live"}]}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := NewDediQueryClient(srv.URL, 5*time.Second)
+	provs, err := c.Providers(context.Background(), "beckn.one/testnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(provs) != 0 {
+		t.Fatalf("got %d providers, want 0 (malformed entries skipped): %+v", len(provs), provs)
+	}
+}
+
 func TestDediQueryClient_EmptyRecords(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"message":"ok","data":{"total_records":0,"records":[]}}`))
