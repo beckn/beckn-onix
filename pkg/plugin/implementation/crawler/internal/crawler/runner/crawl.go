@@ -154,6 +154,7 @@ func (e *Engine) crawlIndex(ctx context.Context, ref source.IndexRef, trig trigg
 		return crawlResult{} // not due yet (per-index cadence via next_crawl_at)
 	}
 
+	e.logCrawlingIndex(runID, trig, ref.IndexURL, ref.ParticipantID, ref.Source)
 	res, err := e.deps.FetchIndex(ctx, ref.IndexURL, conditionsFrom(prev))
 	if err != nil {
 		e.logPollFailed(runID, trig, ref.IndexURL, err)
@@ -296,6 +297,7 @@ func (e *Engine) decideCatalog(ctx context.Context, ref source.IndexRef, trig tr
 		return false, true
 	}
 	d := catalog.DetectChange(entry, entryCursor, cursor, seen)
+	e.logCatalogEvaluated(runID, trig, entry.CatalogID, entry.EntryVersion, entry.LatestVersion(), entryCursor, cursor, seen)
 	switch d.Action {
 	case catalog.ActionSync:
 		if !take {
@@ -324,7 +326,7 @@ func (e *Engine) decideCatalog(ctx context.Context, ref source.IndexRef, trig tr
 		e.logQueued(runID, trig, entry.CatalogID, "retire", cursor, cursor)
 		return true, false
 	case catalog.ActionRollback:
-		e.logRollback(runID, trig, entry.CatalogID, cursor, d.ToVersion)
+		e.logRollback(runID, trig, entry.CatalogID, cursor, d.ToVersion, entryCursor, entry.EntryVersion)
 	case catalog.ActionSkipUnchanged:
 		e.logSkipUnchanged(runID, trig, entry.CatalogID, d.EntryVersion)
 	}

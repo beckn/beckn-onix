@@ -209,7 +209,7 @@ func (g *gateStore) RescheduleQueueItem(context.Context, string, string, time.Ti
 	return nil
 }
 func (g *gateStore) ParkQueueItem(context.Context, string, string) error { return nil }
-func (g *gateStore) Complete(context.Context, string, string, int64, catalog.CatalogState) error {
+func (g *gateStore) Complete(context.Context, string, string, int64, int64, catalog.CatalogState) error {
 	return nil
 }
 func (g *gateStore) QueueDepth(context.Context) (int, error) { return 0, nil }
@@ -507,7 +507,7 @@ func (m *memStore) RescheduleQueueItem(context.Context, string, string, time.Tim
 	return nil
 }
 func (m *memStore) ParkQueueItem(context.Context, string, string) error { return nil }
-func (m *memStore) Complete(context.Context, string, string, int64, catalog.CatalogState) error {
+func (m *memStore) Complete(context.Context, string, string, int64, int64, catalog.CatalogState) error {
 	return nil
 }
 func (m *memStore) QueueDepth(context.Context) (int, error) { return 0, nil }
@@ -556,6 +556,77 @@ func oneCatalogIndex() catalog.Index {
 			CatalogID: "p/c", EntryVersion: 1, // public
 			Baseline: catalog.FileEntry{Version: 5, URL: "base", Digest: "d"},
 		}},
+	}
+}
+
+// indexPass must trace both the moment it starts crawling an index (before
+// the fetch even completes) and, per catalog, what the index declared versus
+// what's stored locally -- otherwise diagnosing why one specific catalog
+// didn't move means inferring it from whichever terminal log happened to
+// fire, if any did at all.
+func TestIndexPass_TracesCrawlingIndexAndCatalogEvaluation(t *testing.T) {
+	h := newCrawlHarness(t, []string{crawlTestURL}, oneCatalogIndex(), nil)
+	logger := &fakeLogger{}
+	h.eng.deps.Log = logger
+
+	h.eng.indexPass(context.Background())
+
+	var gotCrawling, gotEvaluated bool
+	for _, e := range logger.entries {
+		if e.level == "debug" && e.event == "crawling index" {
+			gotCrawling = true
+			if v, _ := e.kvString("index_url"); v != crawlTestURL {
+				t.Errorf("crawling index log index_url = %q, want %q", v, crawlTestURL)
+			}
+		}
+		if e.level == "debug" && strings.Contains(e.event, "catalog evaluated") {
+			gotEvaluated = true
+			if v, _ := e.kvString("catalog_id"); v != "p/c" {
+				t.Errorf("catalog evaluated log catalog_id = %q, want p/c", v)
+			}
+		}
+	}
+	if !gotCrawling {
+		t.Fatalf("no 'crawling index' DEBUG trace found; entries: %+v", logger.entries)
+	}
+	if !gotEvaluated {
+		t.Fatalf("no 'catalog evaluated' DEBUG trace found; entries: %+v", logger.entries)
+	}
+}
+
+// A content-lineage regression (the index's latest version is behind our
+// stored cursor) must log at ERROR, not WARN: it is an operator-actionable
+// anomaly (a republished old snapshot, a rolled-back publish pipeline, a
+// misbehaving index) that will not resolve itself and is otherwise invisible.
+func TestDecideCatalog_RollbackLogsError(t *testing.T) {
+	store := newMemStore()
+	store.cursors["p/c"] = 10 // ahead of the index's declared content version (5)
+	logger := &fakeLogger{}
+	eng := New(EngineConfig{}, Deps{
+		Store: store, Log: logger, Metrics: &recMetrics{},
+		Now: time.Now, NewID: func() string { return "run-1" },
+	})
+	entry := catalog.CatalogEntry{
+		CatalogID: "p/c", EntryVersion: 1,
+		Baseline: catalog.FileEntry{Version: 5, URL: "base", Digest: "d"},
+	}
+
+	queued, failed := eng.decideCatalog(context.Background(), source.IndexRef{IndexURL: crawlTestURL}, scheduled, entry, "run-1")
+
+	if queued || failed {
+		t.Fatalf("queued=%v failed=%v, want false,false (a rollback queues nothing)", queued, failed)
+	}
+	var found *logEntry
+	for i := range logger.entries {
+		if logger.entries[i].level == "error" && strings.Contains(logger.entries[i].event, "went backwards") {
+			found = &logger.entries[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("no ERROR-level rollback log found; entries: %+v", logger.entries)
+	}
+	if v, _ := found.kvString("catalog_id"); v != "p/c" {
+		t.Fatalf("rollback log catalog_id = %q, want p/c", v)
 	}
 }
 
