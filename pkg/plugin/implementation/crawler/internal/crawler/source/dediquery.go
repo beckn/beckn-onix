@@ -70,12 +70,43 @@ type queryDetails struct {
 // LIST of {url} objects, not a single URL string -- a node may host more than
 // one catalog index (e.g. separating a fast-moving retail catalog from a
 // slow-moving mobility one).
+//
+// Kept as a raw JSON value rather than decoded straight into the array: some
+// records double-encode it (a JSON-stringified array, e.g.
+// `"catalog_index_urls": "[{\"url\": \"...\"}]"`, from whatever wrote the
+// record serializing it twice) instead of a native array. parseCatalogIndexURLs
+// tolerates both shapes.
 type queryMeta struct {
-	CatalogIndexURLs []catalogIndexURLEntry `json:"catalog_index_urls"`
+	CatalogIndexURLs json.RawMessage `json:"catalog_index_urls"`
 }
 
 type catalogIndexURLEntry struct {
 	URL string `json:"url"`
+}
+
+// parseCatalogIndexURLs decodes meta.catalog_index_urls in either shape seen
+// on the wire: a native JSON array of {url} objects (the spec-compliant
+// shape), or a JSON string whose content IS that array (some records
+// double-encode it). Malformed either way returns nil -- a bad record is
+// skipped, same as a record with no catalog_index_urls at all, rather than
+// failing the whole /query lookup over one bad record.
+func parseCatalogIndexURLs(raw json.RawMessage) []catalogIndexURLEntry {
+	if len(raw) == 0 {
+		return nil
+	}
+	var entries []catalogIndexURLEntry
+	if err := json.Unmarshal(raw, &entries); err == nil {
+		return entries
+	}
+	// Not a native array -- try the flattened/double-encoded string shape.
+	var flattened string
+	if err := json.Unmarshal(raw, &flattened); err != nil {
+		return nil
+	}
+	if err := json.Unmarshal([]byte(flattened), &entries); err != nil {
+		return nil
+	}
+	return entries
 }
 
 // Providers GETs {base}/query/{networkID} and returns one Provider per
@@ -129,7 +160,7 @@ func (c *DediQueryClient) Providers(ctx context.Context, networkID string) ([]Pr
 		if rec.Details != nil {
 			id = rec.Details.SubscriberID
 		}
-		for _, entry := range rec.Meta.CatalogIndexURLs {
+		for _, entry := range parseCatalogIndexURLs(rec.Meta.CatalogIndexURLs) {
 			idx := strings.TrimSpace(entry.URL)
 			if idx == "" {
 				continue
