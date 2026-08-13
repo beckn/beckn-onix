@@ -108,6 +108,79 @@ func TestApply_CatalogAttributeOverlay(t *testing.T) {
 	}
 }
 
+// A catalog-attribute patch isn't limited to descriptor/provider -- the file
+// spec's own examples name other fields too (e.g. a validity window), and a
+// domain may add its own. Applying one must not drop it, and it must survive
+// a further Apply untouched (Extra round-trips through Doc unmarshal/marshal).
+func TestApply_ArbitraryCatalogAttributeOverlay(t *testing.T) {
+	catalog := []byte(`{"id":"CAT-1","descriptor":{"name":"X"},"provider":{},"resources":[]}`)
+	change := []byte(`{"catalogId":"CAT-1","fromVersion":1,"toVersion":2,"resources":{},"offers":{},"catalog":{"validity":{"endDate":"2027-01-01T00:00:00Z"},"isActive":false}}`)
+
+	result, err := Apply(catalog, change)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	var doc Doc
+	if err := json.Unmarshal(result, &doc); err != nil {
+		t.Fatalf("parsing result: %v", err)
+	}
+	if doc.IsActive == nil || *doc.IsActive {
+		t.Fatalf("isActive = %v, want false", doc.IsActive)
+	}
+	validity, ok := doc.Extra["validity"]
+	if !ok {
+		t.Fatalf("validity field dropped; doc = %s", result)
+	}
+	var got struct {
+		EndDate string `json:"endDate"`
+	}
+	if err := json.Unmarshal(validity, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.EndDate != "2027-01-01T00:00:00Z" {
+		t.Errorf("validity.endDate = %q, want 2027-01-01T00:00:00Z", got.EndDate)
+	}
+}
+
+// Apply must reject resources/offers named INSIDE the nested catalog-attribute
+// patch: they have their own dedicated top-level upserts/removals diffing, so
+// allowing them here too would open a second, conflicting path for the same
+// content.
+func TestApply_CatalogAttributeCannotNameResourcesOrOffers(t *testing.T) {
+	catalog := []byte(`{"id":"CAT-1","descriptor":{},"provider":{},"resources":[]}`)
+	change := []byte(`{"catalogId":"CAT-1","fromVersion":1,"toVersion":2,"resources":{},"offers":{},"catalog":{"resources":[{"id":"sneaky"}]}}`)
+
+	if _, err := Apply(catalog, change); err == nil {
+		t.Fatal("expected an error when the catalog-attribute patch names resources")
+	}
+}
+
+// A top-level field that isn't one of the six this package actively reads/
+// writes (e.g. a domain-specific attribute, or "validity") must survive a
+// plain parse-then-marshal round trip through Doc, exactly like descriptor/
+// provider/resources/offers/isActive already do.
+func TestDoc_ExtraFieldsRoundTrip(t *testing.T) {
+	original := []byte(`{"id":"CAT-1","descriptor":{"name":"X"},"provider":{},"resources":[],"rating":{"ratingValue":4.5},"validity":{"startDate":"2026-01-01T00:00:00Z"}}`)
+	var doc Doc
+	if err := json.Unmarshal(original, &doc); err != nil {
+		t.Fatal(err)
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["rating"]; !ok {
+		t.Errorf("rating field dropped on round trip, got %s", out)
+	}
+	if _, ok := got["validity"]; !ok {
+		t.Errorf("validity field dropped on round trip, got %s", out)
+	}
+}
+
 func TestApply_NoChangesIsIdentity(t *testing.T) {
 	catalog := []byte(`{"id":"CAT-1","descriptor":{"name":"X"},"provider":{},"resources":[{"id":"ITEM-1","descriptor":{"name":"one"}}]}`)
 	change := []byte(`{"catalogId":"CAT-1","fromVersion":1,"toVersion":2,"resources":{},"offers":{}}`)
