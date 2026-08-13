@@ -939,6 +939,15 @@ mappings:
 ```
 Each action entry is optional—if no mapping exists for the current action, the original request body is passed through unchanged. JSONata expressions receive the entire Beckn request as input (`$`) and must return the full payload that should replace it.
 
+A failing transform is rejected with a NACK rather than silently falling back to the untransformed body — see the error codes table below.
+
+**Error codes returned by `transformPayload` step:**
+
+| Code                           | Cause                                                                                                                                                                                                                                                |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SCH_SCHEMA_ADAPTATION_FAILED` | The JSONata expression failed with a type mismatch or other dynamic runtime error (`T*`/`D*`), indicating that the input payload does not match the shape expected by the mapping. Review the mapping expression against the actual request payload. |
+| `BIZ_GENERIC_ERROR`            | The failure was not caused by a payload shape mismatch. The request could not be marshalled before evaluation, or evaluation failed because of a JSONata resource error (for example, recursion depth exceeded, timeout, or panic recovery).         |
+
 **Sample mapping file**:
 ```yaml
 mappings:

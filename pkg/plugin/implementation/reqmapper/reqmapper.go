@@ -14,8 +14,18 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/jsonata-go/jsonata"
+	v206 "github.com/jsonata-go/jsonata/v206"
 	"gopkg.in/yaml.v3"
 )
+
+// codeSchemaAdaptationFailed is used for JSONata evaluation failures that
+// are data/shape-driven (T*/D* JSONataError codes).
+const codeSchemaAdaptationFailed = "SCH_SCHEMA_ADAPTATION_FAILED"
+
+// codeBizGenericError is the fallback for transform failures that aren't a
+// shape mismatch: request marshalling, or a JSONata resource error (U*
+// codes) rather than a T*/D* one.
+const codeBizGenericError = "BIZ_GENERIC_ERROR"
 
 // Config represents the configuration for the request mapper plugin.
 type Config struct {
@@ -99,7 +109,7 @@ func (s *reqMapperStep) transformBody(ctx context.Context, body []byte) ([]byte,
 	mappedBody, err := s.engine.Transform(ctx, parsed.action, parsed.req, s.role)
 	if err != nil {
 		log.Errorf(ctx, err, "Transformation failed for action %s", parsed.action)
-		return body, nil
+		return nil, err
 	}
 
 	return mappedBody, nil
@@ -249,20 +259,43 @@ func (e *MappingEngine) Transform(ctx context.Context, action string, req map[st
 		return json.Marshal(req)
 	}
 
-	// Marshal request for JSONata evaluation
+	// Marshal request for JSONata evaluation. A failure here never reaches
+	// the JSONata engine, so it's classified separately from Evaluate errors.
 	input, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request for mapping: %w", err)
+		return nil, model.NewCodedBadReqErr(codeBizGenericError, fmt.Errorf("failed to marshal request for mapping: %w", err))
 	}
 
 	// Apply JSONata transformation
 	result, err := expr.Evaluate(input, nil)
 	if err != nil {
-		return nil, fmt.Errorf("JSONata evaluation failed: %w", err)
+		return nil, classifyEvaluateErr(err)
 	}
 
 	log.Debugf(ctx, "Successfully transformed %s request using %s mapping, %s", action, role, result)
 	return result, nil
+}
+
+// classifyEvaluateErr maps a JSONata Evaluate failure onto the taxonomy by
+// its *v206.JSONataError code prefix. github.com/jsonata-go/jsonata doesn't
+// re-export the type, so reaching it needs errors.As against v206 directly.
+// T*/D* (type and dynamic errors) are shape-driven and map to
+// codeSchemaAdaptationFailed; U* (recursion depth, timeout, panic recovery)
+// and any other cause fall back to codeBizGenericError. S* (syntax errors)
+// can't occur here: loadBuiltinMappings compiles every expression without
+// recovery mode before Evaluate ever runs.
+func classifyEvaluateErr(err error) *model.BadReqErr {
+	wrapped := fmt.Errorf("JSONata evaluation failed: %w", err)
+
+	var jsonataErr *v206.JSONataError
+	if errors.As(err, &jsonataErr) && len(jsonataErr.Code) > 0 {
+		switch jsonataErr.Code[0] {
+		case 'T', 'D':
+			return model.NewCodedBadReqErr(codeSchemaAdaptationFailed, wrapped)
+		}
+	}
+
+	return model.NewCodedBadReqErr(codeBizGenericError, wrapped)
 }
 
 // ReloadMappings reloads all mapping files (useful for hot-reload scenarios)
