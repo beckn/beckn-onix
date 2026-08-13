@@ -276,14 +276,9 @@ func (e *MappingEngine) Transform(ctx context.Context, action string, req map[st
 	return result, nil
 }
 
-// classifyEvaluateErr maps a JSONata Evaluate failure onto the taxonomy by
-// its *v206.JSONataError code prefix. github.com/jsonata-go/jsonata doesn't
-// re-export the type, so reaching it needs errors.As against v206 directly.
-// T*/D* (type and dynamic errors) are shape-driven and map to
-// codeSchemaAdaptationFailed; U* (recursion depth, timeout, panic recovery)
-// and any other cause fall back to codeBizGenericError. S* (syntax errors)
-// can't occur here: loadBuiltinMappings compiles every expression without
-// recovery mode before Evaluate ever runs.
+// classifyEvaluateErr maps JSONata Evaluate failures by v206.JSONataError code.
+// T*/D* map to codeSchemaAdaptationFailed; U* and other causes map to
+// codeBizGenericError. S* cannot occur here because mappings compile before Evaluate.
 func classifyEvaluateErr(err error) *model.BadReqErr {
 	wrapped := fmt.Errorf("JSONata evaluation failed: %w", err)
 
