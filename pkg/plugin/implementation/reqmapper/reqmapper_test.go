@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"path/filepath"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/testutil"
 	"github.com/jsonata-go/jsonata"
+	v206 "github.com/jsonata-go/jsonata/v206"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,6 +42,19 @@ func (failingExpression) AST() interface{} { return nil }
 func (failingExpression) Errors() []error { return nil }
 
 var _ jsonata.Expression = failingExpression{}
+
+// jsonataErrExpression fails Evaluate with a *v206.JSONataError carrying the
+// given Code, for driving classifyEvaluateErr's branches directly.
+type jsonataErrExpression struct {
+	failingExpression
+	code string
+}
+
+func (e jsonataErrExpression) Evaluate(inputJSON []byte, bindings map[string]interface{}) ([]byte, error) {
+	return nil, &v206.JSONataError{Code: e.code, Message: "synthetic error for test"}
+}
+
+var _ jsonata.Expression = jsonataErrExpression{}
 
 func testMappingsFile() string {
 	return filepath.Join("testdata", "mappings.yaml")
@@ -149,7 +164,7 @@ func TestReqMapperStepRun_Success(t *testing.T) {
 	require.Equal(t, string(ctx.Body), string(clonedBytes))
 }
 
-func TestReqMapperStepRun_FallsBackToOriginalBodyWhenTransformFails(t *testing.T) {
+func TestReqMapperStepRun_TransformFailureNacksInsteadOfFallingBack(t *testing.T) {
 	step := &reqMapperStep{
 		role: "bap",
 		engine: &MappingEngine{
@@ -171,7 +186,10 @@ func TestReqMapperStepRun_FallsBackToOriginalBodyWhenTransformFails(t *testing.T
 		Body:    body,
 	}
 
-	require.NoError(t, step.Run(ctx))
+	err = step.Run(ctx)
+	require.Error(t, err)
+	testutil.RequireBadReqCode(t, err, "BIZ_GENERIC_ERROR")
+	// Run returns before assigning ctx.Body on failure, so it's untouched.
 	require.Equal(t, string(body), string(ctx.Body))
 }
 
@@ -260,6 +278,65 @@ func TestMappingEngineTransform(t *testing.T) {
 		require.NoError(t, err)
 		require.JSONEq(t, string(expected), string(result))
 	})
+
+	t.Run("marshal failure ahead of jsonata evaluation classifies as BIZ_GENERIC_ERROR", func(t *testing.T) {
+		req := map[string]interface{}{
+			"context": map[string]interface{}{"action": "search"},
+			// math.Inf isn't representable in JSON, so json.Marshal fails
+			// here without the JSONata engine ever being reached.
+			"message": map[string]interface{}{"badValue": math.Inf(1)},
+		}
+
+		_, err := engine.Transform(context.Background(), "search", req, "bap")
+		require.Error(t, err)
+		testutil.RequireBadReqCode(t, err, "BIZ_GENERIC_ERROR")
+	})
+
+	// jsonata_dynamic_error (testdata/mappings.yaml) triggers a real v206 D3030 error,
+	// exercising the actual JSONata T*/D* error path instead of a mock.
+	t.Run("genuine JSONata dynamic error classifies as SCH_SCHEMA_ADAPTATION_FAILED", func(t *testing.T) {
+		req := map[string]interface{}{
+			"context": map[string]interface{}{"action": "jsonata_dynamic_error"},
+		}
+
+		_, err := engine.Transform(context.Background(), "jsonata_dynamic_error", req, "bap")
+		require.Error(t, err)
+		testutil.RequireBadReqCode(t, err, "SCH_SCHEMA_ADAPTATION_FAILED")
+
+		var jsonataErr *v206.JSONataError
+		require.ErrorAs(t, err, &jsonataErr, "expected errors.As to still reach the underlying *v206.JSONataError")
+		require.Equal(t, "D3030", jsonataErr.Code)
+	})
+}
+
+func TestMappingEngineTransform_ClassifiesEvaluateFailures(t *testing.T) {
+	tests := []struct {
+		name     string
+		expr     jsonata.Expression
+		wantCode string
+	}{
+		{"type-mismatch JSONataError (T*) -> SCH_SCHEMA_ADAPTATION_FAILED", jsonataErrExpression{code: "T2001"}, "SCH_SCHEMA_ADAPTATION_FAILED"},
+		{"dynamic JSONataError (D*) -> SCH_SCHEMA_ADAPTATION_FAILED", jsonataErrExpression{code: "D3030"}, "SCH_SCHEMA_ADAPTATION_FAILED"},
+		{"recursion-depth JSONataError (U1001) -> BIZ_GENERIC_ERROR", jsonataErrExpression{code: "U1001"}, "BIZ_GENERIC_ERROR"},
+		{"timeout JSONataError (U1002) -> BIZ_GENERIC_ERROR", jsonataErrExpression{code: "U1002"}, "BIZ_GENERIC_ERROR"},
+		{"panic-recovery JSONataError (U1003) -> BIZ_GENERIC_ERROR", jsonataErrExpression{code: "U1003"}, "BIZ_GENERIC_ERROR"},
+		{"non-JSONataError cause -> BIZ_GENERIC_ERROR", failingExpression{}, "BIZ_GENERIC_ERROR"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := &MappingEngine{
+				bapMaps: map[string]jsonata.Expression{"search": tt.expr},
+				bppMaps: make(map[string]jsonata.Expression),
+				mutex:   sync.RWMutex{},
+			}
+			req := map[string]interface{}{"context": map[string]interface{}{"action": "search"}}
+
+			_, err := engine.Transform(context.Background(), "search", req, "bap")
+			require.Error(t, err)
+			testutil.RequireBadReqCode(t, err, tt.wantCode)
+		})
+	}
 }
 
 func TestMappingEngineReloadMappings(t *testing.T) {
