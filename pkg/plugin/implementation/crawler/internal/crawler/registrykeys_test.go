@@ -62,7 +62,7 @@ func (fakeBackend) RescheduleQueueItem(context.Context, string, string, time.Tim
 	return nil
 }
 func (fakeBackend) ParkQueueItem(context.Context, string, string) error { return nil }
-func (fakeBackend) Complete(context.Context, string, string, int64, catalog.CatalogState) error {
+func (fakeBackend) Complete(context.Context, string, string, int64, int64, catalog.CatalogState) error {
 	return nil
 }
 func (fakeBackend) QueueDepth(context.Context) (int, error) { return 0, nil }

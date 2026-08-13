@@ -114,10 +114,23 @@ func (s *Store) ParkQueueItem(ctx context.Context, id, claimID string) error {
 
 // Complete records the catalog's settled state (advancing the cursor to the
 // version this worker actually pushed) and removes the queue row — but only if
-// the row hasn't been superseded by a newer to_version while we worked. If it
-// was superseded, the cursor still advances (real progress) and the row is
-// released so the newer version is re-processed, rather than deleted.
-func (s *Store) Complete(ctx context.Context, id, claimID string, toVersion int64, c catalog.CatalogState) error {
+// the row hasn't been superseded, by EITHER a newer to_version OR a newer
+// entry_version, while we worked. If it was superseded, the cursor still
+// advances (real progress on what this worker actually verified) and the row
+// is released so the newer target is re-processed, rather than deleted.
+//
+// entry_version must be checked here too, not just to_version: a coalescing
+// Enqueue legitimately bumps entry_version alone (a metadata-only index edit,
+// no new content) while to_version is unchanged. Checking to_version only
+// would let that race through undetected -- the worker's to_version still
+// matches, so the DELETE below would "succeed" and permanently persist this
+// worker's now-STALE entry_version as if it were current, with the row (and
+// the fresher entry_version a concurrent Enqueue already wrote onto it)
+// deleted out from under it. The next crawl tick would then see its own
+// stored entryCursor already equal to the index's real entryVersion and
+// report ActionSkipUnchanged forever -- a catalog stuck as "up to date" when
+// it never actually settled at that entry version.
+func (s *Store) Complete(ctx context.Context, id, claimID string, toVersion, entryVersion int64, c catalog.CatalogState) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: Complete begin: %w", err)
@@ -129,14 +142,14 @@ func (s *Store) Complete(ctx context.Context, id, claimID string, toVersion int6
 	}
 
 	res, err := tx.ExecContext(ctx,
-		`DELETE FROM crawler_queue WHERE id = $1 AND claim_id = $2 AND to_version = $3`,
-		id, claimID, toVersion)
+		`DELETE FROM crawler_queue WHERE id = $1 AND claim_id = $2 AND to_version = $3 AND entry_version IS NOT DISTINCT FROM $4`,
+		id, claimID, toVersion, nullInt64Zero(entryVersion))
 	if err != nil {
 		return fmt.Errorf("store: Complete delete: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		// Superseded (a newer to_version arrived) or claim lost: don't delete;
-		// release so the newer target is re-claimed.
+		// Superseded (a newer to_version and/or entry_version arrived) or claim
+		// lost: don't delete; release so the newer target is re-claimed.
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE crawler_queue SET claimed_at = NULL, claim_id = NULL, status = 'queued', next_attempt_at = now()
 			  WHERE id = $1 AND claim_id = $2`, id, claimID); err != nil {

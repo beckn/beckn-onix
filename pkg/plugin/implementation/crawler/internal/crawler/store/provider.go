@@ -42,7 +42,7 @@ type Backend interface {
 	ClaimNext(ctx context.Context) (*catalog.ClaimedItem, error)
 	RescheduleQueueItem(ctx context.Context, id, claimID string, nextAttemptAt time.Time) error
 	ParkQueueItem(ctx context.Context, id, claimID string) error
-	Complete(ctx context.Context, id, claimID string, toVersion int64, c catalog.CatalogState) error
+	Complete(ctx context.Context, id, claimID string, toVersion, entryVersion int64, c catalog.CatalogState) error
 	QueueDepth(ctx context.Context) (int, error)
 
 	// Migrate brings the backend's schema up to date. It is idempotent, so the
