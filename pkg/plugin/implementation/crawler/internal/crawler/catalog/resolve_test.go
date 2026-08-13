@@ -108,6 +108,52 @@ func TestResolveDelta_AttributeOnlyChangeIsFlagged(t *testing.T) {
 	}
 }
 
+// A change file's catalog-attribute envelope legitimately carries ONLY what
+// changed (a publisher toggling isActive alone has no reason to repeat id/
+// descriptor/provider), and this must NOT leave those fields null on the
+// wire: id always comes from entry.CatalogID, and descriptor/provider must
+// still be backfilled from the baseline when the envelope didn't supply them.
+// This reproduces the exact reported failure: discovery-publish-job rejected
+// a push with "Required field 'id' is missing or empty", catalogId=null.
+func TestResolveDelta_AttributeOnlyEnvelopeStillCarriesID(t *testing.T) {
+	files := map[string][]byte{
+		"base": []byte(`{"id":"staging.p-node.fabric.nfh.global/CAT-GENERIC-001","descriptor":{"name":"Generic"},"provider":{"id":"prov"},"resources":[{"id":"r1"}],"offers":[{"id":"o1"}]}`),
+		"v3":   []byte(`{"catalogId":"staging.p-node.fabric.nfh.global/CAT-GENERIC-001","fromVersion":2,"toVersion":3,"resources":{},"offers":{},"catalog":{"isActive":false}}`),
+	}
+	entry := CatalogEntry{
+		CatalogID: "staging.p-node.fabric.nfh.global/CAT-GENERIC-001",
+		Baseline:  FileEntry{Version: 2, URL: "base"},
+		Changes:   []FileEntry{{FromVersion: 2, ToVersion: 3, URL: "v3"}},
+	}
+	fetch := func(f FileEntry) ([]byte, error) { return files[f.URL], nil }
+
+	doc, _, ok, err := ResolveDelta(entry, 2, 3, fetch)
+	if err != nil || !ok {
+		t.Fatalf("ResolveDelta ok=%v err=%v", ok, err)
+	}
+	var got struct {
+		ID         string          `json:"id"`
+		Descriptor json.RawMessage `json:"descriptor"`
+		Provider   json.RawMessage `json:"provider"`
+		IsActive   *bool           `json:"isActive"`
+	}
+	if err := json.Unmarshal(doc, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != entry.CatalogID {
+		t.Fatalf("id = %q, want %q (doc = %s)", got.ID, entry.CatalogID, doc)
+	}
+	if len(got.Descriptor) == 0 || string(got.Descriptor) == "null" {
+		t.Fatalf("descriptor missing/null, want the baseline's, doc = %s", doc)
+	}
+	if len(got.Provider) == 0 || string(got.Provider) == "null" {
+		t.Fatalf("provider missing/null, want the baseline's, doc = %s", doc)
+	}
+	if got.IsActive == nil || *got.IsActive {
+		t.Fatalf("isActive = %v, want false (from the change file's envelope)", got.IsActive)
+	}
+}
+
 // ResolveDelta must not lose an arbitrary catalog-level attribute (anything
 // beyond descriptor/provider/isActive) named in a change file's envelope --
 // catalogfile.Doc's Extra round-trip carries it through with no crawler-side

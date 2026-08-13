@@ -119,22 +119,25 @@ func ResolveWithChangeset(entry CatalogEntry, cursor int64, seen bool, toVersion
 	return current, cs, nil
 }
 
-// ResolveDelta builds a MERGE payload for an incremental update: it takes the
-// catalog envelope (id/descriptor/provider) from a change file's `catalog`
-// block when one carries it, and the union of resource/offer upserts across
-// the change files in (cursor, toVersion] (latest wins per id, order
-// preserved). Removals are recorded in the changeset but NOT applied
-// (deferred to the FULL/removals version).
+// ResolveDelta builds a MERGE payload for an incremental update: id always
+// comes from entry.CatalogID (never the envelope -- see below); descriptor/
+// provider come from the latest change file's `catalog` block that carries
+// them, falling back to a one-time baseline fetch for whichever of the two
+// is still missing; and resources/offers are the union of upserts across the
+// change files in (cursor, toVersion] (latest wins per id, order preserved).
+// Removals are recorded in the changeset but NOT applied (deferred to the
+// FULL/removals version).
 //
-// When NO change file in range carries the metadata envelope, this falls back
-// to a ONE-TIME baseline fetch for id/descriptor/provider only -- catalogpublisher
-// may legitimately omit the envelope on every change file (nothing in the file
-// spec requires it on each one), so treating that as a permanent content fault
-// was the crawler's own wrong assumption, not a publisher defect. The baseline's
-// resources/offers are discarded; only its envelope fields are used, and the
-// push still carries just the changed resources/offers, exactly as when a
-// change file supplied the envelope itself. The returned bool is always true on
-// a nil error; kept for call-site compatibility.
+// A change file's envelope is not required to be complete -- nothing in the
+// file spec mandates repeating id/descriptor/provider on every change file,
+// and a catalog-attribute-only patch (e.g. isActive toggled alone) has no
+// reason to carry any of them. Treating "the envelope existed at all" as "the
+// envelope is complete" -- the crawler's own earlier bug -- left those fields
+// silently null on the wire for exactly that case. The baseline fetched here
+// (when needed) has its resources/offers discarded; only its descriptor/
+// provider are used, and the push still carries just the changed resources/
+// offers, exactly as when a change file supplied them itself. The returned
+// bool is always true on a nil error; kept for call-site compatibility.
 //
 // Continuity is enforced exactly as ResolveWithChangeset enforces it: the first
 // change file in the range must start at the cursor and each later one must
@@ -215,17 +218,42 @@ func ResolveDelta(entry CatalogEntry, cursor, toVersion int64, fetch FetchFunc) 
 		if err := json.Unmarshal(envelope, &doc); err != nil {
 			return nil, cs, false, Permanentf("crawler: reading change catalog envelope: %v", err)
 		}
-	} else {
-		// No change file in range carried the metadata envelope: fetch the
-		// baseline once, for its id/descriptor/provider ONLY -- its
-		// resources/offers are discarded below, so this is not a re-baseline,
-		// just the one-time cost of learning what the catalog IS.
+	}
+	// id is never taken from the envelope: entry.CatalogID already identifies
+	// the catalog being resolved, so a change file's envelope has no need to
+	// repeat it (and isn't independently verified if it did -- CON-TBD-12 only
+	// cross-checks a whole file's own top-level catalogId, never a nested
+	// attribute-patch field). Set unconditionally, overwriting anything the
+	// envelope happened to carry.
+	idBytes, err := json.Marshal(entry.CatalogID)
+	if err != nil {
+		return nil, cs, false, err
+	}
+	doc.ID = idBytes
+	// descriptor/provider fall back to a one-time baseline fetch ONLY for
+	// whatever the envelope didn't actually supply -- an envelope carrying an
+	// attribute patch is not required to repeat fields that didn't change (the
+	// file spec doesn't mandate a full envelope on every change file), so
+	// "the envelope existed at all" is not the same as "the envelope is
+	// complete." Treating it as sufficient just because it was non-empty is
+	// exactly what silently left id/descriptor/provider null for an
+	// attribute-only delta (e.g. an isActive-only patch) that never carried
+	// them. The baseline's own resources/offers are discarded either way; the
+	// push still carries just the changed resources/offers accumulated above.
+	if len(doc.Descriptor) == 0 || len(doc.Provider) == 0 {
 		baselineBytes, err := fetch(entry.Baseline)
 		if err != nil {
 			return nil, cs, false, fmt.Errorf("crawler: fetching baseline v%d for catalog metadata fallback: %w", entry.Baseline.Version, err)
 		}
-		if err := json.Unmarshal(baselineBytes, &doc); err != nil {
+		var base catalogfile.Doc
+		if err := json.Unmarshal(baselineBytes, &base); err != nil {
 			return nil, cs, false, Permanentf("crawler: parsing baseline v%d for catalog metadata fallback: %v", entry.Baseline.Version, err)
+		}
+		if len(doc.Descriptor) == 0 {
+			doc.Descriptor = base.Descriptor
+		}
+		if len(doc.Provider) == 0 {
+			doc.Provider = base.Provider
 		}
 	}
 	doc.Resources = orderedValues(resByID, resOrder)
