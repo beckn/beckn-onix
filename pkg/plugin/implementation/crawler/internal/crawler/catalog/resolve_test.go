@@ -611,3 +611,78 @@ func TestStampIsActive(t *testing.T) {
 		}
 	})
 }
+
+func TestStampBppIdentity(t *testing.T) {
+	catalog := []byte(`{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"p"},"resources":[]}`)
+
+	t.Run("both empty leaves the doc untouched", func(t *testing.T) {
+		out, err := StampBppIdentity(catalog, "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(out) != string(catalog) {
+			t.Fatalf("expected doc unchanged, got %s", out)
+		}
+	})
+
+	t.Run("stamps bppId and bppUri when absent", func(t *testing.T) {
+		out, err := StampBppIdentity(catalog, "node-1", "https://node-1.example/bpp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			BppID  string `json:"bppId"`
+			BppURI string `json:"bppUri"`
+		}
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.BppID != "node-1" || got.BppURI != "https://node-1.example/bpp" {
+			t.Fatalf("got bppId=%q bppUri=%q", got.BppID, got.BppURI)
+		}
+	})
+
+	t.Run("empty bppUri is not stamped even when bppId is", func(t *testing.T) {
+		out, err := StampBppIdentity(catalog, "node-1", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			BppID  string          `json:"bppId"`
+			BppURI json.RawMessage `json:"bppUri"`
+		}
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.BppID != "node-1" {
+			t.Fatalf("bppId = %q, want node-1", got.BppID)
+		}
+		if got.BppURI != nil {
+			t.Fatalf("bppUri should be absent, got %s", got.BppURI)
+		}
+	})
+
+	t.Run("preserves values the publisher already wrote", func(t *testing.T) {
+		withIdentity := []byte(`{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"p"},"resources":[],"bppId":"orig-node","bppUri":"https://orig.example"}`)
+		out, err := StampBppIdentity(withIdentity, "node-1", "https://node-1.example/bpp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			BppID  string `json:"bppId"`
+			BppURI string `json:"bppUri"`
+		}
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.BppID != "orig-node" || got.BppURI != "https://orig.example" {
+			t.Fatalf("expected publisher's own values preserved, got bppId=%q bppUri=%q", got.BppID, got.BppURI)
+		}
+	})
+
+	t.Run("malformed doc is a permanent error", func(t *testing.T) {
+		if _, err := StampBppIdentity([]byte("not json"), "node-1", "uri"); err == nil {
+			t.Fatal("expected an error for malformed doc")
+		}
+	})
+}

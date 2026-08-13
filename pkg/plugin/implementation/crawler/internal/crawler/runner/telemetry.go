@@ -193,6 +193,14 @@ func (e *Engine) logSynced(runID, passID string, item *catalog.ClaimedItem, mode
 	e.deps.Log.Debug("sent the catalog update to Discovery", kv...)
 }
 
+// logBppURIUnresolved records a best-effort bppUri registry lookup failure
+// (DEBUG) — never fatal, since bppUri is an RFC-optional field the sync
+// proceeds without.
+func (e *Engine) logBppURIUnresolved(runID, passID, catalogID string, err error) {
+	e.deps.Log.Debug("could not resolve bppUri to stamp on the pushed catalog",
+		"event", "bppuri_unresolved", "runId", runID, "passId", passID, "catalogId", catalogID, "error", err.Error())
+}
+
 // logSkipped is the terminal for a claimed item with nothing to send (e.g. a
 // removal-only change while removals are deferred) (DEBUG).
 func (e *Engine) logSkipped(runID, passID string, item *catalog.ClaimedItem, reason string) {

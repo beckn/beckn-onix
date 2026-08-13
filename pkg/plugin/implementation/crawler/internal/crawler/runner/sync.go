@@ -258,7 +258,32 @@ func (e *Engine) fetchContent(ctx context.Context, s *syncState) (catalog.SyncOu
 		return catalog.OutcomeFaulted, true
 	}
 	s.pushDoc, s.mode, s.cs = pushDoc, mode, cs
+	e.stampBppIdentity(ctx, s)
 	return "", false
+}
+
+// stampBppIdentity backstops catalog.bppId/bppUri onto the resolved push doc
+// when the publisher's own catalog file content didn't already carry them (RFC
+// NFH-014 §Schema Changes). bppId is the enclosing index's own node identity --
+// always available, no lookup needed. bppUri needs a registry lookup (keyed on
+// this node + the entry's own signing key), which is best-effort: a resolution
+// failure here must not fail an otherwise-good sync over an RFC-optional field,
+// so it is logged and simply left unstamped.
+func (e *Engine) stampBppIdentity(ctx context.Context, s *syncState) {
+	var uri string
+	if e.deps.ResolveBppURI != nil {
+		u, err := e.deps.ResolveBppURI(ctx, s.nodeID, s.entry.Signature.KeyID)
+		if err != nil {
+			e.logBppURIUnresolved(s.runID, s.passID, s.entry.CatalogID, err)
+		} else {
+			uri = u
+		}
+	}
+	stamped, err := catalog.StampBppIdentity(s.pushDoc, s.nodeID, uri)
+	if err != nil {
+		return
+	}
+	s.pushDoc = stamped
 }
 
 // verifyContent (verifying): digests were already checked during the pull; this

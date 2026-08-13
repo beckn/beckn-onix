@@ -65,6 +65,18 @@ type IndexFetcher func(ctx context.Context, indexURL string, cond catalog.IndexC
 // catalogId/version (RFC NFH-014 CON-TBD-12).
 type FileFetcher func(ctx context.Context, nodeID, catalogID string, f catalog.FileEntry) ([]byte, error)
 
+// BppURIResolver resolves a node's own registered network address (the
+// publisher's URL, as held in the network registry) -- used to stamp
+// catalog.bppUri onto a pushed catalog when its own file content doesn't
+// already supply it (RFC NFH-014 §Schema Changes). Distinct from
+// EngineConfig.BppURI, which is the crawler's OWN URI for the push's
+// transport-level context.bppUri, a single static per-deployment value; this
+// is the per-catalog field, resolved per publishing node. keyID is the
+// entry's own signing key id -- the registry lookup endpoint requires both a
+// subscriber id and a key id. Injected so the runner stays free of the fetch
+// package's registry client details; nil disables bppUri stamping entirely.
+type BppURIResolver func(ctx context.Context, nodeID, keyID string) (string, error)
+
 // Validator schema-validates the /push request body before it is sent (Phase 1;
 // reuses onix's schemav2validator). A nil error means valid.
 type Validator func(ctx context.Context, pushBody []byte) error
@@ -142,10 +154,15 @@ type Deps struct {
 	NewRegistrySource func(registryURL string, networkIDs []string) source.Source
 	FetchIndex        IndexFetcher
 	FetchFile         FileFetcher
-	Validate          Validator
-	Push              Pusher
-	Log               Logger
-	Metrics           Metrics
-	Now               func() time.Time
-	NewID             func() string
+	// ResolveBppURI resolves a publishing node's own registered URL, for
+	// stamping catalog.bppUri when a catalog file doesn't supply it. Optional:
+	// nil simply skips bppUri stamping (bppId is still stamped -- it costs no
+	// lookup).
+	ResolveBppURI BppURIResolver
+	Validate      Validator
+	Push          Pusher
+	Log           Logger
+	Metrics       Metrics
+	Now           func() time.Time
+	NewID         func() string
 }

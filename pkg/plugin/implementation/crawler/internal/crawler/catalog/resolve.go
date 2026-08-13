@@ -126,7 +126,11 @@ func ResolveWithChangeset(entry CatalogEntry, cursor int64, seen bool, toVersion
 // is still missing; and resources/offers are the union of upserts across the
 // change files in (cursor, toVersion] (latest wins per id, order preserved).
 // Removals are recorded in the changeset but NOT applied (deferred to the
-// FULL/removals version).
+// FULL/removals version). bppId/bppUri, when present in the envelope, ride
+// through via Doc's generic Extra field like any other attribute the file
+// spec doesn't name explicitly; when absent, the caller fills them in
+// afterward (see StampBppIdentity) rather than this function paying for a
+// baseline fetch just to avoid leaving them null.
 //
 // A change file's envelope is not required to be complete -- nothing in the
 // file spec mandates repeating id/descriptor/provider on every change file,
@@ -240,6 +244,16 @@ func ResolveDelta(entry CatalogEntry, cursor, toVersion int64, fetch FetchFunc) 
 	// attribute-only delta (e.g. an isActive-only patch) that never carried
 	// them. The baseline's own resources/offers are discarded either way; the
 	// push still carries just the changed resources/offers accumulated above.
+	//
+	// bppId/bppUri (RFC NFH-014 §Schema Changes: "the same transaction-leg
+	// identity fields context already carries... included here so a DS can
+	// populate them correctly when it unwraps .catalog back onto the wire")
+	// are NOT force-fetched from the baseline the same way: unlike descriptor/
+	// provider, which have no other source, bppId/bppUri have a
+	// non-network-cost fallback the caller applies afterward (see
+	// StampBppIdentity) -- the crawler's own resolved registry identity for
+	// this node, which is authoritative and doesn't need a baseline refetch
+	// just to avoid leaving them null on a change file that omitted them.
 	if len(doc.Descriptor) == 0 || len(doc.Provider) == 0 {
 		baselineBytes, err := fetch(entry.Baseline)
 		if err != nil {
@@ -279,6 +293,49 @@ func StampIsActive(doc []byte, isActive *bool) ([]byte, error) {
 		return nil, Permanentf("crawler: reading catalog to stamp isActive: %v", err)
 	}
 	d.IsActive = isActive
+	return json.Marshal(d)
+}
+
+// StampBppIdentity fills in the pushed doc's bppId/bppUri ONLY when the
+// resolved content didn't already carry them (RFC NFH-014 §Schema Changes:
+// "catalog.bppId/bppUri are the same transaction-leg identity fields context
+// already carries on /discover<->/on_discover... included here so a DS can
+// populate them correctly when it unwraps .catalog back onto the wire").
+//
+// Preserving what the publisher's own catalog file content declared always
+// takes priority -- bppId/bppUri are schema-optional (beckn.yaml's Catalog
+// only requires id/descriptor/provider), so a publisher that DID write them
+// is not corrected or second-guessed here, only backstopped when they're
+// genuinely absent. bppID is the crawler's own resolved node identity
+// (always available, no network cost); bppURI may be empty when it couldn't
+// be resolved (e.g. a registry lookup failure) -- an empty bppURI is simply
+// not stamped, same as bppID being empty, rather than writing a blank value
+// over "unset."
+func StampBppIdentity(doc []byte, bppID, bppURI string) ([]byte, error) {
+	if bppID == "" && bppURI == "" {
+		return doc, nil
+	}
+	var d catalogfile.Doc
+	if err := json.Unmarshal(doc, &d); err != nil {
+		return nil, Permanentf("crawler: reading catalog to stamp bpp identity: %v", err)
+	}
+	if d.Extra == nil {
+		d.Extra = map[string]json.RawMessage{}
+	}
+	if _, ok := d.Extra["bppId"]; !ok && bppID != "" {
+		b, err := json.Marshal(bppID)
+		if err != nil {
+			return nil, err
+		}
+		d.Extra["bppId"] = b
+	}
+	if _, ok := d.Extra["bppUri"]; !ok && bppURI != "" {
+		b, err := json.Marshal(bppURI)
+		if err != nil {
+			return nil, err
+		}
+		d.Extra["bppUri"] = b
+	}
 	return json.Marshal(d)
 }
 

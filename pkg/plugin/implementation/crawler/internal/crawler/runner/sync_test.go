@@ -808,6 +808,126 @@ func TestBuildPushDoc_StampsIsActive(t *testing.T) {
 	}
 }
 
+func TestFetchContent_StampsBppIdentity(t *testing.T) {
+	fetch := func(f catalog.FileEntry) ([]byte, error) { return []byte(baselineOK), nil }
+	entry := catalog.CatalogEntry{
+		CatalogID: "p/c",
+		Baseline:  catalog.FileEntry{Version: 1, URL: "base", Digest: "d"},
+		Signature: catalog.EntrySignature{KeyID: "key-1"},
+	}
+	item := &catalog.ClaimedItem{
+		ID: "q1", ClaimID: "c1", CatalogID: "p/c", IndexURL: "https://x/i.json",
+		FromVersion: 0, ToVersion: 1, Op: "sync",
+	}
+
+	t.Run("stamps bppId and the resolved bppUri when the doc has neither", func(t *testing.T) {
+		eng := &Engine{cfg: EngineConfig{MergeOnly: true}, deps: Deps{
+			FetchFile: func(_ context.Context, nodeID, catalogID string, f catalog.FileEntry) ([]byte, error) {
+				return fetch(f)
+			},
+			ResolveBppURI: func(_ context.Context, nodeID, keyID string) (string, error) {
+				if nodeID != "node-1" || keyID != "key-1" {
+					t.Fatalf("ResolveBppURI got nodeID=%q keyID=%q", nodeID, keyID)
+				}
+				return "https://node-1.example/bpp", nil
+			},
+			Log: NopLogger{},
+		}}
+		s := &syncState{item: item, entry: entry, nodeID: "node-1"}
+		if outcome, stop := eng.fetchContent(context.Background(), s); stop {
+			t.Fatalf("fetchContent stopped with outcome %v", outcome)
+		}
+		var got struct {
+			BppID  string `json:"bppId"`
+			BppURI string `json:"bppUri"`
+		}
+		if err := json.Unmarshal(s.pushDoc, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.BppID != "node-1" || got.BppURI != "https://node-1.example/bpp" {
+			t.Fatalf("got bppId=%q bppUri=%q", got.BppID, got.BppURI)
+		}
+	})
+
+	t.Run("a failed bppUri lookup does not fail the sync, and bppId still stamps", func(t *testing.T) {
+		eng := &Engine{cfg: EngineConfig{MergeOnly: true}, deps: Deps{
+			FetchFile: func(_ context.Context, nodeID, catalogID string, f catalog.FileEntry) ([]byte, error) {
+				return fetch(f)
+			},
+			ResolveBppURI: func(_ context.Context, nodeID, keyID string) (string, error) {
+				return "", errors.New("registry unreachable")
+			},
+			Log: NopLogger{},
+		}}
+		s := &syncState{item: item, entry: entry, nodeID: "node-1"}
+		if outcome, stop := eng.fetchContent(context.Background(), s); stop {
+			t.Fatalf("fetchContent stopped with outcome %v", outcome)
+		}
+		var got struct {
+			BppID  string          `json:"bppId"`
+			BppURI json.RawMessage `json:"bppUri"`
+		}
+		if err := json.Unmarshal(s.pushDoc, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.BppID != "node-1" {
+			t.Fatalf("bppId = %q, want node-1", got.BppID)
+		}
+		if got.BppURI != nil {
+			t.Fatalf("bppUri should be absent, got %s", got.BppURI)
+		}
+	})
+
+	t.Run("nil ResolveBppURI still stamps bppId only", func(t *testing.T) {
+		eng := &Engine{cfg: EngineConfig{MergeOnly: true}, deps: Deps{
+			FetchFile: func(_ context.Context, nodeID, catalogID string, f catalog.FileEntry) ([]byte, error) {
+				return fetch(f)
+			},
+			Log: NopLogger{},
+		}}
+		s := &syncState{item: item, entry: entry, nodeID: "node-1"}
+		if outcome, stop := eng.fetchContent(context.Background(), s); stop {
+			t.Fatalf("fetchContent stopped with outcome %v", outcome)
+		}
+		var got struct {
+			BppID string `json:"bppId"`
+		}
+		if err := json.Unmarshal(s.pushDoc, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.BppID != "node-1" {
+			t.Fatalf("bppId = %q, want node-1", got.BppID)
+		}
+	})
+
+	t.Run("does not overwrite bppId/bppUri the publisher already set", func(t *testing.T) {
+		withIdentity := `{"id":"p/c","descriptor":{"name":"C"},"provider":{"id":"prov"},"resources":[{"id":"r1"}],"bppId":"orig-node","bppUri":"https://orig.example"}`
+		eng := &Engine{cfg: EngineConfig{MergeOnly: true}, deps: Deps{
+			FetchFile: func(_ context.Context, nodeID, catalogID string, f catalog.FileEntry) ([]byte, error) {
+				return []byte(withIdentity), nil
+			},
+			ResolveBppURI: func(_ context.Context, nodeID, keyID string) (string, error) {
+				return "https://node-1.example/bpp", nil
+			},
+			Log: NopLogger{},
+		}}
+		s := &syncState{item: item, entry: entry, nodeID: "node-1"}
+		if outcome, stop := eng.fetchContent(context.Background(), s); stop {
+			t.Fatalf("fetchContent stopped with outcome %v", outcome)
+		}
+		var got struct {
+			BppID  string `json:"bppId"`
+			BppURI string `json:"bppUri"`
+		}
+		if err := json.Unmarshal(s.pushDoc, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.BppID != "orig-node" || got.BppURI != "https://orig.example" {
+			t.Fatalf("expected publisher's own values preserved, got bppId=%q bppUri=%q", got.BppID, got.BppURI)
+		}
+	})
+}
+
 // The publish stage must carry the index entry's schemaTypes into
 // context.schemaContext, so Discovery's schema-type resolution doesn't depend
 // on every resource in the catalog remembering its own

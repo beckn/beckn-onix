@@ -159,7 +159,10 @@ func New(ctx context.Context, s config.Settings, opts Options) (Crawler, func() 
 		},
 		FetchIndex: fc.FetchIndex,
 		FetchFile:  fc.FetchFile,
-		Validate:   opts.Validate,
+		// Same registry the signature-trust path already resolves keys from,
+		// with its own independent cache (see fetch.RegistryBppURI).
+		ResolveBppURI: runner.BppURIResolver(fetch.RegistryBppURI(opts.Registry, opts.KeyCacheTTL)),
+		Validate:      opts.Validate,
 		Push: func(c context.Context, body []byte) (publish.BatchOutcome, error) {
 			return pc.Push(c, s.PushEndpoint, body)
 		},
