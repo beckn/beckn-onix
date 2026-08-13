@@ -27,6 +27,13 @@ type PushMeta struct {
 	UpdateMode    string   // UpdateModeFull | UpdateModeMerge
 	CatalogType   string   // from the index entry -> publishDirective.catalogType (required)
 	VisibleTo     []string // catalog networks; nil/empty => public (omitted)
+	// SchemaContext mirrors the index entry's own schemaTypes (RFC NFH-014) into
+	// context.schemaContext -- an array of JSON-LD context URLs per beckn.yaml's
+	// Context schema. Discovery's own schema-type resolution checks this FIRST,
+	// before falling back to each resource's own resourceAttributes["@type"], so
+	// setting it here makes schema-type resolution independent of whether every
+	// resource in the catalog remembered to carry that field. Omitted when empty.
+	SchemaContext []string
 }
 
 // BuildPushBody builds the Discovery /push request body: a Beckn catalog/push
@@ -50,16 +57,21 @@ func BuildPushBody(meta PushMeta, catalog []byte) ([]byte, error) {
 		directive["visibleTo"] = meta.VisibleTo
 	}
 
+	context := map[string]any{
+		"action":        "catalog/push",
+		"bppId":         meta.ParticipantID,
+		"bppUri":        meta.BppURI,
+		"messageId":     meta.MessageID,
+		"transactionId": meta.TransactionID,
+		"timestamp":     meta.Timestamp,
+		"version":       "2.0.0",
+	}
+	if len(meta.SchemaContext) > 0 {
+		context["schemaContext"] = meta.SchemaContext
+	}
+
 	body := map[string]any{
-		"context": map[string]any{
-			"action":        "catalog/push",
-			"bppId":         meta.ParticipantID,
-			"bppUri":        meta.BppURI,
-			"messageId":     meta.MessageID,
-			"transactionId": meta.TransactionID,
-			"timestamp":     meta.Timestamp,
-			"version":       "2.0.0",
-		},
+		"context": context,
 		"message": map[string]any{
 			"catalogs":          []json.RawMessage{json.RawMessage(catalog)},
 			"publishDirectives": []any{directive},

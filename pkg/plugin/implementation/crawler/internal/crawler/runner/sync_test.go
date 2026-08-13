@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -268,7 +269,7 @@ func (s *recordingStore) UpsertIndex(context.Context, string, string, string, st
 func (s *recordingStore) AdvanceIndexCadence(context.Context, string, time.Time) error { return nil }
 func (s *recordingStore) Enqueue(context.Context, catalog.QueueItem) error             { return nil }
 func (s *recordingStore) ClaimNext(context.Context) (*catalog.ClaimedItem, error)      { return nil, nil }
-func (s *recordingStore) Complete(_ context.Context, _, _ string, toVersion int64, c catalog.CatalogState) error {
+func (s *recordingStore) Complete(_ context.Context, _, _ string, toVersion, _ int64, c catalog.CatalogState) error {
 	s.completed = append(s.completed, completedCall{toVersion: toVersion, state: c})
 	return nil
 }
@@ -804,6 +805,47 @@ func TestBuildPushDoc_StampsIsActive(t *testing.T) {
 				t.Fatalf("isActive = %v, want %v", got.IsActive, *tt.isActive)
 			}
 		})
+	}
+}
+
+// The publish stage must carry the index entry's schemaTypes into
+// context.schemaContext, so Discovery's schema-type resolution doesn't depend
+// on every resource in the catalog remembering its own
+// resourceAttributes["@type"].
+func TestPublish_CarriesSchemaContext(t *testing.T) {
+	var pushedBodies [][]byte
+	push := func(_ context.Context, body []byte) (publish.BatchOutcome, error) {
+		pushedBodies = append(pushedBodies, body)
+		return publish.BatchOutcome{Acked: true, HTTPStatus: 200}, nil
+	}
+	eng := New(EngineConfig{MaxPushBytes: 10 << 20}, Deps{
+		Store: &recordingStore{}, Push: push, Log: &fakeLogger{}, Metrics: NopMetrics{},
+		Now: time.Now, NewID: func() string { return "id" },
+	})
+	s := &syncState{
+		item:    &catalog.ClaimedItem{ID: "q1", ClaimID: "c1", CatalogID: "p/c"},
+		entry:   catalog.CatalogEntry{CatalogID: "p/c", SchemaTypes: []string{"https://schema.beckn.org/retail/schema/1.1.0/context.jsonld"}},
+		pushDoc: []byte(`{"id":"p/c","resources":[]}`), mode: publish.UpdateModeFull,
+	}
+	s.batches = []publish.CatalogBatch{{Doc: s.pushDoc, UpdateMode: s.mode}}
+
+	if outcome, stop := eng.publish(context.Background(), s); stop || outcome != "" {
+		t.Fatalf("publish stage failed: outcome=%v stop=%v", outcome, stop)
+	}
+	if len(pushedBodies) != 1 {
+		t.Fatalf("push calls = %d, want 1", len(pushedBodies))
+	}
+	var got struct {
+		Context struct {
+			SchemaContext []string `json:"schemaContext"`
+		} `json:"context"`
+	}
+	if err := json.Unmarshal(pushedBodies[0], &got); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"https://schema.beckn.org/retail/schema/1.1.0/context.jsonld"}
+	if !reflect.DeepEqual(got.Context.SchemaContext, want) {
+		t.Fatalf("schemaContext = %v, want %v", got.Context.SchemaContext, want)
 	}
 }
 

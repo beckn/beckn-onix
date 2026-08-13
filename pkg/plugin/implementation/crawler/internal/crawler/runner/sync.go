@@ -354,7 +354,7 @@ func (e *Engine) publish(ctx context.Context, s *syncState) (catalog.SyncOutcome
 			MessageID: e.newID(), TransactionID: e.newID(),
 			Timestamp:  e.deps.Now().UTC().Format(time.RFC3339),
 			UpdateMode: b.UpdateMode, CatalogType: s.entry.CatalogType,
-			VisibleTo: s.visibleTo,
+			VisibleTo: s.visibleTo, SchemaContext: s.entry.SchemaTypes,
 		}, b.Doc)
 		if err != nil {
 			return e.failPublish(ctx, s, outcomes, ackedSoFar, catalog.FaultContentInvalid, "build_push: "+err.Error())
@@ -521,7 +521,7 @@ func (e *Engine) resolvePushDoc(entry catalog.CatalogEntry, item *catalog.Claime
 // shared by the three terminal sites — the caller handles the returned error
 // (all currently via storeUnhealthy("complete")).
 func (e *Engine) settle(ctx context.Context, item *catalog.ClaimedItem, participantID string, status catalog.CatalogStatus, report catalog.PassReport, descriptor, provider []byte, catalogType string) error {
-	return e.deps.Store.Complete(ctx, item.ID, item.ClaimID, item.ToVersion, catalog.CatalogState{
+	return e.deps.Store.Complete(ctx, item.ID, item.ClaimID, item.ToVersion, item.EntryVersion, catalog.CatalogState{
 		CatalogID: item.CatalogID, IndexURL: item.IndexURL, ParticipantID: participantID,
 		Version: item.ToVersion, EntryVersion: item.EntryVersion, Status: string(status), Report: report,
 		Descriptor: descriptor, Provider: provider, CatalogType: catalogType,

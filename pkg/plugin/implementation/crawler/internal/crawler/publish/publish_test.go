@@ -176,6 +176,48 @@ func TestBuildPushBody_PublicOmitsVisibleTo(t *testing.T) {
 	}
 }
 
+// context.schemaContext mirrors the index entry's schemaTypes, so Discovery's
+// schema-type resolution doesn't depend on every resource carrying its own
+// resourceAttributes["@type"]. Omitted entirely when the entry declares none.
+func TestBuildPushBody_SchemaContext(t *testing.T) {
+	catalog := []byte(`{"id":"p/c","resources":[]}`)
+
+	t.Run("carried through when the entry declares schemaTypes", func(t *testing.T) {
+		body, err := BuildPushBody(PushMeta{
+			ParticipantID: "p", UpdateMode: UpdateModeFull,
+			SchemaContext: []string{"https://schema.beckn.org/retail/schema/1.1.0/context.jsonld"},
+		}, catalog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			Context struct {
+				SchemaContext []string `json:"schemaContext"`
+			} `json:"context"`
+		}
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"https://schema.beckn.org/retail/schema/1.1.0/context.jsonld"}
+		if !reflect.DeepEqual(got.Context.SchemaContext, want) {
+			t.Errorf("schemaContext = %v, want %v", got.Context.SchemaContext, want)
+		}
+	})
+
+	t.Run("omitted when the entry declares none", func(t *testing.T) {
+		body, err := BuildPushBody(PushMeta{ParticipantID: "p", UpdateMode: UpdateModeFull}, catalog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var raw map[string]any
+		json.Unmarshal(body, &raw)
+		ctx := raw["context"].(map[string]any)
+		if _, present := ctx["schemaContext"]; present {
+			t.Errorf("schemaContext should be omitted when empty, got %v", ctx["schemaContext"])
+		}
+	})
+}
+
 func TestRollup(t *testing.T) {
 	ok := BatchOutcome{Acked: true, HTTPStatus: 200}
 	bad := BatchOutcome{Acked: false, HTTPStatus: 400, Reason: "schema"}
