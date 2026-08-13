@@ -14,21 +14,117 @@ import (
 	"fmt"
 )
 
-// Doc is the fixed top-level shape a Beckn Catalog carries (file spec:
-// "the plain Beckn catalog JSON, exactly the schema used today"). Offers
-// is optional -- not every catalog carries one.
+// Doc is the top-level shape a Beckn Catalog carries (file spec: "the plain
+// Beckn catalog JSON, exactly the schema used today"). Offers is optional --
+// not every catalog carries one.
+//
+// id/descriptor/provider/resources/offers/isActive are named fields because
+// callers throughout this package and the crawler read and write them
+// directly (resource/offer diffing, filtering, batching, isActive stamping).
+// Extra preserves every OTHER top-level field a real Catalog document can
+// carry -- the file spec's own examples name "validity window" alongside
+// descriptor/provider, and a domain may add its own -- so a baseline+changes
+// fold, or a catalog-attribute patch naming a field that isn't one of the six
+// above, never silently drops it. Custom MarshalJSON/UnmarshalJSON below
+// route the known fields to their typed slots and everything else into
+// Extra, in both directions.
 type Doc struct {
-	ID         json.RawMessage   `json:"id"`
-	Descriptor json.RawMessage   `json:"descriptor"`
-	Provider   json.RawMessage   `json:"provider"`
-	Resources  []json.RawMessage `json:"resources"`
-	Offers     []json.RawMessage `json:"offers,omitempty"`
+	ID         json.RawMessage
+	Descriptor json.RawMessage
+	Provider   json.RawMessage
+	Resources  []json.RawMessage
+	Offers     []json.RawMessage
 	// IsActive mirrors the pushed Catalog schema's own isActive (default true
 	// there). It is a pointer so nil (never stamped) stays omitted on the wire
 	// rather than us inventing a default -- see catalog.StampIsActive, the only
-	// writer of this field; nothing in a baseline/change file ever sets it,
-	// since isActive is index-entry metadata, not catalog content.
-	IsActive *bool `json:"isActive,omitempty"`
+	// writer of this field via this path; a baseline/change file's own content
+	// can also carry it directly (see Apply).
+	IsActive *bool
+	Extra    map[string]json.RawMessage
+}
+
+// nullRaw is what a zero-value json.RawMessage field marshals as, matching
+// encoding/json's own behavior for an untagged (no omitempty) nil field.
+var nullRaw = json.RawMessage("null")
+
+// MarshalJSON emits id/descriptor/provider/resources/isActive unconditionally
+// (matching the struct's pre-generic no-omitempty tags: an unset field
+// marshals as null, not absent), offers/isActive only when set (omitempty),
+// and every Extra field alongside them.
+func (d Doc) MarshalJSON() ([]byte, error) {
+	m := make(map[string]json.RawMessage, len(d.Extra)+6)
+	for k, v := range d.Extra {
+		m[k] = v
+	}
+	m["id"] = orNull(d.ID)
+	m["descriptor"] = orNull(d.Descriptor)
+	m["provider"] = orNull(d.Provider)
+	resources, err := json.Marshal(d.Resources) // nil -> null, non-nil (even empty) -> []
+	if err != nil {
+		return nil, fmt.Errorf("catalogfile: marshaling resources: %w", err)
+	}
+	m["resources"] = resources
+	if len(d.Offers) > 0 {
+		offers, err := json.Marshal(d.Offers)
+		if err != nil {
+			return nil, fmt.Errorf("catalogfile: marshaling offers: %w", err)
+		}
+		m["offers"] = offers
+	}
+	if d.IsActive != nil {
+		active, err := json.Marshal(*d.IsActive)
+		if err != nil {
+			return nil, err
+		}
+		m["isActive"] = active
+	}
+	return json.Marshal(m)
+}
+
+func orNull(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nullRaw
+	}
+	return raw
+}
+
+// UnmarshalJSON routes the six named fields to their typed slots and every
+// other top-level field into Extra, so nothing beyond the fields this package
+// actively reads/writes is ever silently dropped on a round trip.
+func (d *Doc) UnmarshalJSON(b []byte) error {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	extra := make(map[string]json.RawMessage, len(m))
+	for field, v := range m {
+		switch field {
+		case "id":
+			d.ID = v
+		case "descriptor":
+			d.Descriptor = v
+		case "provider":
+			d.Provider = v
+		case "resources":
+			if err := json.Unmarshal(v, &d.Resources); err != nil {
+				return fmt.Errorf("catalogfile: parsing resources: %w", err)
+			}
+		case "offers":
+			if err := json.Unmarshal(v, &d.Offers); err != nil {
+				return fmt.Errorf("catalogfile: parsing offers: %w", err)
+			}
+		case "isActive":
+			var active bool
+			if err := json.Unmarshal(v, &active); err != nil {
+				return fmt.Errorf("catalogfile: parsing isActive: %w", err)
+			}
+			d.IsActive = &active
+		default:
+			extra[field] = v
+		}
+	}
+	d.Extra = extra
+	return nil
 }
 
 // DiffBlock is one array's worth of upserts (added or updated items,
@@ -86,11 +182,33 @@ func Apply(catalog []byte, changeRaw []byte) ([]byte, error) {
 		if err := json.Unmarshal(change.Catalog, &attrs); err != nil {
 			return nil, fmt.Errorf("catalogfile: parsing catalog attribute changes: %w", err)
 		}
-		if v, ok := attrs["descriptor"]; ok {
-			doc.Descriptor = v
+		// Any catalog-level field the change file names is applied, not a fixed
+		// list -- the file spec's own examples aren't limited to descriptor/
+		// provider (e.g. "validity window"), and a domain may add its own.
+		// resources/offers are deliberately NOT valid here even if named: they
+		// have their own dedicated upserts/removals diffing above, never this
+		// nested per-catalog-attribute patch, so overlaying them here would open
+		// a second, conflicting path for the same content.
+		if doc.Extra == nil {
+			doc.Extra = map[string]json.RawMessage{}
 		}
-		if v, ok := attrs["provider"]; ok {
-			doc.Provider = v
+		for field, v := range attrs {
+			switch field {
+			case "descriptor":
+				doc.Descriptor = v
+			case "provider":
+				doc.Provider = v
+			case "isActive":
+				var active bool
+				if err := json.Unmarshal(v, &active); err != nil {
+					return nil, fmt.Errorf("catalogfile: parsing isActive attribute change: %w", err)
+				}
+				doc.IsActive = &active
+			case "resources", "offers":
+				return nil, fmt.Errorf("catalogfile: %q is not a valid catalog-attribute field (it has its own dedicated diffing)", field)
+			default:
+				doc.Extra[field] = v
+			}
 		}
 	}
 
