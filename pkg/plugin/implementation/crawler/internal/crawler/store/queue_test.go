@@ -158,7 +158,7 @@ func TestComplete(t *testing.T) {
 
 	it, err := s.ClaimNext(ctx)
 	must(t, err)
-	must(t, s.Complete(ctx, it.ID, it.ClaimID, it.ToVersion, catalog.CatalogState{
+	must(t, s.Complete(ctx, it.ID, it.ClaimID, it.ToVersion, it.EntryVersion, catalog.CatalogState{
 		CatalogID: "p/c", IndexURL: "i", Version: 42, Status: "active", Report: catalog.PassReport{Outcome: "pushed"},
 	}))
 
@@ -197,7 +197,7 @@ func TestEnqueue_PreservesInProgressClaim(t *testing.T) {
 	}
 
 	// Completing v5 advances the cursor but must NOT delete the v7 work.
-	must(t, s.Complete(ctx, it.ID, it.ClaimID, 5, catalog.CatalogState{
+	must(t, s.Complete(ctx, it.ID, it.ClaimID, 5, it.EntryVersion, catalog.CatalogState{
 		CatalogID: "p/c", IndexURL: "i", Version: 5, Status: "active", Report: catalog.PassReport{Outcome: "pushed"},
 	}))
 	if v, _, seen, _ := s.GetCatalogVersion(ctx, "p/c"); !seen || v != 5 {
@@ -210,6 +210,50 @@ func TestEnqueue_PreservesInProgressClaim(t *testing.T) {
 	must(t, err)
 	if it2 == nil || it2.ToVersion != 7 {
 		t.Fatalf("reclaim = %+v, want ToVersion 7", it2)
+	}
+}
+
+// A coalescing enqueue can bump entry_version ALONE, with to_version unchanged
+// (a metadata-only index edit: isActive toggled, networkIds edited -- no new
+// content). Complete's optimistic-concurrency check must catch that too, not
+// just a to_version bump: a worker completing with its own now-stale
+// entry_version must be released for reclaim, never allowed to delete the row
+// out from under a fresher entry_version -- otherwise the catalog settles at
+// an entry cursor that doesn't match what actually happened, and the next
+// crawl tick sees its stored entryCursor already equal to the index's real
+// entryVersion and reports ActionSkipUnchanged forever: a catalog silently
+// stuck as "up to date" when its content sync never actually completed at
+// that entry version.
+func TestComplete_EntryVersionBumpAloneIsDetectedAsSuperseded(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	must(t, s.Enqueue(ctx, catalog.QueueItem{CatalogID: "p/c", IndexURL: "i", ToVersion: 1, EntryVersion: 1}))
+
+	it, err := s.ClaimNext(ctx)
+	must(t, err)
+	if it == nil || it.EntryVersion != 1 {
+		t.Fatalf("claimed = %+v, want EntryVersion 1", it)
+	}
+
+	// A metadata-only edit lands while v1 is being processed: entry_version
+	// bumps to 2, to_version stays 1 (no new content).
+	must(t, s.Enqueue(ctx, catalog.QueueItem{CatalogID: "p/c", IndexURL: "i", ToVersion: 1, EntryVersion: 2}))
+
+	// The original worker completes with its OWN stale claimed EntryVersion (1).
+	must(t, s.Complete(ctx, it.ID, it.ClaimID, it.ToVersion, it.EntryVersion, catalog.CatalogState{
+		CatalogID: "p/c", IndexURL: "i", Version: 1, EntryVersion: 1, Status: "active",
+		Report: catalog.PassReport{Outcome: "pushed"},
+	}))
+
+	// The row must survive (released, not deleted) so entry_version 2 gets
+	// reprocessed -- losing it here is exactly the stuck-forever bug.
+	if d, _ := s.QueueDepth(ctx); d != 1 {
+		t.Fatalf("depth = %d, want 1 (entry_version 2 still queued, not lost)", d)
+	}
+	reclaimed, err := s.ClaimNext(ctx)
+	must(t, err)
+	if reclaimed == nil || reclaimed.EntryVersion != 2 {
+		t.Fatalf("reclaim = %+v, want EntryVersion 2 preserved", reclaimed)
 	}
 }
 
@@ -270,7 +314,7 @@ func TestQueueDepth_CountsOnlyPendingWork(t *testing.T) {
 		{
 			name: "completed rows leave the queue entirely",
 			arrange: func(t *testing.T, s *Store, ctx context.Context, it *catalog.ClaimedItem) {
-				must(t, s.Complete(ctx, it.ID, it.ClaimID, it.ToVersion, catalog.CatalogState{
+				must(t, s.Complete(ctx, it.ID, it.ClaimID, it.ToVersion, it.EntryVersion, catalog.CatalogState{
 					CatalogID: "p/c", IndexURL: "i", Version: it.ToVersion, Status: "active",
 					Report: catalog.PassReport{Outcome: "pushed"},
 				}))
