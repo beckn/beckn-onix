@@ -439,14 +439,14 @@ func TestValidateHeaders_PreservesClassifiedCode(t *testing.T) {
 	}{
 		{
 			name:     "Validate returns a classified error",
-			sv:       &mockSignValidatorBasic{validateErr: model.NewCodedSignValidationErr("AUT_UNAUTHORIZED_ACTION", errors.New("identity mismatch"))},
+			sv:       &mockSignValidatorBasic{validateErr: model.NewSignValidationErr("AUT_UNAUTHORIZED_ACTION", errors.New("identity mismatch"))},
 			km:       &mockKMBasic{publicKey: "pubKey=="},
 			wantCode: "AUT_UNAUTHORIZED_ACTION",
 		},
 		{
 			name:     "LookupNPKeys returns a classified error",
 			sv:       &mockSignValidatorBasic{},
-			km:       &mockKMBasic{lookupErr: model.NewCodedSignValidationErr("AUT_SUBSCRIBER_NOT_FOUND", errors.New("no subscriber found with given credentials"))},
+			km:       &mockKMBasic{lookupErr: model.NewSignValidationErr("AUT_SUBSCRIBER_NOT_FOUND", errors.New("no subscriber found with given credentials"))},
 			wantCode: "AUT_SUBSCRIBER_NOT_FOUND",
 		},
 	}
@@ -464,9 +464,9 @@ func TestValidateHeaders_PreservesClassifiedCode(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected an error but got none")
 			}
-			var signErr *model.SignValidationErr
+			var signErr *model.CodedErr
 			if !errors.As(err, &signErr) {
-				t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+				t.Fatalf("expected err to be a *model.CodedErr, got: %T (%v)", err, err)
 			}
 			if signErr.Code != tt.wantCode {
 				t.Errorf("signErr.Code = %s, want %s (validateHeaders must not shadow the inner classification)", signErr.Code, tt.wantCode)
@@ -801,9 +801,11 @@ func TestValidateSchemaStep_Run_EmptyBodyPost_ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty-body POST, got nil")
 	}
-	var badReq *model.BadReqErr
+	var badReq *model.CodedErr
 	if !errors.As(err, &badReq) {
-		t.Errorf("expected BadReqErr, got %T: %v", err, err)
+		t.Errorf("expected a bad-request *model.CodedErr, got %T: %v", err, err)
+	} else if got := badReq.HTTPStatus(); got != http.StatusBadRequest {
+		t.Errorf("HTTPStatus() = %d, want %d", got, http.StatusBadRequest)
 	}
 	if mv.gotURL != nil {
 		t.Error("Validate should not have been called for empty-body POST")

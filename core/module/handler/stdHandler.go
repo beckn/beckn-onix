@@ -263,7 +263,7 @@ func (h *stdHandler) signNackResponse(ctx *model.StepContext, err error) {
 func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContext, error) {
 	var bodyBuffer bytes.Buffer
 	if _, err := io.Copy(&bodyBuffer, r.Body); err != nil {
-		return nil, model.NewBadReqErr(err)
+		return nil, model.NewBadReqErr("", err)
 	}
 	r.Body.Close()
 	body := bodyBuffer.Bytes()

@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 )
 
@@ -25,11 +26,13 @@ type Error struct {
 //
 // The returned *Error is a plain value, not a step error: nackBecknError
 // (core/module/handler/responsestep.go) only recognizes SchemaValidationErr,
-// SignValidationErr, BadReqErr, NotFoundErr, AckNoCallbackErr, and any type
-// implementing BecknErrorer. Callers must wrap the result in one of those
-// types (or implement BecknErrorer) before returning it from a Step —
-// returning it bare falls through to a generic 500 Internal Server Error
-// instead of the intended NACK code.
+// CodedErr, AckNoCallbackErr, and any type implementing BecknErrorer. Callers
+// must wrap the result in one of those types (or implement BecknErrorer)
+// before returning it from a Step — returning it bare falls through to a
+// generic 500 Internal Server Error instead of the intended NACK code.
+//
+// NewCodedErr builds the step error itself, carrying a cause and an HTTP
+// status alongside the code.
 func NewCodedError(code, message string) *Error {
 	return &Error{Code: code, Message: message}
 }
@@ -55,12 +58,12 @@ func (e *Error) Unwrap() error {
 
 // BecknErrorer is implemented by any error type that can produce its own
 // *Error NACK representation. nackBecknError (core/module/handler/responsestep.go)
-// dispatches on a fixed list of concrete types first (SchemaValidationErr,
-// SignValidationErr, BadReqErr, NotFoundErr, AckNoCallbackErr) for their
-// type-specific HTTP status codes, then falls back to this interface for any
-// other type — so a new error type can be wired into NACK dispatch by
-// implementing BecknError() *Error alone, without core importing the
-// plugin package that defines it.
+// dispatches on a short list of concrete types first (SchemaValidationErr,
+// CodedErr, AckNoCallbackErr) for their HTTP status codes, then falls back to
+// this interface for any other type — so a new error type can be wired into
+// NACK dispatch by implementing BecknError() *Error alone, without core
+// importing the plugin package that defines it. The fallback always answers
+// 400; a type needing another status should return a *CodedErr instead.
 type BecknErrorer interface {
 	error
 	BecknError() *Error
@@ -159,148 +162,160 @@ func FirstNonEmptyCode(errs []Error, defaultCode string) string {
 	return defaultCode
 }
 
-// codedErr is the common shape shared by wrapper error types that carry one
-// opaque cause plus an optional explicit taxonomy code, falling back to a
-// type-specific default when Code is empty. Embed it in a named type (e.g.
-// SignValidationErr, BadReqErr) to get Code storage and Unwrap() without
-// duplicating them — the embedding type still defines its own constructors
-// and BecknError(), since message-prefix formatting and the default code
-// genuinely differ per type.
-type codedErr struct {
+// CodedErr wraps one cause with an optional taxonomy code and the HTTP status
+// to NACK it with. It replaces BadReqErr, SignValidationErr and NotFoundErr,
+// which stored the same fields and differed only in the status
+// nackBecknError (core/module/handler/responsestep.go) picked for each by
+// type switch. That status is now set at construction.
+//
+// Use NewCodedErr, or NewBadReqErr, NewSignValidationErr and NewNotFoundErr
+// for the 400, 401 and 404 cases and their message prefixes. Status, prefix
+// and default code are unexported, so a usable value comes from a constructor.
+//
+// SchemaValidationErr and AckNoCallbackErr stay separate. They differ in
+// shape, not just status.
+type CodedErr struct {
 	// Code is the taxonomy value for this failure's specific cause, or ""
-	// if unclassified — the embedding type's BecknError() should apply its
-	// own default via resolveCode in that case.
+	// if unclassified, in which case BecknError() reports defaultCode.
 	Code string
+
+	// httpStatus is the status nackBecknError responds with.
+	httpStatus int
+	// prefix is prepended to the wrapped error's text by BecknError().
+	prefix string
+	// defaultCode is reported when Code is empty.
+	defaultCode string
+
 	error
 }
 
+// defaultUnclassifiedCode is reported when a NewCodedErr caller passes no
+// code. Callers are expected to pass one, so this only keeps an empty code
+// off the wire.
+const defaultUnclassifiedCode = "NET_INTERNAL_ERROR"
+
+// NewCodedErr creates a CodedErr with an explicit HTTP status and taxonomy
+// code. A plugin that classifies several kinds of failure, such as
+// vcvalidator, needs only this constructor.
+//
+// The status is explicit rather than derived from the code's family prefix,
+// which does not determine it: NET_* alone spans 404, 500, 502 and 503.
+func NewCodedErr(httpStatus int, code string, err error) *CodedErr {
+	return &CodedErr{Code: code, httpStatus: httpStatus, defaultCode: defaultUnclassifiedCode, error: err}
+}
+
+// HTTPStatus returns the status to NACK with. Anything outside the 4xx/5xx
+// range reports 400 instead, since a NACK must not be sent with a success
+// status and a value built without a constructor carries no status at all.
+// 400 is also what core answers for any other BecknErrorer.
+func (e *CodedErr) HTTPStatus() int {
+	if e.httpStatus < 400 || e.httpStatus > 599 {
+		return http.StatusBadRequest
+	}
+	return e.httpStatus
+}
+
 // Unwrap exposes the wrapped cause so errors.Is/errors.As can reach it (e.g. a
-// plugin-defined sentinel error) in addition to matching the embedding type.
-func (e *codedErr) Unwrap() error {
+// plugin-defined sentinel error) in addition to matching *CodedErr itself.
+func (e *CodedErr) Unwrap() error {
 	return e.error
 }
 
-// resolveCode returns Code if non-empty, else defaultCode. Called by
-// becknError to apply the embedding type's own default fallback.
-func (e *codedErr) resolveCode(defaultCode string) string {
+// Error returns the wrapped cause's text, or "" when a CodedErr was built
+// without a cause. BecknError runs while the handler builds the NACK, so a
+// panic here would drop the request instead of answering it.
+func (e *CodedErr) Error() string {
+	if e.error == nil {
+		return ""
+	}
+	return e.error.Error()
+}
+
+// resolveCode returns Code if non-empty, else the constructor's default, else
+// defaultUnclassifiedCode. The last fallback applies only to a CodedErr built
+// without a constructor, and keeps an empty code off the wire.
+func (e *CodedErr) resolveCode() string {
 	if e.Code != "" {
 		return e.Code
 	}
-	return defaultCode
+	if e.defaultCode != "" {
+		return e.defaultCode
+	}
+	return defaultUnclassifiedCode
 }
 
-// becknError builds the *Error NACK payload shared by every codedErr embedder:
-// resolveCode's Code/default fallback, plus prefix prepended to the wrapped
-// error's text. New plugin-specific error types that only need "a code with
-// a default, plus a fixed message prefix" (the common case) should embed
-// codedErr and implement BecknError() as a one-line call to this — see
-// BadReqErr/SignValidationErr/NotFoundErr below. Only reach for a fully
-// custom BecknError() (like SchemaValidationErr's multi-cause aggregation or
-// AckNoCallbackErr's pass-through) when the shape genuinely doesn't fit.
-func (e *codedErr) becknError(prefix, defaultCode string) *Error {
+// BecknError builds the *Error NACK payload from the resolved code and the
+// constructor's prefix prepended to the wrapped error's text.
+func (e *CodedErr) BecknError() *Error {
 	return &Error{
-		Code:    e.resolveCode(defaultCode),
-		Message: prefix + e.Error(),
+		Code:    e.resolveCode(),
+		Message: e.prefix + e.Error(),
 	}
 }
 
-// defaultSignValidationCode is used when a SignValidationErr carries no more
-// specific classification — the closest generic bucket in the AUT_* taxonomy.
+// defaultSignValidationCode is used when a signature-validation failure
+// carries no more specific classification — the closest generic bucket in the
+// AUT_* taxonomy.
 const defaultSignValidationCode = "AUT_SIGNATURE_INVALID"
 
-// SignValidationErr occurs when signature validation fails.
-type SignValidationErr struct {
-	codedErr
-}
-
-// NewSignValidationErr creates a new instance of SignValidationErr from an
-// error. Code is left unset, so BecknError() falls back to the generic
-// AUT_SIGNATURE_INVALID bucket — mirrors NewBadReqErr's lazy-default
-// convention. Use NewCodedSignValidationErr when the caller knows a more
-// specific AUT_* cause.
-func NewSignValidationErr(e error) *SignValidationErr {
-	return &SignValidationErr{codedErr{error: e}}
-}
-
-// NewCodedSignValidationErr creates a SignValidationErr classified with an
-// explicit AUT_* code, for callers that already know the specific cause.
-func NewCodedSignValidationErr(code string, e error) *SignValidationErr {
-	return &SignValidationErr{codedErr{Code: code, error: e}}
-}
-
-// BecknError converts the SignValidationErr to an instance of Error.
+// NewSignValidationErr creates a 401 CodedErr for a request whose
+// authenticity could not be established. Pass code "" to leave the failure
+// unclassified, reporting defaultSignValidationCode.
 //
-// The "Signature Validation Error: " message prefix was accurate for this
-// type's original sole caller (signvalidator.go, exclusively real signature
-// failures). vcvalidator (see #870/#884) also constructs SignValidationErr
-// for non-signature causes — expiry, revocation, DID-resolution failures,
-// issuer mismatch — via NewCodedSignValidationErr, so the human-readable
-// message can now read e.g. "Signature Validation Error: CREDENTIAL_EXPIRED:
-// ...". The structured Code field is correct either way; only this message
-// text is misleading for those causes. Deliberately left as-is: fixing it is
-// a cross-cutting change affecting every caller of this type, deferred
+// The "Signature Validation Error: " message prefix was accurate for the
+// original sole caller (signvalidator.go, exclusively real signature
+// failures). vcvalidator (see #870/#884) also uses it for non-signature causes
+// — expiry, revocation, DID-resolution failures, issuer mismatch — so the
+// human-readable message can now read e.g. "Signature Validation Error:
+// CREDENTIAL_EXPIRED: ...". The structured Code field is correct either way;
+// only this message text is misleading for those causes. Deliberately left
+// as-is: fixing it is a cross-cutting change affecting every caller, deferred
 // rather than folded into #884's scope.
-func (e *SignValidationErr) BecknError() *Error {
-	return e.becknError("Signature Validation Error: ", defaultSignValidationCode)
+func NewSignValidationErr(code string, err error) *CodedErr {
+	return &CodedErr{
+		Code:        code,
+		httpStatus:  http.StatusUnauthorized,
+		prefix:      "Signature Validation Error: ",
+		defaultCode: defaultSignValidationCode,
+		error:       err,
+	}
 }
 
-// BadReqErr occurs when a bad request is encountered.
-type BadReqErr struct {
-	codedErr
-}
-
-// defaultBadReqCode is used when a BadReqErr carries no more specific
+// defaultBadReqCode is used when a bad request carries no more specific
 // classification — the closest generic bucket in the SCH_* taxonomy. Reused
 // across many callers rather than a dedicated bucket, since this fallback is
-// rarely hit once a caller adopts NewCodedBadReqErr.
+// rarely hit once a caller passes an explicit code.
 const defaultBadReqCode = "SCH_INVALID_FORMAT"
 
-// NewBadReqErr creates a new instance of BadReqErr from an error. Code is left
-// unset, so BecknError() falls back to defaultBadReqCode — the many existing
-// callers of this constructor across the codebase keep that behavior
-// unchanged. Use NewCodedBadReqErr when the caller knows a more specific
-// taxonomy code.
-func NewBadReqErr(err error) *BadReqErr {
-	return &BadReqErr{codedErr{error: err}}
+// NewBadReqErr creates a 400 CodedErr. Pass code "" to leave the failure
+// unclassified, reporting defaultBadReqCode, or a specific taxonomy code when
+// the caller knows one (e.g. a policy checker classifying a denial onto the
+// Beckn v2.0.0 POL_* codes).
+func NewBadReqErr(code string, err error) *CodedErr {
+	return &CodedErr{
+		Code:        code,
+		httpStatus:  http.StatusBadRequest,
+		prefix:      "BAD Request: ",
+		defaultCode: defaultBadReqCode,
+		error:       err,
+	}
 }
 
-// NewCodedBadReqErr creates a BadReqErr classified with an explicit taxonomy
-// code, for callers that already know the specific cause (e.g. a policy
-// checker classifying a denial onto the Beckn v2.0.0 POL_* codes).
-func NewCodedBadReqErr(code string, err error) *BadReqErr {
-	return &BadReqErr{codedErr{Code: code, error: err}}
-}
-
-// BecknError converts the BadReqErr to an instance of Error.
-func (e *BadReqErr) BecknError() *Error {
-	return e.becknError("BAD Request: ", defaultBadReqCode)
-}
-
-// defaultNotFoundCode is used when a NotFoundErr carries no more specific
-// classification — the closest generic bucket in the NET_* taxonomy.
+// defaultNotFoundCode is used when a not-found failure carries no more
+// specific classification — the closest generic bucket in the NET_* taxonomy.
 const defaultNotFoundCode = "NET_ENTITY_NOT_FOUND"
 
-// NotFoundErr occurs when a requested endpoint is not found.
-type NotFoundErr struct {
-	codedErr
-}
-
-// NewNotFoundErr creates a new instance of NotFoundErr from an error. Code is
-// left unset, so BecknError() falls back to defaultNotFoundCode. Use
-// NewCodedNotFoundErr when the caller knows a more specific taxonomy code.
-func NewNotFoundErr(err error) *NotFoundErr {
-	return &NotFoundErr{codedErr{error: err}}
-}
-
-// NewCodedNotFoundErr creates a NotFoundErr classified with an explicit
-// taxonomy code, for callers that already know the specific cause.
-func NewCodedNotFoundErr(code string, err error) *NotFoundErr {
-	return &NotFoundErr{codedErr{Code: code, error: err}}
-}
-
-// BecknError converts the NotFoundErr to an instance of Error.
-func (e *NotFoundErr) BecknError() *Error {
-	return e.becknError("Endpoint not found: ", defaultNotFoundCode)
+// NewNotFoundErr creates a 404 CodedErr for a requested endpoint or entity
+// that does not exist. Pass code "" to leave the failure unclassified,
+// reporting defaultNotFoundCode.
+func NewNotFoundErr(code string, err error) *CodedErr {
+	return &CodedErr{
+		Code:        code,
+		httpStatus:  http.StatusNotFound,
+		prefix:      "Endpoint not found: ",
+		defaultCode: defaultNotFoundCode,
+		error:       err,
+	}
 }
 
 // AckNoCallbackErr is returned by a step when the receiver has authenticated and

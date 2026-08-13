@@ -574,18 +574,21 @@ func TestStepPassThrough(t *testing.T) {
 	})
 }
 
-// TestStepNackErrorTypes asserts that rejections carry the model error type
-// the handler's NACK mapping understands: BadReqErr for structurally broken
-// credentials, SignValidationErr for authenticity failures. The failure class
-// must survive in the error message.
+// TestStepNackErrorTypes asserts that rejections carry the error the handler's
+// NACK mapping understands: a *model.CodedErr with HTTP status 401 for
+// authenticity failures and 400 for structurally broken credentials. The
+// failure class must survive in the error message.
 func TestStepNackErrorTypes(t *testing.T) {
-	t.Run("authenticity failure is SignValidationErr", func(t *testing.T) {
+	t.Run("authenticity failure is a 401", func(t *testing.T) {
 		vc := loadVC(t)
 		vc["issuer"] = "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH" // signer ≠ issuer
 		err := testStep().Run(stepCtx("/bpp/receiver/confirm", becknBody(t, "confirm", vc)))
-		var signErr *model.SignValidationErr
+		var signErr *model.CodedErr
 		if !errors.As(err, &signErr) {
-			t.Fatalf("expected *model.SignValidationErr, got %T: %v", err, err)
+			t.Fatalf("expected *model.CodedErr, got %T: %v", err, err)
+		}
+		if got := signErr.HTTPStatus(); got != http.StatusUnauthorized {
+			t.Fatalf("HTTPStatus() = %d, want %d", got, http.StatusUnauthorized)
 		}
 		if !strings.Contains(err.Error(), string(failIssuer)) {
 			t.Fatalf("failure class missing from error: %v", err)
@@ -594,15 +597,18 @@ func TestStepNackErrorTypes(t *testing.T) {
 			t.Fatalf("BecknError().Code = %s, want %s", code, codeAutUnauthorizedAction)
 		}
 	})
-	t.Run("structural failure is BadReqErr", func(t *testing.T) {
+	t.Run("structural failure is a 400", func(t *testing.T) {
 		vc := map[string]any{ // no issuer → failStructure
 			"credentialSubject": map[string]any{"id": "x"},
 			"proof":             map[string]any{"jwt": "a.b.c"},
 		}
 		err := testStep().Run(stepCtx("/bpp/receiver/confirm", becknBody(t, "confirm", vc)))
-		var badReq *model.BadReqErr
+		var badReq *model.CodedErr
 		if !errors.As(err, &badReq) {
-			t.Fatalf("expected *model.BadReqErr, got %T: %v", err, err)
+			t.Fatalf("expected *model.CodedErr, got %T: %v", err, err)
+		}
+		if got := badReq.HTTPStatus(); got != http.StatusBadRequest {
+			t.Fatalf("HTTPStatus() = %d, want %d", got, http.StatusBadRequest)
 		}
 		if !strings.Contains(err.Error(), string(failStructure)) {
 			t.Fatalf("failure class missing from error: %v", err)
@@ -637,9 +643,12 @@ func TestStepMaxCredentials(t *testing.T) {
 	}
 
 	runErr := s.Run(stepCtx("/bpp/receiver/confirm", body))
-	var badReq *model.BadReqErr
+	var badReq *model.CodedErr
 	if !errors.As(runErr, &badReq) {
-		t.Fatalf("expected *model.BadReqErr, got %T: %v", runErr, runErr)
+		t.Fatalf("expected *model.CodedErr, got %T: %v", runErr, runErr)
+	}
+	if got := badReq.HTTPStatus(); got != http.StatusBadRequest {
+		t.Fatalf("HTTPStatus() = %d, want %d", got, http.StatusBadRequest)
 	}
 	if !strings.Contains(runErr.Error(), "maxCredentials") {
 		t.Fatalf("expected cap rejection, got: %v", runErr)

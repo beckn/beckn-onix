@@ -306,9 +306,12 @@ func TestVerifyFailure(t *testing.T) {
 			if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 				t.Fatalf("Expected error to contain %q, got: %v", tt.errContains, err)
 			}
-			var signErr *model.SignValidationErr
+			var signErr *model.CodedErr
 			if !errors.As(err, &signErr) {
-				t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+				t.Fatalf("expected err to be a *model.CodedErr, got: %T (%v)", err, err)
+			}
+			if got := signErr.HTTPStatus(); got != http.StatusUnauthorized {
+				t.Errorf("HTTPStatus() = %d, want %d", got, http.StatusUnauthorized)
 			}
 			if signErr.Code != tt.wantCode {
 				t.Errorf("signErr.Code = %s, want %s", signErr.Code, tt.wantCode)
@@ -351,9 +354,9 @@ func TestValidate_SubIdentity_FromContext_Mismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error: signer evil.com does not match callerID bap.example.com")
 	}
-	var signErr *model.SignValidationErr
+	var signErr *model.CodedErr
 	if !errors.As(err, &signErr) {
-		t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+		t.Fatalf("expected err to be a *model.CodedErr, got: %T (%v)", err, err)
 	}
 	if signErr.Code != codeUnauthorizedAction {
 		t.Errorf("signErr.Code = %s, want %s", signErr.Code, codeUnauthorizedAction)
@@ -478,9 +481,9 @@ func TestValidateAck_SubIdentity_FromContext_Mismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error: signer evil.com does not match callerID bap.example.com")
 	}
-	var signErr *model.SignValidationErr
+	var signErr *model.CodedErr
 	if !errors.As(err, &signErr) {
-		t.Fatalf("expected err to be a *model.SignValidationErr, got: %T (%v)", err, err)
+		t.Fatalf("expected err to be a *model.CodedErr, got: %T (%v)", err, err)
 	}
 	if signErr.Code != codeUnauthorizedAction {
 		t.Errorf("signErr.Code = %s, want %s", signErr.Code, codeUnauthorizedAction)
