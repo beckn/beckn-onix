@@ -436,8 +436,14 @@ func (p *provider) New(ctx context.Context, loader definition.ManifestLoader, cf
 // Mediate runs the full inbound schema version mediation sequence on ctx.Body.
 // It is direction-agnostic: the caller (BAPCaller / BPPCaller handler) invokes
 // it for inbound payloads; the response path uses RunOnResponse (not yet implemented).
-func (m *mediator) Mediate(ctx *model.StepContext) error {
+func (m *mediator) Mediate(ctx *model.StepContext) (err error) {
+	// Each terminating branch sets outcome, including the two guards below;
+	// the deferred call records exactly one data point per Mediate call.
+	outcome := ""
+	defer func() { m.recordOutcome(ctx, resolveOutcome(outcome, err)) }()
+
 	if m.notOnboarded {
+		outcome = outcomeNotOnboarded
 		return &MediationError{
 			Code:    "SCH_SUBSCRIBER_NOT_FOUND",
 			Message: "Local node manifest is missing or has no schemaObjects. Publish your manifest to DeDi before going live.",
@@ -447,6 +453,7 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 	counterpartyID, _ := ctx.Value(model.ContextKeyRemoteID).(string)
 
 	if counterpartyID == "" {
+		outcome = outcomeSkippedNoCounterparty
 		log.Warnf(ctx, "schemaversionmediator: passThrough counterpartyID empty — reqpreprocessor middleware may not be configured")
 		return nil
 	}
@@ -468,6 +475,7 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 	if ctx.IsCallerHandler {
 		targetManifest, err = m.fetchCounterpartyManifest(ctx, counterpartyID)
 		if err != nil {
+			outcome = outcomeSkippedNoManifest
 			return m.applyOnFailure(fmt.Errorf("schemaversionmediator: counterparty manifest unavailable for %q: %w", counterpartyID, err))
 		}
 	} else {
@@ -476,9 +484,13 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 
 	needs, err := CheckCompatibility(refs, targetManifest)
 	if err != nil {
+		if errors.Is(err, ErrNoManifest) {
+			outcome = outcomeSkippedNoManifest
+		}
 		return err
 	}
 	if len(needs) == 0 {
+		outcome = outcomeSkippedCompatible
 		log.Debugf(ctx, "schemaversionmediator: compatibilityCheck counterparty=%q result=compatible objects=%d", counterpartyID, len(refs))
 		return nil // fully compatible
 	}
@@ -488,6 +500,7 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 	}
 
 	if m.policy.Action == PolicyActionReject {
+		outcome = outcomeRejectedByPolicy
 		return &MediationError{
 			Code:    "SCH_SCHEMA_ADAPTATION_FAILED",
 			Message: fmt.Sprintf("payload contains %d incompatible schema object(s) and policy is reject", len(needs)),
@@ -497,10 +510,15 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 	// Fetch all translation artifacts; any failure applies onFailure policy.
 	artifacts, failures := m.fetchAllArtifacts(ctx, needs)
 	if len(failures) > 0 {
+		outcome = outcomeArtifactFetchFailure
 		cause := fmt.Errorf("schemaversionmediator: %d artifact fetch failure(s): first: %w", len(failures), failures[0].Reason)
 		log.Warnf(ctx, "schemaversionmediator: artifact fetch failed counterparty=%q onFailure=%s cause=%v", counterpartyID, m.policy.OnFailure, cause)
 		return m.applyOnFailure(cause)
 	}
+
+	// Any early return past this point is an apply-phase failure; the success
+	// path overwrites this.
+	outcome = outcomeTranslationFailed
 
 	msgBytes, err := extractMessageSubtree(ctx.Body)
 	if err != nil {
@@ -580,6 +598,7 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 		return fmt.Errorf("schemaversionmediator: patch message subtree: %w", err)
 	}
 	ctx.Body = patched
+	outcome = outcomeTranslationApplied
 	log.Infof(ctx, "schemaversionmediator: translationApplied counterparty=%q objects=%d", counterpartyID, len(needs))
 	for _, n := range needs {
 		log.Infof(ctx, "schemaversionmediator: translatedObject counterparty=%q type=%q from=%q to=%q", counterpartyID, n.From.Type, n.From.ContextURL, n.ToContextURL())
@@ -740,11 +759,14 @@ func (m *mediator) fetchArtifact(ctx context.Context, need TranslationNeeded) (*
 // directly to avoid a second derivation.
 func (m *mediator) fetchArtifactByURL(ctx context.Context, artifactURL string) (*TranslationArtifact, error) {
 	if artifact, found := m.cache.get(artifactURL); found {
+		// Negative entries count as hits: the fetch was avoided either way.
+		m.recordCacheLookup(ctx, cacheArtifact, true)
 		if artifact == nil {
 			return nil, ErrArtifactNotFound
 		}
 		return artifact, nil
 	}
+	m.recordCacheLookup(ctx, cacheArtifact, false)
 
 	artifact, err := m.doFetch(ctx, artifactURL)
 	if err != nil {
@@ -1037,13 +1059,15 @@ func ComposeExpression(entries []MappingEntry) (string, error) {
 
 // compiledExpr returns a cached compiled JSONata expression for the given
 // expression string, compiling and caching it on the first call.
-func (m *mediator) compiledExpr(expression string) (jsonata.Expression, error) {
+func (m *mediator) compiledExpr(ctx context.Context, expression string) (jsonata.Expression, error) {
 	m.exprs.mu.RLock()
 	if expr, ok := m.exprs.entries[expression]; ok {
 		m.exprs.mu.RUnlock()
+		m.recordCacheLookup(ctx, cacheExpression, true)
 		return expr, nil
 	}
 	m.exprs.mu.RUnlock()
+	m.recordCacheLookup(ctx, cacheExpression, false)
 
 	expr, err := m.jsonataInstance.Compile(expression, false)
 	if err != nil {
@@ -1061,11 +1085,10 @@ func (m *mediator) compiledExpr(expression string) (jsonata.Expression, error) {
 // Execute compiles (with caching) and evaluates a JSONata expression against
 // the Beckn message subtree bytes. It returns the transformed message bytes.
 // The expression is typically produced by ComposeExpression.
-// ctx is accepted for interface consistency; jsonata-go does not support
-// context cancellation, so it is not forwarded to the evaluator.
+// ctx is used to record the expression cache lookup; jsonata-go does not
+// support context cancellation, so it is not forwarded to the evaluator.
 func (m *mediator) Execute(ctx context.Context, expression string, message []byte) ([]byte, error) {
-	_ = ctx
-	expr, err := m.compiledExpr(expression)
+	expr, err := m.compiledExpr(ctx, expression)
 	if err != nil {
 		return nil, err
 	}
