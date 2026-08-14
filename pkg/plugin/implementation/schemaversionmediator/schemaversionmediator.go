@@ -356,6 +356,7 @@ type mediator struct {
 	exprs           *exprCache
 	notOnboarded    bool                // set at New() when local manifest is absent or has no schemaObjects
 	localManifest   *model.NodeManifest // local node manifest loaded at startup; nil when notOnboarded
+	metrics         *MediatorMetrics    // nil when the meter could not be registered; recording is a no-op
 }
 
 // New is the package-level constructor used by the plugin entrypoint.
@@ -396,6 +397,14 @@ func (p *provider) New(ctx context.Context, loader definition.ManifestLoader, cf
 		jsonataInstance: instance,
 		exprs:           newExprCache(),
 	}
+
+	// Instruments bind to the meter provider installed by the otelsetup plugin.
+	// A registration failure disables them but does not fail plugin load.
+	metrics, err := GetMediatorMetrics(ctx)
+	if err != nil {
+		log.Warnf(ctx, "schemaversionmediator: meter registration failed, mediation metrics disabled: %v", err)
+	}
+	m.metrics = metrics
 
 	// Cold-start check: attempt to load the local node manifest. If it is
 	// absent or has no schemaObjects, mark as not onboarded so Mediate rejects
