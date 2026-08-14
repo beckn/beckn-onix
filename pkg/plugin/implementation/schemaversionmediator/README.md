@@ -16,7 +16,8 @@
 8. [Error Codes](#error-codes)
 9. [Translation Artifacts](#translation-artifacts)
 10. [Data-Loss Detection](#data-loss-detection)
-11. [Known Limitations](#known-limitations)
+11. [Metrics](#metrics)
+12. [Known Limitations](#known-limitations)
 
 ---
 
@@ -239,9 +240,71 @@ Artifacts are cached in memory with configurable positive and negative TTLs. The
 
 After translation, the plugin compares the flattened dot-notation key paths of the source `message` subtree against the translated output. Any key present in the source but absent in the output is considered a dropped field.
 
-**Current behaviour:** data loss always causes rejection with `SCH_SCHEMA_ADAPTATION_FAILED`, listing the dropped field paths. There is no configurable policy — this is intentional. A partially translated payload is as harmful as an incompatible one.
+**Intended behaviour:** data loss always causes rejection with `SCH_SCHEMA_ADAPTATION_FAILED`, listing the dropped field paths. There is no configurable policy — this is intentional. A partially translated payload is as harmful as an incompatible one.
+
+**Status:** the comparison helper is in place but no code path constructs the rejection yet (see the [Error Codes](#error-codes) table). The `data_loss_detected` counter is keyed off the dropped field paths carried by the rejection, so it begins reporting as soon as enforcement lands — no further instrumentation change needed.
 
 **Array handling:** array elements are treated as opaque leaf values. Element-level drops within an array are not detected — only object key presence is compared.
+
+---
+
+## Metrics
+
+The mediator registers OpenTelemetry counters at plugin load so operators can watch translation activity, cache effectiveness, and failure rates without scraping logs. The instruments are bound to the global meter provider configured by the `otelsetup` plugin; if no provider is configured, recording is a no-op and mediation is unaffected.
+
+| Metric | Type | Unit | Description |
+|---|---|---|---|
+| `onix_schema_mediation_outcomes_total` | Counter | `{mediation}` | Mediation decisions, broken down by `outcome` |
+| `onix_schema_mediation_cache_hits_total` | Counter | `{hit}` | Cache lookups served from memory |
+| `onix_schema_mediation_cache_misses_total` | Counter | `{miss}` | Cache lookups that had to fetch or compile |
+
+### `outcome` values
+
+Exactly **one** outcome is recorded per `Mediate` call, so the sum across outcomes is the total number of calls and each value is a rate you can alert on.
+
+| Value | Meaning |
+|---|---|
+| `translation_applied` | Payload was translated and patched |
+| `translation_skipped_compatible` | Every schema object already sat at a supported version; payload forwarded unchanged |
+| `translation_skipped_no_manifest` | Target node manifest unavailable (counterparty lookup failed, or no local manifest) |
+| `translation_rejected_by_policy` | Incompatible objects found and `action=reject`; no translation attempted |
+| `artifact_fetch_failure` | At least one translation artifact could not be fetched; `onFailure` applied |
+| `translation_failed` | Artifacts were fetched but applying them failed (bad expression, unexpected payload shape) |
+| `data_loss_detected` | Translation dropped source fields and the request was rejected. Recorded whenever the rejection carries dropped field paths — see [Data-Loss Detection](#data-loss-detection) for the enforcement status |
+| `rejected_not_onboarded` | Cold-start guard fired — the local node manifest was missing at startup |
+| `skipped_no_counterparty` | Counterparty subscriber ID absent, so the payload was forwarded untranslated |
+
+The last two are node-wide conditions rather than per-payload decisions: while either is firing, it fires on **every** request. They are counted rather than left to the logs precisely because a node that mediates nothing at all is otherwise indistinguishable from a node with no version mismatches. Alert on them directly:
+
+```promql
+# every request is being rejected — publish the node manifest and restart
+rate(onix_schema_mediation_outcomes_total{outcome="rejected_not_onboarded"}[5m]) > 0
+
+# every request bypasses mediation — reqpreprocessor middleware is missing
+rate(onix_schema_mediation_outcomes_total{outcome="skipped_no_counterparty"}[5m]) > 0
+```
+
+**Labels on `onix_schema_mediation_outcomes_total`:**
+
+| Label | Description |
+|---|---|
+| `outcome` | One of the values above |
+| `action` | Beckn `context.action` (`unknown` when absent) |
+| `counterparty_id` | Counterparty subscriber ID from `ContextKeyRemoteID` (`unknown` when absent) |
+| `network_id` | Network ID from the request context, falling back to `context.network_id` / `context.networkId` in the payload (`unknown` when absent) |
+
+`counterparty_id` is deliberately included — per-counterparty failure rates are the signal operators need during a schema migration — but it is unbounded in a large network. Drop the label at the collector if your metrics backend is cardinality-constrained.
+
+### Cache counters
+
+The hit/miss counters carry a single `cache` label:
+
+| Value | What it measures |
+|---|---|
+| `artifact` | Translation artifact cache — a hit means an HTTP fetch was avoided. A remembered 404 (negative cache entry) counts as a hit, since it also avoids the network call |
+| `expression` | Compiled JSONata expression cache — a hit means a compile was avoided |
+
+Cache effectiveness is a property of the node rather than of any one counterparty, so these counters intentionally omit the request labels; the per-counterparty view is available on the outcome counter.
 
 ---
 
