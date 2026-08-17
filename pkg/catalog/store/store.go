@@ -64,7 +64,7 @@ func LocalName(catalogID string) string {
 // CatalogFilePath returns the blob key for one catalog file: a baseline
 // (suffix "json") sits directly under catalogs/, a change file (suffix
 // "changes.json") under catalogs/changes/. compressed appends ".gz".
-func CatalogFilePath(catalogID string, version int, suffix string, compressed bool) string {
+func CatalogFilePath(catalogID string, version int64, suffix string, compressed bool) string {
 	if compressed {
 		suffix += ".gz"
 	}
@@ -86,45 +86,25 @@ func LatestFilePath(catalogID string, compressed bool) string {
 	return path.Join(CatalogsDirName, fmt.Sprintf("%s.latest.%s", LocalName(catalogID), suffix))
 }
 
-// CatalogFileRef points at one previously published catalog file (a
-// baseline, a change file, or a "latest" pointer): its own version, where
-// it lives, and enough to verify it without re-fetching (size/digest).
-// FromVersion is meaningful for a change file only -- zero for a
-// baseline/latest ref. It is carried explicitly rather than reconstructed
-// from sequence order: once a catalog has been compacted, retained
-// pre-compaction entries no longer form a contiguous chain.
-type CatalogFileRef struct {
-	FromVersion int
-	Version     int
-	URL         string
-	Size        int64
-	Digest      string
-}
-
-// MasterDependency is one MASTER catalog a REGULAR catalog's resources
-// currently extend.
-type MasterDependency struct {
-	CatalogID string
-	Version   int
-	IndexURL  string
-}
-
 // CatalogState is one catalog's reconstructed current state: the full
 // content last published (baseline with every change file applied),
 // enough for a caller to diff a new submission against, plus the
 // entry-level metadata (distinct from file-lineage versioning) needed to
-// detect a metadata-only change with no new file.
+// detect a metadata-only change with no new file. BaselineFile/ChangeFiles/
+// Dependencies reuse pkg/catalog's own wire types directly (the same ones
+// catalog/crawler reads) rather than a second, independently-drifting
+// copy -- see index.go.
 type CatalogState struct {
 	Catalog      json.RawMessage
-	BaselineFile *CatalogFileRef
-	ChangeFiles  []CatalogFileRef
+	BaselineFile *catalog.FileEntry
+	ChangeFiles  []catalog.FileEntry
 
-	EntryVersion int
+	EntryVersion int64
 	CatalogType  string
 	NetworkIds   []string
 	SchemaTypes  []string
 	IsActive     bool
-	Dependencies []MasterDependency
+	Dependencies []catalog.MasterDependency
 	CrawlHint    string
 
 	// LatestPublished reports whether a "latest" full-catalog pointer was
@@ -139,7 +119,7 @@ type CatalogState struct {
 // unversioned key). Content is canonical (uncompressed) bytes;
 // ServedContent is what's actually written when Compressed is true.
 type FileWrite struct {
-	Version       int
+	Version       int64
 	Content       json.RawMessage
 	ServedContent []byte
 	Compressed    bool
@@ -179,84 +159,28 @@ type Store struct{ blobs definition.CatalogBlobStore }
 // required.
 func New(blobs definition.CatalogBlobStore) *Store { return &Store{blobs: blobs} }
 
-// --- wire types -----------------------------------------------------------
-//
-// These mirror the subset of the catalog index's shape Store needs to
-// read/write -- a wire-format contract, not Go code shared with any
-// publisher implementation.
-//
-// Once a pkg/catalog/index.go exists as the canonical Go representation
-// of the RFC index schema, these become a second, independent encoding
-// of the same wire format -- worth revisiting then whether Store should
-// migrate onto the shared types, reconciling the int/int64 version-field
-// mismatch (wireFileEntry.Version is int64 to round-trip an unbounded
-// JSON number; the rest of this file's version fields stay int) and
-// deciding how this package's extra bookkeeping fields (EntryVersion,
-// RetiredAt, CrawlHint, pointer-typed Dependencies for presence
-// detection) relate to the crawl side's shape, so the two stop silently
-// drifting apart. Not urgent: this package's current design is
-// deliberate (it never verifies on read, only round-trips its own
-// output), not an oversight.
-
+// indexDoc is the top-level index document's own shape: unlike an entry,
+// nobody besides Store needs it as a typed value -- every reader treats
+// "catalogs" as opaque per-entry bytes to merge or carry forward, and
+// NextUpdate here is optional (omitted entirely when unset, per the file
+// spec -- unlike catalog.Index's plain string, which a read-only caller
+// like the crawler is content to leave as "" when absent). So this one
+// wrapper stays Store's own, not shared with catalog.Index.
 type indexDoc struct {
 	NodeID     string            `json:"nodeId"`
 	NextUpdate *time.Time        `json:"next_update,omitempty"`
 	Catalogs   []json.RawMessage `json:"catalogs"`
 }
 
-type indexEntry struct {
-	CatalogID    string                `json:"catalogId"`
-	EntryVersion int                   `json:"entryVersion"`
-	CatalogType  string                `json:"catalogType"`
-	Dependencies *wireDependencies     `json:"dependencies"`
-	NetworkIds   []string              `json:"networkIds"`
-	SchemaTypes  []string              `json:"schemaTypes"`
-	IsActive     *bool                 `json:"isActive"`
-	Baseline     *wireFileEntry        `json:"baseline"`
-	Changes      []wireChangeFileEntry `json:"changes"`
-	Latest       *wireFileEntry        `json:"latest"`
-	RetiredAt    *string               `json:"retiredAt"`
-	CrawlHint    string                `json:"crawlHint"`
-}
-
-type wireDependencies struct {
-	Masters []wireMasterDependency `json:"masters"`
-}
-
-type wireMasterDependency struct {
-	CatalogID string `json:"catalogId"`
-	Version   int    `json:"version"`
-	IndexURL  string `json:"indexUrl"`
-}
-
-// wireFileEntry is baseline/latest's shape -- one file-lineage version.
-// Version is int64, not int, because it round-trips a JSON number of
-// unbounded (spec-wise) magnitude -- unlike CatalogFileRef.Version, which
-// stays int for now (this package's own public surface, not the wire).
-type wireFileEntry struct {
-	Version int64  `json:"version"`
-	URL     string `json:"url"`
-	Size    int64  `json:"size"`
-	Digest  string `json:"digest"`
-}
-
-// wireChangeFileEntry is a changes[] entry's shape -- a fromVersion/
-// toVersion range, not a single version.
-type wireChangeFileEntry struct {
-	FromVersion int    `json:"fromVersion"`
-	ToVersion   int    `json:"toVersion"`
-	URL         string `json:"url"`
-	Size        int64  `json:"size"`
-	Digest      string `json:"digest"`
-}
-
-// wireCatalogFile unwraps a stored baseline/change file's self-signed
+// fileEnvelope unwraps a stored baseline/change file's self-signed
 // envelope back to the bare catalog content, plus NextUpdate -- used to
 // decide when a compaction's grace period has elapsed (see
-// reconstructState). No signature verification on read -- Store only
-// ever reads back its own previously-written output, not
-// externally-fetched content.
-type wireCatalogFile struct {
+// reconstructState). This is a file-content document, not an index entry
+// -- index.go covers the latter, not the former, so there is nothing to
+// share here yet (see pkg/catalog/publisher for where these get built and
+// signed). No signature verification on read -- Store only ever reads
+// back its own previously-written output, not externally-fetched content.
+type fileEnvelope struct {
 	NextUpdate time.Time       `json:"next_update"`
 	Catalog    json.RawMessage `json:"catalog"`
 }
@@ -279,11 +203,11 @@ func (s *Store) LoadCatalogs(ctx context.Context, catalogIDs []string) (map[stri
 		if !ok {
 			continue
 		}
-		var entry indexEntry
+		var entry catalog.CatalogEntry
 		if err := json.Unmarshal(rawEntry, &entry); err != nil {
 			return nil, fmt.Errorf("catalogstore: parsing entry for %s: %w", id, err)
 		}
-		if entry.RetiredAt != nil || entry.Baseline == nil {
+		if entry.IsRetired() || entry.Baseline.URL == "" {
 			continue // no publishable prior state; caller starts a fresh baseline
 		}
 		state, err := s.reconstructState(ctx, entry)
@@ -328,9 +252,9 @@ func (s *Store) readIndexEntries(ctx context.Context) (map[string]json.RawMessag
 	return entries, order, nil
 }
 
-func (s *Store) reconstructState(ctx context.Context, entry indexEntry) (*CatalogState, error) {
-	baselineGzip := isGzipURL(entry.Baseline.URL)
-	baselinePath := CatalogFilePath(entry.CatalogID, int(entry.Baseline.Version), "json", baselineGzip)
+func (s *Store) reconstructState(ctx context.Context, entry catalog.CatalogEntry) (*CatalogState, error) {
+	baselineGzip := isGzipEncoded(entry.Baseline)
+	baselinePath := CatalogFilePath(entry.CatalogID, entry.Baseline.Version, "json", baselineGzip)
 	baselineBytes, err := s.blobs.Get(ctx, baselinePath)
 	if err != nil {
 		return nil, fmt.Errorf("catalogstore: reading %s: %w", baselinePath, err)
@@ -340,30 +264,31 @@ func (s *Store) reconstructState(ctx context.Context, entry indexEntry) (*Catalo
 			return nil, fmt.Errorf("catalogstore: decompressing %s: %w", baselinePath, err)
 		}
 	}
-	var wrapped wireCatalogFile
+	var wrapped fileEnvelope
 	if err := json.Unmarshal(baselineBytes, &wrapped); err != nil {
 		return nil, fmt.Errorf("catalogstore: parsing %s: %w", baselinePath, err)
 	}
 
-	// A change file's ToVersion is only ever <= the current baseline's own
-	// Version right after a forced re-baseline (compaction): every other
-	// baseline is created once, before any of its changes[], so all of its
-	// changes carry strictly higher versions. Such a "superseded" change's
-	// content is already folded into the baseline itself -- applying it
-	// again is a harmless no-op -- but it only needs to stay *listed* for
-	// one full next_update cycle after the compaction, measured against
-	// the next_update stamped on the new baseline at compaction time
-	// (wrapped.NextUpdate here). Once that's elapsed, dropping it from the
-	// returned ChangeFiles is what actually realizes compaction's
-	// index-payload benefit -- this is Store's own retention rule, derived
-	// purely from data already on disk, not a separate config knob.
+	// A change file's EffectiveVersion is only ever <= the current
+	// baseline's own Version right after a forced re-baseline
+	// (compaction): every other baseline is created once, before any of
+	// its changes[], so all of its changes carry strictly higher
+	// versions. Such a "superseded" change's content is already folded
+	// into the baseline itself -- applying it again is a harmless no-op
+	// -- but it only needs to stay *listed* for one full next_update
+	// cycle after the compaction, measured against the next_update
+	// stamped on the new baseline at compaction time (wrapped.NextUpdate
+	// here). Once that's elapsed, dropping it from the returned
+	// ChangeFiles is what actually realizes compaction's index-payload
+	// benefit -- this is Store's own retention rule, derived purely from
+	// data already on disk, not a separate config knob.
 	gracePeriodElapsed := time.Now().After(wrapped.NextUpdate)
 
 	effective := wrapped.Catalog
-	changeFiles := make([]CatalogFileRef, 0, len(entry.Changes))
+	changeFiles := make([]catalog.FileEntry, 0, len(entry.Changes))
 	for _, ch := range entry.Changes {
-		chGzip := isGzipURL(ch.URL)
-		chPath := CatalogFilePath(entry.CatalogID, ch.ToVersion, "changes.json", chGzip)
+		chGzip := isGzipEncoded(ch)
+		chPath := CatalogFilePath(entry.CatalogID, ch.EffectiveVersion(), "changes.json", chGzip)
 		raw, err := s.blobs.Get(ctx, chPath)
 		if err != nil {
 			return nil, fmt.Errorf("catalogstore: reading %s: %w", chPath, err)
@@ -377,28 +302,32 @@ func (s *Store) reconstructState(ctx context.Context, entry indexEntry) (*Catalo
 		if err != nil {
 			return nil, fmt.Errorf("catalogstore: applying %s: %w", chPath, err)
 		}
-		superseded := int64(ch.ToVersion) <= entry.Baseline.Version
+		superseded := ch.EffectiveVersion() <= entry.Baseline.Version
 		if superseded && gracePeriodElapsed {
 			continue // grace period over: stop listing this pre-compaction change file
 		}
-		changeFiles = append(changeFiles, toChangeFileRef(ch))
+		changeFiles = append(changeFiles, ch)
 	}
 
 	isActive := true
 	if entry.IsActive != nil {
 		isActive = *entry.IsActive
 	}
-	baselineRef := toFileRef(*entry.Baseline)
+	baseline := entry.Baseline
+	var deps []catalog.MasterDependency
+	if entry.Dependencies != nil {
+		deps = entry.Dependencies.Masters
+	}
 	return &CatalogState{
 		Catalog:         effective,
-		BaselineFile:    &baselineRef,
+		BaselineFile:    &baseline,
 		ChangeFiles:     changeFiles,
 		EntryVersion:    entry.EntryVersion,
 		CatalogType:     entry.CatalogType,
-		NetworkIds:      entry.NetworkIds,
+		NetworkIds:      entry.NetworkIDs,
 		SchemaTypes:     entry.SchemaTypes,
 		IsActive:        isActive,
-		Dependencies:    toMasterDependencies(entry.Dependencies),
+		Dependencies:    deps,
 		CrawlHint:       entry.CrawlHint,
 		LatestPublished: entry.Latest != nil,
 	}, nil
@@ -484,23 +413,19 @@ func (s *Store) writeFile(ctx context.Context, path string, fw *FileWrite) error
 
 // --- helpers --------------------------------------------------------------
 
-func toMasterDependencies(deps *wireDependencies) []MasterDependency {
-	if deps == nil || len(deps.Masters) == 0 {
-		return nil
+// isGzipEncoded reports whether fe's content is gzip-compressed: fe.Encoding
+// if set, otherwise falling back to the URL's ".gz" suffix -- the same
+// fallback convention catalog.FileEntry's own doc comment describes for a
+// reader (see pkg/crawler/decode.EncodingFor). Read back from the entry
+// itself rather than from any current compression setting, since a
+// catalog's files may have been published under a different compression
+// setting than whatever produced this call.
+func isGzipEncoded(fe catalog.FileEntry) bool {
+	if fe.Encoding != "" {
+		return fe.Encoding == "gzip"
 	}
-	out := make([]MasterDependency, len(deps.Masters))
-	for i, m := range deps.Masters {
-		out[i] = MasterDependency{CatalogID: m.CatalogID, Version: m.Version, IndexURL: m.IndexURL}
-	}
-	return out
+	return strings.HasSuffix(fe.URL, ".gz")
 }
-
-// isGzipURL reports whether a stored file reference's declared URL is
-// gzip-compressed (signaled purely by a ".gz" URL extension) -- read back
-// from the entry itself rather than from any current compression setting,
-// since a catalog's files may have been published under a different
-// compression setting than whatever produced this call.
-func isGzipURL(url string) bool { return strings.HasSuffix(url, ".gz") }
 
 // gunzip decompresses data written by a caller's own gzip.Writer.
 func gunzip(data []byte) ([]byte, error) {
@@ -510,29 +435,4 @@ func gunzip(data []byte) ([]byte, error) {
 	}
 	defer r.Close()
 	return io.ReadAll(r)
-}
-
-func toFileRef(fe wireFileEntry) CatalogFileRef {
-	return CatalogFileRef{
-		Version: int(fe.Version),
-		URL:     fe.URL,
-		Size:    fe.Size,
-		Digest:  fe.Digest,
-	}
-}
-
-// toChangeFileRef converts a changes[] entry back to a CatalogFileRef,
-// carrying FromVersion through explicitly -- it is NOT safe to reconstruct
-// from sequence order once a compaction has happened, since a superseded
-// (pre-compaction) entry retained for the grace period predates the
-// current baseline and breaks the "contiguous chain" assumption that
-// reconstruction relied on.
-func toChangeFileRef(ch wireChangeFileEntry) CatalogFileRef {
-	return CatalogFileRef{
-		FromVersion: ch.FromVersion,
-		Version:     ch.ToVersion,
-		URL:         ch.URL,
-		Size:        ch.Size,
-		Digest:      ch.Digest,
-	}
 }
