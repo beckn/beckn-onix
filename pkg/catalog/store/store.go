@@ -1,4 +1,4 @@
-// Package catalogstore is the one shared, backend-agnostic assembler for
+// Package store is the one shared, backend-agnostic assembler for
 // a publisher's catalog index: it understands how an index, its
 // catalogs' baselines, change files, and "latest" pointers fit together
 // per the decentralized-catalog file spec, built on top of whichever
@@ -15,7 +15,7 @@
 // writes (CatalogUpdate.SignedEntry) arrives already self-signed by the
 // caller. Store's only job is deciding where bytes live and merging new
 // entries into the index that's already there.
-package catalogstore
+package store
 
 import (
 	"bytes"

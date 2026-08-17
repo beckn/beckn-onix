@@ -1,4 +1,4 @@
-package catalogstore_test
+package store_test
 
 import (
 	"context"
@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/catalog/store"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogstore"
 )
 
 // fakeBlobStore is an in-memory definition.CatalogBlobStore, standing in
-// for any real backend (local disk, S3, GCS, ...) -- catalogstore.Store
-// is tested entirely against this fake, proving its assembly logic never
+// for any real backend (local disk, S3, GCS, ...) -- store.Store is
+// tested entirely against this fake, proving its assembly logic never
 // depends on backend specifics.
 type fakeBlobStore struct{ data map[string][]byte }
 
@@ -47,26 +47,26 @@ func baselineFile(t *testing.T, catalogID string, catalog json.RawMessage, nextU
 
 func TestPublishThenLoad_RoundTripsBaseline(t *testing.T) {
 	blobs := newFakeBlobStore()
-	store := catalogstore.New(blobs)
+	s := store.New(blobs)
 	ctx := context.Background()
 
 	catalog := json.RawMessage(`{"id":"CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[{"id":"ITEM-1","descriptor":{"name":"one"}}]}`)
 	content := baselineFile(t, "example.test/CAT-1", catalog, time.Now().Add(24*time.Hour))
 	entry := json.RawMessage(`{"catalogId":"example.test/CAT-1","entryVersion":1,"catalogType":"REGULAR","isActive":true,"baseline":{"version":1,"url":"https://example.test/catalogs/CAT-1.v1.json","size":1,"digest":"sha-256:x"}}`)
 
-	err := store.Publish(ctx, catalogstore.PublishRequest{
+	err := s.Publish(ctx, store.PublishRequest{
 		NodeID: "example.test",
-		Updates: []catalogstore.CatalogUpdate{{
+		Updates: []store.CatalogUpdate{{
 			CatalogID:   "example.test/CAT-1",
 			SignedEntry: entry,
-			Baseline:    &catalogstore.FileWrite{Version: 1, Content: content},
+			Baseline:    &store.FileWrite{Version: 1, Content: content},
 		}},
 	})
 	if err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
-	states, err := store.LoadCatalogs(ctx, []string{"example.test/CAT-1"})
+	states, err := s.LoadCatalogs(ctx, []string{"example.test/CAT-1"})
 	if err != nil {
 		t.Fatalf("LoadCatalogs: %v", err)
 	}
@@ -86,8 +86,8 @@ func TestPublishThenLoad_RoundTripsBaseline(t *testing.T) {
 }
 
 func TestLoad_NoPriorIndex_ReturnsEmptyResult(t *testing.T) {
-	store := catalogstore.New(newFakeBlobStore())
-	states, err := store.LoadCatalogs(context.Background(), []string{"example.test/CAT-1"})
+	s := store.New(newFakeBlobStore())
+	states, err := s.LoadCatalogs(context.Background(), []string{"example.test/CAT-1"})
 	if err != nil {
 		t.Fatalf("LoadCatalogs: %v", err)
 	}
@@ -98,18 +98,18 @@ func TestLoad_NoPriorIndex_ReturnsEmptyResult(t *testing.T) {
 
 func TestLoad_RetiredEntry_HasNoPublishableState(t *testing.T) {
 	blobs := newFakeBlobStore()
-	store := catalogstore.New(blobs)
+	s := store.New(blobs)
 	ctx := context.Background()
 
 	entry := json.RawMessage(`{"catalogId":"example.test/CAT-1","entryVersion":2,"catalogType":"REGULAR","retiredAt":"2026-01-01T00:00:00Z"}`)
-	if err := store.Publish(ctx, catalogstore.PublishRequest{
+	if err := s.Publish(ctx, store.PublishRequest{
 		NodeID:      "example.test",
-		Retirements: []catalogstore.CatalogUpdate{{CatalogID: "example.test/CAT-1", SignedEntry: entry}},
+		Retirements: []store.CatalogUpdate{{CatalogID: "example.test/CAT-1", SignedEntry: entry}},
 	}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
-	states, err := store.LoadCatalogs(ctx, []string{"example.test/CAT-1"})
+	states, err := s.LoadCatalogs(ctx, []string{"example.test/CAT-1"})
 	if err != nil {
 		t.Fatalf("LoadCatalogs: %v", err)
 	}
@@ -120,16 +120,16 @@ func TestLoad_RetiredEntry_HasNoPublishableState(t *testing.T) {
 
 func TestPublish_PreservesUntouchedEntries(t *testing.T) {
 	blobs := newFakeBlobStore()
-	store := catalogstore.New(blobs)
+	s := store.New(blobs)
 	ctx := context.Background()
 
 	catalog1 := json.RawMessage(`{"id":"CAT-1","descriptor":{},"provider":{},"resources":[]}`)
 	entry1 := json.RawMessage(`{"catalogId":"example.test/CAT-1","entryVersion":1,"catalogType":"REGULAR","isActive":true,"baseline":{"version":1,"url":"https://example.test/catalogs/CAT-1.v1.json","size":1,"digest":"sha-256:x"}}`)
-	if err := store.Publish(ctx, catalogstore.PublishRequest{
+	if err := s.Publish(ctx, store.PublishRequest{
 		NodeID: "example.test",
-		Updates: []catalogstore.CatalogUpdate{{
+		Updates: []store.CatalogUpdate{{
 			CatalogID: "example.test/CAT-1", SignedEntry: entry1,
-			Baseline: &catalogstore.FileWrite{Version: 1, Content: baselineFile(t, "example.test/CAT-1", catalog1, time.Now().Add(time.Hour))},
+			Baseline: &store.FileWrite{Version: 1, Content: baselineFile(t, "example.test/CAT-1", catalog1, time.Now().Add(time.Hour))},
 		}},
 	}); err != nil {
 		t.Fatalf("Publish CAT-1: %v", err)
@@ -137,17 +137,17 @@ func TestPublish_PreservesUntouchedEntries(t *testing.T) {
 
 	catalog2 := json.RawMessage(`{"id":"CAT-2","descriptor":{},"provider":{},"resources":[]}`)
 	entry2 := json.RawMessage(`{"catalogId":"example.test/CAT-2","entryVersion":1,"catalogType":"REGULAR","isActive":true,"baseline":{"version":1,"url":"https://example.test/catalogs/CAT-2.v1.json","size":1,"digest":"sha-256:y"}}`)
-	if err := store.Publish(ctx, catalogstore.PublishRequest{
+	if err := s.Publish(ctx, store.PublishRequest{
 		NodeID: "example.test",
-		Updates: []catalogstore.CatalogUpdate{{
+		Updates: []store.CatalogUpdate{{
 			CatalogID: "example.test/CAT-2", SignedEntry: entry2,
-			Baseline: &catalogstore.FileWrite{Version: 1, Content: baselineFile(t, "example.test/CAT-2", catalog2, time.Now().Add(time.Hour))},
+			Baseline: &store.FileWrite{Version: 1, Content: baselineFile(t, "example.test/CAT-2", catalog2, time.Now().Add(time.Hour))},
 		}},
 	}); err != nil {
 		t.Fatalf("Publish CAT-2: %v", err)
 	}
 
-	raw, err := blobs.Get(ctx, catalogstore.IndexPath())
+	raw, err := blobs.Get(ctx, store.IndexPath())
 	if err != nil {
 		t.Fatalf("reading index: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestPublish_PreservesUntouchedEntries(t *testing.T) {
 		t.Fatalf("expected 2 entries after the second publish, got %d", len(doc.Catalogs))
 	}
 
-	states, err := store.LoadCatalogs(ctx, []string{"example.test/CAT-1"})
+	states, err := s.LoadCatalogs(ctx, []string{"example.test/CAT-1"})
 	if err != nil {
 		t.Fatalf("LoadCatalogs: %v", err)
 	}
@@ -172,29 +172,29 @@ func TestPublish_PreservesUntouchedEntries(t *testing.T) {
 
 func TestLoad_AppliesChangeFileOntoBaseline(t *testing.T) {
 	blobs := newFakeBlobStore()
-	store := catalogstore.New(blobs)
+	s := store.New(blobs)
 	ctx := context.Background()
 
 	catalog := json.RawMessage(`{"id":"CAT-1","descriptor":{},"provider":{},"resources":[{"id":"ITEM-1","descriptor":{"name":"one"}}]}`)
-	baseline := &catalogstore.FileWrite{Version: 1, Content: baselineFile(t, "example.test/CAT-1", catalog, time.Now().Add(24*time.Hour))}
+	baseline := &store.FileWrite{Version: 1, Content: baselineFile(t, "example.test/CAT-1", catalog, time.Now().Add(24*time.Hour))}
 	entry1 := json.RawMessage(`{"catalogId":"example.test/CAT-1","entryVersion":1,"catalogType":"REGULAR","isActive":true,"baseline":{"version":1,"url":"https://example.test/catalogs/CAT-1.v1.json","size":1,"digest":"sha-256:x"}}`)
-	if err := store.Publish(ctx, catalogstore.PublishRequest{
+	if err := s.Publish(ctx, store.PublishRequest{
 		NodeID:  "example.test",
-		Updates: []catalogstore.CatalogUpdate{{CatalogID: "example.test/CAT-1", SignedEntry: entry1, Baseline: baseline}},
+		Updates: []store.CatalogUpdate{{CatalogID: "example.test/CAT-1", SignedEntry: entry1, Baseline: baseline}},
 	}); err != nil {
 		t.Fatalf("Publish baseline: %v", err)
 	}
 
 	change := json.RawMessage(`{"catalogId":"example.test/CAT-1","fromVersion":1,"toVersion":2,"next_update":"2099-01-01T00:00:00Z","resources":{"upserts":[{"id":"ITEM-2","descriptor":{"name":"two"}}]},"offers":{}}`)
 	entry2 := json.RawMessage(`{"catalogId":"example.test/CAT-1","entryVersion":2,"catalogType":"REGULAR","isActive":true,"baseline":{"version":1,"url":"https://example.test/catalogs/CAT-1.v1.json","size":1,"digest":"sha-256:x"},"changes":[{"fromVersion":1,"toVersion":2,"url":"https://example.test/catalogs/changes/CAT-1.v2.changes.json","size":1,"digest":"sha-256:y"}]}`)
-	if err := store.Publish(ctx, catalogstore.PublishRequest{
+	if err := s.Publish(ctx, store.PublishRequest{
 		NodeID:  "example.test",
-		Updates: []catalogstore.CatalogUpdate{{CatalogID: "example.test/CAT-1", SignedEntry: entry2, Change: &catalogstore.FileWrite{Version: 2, Content: change}}},
+		Updates: []store.CatalogUpdate{{CatalogID: "example.test/CAT-1", SignedEntry: entry2, Change: &store.FileWrite{Version: 2, Content: change}}},
 	}); err != nil {
 		t.Fatalf("Publish change: %v", err)
 	}
 
-	states, err := store.LoadCatalogs(ctx, []string{"example.test/CAT-1"})
+	states, err := s.LoadCatalogs(ctx, []string{"example.test/CAT-1"})
 	if err != nil {
 		t.Fatalf("LoadCatalogs: %v", err)
 	}
@@ -218,16 +218,16 @@ func TestLoad_AppliesChangeFileOntoBaseline(t *testing.T) {
 
 func TestPublish_GzipSuffixAndServedContent(t *testing.T) {
 	blobs := newFakeBlobStore()
-	store := catalogstore.New(blobs)
+	s := store.New(blobs)
 	ctx := context.Background()
 
 	served := []byte("compressed-bytes")
-	err := store.Publish(ctx, catalogstore.PublishRequest{
+	err := s.Publish(ctx, store.PublishRequest{
 		NodeID: "example.test",
-		Updates: []catalogstore.CatalogUpdate{{
+		Updates: []store.CatalogUpdate{{
 			CatalogID:   "example.test/CAT-1",
 			SignedEntry: json.RawMessage(`{"catalogId":"example.test/CAT-1"}`),
-			Baseline: &catalogstore.FileWrite{
+			Baseline: &store.FileWrite{
 				Version:       1,
 				Content:       json.RawMessage(`{"catalogId":"example.test/CAT-1"}`),
 				ServedContent: served,
@@ -239,7 +239,7 @@ func TestPublish_GzipSuffixAndServedContent(t *testing.T) {
 		t.Fatalf("Publish: %v", err)
 	}
 
-	path := catalogstore.CatalogFilePath("example.test/CAT-1", 1, "json", true)
+	path := store.CatalogFilePath("example.test/CAT-1", 1, "json", true)
 	got, err := blobs.Get(ctx, path)
 	if err != nil {
 		t.Fatalf("reading %s: %v", path, err)
@@ -251,21 +251,21 @@ func TestPublish_GzipSuffixAndServedContent(t *testing.T) {
 
 func TestPublish_ChangeMode_UsesChangesPath(t *testing.T) {
 	blobs := newFakeBlobStore()
-	store := catalogstore.New(blobs)
+	s := store.New(blobs)
 	ctx := context.Background()
 
-	err := store.Publish(ctx, catalogstore.PublishRequest{
+	err := s.Publish(ctx, store.PublishRequest{
 		NodeID: "example.test",
-		Updates: []catalogstore.CatalogUpdate{{
+		Updates: []store.CatalogUpdate{{
 			CatalogID:   "example.test/CAT-1",
 			SignedEntry: json.RawMessage(`{"catalogId":"example.test/CAT-1"}`),
-			Change:      &catalogstore.FileWrite{Version: 2, Content: json.RawMessage(`{"catalogId":"example.test/CAT-1"}`)},
+			Change:      &store.FileWrite{Version: 2, Content: json.RawMessage(`{"catalogId":"example.test/CAT-1"}`)},
 		}},
 	})
 	if err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	path := catalogstore.CatalogFilePath("example.test/CAT-1", 2, "changes.json", false)
+	path := store.CatalogFilePath("example.test/CAT-1", 2, "changes.json", false)
 	if _, err := blobs.Get(ctx, path); err != nil {
 		t.Errorf("expected change file at %s: %v", path, err)
 	}
@@ -273,21 +273,21 @@ func TestPublish_ChangeMode_UsesChangesPath(t *testing.T) {
 
 func TestPublish_RetiredLatest_WritesFinalTombstone(t *testing.T) {
 	blobs := newFakeBlobStore()
-	store := catalogstore.New(blobs)
+	s := store.New(blobs)
 	ctx := context.Background()
 
-	err := store.Publish(ctx, catalogstore.PublishRequest{
+	err := s.Publish(ctx, store.PublishRequest{
 		NodeID: "example.test",
-		Retirements: []catalogstore.CatalogUpdate{{
+		Retirements: []store.CatalogUpdate{{
 			CatalogID:   "example.test/CAT-1",
 			SignedEntry: json.RawMessage(`{"catalogId":"example.test/CAT-1","retiredAt":"2026-01-01T00:00:00Z"}`),
-			Latest:      &catalogstore.FileWrite{Content: json.RawMessage(`{"catalogId":"example.test/CAT-1","retiredAt":"2026-01-01T00:00:00Z"}`)},
+			Latest:      &store.FileWrite{Content: json.RawMessage(`{"catalogId":"example.test/CAT-1","retiredAt":"2026-01-01T00:00:00Z"}`)},
 		}},
 	})
 	if err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	path := catalogstore.LatestFilePath("example.test/CAT-1", false)
+	path := store.LatestFilePath("example.test/CAT-1", false)
 	if _, err := blobs.Get(ctx, path); err != nil {
 		t.Errorf("expected latest tombstone at %s: %v", path, err)
 	}
