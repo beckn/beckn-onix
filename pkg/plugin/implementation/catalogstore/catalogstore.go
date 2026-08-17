@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/beckn-one/beckn-onix/pkg/catalogfile"
+	"github.com/beckn-one/beckn-onix/pkg/catalog"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
@@ -357,7 +357,7 @@ func (s *Store) reconstructState(ctx context.Context, entry indexEntry) (*Catalo
 				return nil, fmt.Errorf("catalogstore: decompressing %s: %w", chPath, err)
 			}
 		}
-		effective, err = catalogfile.Apply(effective, raw)
+		effective, err = catalog.Apply(effective, raw)
 		if err != nil {
 			return nil, fmt.Errorf("catalogstore: applying %s: %w", chPath, err)
 		}

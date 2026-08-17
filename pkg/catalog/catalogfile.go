@@ -1,4 +1,4 @@
-// Package catalogfile implements the decentralized-catalog file spec's
+// Package catalog implements the decentralized-catalog file spec's
 // change-file application rule: a change file carries what changed between
 // two consecutive versions, keyed by id never by position, as upserts
 // (added or updated items, replaced by id) and removals (ids only).
@@ -7,7 +7,7 @@
 // a crawler composing a catalog from its baseline plus every change since
 // -- applies change files the same way, so the logic lives here once
 // rather than being duplicated at each call site.
-package catalogfile
+package catalog
 
 import (
 	"encoding/json"

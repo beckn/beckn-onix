@@ -1,4 +1,4 @@
-package catalogfile
+package catalog
 
 import (
 	"encoding/json"
