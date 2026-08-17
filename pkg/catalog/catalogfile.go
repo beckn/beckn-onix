@@ -12,6 +12,7 @@ package catalog
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // DiffBlock is one array's worth of upserts (added or updated items,
@@ -28,13 +29,18 @@ func (b DiffBlock) IsEmpty() bool { return len(b.Upserts) == 0 && len(b.Removals
 // offers are diffed independently, and Catalog optionally carries
 // catalog-level attribute changes (e.g. name, validity window) -- any
 // top-level catalog field other than resources/offers, not a fixed list.
+// NextUpdate/Signature are populated by a publisher (see
+// pkg/catalog/publisher) and ignored by Apply, which only ever reads
+// CatalogID/FromVersion/ToVersion/Resources/Offers/Catalog.
 type ChangeFileDoc struct {
 	CatalogID   string          `json:"catalogId"`
-	FromVersion int             `json:"fromVersion"`
-	ToVersion   int             `json:"toVersion"`
+	FromVersion int64           `json:"fromVersion"`
+	ToVersion   int64           `json:"toVersion"`
+	NextUpdate  time.Time       `json:"next_update"`
 	Resources   DiffBlock       `json:"resources"`
 	Offers      DiffBlock       `json:"offers"`
 	Catalog     json.RawMessage `json:"catalog,omitempty"`
+	Signature   FileSignature   `json:"signature"`
 }
 
 // Apply folds one change file onto catalog's resources/offers arrays
