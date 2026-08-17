@@ -1,12 +1,18 @@
-// Package catalog implements the decentralized-catalog file spec's
-// change-file application rule: a change file carries what changed between
+// Package catalog is the decentralized-catalog file spec's shared document
+// model: the index schema (index.go -- which files exist for a catalog, at
+// which versions, with which digests/signatures) and the change-file
+// application rule (this file -- a change file carries what changed between
 // two consecutive versions, keyed by id never by position, as upserts
-// (added or updated items, replaced by id) and removals (ids only).
+// (added or updated items, replaced by id) and removals (ids only)).
 // Anything that needs to fold a change file onto a baseline to reconstruct
 // a catalog's current content -- a storage backend replaying prior state,
 // a crawler composing a catalog from its baseline plus every change since
-// -- applies change files the same way, so the logic lives here once
-// rather than being duplicated at each call site.
+// -- applies change files the same way, so the logic lives here once rather
+// than being duplicated at each call site.
+//
+// fetch.go layers a fetch-verify-decode caller on top of pkg/crawler's
+// content-agnostic primitives, understanding these document shapes so
+// pkg/crawler itself doesn't have to.
 package catalog
 
 import (
