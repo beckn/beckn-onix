@@ -102,6 +102,10 @@ func (m *MockPluginManager) PayloadStore(_ context.Context, _ definition.Cache, 
 	return nil, nil
 }
 
+func (m *MockPluginManager) CatalogPublisher(_ context.Context, _ definition.KeyManager, _ *plugin.Config) (definition.CatalogPublisher, error) {
+	return nil, nil
+}
+
 // PolicyChecker returns a mock implementation of the PolicyChecker interface.
 func (m *MockPluginManager) PolicyChecker(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
 	if m.policyCheckerFunc != nil {

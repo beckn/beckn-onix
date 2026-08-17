@@ -25,9 +25,9 @@ type onixPlugin interface {
 
 // Manager is responsible for managing dynamically loaded plugins.
 type Manager struct {
-	plugins        map[string]onixPlugin        // plugins holds the dynamically loaded plugins.
-	closers        []func()                     // closers contains functions to release resources when the manager is closed.
-	constants      *beckndefaults.BecknConstants // loaded and verified at init; nil if not configured.
+	plugins        map[string]onixPlugin                  // plugins holds the dynamically loaded plugins.
+	closers        []func()                               // closers contains functions to release resources when the manager is closed.
+	constants      *beckndefaults.BecknConstants          // loaded and verified at init; nil if not configured.
 	overridesByKey map[string]telemetry.ConstantsOverride // keyed by "pluginID:key"; populated lazily at plugin creation time.
 }
 
@@ -63,15 +63,15 @@ func NewManager(ctx context.Context, cfg *ManagerConfig) (*Manager, func(), erro
 
 	closers := []func(){}
 	return &Manager{
-		plugins:        plugins,
-		closers:        closers,
-		constants:      constants,
-		overridesByKey: make(map[string]telemetry.ConstantsOverride),
-	}, func() {
-		for _, closer := range closers {
-			closer()
-		}
-	}, nil
+			plugins:        plugins,
+			closers:        closers,
+			constants:      constants,
+			overridesByKey: make(map[string]telemetry.ConstantsOverride),
+		}, func() {
+			for _, closer := range closers {
+				closer()
+			}
+		}, nil
 }
 
 // applyConstants enforces beckn constants for the given plugin config.
@@ -533,6 +533,27 @@ func (m *Manager) KeyManager(ctx context.Context, rClient definition.RegistryLoo
 		})
 	}
 	return km, nil
+}
+
+// CatalogPublisher returns a CatalogPublisher instance based on the provided
+// configuration. It reuses the loaded provider.
+func (m *Manager) CatalogPublisher(ctx context.Context, km definition.KeyManager, cfg *Config) (definition.CatalogPublisher, error) {
+	cpp, err := provider[definition.CatalogPublisherProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	cp, closer, err := cpp.New(ctx, km, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.closers = append(m.closers, func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return cp, nil
 }
 
 // SimpleKeyManager returns a KeyManager instance based on the provided configuration.
