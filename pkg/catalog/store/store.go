@@ -184,6 +184,19 @@ func New(blobs definition.CatalogBlobStore) *Store { return &Store{blobs: blobs}
 // These mirror the subset of the catalog index's shape Store needs to
 // read/write -- a wire-format contract, not Go code shared with any
 // publisher implementation.
+//
+// Once a pkg/catalog/index.go exists as the canonical Go representation
+// of the RFC index schema, these become a second, independent encoding
+// of the same wire format -- worth revisiting then whether Store should
+// migrate onto the shared types, reconciling the int/int64 version-field
+// mismatch (wireFileEntry.Version is int64 to round-trip an unbounded
+// JSON number; the rest of this file's version fields stay int) and
+// deciding how this package's extra bookkeeping fields (EntryVersion,
+// RetiredAt, CrawlHint, pointer-typed Dependencies for presence
+// detection) relate to the crawl side's shape, so the two stop silently
+// drifting apart. Not urgent: this package's current design is
+// deliberate (it never verifies on read, only round-trips its own
+// output), not an oversight.
 
 type indexDoc struct {
 	NodeID     string            `json:"nodeId"`
@@ -217,8 +230,11 @@ type wireMasterDependency struct {
 }
 
 // wireFileEntry is baseline/latest's shape -- one file-lineage version.
+// Version is int64, not int, because it round-trips a JSON number of
+// unbounded (spec-wise) magnitude -- unlike CatalogFileRef.Version, which
+// stays int for now (this package's own public surface, not the wire).
 type wireFileEntry struct {
-	Version int    `json:"version"`
+	Version int64  `json:"version"`
 	URL     string `json:"url"`
 	Size    int64  `json:"size"`
 	Digest  string `json:"digest"`
@@ -314,7 +330,7 @@ func (s *Store) readIndexEntries(ctx context.Context) (map[string]json.RawMessag
 
 func (s *Store) reconstructState(ctx context.Context, entry indexEntry) (*CatalogState, error) {
 	baselineGzip := isGzipURL(entry.Baseline.URL)
-	baselinePath := CatalogFilePath(entry.CatalogID, entry.Baseline.Version, "json", baselineGzip)
+	baselinePath := CatalogFilePath(entry.CatalogID, int(entry.Baseline.Version), "json", baselineGzip)
 	baselineBytes, err := s.blobs.Get(ctx, baselinePath)
 	if err != nil {
 		return nil, fmt.Errorf("catalogstore: reading %s: %w", baselinePath, err)
@@ -361,7 +377,7 @@ func (s *Store) reconstructState(ctx context.Context, entry indexEntry) (*Catalo
 		if err != nil {
 			return nil, fmt.Errorf("catalogstore: applying %s: %w", chPath, err)
 		}
-		superseded := ch.ToVersion <= entry.Baseline.Version
+		superseded := int64(ch.ToVersion) <= entry.Baseline.Version
 		if superseded && gracePeriodElapsed {
 			continue // grace period over: stop listing this pre-compaction change file
 		}
@@ -498,7 +514,7 @@ func gunzip(data []byte) ([]byte, error) {
 
 func toFileRef(fe wireFileEntry) CatalogFileRef {
 	return CatalogFileRef{
-		Version: fe.Version,
+		Version: int(fe.Version),
 		URL:     fe.URL,
 		Size:    fe.Size,
 		Digest:  fe.Digest,
