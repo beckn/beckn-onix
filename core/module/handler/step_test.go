@@ -718,14 +718,18 @@ func TestStripBasePath_DoesNotMutateURL(t *testing.T) {
 // Mocks for validateSchemaStep / addRouteStep wiring tests
 // ---------------------------------------------------------------------------
 
-// mockRecordingValidator records the *url.URL passed to Validate.
+// mockRecordingValidator records the *url.URL and body passed to Validate.
 type mockRecordingValidator struct {
-	gotURL *url.URL
-	retErr error
+	gotURL   *url.URL
+	gotBody  []byte
+	bodySeen bool
+	retErr   error
 }
 
-func (m *mockRecordingValidator) Validate(_ context.Context, u *url.URL, _ []byte) error {
+func (m *mockRecordingValidator) Validate(_ context.Context, u *url.URL, data []byte) error {
 	m.gotURL = u
+	m.gotBody = data
+	m.bodySeen = true
 	return m.retErr
 }
 
@@ -809,6 +813,34 @@ func TestValidateSchemaStep_Run_EmptyBodyPost_ReturnsError(t *testing.T) {
 	}
 	if mv.gotURL != nil {
 		t.Error("Validate should not have been called for empty-body POST")
+	}
+}
+
+// TestValidateSchemaStep_Run_EmptyBodyGet_CallsValidator guards the inverse of
+// TestValidateSchemaStep_Run_EmptyBodyPost_ReturnsError: only POST is special-cased
+// for an empty body, so a bodyless GET must still reach the validator (with an
+// empty payload) rather than being rejected by the step itself.
+func TestValidateSchemaStep_Run_EmptyBodyGet_CallsValidator(t *testing.T) {
+	mv := &mockRecordingValidator{}
+	step, _ := newValidateSchemaStep(mv, "")
+	req, _ := http.NewRequest(http.MethodGet, "http://localhost/catalog/subscription", nil)
+	ctx := &model.StepContext{
+		Context:    context.Background(),
+		Request:    req,
+		Body:       []byte{},
+		RespHeader: http.Header{},
+	}
+	if err := step.Run(ctx); err != nil {
+		t.Fatalf("Run() unexpected error for empty-body GET: %v", err)
+	}
+	if !mv.bodySeen {
+		t.Fatal("Validate should have been called for empty-body GET")
+	}
+	if len(mv.gotBody) != 0 {
+		t.Errorf("Validate received body %q, want empty", mv.gotBody)
+	}
+	if mv.gotURL == nil || mv.gotURL.Path != "catalog/subscription" {
+		t.Errorf("validator received path %q, want %q", mv.gotURL.Path, "catalog/subscription")
 	}
 }
 

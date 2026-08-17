@@ -56,13 +56,15 @@ func New(ctx context.Context, config *Config) (*schemaValidator, func() error, e
 // reqURL.Path holds the Beckn endpoint action already stripped of the module
 // base path by the step layer (e.g. "search") — no leading slash.
 func (v *schemaValidator) Validate(ctx context.Context, reqURL *url.URL, data []byte) error {
-	// An empty body only ever reaches here for GET/DELETE requests — the step
+	// An empty body only ever reaches here for non-POST requests — the step
 	// layer (validateSchemaStep) already rejects an empty-body POST before
-	// calling Validate. This validator has no per-endpoint notion of "requires
-	// a body" (unlike schemav2validator's OpenAPI-derived bodylessActions
-	// index), so it skips content validation instead of failing every bodyless
-	// request with a spurious "failed to parse JSON payload" error.
+	// calling Validate; PUT/PATCH/GET/DELETE with no body all fall through.
+	// This validator has no per-endpoint notion of "requires a body" (unlike
+	// schemav2validator's OpenAPI-derived bodylessActions index), so it skips
+	// content validation instead of failing every bodyless request with a
+	// spurious "failed to parse JSON payload" error.
 	if len(data) == 0 {
+		log.Debugf(ctx, "empty body for %s: skipping schema validation", reqURL.Path)
 		return nil
 	}
 
