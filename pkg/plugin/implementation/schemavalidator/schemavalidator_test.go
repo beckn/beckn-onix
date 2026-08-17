@@ -193,6 +193,27 @@ func TestValidator_Validate_SchemaErrorDetails(t *testing.T) {
 	}
 }
 
+// TestValidator_Validate_EmptyBody confirms that an empty body — the shape a
+// GET/DELETE request arrives with, since validateSchemaStep only rejects an
+// empty body for POST before calling Validate — is treated as "nothing to
+// validate" rather than a JSON parse failure.
+func TestValidator_Validate_EmptyBody(t *testing.T) {
+	schemaDir := setupTestSchema(t)
+	defer os.RemoveAll(schemaDir)
+
+	config := &Config{SchemaDir: schemaDir}
+	v, _, err := New(context.Background(), config)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	for _, data := range [][]byte{nil, {}} {
+		if err := v.Validate(context.Background(), &url.URL{Path: "endpoint"}, data); err != nil {
+			t.Errorf("Validate() with empty body = %v, want nil", err)
+		}
+	}
+}
+
 func TestValidator_Initialise(t *testing.T) {
 	tests := []struct {
 		name      string
