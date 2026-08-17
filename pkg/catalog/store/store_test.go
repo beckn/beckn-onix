@@ -211,7 +211,7 @@ func TestLoad_AppliesChangeFileOntoBaseline(t *testing.T) {
 	if len(effective.Resources) != 2 {
 		t.Fatalf("expected 2 resources after applying change, got %d", len(effective.Resources))
 	}
-	if len(state.ChangeFiles) != 1 || state.ChangeFiles[0].FromVersion != 1 || state.ChangeFiles[0].Version != 2 {
+	if len(state.ChangeFiles) != 1 || state.ChangeFiles[0].FromVersion != 1 || state.ChangeFiles[0].ToVersion != 2 {
 		t.Errorf("unexpected change file refs: %+v", state.ChangeFiles)
 	}
 }
