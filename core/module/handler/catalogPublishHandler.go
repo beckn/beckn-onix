@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -233,7 +234,10 @@ func NewCatalogPublishHandler(ctx context.Context, mgr PluginManager, cfg *Confi
 		}
 	}
 
-	catalogStore := store.New(localcatalogblobstore.New(cfg.OutputRoot))
+	// WithLogger bridges pkg/catalog/store's own log/slog logging into
+	// this handler's onix logging (pkg/log) -- same log stream, same
+	// configured level, nothing further to wire up.
+	catalogStore := store.New(localcatalogblobstore.New(cfg.OutputRoot)).WithLogger(slog.New(log.NewSlogHandler()))
 
 	log.Debugf(ctx, "catalogPublish handler %s initialized, outputRoot=%s", moduleName, cfg.OutputRoot)
 	return &catalogPublishHandler{

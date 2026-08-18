@@ -13,9 +13,11 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/catalog/publisher"
+	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
@@ -42,9 +44,14 @@ type Config struct {
 type Publisher struct {
 	keyManager definition.KeyManager
 	config     *Config
+	log        *slog.Logger
 }
 
-// New creates a Publisher instance.
+// New creates a Publisher instance. pkg/catalog/publisher's own logging
+// (diff summaries, mode decisions and why, signing, compaction triggers,
+// ...) is bridged into this package's own pkg/log -- so it shows up in
+// the same log stream, at whatever level onix itself is configured for,
+// with nothing further to wire up.
 func New(ctx context.Context, keyManager definition.KeyManager, cfg *Config) (*Publisher, func() error, error) {
 	if keyManager == nil {
 		return nil, nil, fmt.Errorf("catalogpublisher: KeyManager plugin not configured")
@@ -52,7 +59,7 @@ func New(ctx context.Context, keyManager definition.KeyManager, cfg *Config) (*P
 	if cfg == nil || cfg.SubscriberID == "" {
 		return nil, nil, fmt.Errorf("catalogpublisher: subscriberID is required")
 	}
-	return &Publisher{keyManager: keyManager, config: cfg}, func() error { return nil }, nil
+	return &Publisher{keyManager: keyManager, config: cfg, log: slog.New(log.NewSlogHandler())}, func() error { return nil }, nil
 }
 
 // Publish resolves this call's signing keyset and delegates everything
@@ -83,6 +90,8 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 		SigningKey: priv,
 		KeyID:      keyset.UniqueKeyID,
 		Domain:     keyset.SubscriberID,
+
+		Logger: p.log,
 	})
 	if err != nil {
 		return definition.PublishResult{}, err

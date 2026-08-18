@@ -169,6 +169,16 @@ func getLogger(config Config) (zerolog.Logger, error) {
 	return newLogger, nil
 }
 
+// InitStdout is a small convenience over InitLogger for the common case
+// of just wanting to bump this package's level: stdout only, at lvl
+// ("debug", "info", "warn", "error", "fatal", "panic"). Useful for a
+// plain CLI (or anything else outside onix's own YAML-configured startup
+// path) that has no way to construct Config.Destinations itself (an
+// unexported type, populated elsewhere only via YAML unmarshaling).
+func InitStdout(lvl string) error {
+	return InitLogger(Config{Level: level(lvl), Destinations: []destination{{Type: Stdout}}})
+}
+
 // InitLogger initializes the logger with the given configuration.
 // It ensures that the logger is initialized only once using sync.Once.
 func InitLogger(c Config) error {

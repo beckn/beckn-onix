@@ -29,6 +29,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,7 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/catalog"
 	"github.com/beckn-one/beckn-onix/pkg/catalog/store"
+	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher"
@@ -56,7 +58,12 @@ func main() {
 	gzipEnabled := flag.Bool("gzip", true, "serve catalog files gzip-compressed, signaled by a \".json.gz\" URL extension (NFH-014 §10.1). On by default; pass -gzip=false to opt out")
 	compactionChangeCountThreshold := flag.Int("compactionChangeCountThreshold", 0, "auto-compact (fresh baseline) once a catalog already has this many pending change files, instead of adding another (NFH-014 §10.1). 0 disables")
 	compactionSizeRatioThreshold := flag.Float64("compactionSizeRatioThreshold", 0, "auto-compact once combined pending-change-file size / baseline size reaches this fraction (e.g. 0.5 for 50%). 0 disables")
+	debug := flag.Bool("debug", true, "log every major diff/sign/version/storage decision at debug level (pkg/catalog/store's and pkg/catalog/publisher's own log/slog logging, bridged through pkg/log to stdout). On by default for this CLI; pass -debug=false to quiet it")
 	flag.Parse()
+
+	if *debug {
+		must(log.InitStdout("debug"))
+	}
 
 	var retireIDs []string
 	if *retire != "" {
@@ -75,7 +82,7 @@ func main() {
 		base = strings.TrimRight(*publicBaseURL, "/")
 	}
 
-	catalogStore := store.New(localcatalogblobstore.New(*outDir))
+	catalogStore := store.New(localcatalogblobstore.New(*outDir)).WithLogger(slog.New(log.NewSlogHandler()))
 
 	km, err := newFileKeyManager(*outDir, *keyID, *domain)
 	must(err)
