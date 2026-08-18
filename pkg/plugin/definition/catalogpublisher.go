@@ -88,6 +88,12 @@ type FileRef struct {
 	URL         string
 	Size        int64
 	Digest      string
+
+	// Encoding names the artifact packaging ("" / "json" = plain JSON,
+	// "gzip" = gzipped JSON) -- carried through so a round trip via this
+	// type doesn't silently lose it even though a reader can still fall
+	// back to the URL's own suffix.
+	Encoding string
 }
 
 // PriorCatalogState is what a caller must supply, per catalogId, to get
@@ -149,15 +155,6 @@ type PublishRequest struct {
 	// baseline, same as when ForceBaseline is set.
 	PriorState map[string]PriorCatalogState
 
-	// CarryForward holds raw catalogs[] entries from the last published
-	// index for catalogIds NOT present in Catalogs and NOT in Retire --
-	// the catalog index lists every catalog the publisher has, not just
-	// the ones touched this call, so these are included verbatim in the
-	// output index unmodified. Publish only reads each entry's
-	// "catalogId" field to de-duplicate against Catalogs/Retire; it does
-	// not otherwise interpret them.
-	CarryForward []json.RawMessage
-
 	// Retire marks these catalogIds RETIRED this call: a tombstone entry
 	// (retiredAt, no isActive/baseline/changes) replaces whatever was
 	// there, per NFH-014 §10.4's "a retired catalog stays as a tombstone"
@@ -179,6 +176,13 @@ type PublishRequest struct {
 // CatalogPublishOutcome reports what happened to one submitted catalog.
 type CatalogPublishOutcome struct {
 	CatalogID string
+
+	// SignedEntry is this catalog's complete, already-signed catalogs[]
+	// entry -- ready to hand a catalog storage layer (e.g.
+	// pkg/catalog/store's CatalogUpdate.SignedEntry) to merge into the
+	// index. Publish itself never assembles or persists the index as a
+	// whole; it only ever produces this one entry's bytes.
+	SignedEntry json.RawMessage
 
 	// Version is this catalog's new current file-lineage version after
 	// this call (the version stamped on the file just published, or the
@@ -243,33 +247,52 @@ type PublishError struct {
 	Fatal     bool
 }
 
-// PublishResult is the output of a Publish call: the catalog index
-// (unsigned as a whole; trust rides on each entry's own signature -- NFH-
-// 014, "There is no whole-index version field" -- a DS detects index
-// change via conditional HTTP, not a document-level counter this plugin
-// would have to fabricate), ready to be handed to a storage layer (not
-// this plugin's concern -- see ArtifactStore, not yet built), plus
-// per-catalog outcomes and errors. There is no DeDi manifest here: the
-// index's location is declared directly in the publisher's own DeDi
-// registry record (meta.catalog_index_url, see IndexURL and
+// PublishResult is the output of a Publish call: per-catalog outcomes and
+// errors, plus the two fields (NodeID/NextUpdate) a caller needs to stamp
+// on the index document it assembles from those outcomes -- Publish
+// itself never assembles or persists a catalog index as a whole (that is
+// a storage layer's job, e.g. pkg/catalog/store.Store.Publish, which
+// merges each outcome's SignedEntry into the index it already holds).
+// There is no DeDi manifest here: the index's location is declared
+// directly in the publisher's own DeDi registry record
+// (meta.catalog_index_url, see IndexURL and
 // core/module/handler/catalogPublishHandler.go's
 // checkRegistryLinksCatalogIndex), not via a separate manifest document.
 type PublishResult struct {
 	PublishedAt time.Time
-	Index       json.RawMessage
-	Catalogs    []CatalogPublishOutcome
-	Errors      []PublishError
+
+	// NodeID and NextUpdate are the index document's own top-level
+	// fields (NFH-014's "nodeId"/"next_update") -- domain and freshness
+	// window, resolved here from KeyManager's Keyset and Config.NextUpdateIn
+	// respectively, so a caller assembling the index doesn't have to
+	// duplicate that resolution itself.
+	NodeID     string
+	NextUpdate *time.Time
+
+	Catalogs []CatalogPublishOutcome
+	Errors   []PublishError
+
+	// Retirements carries each retired catalogId's signed tombstone entry
+	// -- separate from Catalogs, which reports outcomes for submitted
+	// catalogs only; retirement is a different kind of event with no
+	// Version/EntryVersion/Mode of its own to report there.
+	Retirements []RetirementOutcome
 
 	// RetiredLatest carries the final, self-signed CatalogFile write
 	// CON-TBD-38 requires for each retired catalogId whose PriorState had
 	// LatestPublished set: the same stable "latest" URL as before, now
 	// carrying CatalogFile.retiredAt, so a consumer that only ever fetches
 	// "latest" directly (never revisiting the index) can still learn the
-	// catalog is gone. Deliberately separate from Catalogs -- Catalogs
-	// reports outcomes for submitted catalogs only; retirement is a
-	// different kind of event with no Version/EntryVersion/Mode of its own
-	// to report there.
+	// catalog is gone.
 	RetiredLatest []RetiredCatalogFile
+}
+
+// RetirementOutcome is one retired catalog's signed tombstone entry --
+// ready to hand a catalog storage layer to merge into the index, same as
+// CatalogPublishOutcome.SignedEntry for a submitted catalog.
+type RetirementOutcome struct {
+	CatalogID   string
+	SignedEntry json.RawMessage
 }
 
 // RetiredCatalogFile is one retired catalog's final "latest" write (see
