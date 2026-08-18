@@ -25,6 +25,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -159,6 +160,22 @@ type Params struct {
 	SigningKey ed25519.PrivateKey
 	KeyID      string
 	Domain     string
+
+	// Logger receives every major-event log line Publish emits (mode
+	// decisions, compaction triggers, signing steps, non-fatal errors).
+	// Never logs key material or raw signature values. Defaults to
+	// slog.Default() when unset -- there is no way to fully silence
+	// logging short of passing a logger with a discarding handler, since
+	// this package holds no global logging state of its own to disable.
+	Logger *slog.Logger
+}
+
+// logger returns p.Logger, or slog.Default() when unset.
+func (p Params) logger() *slog.Logger {
+	if p.Logger != nil {
+		return p.Logger
+	}
+	return slog.Default()
 }
 
 // Outcome reports what happened to one submitted catalog -- reporting
@@ -243,6 +260,10 @@ func IndexURL(publicBaseURL string) string {
 // submission that fails validation or diffing is reported as a non-fatal
 // PublishError and skipped; it does not fail the rest of the batch.
 func Publish(ctx context.Context, p Params) (Result, error) {
+	log := p.logger()
+	log.DebugContext(ctx, "catalog/publisher: Publish", "domain", p.Domain, "keyId", p.KeyID,
+		"catalogs", len(p.Catalogs), "retirements", len(p.Retire), "forceBaseline", p.ForceBaseline)
+
 	if len(p.SigningKey) != ed25519.PrivateKeySize {
 		return Result{}, fmt.Errorf("catalog/publisher: invalid signing key (want %d bytes, got %d)", ed25519.PrivateKeySize, len(p.SigningKey))
 	}
@@ -268,18 +289,23 @@ func Publish(ctx context.Context, p Params) (Result, error) {
 	for _, sub := range p.Catalogs {
 		submitted[sub.CatalogID] = true
 		if err := validateSubmission(sub); err != nil {
+			log.WarnContext(ctx, "catalog/publisher: submission rejected", "catalogId", sub.CatalogID, "stage", "validate", "reason", err.Error())
 			result.Errors = append(result.Errors, PublishError{CatalogID: sub.CatalogID, Stage: "validate", Reason: err.Error()})
 			continue
 		}
 
-		oc, entry, err := p.publishOne(sub, p.PriorState[sub.CatalogID], fileNextUpdate)
+		oc, entry, err := p.publishOne(ctx, sub, p.PriorState[sub.CatalogID], fileNextUpdate)
 		if err != nil {
+			log.WarnContext(ctx, "catalog/publisher: submission rejected", "catalogId", sub.CatalogID, "stage", "diff", "reason", err.Error())
 			result.Errors = append(result.Errors, PublishError{CatalogID: sub.CatalogID, Stage: "diff", Reason: err.Error()})
 			continue
 		}
+		log.DebugContext(ctx, "catalog/publisher: catalog decided", "catalogId", sub.CatalogID, "mode", oc.Mode,
+			"changed", oc.Changed, "version", oc.Version, "entryVersion", oc.EntryVersion)
 
 		raw, err := p.signEntry(entry)
 		if err != nil {
+			log.ErrorContext(ctx, "catalog/publisher: signing catalog entry failed", "catalogId", sub.CatalogID, "error", err)
 			return result, fmt.Errorf("catalog/publisher: signing catalog entry %q: %w", sub.CatalogID, err)
 		}
 
@@ -320,8 +346,10 @@ func Publish(ctx context.Context, p Params) (Result, error) {
 			RetiredAt:    now.Format(time.RFC3339Nano),
 		})
 		if err != nil {
+			log.ErrorContext(ctx, "catalog/publisher: signing tombstone failed", "catalogId", id, "error", err)
 			return result, fmt.Errorf("catalog/publisher: signing tombstone %q: %w", id, err)
 		}
+		log.DebugContext(ctx, "catalog/publisher: catalog retired", "catalogId", id, "entryVersion", prior.EntryVersion+1, "latestPublished", prior.LatestPublished)
 		update := store.CatalogUpdate{CatalogID: id, SignedEntry: raw}
 
 		// CON-TBD-38: a catalog that had "latest" published needs one
@@ -333,6 +361,7 @@ func Publish(ctx context.Context, p Params) (Result, error) {
 		// not deciding whether to start publishing a new one.
 		if prior.LatestPublished {
 			if prior.Catalog == nil {
+				log.WarnContext(ctx, "catalog/publisher: cannot write final latest tombstone, prior catalog content missing", "catalogId", id)
 				result.Errors = append(result.Errors, PublishError{
 					CatalogID: id, Stage: "retire",
 					Reason: "LatestPublished is set but PriorState.Catalog is empty; cannot write the final \"latest\" tombstone",
@@ -340,6 +369,7 @@ func Publish(ctx context.Context, p Params) (Result, error) {
 			} else {
 				content, err := p.signCatalogFile(id, currentVersion(prior), fileNextUpdate, prior.Catalog, &now)
 				if err != nil {
+					log.ErrorContext(ctx, "catalog/publisher: signing final latest tombstone failed", "catalogId", id, "error", err)
 					return result, fmt.Errorf("catalog/publisher: signing final \"latest\" tombstone %q: %w", id, err)
 				}
 				served, _, _, err := maybeCompress(content, "json", p.Gzip)
@@ -347,11 +377,14 @@ func Publish(ctx context.Context, p Params) (Result, error) {
 					return result, fmt.Errorf("catalog/publisher: compressing final \"latest\" tombstone %q: %w", id, err)
 				}
 				update.Latest = &store.FileWrite{Content: content, ServedContent: served, Compressed: p.Gzip}
+				log.DebugContext(ctx, "catalog/publisher: wrote final latest tombstone", "catalogId", id)
 			}
 		}
 		result.Publish.Retirements = append(result.Publish.Retirements, update)
 	}
 
+	log.DebugContext(ctx, "catalog/publisher: Publish done", "published", len(result.Publish.Updates),
+		"retired", len(result.Publish.Retirements), "errors", len(result.Errors))
 	return result, nil
 }
 
@@ -359,7 +392,8 @@ func Publish(ctx context.Context, p Params) (Result, error) {
 // for one submission and builds both its internal outcome and its
 // catalog.CatalogEntry. The returned entry is not yet signed -- Publish
 // signs every entry uniformly via signEntry.
-func (p Params) publishOne(sub Submission, prior store.CatalogState, fileNextUpdate time.Time) (outcome, catalog.CatalogEntry, error) {
+func (p Params) publishOne(ctx context.Context, sub Submission, prior store.CatalogState, fileNextUpdate time.Time) (outcome, catalog.CatalogEntry, error) {
+	log := p.logger()
 	hasPrior := prior.Catalog != nil
 	catalogType := sub.CatalogType
 	if catalogType == "" {
@@ -408,9 +442,21 @@ func (p Params) publishOne(sub Submission, prior store.CatalogState, fileNextUpd
 			return outcome{}, catalog.CatalogEntry{}, err
 		}
 		contentChanged = !diff.Resources.IsEmpty() || !diff.Offers.IsEmpty() || changeCatalog != nil
+		log.DebugContext(ctx, "catalog/publisher: diffed against prior state", "catalogId", sub.CatalogID,
+			"upserts", len(diff.Resources.Upserts)+len(diff.Offers.Upserts), "removals", len(diff.Resources.Removals)+len(diff.Offers.Removals),
+			"attributesChanged", changeCatalog != nil, "contentChanged", contentChanged)
 	}
 
-	if !hasPrior || p.ForceBaseline || (contentChanged && p.compactionDue(prior)) {
+	compactionDue := hasPrior && !p.ForceBaseline && contentChanged && p.compactionDue(ctx, sub.CatalogID, prior)
+	if !hasPrior || p.ForceBaseline || compactionDue {
+		reason := "no prior state"
+		switch {
+		case p.ForceBaseline:
+			reason = "ForceBaseline"
+		case compactionDue:
+			reason = "compaction threshold reached"
+		}
+		log.DebugContext(ctx, "catalog/publisher: publishing baseline", "catalogId", sub.CatalogID, "reason", reason)
 		version := currentVersion(prior) + 1
 		content, err := p.signCatalogFile(sub.CatalogID, version, fileNextUpdate, sub.Catalog, nil)
 		if err != nil {
@@ -436,20 +482,23 @@ func (p Params) publishOne(sub Submission, prior store.CatalogState, fileNextUpd
 			CatalogID: sub.CatalogID, Version: version, EntryVersion: entry.EntryVersion, Changed: true, Digest: fe.Digest, Mode: "baseline",
 			Content: content, ServedContent: served,
 		}
-		return p.finishEntry(sub, entry, oc, fileNextUpdate)
+		return p.finishEntry(ctx, sub, entry, oc, fileNextUpdate)
 	}
 
 	if !contentChanged {
 		version := currentVersion(prior)
 		if !metadataChanged {
+			log.DebugContext(ctx, "catalog/publisher: no-op, nothing changed", "catalogId", sub.CatalogID)
 			entry.EntryVersion = prior.EntryVersion
 			oc := outcome{CatalogID: sub.CatalogID, Version: version, EntryVersion: entry.EntryVersion, Changed: false, Mode: "unchanged"}
-			return p.finishEntry(sub, entry, oc, fileNextUpdate)
+			return p.finishEntry(ctx, sub, entry, oc, fileNextUpdate)
 		}
+		log.DebugContext(ctx, "catalog/publisher: metadata-only change, no new file", "catalogId", sub.CatalogID, "entryVersion", prior.EntryVersion+1)
 		entry.EntryVersion = prior.EntryVersion + 1
 		oc := outcome{CatalogID: sub.CatalogID, Version: version, EntryVersion: entry.EntryVersion, Changed: true, Mode: "metadata"}
-		return p.finishEntry(sub, entry, oc, fileNextUpdate)
+		return p.finishEntry(ctx, sub, entry, oc, fileNextUpdate)
 	}
+	log.DebugContext(ctx, "catalog/publisher: publishing change file", "catalogId", sub.CatalogID, "fromVersion", currentVersion(prior))
 
 	fromVersion := currentVersion(prior)
 	toVersion := fromVersion + 1
@@ -475,7 +524,7 @@ func (p Params) publishOne(sub Submission, prior store.CatalogState, fileNextUpd
 		CatalogID: sub.CatalogID, Version: toVersion, EntryVersion: entry.EntryVersion, Changed: true, Digest: fe.Digest, Mode: "change",
 		Content: content, ServedContent: served,
 	}
-	return p.finishEntry(sub, entry, oc, fileNextUpdate)
+	return p.finishEntry(ctx, sub, entry, oc, fileNextUpdate)
 }
 
 // finishEntry adds a "latest" full-CatalogFileDoc pointer when
@@ -484,7 +533,7 @@ func (p Params) publishOne(sub Submission, prior store.CatalogState, fileNextUpd
 // a specific lineage step. A no-op when PublishLatest is off, which every
 // publishOne return path funnels through so "latest" (or its absence) is
 // applied uniformly rather than duplicated at each call site.
-func (p Params) finishEntry(sub Submission, entry catalog.CatalogEntry, oc outcome, fileNextUpdate time.Time) (outcome, catalog.CatalogEntry, error) {
+func (p Params) finishEntry(ctx context.Context, sub Submission, entry catalog.CatalogEntry, oc outcome, fileNextUpdate time.Time) (outcome, catalog.CatalogEntry, error) {
 	if !p.PublishLatest {
 		return oc, entry, nil
 	}
@@ -500,6 +549,7 @@ func (p Params) finishEntry(sub Submission, entry catalog.CatalogEntry, oc outco
 	oc.LatestContent = content
 	oc.LatestServedContent = served
 	oc.LatestDigest = fe.Digest
+	p.logger().DebugContext(ctx, "catalog/publisher: latest pointer updated", "catalogId", sub.CatalogID, "version", oc.Version)
 	return oc, entry, nil
 }
 
@@ -697,7 +747,7 @@ func currentVersion(prior store.CatalogState) int64 {
 //
 // Counts only "live" change files (EffectiveVersion > baseline's own
 // Version), same rationale as currentVersion.
-func (p Params) compactionDue(prior store.CatalogState) bool {
+func (p Params) compactionDue(ctx context.Context, catalogID string, prior store.CatalogState) bool {
 	var baselineVersion, baselineSize int64
 	if prior.BaselineFile != nil {
 		baselineVersion = prior.BaselineFile.Version
@@ -712,11 +762,13 @@ func (p Params) compactionDue(prior store.CatalogState) bool {
 		}
 	}
 	if p.CompactionChangeCountThreshold > 0 && liveCount >= p.CompactionChangeCountThreshold {
+		p.logger().DebugContext(ctx, "catalog/publisher: compaction triggered by change count", "catalogId", catalogID, "liveChangeFiles", liveCount, "threshold", p.CompactionChangeCountThreshold)
 		return true
 	}
 	if p.CompactionSizeRatioThreshold > 0 && baselineSize > 0 {
 		ratio := float64(liveSize) / float64(baselineSize)
 		if ratio >= p.CompactionSizeRatioThreshold {
+			p.logger().DebugContext(ctx, "catalog/publisher: compaction triggered by size ratio", "catalogId", catalogID, "ratio", ratio, "threshold", p.CompactionSizeRatioThreshold)
 			return true
 		}
 	}

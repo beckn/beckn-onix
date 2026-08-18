@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"path"
 	"strings"
 	"time"
@@ -153,11 +154,24 @@ type PublishRequest struct {
 }
 
 // Store is the one canonical assembler over any definition.CatalogBlobStore.
-type Store struct{ blobs definition.CatalogBlobStore }
+type Store struct {
+	blobs definition.CatalogBlobStore
+	log   *slog.Logger
+}
 
 // New constructs a Store over blobs. Plain Go, no onix plugin machinery
-// required.
-func New(blobs definition.CatalogBlobStore) *Store { return &Store{blobs: blobs} }
+// required. Logs via slog.Default() until WithLogger overrides it.
+func New(blobs definition.CatalogBlobStore) *Store { return &Store{blobs: blobs, log: slog.Default()} }
+
+// WithLogger sets the logger this Store uses for every subsequent call,
+// e.g. to route it through an onix-hosted caller's own structured
+// logging instead of slog's default handler. Returns s for chaining.
+func (s *Store) WithLogger(logger *slog.Logger) *Store {
+	if logger != nil {
+		s.log = logger
+	}
+	return s
+}
 
 // indexDoc is the top-level index document's own shape: unlike an entry,
 // nobody besides Store needs it as a typed value -- every reader treats
@@ -192,6 +206,7 @@ type fileEnvelope struct {
 // A requested catalogId absent from the result has none: the caller
 // starts a fresh baseline for it.
 func (s *Store) LoadCatalogs(ctx context.Context, catalogIDs []string) (map[string]CatalogState, error) {
+	s.log.DebugContext(ctx, "catalogstore: LoadCatalogs", "requested", len(catalogIDs))
 	entries, _, err := s.readIndexEntries(ctx)
 	if err != nil {
 		return nil, err
@@ -201,6 +216,7 @@ func (s *Store) LoadCatalogs(ctx context.Context, catalogIDs []string) (map[stri
 	for _, id := range catalogIDs {
 		rawEntry, ok := entries[id]
 		if !ok {
+			s.log.DebugContext(ctx, "catalogstore: catalog not in index, starting fresh", "catalogId", id)
 			continue
 		}
 		var entry catalog.CatalogEntry
@@ -208,6 +224,7 @@ func (s *Store) LoadCatalogs(ctx context.Context, catalogIDs []string) (map[stri
 			return nil, fmt.Errorf("catalogstore: parsing entry for %s: %w", id, err)
 		}
 		if entry.IsRetired() || entry.Baseline.URL == "" {
+			s.log.DebugContext(ctx, "catalogstore: no publishable prior state, starting fresh", "catalogId", id, "retired", entry.IsRetired())
 			continue // no publishable prior state; caller starts a fresh baseline
 		}
 		state, err := s.reconstructState(ctx, entry)
@@ -216,6 +233,7 @@ func (s *Store) LoadCatalogs(ctx context.Context, catalogIDs []string) (map[stri
 		}
 		result[id] = *state
 	}
+	s.log.DebugContext(ctx, "catalogstore: LoadCatalogs done", "requested", len(catalogIDs), "reconstructed", len(result))
 	return result, nil
 }
 
@@ -226,9 +244,11 @@ func (s *Store) LoadCatalogs(ctx context.Context, catalogIDs []string) (map[stri
 func (s *Store) readIndexEntries(ctx context.Context) (map[string]json.RawMessage, []string, error) {
 	raw, err := s.blobs.Get(ctx, IndexPath())
 	if errors.Is(err, definition.ErrBlobNotFound) {
+		s.log.DebugContext(ctx, "catalogstore: no existing index, starting empty")
 		return map[string]json.RawMessage{}, nil, nil
 	}
 	if err != nil {
+		s.log.ErrorContext(ctx, "catalogstore: reading existing index failed", "error", err)
 		return nil, nil, fmt.Errorf("catalogstore: reading existing index: %w", err)
 	}
 
@@ -244,11 +264,13 @@ func (s *Store) readIndexEntries(ctx context.Context) (map[string]json.RawMessag
 			CatalogID string `json:"catalogId"`
 		}
 		if json.Unmarshal(rawEntry, &probe) != nil || probe.CatalogID == "" {
+			s.log.WarnContext(ctx, "catalogstore: skipping malformed index entry")
 			continue // tolerate a malformed stray entry rather than fail the whole read
 		}
 		entries[probe.CatalogID] = rawEntry
 		order = append(order, probe.CatalogID)
 	}
+	s.log.DebugContext(ctx, "catalogstore: read existing index", "entries", len(entries), "bytes", len(raw))
 	return entries, order, nil
 }
 
@@ -257,8 +279,10 @@ func (s *Store) reconstructState(ctx context.Context, entry catalog.CatalogEntry
 	baselinePath := CatalogFilePath(entry.CatalogID, entry.Baseline.Version, "json", baselineGzip)
 	baselineBytes, err := s.blobs.Get(ctx, baselinePath)
 	if err != nil {
+		s.log.ErrorContext(ctx, "catalogstore: reading baseline failed", "catalogId", entry.CatalogID, "path", baselinePath, "error", err)
 		return nil, fmt.Errorf("catalogstore: reading %s: %w", baselinePath, err)
 	}
+	s.log.DebugContext(ctx, "catalogstore: read baseline", "catalogId", entry.CatalogID, "path", baselinePath, "bytes", len(baselineBytes))
 	if baselineGzip {
 		if baselineBytes, err = gunzip(baselineBytes); err != nil {
 			return nil, fmt.Errorf("catalogstore: decompressing %s: %w", baselinePath, err)
@@ -291,6 +315,7 @@ func (s *Store) reconstructState(ctx context.Context, entry catalog.CatalogEntry
 		chPath := CatalogFilePath(entry.CatalogID, ch.EffectiveVersion(), "changes.json", chGzip)
 		raw, err := s.blobs.Get(ctx, chPath)
 		if err != nil {
+			s.log.ErrorContext(ctx, "catalogstore: reading change file failed", "catalogId", entry.CatalogID, "path", chPath, "error", err)
 			return nil, fmt.Errorf("catalogstore: reading %s: %w", chPath, err)
 		}
 		if chGzip {
@@ -304,8 +329,12 @@ func (s *Store) reconstructState(ctx context.Context, entry catalog.CatalogEntry
 		}
 		superseded := ch.EffectiveVersion() <= entry.Baseline.Version
 		if superseded && gracePeriodElapsed {
+			s.log.DebugContext(ctx, "catalogstore: dropping superseded change file (grace period elapsed)",
+				"catalogId", entry.CatalogID, "fromVersion", ch.FromVersion, "toVersion", ch.ToVersion)
 			continue // grace period over: stop listing this pre-compaction change file
 		}
+		s.log.DebugContext(ctx, "catalogstore: applied change file", "catalogId", entry.CatalogID,
+			"fromVersion", ch.FromVersion, "toVersion", ch.ToVersion, "superseded", superseded)
 		changeFiles = append(changeFiles, ch)
 	}
 
@@ -341,6 +370,7 @@ func (s *Store) reconstructState(ctx context.Context, entry catalog.CatalogEntry
 // content, then the merged index last (so a failure partway through never
 // leaves the index pointing at a file that was never written).
 func (s *Store) Publish(ctx context.Context, req PublishRequest) error {
+	s.log.DebugContext(ctx, "catalogstore: Publish", "nodeId", req.NodeID, "updates", len(req.Updates), "retirements", len(req.Retirements))
 	entries, order, err := s.readIndexEntries(ctx)
 	if err != nil {
 		return err
@@ -350,10 +380,12 @@ func (s *Store) Publish(ctx context.Context, req PublishRequest) error {
 		if err := s.writeCatalogFiles(ctx, u); err != nil {
 			return err
 		}
-		if _, exists := entries[u.CatalogID]; !exists {
+		_, existed := entries[u.CatalogID]
+		if !existed {
 			order = append(order, u.CatalogID)
 		}
 		entries[u.CatalogID] = u.SignedEntry
+		s.log.DebugContext(ctx, "catalogstore: merged entry", "catalogId", u.CatalogID, "replacedExisting", existed)
 		return nil
 	}
 	for _, u := range req.Updates {
@@ -376,8 +408,10 @@ func (s *Store) Publish(ctx context.Context, req PublishRequest) error {
 		return fmt.Errorf("catalogstore: marshaling index: %w", err)
 	}
 	if err := s.blobs.Put(ctx, IndexPath(), indexBytes); err != nil {
+		s.log.ErrorContext(ctx, "catalogstore: writing index failed", "error", err)
 		return fmt.Errorf("catalogstore: writing index: %w", err)
 	}
+	s.log.DebugContext(ctx, "catalogstore: Publish done", "entries", len(ordered), "bytes", len(indexBytes))
 	return nil
 }
 
@@ -406,8 +440,10 @@ func (s *Store) writeFile(ctx context.Context, path string, fw *FileWrite) error
 		served = fw.Content // Compressed is false: ServedContent and Content are identical
 	}
 	if err := s.blobs.Put(ctx, path, served); err != nil {
+		s.log.ErrorContext(ctx, "catalogstore: writing file failed", "path", path, "error", err)
 		return fmt.Errorf("catalogstore: writing %s: %w", path, err)
 	}
+	s.log.DebugContext(ctx, "catalogstore: wrote file", "path", path, "bytes", len(served), "compressed", fw.Compressed)
 	return nil
 }
 
