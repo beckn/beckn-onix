@@ -13,10 +13,12 @@
 // several equally valid ways to invoke it (a CLI here, an HTTP handler, a
 // future desktop app all wire the same call differently).
 //
-// catalogpublisherctl owns all persistence itself (signing key, prior
-// state reconstruction, carrying forward every other catalog in the
-// index) -- Publish itself holds no storage-backed state, per
-// definition.PriorCatalogState's doc comment.
+// catalogpublisherctl owns the signing key (a demo-only file-backed
+// KeyManager, see fileKeyManager below); prior-state reconstruction and
+// persisting a publish result are pkg/catalog/store's job, over a
+// local-disk localcatalogblobstore rooted at -out -- Publish itself holds
+// no storage-backed state and never assembles or persists an index, per
+// definition.PriorCatalogState's and PublishResult's doc comments.
 package main
 
 import (
@@ -32,11 +34,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/beckn-one/beckn-onix/pkg/catalogfile"
+	"github.com/beckn-one/beckn-onix/pkg/catalog"
+	"github.com/beckn-one/beckn-onix/pkg/catalog/store"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher"
-	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher/localstore"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/localcatalogblobstore"
 )
 
 func main() {
@@ -48,7 +51,7 @@ func main() {
 	nextUpdateDays := flag.Int("nextUpdateDays", 14, "days until the index \"next_update\" freshness window expires (0 to omit it)")
 	retire := flag.String("retire", "", "comma-separated catalogIds to mark RETIRED this run (works with or without -catalog)")
 	forceBaseline := flag.Bool("forceBaseline", false, "publish a fresh baseline for -catalog, discarding its change history (also how to trigger compaction)")
-	publicBaseURL := flag.String("publicBaseURL", "", "if set, embed URLs under this single base instead of file:// (e.g. http://localhost:8000 when serving -out with `python3 -m http.server` from within it) -- must match wherever -out is actually served from. Note: the manifest (.well-known/dedi.index.json) is currently not written to -out at all (see localstore.Write); only the catalog index and catalog files are")
+	publicBaseURL := flag.String("publicBaseURL", "", "if set, embed URLs under this single base instead of file:// (e.g. http://localhost:8000 when serving -out with `python3 -m http.server` from within it) -- must match wherever -out is actually served from. Note: there is no manifest document written to -out at all; only the catalog index and catalog files are")
 	publishLatest := flag.Bool("publishLatest", true, "publish/maintain a \"latest\" pointer (NFH-014): a full CatalogFile overwritten in place at a stable URL, for consumers who never apply changes[]. On by default; pass -publishLatest=false to opt out")
 	gzipEnabled := flag.Bool("gzip", true, "serve catalog files gzip-compressed, signaled by a \".json.gz\" URL extension (NFH-014 §10.1). On by default; pass -gzip=false to opt out")
 	compactionChangeCountThreshold := flag.Int("compactionChangeCountThreshold", 0, "auto-compact (fresh baseline) once a catalog already has this many pending change files, instead of adding another (NFH-014 §10.1). 0 disables")
@@ -64,15 +67,15 @@ func main() {
 		os.Exit(2)
 	}
 
-	must(localstore.EnsureDirs(*outDir))
-
-	// index/catalogs both live as subdirectories of outDir (localstore's own
-	// layout), so one base -- file://<outDir> by default, or -publicBaseURL
+	// index/catalogs both live as subdirectories of outDir (pkg/catalog/store's
+	// own layout), so one base -- file://<outDir> by default, or -publicBaseURL
 	// when set -- addresses both.
 	base := "file://" + mustAbs(*outDir)
 	if *publicBaseURL != "" {
 		base = strings.TrimRight(*publicBaseURL, "/")
 	}
+
+	catalogStore := store.New(localcatalogblobstore.New(*outDir))
 
 	km, err := newFileKeyManager(*outDir, *keyID, *domain)
 	must(err)
@@ -123,10 +126,9 @@ func main() {
 		loadIDs = append(loadIDs, id)
 	}
 	loadIDs = append(loadIDs, retireIDs...) // tombstones need the retired catalog's prior CatalogType/NetworkIds/SchemaTypes/EntryVersion too
-	state, err := localstore.Load(*outDir, loadIDs)
+	priorStates, err := catalogStore.LoadCatalogs(ctx, loadIDs)
 	must(err)
-	req.PriorState = state.PriorState
-	req.CarryForward = state.CarryForward
+	req.PriorState = catalogpublisher.ToPriorState(priorStates)
 
 	result, err := publisher.Publish(ctx, req)
 	must(err)
@@ -135,7 +137,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "publish error [%s/%s]: %s\n", e.CatalogID, e.Stage, e.Reason)
 	}
 
-	must(localstore.Write(*outDir, result))
+	must(catalogStore.Publish(ctx, catalogpublisher.ToStorePublishRequest(result)))
 
 	for _, outcome := range result.Catalogs {
 		switch outcome.Mode {
@@ -163,8 +165,8 @@ func main() {
 
 func printChangeSummary(content json.RawMessage) {
 	var change struct {
-		Resources catalogfile.DiffBlock `json:"resources"`
-		Offers    catalogfile.DiffBlock `json:"offers"`
+		Resources catalog.DiffBlock `json:"resources"`
+		Offers    catalog.DiffBlock `json:"offers"`
 	}
 	if json.Unmarshal(content, &change) != nil {
 		return

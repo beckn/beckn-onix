@@ -11,14 +11,15 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/catalog/store"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher"
-	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher/localstore"
 )
 
 // fakeKeyManager returns a fixed Ed25519 keyset (and keyID) for any subscriberID.
@@ -309,9 +310,9 @@ func TestCatalogPublishHandler_PublishesAndWritesToOutputRoot(t *testing.T) {
 		t.Fatalf("unexpected results: %+v", resp.Results)
 	}
 
-	// The manifest (.well-known/dedi.index.json) is deliberately not
-	// written by localstore right now (see localstore.Write) -- this
-	// asserts it stays untouched, not just unwritten on a fresh root.
+	// The manifest (.well-known/dedi.index.json) is deliberately never
+	// written by pkg/catalog/store -- this asserts it stays untouched, not
+	// just unwritten on a fresh root.
 	if _, err := os.Stat(root + "/.well-known"); !os.IsNotExist(err) {
 		t.Errorf("expected .well-known/ not created, got err=%v", err)
 	}
@@ -339,7 +340,7 @@ func TestCatalogPublishHandler_PublishDirectivesVisibleToMapsToNetworkIds(t *tes
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	raw, err := os.ReadFile(localstore.IndexPath(root))
+	raw, err := os.ReadFile(filepath.Join(root, store.IndexPath()))
 	if err != nil {
 		t.Fatalf("reading index: %v", err)
 	}

@@ -9,11 +9,13 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/beckn-one/beckn-onix/pkg/catalog/store"
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher/localstore"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/localcatalogblobstore"
 )
 
 // catalogPublishHandler serves a DS-internal, unsigned catalog/publish
@@ -31,7 +33,15 @@ import (
 // isn't wired to any request field yet -- restricted catalogs with custom
 // auth are a later phase, tracked in this package's README.
 type catalogPublishHandler struct {
-	publisher       definition.CatalogPublisher
+	publisher definition.CatalogPublisher
+	// catalogStore is where prior state is read from and a publish result
+	// is persisted -- pkg/catalog/store over a local-disk
+	// localcatalogblobstore rooted at cfg.OutputRoot today. The blob
+	// backend itself isn't yet config-selectable (no
+	// cfg.Plugins.CatalogBlobStore slot) -- a real deployment wanting
+	// S3/GCS/etc. is a separate, later wiring change, not this handler's
+	// concern to anticipate.
+	catalogStore    *store.Store
 	outputRoot      string
 	schemaValidator definition.SchemaValidator
 	policyChecker   definition.PolicyChecker
@@ -223,9 +233,12 @@ func NewCatalogPublishHandler(ctx context.Context, mgr PluginManager, cfg *Confi
 		}
 	}
 
+	catalogStore := store.New(localcatalogblobstore.New(cfg.OutputRoot))
+
 	log.Debugf(ctx, "catalogPublish handler %s initialized, outputRoot=%s", moduleName, cfg.OutputRoot)
 	return &catalogPublishHandler{
 		publisher:        publisher,
+		catalogStore:     catalogStore,
 		outputRoot:       cfg.OutputRoot,
 		schemaValidator:  schemaValidator,
 		policyChecker:    policyChecker,
@@ -387,7 +400,7 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	loadIDs := append(append([]string{}, catalogIDs...), req.Retire...)
 
 	log.Debugf(r.Context(), "catalogPublish: loading prior state for %v from %s", loadIDs, h.outputRoot)
-	state, err := localstore.Load(h.outputRoot, loadIDs)
+	priorStates, err := h.catalogStore.LoadCatalogs(r.Context(), loadIDs)
 	if err != nil {
 		log.Errorf(r.Context(), err, "catalogPublish: loading prior state from %s", h.outputRoot)
 		writePublishJSON(w, r, publishResponse{
@@ -397,11 +410,10 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	log.Debugf(r.Context(), "catalogPublish: calling Publish, carryForward=%d", len(state.CarryForward))
+	log.Debugf(r.Context(), "catalogPublish: calling Publish, %d prior state(s) loaded", len(priorStates))
 	result, err := h.publisher.Publish(r.Context(), definition.PublishRequest{
 		Catalogs:      submissions,
-		PriorState:    state.PriorState,
-		CarryForward:  state.CarryForward,
+		PriorState:    catalogpublisher.ToPriorState(priorStates),
 		Retire:        req.Retire,
 		ForceBaseline: req.ForceBaseline,
 	})
@@ -415,7 +427,7 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	}
 
 	log.Debugf(r.Context(), "catalogPublish: writing result to %s, %d catalog outcome(s), %d error(s)", h.outputRoot, len(result.Catalogs), len(result.Errors))
-	if err := localstore.Write(h.outputRoot, result); err != nil {
+	if err := h.catalogStore.Publish(r.Context(), catalogpublisher.ToStorePublishRequest(result)); err != nil {
 		log.Errorf(r.Context(), err, "catalogPublish: writing result to %s", h.outputRoot)
 		writePublishJSON(w, r, publishResponse{
 			Status:  publishOverallFailed,

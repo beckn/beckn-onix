@@ -138,10 +138,11 @@ type Config struct {
 	// read from YAML. Steps use it to strip the prefix before calling plugins.
 	BasePath string `yaml:"-"`
 	// OutputRoot is the catalogPublish handler's common local directory for
-	// every generated artifact (manifest, catalog index, catalog files) --
-	// see pkg/plugin/implementation/catalogpublisher/localstore. Moving
-	// those files to wherever they're actually served from is a separate,
-	// later deployment step, not this handler's concern. Unused by any
-	// other handler type.
+	// every generated artifact (catalog index, catalog files) -- rooted
+	// under a localcatalogblobstore-backed pkg/catalog/store.Store, see
+	// catalogPublishHandler.go's catalogStore field. Moving those files
+	// to wherever they're actually served from is a separate, later
+	// deployment step, not this handler's concern. Unused by any other
+	// handler type.
 	OutputRoot string `yaml:"outputRoot,omitempty"`
 }
