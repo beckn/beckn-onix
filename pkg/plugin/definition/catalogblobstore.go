@@ -2,14 +2,17 @@ package definition
 
 import (
 	"context"
-	"errors"
+
+	"github.com/beckn/catalog-core/pkg/catalog/store"
 )
 
 // ErrBlobNotFound is the sentinel a CatalogBlobStore.Get implementation
-// must return when path has never been written -- catalogstore.Store
-// relies on this exact sentinel (via errors.Is) to tell "nothing here
-// yet, start fresh" apart from a real backend failure.
-var ErrBlobNotFound = errors.New("catalogblobstore: not found")
+// must return when path has never been written. It's the same sentinel
+// catalog-core's store.Store checks for (via errors.Is) to tell "nothing
+// here yet, start fresh" apart from a real backend failure -- aliased
+// here rather than redeclared so every onix CatalogBlobStore plugin
+// stays compatible with it without importing catalog-core directly.
+var ErrBlobNotFound = store.ErrBlobNotFound
 
 // CatalogBlobStore is the only backend-specific capability a catalog
 // storage backend needs: read/write bytes at a path. It carries no
