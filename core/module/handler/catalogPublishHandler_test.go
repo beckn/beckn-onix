@@ -19,7 +19,7 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher"
-	"github.com/beckn/catalog-core/catalog/store"
+	"github.com/beckn/catalog-core/pkg/catalog/store"
 )
 
 // fakeKeyManager returns a fixed Ed25519 keyset (and keyID) for any subscriberID.

@@ -40,8 +40,8 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/localcatalogblobstore"
-	"github.com/beckn/catalog-core/catalog"
-	"github.com/beckn/catalog-core/catalog/store"
+	"github.com/beckn/catalog-core/pkg/catalog"
+	"github.com/beckn/catalog-core/pkg/catalog/store"
 )
 
 func main() {

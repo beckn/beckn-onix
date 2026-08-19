@@ -3,7 +3,7 @@ package definition
 import (
 	"context"
 
-	"github.com/beckn/catalog-core/catalog/store"
+	"github.com/beckn/catalog-core/pkg/catalog/store"
 )
 
 // ErrBlobNotFound is the sentinel a CatalogBlobStore.Get implementation
