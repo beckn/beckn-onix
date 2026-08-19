@@ -205,7 +205,14 @@ func NewCatalogPublishHandler(ctx context.Context, mgr PluginManager, cfg *Confi
 	// loadManifestLoader's identical type-assertion in stdHandler.go), since
 	// a raw registry-record read is all checkRegistryLinksCatalogIndex needs
 	// -- no manifest document fetch/verify/cache required.
-	checkCatalogIndexLink, _ := strconv.ParseBool(publisherCfg.Config["checkCatalogIndexLink"])
+	var checkCatalogIndexLink bool
+	if v := publisherCfg.Config["checkCatalogIndexLink"]; v != "" {
+		var err error
+		checkCatalogIndexLink, err = strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("catalogPublish handler %s: invalid checkCatalogIndexLink value %q: %w", moduleName, v, err)
+		}
+	}
 	var registryMetadata definition.RegistryMetadataLookup
 	subscriberID := publisherCfg.Config["subscriberId"]
 	if checkCatalogIndexLink {

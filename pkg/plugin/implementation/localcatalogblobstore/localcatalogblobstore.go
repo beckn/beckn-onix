@@ -36,13 +36,33 @@ func (s *Store) Get(ctx context.Context, path string) ([]byte, error) {
 }
 
 // Put writes content to the file at path relative to Root, creating
-// parent directories as needed.
+// parent directories as needed. Writes to a temp file in the same
+// directory and renames it into place -- rename is atomic on the same
+// filesystem, so a concurrent Get() never observes a truncated/partial
+// file, matching CatalogBlobStore's documented "atomic per-path
+// overwrite" contract.
 func (s *Store) Put(ctx context.Context, path string, content []byte) error {
 	full := s.fullPath(path)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		return fmt.Errorf("localcatalogblobstore: creating %s: %w", filepath.Dir(full), err)
+	dir := filepath.Dir(full)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("localcatalogblobstore: creating %s: %w", dir, err)
 	}
-	if err := os.WriteFile(full, content, 0o644); err != nil {
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return fmt.Errorf("localcatalogblobstore: creating temp file in %s: %w", dir, err)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(content); err != nil {
+		tmp.Close()
+		return fmt.Errorf("localcatalogblobstore: writing %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("localcatalogblobstore: writing %s: %w", path, err)
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return fmt.Errorf("localcatalogblobstore: writing %s: %w", path, err)
+	}
+	if err := os.Rename(tmp.Name(), full); err != nil {
 		return fmt.Errorf("localcatalogblobstore: writing %s: %w", path, err)
 	}
 	return nil

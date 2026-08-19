@@ -425,28 +425,6 @@ func (m *Manager) Signer(ctx context.Context, cfg *Config) (definition.Signer, e
 	return s, nil
 }
 
-// CatalogBlobStore returns a CatalogBlobStore instance based on the
-// provided configuration. It registers a cleanup function for resource
-// management.
-func (m *Manager) CatalogBlobStore(ctx context.Context, cfg *Config) (definition.CatalogBlobStore, error) {
-	csp, err := provider[definition.CatalogBlobStoreProvider](m.plugins, cfg.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
-	}
-	cs, closer, err := csp.New(ctx, cfg.Config)
-	if err != nil {
-		return nil, err
-	}
-	if closer != nil {
-		m.closers = append(m.closers, func() {
-			if err := closer(); err != nil {
-				panic(err)
-			}
-		})
-	}
-	return cs, nil
-}
-
 // Encryptor returns an Encrypter instance based on the provided configuration.
 // It registers a cleanup function for resource management.
 func (m *Manager) Encryptor(ctx context.Context, cfg *Config) (definition.Encrypter, error) {
