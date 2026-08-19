@@ -21,9 +21,10 @@ import (
 
 // catalogPublishHandler serves a DS-internal, unsigned catalog/publish
 // trigger: it invokes a CatalogPublisher synchronously with the catalogs in
-// the request body, persists the result under a common local output root
-// (localstore), and returns a CatalogProcessingResult-shaped body per
-// catalog -- borrowing that vocabulary (ACCEPTED/REJECTED) from beckn.yaml's
+// the request body, persists the result via catalog-core's store.Store (a
+// localcatalogblobstore rooted at cfg.OutputRoot), and returns a
+// CatalogProcessingResult-shaped body per catalog -- borrowing that
+// vocabulary (ACCEPTED/REJECTED) from beckn.yaml's
 // CatalogPublishAction/OnCatalogPublishAction, but as one synchronous
 // response rather than an Ack-now/on_publish-later pair: this is a
 // DS-internal trigger, not a network-facing Beckn action, so there is no

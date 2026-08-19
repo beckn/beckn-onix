@@ -59,7 +59,8 @@ catalogs) -- widening the gap until `catalogcrawler` catches up.
 5. **Two independent, per-catalog signature layers** (RFC NFH-014), not a
    whole-index signature: every catalog **file** (baseline and change file
    alike) self-signs its own content -- a plain Ed25519 signature
-   (`pkg/security/artifactsigner.SignJSON`) over the JCS-canonicalized file
+   (`catalog-core`'s `pkg/security/artifactsigner.SignJSON`) over the
+   JCS-canonicalized file
    document with its own `signature` field removed ("avoiding circular
    signing") -- and every catalog-index **entry** separately self-signs
    itself as a whole (`catalogId`, `entryVersion`, `catalogType`,
@@ -91,18 +92,21 @@ catalogs) -- widening the gap until `catalogcrawler` catches up.
    directly, never revisiting the index, can still learn the catalog is
    gone (NFH-014 CON-TBD-38). Independent of whether `Config.PublishLatest`
    is on for this call.
-8. Carries forward every other catalog untouched by this call
-   (`PublishRequest.CarryForward`, raw entries the caller supplies) --
-   the catalog index lists every catalog a publisher has, not just the
-   ones touched in one `Publish` call.
+8. Leaves every other catalog untouched by this call alone -- `Publish`
+   itself only ever produces the submitted/retired catalogs' own signed
+   entries (`PublishResult.Catalogs`/`Retirements`); it holds no index of
+   its own. Merging those entries into the existing index while leaving
+   everything else as-is is `catalog-core`'s `pkg/catalog/store.Store`'s
+   job (below), not something `PublishRequest`/`PublishResult` carry as
+   data.
 9. On a forced re-baseline (compaction), keeps the pre-compaction change
    files **listed**, not just hosted (NFH-014 CON-TBD-32) -- `Publish`
    never resets `changes[]` to empty on its own; a caller decides how
    long to keep passing them back in `PriorCatalogState.ChangeFiles`
-   (`Publish` holds no timer or storage of its own). `localstore`'s own
-   policy (see below) implements CON-TBD-32's concrete minimum: it keeps
-   listing them until the compacted baseline's own `next_update` has
-   passed, then stops.
+   (`Publish` holds no timer or storage of its own). `catalog-core`'s
+   `store.Store` (see below) implements CON-TBD-32's concrete minimum: it
+   keeps listing them until the compacted baseline's own `next_update`
+   has passed, then stops.
 10. Maintains a **`latest` pointer** (`Config.PublishLatest`) -- a full,
     self-signed `CatalogFile` overwritten in place at one stable,
     non-versioned URL, for consumers who want fully-current content
@@ -121,16 +125,19 @@ catalogs) -- widening the gap until `catalogcrawler` catches up.
     (`CatalogPublishOutcome.Content`/`LatestContent`); the compressed
     bytes to actually write are `ServedContent`/`LatestServedContent`, and
     the index entry's reported `size` is the compressed, actually-served
-    size. `localstore` reads a stored file's own declared URL to decide
-    whether to decompress it, not the current `Config.Gzip` -- so mixed
-    compression history (some files compressed, some not, across
-    different past publishes) reconstructs correctly regardless. On by
-    default for the CLI and plugin config (opt out with `-gzip=false` /
-    `gzip: "false"`); `catalogpublisher.Config`'s own zero value stays off
-    for direct programmatic callers.
-12. Returns `PublishResult{Index, Catalogs, Errors}` as JSON. No I/O
-    happens here -- where these bytes get written and served is a
-    separate concern (an `ArtifactStore`-shaped plugin, not yet built).
+    size. `catalog-core`'s `store.Store` reads a stored file's own
+    declared URL to decide whether to decompress it, not the current
+    `Config.Gzip` -- so mixed compression history (some files
+    compressed, some not, across different past publishes) reconstructs
+    correctly regardless. On by default for the `catalogPublish` plugin
+    config (opt out with `gzip: "false"`); `catalogpublisher.Config`'s
+    own zero value stays off for direct programmatic callers.
+12. Returns a `definition.PublishResult` (`NodeID`, `NextUpdate`,
+    `Catalogs`, `Errors`, `Retirements`, `RetiredLatest`) -- no whole
+    index, since `Publish` never assembles or persists one. No I/O
+    happens here either -- writing and serving those bytes is
+    `catalog-core`'s `store.Store`'s job (a `CatalogBlobStore`-shaped
+    plugin underneath it; see "Local persistence" below).
 
 ## Wire shapes, at a glance
 
@@ -215,12 +222,14 @@ go test ./pkg/plugin/implementation/catalogpublisher/... -v
   spanning the same range, without touching the baseline) is also not
   implemented -- only baseline compaction. Grace-period expiry of
   superseded change files after a baseline compaction (CON-TBD-32) *is*
-  implemented, in `localstore.Load`/`reconstructState` -- see the package
-  doc above and `localstore`'s own tests.
-- **No storage wiring.** `Config.PublicBaseURL` is read straight from
-  config -- one URL prefix for everything a publish writes, mirroring
-  wherever `outputRoot` (see `localstore`) is actually served from
-  publicly (e.g. an ngrok tunnel onto that one directory). The index is
+  implemented, in `catalog-core`'s `store.Store.LoadCatalogs`/
+  `reconstructState` -- see the package doc above and `catalog-core`'s
+  own tests.
+- **`Config.PublicBaseURL` is just a config value.** It's read straight
+  from config -- one URL prefix for everything a publish writes,
+  mirroring wherever `cfg.OutputRoot` (see "Local persistence" below) is
+  actually served from publicly (e.g. an ngrok tunnel onto that one
+  directory). The index is
   addressed at `{PublicBaseURL}/index/becknCatalogs.index.json`, baselines
   at `{PublicBaseURL}/catalogs/<localName>.v<version>.json`, and change
   files at `{PublicBaseURL}/catalogs/changes/<localName>.v<version>.changes.json`.
@@ -244,22 +253,23 @@ go test ./pkg/plugin/implementation/catalogpublisher/... -v
   entirely. Catalogs are public, unconditionally; there is no restricted
   catalog, no download gate, and no per-catalog authentication method.
 
-## Local persistence: `localstore`
+## Local persistence: catalog-core's `store.Store`
 
-[`localstore`](localstore) is the shared "write a `Publish` result to a
-local directory, read it back as prior state" logic -- the same layout
-`catalogpublisherctl` used to write in full (`index/becknCatalogs.index.json`,
-flat `catalogs/<name>.v<version>.json` (baselines) and
-`catalogs/changes/<name>.v<version>.changes.json` (change files)),
-extracted so both the CLI and the `catalogPublish` HTTP handler
-(below) use one implementation instead of two. `Publish` itself still
-holds no storage-backed state -- `localstore.Load`/`Write` are one
-concrete, filesystem-backed way to supply and persist
-`definition.PriorCatalogState`/`PublishResult`, not part of the core
-plugin's own logic. `localstore.Load` reads the index once and returns
-prior state for every catalogId asked for, plus every other catalog's raw
-entry to carry forward untouched -- see its doc comments for the exact
-contract.
+Reading prior state and persisting a `Publish` result is not this
+package's job, or even this repo's: it's
+[`catalog-core`](https://github.com/beckn/catalog-core)'s
+`pkg/catalog/store.Store`, built over whichever `store.BlobStore` is
+configured -- `catalogPublishHandler.go` (below) uses
+`localcatalogblobstore`, a filesystem-backed one rooted at
+`cfg.OutputRoot`. `Store` understands the full layout
+(`index/becknCatalogs.index.json`, flat
+`catalogs/<name>.v<version>.json` (baselines), and
+`catalogs/changes/<name>.v<version>.changes.json` (change files)) and
+is the one place that assembly logic lives -- this package's own
+`Publish`/`New` hold no storage-backed state of their own.
+`Store.LoadCatalogs` reads the index once and returns prior state for
+every catalogId asked for; `Store.Publish` merges a publish result back
+into it. See `catalog-core`'s own doc comments for the exact contract.
 
 ## HTTP handler: `catalog/publish`
 
@@ -542,12 +552,13 @@ below).
 ## Known open items
 
 - Compaction scheduling (see above) -- grace-period cleanup itself is
-  implemented (`localstore`).
-- `ArtifactStore` wiring once a storage plugin exists, to replace the
-  placeholder URLs with real published locations -- until then, the
-  `catalogPublish` handler's `outputRoot` only ever holds local files;
-  "moving them to wherever they're actually served from" is left to a
-  separate, later deployment step.
+  implemented (`catalog-core`'s `store.Store`).
+- Real published locations. `CatalogBlobStore`/`localcatalogblobstore`
+  and `catalog-core`'s `store.Store` exist, but `cfg.OutputRoot` still
+  only ever holds local files -- moving them to wherever they're
+  actually served from publicly (and pointing `catalogBaseURL` at that
+  location) is a separate, later deployment step, not something this
+  package or the handler does for you.
 - A real, signed, async `catalog/publish` Beckn action per beckn.yaml
   (context/action envelope, `validateSign`/`addRoute`/`sign` pipeline,
   `on_publish` callback with `CatalogProcessingResult`) is a materially
