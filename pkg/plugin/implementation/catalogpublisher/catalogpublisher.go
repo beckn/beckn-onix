@@ -16,10 +16,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/beckn-one/beckn-onix/pkg/catalog/publisher"
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn/catalog-core/catalog/publisher"
 )
 
 // Config controls publish behavior -- resolved once at plugin construction

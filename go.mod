@@ -89,6 +89,7 @@ require (
 
 require (
 	github.com/alicebob/miniredis/v2 v2.37.0
+	github.com/beckn/catalog-core v0.0.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/getkin/kin-openapi v0.144.0
 	github.com/google/uuid v1.6.0
@@ -119,3 +120,5 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v2 v2.4.0
 )
+
+replace github.com/beckn/catalog-core => /Users/nirmay/work/git/catalog-core

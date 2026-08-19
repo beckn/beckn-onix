@@ -8,10 +8,10 @@ package catalogpublisher
 // place that glue happens.
 
 import (
-	"github.com/beckn-one/beckn-onix/pkg/catalog"
-	"github.com/beckn-one/beckn-onix/pkg/catalog/publisher"
-	"github.com/beckn-one/beckn-onix/pkg/catalog/store"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn/catalog-core/catalog"
+	"github.com/beckn/catalog-core/catalog/publisher"
+	"github.com/beckn/catalog-core/catalog/store"
 )
 
 // ToPriorState converts pkg/catalog/store's reconstructed catalog state
