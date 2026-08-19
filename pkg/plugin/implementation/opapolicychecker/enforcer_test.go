@@ -23,7 +23,7 @@ import (
 	"github.com/open-policy-agent/opa/v1/bundle"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
-	"github.com/beckn-one/beckn-onix/pkg/security/artifactverifier"
+	"github.com/beckn/catalog-core/security/artifactverifier"
 )
 
 type stubManifestLoader struct {

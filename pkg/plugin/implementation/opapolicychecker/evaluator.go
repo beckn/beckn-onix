@@ -27,7 +27,7 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
-	"github.com/beckn-one/beckn-onix/pkg/security/artifactverifier"
+	"github.com/beckn/catalog-core/security/artifactverifier"
 )
 
 // Evaluator wraps the OPA engine: loads and compiles .rego files at startup,
