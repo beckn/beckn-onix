@@ -111,10 +111,9 @@ catalogs) -- widening the gap until `catalogcrawler` catches up.
     `changes[]` which are only written when content actually changes.
     Explicitly exempt from the immutable-URL rule every other catalog
     file here follows (NFH-014 CON-TBD-36). On by default for the
-    `catalogpublisherctl` CLI and the `catalogPublish` plugin config
-    (opt out with `-publishLatest=false` / `publishLatest: "false"`);
-    `catalogpublisher.Config`'s own zero value stays off for direct
-    programmatic callers.
+    `catalogPublish` plugin config (opt out with `publishLatest:
+    "false"`); `catalogpublisher.Config`'s own zero value stays off for
+    direct programmatic callers.
 11. Serves every catalog file **gzip-compressed** (`Config.Gzip`), signaled
     purely by a `.json.gz`/`.changes.json.gz` URL extension (NFH-014
     §10.1) -- never a header or content negotiation. Digest and signature
@@ -195,143 +194,6 @@ index's own `next_update`, falling back to a fixed 24h when unset (the
 index's is optional and simply omitted in that case; a catalog file's is
 required by the schema, so it always gets a value).
 
-## Try it yourself: `catalogpublisherctl`
-
-[`cmd/catalogpublisherctl`](../../../../cmd/catalogpublisherctl) is a small
-demo CLI that wraps `Publish` end to end: it reads a catalog JSON file,
-reconstructs prior state (and every other catalog's index entry, to carry
-forward) from whatever it previously wrote to an output directory, calls
-`Publish`, and writes the resulting index/catalog files to that
-directory. It owns a demo-only local signing key and all state
-reconstruction -- none of that lives in this package. Run everything below
-from the repo root.
-
-### 1. Publish a fresh catalog (baseline)
-
-```bash
-go run ./cmd/catalogpublisherctl \
-  -catalog pkg/plugin/implementation/catalogpublisher/testdata/sample-catalog-v1.json \
-  -out /tmp/catalog-demo -domain open-economy.nfh.global
-```
-
-Expected output:
-```
-catalog open-economy.nfh.global/CAT-DEMO-1: published baseline, version 1 (entryVersion 1)
-  digest: sha-256:...
-artifacts written to /tmp/catalog-demo
-```
-
-(`-catalogId` defaults to `{domain}/{the catalog's own top-level "id"}` --
-here, `sample-catalog-v1.json`'s `id` is `CAT-DEMO-1`.)
-
-Inspect what got written:
-```bash
-find /tmp/catalog-demo -type f
-cat /tmp/catalog-demo/catalogs/CAT-DEMO-1.v1.json          # the baseline -- unchanged Beckn Catalog JSON
-cat /tmp/catalog-demo/index/becknCatalogs.index.json         # nodeId/catalogs[], each entry self-signed with its own entryVersion
-```
-
-### 2. Publish an update to the same catalog (change file + version bump)
-
-`sample-catalog-v2.json` updates `ITEM-1`'s price, removes `ITEM-2`, and
-adds `ITEM-3` -- publish it to the **same** output directory so the tool
-can diff against what it wrote in step 1:
-
-```bash
-go run ./cmd/catalogpublisherctl \
-  -catalog pkg/plugin/implementation/catalogpublisher/testdata/sample-catalog-v2.json \
-  -out /tmp/catalog-demo -domain open-economy.nfh.global
-```
-
-Expected output:
-```
-catalog open-economy.nfh.global/CAT-DEMO-1: published change file, version 2 (entryVersion 2)
-  resources: 2 upserts, 1 removals; offers: 0 upserts, 0 removals
-  digest: sha-256:...
-artifacts written to /tmp/catalog-demo
-```
-
-```bash
-cat /tmp/catalog-demo/catalogs/changes/CAT-DEMO-1.v2.changes.json   # {"catalogId":...,"fromVersion":1,"toVersion":2,"next_update":"...","resources":{"upserts":[...ITEM-1,ITEM-3],"removals":["ITEM-2"]},"offers":{}}
-cat /tmp/catalog-demo/index/becknCatalogs.index.json          # entryVersion now 2; baseline entry unchanged; changes[] has one new file reference; the catalog entry re-signs regardless
-```
-
-### 3. Publish the same content again (no-op)
-
-```bash
-go run ./cmd/catalogpublisherctl \
-  -catalog pkg/plugin/implementation/catalogpublisher/testdata/sample-catalog-v2.json \
-  -out /tmp/catalog-demo -domain open-economy.nfh.global
-```
-```
-catalog open-economy.nfh.global/CAT-DEMO-1: unchanged, still version 2 (entryVersion 2)
-  digest:
-artifacts written to /tmp/catalog-demo
-```
-No new file is written, and `entryVersion` also stays at 2 -- it only
-bumps when something in the entry (content or metadata) actually changed.
-
-### 4. Retire a catalog
-
-```bash
-go run ./cmd/catalogpublisherctl -retire "open-economy.nfh.global/CAT-DEMO-1" -out /tmp/catalog-demo -domain open-economy.nfh.global
-```
-```
-catalog open-economy.nfh.global/CAT-DEMO-1: marked RETIRED
-artifacts written to /tmp/catalog-demo
-```
-```bash
-cat /tmp/catalog-demo/index/becknCatalogs.index.json   # {"catalogId":"...","entryVersion":3,"catalogType":"REGULAR","retiredAt":"..."} -- no isActive/files, a tombstone
-```
-`-retire` works with or without `-catalog` in the same invocation, and
-accepts a comma-separated list.
-
-### 5. Try it with your own catalog file
-
-Any JSON file matching `{id, descriptor, provider, resources: [{id, ...}],
-offers: [{id, ...}]}` works (`offers` is optional) -- point `-catalog` at
-it and give it a fresh `-out` directory. Edit the file and rerun against
-the same `-out` to see the diff. Delete the `-out` directory to start over
-as a fresh baseline.
-
-### Output layout
-
-```
-<out>/
-  index/
-    becknCatalogs.index.json     # the catalog index
-  catalogs/
-    <localName>.v<version>.json            # a baseline
-    changes/
-      <localName>.v<version>.changes.json  # a change file
-  .keys/
-    <keyID>.json                 # demo-only local signing key
-```
-`<localName>` is `catalogId` with any `domain/` prefix stripped (matching
-the file spec's own example: `open-economy.nfh.global/electronics-2026` ->
-`electronics-2026.v40.json`). Files are flat within each of `catalogs/` and
-`catalogs/changes/` -- not one subdirectory per catalog -- matching the
-file spec's own example URLs.
-
-### Flags
-
-| Flag | Meaning | Default |
-|---|---|---|
-| `-catalog` | path to a Beckn Catalog JSON file | -- |
-| `-catalogId` | catalog id; a bare name (no `/`) is prefixed with `-domain` | `{domain}/{the catalog's own top-level "id"}` |
-| `-out` | output directory for artifacts and local state | `./catalog-publish-out` |
-| `-keyID` | signing key id (auto-generated into `<out>/.keys/` on first use); embedded in the keyset this CLI's file-backed KeyManager returns, and read from there by `catalogpublisher`, not passed to its config directly | `local-publisher-key` |
-| `-domain` | publisher domain -- likewise embedded in the returned keyset (`SubscriberID`), not `catalogpublisher`'s own config | `local.test` |
-| `-nextUpdateDays` | days until `next_update` expires; `0` omits it | `14` |
-| `-retire` | comma-separated catalogIds to mark RETIRED this run | *(empty)* |
-| `-forceBaseline` | publish a fresh baseline for `-catalog`, discarding its change history (also how to trigger compaction manually) | `false` |
-| `-publishLatest` | publish/maintain a `latest` pointer (NFH-014); pass `-publishLatest=false` to opt out | `true` |
-| `-gzip` | serve catalog files gzip-compressed (NFH-014 §10.1); pass `-gzip=false` to opt out | `true` |
-| `-compactionChangeCountThreshold` | auto-compact (fresh baseline) once a catalog already has this many pending change files, instead of adding another (NFH-014 §10.1); `0` disables | `0` |
-| `-compactionSizeRatioThreshold` | auto-compact once combined pending-change-file size ÷ baseline size reaches this fraction (e.g. `0.5` for 50%); `0` disables | `0` |
-
-At least one of `-catalog` or `-retire` is required.
-
 ### Running the automated tests instead
 
 ```bash
@@ -364,8 +226,7 @@ go test ./pkg/plugin/implementation/catalogpublisher/... -v
   files at `{PublicBaseURL}/catalogs/changes/<localName>.v<version>.changes.json`.
   When unset, a `pending-artifact-store://...` placeholder URL is used so
   the plugin can still be exercised and tested before a real public
-  location exists (`catalogpublisherctl` fills this in with a `file://`
-  path for its own demo purposes).
+  location exists.
 - **`diffCatalogAttributes` is a best-effort subset**, not a complete
   implementation of the change file's optional `catalog` object. The file
   spec names "name, validity window" as examples of catalog-level
@@ -403,8 +264,8 @@ contract.
 ## HTTP handler: `catalog/publish`
 
 `core/module/handler/catalogPublishHandler.go` (`NewCatalogPublishHandler`)
-exposes the same capability `catalogpublisherctl` does, as a DS-internal,
-unsigned trigger -- mirroring `catalogPullHandler` exactly: no
+exposes this plugin's publish capability as a DS-internal, unsigned
+trigger -- mirroring `catalogPullHandler` exactly: no
 `validateSign`/`addRoute`/`signAck` pipeline, since the caller is the
 operator's own tooling, not another network participant. Request body
 matches beckn.yaml's real `CatalogPublishAction` envelope shape
@@ -435,8 +296,7 @@ same-named fields (`catalogType`/`networkIds`) in the published index.
 `retire`/`forceBaseline` have no beckn.yaml equivalent and stay as this
 handler's own siblings of `context`/`message`. Each catalog's own top-level `"id"` is used verbatim
 as its `catalogId` -- the handler does not prefix or derive it from a
-domain the way `catalogpublisherctl`'s `-catalogId` convenience-defaulting
-does; submit the full id you want. Response borrows beckn.yaml's
+domain; submit the full id you want. Response borrows beckn.yaml's
 `CatalogPublishAction`/`CatalogProcessingResult` vocabulary
 (`ACCEPTED`/`REJECTED` per catalog) but as one synchronous call, not an
 Ack-now/`on_publish`-later pair -- beckn.yaml's async, signed

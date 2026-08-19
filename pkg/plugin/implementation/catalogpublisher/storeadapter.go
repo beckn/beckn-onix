@@ -18,7 +18,7 @@ import (
 // (e.g. from Store.LoadCatalogs) into the map[string]PriorCatalogState
 // shape definition.PublishRequest needs -- the two are already isomorphic
 // field-for-field; this is purely the type-boundary conversion a caller
-// (the catalogPublish HTTP handler, catalogpublisherctl) needs since
+// (the catalogPublish HTTP handler) needs since
 // definition deliberately doesn't import pkg/catalog/store.
 func ToPriorState(states map[string]store.CatalogState) map[string]definition.PriorCatalogState {
 	out := make(map[string]definition.PriorCatalogState, len(states))
@@ -85,7 +85,7 @@ func toDefinitionDependencies(deps []catalog.MasterDependency) []definition.Mast
 // into the request store.Store.Publish expects: each outcome's
 // already-signed entry, plus whatever new baseline/change/latest content
 // it produced, repackaged as a store.CatalogUpdate. This is the caller's
-// (the catalogPublish HTTP handler, catalogpublisherctl) counterpart to
+// (the catalogPublish HTTP handler) counterpart to
 // toDefinitionResult -- a caller only ever sees definition.PublishResult
 // (via the definition.CatalogPublisher interface), never the internal
 // publisher.Result that produced it.
