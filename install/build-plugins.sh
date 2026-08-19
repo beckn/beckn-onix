@@ -26,6 +26,7 @@ plugins=(
     "encrypter"
     "keymanager"
     "simplekeymanager"
+    "localcatalogblobstore"
     "publisher"
     "registry"
     "dediregistry"
@@ -41,6 +42,7 @@ plugins=(
     "opapolicychecker"
     "payloadstore"
     "schemaversionmediator"
+    "catalogpublisher"
     "vcvalidator:validateVC"
 )
 

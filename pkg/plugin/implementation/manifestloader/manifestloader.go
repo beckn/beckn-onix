@@ -16,7 +16,7 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn-one/beckn-onix/pkg/security/artifactverifier"
+	"github.com/beckn/catalog-core/pkg/security/artifactverifier"
 )
 
 // Config controls fetch and cache behavior for the manifest loader.

@@ -23,7 +23,7 @@ import (
 	"github.com/open-policy-agent/opa/v1/bundle"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
-	"github.com/beckn-one/beckn-onix/pkg/security/artifactverifier"
+	"github.com/beckn/catalog-core/pkg/security/artifactverifier"
 )
 
 type stubManifestLoader struct {
@@ -170,7 +170,6 @@ func TestParsePolicyConfig_RuntimeConfigForwarding(t *testing.T) {
 		t.Errorf("expected customParam=value, got %q", cfg.RuntimeConfig["customParam"])
 	}
 }
-
 
 func TestParsePolicyConfig_PolicyPaths(t *testing.T) {
 	cfg, err := parsePolicyConfig(map[string]string{
@@ -1543,7 +1542,7 @@ func TestExtractStructuredViolations_ObjectItemEdgeCases(t *testing.T) {
 			"plain string violation",
 			map[string]interface{}{"code": "POL_CONSENT_REQUIRED", "message": "consent required"},
 			map[string]interface{}{"code": "POL_SANCTIONED_PARTY"}, // no message: falls back to code
-			map[string]interface{}{},                               // neither code nor message: skipped
+			map[string]interface{}{}, // neither code nor message: skipped
 		},
 	}
 
@@ -2505,8 +2504,8 @@ result := {"valid": false, "violations": ["missing provider"]} if {
 		`    url: "` + server.URL + `/policy.rego"`,
 		`    policyQueryPath: "data.policy.result"`,
 		`    signed: true`,
-		`    signatureUrl: "`+ server.URL + `/policy.rego.sig"`,
-		`    signingPublicKeyLookupUrl: "`+ server.URL + `/public.pem"`,
+		`    signatureUrl: "` + server.URL + `/policy.rego.sig"`,
+		`    signingPublicKeyLookupUrl: "` + server.URL + `/public.pem"`,
 		strings.TrimSuffix(validManifestGovernanceYAML(), "\n"),
 	}, "\n") + "\n"
 

@@ -66,8 +66,9 @@ type RegistryMetadata struct {
 // node-level manifest metadata (from the registry meta block) in a single response,
 // since both come from the same DeDi endpoint call.
 type SubscriberRecord struct {
-	Subscription                   // identity, URL, signing/encryption keys — from data["details"]
-	Meta         map[string]string // node manifest metadata — from data["meta"]; may be empty
+	Subscription                     // identity, URL, signing/encryption keys — from data["details"]
+	Meta         map[string]string   // node manifest metadata — from data["meta"]; may be empty
+	MetaArrays   map[string][]string // array-shaped meta values (e.g. NFH-014's meta.catalog_index_urls: [{url}, ...]) — kept separate from Meta rather than widening it to map[string]any, so every existing caller of Meta[key] keeps working unchanged
 }
 
 // Authorization-related constants for headers.

@@ -29,6 +29,7 @@ type PluginManager interface {
 	TransportWrapper(ctx context.Context, cfg *plugin.Config) (definition.TransportWrapper, error)
 	SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)
 	PayloadStore(ctx context.Context, cache definition.Cache, namespace string, cfg *plugin.Config) (definition.PayloadStore, error)
+	CatalogPublisher(ctx context.Context, km definition.KeyManager, cfg *plugin.Config) (definition.CatalogPublisher, error)
 }
 
 // Type defines different handler types for processing requests.
@@ -37,26 +38,33 @@ type Type string
 const (
 	// HandlerTypeStd represents the standard handler type used for general request processing.
 	HandlerTypeStd Type = "std"
+	// HandlerTypeCatalogPublish handles DS-internal, unsigned catalog/publish
+	// triggers: it invokes a CatalogPublisher synchronously with the
+	// catalogs in the request body and writes the result to a local output
+	// root, bypassing validateSign/signAck since the caller is the
+	// operator's own tooling, not another network participant.
+	HandlerTypeCatalogPublish Type = "catalogPublish"
 )
 
 // PluginCfg holds the configuration for various plugins.
 type PluginCfg struct {
-	SchemaValidator  *plugin.Config  `yaml:"schemaValidator,omitempty"`
-	PolicyChecker    *plugin.Config  `yaml:"checkPolicy,omitempty"`
-	PayloadTransformer *plugin.Config `yaml:"payloadTransformer,omitempty"`
-	SignValidator    *plugin.Config  `yaml:"signValidator,omitempty"`
-	Publisher        *plugin.Config  `yaml:"publisher,omitempty"`
-	Signer           *plugin.Config  `yaml:"signer,omitempty"`
-	Router           *plugin.Config  `yaml:"router,omitempty"`
-	Cache            *plugin.Config  `yaml:"cache,omitempty"`
-	Registry         *plugin.Config  `yaml:"registry,omitempty"`
-	KeyManager       *plugin.Config  `yaml:"keyManager,omitempty"`
-	ManifestLoader        *plugin.Config `yaml:"manifestLoader,omitempty"`
-	SchemaVersionMediator *plugin.Config `yaml:"schemaVersionMediator,omitempty"`
-	TransportWrapper      *plugin.Config `yaml:"transportWrapper,omitempty"`
-	PayloadStore     *plugin.Config  `yaml:"payloadStore,omitempty"`
-	Middleware       []plugin.Config `yaml:"middleware,omitempty"`
-	Steps            []plugin.Config
+	SchemaValidator       *plugin.Config  `yaml:"schemaValidator,omitempty"`
+	PolicyChecker         *plugin.Config  `yaml:"checkPolicy,omitempty"`
+	PayloadTransformer    *plugin.Config  `yaml:"payloadTransformer,omitempty"`
+	SignValidator         *plugin.Config  `yaml:"signValidator,omitempty"`
+	Publisher             *plugin.Config  `yaml:"publisher,omitempty"`
+	Signer                *plugin.Config  `yaml:"signer,omitempty"`
+	Router                *plugin.Config  `yaml:"router,omitempty"`
+	Cache                 *plugin.Config  `yaml:"cache,omitempty"`
+	Registry              *plugin.Config  `yaml:"registry,omitempty"`
+	KeyManager            *plugin.Config  `yaml:"keyManager,omitempty"`
+	ManifestLoader        *plugin.Config  `yaml:"manifestLoader,omitempty"`
+	SchemaVersionMediator *plugin.Config  `yaml:"schemaVersionMediator,omitempty"`
+	TransportWrapper      *plugin.Config  `yaml:"transportWrapper,omitempty"`
+	PayloadStore          *plugin.Config  `yaml:"payloadStore,omitempty"`
+	CatalogPublisher      *plugin.Config  `yaml:"catalogPublisher,omitempty"`
+	Middleware            []plugin.Config `yaml:"middleware,omitempty"`
+	Steps                 []plugin.Config
 }
 
 // PluginEntries returns a flat list of all configured plugins in this PluginCfg.
@@ -83,6 +91,7 @@ func (p *PluginCfg) PluginEntries() []telemetry.PluginEntry {
 	add("payload_transformer", p.PayloadTransformer)
 	add("key_manager", p.KeyManager)
 	add("payload_store", p.PayloadStore)
+	add("catalog_publisher", p.CatalogPublisher)
 	for i := range p.Steps {
 		if p.Steps[i].ID != "" {
 			entries = append(entries, telemetry.PluginEntry{Type: "step", ID: p.Steps[i].ID})
@@ -117,10 +126,10 @@ type HttpClientConfig struct {
 
 // Config holds the configuration for request processing handlers.
 type Config struct {
-	Plugins          PluginCfg        `yaml:"plugins"`
+	Plugins          PluginCfg `yaml:"plugins"`
 	Steps            []string
 	Type             Type
-	RegistryURL      string           `yaml:"registryUrl"`
+	RegistryURL      string `yaml:"registryUrl"`
 	Role             model.Role
 	SubscriberID     string           `yaml:"subscriberId"`
 	HttpClientConfig HttpClientConfig `yaml:"httpClientConfig"`
@@ -128,4 +137,12 @@ type Config struct {
 	// "/bap/receiver/"). Set by the module layer from module.Config.Path; not
 	// read from YAML. Steps use it to strip the prefix before calling plugins.
 	BasePath string `yaml:"-"`
+	// OutputRoot is the catalogPublish handler's common local directory for
+	// every generated artifact (catalog index, catalog files) -- rooted
+	// under a localcatalogblobstore-backed pkg/catalog/store.Store, see
+	// catalogPublishHandler.go's catalogStore field. Moving those files
+	// to wherever they're actually served from is a separate, later
+	// deployment step, not this handler's concern. Unused by any other
+	// handler type.
+	OutputRoot string `yaml:"outputRoot,omitempty"`
 }
