@@ -61,17 +61,17 @@ func NewManager(ctx context.Context, cfg *ManagerConfig) (*Manager, func(), erro
 		return nil, nil, fmt.Errorf("beckn constants: %w", err)
 	}
 
-	closers := []func(){}
-	return &Manager{
-			plugins:        plugins,
-			closers:        closers,
-			constants:      constants,
-			overridesByKey: make(map[string]telemetry.ConstantsOverride),
-		}, func() {
-			for _, closer := range closers {
-				closer()
-			}
-		}, nil
+	m := &Manager{
+		plugins:        plugins,
+		closers:        []func(){},
+		constants:      constants,
+		overridesByKey: make(map[string]telemetry.ConstantsOverride),
+	}
+	return m, func() {
+		for _, closer := range m.closers {
+			closer()
+		}
+	}, nil
 }
 
 // applyConstants enforces beckn constants for the given plugin config.
@@ -640,6 +640,29 @@ func (m *Manager) DeDiRegistry(ctx context.Context, cache definition.Cache, cfg 
 		})
 	}
 	return registry, nil
+}
+
+// Crawler returns a Crawler instance based on the provided configuration.
+// registry is the crawler's key-distribution channel (every fetched index
+// entry/file's self-signature is verified against it) -- required, per
+// definition.CrawlerProvider's own contract.
+func (m *Manager) Crawler(ctx context.Context, registry definition.RegistryLookup, cfg *Config) (definition.Crawler, error) {
+	cp, err := provider[definition.CrawlerProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	crawler, closer, err := cp.New(ctx, registry, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.closers = append(m.closers, func() {
+			if err := closer(); err != nil {
+				log.Errorf(context.Background(), err, "Failed to close crawler plugin")
+			}
+		})
+	}
+	return crawler, nil
 }
 
 // Validator implements handler.PluginManager.

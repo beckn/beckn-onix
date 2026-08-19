@@ -18,14 +18,23 @@ import (
 	"github.com/beckn-one/beckn-onix/core/module/handler"
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"github.com/beckn-one/beckn-onix/pkg/version"
 	_ "go.uber.org/automaxprocs"
 )
 
-// ApplicationPlugins holds application-level plugin configurations.
+// ApplicationPlugins holds application-level plugin configurations: plugins
+// that run their own background lifecycle rather than being loaded lazily
+// per-request by a module. Cache/Registry here are the Crawler's own
+// dependencies (its key-distribution channel), not the per-module ones
+// modules.*.plugins.registry configure for request handling -- a deployment
+// not running a crawler configures neither.
 type ApplicationPlugins struct {
 	OtelSetup *plugin.Config `yaml:"otelsetup,omitempty"`
+	Cache     *plugin.Config `yaml:"cache,omitempty"`
+	Registry  *plugin.Config `yaml:"registry,omitempty"`
+	Crawler   *plugin.Config `yaml:"crawler,omitempty"`
 }
 
 // Config struct holds all configurations.
@@ -131,6 +140,50 @@ func initAppPlugins(ctx context.Context, mgr *plugin.Manager, cfg ApplicationPlu
 	return nil
 }
 
+// initCrawler loads and starts the catalog crawler's background polling
+// loop, if configured. Unlike a request-driven plugin (loaded lazily by a
+// module on first use), the crawler's job -- discover indexes, detect
+// changed catalogs, push them onward -- runs on its own schedule, so it has
+// to be constructed and started once here rather than left for a module to
+// load. Returns a no-op closer when Crawler isn't configured, so the caller
+// can unconditionally append the result to its shutdown closers.
+func initCrawler(ctx context.Context, mgr *plugin.Manager, cfg ApplicationPlugins) (func(), error) {
+	if cfg.Crawler == nil {
+		log.Debugf(ctx, "Skipping Crawler plugin: not configured")
+		return func() {}, nil
+	}
+	if cfg.Registry == nil {
+		return nil, fmt.Errorf("crawler plugin configured without a registry plugin (catalog signatures are verified against the publisher's registry key)")
+	}
+
+	var cache definition.Cache
+	if cfg.Cache != nil {
+		c, err := mgr.Cache(ctx, cfg.Cache)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load Cache plugin (%s): %w", cfg.Cache.ID, err)
+		}
+		cache = c
+	}
+	registry, err := mgr.Registry(ctx, cache, cfg.Registry)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load Registry plugin (%s): %w", cfg.Registry.ID, err)
+	}
+	crawler, err := mgr.Crawler(ctx, registry, cfg.Crawler)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load Crawler plugin (%s): %w", cfg.Crawler.ID, err)
+	}
+	if err := crawler.Start(ctx); err != nil {
+		return nil, fmt.Errorf("failed to start Crawler plugin (%s): %w", cfg.Crawler.ID, err)
+	}
+	log.Infof(ctx, "Crawler plugin %s started", cfg.Crawler.ID)
+
+	return func() {
+		if err := crawler.Stop(); err != nil {
+			log.Errorf(context.Background(), err, "Failed to stop crawler plugin")
+		}
+	}, nil
+}
+
 // newServer creates and initializes the HTTP server.
 func newServer(ctx context.Context, mgr handler.PluginManager, cfg *Config) (http.Handler, error) {
 	mux := http.NewServeMux()
@@ -173,6 +226,13 @@ func run(ctx context.Context, configPath string) error {
 	if err := initAppPlugins(ctx, mgr, cfg.Plugins); err != nil {
 		return fmt.Errorf("failed to initialize plugins: %w", err)
 	}
+
+	// Start the catalog crawler's background polling loop, if configured.
+	crawlerCloser, err := initCrawler(ctx, mgr, cfg.Plugins)
+	if err != nil {
+		return fmt.Errorf("failed to initialize crawler: %w", err)
+	}
+	closers = append(closers, crawlerCloser)
 
 	// Initialize HTTP server.
 	log.Infof(ctx, "Initializing HTTP server")
