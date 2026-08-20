@@ -43,6 +43,7 @@ plugins=(
     "payloadstore"
     "schemaversionmediator"
     "catalogpublisher"
+    "catalogcrawler"
     "vcvalidator:validateVC"
 )
 
