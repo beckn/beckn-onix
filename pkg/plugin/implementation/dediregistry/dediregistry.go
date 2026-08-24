@@ -207,6 +207,14 @@ func (c *DeDiRegistryClient) parseSubscriptionFromData(ctx context.Context, data
 // meta.catalog_index_urls: [{url: "..."}]. Returns empty maps (not an
 // error) when the meta field is absent or null — the participant has
 // simply not published a node manifest yet.
+//
+// A string value is first tried as a double-encoded array (a JSON string
+// whose content IS a [{url}] array, e.g.
+// `"catalog_index_urls": "[{\"url\": \"...\"}]"` -- a real-world quirk from
+// whatever wrote the record serializing it twice) before falling back to a
+// plain meta string. Without this, a double-encoded value would silently
+// land in meta instead of metaArrays and never surface to a caller that
+// only reads metaArrays (e.g. catalogcrawler's QueryByNetwork consumer).
 func parseMetaFromData(ctx context.Context, data map[string]any) (map[string]string, map[string][]string) {
 	meta := make(map[string]string)
 	metaArrays := make(map[string][]string)
@@ -221,7 +229,11 @@ func parseMetaFromData(ctx context.Context, data map[string]any) (map[string]str
 	for key, value := range rawMetaMap {
 		switch v := value.(type) {
 		case string:
-			meta[key] = v
+			if arr, ok := parseDoubleEncodedURLArray(ctx, key, v); ok {
+				metaArrays[key] = arr
+			} else {
+				meta[key] = v
+			}
 		case []any:
 			metaArrays[key] = extractURLObjectArray(ctx, key, v)
 		default:
@@ -229,6 +241,20 @@ func parseMetaFromData(ctx context.Context, data map[string]any) (map[string]str
 		}
 	}
 	return meta, metaArrays
+}
+
+// parseDoubleEncodedURLArray reports whether s is valid JSON for a native
+// array (of any shape -- extractURLObjectArray itself filters to {url}
+// objects), and if so returns the extracted URLs. Returns ok=false for any
+// string that isn't JSON-array syntax, which is the common case (an
+// ordinary plain meta string), so those are left for the caller to store as
+// a plain string.
+func parseDoubleEncodedURLArray(ctx context.Context, fieldName, s string) ([]string, bool) {
+	var items []any
+	if err := json.Unmarshal([]byte(s), &items); err != nil {
+		return nil, false
+	}
+	return extractURLObjectArray(ctx, fieldName, items), true
 }
 
 // extractURLObjectArray extracts the "url" field from each element of a
