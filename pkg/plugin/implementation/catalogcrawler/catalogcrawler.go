@@ -174,15 +174,24 @@ func (d *registryDiscoverer) Discover(ctx context.Context) ([]crawlmanager.Index
 			d.log.ErrorContext(ctx, "catalogcrawler: registry lookup failed", "networkId", net, "error", err)
 			return nil, fmt.Errorf("catalogcrawler: registry lookup %q: %w", net, err)
 		}
+		// found counts every non-empty catalog_index_urls entry the registry
+		// returned for this network, before the cross-network seen-URL dedup
+		// below -- so it reflects what the registry actually reported, not
+		// how many of those survived deduping, which is what an operator
+		// comparing this log against the registry's own record count expects.
 		found := 0
 		for _, rec := range records {
 			for _, entry := range rec.MetaArrays["catalog_index_urls"] {
 				idx := strings.TrimSpace(entry)
-				if idx == "" || seen[idx] {
+				d.log.DebugContext(ctx, "catalogcrawler: registry lookup provider", "networkId", net, "participantId", rec.SubscriberID, "indexUrl", idx)
+				if idx == "" {
+					continue
+				}
+				found++
+				if seen[idx] {
 					continue
 				}
 				seen[idx] = true
-				found++
 				refs = append(refs, crawlmanager.IndexRef{IndexURL: idx, ParticipantID: rec.SubscriberID})
 			}
 		}
@@ -233,22 +242,17 @@ func (c *crawlerImpl) Stop() error {
 }
 
 // CrawlRegistry runs an immediate registry-backed crawl against networkIDs --
-// the same dediregistry-backed discovery the scheduled pass uses, just
-// against caller-supplied networks instead of the configured defaults. It
-// launches one background poll and returns a run ID immediately; the poll's
-// outcome is only observable via logs/the queue, the same as a scheduled
-// tick. The poll runs under the Scheduler's own lifecycle (via
-// Scheduler.RunOnce), not the caller's context, so it survives a
-// request-scoped caller returning and is still waited-for (not orphaned) by
-// Stop.
-//
-// registryURL is validated but otherwise unused: discovery now goes through
-// the dediregistry plugin instance, which owns its own configured URL
-// (registry.config.url) rather than a per-call base URL.
-func (c *crawlerImpl) CrawlRegistry(ctx context.Context, registryURL string, networkIDs []string) (string, error) {
-	if strings.TrimSpace(registryURL) == "" {
-		return "", fmt.Errorf("catalogcrawler: registryURL is required")
-	}
+// the same registry-backed discovery the scheduled pass uses, just against
+// caller-supplied networks instead of the configured defaults. Discovery
+// goes through the configured RegistryMetadataLookup plugin instance, which
+// owns its own registry URL -- there is no per-call registry URL to select a
+// different endpoint. It launches one background poll and returns a run ID
+// immediately; the poll's outcome is only observable via logs/the queue, the
+// same as a scheduled tick. The poll runs under the Scheduler's own
+// lifecycle (via Scheduler.RunOnce), not the caller's context, so it
+// survives a request-scoped caller returning and is still waited-for (not
+// orphaned) by Stop.
+func (c *crawlerImpl) CrawlRegistry(ctx context.Context, networkIDs []string) (string, error) {
 	if len(networkIDs) == 0 {
 		return "", fmt.Errorf("catalogcrawler: at least one networkID is required")
 	}
@@ -261,7 +265,7 @@ func (c *crawlerImpl) CrawlRegistry(ctx context.Context, registryURL string, net
 	runID := uuid.NewString()
 	started := c.sched.RunOnce(func(ctx context.Context) {
 		if err := adhoc.PollIndexes(ctx); err != nil {
-			c.log.ErrorContext(ctx, "catalogcrawler: on-demand crawl failed", "runId", runID, "registryUrl", registryURL, "error", err)
+			c.log.ErrorContext(ctx, "catalogcrawler: on-demand crawl failed", "runId", runID, "networkIds", networkIDs, "error", err)
 		}
 	})
 	if !started {

@@ -441,6 +441,13 @@ func (c *DeDiRegistryClient) LookupNode(ctx context.Context, nodeID string) (*mo
 	}, nil
 }
 
+// maxQueryResponseBytes caps a /query response read into memory -- unlike
+// /lookup's single-record response, /query returns one record per network
+// participant, so a runaway or compromised registry could otherwise return
+// an arbitrarily large body. A few MiB is far more than any real network
+// needs.
+const maxQueryResponseBytes = 8 << 20
+
 // queryEnvelope is the /query response shape: a list of records, one per
 // network participant, as opposed to /lookup's single-record "data" object.
 type queryEnvelope struct {
@@ -475,9 +482,12 @@ func (c *DeDiRegistryClient) QueryByNetwork(ctx context.Context, networkID strin
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxQueryResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read network query response body: %w", err)
+	}
+	if int64(len(body)) > maxQueryResponseBytes {
+		return nil, fmt.Errorf("network query response for %q exceeds max %d bytes", networkID, maxQueryResponseBytes)
 	}
 
 	if resp.StatusCode != http.StatusOK {

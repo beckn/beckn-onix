@@ -1026,6 +1026,28 @@ func TestQueryByNetwork(t *testing.T) {
 			t.Error("expected error for malformed response body, got nil")
 		}
 	})
+
+	t.Run("oversized response is rejected rather than read into memory unbounded", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"data":{"records":[`))
+			for i := 0; i < maxQueryResponseBytes; i++ {
+				w.Write([]byte("0"))
+			}
+			w.Write([]byte(`]}}`))
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, nil, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		if _, err := client.QueryByNetwork(ctx, networkID); err == nil {
+			t.Error("expected error for a response exceeding maxQueryResponseBytes, got nil")
+		}
+	})
 }
 
 func dediLookupResponse(ttl float64) map[string]interface{} {
