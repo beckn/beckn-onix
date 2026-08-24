@@ -474,3 +474,205 @@ func TestDecodeRequest_ForceBaseline(t *testing.T) {
 		t.Fatal("expected ForceBaseline to be decoded as true")
 	}
 }
+
+// --- validatePublishRequest coverage (items 1-4, 6 of #905), via DecodeRequest ---
+
+func TestDecodeRequest_DirectiveMatchingSubmittedCatalogIsValid(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[{"id":"CAT-1","descriptor":{},"provider":{},"resources":[]}],
+		"publishDirectives":[{"catalogId":"CAT-1","catalogType":"REGULAR"}]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	if _, err := p.DecodeRequest(context.Background(), req); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestDecodeRequest_DanglingPublishDirectiveIsRejected(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[{"id":"CAT-1","descriptor":{},"provider":{},"resources":[]}],
+		"publishDirectives":[{"catalogId":"CAT-NOT-SUBMITTED","catalogType":"REGULAR"}]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	_, err := p.DecodeRequest(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected an error for a publishDirectives entry naming an unsubmitted catalogId")
+	}
+	if !strings.Contains(err.Error(), "CAT-NOT-SUBMITTED") || !strings.Contains(err.Error(), "does not match any submitted catalog") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestDecodeRequest_DuplicateCatalogIDInCatalogsIsRejected(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[
+			{"id":"CAT-1","descriptor":{},"provider":{},"resources":[]},
+			{"id":"CAT-1","descriptor":{},"provider":{},"resources":[]}
+		]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	_, err := p.DecodeRequest(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "duplicate catalog id") {
+		t.Fatalf("expected a duplicate-catalog-id error, got %v", err)
+	}
+}
+
+func TestDecodeRequest_DuplicatePublishDirectiveIsRejected(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[{"id":"CAT-1","descriptor":{},"provider":{},"resources":[]}],
+		"publishDirectives":[
+			{"catalogId":"CAT-1","catalogType":"REGULAR"},
+			{"catalogId":"CAT-1","catalogType":"MASTER"}
+		]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	_, err := p.DecodeRequest(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "duplicate publishDirectives entry") {
+		t.Fatalf("expected a duplicate-publishDirectives error, got %v", err)
+	}
+}
+
+func TestDecodeRequest_UpdateModeFullIsRejectedAsUnsupported(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[{"id":"CAT-1","descriptor":{},"provider":{},"resources":[]}],
+		"publishDirectives":[{"catalogId":"CAT-1","catalogType":"REGULAR","updateMode":"FULL"}]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	_, err := p.DecodeRequest(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), `updateMode "FULL" is not yet supported`) {
+		t.Fatalf("expected updateMode FULL to be rejected, got %v", err)
+	}
+}
+
+func TestDecodeRequest_UpdateModeMergeIsAccepted(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[{"id":"CAT-1","descriptor":{},"provider":{},"resources":[]}],
+		"publishDirectives":[{"catalogId":"CAT-1","catalogType":"REGULAR","updateMode":"MERGE"}]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	if _, err := p.DecodeRequest(context.Background(), req); err != nil {
+		t.Fatalf("expected updateMode MERGE to be accepted, got %v", err)
+	}
+}
+
+func TestDecodeRequest_UpdateModeInvalidValueIsRejected(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[{"id":"CAT-1","descriptor":{},"provider":{},"resources":[]}],
+		"publishDirectives":[{"catalogId":"CAT-1","catalogType":"REGULAR","updateMode":"BOGUS"}]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	_, err := p.DecodeRequest(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "invalid updateMode") {
+		t.Fatalf("expected invalid updateMode to be rejected, got %v", err)
+	}
+}
+
+func TestDecodeRequest_ResourceDirectiveResourceIDMustExistInCatalog(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[{"id":"CAT-1","descriptor":{},"provider":{},"resources":[{"id":"ITEM-1"}]}],
+		"publishDirectives":[{"catalogId":"CAT-1","catalogType":"REGULAR","resourceDirectives":[
+			{"resourceId":"ITEM-DOES-NOT-EXIST","extends":{"masterResourceId":"MASTER-1"}}
+		]}]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	_, err := p.DecodeRequest(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "ITEM-DOES-NOT-EXIST") || !strings.Contains(err.Error(), "not found in that catalog's resources") {
+		t.Fatalf("expected resourceDirectives referential error, got %v", err)
+	}
+}
+
+func TestDecodeRequest_ResourceDirectiveResourceIDPresentIsAccepted(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[{"id":"CAT-1","descriptor":{},"provider":{},"resources":[{"id":"ITEM-1"}]}],
+		"publishDirectives":[{"catalogId":"CAT-1","catalogType":"REGULAR","resourceDirectives":[
+			{"resourceId":"ITEM-1","extends":{"masterResourceId":"MASTER-1"}}
+		]}]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	if _, err := p.DecodeRequest(context.Background(), req); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestDecodeRequest_ResourceDirectiveMissingMasterResourceIDIsRejected(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[{"id":"CAT-1","descriptor":{},"provider":{},"resources":[{"id":"ITEM-1"}]}],
+		"publishDirectives":[{"catalogId":"CAT-1","catalogType":"REGULAR","resourceDirectives":[
+			{"resourceId":"ITEM-1","extends":{}}
+		]}]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	_, err := p.DecodeRequest(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "missing extends.masterResourceId") {
+		t.Fatalf("expected a missing-masterResourceId error, got %v", err)
+	}
+}
+
+func TestDecodeRequest_SchemaTypesValidURIsAreAccepted(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[{"id":"CAT-1","descriptor":{},"provider":{},"resources":[]}],
+		"publishDirectives":[{"catalogId":"CAT-1","catalogType":"REGULAR",
+			"schemaTypes":["https://schema.beckn.org/retail/schema/1.1.0/context.jsonld"]}]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	got, err := p.DecodeRequest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(got.Catalogs) != 1 || len(got.Catalogs[0].SchemaTypes) != 1 ||
+		got.Catalogs[0].SchemaTypes[0] != "https://schema.beckn.org/retail/schema/1.1.0/context.jsonld" {
+		t.Fatalf("expected schemaTypes to flow through to CatalogSubmission, got %+v", got.Catalogs)
+	}
+}
+
+func TestDecodeRequest_SchemaTypesNonURIIsRejected(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[{"id":"CAT-1","descriptor":{},"provider":{},"resources":[]}],
+		"publishDirectives":[{"catalogId":"CAT-1","catalogType":"REGULAR","schemaTypes":["not a uri"]}]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	_, err := p.DecodeRequest(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "invalid schemaTypes") {
+		t.Fatalf("expected invalid schemaTypes to be rejected, got %v", err)
+	}
+}
+
+func TestDecodeRequest_SchemaTypesDuplicateIsRejected(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[{"id":"CAT-1","descriptor":{},"provider":{},"resources":[]}],
+		"publishDirectives":[{"catalogId":"CAT-1","catalogType":"REGULAR","schemaTypes":[
+			"https://schema.beckn.org/retail/schema/1.1.0/context.jsonld",
+			"https://schema.beckn.org/retail/schema/1.1.0/context.jsonld"
+		]}]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	_, err := p.DecodeRequest(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "invalid schemaTypes") {
+		t.Fatalf("expected duplicate schemaTypes to be rejected, got %v", err)
+	}
+}
+
+func TestValidateSchemaTypes_EmptyIsValid(t *testing.T) {
+	if err := validateSchemaTypes("CAT-1", nil); err != nil {
+		t.Fatalf("expected nil for empty schemaTypes, got %v", err)
+	}
+}
+
+func TestValidateSchemaTypes_EmptyStringItemIsRejected(t *testing.T) {
+	if err := validateSchemaTypes("CAT-1", []string{""}); err == nil {
+		t.Fatal("expected an error for an empty-string schemaTypes entry")
+	}
+}
