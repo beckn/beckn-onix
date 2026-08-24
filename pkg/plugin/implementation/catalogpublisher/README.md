@@ -399,7 +399,7 @@ every violation found, not just the first):
   intent -- a fresh baseline discarding change history -- which this
   plugin doesn't do yet); any other value is rejected too.
 - `publishDirectives[].schemaTypes` is checked against a custom JSON
-  Schema (`schematypes.go`) derived from NFH-014's own documented shape
+  Schema (`decode.go`) derived from NFH-014's own documented shape
   (a unique, non-empty array of domain-schema context URIs) -- there's
   no upstream machine-readable schema for it to reuse (see the note
   above), and `schemaValidator`'s own auxiliary-spec mechanism can't
