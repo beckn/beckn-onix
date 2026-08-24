@@ -56,4 +56,39 @@ Supported config keys:
 
 ## On-demand crawl
 
-`CrawlRegistry(ctx, networkIDs)` triggers an immediate registry-backed discovery pass against caller-supplied `networkIDs`, independent of the configured `networks` default, without waiting for the next scheduled tick. Discovery goes through the configured `RegistryMetadataLookup` plugin instance, which owns its own registry URL — there is no per-call registry URL, so this cannot target a different registry than the one the deployment is configured with. It returns a run ID immediately; the run's outcome is only observable via logs and the queue, the same as a scheduled tick. The run is tied to the plugin's own lifecycle (not the caller's context), so it is not cut short by a request-scoped caller and is waited for on shutdown.
+`CrawlRegistry(ctx, networkIDs)` triggers an immediate registry-backed discovery pass against caller-supplied `networkIDs`, independent of the configured `networks` default, without waiting for the next scheduled tick. Discovery goes through the configured `RegistryMetadataLookup` plugin instance, which owns its own registry URL — there is no per-call registry URL, so this cannot target a different registry than the one the deployment is configured with. It returns a run ID immediately; the run's outcome is only observable via logs and the queue, the same as a scheduled tick. The run is tied to the plugin's own lifecycle (not the caller's context), so it is not cut short by a request-scoped caller and is waited for on shutdown. It requires the crawler already be running (`Start` already called) — calling it on a freshly-constructed, unstarted instance returns an error.
+
+### `/crawl` HTTP endpoint
+
+`CrawlRegistry` is also reachable over HTTP via a `catalogCrawl`-type module (see [handler.go](handler.go) and [CONFIG.md](../../../../CONFIG.md#handler-type-catalogcrawl) for the full request/response shape). This endpoint always calls into the one crawler instance `cmd/adapter/main.go` constructs and starts as a background job from the top-level `plugins.crawler` config (see [CONFIG.md](../../../../CONFIG.md#pluginscrawler)) — it is not a separately-configured plugin instance, so `plugins.crawler` must be configured for this endpoint to do anything; without it, requests fail with "no Crawler plugin configured/running".
+
+```yaml
+# top-level plugins block -- starts the crawler as a background job
+plugins:
+  registry:
+    id: dediregistry
+    config: { ... }
+  crawler:
+    id: catalogcrawler
+    config:
+      dbDsn: "postgres://user:pass@localhost:5432/catalogcrawler"
+      discoveryPushUrl: "https://discovery.example.org/beckn/catalog/push"
+      # ... see Config above
+
+modules:
+  # exposes the on-demand trigger for the crawler configured above
+  - name: crawl
+    path: /crawl
+    handler:
+      type: catalogCrawl
+```
+
+```
+POST /crawl
+{"networkIds": ["example.network.production"]}
+
+202 Accepted
+{"runId": "3fa2c1e0-4b1a-4c9e-9c3a-6a2f8e0b7d21"}
+```
+
+The module takes no `handler.plugins` of its own -- unlike `catalogPublisher`'s module, which constructs its own plugins per-request, this handler is wired directly to the singleton above (`catalogcrawler.RegisterHandler`, called once from `main.go` after the crawler starts), since `CrawlRegistry` needs that exact running instance rather than a fresh one.

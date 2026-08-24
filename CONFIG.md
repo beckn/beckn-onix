@@ -8,12 +8,13 @@
 5. [Logging Configuration](#logging-configuration)
 6. [Metrics Configuration](#metrics-configuration)
 7. [Plugin Manager Configuration](#plugin-manager-configuration)
-8. [Module Configuration](#module-configuration)
-9. [Handler Configuration](#handler-configuration)
-10. [Plugin Configuration](#plugin-configuration)
-11. [Routing Configuration](#routing-configuration)
-12. [Deployment Scenarios](#deployment-scenarios)
-13. [Configuration Examples](#configuration-examples)
+8. [Application-Level Plugins Configuration](#application-level-plugins-configuration) (incl. [`plugins.crawler`](#pluginscrawler))
+9. [Module Configuration](#module-configuration)
+10. [Handler Configuration](#handler-configuration) (incl. [`catalogCrawl` handler type](#handler-type-catalogcrawl))
+11. [Plugin Configuration](#plugin-configuration)
+12. [Routing Configuration](#routing-configuration)
+13. [Deployment Scenarios](#deployment-scenarios)
+14. [Configuration Examples](#configuration-examples)
 
 ---
 
@@ -329,7 +330,45 @@ plugins:
       auditFieldsConfig: "/app/config/audit-fields.yaml"
 ```
 
+#### `plugins.crawler`
+**Type**: `object`  
+**Required**: No  
+**Description**: The catalog crawler's own configuration. Unlike `registry`/`signer`/etc. under a module's `handler.plugins`, this is an **application-level, singleton background job** — it is constructed and started once at process startup (independent of any module/HTTP path), not loaded lazily per request. It discovers Beckn catalog indexes on a schedule, fetches and self-signature-verifies changed catalogs, and pushes them to a Discovery service. See [`pkg/plugin/implementation/catalogcrawler/README.md`](pkg/plugin/implementation/catalogcrawler/README.md) for the full set of config keys (`dbDsn`, `networks`, `discoveryPushUrl`, etc.) and how signature verification works.
 
+Deliberately kept at this level rather than under a module: it lets a deployment run scheduled background crawling with **no** on-demand HTTP trigger exposed at all (omit the `catalogCrawl` module below), or both together (configure this plus the module). Omit `plugins.crawler` entirely to disable the crawler altogether — the `catalogCrawl` module, if present, will then fail to trigger anything since there is no running crawler.
+
+**Requires** `plugins.registry` (below) — every fetched index entry and catalog file is self-signed, and the registry plugin is the only source of the signing keys checked against.
+
+##### `plugins.registry` / `plugins.cache` (crawler's own)
+**Type**: `object`  
+**Required**: `registry` required whenever `plugins.crawler` is configured; `cache` optional  
+**Description**: The crawler's own `RegistryLookup`/`RegistryMetadataLookup` (key distribution + network-scoped provider discovery) and optional `Cache` in front of it. Same plugin config shape as the module-level [Registry Plugin](#1-registry-plugin) / [Cache Plugin](#4-cache-plugin) sections below — this is a separate instance from whatever a module's own `handler.plugins.registry` configures, since this one lives at the application level and is wired to the crawler, not to any request-handling module.
+
+**Example** (e.g. `config/local-beckn-one-bpp.yaml`):
+```yaml
+plugins:
+  registry:
+    id: dediregistry
+    config:
+      timeout: 10
+      retry_max: 3
+      retry_wait_min: 100ms
+      retry_wait_max: 500ms
+  cache:
+    id: cache
+    config:
+      addr: redis:6379
+  crawler:
+    id: catalogcrawler
+    config:
+      dbDsn: "postgres://user:pass@localhost:5432/catalogcrawler"
+      networks: "example.network.production"
+      discoveryPushUrl: "https://discovery.example.org/beckn/catalog/push"
+      participantId: "bpp.example.org"
+      bppUri: "https://bpp.example.org"
+```
+
+To also expose an on-demand HTTP trigger for this crawler, add a module with handler type `catalogCrawl` — see [`catalogCrawl` handler type](#handler-type-catalogcrawl) below. That module takes no `plugins` of its own: it calls `CrawlRegistry` directly on this same running crawler instance.
 
 ### Audit fields configuration
 
@@ -502,8 +541,36 @@ modules:
 ##### `type`
 **Type**: `string`  
 **Required**: Yes  
-**Options**: `std` (standard handler)  
-**Description**: Type of handler. Currently only `std` is supported.
+**Options**: `std` (standard beckn-protocol handler), `catalogPublish` (DS-internal catalog/publish trigger), `catalogCrawl` (DS-internal on-demand crawl trigger)  
+**Description**: Type of handler. `std` is the standard Beckn-protocol request/response handler used by `bapTxnReceiver`/`bapTxnCaller`/`bppTxnReceiver`/`bppTxnCaller`-style modules; `catalogPublish` and `catalogCrawl` are unsigned, same-operator DS-internal triggers, not network-facing Beckn actions. See [`catalogCrawl` handler type](#handler-type-catalogcrawl) below for that one.
+
+<a name="handler-type-catalogcrawl"></a>
+###### Handler type: `catalogCrawl`
+
+A DS-internal, unsigned on-demand crawl trigger. It calls `CrawlRegistry` on the already-running crawler configured via [`plugins.crawler`](#pluginscrawler) (top-level, not per-module) and returns a run ID; it takes no `handler.plugins` of its own. Requires `plugins.crawler` to be configured — otherwise the module registers but every request to it fails with "no Crawler plugin configured/running".
+
+**Request body** — either form is accepted, and both may be combined (merged into one list):
+```json
+{ "networkId": "example.network.production" }
+```
+```json
+{ "networkIds": ["example.network.production", "example.network.staging"] }
+```
+
+**Response** — `202 Accepted` on success:
+```json
+{ "runId": "3fa2c1e0-4b1a-4c9e-9c3a-6a2f8e0b7d21" }
+```
+On failure (e.g. no `networkId(s)` given, or the crawler isn't running), a `400`/`500` with `{"error": "..."}`.
+
+**Example**:
+```yaml
+modules:
+  - name: crawl
+    path: /crawl
+    handler:
+      type: catalogCrawl
+```
 
 ##### `role`
 **Type**: `string`  
