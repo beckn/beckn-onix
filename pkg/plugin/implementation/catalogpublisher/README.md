@@ -252,6 +252,17 @@ go test ./pkg/plugin/implementation/catalogpublisher/... -v
 - **Restricted catalogs.** Not a gap -- file spec v2 removed the concept
   entirely. Catalogs are public, unconditionally; there is no restricted
   catalog, no download gate, and no per-catalog authentication method.
+- **Content-based `catalogType` inference when `publishDirectives` is
+  omitted.** beckn.yaml's own schema documents this as the default:
+  offers present -> `REGULAR`, resources-only -> `MASTER`. This plugin
+  doesn't do it -- `CatalogSubmission.CatalogType` defaults to the literal
+  `"REGULAR"` regardless of content when no directive sets it explicitly.
+  Explicitly out of scope for #905 (needs its own design discussion, not
+  just a validation fix).
+- **`CatalogPublishAction`'s `deprecated: true` status isn't surfaced
+  anywhere.** The canonical beckn.yaml marks this schema deprecated;
+  nothing here flags or rejects that at config/startup time if
+  `schemaValidator` is pointed at it. Explicitly out of scope for #905.
 
 ## Local persistence: catalog-core's `store.Store`
 
@@ -296,8 +307,10 @@ raw request directly with no synthesized wrapper:
 `Context` field optional, and none of them (`bapId`/`bapUri`/`messageId`/
 ...) are meaningful for this unsigned, same-operator trigger.
 `publishDirectives[]` is beckn.yaml's own construct (matched to a catalog
-by `catalogId`, alongside `updateMode`/`resourceDirectives` which this
-handler doesn't act on yet). `catalogType` (`MASTER`/`REGULAR`) is
+by `catalogId`, alongside `updateMode`/`resourceDirectives`, both
+validated -- see "Request validation" below -- but not otherwise acted
+on: their resolution belongs to the Discovery Service at index time, not
+this plugin at publish time). `catalogType` (`MASTER`/`REGULAR`) is
 required by the schema (unlike `CatalogSubmission.CatalogType`, which
 defaults to `"REGULAR"` on its own when empty -- callers must still set it
 explicitly here once `schemaValidator` is configured) and `visibleTo` is
@@ -314,11 +327,15 @@ Ack-now/`on_publish`-later pair -- beckn.yaml's async, signed
 lookup, callback signing) that this handler deliberately does not
 implement; see "Known open items."
 
-Note: beckn.yaml's `schemaTypes` concept only exists on `catalog/
-subscription`'s `CatalogSubscribeAction` (a subscriber declaring interest
-in updates) -- there is no publish-time directive for it, so
-`CatalogSubmission.SchemaTypes` is not wired to any request field yet and
-is never inferred from catalog content either.
+Note: `schemaTypes` is not a beckn.yaml `CatalogPublishAction` field at
+all -- beckn.yaml only uses it on `catalog/subscription`'s
+`CatalogSubscribeAction` (a subscriber declaring interest in updates).
+It's an NFH-014 addition to the catalog index entry, so
+`publishDirectives[].schemaTypes` is this plugin's own extension of the
+request body, not something `schemaValidator` validates against the
+canonical spec -- see "Request validation" below for how it's validated
+instead. It's wired straight through to `CatalogSubmission.SchemaTypes`;
+never inferred from catalog content.
 
 Config: a new `outputRoot` field on the handler config (not a plugin
 `config:` map -- there was no precedent for a handler-level scalar besides
@@ -361,12 +378,57 @@ maps onto `NetworkIds` -- a Discovery-service relevance filter, not access
 control (file spec v2, "Catalog access is public"); there is no
 restricted-catalog concept to wire up.
 
-**Optional schema/policy validation, reusing existing plugins as-is, on
-the real request body.** `plugins.schemaValidator` (`schemav2validator`)
-and `plugins.checkPolicy` (`opapolicychecker`) can both be wired under the
+**Request validation, always on, independent of `schemaValidator`.**
+`validatePublishRequest` (`decode.go`, called from `DecodeRequest`)
+checks referential and business-rule constraints a JSON Schema can't
+express -- one array's values being drawn from another array in the
+same document isn't something JSON Schema can assert -- so these run
+unconditionally, even with `schemaValidator` unconfigured, and reject
+the whole request with `400` before `Publish` is ever called (collecting
+every violation found, not just the first):
+- `publishDirectives[].catalogId` must match a submitted catalog's `id`
+  -- a directive naming a catalog that wasn't submitted is rejected, not
+  silently ignored.
+- No duplicate `catalogId` within `catalogs[]` or `publishDirectives[]`.
+- `publishDirectives[].resourceDirectives[].resourceId` must match a
+  resource `id` actually present in that catalog, and
+  `extends.masterResourceId` must be present.
+- `publishDirectives[].updateMode`: `"MERGE"` (or omitted) is accepted;
+  `"FULL"` is explicitly rejected as **not yet implemented** (see the
+  migration table's `updateMode: FULL` row below for the eventual
+  intent -- a fresh baseline discarding change history -- which this
+  plugin doesn't do yet); any other value is rejected too.
+- `publishDirectives[].schemaTypes` is checked against a custom JSON
+  Schema (`schematypes.go`) derived from NFH-014's own documented shape
+  (a unique, non-empty array of domain-schema context URIs) -- there's
+  no upstream machine-readable schema for it to reuse (see the note
+  above), and `schemaValidator`'s own auxiliary-spec mechanism can't
+  extend `catalog/publish`'s schema to add it either (auxiliary specs
+  may only add actions beckn.yaml doesn't already define, never extend
+  one it does).
+
+Per-catalog *content* issues (missing/empty `id`, bad `descriptor`) are
+deliberately left to `Publish`'s own validate stage instead, which
+reports them as a non-fatal `PublishError` for that one catalog rather
+than failing the whole request -- see
+`TestDecodeRequest_MissingCatalogIDIsPreservedForNonFatalRejection`.
+
+**Schema/policy validation, reusing existing plugins as-is, on the real
+request body.** `plugins.schemaValidator` (`schemav2validator`) and
+`plugins.checkPolicy` (`opapolicychecker`) can both be wired under the
 `catalogPublish` module, exactly like any `std` handler already does.
 Both are unconfigured by default -- validation is skipped entirely until
-you add one. Neither plugin is modified or wrapped in a new interface to
+you add one. **Configure `schemav2validator` for any catalog
+publishing**: `validatePublishRequest` (above) only catches
+cross-references and a handful of business rules -- it does not check
+that `catalogType` is a valid enum value, that `visibleTo` entries are
+actual strings, or any other per-field shape/type constraint
+`CatalogPublishAction`'s real schema defines. Without `schemaValidator`
+configured, a malformed request can still reach `Publish` as long as it
+satisfies `validatePublishRequest`'s narrower checks. See
+[`schemav2validator`'s README](../schemav2validator/README.md) for how
+to configure it (primary spec, auxiliary specs, caching). Neither plugin
+is modified or wrapped in a new interface to
 support this: both already validate/police an arbitrary raw JSON body
 keyed off a bare `context.action` field (`schemav2Validator.Validate`
 looks up its pre-loaded OpenAPI schema by `context.action` alone;
@@ -528,7 +590,7 @@ below).
 | `catalog/publish` with ACK/NACK | Files saved to storage; validation happens up front, results in a feedback log |
 | `publishDirectives.visibleTo` | Per-catalog `networkIds` in the index -- relevance filter, not access gate |
 | `publishDirectives.updateMode: MERGE` | A change file (id-keyed upserts/removals) |
-| `publishDirectives.updateMode: FULL` | A fresh baseline |
+| `publishDirectives.updateMode: FULL` | A fresh baseline (**not yet implemented** -- currently rejected with `400`, see "Request validation" above) |
 | `catalog/pull`, mode FULL | The baseline file |
 | `catalog/pull`, mode DELTA | Change files after the crawler's cursor |
 | `downloadManifest` (sha256, sizeBytes) | `digest`/`size` in the index, verified against each self-signed file |
