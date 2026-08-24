@@ -168,11 +168,7 @@ func initCrawler(ctx context.Context, mgr *plugin.Manager, cfg ApplicationPlugin
 	if err != nil {
 		return nil, fmt.Errorf("failed to load Registry plugin (%s): %w", cfg.Registry.ID, err)
 	}
-	metadataLookup, ok := registry.(definition.RegistryMetadataLookup)
-	if !ok {
-		return nil, fmt.Errorf("crawler plugin configured without a registry plugin that supports RegistryMetadataLookup (network-scoped discovery)")
-	}
-	crawler, err := mgr.Crawler(ctx, registry, metadataLookup, cfg.Crawler)
+	crawler, err := mgr.Crawler(ctx, registry, cfg.Crawler)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load Crawler plugin (%s): %w", cfg.Crawler.ID, err)
 	}
