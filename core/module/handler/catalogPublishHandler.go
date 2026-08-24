@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -100,19 +101,38 @@ const catalogIndexMetaKey = "catalog_index_urls"
 
 // publishDirective is one entry in publishRequest.Message.PublishDirectives,
 // matched to a submitted catalog by CatalogID -- beckn.yaml's own
-// CatalogPublishAction.publishDirectives shape (only the fields this
-// handler currently acts on are modeled; catalogType/updateMode/
-// resourceDirectives are part of the real schema too but not wired here
-// yet). VisibleTo is the spec's name for what the catalog-index file
-// itself (and CatalogSubmission) call NetworkIds -- restricts delivery of
-// this catalog to the listed network participant ids; omitted means
-// visible to all. CatalogType is required by the spec (unlike
-// CatalogSubmission.CatalogType, which defaults to "REGULAR" when empty);
-// callers must set it explicitly once schemaValidator is configured.
+// CatalogPublishAction.publishDirectives shape. VisibleTo is the spec's
+// name for what the catalog-index file itself (and CatalogSubmission)
+// call NetworkIds -- restricts delivery of this catalog to the listed
+// network participant ids; omitted means visible to all. CatalogType is
+// required by the spec (unlike CatalogSubmission.CatalogType, which
+// defaults to "REGULAR" when empty); callers must set it explicitly once
+// schemaValidator is configured. UpdateMode/ResourceDirectives are
+// validated (see validatePublishRequest) but not otherwise acted on:
+// UpdateMode's FULL/MERGE semantics and ResourceDirectives' master/
+// variant resolution are resolved by the Discovery Service at index
+// time, not centrally at publish time (see this package's README,
+// "What changes at each layer"). SchemaTypes is not a beckn.yaml field at
+// all -- it's an NFH-014 addition to the catalog index entry (see
+// validateSchemaTypes) -- carried here so a caller has one place to set
+// every per-catalog directive field.
 type publishDirective struct {
-	CatalogID   string   `json:"catalogId"`
-	VisibleTo   []string `json:"visibleTo,omitempty"`
-	CatalogType string   `json:"catalogType,omitempty"`
+	CatalogID          string              `json:"catalogId"`
+	VisibleTo          []string            `json:"visibleTo,omitempty"`
+	CatalogType        string              `json:"catalogType,omitempty"`
+	UpdateMode         string              `json:"updateMode,omitempty"`
+	ResourceDirectives []resourceDirective `json:"resourceDirectives,omitempty"`
+	SchemaTypes        []string            `json:"schemaTypes,omitempty"`
+}
+
+// resourceDirective links one resource in a REGULAR catalog to the master
+// resource it extends, per beckn.yaml's
+// CatalogPublishAction.publishDirectives[].resourceDirectives shape.
+type resourceDirective struct {
+	ResourceID string `json:"resourceId"`
+	Extends    struct {
+		MasterResourceID string `json:"masterResourceId"`
+	} `json:"extends"`
 }
 
 // publishRequest is the DS-facing catalog/publish request body. It matches
@@ -332,6 +352,92 @@ type publishResponse struct {
 	Message  *publishResponseMessage   `json:"message,omitempty"`
 }
 
+// validatePublishRequest checks referential and business-rule constraints
+// schemaValidator's JSON Schema check cannot express -- a JSON Schema has
+// no way to assert one array's values are drawn from another array in the
+// same document -- and runs unconditionally, independent of whether
+// schemaValidator is even configured, so these checks are never silently
+// skipped. Collects every violation found rather than stopping at the
+// first, so a caller can fix a malformed request in one round trip.
+// Per-catalog structural issues (missing/empty id, bad descriptor) are
+// deliberately left to catalogpublisher's own validate stage, which
+// reports them as a non-fatal PublishError per catalog rather than
+// failing the whole request -- this function only rejects requests whose
+// cross-references or unsupported-but-well-formed values make them
+// impossible to process correctly at all.
+func validatePublishRequest(req publishRequest) error {
+	type catalogInfo struct {
+		resourceIDs map[string]bool
+	}
+	catalogs := make(map[string]catalogInfo, len(req.Message.Catalogs))
+	var errs []error
+
+	for _, raw := range req.Message.Catalogs {
+		var probe struct {
+			ID        string `json:"id"`
+			Resources []struct {
+				ID string `json:"id"`
+			} `json:"resources"`
+		}
+		_ = json.Unmarshal(raw, &probe) // malformed/missing id surfaces as a non-fatal PublishError downstream, not a 400 here
+		if probe.ID == "" {
+			continue
+		}
+		if _, dup := catalogs[probe.ID]; dup {
+			errs = append(errs, fmt.Errorf("duplicate catalog id %q in message.catalogs", probe.ID))
+			continue
+		}
+		resourceIDs := make(map[string]bool, len(probe.Resources))
+		for _, res := range probe.Resources {
+			if res.ID != "" {
+				resourceIDs[res.ID] = true
+			}
+		}
+		catalogs[probe.ID] = catalogInfo{resourceIDs: resourceIDs}
+	}
+
+	seenDirectives := make(map[string]bool, len(req.Message.PublishDirectives))
+	for _, d := range req.Message.PublishDirectives {
+		if d.CatalogID == "" {
+			continue // caught by schemaValidator's "required" when configured; nothing referential to check here
+		}
+		if seenDirectives[d.CatalogID] {
+			errs = append(errs, fmt.Errorf("duplicate publishDirectives entry for catalogId %q", d.CatalogID))
+			continue
+		}
+		seenDirectives[d.CatalogID] = true
+
+		info, ok := catalogs[d.CatalogID]
+		if !ok {
+			errs = append(errs, fmt.Errorf("publishDirectives entry for catalogId %q does not match any submitted catalog", d.CatalogID))
+			continue
+		}
+
+		switch d.UpdateMode {
+		case "", "MERGE":
+		case "FULL":
+			errs = append(errs, fmt.Errorf("publishDirectives entry for catalogId %q: updateMode \"FULL\" is not yet supported (only \"MERGE\")", d.CatalogID))
+		default:
+			errs = append(errs, fmt.Errorf("publishDirectives entry for catalogId %q: invalid updateMode %q (must be \"MERGE\" or \"FULL\")", d.CatalogID, d.UpdateMode))
+		}
+
+		for _, rd := range d.ResourceDirectives {
+			if rd.ResourceID == "" {
+				continue
+			}
+			if !info.resourceIDs[rd.ResourceID] {
+				errs = append(errs, fmt.Errorf("publishDirectives entry for catalogId %q: resourceDirectives resourceId %q not found in that catalog's resources", d.CatalogID, rd.ResourceID))
+			}
+		}
+
+		if err := validateSchemaTypes(d.CatalogID, d.SchemaTypes); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
 // ServeHTTP parses the DS-internal request body, loads prior state for the
 // submitted catalogIds from cfg.outputRoot, runs the publish, persists the
 // result back to cfg.outputRoot, and returns a per-catalog
@@ -361,6 +467,12 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return
 	}
 	log.Debugf(r.Context(), "catalogPublish: received %d catalog(s), %d retire(s), forceBaseline=%v", len(req.Message.Catalogs), len(req.Retire), req.ForceBaseline)
+
+	if err := validatePublishRequest(req); err != nil {
+		log.Debugf(r.Context(), "catalogPublish: request validation failed: %v", err)
+		http.Error(w, fmt.Sprintf("invalid request: %v", err), http.StatusBadRequest)
+		return
+	}
 
 	if len(req.Message.Catalogs) > 0 {
 		if h.schemaValidator != nil {
@@ -399,6 +511,7 @@ func (h *catalogPublishHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 			Catalog:     raw,
 			NetworkIds:  d.VisibleTo,
 			CatalogType: d.CatalogType,
+			SchemaTypes: d.SchemaTypes,
 		})
 		if probe.ID != "" {
 			catalogIDs = append(catalogIDs, probe.ID)
