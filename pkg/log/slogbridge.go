@@ -21,9 +21,12 @@ import (
 // Debug/Info/Warn/Error, folding any attrs (including ones attached via
 // WithAttrs) into the message as "key=value" pairs, since this package's
 // own logging functions take a plain string, not structured fields. An
-// attr keyed "error" whose value is an error is passed through as the
-// real error argument to Error instead of being flattened into the
-// message text.
+// attr keyed "error" whose value is an error is pulled out of that
+// flattening -- at Error level it's passed through as the real error
+// argument to Error; at any other level (Debug/Info/Warn take no separate
+// error argument) it's appended back onto the message as "error=<value>"
+// instead, so it's never silently dropped regardless of which level the
+// caller logged it at.
 type slogHandler struct{ attrs []slog.Attr }
 
 // NewSlogHandler constructs the bridge handler described above. Use it
@@ -58,13 +61,27 @@ func (h *slogHandler) Handle(ctx context.Context, r slog.Record) error {
 		}
 		Error(ctx, errAttr, msg)
 	case r.Level >= slog.LevelWarn:
-		Warn(ctx, msg)
+		Warn(ctx, appendErrAttr(msg, errAttr))
 	case r.Level >= slog.LevelInfo:
-		Info(ctx, msg)
+		Info(ctx, appendErrAttr(msg, errAttr))
 	default:
-		Debug(ctx, msg)
+		Debug(ctx, appendErrAttr(msg, errAttr))
 	}
 	return nil
+}
+
+// appendErrAttr appends an "error" attr pulled out of collect (see Handle)
+// back onto msg for any level below Error, whose Debug/Info/Warn call
+// signatures (unlike Error's) take no separate error argument -- without
+// this, an error-typed attr on e.g. a Warn record (crawlmanager's
+// "rescheduling after transient error" being the motivating case) would be
+// captured into errAttr and then silently dropped instead of ending up
+// anywhere in the log line.
+func appendErrAttr(msg string, errAttr error) string {
+	if errAttr == nil {
+		return msg
+	}
+	return fmt.Sprintf("%s error=%v", msg, errAttr)
 }
 
 func (h *slogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
