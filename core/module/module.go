@@ -8,6 +8,7 @@ import (
 	"github.com/beckn-one/beckn-onix/core/module/handler"
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogpublisher"
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 )
 
@@ -24,7 +25,7 @@ type Provider func(ctx context.Context, mgr handler.PluginManager, cfg *handler.
 // handlerProviders maintains a mapping of handler types to their respective providers.
 var handlerProviders = map[handler.Type]Provider{
 	handler.HandlerTypeStd:            handler.NewStdHandler,
-	handler.HandlerTypeCatalogPublish: handler.NewCatalogPublishHandler,
+	handler.HandlerTypeCatalogPublish: catalogpublisher.NewHandler,
 }
 
 // Register initializes and registers handlers based on the provided configuration.

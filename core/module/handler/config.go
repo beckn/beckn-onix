@@ -29,7 +29,8 @@ type PluginManager interface {
 	TransportWrapper(ctx context.Context, cfg *plugin.Config) (definition.TransportWrapper, error)
 	SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)
 	PayloadStore(ctx context.Context, cache definition.Cache, namespace string, cfg *plugin.Config) (definition.PayloadStore, error)
-	CatalogPublisher(ctx context.Context, km definition.KeyManager, cfg *plugin.Config) (definition.CatalogPublisher, error)
+	CatalogPublisher(ctx context.Context, km definition.KeyManager, blobStore definition.CatalogBlobStore, registryMetadata definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.CatalogPublisher, error)
+	CatalogBlobStore(ctx context.Context, cfg *plugin.Config) (definition.CatalogBlobStore, error)
 }
 
 // Type defines different handler types for processing requests.
@@ -63,6 +64,7 @@ type PluginCfg struct {
 	TransportWrapper      *plugin.Config  `yaml:"transportWrapper,omitempty"`
 	PayloadStore          *plugin.Config  `yaml:"payloadStore,omitempty"`
 	CatalogPublisher      *plugin.Config  `yaml:"catalogPublisher,omitempty"`
+	CatalogBlobStore      *plugin.Config  `yaml:"catalogBlobStore,omitempty"`
 	Middleware            []plugin.Config `yaml:"middleware,omitempty"`
 	Steps                 []plugin.Config
 }
@@ -92,6 +94,7 @@ func (p *PluginCfg) PluginEntries() []telemetry.PluginEntry {
 	add("key_manager", p.KeyManager)
 	add("payload_store", p.PayloadStore)
 	add("catalog_publisher", p.CatalogPublisher)
+	add("catalog_blob_store", p.CatalogBlobStore)
 	for i := range p.Steps {
 		if p.Steps[i].ID != "" {
 			entries = append(entries, telemetry.PluginEntry{Type: "step", ID: p.Steps[i].ID})
@@ -137,12 +140,16 @@ type Config struct {
 	// "/bap/receiver/"). Set by the module layer from module.Config.Path; not
 	// read from YAML. Steps use it to strip the prefix before calling plugins.
 	BasePath string `yaml:"-"`
-	// OutputRoot is the catalogPublish handler's common local directory for
-	// every generated artifact (catalog index, catalog files) -- rooted
-	// under a localcatalogblobstore-backed pkg/catalog/store.Store, see
-	// catalogPublishHandler.go's catalogStore field. Moving those files
-	// to wherever they're actually served from is a separate, later
-	// deployment step, not this handler's concern. Unused by any other
-	// handler type.
+	// OutputRoot previously named the catalogPublish handler's local output
+	// directory directly. Storage is now supplied to the catalogPublisher
+	// plugin via its own CatalogBlobStore plugin config
+	// (Plugins.CatalogBlobStore, e.g. localcatalogblobstore's "root" key)
+	// instead, so NewCatalogPublishHandler no longer reads this field. Kept
+	// on Config only for backward-compat parsing of existing YAML that
+	// still sets outputRoot -- YAML decoding in this package is not strict
+	// (unknown keys are simply ignored), so removing the field entirely
+	// would not break parsing, but that's a config-migration decision
+	// better made deliberately, not as a side effect of this handler
+	// change.
 	OutputRoot string `yaml:"outputRoot,omitempty"`
 }

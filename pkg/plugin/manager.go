@@ -515,12 +515,12 @@ func (m *Manager) KeyManager(ctx context.Context, rClient definition.RegistryLoo
 
 // CatalogPublisher returns a CatalogPublisher instance based on the provided
 // configuration. It reuses the loaded provider.
-func (m *Manager) CatalogPublisher(ctx context.Context, km definition.KeyManager, cfg *Config) (definition.CatalogPublisher, error) {
+func (m *Manager) CatalogPublisher(ctx context.Context, km definition.KeyManager, blobStore definition.CatalogBlobStore, registryMetadata definition.RegistryMetadataLookup, cfg *Config) (definition.CatalogPublisher, error) {
 	cpp, err := provider[definition.CatalogPublisherProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	cp, closer, err := cpp.New(ctx, km, cfg.Config)
+	cp, closer, err := cpp.New(ctx, km, blobStore, registryMetadata, cfg.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -532,6 +532,26 @@ func (m *Manager) CatalogPublisher(ctx context.Context, km definition.KeyManager
 		})
 	}
 	return cp, nil
+}
+
+// CatalogBlobStore returns a CatalogBlobStore instance based on the provided configuration.
+func (m *Manager) CatalogBlobStore(ctx context.Context, cfg *Config) (definition.CatalogBlobStore, error) {
+	bsp, err := provider[definition.CatalogBlobStoreProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	bs, closer, err := bsp.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.closers = append(m.closers, func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return bs, nil
 }
 
 // SimpleKeyManager returns a KeyManager instance based on the provided configuration.

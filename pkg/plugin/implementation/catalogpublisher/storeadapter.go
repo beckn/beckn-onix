@@ -1,11 +1,14 @@
 package catalogpublisher
 
 // storeadapter.go bridges this package's own definition.CatalogSubmission/
-// PriorCatalogState/PublishRequest/PublishResult shapes to
-// pkg/catalog/publisher's/pkg/catalog/store's. definition's types stay
-// self-contained (not importing pkg/catalog/store directly) so the onix
-// plugin contract doesn't hard-bind to a storage layer -- this is the one
-// place that glue happens.
+// PublishResult shapes to pkg/catalog/publisher's/pkg/catalog/store's.
+// definition's types stay self-contained (not importing pkg/catalog/store
+// directly) so the onix plugin contract doesn't hard-bind to a storage
+// layer -- this is the one place that glue happens. Prior state itself
+// needs no conversion in either direction: store.CatalogState is exactly
+// what publisher.Params.PriorState expects, and Publish (catalogpublisher.go)
+// loads it straight from its own catalogStore and passes it through
+// unconverted.
 
 import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
@@ -14,81 +17,12 @@ import (
 	"github.com/beckn/catalog-core/pkg/catalog/store"
 )
 
-// ToPriorState converts pkg/catalog/store's reconstructed catalog state
-// (e.g. from Store.LoadCatalogs) into the map[string]PriorCatalogState
-// shape definition.PublishRequest needs -- the two are already isomorphic
-// field-for-field; this is purely the type-boundary conversion a caller
-// (the catalogPublish HTTP handler) needs since
-// definition deliberately doesn't import pkg/catalog/store.
-func ToPriorState(states map[string]store.CatalogState) map[string]definition.PriorCatalogState {
-	out := make(map[string]definition.PriorCatalogState, len(states))
-	for id, s := range states {
-		out[id] = definition.PriorCatalogState{
-			Catalog:         s.Catalog,
-			BaselineFile:    toDefinitionFileRef(s.BaselineFile),
-			ChangeFiles:     toDefinitionFileRefs(s.ChangeFiles),
-			EntryVersion:    int(s.EntryVersion),
-			CatalogType:     s.CatalogType,
-			NetworkIds:      s.NetworkIds,
-			SchemaTypes:     s.SchemaTypes,
-			IsActive:        s.IsActive,
-			Dependencies:    toDefinitionDependencies(s.Dependencies),
-			CrawlHint:       s.CrawlHint,
-			LatestPublished: s.LatestPublished,
-		}
-	}
-	return out
-}
-
-// toDefinitionFileRefValue is toCatalogFileEntryValue's inverse.
-func toDefinitionFileRefValue(fe catalog.FileEntry) definition.FileRef {
-	fr := definition.FileRef{URL: fe.URL, Size: fe.Size, Digest: fe.Digest, Encoding: fe.Encoding}
-	if fe.FromVersion != 0 {
-		fr.FromVersion, fr.Version = int(fe.FromVersion), int(fe.ToVersion)
-	} else {
-		fr.Version = int(fe.Version)
-	}
-	return fr
-}
-
-func toDefinitionFileRef(fe *catalog.FileEntry) *definition.FileRef {
-	if fe == nil {
-		return nil
-	}
-	fr := toDefinitionFileRefValue(*fe)
-	return &fr
-}
-
-func toDefinitionFileRefs(fes []catalog.FileEntry) []definition.FileRef {
-	if len(fes) == 0 {
-		return nil
-	}
-	out := make([]definition.FileRef, len(fes))
-	for i, fe := range fes {
-		out[i] = toDefinitionFileRefValue(fe)
-	}
-	return out
-}
-
-func toDefinitionDependencies(deps []catalog.MasterDependency) []definition.MasterDependency {
-	if len(deps) == 0 {
-		return nil
-	}
-	out := make([]definition.MasterDependency, len(deps))
-	for i, d := range deps {
-		out[i] = definition.MasterDependency{CatalogID: d.CatalogID, Version: int(d.Version), IndexURL: d.IndexURL}
-	}
-	return out
-}
-
 // ToStorePublishRequest converts a Publish call's definition.PublishResult
 // into the request store.Store.Publish expects: each outcome's
 // already-signed entry, plus whatever new baseline/change/latest content
-// it produced, repackaged as a store.CatalogUpdate. This is the caller's
-// (the catalogPublish HTTP handler) counterpart to
-// toDefinitionResult -- a caller only ever sees definition.PublishResult
-// (via the definition.CatalogPublisher interface), never the internal
-// publisher.Result that produced it.
+// it produced, repackaged as a store.CatalogUpdate. This is Publish's own
+// (catalogpublisher.go) counterpart to toDefinitionResult, used to persist
+// the result it just produced back to its catalogStore.
 func ToStorePublishRequest(result definition.PublishResult) store.PublishRequest {
 	req := store.PublishRequest{NodeID: result.NodeID, NextUpdate: result.NextUpdate}
 
@@ -130,6 +64,23 @@ func ToStorePublishRequest(result definition.PublishResult) store.PublishRequest
 	return req
 }
 
+// nonEmptyCatalogIDs returns each submission's CatalogID, skipping any
+// empty one (an empty ID surfaces as its own non-fatal PublishError from
+// Publish, not as a gap here). Shared by Publish (catalogpublisher.go,
+// to know which catalogs' prior state to load) and NewHandler's Encode
+// closure (handler.go, to know which submitted catalogs a Retire entry
+// might collide with) -- one implementation so the two can't disagree on
+// what counts as "actually submitted".
+func nonEmptyCatalogIDs(subs []definition.CatalogSubmission) []string {
+	ids := make([]string, 0, len(subs))
+	for _, s := range subs {
+		if s.CatalogID != "" {
+			ids = append(ids, s.CatalogID)
+		}
+	}
+	return ids
+}
+
 func toSubmissions(subs []definition.CatalogSubmission) []publisher.Submission {
 	if len(subs) == 0 {
 		return nil
@@ -156,62 +107,6 @@ func toCatalogMasterDependencies(deps []definition.MasterDependency) []catalog.M
 	out := make([]catalog.MasterDependency, len(deps))
 	for i, d := range deps {
 		out[i] = catalog.MasterDependency{CatalogID: d.CatalogID, Version: int64(d.Version), IndexURL: d.IndexURL}
-	}
-	return out
-}
-
-func toCatalogStates(states map[string]definition.PriorCatalogState) map[string]store.CatalogState {
-	out := make(map[string]store.CatalogState, len(states))
-	for id, s := range states {
-		out[id] = store.CatalogState{
-			Catalog:         s.Catalog,
-			BaselineFile:    toCatalogFileEntry(s.BaselineFile),
-			ChangeFiles:     toCatalogFileEntries(s.ChangeFiles),
-			EntryVersion:    int64(s.EntryVersion),
-			CatalogType:     s.CatalogType,
-			NetworkIds:      s.NetworkIds,
-			SchemaTypes:     s.SchemaTypes,
-			IsActive:        s.IsActive,
-			Dependencies:    toCatalogMasterDependencies(s.Dependencies),
-			CrawlHint:       s.CrawlHint,
-			LatestPublished: s.LatestPublished,
-		}
-	}
-	return out
-}
-
-// toCatalogFileEntryValue converts one definition.FileRef to a
-// catalog.FileEntry. definition.FileRef reuses its own Version field for
-// what is a change file's ToVersion (FromVersion != 0 marks that case,
-// matching FileRef's own doc comment: FromVersion is zero for a
-// baseline/latest ref) -- catalog.FileEntry instead carries these as two
-// mutually-exclusive shapes (Version vs. FromVersion/ToVersion), so which
-// one gets populated here depends on FromVersion.
-func toCatalogFileEntryValue(fr definition.FileRef) catalog.FileEntry {
-	fe := catalog.FileEntry{URL: fr.URL, Size: fr.Size, Digest: fr.Digest, Encoding: fr.Encoding}
-	if fr.FromVersion != 0 {
-		fe.FromVersion, fe.ToVersion = int64(fr.FromVersion), int64(fr.Version)
-	} else {
-		fe.Version = int64(fr.Version)
-	}
-	return fe
-}
-
-func toCatalogFileEntry(fr *definition.FileRef) *catalog.FileEntry {
-	if fr == nil {
-		return nil
-	}
-	fe := toCatalogFileEntryValue(*fr)
-	return &fe
-}
-
-func toCatalogFileEntries(frs []definition.FileRef) []catalog.FileEntry {
-	if len(frs) == 0 {
-		return nil
-	}
-	out := make([]catalog.FileEntry, len(frs))
-	for i, fr := range frs {
-		out[i] = toCatalogFileEntryValue(fr)
 	}
 	return out
 }

@@ -426,8 +426,8 @@ func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpC
 	p.ServeHTTP(w, r)
 }
 
-// loadPlugin is a generic function to load and validate plugins.
-func loadPlugin[T any](ctx context.Context, name string, cfg *plugin.Config, mgrFunc func(context.Context, *plugin.Config) (T, error)) (T, error) {
+// LoadPlugin is a generic function to load and validate plugins.
+func LoadPlugin[T any](ctx context.Context, name string, cfg *plugin.Config, mgrFunc func(context.Context, *plugin.Config) (T, error)) (T, error) {
 	var zero T
 	if cfg == nil {
 		log.Debugf(ctx, "Skipping %s plugin: not configured", name)
@@ -443,8 +443,8 @@ func loadPlugin[T any](ctx context.Context, name string, cfg *plugin.Config, mgr
 	return plugin, nil
 }
 
-// loadKeyManager loads the KeyManager plugin using the provided PluginManager and registry.
-func loadKeyManager(ctx context.Context, mgr PluginManager, registry definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error) {
+// LoadKeyManager loads the KeyManager plugin using the provided PluginManager and registry.
+func LoadKeyManager(ctx context.Context, mgr PluginManager, registry definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping KeyManager plugin: not configured")
 		return nil, nil
@@ -503,7 +503,7 @@ func loadPayloadStore(ctx context.Context, mgr PluginManager, cache definition.C
 	return ps, nil
 }
 
-func loadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
+func LoadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping PolicyChecker plugin: not configured")
 		return nil, nil
@@ -552,15 +552,15 @@ func loadPayloadTransformerStep(ctx context.Context, mgr PluginManager, cfg *plu
 // initPlugins initializes required plugins for the processor.
 func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *PluginCfg) error {
 	var err error
-	if h.cache, err = loadPlugin(ctx, "Cache", cfg.Cache, mgr.Cache); err != nil {
+	if h.cache, err = LoadPlugin(ctx, "Cache", cfg.Cache, mgr.Cache); err != nil {
 		return err
 	}
-	if h.registry, err = loadPlugin(ctx, "Registry", cfg.Registry, func(ctx context.Context, cfg *plugin.Config) (definition.RegistryLookup, error) {
+	if h.registry, err = LoadPlugin(ctx, "Registry", cfg.Registry, func(ctx context.Context, cfg *plugin.Config) (definition.RegistryLookup, error) {
 		return mgr.Registry(ctx, h.cache, cfg)
 	}); err != nil {
 		return err
 	}
-	if h.km, err = loadKeyManager(ctx, mgr, h.registry, cfg.KeyManager); err != nil {
+	if h.km, err = LoadKeyManager(ctx, mgr, h.registry, cfg.KeyManager); err != nil {
 		return err
 	}
 	if h.manifestLoader, err = loadManifestLoader(ctx, mgr, h.cache, h.registry, cfg.ManifestLoader); err != nil {
@@ -569,25 +569,25 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.payloadStore, err = loadPayloadStore(ctx, mgr, h.cache, "onix", cfg.PayloadStore, h.role); err != nil {
 		return err
 	}
-	if h.signValidator, err = loadPlugin(ctx, "SignValidator", cfg.SignValidator, mgr.SignValidator); err != nil {
+	if h.signValidator, err = LoadPlugin(ctx, "SignValidator", cfg.SignValidator, mgr.SignValidator); err != nil {
 		return err
 	}
-	if h.schemaValidator, err = loadPlugin(ctx, "SchemaValidator", cfg.SchemaValidator, mgr.SchemaValidator); err != nil {
+	if h.schemaValidator, err = LoadPlugin(ctx, "SchemaValidator", cfg.SchemaValidator, mgr.SchemaValidator); err != nil {
 		return err
 	}
-	if h.router, err = loadPlugin(ctx, "Router", cfg.Router, mgr.Router); err != nil {
+	if h.router, err = LoadPlugin(ctx, "Router", cfg.Router, mgr.Router); err != nil {
 		return err
 	}
-	if h.publisher, err = loadPlugin(ctx, "Publisher", cfg.Publisher, mgr.Publisher); err != nil {
+	if h.publisher, err = LoadPlugin(ctx, "Publisher", cfg.Publisher, mgr.Publisher); err != nil {
 		return err
 	}
-	if h.signer, err = loadPlugin(ctx, "Signer", cfg.Signer, mgr.Signer); err != nil {
+	if h.signer, err = LoadPlugin(ctx, "Signer", cfg.Signer, mgr.Signer); err != nil {
 		return err
 	}
-	if h.transportWrapper, err = loadPlugin(ctx, "TransportWrapper", cfg.TransportWrapper, mgr.TransportWrapper); err != nil {
+	if h.transportWrapper, err = LoadPlugin(ctx, "TransportWrapper", cfg.TransportWrapper, mgr.TransportWrapper); err != nil {
 		return err
 	}
-	if h.policyChecker, err = loadPolicyChecker(ctx, mgr, h.manifestLoader, cfg.PolicyChecker); err != nil {
+	if h.policyChecker, err = LoadPolicyChecker(ctx, mgr, h.manifestLoader, cfg.PolicyChecker); err != nil {
 		return err
 	}
 	if h.schemaVersionMediator, err = loadSchemaVersionMediator(ctx, mgr, h.manifestLoader, cfg.SchemaVersionMediator); err != nil {
