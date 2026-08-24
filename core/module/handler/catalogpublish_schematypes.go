@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -37,38 +38,59 @@ const schemaTypesSchemaJSON = `{
 	"uniqueItems": true
 }`
 
-var schemaTypesSchema = mustCompileSchemaTypesSchema()
+// schemaTypesSchemaOnce compiles schemaTypesSchemaJSON lazily, on first
+// use, rather than as a package-level var initializer -- a compile
+// failure (e.g. a future edit to schemaTypesSchemaJSON introducing a
+// syntax error) then surfaces as an ordinary error from
+// validateSchemaTypes instead of a panic at package load time that
+// would crash every binary importing this package, not just this one
+// validation path.
+var (
+	schemaTypesSchemaOnce sync.Once
+	schemaTypesSchema     *jsonschema.Schema
+	schemaTypesSchemaErr  error
+)
 
-func mustCompileSchemaTypesSchema() *jsonschema.Schema {
-	doc, err := jsonschema.UnmarshalJSON(strings.NewReader(schemaTypesSchemaJSON))
-	if err != nil {
-		panic(fmt.Errorf("catalogPublish: parsing embedded schemaTypes schema: %w", err))
-	}
-	compiler := jsonschema.NewCompiler()
-	compiler.AssertFormat()
-	if err := compiler.AddResource(schemaTypesSchemaID, doc); err != nil {
-		panic(fmt.Errorf("catalogPublish: registering embedded schemaTypes schema: %w", err))
-	}
-	schema, err := compiler.Compile(schemaTypesSchemaID)
-	if err != nil {
-		panic(fmt.Errorf("catalogPublish: compiling embedded schemaTypes schema: %w", err))
-	}
-	return schema
+func compileSchemaTypesSchema() (*jsonschema.Schema, error) {
+	schemaTypesSchemaOnce.Do(func() {
+		doc, err := jsonschema.UnmarshalJSON(strings.NewReader(schemaTypesSchemaJSON))
+		if err != nil {
+			schemaTypesSchemaErr = fmt.Errorf("catalogPublish: parsing embedded schemaTypes schema: %w", err)
+			return
+		}
+		compiler := jsonschema.NewCompiler()
+		compiler.AssertFormat()
+		if err := compiler.AddResource(schemaTypesSchemaID, doc); err != nil {
+			schemaTypesSchemaErr = fmt.Errorf("catalogPublish: registering embedded schemaTypes schema: %w", err)
+			return
+		}
+		schema, err := compiler.Compile(schemaTypesSchemaID)
+		if err != nil {
+			schemaTypesSchemaErr = fmt.Errorf("catalogPublish: compiling embedded schemaTypes schema: %w", err)
+			return
+		}
+		schemaTypesSchema = schema
+	})
+	return schemaTypesSchema, schemaTypesSchemaErr
 }
 
-// validateSchemaTypes checks schemaTypes against schemaTypesSchema,
-// returning a descriptive error naming catalogID if invalid. schemaTypes
-// is optional -- NFH-014 has no "at least one" requirement -- so an
-// empty/nil slice is always valid.
+// validateSchemaTypes checks schemaTypes against the compiled
+// schemaTypesSchema, returning a descriptive error naming catalogID if
+// invalid. schemaTypes is optional -- NFH-014 has no "at least one"
+// requirement -- so an empty/nil slice is always valid.
 func validateSchemaTypes(catalogID string, schemaTypes []string) error {
 	if len(schemaTypes) == 0 {
 		return nil
+	}
+	schema, err := compileSchemaTypesSchema()
+	if err != nil {
+		return fmt.Errorf("publishDirectives entry for catalogId %q: schemaTypes validation unavailable: %w", catalogID, err)
 	}
 	asAny := make([]any, len(schemaTypes))
 	for i, t := range schemaTypes {
 		asAny[i] = t
 	}
-	if err := schemaTypesSchema.Validate(asAny); err != nil {
+	if err := schema.Validate(asAny); err != nil {
 		return fmt.Errorf("publishDirectives entry for catalogId %q: invalid schemaTypes: %w", catalogID, err)
 	}
 	return nil

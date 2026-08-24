@@ -428,6 +428,9 @@ func validatePublishRequest(req publishRequest) error {
 			if !info.resourceIDs[rd.ResourceID] {
 				errs = append(errs, fmt.Errorf("publishDirectives entry for catalogId %q: resourceDirectives resourceId %q not found in that catalog's resources", d.CatalogID, rd.ResourceID))
 			}
+			if rd.Extends.MasterResourceID == "" {
+				errs = append(errs, fmt.Errorf("publishDirectives entry for catalogId %q: resourceDirectives resourceId %q missing extends.masterResourceId", d.CatalogID, rd.ResourceID))
+			}
 		}
 
 		if err := validateSchemaTypes(d.CatalogID, d.SchemaTypes); err != nil {

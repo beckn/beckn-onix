@@ -996,6 +996,19 @@ func TestValidatePublishRequest_ResourceDirectiveResourceIDPresentIsAccepted(t *
 	}
 }
 
+func TestValidatePublishRequest_ResourceDirectiveMissingMasterResourceIDIsRejected(t *testing.T) {
+	req := mustPublishRequest(t, `{"message":{
+		"catalogs":[{"id":"CAT-1","descriptor":{},"provider":{},"resources":[{"id":"ITEM-1"}]}],
+		"publishDirectives":[{"catalogId":"CAT-1","catalogType":"REGULAR","resourceDirectives":[
+			{"resourceId":"ITEM-1","extends":{}}
+		]}]
+	}}`)
+	err := validatePublishRequest(req)
+	if err == nil || !strings.Contains(err.Error(), "missing extends.masterResourceId") {
+		t.Fatalf("expected a missing-masterResourceId error, got %v", err)
+	}
+}
+
 func TestValidatePublishRequest_SchemaTypesValidURIsAreAccepted(t *testing.T) {
 	req := mustPublishRequest(t, `{"message":{
 		"catalogs":[{"id":"CAT-1","descriptor":{},"provider":{},"resources":[]}],
