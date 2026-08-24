@@ -34,6 +34,13 @@ type RegistryMetadataLookup interface {
 	// The full SubscriberRecord is available for any plugin to consume — manifest discovery
 	// (ManifestLoader) is the first use case but not the only one.
 	LookupNode(ctx context.Context, nodeID string) (*model.SubscriberRecord, error)
+
+	// QueryByNetwork fetches all subscriber records belonging to a DeDi network registry.
+	// Input: networkID in namespace/registryName DeDi path form (e.g. "beckn.one/testnet").
+	// Only records with state=="live" are returned. Meta/MetaArrays follow the same shape
+	// as LookupNode (e.g. MetaArrays["catalog_index_urls"]). AllowedNetworkIDs is not
+	// applied, same as LookupNode -- this is a discovery read, not a trust decision.
+	QueryByNetwork(ctx context.Context, networkID string) ([]model.SubscriberRecord, error)
 }
 
 // RegistryLookupProvider initializes a new registry lookup instance.

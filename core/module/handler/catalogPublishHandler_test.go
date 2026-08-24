@@ -66,6 +66,9 @@ func (f *fakeRegistry) LookupNode(_ context.Context, nodeID string) (*model.Subs
 	f.lastNodeID = nodeID
 	return f.nodeRecord, f.nodeErr
 }
+func (*fakeRegistry) QueryByNetwork(context.Context, string) ([]model.SubscriberRecord, error) {
+	panic("unused")
+}
 
 type fakeCache struct{}
 

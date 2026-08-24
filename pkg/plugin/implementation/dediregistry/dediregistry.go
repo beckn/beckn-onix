@@ -195,9 +195,9 @@ func (c *DeDiRegistryClient) parseSubscriptionFromData(ctx context.Context, data
 			Type:         detailsType,
 		},
 		SigningPublicKey: signingPublicKey,
-		EncrPublicKey:   encrPublicKey,
-		Created:         parseTime(createdAt),
-		Updated:         parseTime(updatedAt),
+		EncrPublicKey:    encrPublicKey,
+		Created:          parseTime(createdAt),
+		Updated:          parseTime(updatedAt),
 	}, nil
 }
 
@@ -207,6 +207,14 @@ func (c *DeDiRegistryClient) parseSubscriptionFromData(ctx context.Context, data
 // meta.catalog_index_urls: [{url: "..."}]. Returns empty maps (not an
 // error) when the meta field is absent or null — the participant has
 // simply not published a node manifest yet.
+//
+// A string value is first tried as a double-encoded array (a JSON string
+// whose content IS a [{url}] array, e.g.
+// `"catalog_index_urls": "[{\"url\": \"...\"}]"` -- a real-world quirk from
+// whatever wrote the record serializing it twice) before falling back to a
+// plain meta string. Without this, a double-encoded value would silently
+// land in meta instead of metaArrays and never surface to a caller that
+// only reads metaArrays (e.g. catalogcrawler's QueryByNetwork consumer).
 func parseMetaFromData(ctx context.Context, data map[string]any) (map[string]string, map[string][]string) {
 	meta := make(map[string]string)
 	metaArrays := make(map[string][]string)
@@ -221,7 +229,11 @@ func parseMetaFromData(ctx context.Context, data map[string]any) (map[string]str
 	for key, value := range rawMetaMap {
 		switch v := value.(type) {
 		case string:
-			meta[key] = v
+			if arr, ok := parseDoubleEncodedURLArray(ctx, key, v); ok {
+				metaArrays[key] = arr
+			} else {
+				meta[key] = v
+			}
 		case []any:
 			metaArrays[key] = extractURLObjectArray(ctx, key, v)
 		default:
@@ -229,6 +241,20 @@ func parseMetaFromData(ctx context.Context, data map[string]any) (map[string]str
 		}
 	}
 	return meta, metaArrays
+}
+
+// parseDoubleEncodedURLArray reports whether s is valid JSON for a native
+// array (of any shape -- extractURLObjectArray itself filters to {url}
+// objects), and if so returns the extracted URLs. Returns ok=false for any
+// string that isn't JSON-array syntax, which is the common case (an
+// ordinary plain meta string), so those are left for the caller to store as
+// a plain string.
+func parseDoubleEncodedURLArray(ctx context.Context, fieldName, s string) ([]string, bool) {
+	var items []any
+	if err := json.Unmarshal([]byte(s), &items); err != nil {
+		return nil, false
+	}
+	return extractURLObjectArray(ctx, fieldName, items), true
 }
 
 // extractURLObjectArray extracts the "url" field from each element of a
@@ -439,6 +465,88 @@ func (c *DeDiRegistryClient) LookupNode(ctx context.Context, nodeID string) (*mo
 		Meta:         meta,
 		MetaArrays:   metaArrays,
 	}, nil
+}
+
+// maxQueryResponseBytes caps a /query response read into memory -- unlike
+// /lookup's single-record response, /query returns one record per network
+// participant, so a runaway or compromised registry could otherwise return
+// an arbitrarily large body. A few MiB is far more than any real network
+// needs.
+const maxQueryResponseBytes = 8 << 20
+
+// queryEnvelope is the /query response shape: a list of records, one per
+// network participant, as opposed to /lookup's single-record "data" object.
+type queryEnvelope struct {
+	Data struct {
+		Records []map[string]any `json:"records"`
+	} `json:"data"`
+}
+
+// QueryByNetwork implements RegistryMetadataLookup — calls the DeDi /query endpoint
+// for networkID and returns one SubscriberRecord per live participant record.
+// A record that isn't state=="live", or whose details don't parse, is skipped
+// rather than failing the whole query -- consistent with LookupNode/parseMetaFromData's
+// skip-bad-record handling elsewhere in this file. Not cached: this is a bulk
+// discovery read, not the hot per-request signing-key lookup Lookup caches.
+func (c *DeDiRegistryClient) QueryByNetwork(ctx context.Context, networkID string) ([]model.SubscriberRecord, error) {
+	if networkID == "" {
+		return nil, fmt.Errorf("networkID is required for DeDi query")
+	}
+
+	queryURL := fmt.Sprintf("%s/query/%s", c.config.URL, networkID)
+
+	httpReq, err := retryablehttp.NewRequest("GET", queryURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create network query request: %w", err)
+	}
+	httpReq = httpReq.WithContext(ctx)
+
+	log.Debugf(ctx, "Making DeDi network query request to: %s", queryURL)
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send DeDi network query request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxQueryResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read network query response body: %w", err)
+	}
+	if int64(len(body)) > maxQueryResponseBytes {
+		return nil, fmt.Errorf("network query response for %q exceeds max %d bytes", networkID, maxQueryResponseBytes)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Errorf(ctx, nil, "DeDi network query request failed with status: %s, response: %s", resp.Status, string(body))
+		return nil, fmt.Errorf("DeDi network query request failed with status: %s", resp.Status)
+	}
+
+	var envelope queryEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal network query response body: %w", err)
+	}
+
+	records := make([]model.SubscriberRecord, 0, len(envelope.Data.Records))
+	for i, data := range envelope.Data.Records {
+		state, _ := data["state"].(string)
+		if state != "live" {
+			continue
+		}
+		subscription, err := c.parseSubscriptionFromData(ctx, data, false)
+		if err != nil {
+			log.Warnf(ctx, "Skipping network query record at index %d for network %q: %v", i, networkID, err)
+			continue
+		}
+		meta, metaArrays := parseMetaFromData(ctx, data)
+		records = append(records, model.SubscriberRecord{
+			Subscription: *subscription,
+			Meta:         meta,
+			MetaArrays:   metaArrays,
+		})
+	}
+
+	log.Debugf(ctx, "DeDi network query successful for networkID: %s, live records: %d", networkID, len(records))
+	return records, nil
 }
 
 // parseTime converts string timestamp to time.Time

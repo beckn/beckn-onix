@@ -69,6 +69,34 @@ GET {url}/lookup/{subscriber_id}/subscribers.beckn.one/{key_id}
 }
 ```
 
+## Network-Scoped Discovery (`QueryByNetwork`)
+
+In addition to the single-record `RegistryLookup`/`RegistryMetadataLookup.LookupNode` calls above, the plugin implements `RegistryMetadataLookup.QueryByNetwork(ctx, networkID)`, which fetches every subscriber record belonging to a DeDi network registry in one call — used by `catalogcrawler` to discover the providers of each configured network, instead of a direct HTTP call to DeDi.
+
+```
+GET {url}/query/{networkID}
+```
+
+`networkID` is passed through verbatim in `namespace/registryName` form (e.g. `beckn.one/testnet`), matching the DeDi path convention used elsewhere (`LookupRegistry`, `LookupNode`).
+
+### Expected Response Format
+
+```json
+{
+  "data": {
+    "records": [
+      {
+        "state": "live",
+        "details": { "subscriber_id": "bpp.example.com", "url": "...", "type": "BPP", "domain": "energy" },
+        "meta": { "catalog_index_urls": [{ "url": "https://bpp.example.com/catalog/index.json" }] }
+      }
+    ]
+  }
+}
+```
+
+Only records with `state == "live"` are returned; a record whose `details` don't parse is skipped rather than failing the whole query. `allowedNetworkIDs` is **not** applied to this call — like `LookupNode`, this is a discovery read, not a trust decision. Results are not cached (unlike `Lookup`, which is on the hot request-signing path).
+
 ## Usage Context
 
 ### Signature Validation Flow

@@ -1,6 +1,6 @@
 # Catalog Crawler
 
-`catalogcrawler` discovers Beckn catalog indexes (via a registry-backed DeDi query, or a fixed static list), polls them on a schedule, fetches and self-signature-verifies changed catalog entries and files, and pushes the resulting catalogs onward to a Discovery service. Progress and retry state are persisted in Postgres, so a restart resumes rather than re-crawling everything.
+`catalogcrawler` discovers Beckn catalog indexes (via a registry plugin's network-scoped query, or a fixed static list), polls them on a schedule, fetches and self-signature-verifies changed catalog entries and files, and pushes the resulting catalogs onward to a Discovery service. Progress and retry state are persisted in Postgres, so a restart resumes rather than re-crawling everything.
 
 The core fetch/verify/decode and catalog-resolve/orchestration logic lives in [github.com/beckn/catalog-core](https://github.com/beckn/catalog-core) (`pkg/catalog`, `pkg/catalog/crawler`, `pkg/catalog/crawlmanager`) — this plugin is deployment-specific wiring on top of it: config parsing, the Postgres-backed store, the registry-backed/static discovery sources, the Discovery-push sink, and the ticker-driven scheduler.
 
@@ -10,6 +10,7 @@ The core fetch/verify/decode and catalog-resolve/orchestration logic lives in [g
 
 - a `dbDsn` reachable Postgres database (migrations run automatically on startup)
 - a registry plugin implementing `RegistryLookup` — every fetched index entry and catalog file is self-signed, and the registry is the only source of the signing keys checked against. There is deliberately no per-deployment trusted-key configuration.
+- a registry plugin implementing `RegistryMetadataLookup` (e.g. `dediregistry`), required whenever `networks` is configured — its `QueryByNetwork` method resolves each configured network's member providers and their catalog index URLs. In practice this is the same plugin instance as `RegistryLookup` above (`dediregistry` implements both).
 
 ## Config
 
@@ -19,7 +20,6 @@ catalogCrawler:
   config:
     dbDsn: "postgres://user:pass@localhost:5432/catalogcrawler"
     networks: "example.network.production"
-    dediRegistryUrl: "https://dedi.example.org"
     discoveryPushUrl: "https://discovery.example.org/beckn/catalog/push"
     participantId: "bpp.example.org"
     bppUri: "https://bpp.example.org"
@@ -36,9 +36,8 @@ Supported config keys:
 
 - `dbDsn`: required. Postgres connection string for the crawl queue/cursor store.
 - `discoveryPushUrl`: required. Where crawled catalogs are pushed.
-- `networks`: comma-separated networkIds to discover indexes for via the DeDi registry. Drives both discovery (with `dediRegistryUrl`) and scope filtering — a catalog entry naming a network not in this list is skipped.
+- `networks`: comma-separated networkIds to discover indexes for via the configured `RegistryMetadataLookup` plugin (e.g. `dediregistry`'s `QueryByNetwork`). Drives both discovery and scope filtering — a catalog entry naming a network not in this list is skipped.
 - `staticIndexUrls`: comma-separated, optional fixed index URLs, unioned with any registry-discovered ones.
-- `dediRegistryUrl`: base URL for the DeDi `/query` discovery endpoint. Only used when `networks` is also set. Distinct from the `RegistryLookup` passed to the plugin at construction, which resolves signing keys, not index locations.
 - `participantId`, `bppUri`: this deployment's own bppId/bppUri, stamped onto pushed catalogs.
 - `fetchTimeoutSeconds`: optional, default `30`. Whole-attempt HTTP timeout for index/catalog fetches.
 - `maxFetchBytes`: optional, default `10485760` (10 MiB). Cap on a fetched artifact's at-rest size.
@@ -57,4 +56,4 @@ Supported config keys:
 
 ## On-demand crawl
 
-`CrawlRegistry(ctx, registryURL, networkIDs)` triggers an immediate registry-backed discovery pass against caller-supplied parameters, independent of the configured `networks`/`dediRegistryUrl` defaults, without waiting for the next scheduled tick. It returns a run ID immediately; the run's outcome is only observable via logs and the queue, the same as a scheduled tick. The run is tied to the plugin's own lifecycle (not the caller's context), so it is not cut short by a request-scoped caller and is waited for on shutdown.
+`CrawlRegistry(ctx, networkIDs)` triggers an immediate registry-backed discovery pass against caller-supplied `networkIDs`, independent of the configured `networks` default, without waiting for the next scheduled tick. Discovery goes through the configured `RegistryMetadataLookup` plugin instance, which owns its own registry URL — there is no per-call registry URL, so this cannot target a different registry than the one the deployment is configured with. It returns a run ID immediately; the run's outcome is only observable via logs and the queue, the same as a scheduled tick. The run is tied to the plugin's own lifecycle (not the caller's context), so it is not cut short by a request-scoped caller and is waited for on shutdown.

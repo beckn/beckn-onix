@@ -645,13 +645,20 @@ func (m *Manager) DeDiRegistry(ctx context.Context, cache definition.Cache, cfg 
 // Crawler returns a Crawler instance based on the provided configuration.
 // registry is the crawler's key-distribution channel (every fetched index
 // entry/file's self-signature is verified against it) -- required, per
-// definition.CrawlerProvider's own contract.
+// definition.CrawlerProvider's own contract. If registry also implements
+// RegistryMetadataLookup (as dediregistry does), it is passed through too,
+// for network-scoped discovery -- narrowed here rather than by the caller,
+// since it's a generic interface check, not a crawler-specific business
+// rule. Whether it's actually required (only when the plugin's own
+// "networks" config is set) is validated inside the plugin's own New, which
+// is the only place that already knows that config key.
 func (m *Manager) Crawler(ctx context.Context, registry definition.RegistryLookup, cfg *Config) (definition.Crawler, error) {
 	cp, err := provider[definition.CrawlerProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	crawler, closer, err := cp.New(ctx, registry, cfg.Config)
+	metadataLookup, _ := registry.(definition.RegistryMetadataLookup)
+	crawler, closer, err := cp.New(ctx, registry, metadataLookup, cfg.Config)
 	if err != nil {
 		return nil, err
 	}

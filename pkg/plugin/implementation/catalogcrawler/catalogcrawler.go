@@ -40,7 +40,6 @@ const (
 	cfgDBDSN              = "dbDsn"
 	cfgNetworks           = "networks"        // comma-separated networkIds for registry-backed discovery
 	cfgStaticIndexURLs    = "staticIndexUrls" // comma-separated, optional fixed index URLs
-	cfgDediRegistryURL    = "dediRegistryUrl" // base URL for the DeDi /query endpoint used for discovery -- distinct from the RegistryLookup passed to New, which resolves signing keys
 	cfgDiscoveryURL       = "discoveryPushUrl"
 	cfgParticipantID      = "participantId" // this deployment's own bppId
 	cfgBppURI             = "bppUri"        // this deployment's own bppUri
@@ -67,10 +66,18 @@ type Provider struct{}
 // New builds a Crawler from config, wiring a Postgres Store, a
 // registry+static Source, a Discovery-push Sink, and a ticker Scheduler.
 // registry is REQUIRED: it is the key-distribution channel every fetched
-// index entry/file's self-signature is verified against.
-func (Provider) New(ctx context.Context, registry definition.RegistryLookup, config map[string]string) (definition.Crawler, func() error, error) {
+// index entry/file's self-signature is verified against. metadataLookup is
+// REQUIRED whenever registry-backed discovery (the "networks" config) is
+// used: it resolves each configured networkId to its member providers via
+// the dediregistry plugin's QueryByNetwork, rather than a direct DeDi call.
+// A deployment using only staticIndexUrls (no networks) does not need it and
+// may pass nil.
+func (Provider) New(ctx context.Context, registry definition.RegistryLookup, metadataLookup definition.RegistryMetadataLookup, config map[string]string) (definition.Crawler, func() error, error) {
 	if registry == nil {
 		return nil, nil, fmt.Errorf("catalogcrawler: a RegistryLookup is required")
+	}
+	if len(splitNonEmpty(config[cfgNetworks])) > 0 && metadataLookup == nil {
+		return nil, nil, fmt.Errorf("catalogcrawler: config %q requires a registry plugin that supports RegistryMetadataLookup (network-scoped discovery)", cfgNetworks)
 	}
 	dsn := strings.TrimSpace(config[cfgDBDSN])
 	if dsn == "" {
@@ -102,7 +109,7 @@ func (Provider) New(ctx context.Context, registry definition.RegistryLookup, con
 	client := crawler.NewClient(fetchTimeout, maxFetchBytes, allowPrivate)
 	fetcher := catalog.NewFetcher(client, keys, maxDecompressed)
 
-	src := buildSource(config, fetchTimeout, log)
+	src := buildSource(config, metadataLookup, log)
 	snk := sink.NewDiscoverySink(discoveryURL, config[cfgParticipantID], config[cfgBppURI], int64Or(config[cfgMaxPushBytes], defaultMaxPushBytes), fetchTimeout)
 
 	// The same configured networks drive both registry-backed discovery
@@ -119,29 +126,78 @@ func (Provider) New(ctx context.Context, registry definition.RegistryLookup, con
 	}
 
 	c := &crawlerImpl{
-		params:       params,
-		sched:        NewScheduler(params, schedCfg, log),
-		fetchTimeout: fetchTimeout,
-		log:          log,
+		params:         params,
+		sched:          NewScheduler(params, schedCfg, log),
+		metadataLookup: metadataLookup,
+		log:            log,
 	}
 	return c, db.Close, nil
 }
 
-// buildSource unions a static config list (if any) with a DeDi registry
+// buildSource unions a static config list (if any) with a registry-backed
 // lookup (if any networks are configured) -- an index crawled via either
 // path is polled the same way once discovered.
-func buildSource(config map[string]string, timeout time.Duration, log *slog.Logger) crawlmanager.Source {
+func buildSource(config map[string]string, metadataLookup definition.RegistryMetadataLookup, log *slog.Logger) crawlmanager.Source {
 	var sources []crawlmanager.Source
 	if urls := splitNonEmpty(config[cfgStaticIndexURLs]); len(urls) > 0 {
 		sources = append(sources, source.NewConfigSource(urls))
 	}
-	if networks := splitNonEmpty(config[cfgNetworks]); len(networks) > 0 {
-		if base := strings.TrimSpace(config[cfgDediRegistryURL]); base != "" {
-			client := source.NewDediQueryClient(base, timeout)
-			sources = append(sources, source.NewRegistrySource(client, networks, log))
-		}
+	if networks := splitNonEmpty(config[cfgNetworks]); len(networks) > 0 && metadataLookup != nil {
+		sources = append(sources, &registryDiscoverer{lookup: metadataLookup, networkIDs: networks, log: log})
 	}
 	return multiSource(sources)
+}
+
+// registryDiscoverer implements crawlmanager.Source by asking the
+// configured registry plugin's RegistryMetadataLookup.QueryByNetwork for the
+// participant records of each configured networkId -- the registry plugin
+// (e.g. dediregistry) is the sole source of truth for network membership;
+// this is just the mapping from its generic SubscriberRecord shape to
+// catalog-core's IndexRef, not a second discovery mechanism.
+type registryDiscoverer struct {
+	lookup     definition.RegistryMetadataLookup
+	networkIDs []string
+	log        *slog.Logger
+}
+
+// Discover queries lookup once per configured network and returns one
+// IndexRef per catalog index URL any record declares in its
+// meta.catalog_index_urls (a record with more than one URL yields more than
+// one ref, one per catalog per node), deduped by index URL so a provider
+// found in multiple networks is crawled once.
+func (d *registryDiscoverer) Discover(ctx context.Context) ([]crawlmanager.IndexRef, error) {
+	seen := make(map[string]bool)
+	var refs []crawlmanager.IndexRef
+	for _, net := range d.networkIDs {
+		records, err := d.lookup.QueryByNetwork(ctx, net)
+		if err != nil {
+			d.log.ErrorContext(ctx, "catalogcrawler: registry lookup failed", "networkId", net, "error", err)
+			return nil, fmt.Errorf("catalogcrawler: registry lookup %q: %w", net, err)
+		}
+		// found counts every non-empty catalog_index_urls entry the registry
+		// returned for this network, before the cross-network seen-URL dedup
+		// below -- so it reflects what the registry actually reported, not
+		// how many of those survived deduping, which is what an operator
+		// comparing this log against the registry's own record count expects.
+		found := 0
+		for _, rec := range records {
+			for _, entry := range rec.MetaArrays["catalog_index_urls"] {
+				idx := strings.TrimSpace(entry)
+				d.log.DebugContext(ctx, "catalogcrawler: registry lookup provider", "networkId", net, "participantId", rec.SubscriberID, "indexUrl", idx)
+				if idx == "" {
+					continue
+				}
+				found++
+				if seen[idx] {
+					continue
+				}
+				seen[idx] = true
+				refs = append(refs, crawlmanager.IndexRef{IndexURL: idx, ParticipantID: rec.SubscriberID})
+			}
+		}
+		d.log.InfoContext(ctx, "catalogcrawler: registry lookup succeeded", "networkId", net, "providersFound", found)
+	}
+	return refs, nil
 }
 
 // multiSource unions several Sources' Discover results, deduped by index
@@ -169,10 +225,10 @@ func (m multiSource) Discover(ctx context.Context) ([]crawlmanager.IndexRef, err
 
 // crawlerImpl implements definition.Crawler.
 type crawlerImpl struct {
-	params       crawlmanager.Params
-	sched        *Scheduler
-	fetchTimeout time.Duration
-	log          *slog.Logger
+	params         crawlmanager.Params
+	sched          *Scheduler
+	metadataLookup definition.RegistryMetadataLookup
+	log            *slog.Logger
 }
 
 func (c *crawlerImpl) Start(ctx context.Context) error {
@@ -185,30 +241,31 @@ func (c *crawlerImpl) Stop() error {
 	return nil
 }
 
-// CrawlRegistry runs an immediate registry-backed crawl against registryURL
-// and networkIDs -- the same DeDi /query discovery the scheduled pass uses,
-// just against caller-supplied parameters instead of the configured
-// defaults. It launches one background poll and returns a run ID
+// CrawlRegistry runs an immediate registry-backed crawl against networkIDs --
+// the same registry-backed discovery the scheduled pass uses, just against
+// caller-supplied networks instead of the configured defaults. Discovery
+// goes through the configured RegistryMetadataLookup plugin instance, which
+// owns its own registry URL -- there is no per-call registry URL to select a
+// different endpoint. It launches one background poll and returns a run ID
 // immediately; the poll's outcome is only observable via logs/the queue, the
 // same as a scheduled tick. The poll runs under the Scheduler's own
 // lifecycle (via Scheduler.RunOnce), not the caller's context, so it
 // survives a request-scoped caller returning and is still waited-for (not
 // orphaned) by Stop.
-func (c *crawlerImpl) CrawlRegistry(ctx context.Context, registryURL string, networkIDs []string) (string, error) {
-	if strings.TrimSpace(registryURL) == "" {
-		return "", fmt.Errorf("catalogcrawler: registryURL is required")
-	}
+func (c *crawlerImpl) CrawlRegistry(ctx context.Context, networkIDs []string) (string, error) {
 	if len(networkIDs) == 0 {
 		return "", fmt.Errorf("catalogcrawler: at least one networkID is required")
 	}
-	client := source.NewDediQueryClient(registryURL, c.fetchTimeout)
+	if c.metadataLookup == nil {
+		return "", fmt.Errorf("catalogcrawler: no RegistryMetadataLookup configured for registry-backed discovery")
+	}
 	adhoc := c.params
-	adhoc.Source = source.NewRegistrySource(client, networkIDs, c.log)
+	adhoc.Source = &registryDiscoverer{lookup: c.metadataLookup, networkIDs: networkIDs, log: c.log}
 
 	runID := uuid.NewString()
 	started := c.sched.RunOnce(func(ctx context.Context) {
 		if err := adhoc.PollIndexes(ctx); err != nil {
-			c.log.ErrorContext(ctx, "catalogcrawler: on-demand crawl failed", "runId", runID, "registryUrl", registryURL, "error", err)
+			c.log.ErrorContext(ctx, "catalogcrawler: on-demand crawl failed", "runId", runID, "networkIds", networkIDs, "error", err)
 		}
 	})
 	if !started {

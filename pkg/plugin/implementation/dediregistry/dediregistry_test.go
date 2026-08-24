@@ -852,6 +852,31 @@ func TestLookupNode(t *testing.T) {
 		}
 	})
 
+	t.Run("double-encoded catalog_index_urls lands in MetaArrays, not Meta", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"data":{"details":{"url":"https://bpp.example.com","subscriber_id":"x"},"meta":{"catalog_index_urls":"[{\"url\":\"https://a/index\"}]"}}}`))
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, nil, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		got, err := client.LookupNode(ctx, nodeID)
+		if err != nil {
+			t.Fatalf("LookupNode() error = %v", err)
+		}
+		if len(got.Meta["catalog_index_urls"]) != 0 {
+			t.Errorf("expected catalog_index_urls NOT in Meta (plain string map), got %q", got.Meta["catalog_index_urls"])
+		}
+		if want := []string{"https://a/index"}; !reflect.DeepEqual(got.MetaArrays["catalog_index_urls"], want) {
+			t.Errorf("MetaArrays[catalog_index_urls] = %v, want %v (double-encoded array parsed)", got.MetaArrays["catalog_index_urls"], want)
+		}
+	})
+
 	t.Run("invalid nodeID fewer than three parts returns error without HTTP call", func(t *testing.T) {
 		httpCalls := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { httpCalls++ }))
@@ -904,6 +929,175 @@ func TestLookupNode(t *testing.T) {
 
 		if _, err := client.LookupNode(ctx, nodeID); err == nil {
 			t.Error("expected error for malformed response body, got nil")
+		}
+	})
+}
+
+func TestQueryByNetwork(t *testing.T) {
+	ctx := context.Background()
+	const networkID = "beckn.one/testnet"
+
+	t.Run("success — returns one record per live subscriber with meta", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/dedi/query/beckn.one/testnet" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"data":{"records":[
+				{"state":"live","details":{"subscriber_id":"p1"},"meta":{"catalog_index_urls":[{"url":"https://a/index"},{"url":"https://b/index"}]}},
+				{"state":"inactive","details":{"subscriber_id":"p2"},"meta":{"catalog_index_urls":[{"url":"https://c/index"}]}},
+				{"state":"live","details":{"subscriber_id":"p3"}}
+			]}}`))
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, nil, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		got, err := client.QueryByNetwork(ctx, networkID)
+		if err != nil {
+			t.Fatalf("QueryByNetwork() error = %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("got %d records, want 2 (inactive record excluded); records = %+v", len(got), got)
+		}
+		if got[0].SubscriberID != "p1" || len(got[0].MetaArrays["catalog_index_urls"]) != 2 {
+			t.Errorf("record[0] = %+v, want p1 with two catalog_index_urls", got[0])
+		}
+		if got[1].SubscriberID != "p3" || len(got[1].MetaArrays["catalog_index_urls"]) != 0 {
+			t.Errorf("record[1] = %+v, want p3 with no catalog_index_urls", got[1])
+		}
+	})
+
+	t.Run("double-encoded catalog_index_urls is still discoverable via MetaArrays", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"data":{"records":[
+				{"state":"live","details":{"subscriber_id":"p1"},"meta":{"catalog_index_urls":"[{\"url\":\"https://a/index\"}]"}}
+			]}}`))
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, nil, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		got, err := client.QueryByNetwork(ctx, networkID)
+		if err != nil {
+			t.Fatalf("QueryByNetwork() error = %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("got %d records, want 1", len(got))
+		}
+		if want := []string{"https://a/index"}; !reflect.DeepEqual(got[0].MetaArrays["catalog_index_urls"], want) {
+			t.Errorf("MetaArrays[catalog_index_urls] = %v, want %v -- a double-encoded record must still surface its index URL to callers (e.g. catalogcrawler) that only read MetaArrays", got[0].MetaArrays["catalog_index_urls"], want)
+		}
+	})
+
+	t.Run("record with missing details is skipped, not fatal", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"data":{"records":[
+				{"state":"live","details":null},
+				{"state":"live","details":{"subscriber_id":"p1"}}
+			]}}`))
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, nil, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		got, err := client.QueryByNetwork(ctx, networkID)
+		if err != nil {
+			t.Fatalf("expected no error when a record has missing details, got %v", err)
+		}
+		if len(got) != 1 || got[0].SubscriberID != "p1" {
+			t.Fatalf("got %+v, want only p1 (bad-details record skipped)", got)
+		}
+	})
+
+	t.Run("empty networkID returns error without HTTP call", func(t *testing.T) {
+		httpCalls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { httpCalls++ }))
+		defer server.Close()
+
+		client, closer, err := New(ctx, nil, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		if _, err := client.QueryByNetwork(ctx, ""); err == nil {
+			t.Error("expected error for empty networkID, got nil")
+		}
+		if httpCalls != 0 {
+			t.Errorf("expected no HTTP call for empty networkID, got %d", httpCalls)
+		}
+	})
+
+	t.Run("non-OK status returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, nil, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		if _, err := client.QueryByNetwork(ctx, networkID); err == nil {
+			t.Error("expected error for a 500 response, got nil")
+		}
+	})
+
+	t.Run("malformed response body returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte("not valid json{{"))
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, nil, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		if _, err := client.QueryByNetwork(ctx, networkID); err == nil {
+			t.Error("expected error for malformed response body, got nil")
+		}
+	})
+
+	t.Run("oversized response is rejected rather than read into memory unbounded", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"data":{"records":[`))
+			for i := 0; i < maxQueryResponseBytes; i++ {
+				w.Write([]byte("0"))
+			}
+			w.Write([]byte(`]}}`))
+		}))
+		defer server.Close()
+
+		client, closer, err := New(ctx, nil, &Config{URL: server.URL + "/dedi"})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer closer()
+
+		if _, err := client.QueryByNetwork(ctx, networkID); err == nil {
+			t.Error("expected error for a response exceeding maxQueryResponseBytes, got nil")
 		}
 	})
 }
