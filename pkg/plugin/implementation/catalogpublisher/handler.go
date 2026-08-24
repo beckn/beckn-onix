@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 
 	"github.com/beckn-one/beckn-onix/core/module/handler"
 	"github.com/beckn-one/beckn-onix/pkg/log"
@@ -88,17 +87,13 @@ func NewHandler(ctx context.Context, mgr handler.PluginManager, cfg *handler.Con
 
 	// checkCatalogIndexLink is resolved here only to decide whether to load
 	// registryMetadata (typed off the already-loaded `registry`) before
-	// constructing the catalogPublisher plugin -- the plugin itself
-	// re-validates this same config value and does the subscriberId "/"
-	// check plus the fail-fast Keyset probe internally (see
-	// catalogpublisher.New).
-	var checkCatalogIndexLink bool
-	if v := publisherCfg.Config["checkCatalogIndexLink"]; v != "" {
-		var err error
-		checkCatalogIndexLink, err = strconv.ParseBool(v)
-		if err != nil {
-			return nil, fmt.Errorf("catalogPublish handler %s: invalid checkCatalogIndexLink value %q: %w", moduleName, v, err)
-		}
+	// constructing the catalogPublisher plugin -- ParseCheckCatalogIndexLink
+	// is the same parsing New itself uses (via cmd/plugin.go's parseConfig),
+	// so the two decisions can't drift apart. New still re-validates the
+	// subscriberId "/" check plus the fail-fast Keyset probe internally.
+	checkCatalogIndexLink, err := ParseCheckCatalogIndexLink(publisherCfg.Config)
+	if err != nil {
+		return nil, fmt.Errorf("catalogPublish handler %s: %w", moduleName, err)
 	}
 	var registryMetadata definition.RegistryMetadataLookup
 	if checkCatalogIndexLink {
@@ -192,10 +187,8 @@ func NewHandler(ctx context.Context, mgr handler.PluginManager, cfg *handler.Con
 		}
 
 		submittedIDs := make(map[string]bool, len(req.Catalogs))
-		for _, c := range req.Catalogs {
-			if c.CatalogID != "" {
-				submittedIDs[c.CatalogID] = true
-			}
+		for _, id := range nonEmptyCatalogIDs(req.Catalogs) {
+			submittedIDs[id] = true
 		}
 		for _, id := range req.Retire {
 			if submittedIDs[id] {

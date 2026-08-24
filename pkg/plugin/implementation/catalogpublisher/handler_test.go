@@ -598,7 +598,14 @@ func TestCatalogPublishHandler_WarningsFromPublishAreSurfaced(t *testing.T) {
 }
 
 func TestCatalogPublishHandler_MethodNotAllowed(t *testing.T) {
-	pub := &fakeHandlerCatalogPublisher{decodeErr: fmt.Errorf("method not allowed: GET")}
+	// A real DecodeRequest (decode.go) wraps a method mismatch in
+	// handler.StatusError{Status: http.StatusMethodNotAllowed}, which the
+	// generic EndpointHandler shell (endpointhandler.go) must surface as
+	// 405, not the default 400 every other Decode failure gets.
+	pub := &fakeHandlerCatalogPublisher{decodeErr: &handler.StatusError{
+		Status: http.StatusMethodNotAllowed,
+		Err:    fmt.Errorf("method not allowed: GET"),
+	}}
 	h, err := NewHandler(context.Background(), newTestManager(pub), newTestConfig(), "test")
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
@@ -606,9 +613,22 @@ func TestCatalogPublishHandler_MethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/catalog/publish", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	// The generic EndpointHandler shell maps any Decode error to 400 --
-	// method enforcement now lives inside the catalogPublisher plugin's own
-	// DecodeRequest, not this handler.
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+}
+
+func TestCatalogPublishHandler_DecodeErrorWithoutStatusDefaultsTo400(t *testing.T) {
+	// A Decode error that doesn't wrap a *handler.StatusError (e.g. a
+	// malformed body or failed validation) falls back to the default 400.
+	pub := &fakeHandlerCatalogPublisher{decodeErr: fmt.Errorf("invalid request body")}
+	h, err := NewHandler(context.Background(), newTestManager(pub), newTestConfig(), "test")
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
 	}

@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,6 +50,24 @@ type Config struct {
 	// construction time so a missing dependency fails fast at startup
 	// rather than on the first Publish call.
 	CheckCatalogIndexLink bool
+}
+
+// ParseCheckCatalogIndexLink parses the "checkCatalogIndexLink" plugin
+// config value -- shared by cmd/plugin.go's parseConfig (which sets
+// Config.CheckCatalogIndexLink) and handler.go's NewHandler (which needs
+// the same decision before New is even called, to know whether to resolve
+// a RegistryMetadataLookup). A single implementation so the two call sites
+// can't drift apart. An absent/empty value means false, not an error.
+func ParseCheckCatalogIndexLink(config map[string]string) (bool, error) {
+	v := config["checkCatalogIndexLink"]
+	if v == "" {
+		return false, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, fmt.Errorf("invalid checkCatalogIndexLink value %q: %w", v, err)
+	}
+	return b, nil
 }
 
 // Publisher implements definition.CatalogPublisher.
@@ -138,18 +157,12 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 		return definition.PublishResult{}, fmt.Errorf("catalogpublisher: decoding keyset %q: %w", p.config.SubscriberID, err)
 	}
 
-	catalogIDs := make([]string, 0, len(req.Catalogs))
-	for _, c := range req.Catalogs {
-		if c.CatalogID != "" {
-			catalogIDs = append(catalogIDs, c.CatalogID)
-		}
-	}
 	// Retired catalogIds need their prior state loaded too -- the
 	// tombstone Publish builds for them carries forward their prior
 	// CatalogType/NetworkIds/SchemaTypes and bumps their EntryVersion
 	// (NFH-014 Appendix A, Example 4's retired entry still carries those
 	// fields), not just retiredAt.
-	loadIDs := append(append([]string{}, catalogIDs...), req.Retire...)
+	loadIDs := append(nonEmptyCatalogIDs(req.Catalogs), req.Retire...)
 
 	priorStates, err := p.catalogStore.LoadCatalogs(ctx, loadIDs)
 	if err != nil {

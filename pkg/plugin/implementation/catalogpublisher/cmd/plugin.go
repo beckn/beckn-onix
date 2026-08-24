@@ -76,13 +76,11 @@ func (p catalogPublisherProvider) parseConfig(config map[string]string) (*catalo
 		cfg.CompactionSizeRatioThreshold = f
 	}
 
-	if v, exists := config["checkCatalogIndexLink"]; exists && v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			return nil, fmt.Errorf("invalid checkCatalogIndexLink value '%s': %w", v, err)
-		}
-		cfg.CheckCatalogIndexLink = b
+	checkCatalogIndexLink, err := catalogpublisher.ParseCheckCatalogIndexLink(config)
+	if err != nil {
+		return nil, err
 	}
+	cfg.CheckCatalogIndexLink = checkCatalogIndexLink
 
 	return cfg, nil
 }

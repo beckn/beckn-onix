@@ -64,6 +64,23 @@ func ToStorePublishRequest(result definition.PublishResult) store.PublishRequest
 	return req
 }
 
+// nonEmptyCatalogIDs returns each submission's CatalogID, skipping any
+// empty one (an empty ID surfaces as its own non-fatal PublishError from
+// Publish, not as a gap here). Shared by Publish (catalogpublisher.go,
+// to know which catalogs' prior state to load) and NewHandler's Encode
+// closure (handler.go, to know which submitted catalogs a Retire entry
+// might collide with) -- one implementation so the two can't disagree on
+// what counts as "actually submitted".
+func nonEmptyCatalogIDs(subs []definition.CatalogSubmission) []string {
+	ids := make([]string, 0, len(subs))
+	for _, s := range subs {
+		if s.CatalogID != "" {
+			ids = append(ids, s.CatalogID)
+		}
+	}
+	return ids
+}
+
 func toSubmissions(subs []definition.CatalogSubmission) []publisher.Submission {
 	if len(subs) == 0 {
 		return nil

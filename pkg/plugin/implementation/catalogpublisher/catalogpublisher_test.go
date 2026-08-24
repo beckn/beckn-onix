@@ -5,12 +5,14 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/beckn-one/beckn-onix/core/module/handler"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
@@ -59,6 +61,10 @@ func (f *fakeRegistryMetadata) LookupRegistry(context.Context, string, string) (
 func (f *fakeRegistryMetadata) LookupNode(_ context.Context, nodeID string) (*model.SubscriberRecord, error) {
 	f.lastNodeID = nodeID
 	return f.nodeRecord, f.nodeErr
+}
+
+func (f *fakeRegistryMetadata) QueryByNetwork(context.Context, string) ([]model.SubscriberRecord, error) {
+	panic("unused")
 }
 
 // fakeKeyManager returns a fixed Ed25519 keyset for one configured
@@ -382,8 +388,16 @@ func testPublisher(t *testing.T) *Publisher {
 func TestDecodeRequest_MethodNotAllowed(t *testing.T) {
 	p := testPublisher(t)
 	req := httptest.NewRequest(http.MethodGet, "/catalog/publish", nil)
-	if _, err := p.DecodeRequest(context.Background(), req); err == nil {
+	_, err := p.DecodeRequest(context.Background(), req)
+	if err == nil {
 		t.Fatal("expected error for non-POST method")
+	}
+	var statusErr *handler.StatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("expected a *handler.StatusError so the generic EndpointHandler surfaces 405, got %T: %v", err, err)
+	}
+	if statusErr.Status != http.StatusMethodNotAllowed {
+		t.Errorf("Status = %d, want %d", statusErr.Status, http.StatusMethodNotAllowed)
 	}
 }
 

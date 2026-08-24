@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 )
 
@@ -26,11 +27,29 @@ type EndpointHandler[Req, Resp any] struct {
 	Encode  func(w http.ResponseWriter, r *http.Request, req Req, resp Resp, err error)
 }
 
+// StatusError lets a Decode implementation pick the transport-level HTTP
+// status a decode failure is surfaced as -- e.g. http.StatusMethodNotAllowed
+// for a wrong-method request, rather than always collapsing to 400. A
+// Decode error that doesn't wrap a *StatusError still gets the default
+// http.StatusBadRequest.
+type StatusError struct {
+	Status int
+	Err    error
+}
+
+func (e *StatusError) Error() string { return e.Err.Error() }
+func (e *StatusError) Unwrap() error { return e.Err }
+
 // ServeHTTP implements http.Handler.
 func (e *EndpointHandler[Req, Resp]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	req, err := e.Decode(r.Context(), r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		status := http.StatusBadRequest
+		var statusErr *StatusError
+		if errors.As(err, &statusErr) {
+			status = statusErr.Status
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
 	resp, err := e.Execute(r.Context(), req)

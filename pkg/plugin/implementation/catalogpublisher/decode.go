@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/beckn-one/beckn-onix/core/module/handler"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
@@ -67,11 +68,16 @@ func validatePublishRequest(req publishRequest) error {
 // read, JSON decoding, and validatePublishRequest. Errors here always mean
 // a malformed/invalid request. It deliberately does not run
 // schemaValidator/policyChecker against the raw body -- those are generic
-// plugins wired by the handler (core/module/handler/catalogPublishHandler.go),
-// unrelated to CatalogPublisher's own contract.
+// plugins wired by NewHandler (handler.go), unrelated to CatalogPublisher's
+// own contract. The method-mismatch case is wrapped in a
+// handler.StatusError so the generic EndpointHandler surfaces it as 405,
+// not the default 400 every other decode failure here gets.
 func (p *Publisher) DecodeRequest(ctx context.Context, r *http.Request) (definition.PublishRequest, error) {
 	if r.Method != http.MethodPost {
-		return definition.PublishRequest{}, fmt.Errorf("method not allowed: %s", r.Method)
+		return definition.PublishRequest{}, &handler.StatusError{
+			Status: http.StatusMethodNotAllowed,
+			Err:    fmt.Errorf("method not allowed: %s", r.Method),
+		}
 	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
