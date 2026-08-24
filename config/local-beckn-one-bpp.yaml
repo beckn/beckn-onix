@@ -192,6 +192,9 @@ modules:
     handler:
       type: catalogPublish
       role: bpp
+      # outputRoot is no longer read by this handler (storage now comes
+      # from plugins.catalogBlobStore below) -- left set here, harmlessly,
+      # for backward-compat with older config expectations.
       outputRoot: /catalog
       httpClientConfig:
         maxIdleConns: 1000
@@ -222,6 +225,16 @@ modules:
             signingPublicKey: CqVy97DW45bcZPPrWIYGe2ldl9C93NFeVciiAEYsvR0=
             encrPrivateKey: 393fVJJsfqssJCRAjedKR2cKAjSLrjU3t+bICQ5KzYM=
             encrPublicKey: CqVy97DW45bcZPPrWIYGe2ldl9C93NFeVciiAEYsvR0=
+        # catalogBlobStore: where the catalogPublisher plugin itself now
+        # reads prior state from and persists publish results to (moved out
+        # of the handler's own outputRoot -- see outputRoot's comment
+        # above, kept only for backward-compat YAML parsing). Same path
+        # outputRoot pointed to (/catalog) so this deployment's behavior is
+        # unchanged.
+        catalogBlobStore:
+          id: localcatalogblobstore
+          config:
+            root: /catalog
         catalogPublisher:
           id: catalogpublisher
           config:

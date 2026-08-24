@@ -5,11 +5,61 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
+
+// fakeBlobStore is an in-memory definition.CatalogBlobStore double.
+type fakeBlobStore struct {
+	mu   sync.Mutex
+	data map[string][]byte
+}
+
+func newFakeBlobStore() *fakeBlobStore {
+	return &fakeBlobStore{data: map[string][]byte{}}
+}
+
+func (f *fakeBlobStore) Get(ctx context.Context, path string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.data[path]
+	if !ok {
+		return nil, definition.ErrBlobNotFound
+	}
+	return b, nil
+}
+
+func (f *fakeBlobStore) Put(ctx context.Context, path string, content []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.data[path] = content
+	return nil
+}
+
+// fakeRegistryMetadata is a configurable definition.RegistryMetadataLookup
+// double. LookupNode returns nodeRecord/nodeErr and records the nodeID it
+// was called with (lastNodeID) -- checkIndexLink calls it with a synthetic
+// subscriberID/dediSubscriberWildcardRegistry/keyID path.
+type fakeRegistryMetadata struct {
+	nodeRecord *model.SubscriberRecord
+	nodeErr    error
+	lastNodeID string
+}
+
+func (f *fakeRegistryMetadata) LookupRegistry(context.Context, string, string) (*model.RegistryMetadata, error) {
+	panic("unused")
+}
+
+func (f *fakeRegistryMetadata) LookupNode(_ context.Context, nodeID string) (*model.SubscriberRecord, error) {
+	f.lastNodeID = nodeID
+	return f.nodeRecord, f.nodeErr
+}
 
 // fakeKeyManager returns a fixed Ed25519 keyset for one configured
 // subscriberID; it satisfies definition.KeyManager but only Keyset is
@@ -63,15 +113,44 @@ func validCatalogJSON(id string) json.RawMessage {
 
 func TestNew_RequiresKeyManagerAndKeyID(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
+	bs := newFakeBlobStore()
 
-	if _, _, err := New(context.Background(), nil, &Config{SubscriberID: "k1"}); err == nil {
+	if _, _, err := New(context.Background(), nil, bs, nil, &Config{SubscriberID: "k1"}); err == nil {
 		t.Fatal("expected error for nil KeyManager")
 	}
-	if _, _, err := New(context.Background(), km, &Config{}); err == nil {
+	if _, _, err := New(context.Background(), km, bs, nil, &Config{}); err == nil {
 		t.Fatal("expected error for missing keyID")
 	}
-	if _, _, err := New(context.Background(), km, &Config{SubscriberID: "k1"}); err != nil {
+	if _, _, err := New(context.Background(), km, bs, nil, &Config{SubscriberID: "k1"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNew_RequiresCatalogBlobStore(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	if _, _, err := New(context.Background(), km, nil, nil, &Config{SubscriberID: "k1"}); err == nil {
+		t.Fatal("expected error for nil CatalogBlobStore")
+	}
+}
+
+func TestNew_CheckCatalogIndexLinkRequiresRegistryMetadata(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	bs := newFakeBlobStore()
+	if _, _, err := New(context.Background(), km, bs, nil, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true}); err == nil {
+		t.Fatal("expected error when CheckCatalogIndexLink is true but registryMetadata is nil")
+	}
+	rm := &fakeRegistryMetadata{}
+	if _, _, err := New(context.Background(), km, bs, rm, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNew_RejectsSlashInSubscriberIDWhenCatalogIndexLinkCheckEnabled(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	bs := newFakeBlobStore()
+	rm := &fakeRegistryMetadata{}
+	if _, _, err := New(context.Background(), km, bs, rm, &Config{SubscriberID: "nfh.global/k1", CheckCatalogIndexLink: true}); err == nil {
+		t.Fatal("expected error for a subscriberId containing \"/\" when the catalog-index link check is enabled")
 	}
 }
 
@@ -83,7 +162,7 @@ func TestNew_RequiresKeyManagerAndKeyID(t *testing.T) {
 func TestPublish_DelegatesToLibraryAndConvertsResult(t *testing.T) {
 	km := newFakeKeyManager(t, "publisher-key-1")
 	km.domain = "example.test"
-	p, _, err := New(context.Background(), km, &Config{
+	p, _, err := New(context.Background(), km, newFakeBlobStore(), nil, &Config{
 		SubscriberID:  "publisher-key-1",
 		PublicBaseURL: "https://cdn.example.test",
 	})
@@ -130,12 +209,104 @@ func TestPublish_DelegatesToLibraryAndConvertsResult(t *testing.T) {
 
 func TestPublish_UnknownKeyIDFails(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
-	p, _, err := New(context.Background(), km, &Config{SubscriberID: "wrong-key"})
+	p, _, err := New(context.Background(), km, newFakeBlobStore(), nil, &Config{SubscriberID: "wrong-key"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	if _, err := p.Publish(context.Background(), definition.PublishRequest{}); err == nil {
 		t.Fatal("expected error for unknown keyID")
+	}
+}
+
+// TestPublish_LoadsPriorStateAndPersistsResult exercises Publish's own
+// storage round trip: with no prior state, the first Publish call for a
+// catalogId writes a fresh baseline into the fake blob store; a second
+// Publish call for the same catalogId with the same content should then be
+// a metadata/no-op-shaped outcome (Publish loaded its own prior state from
+// storage, without the caller supplying any PriorState).
+func TestPublish_LoadsPriorStateAndPersistsResult(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	km.domain = "example.test"
+	bs := newFakeBlobStore()
+	p, _, err := New(context.Background(), km, bs, nil, &Config{SubscriberID: "k1"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	req := definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: validCatalogJSON("CAT-1")}},
+	}
+	first, err := p.Publish(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first Publish: %v", err)
+	}
+	if len(first.Catalogs) != 1 || first.Catalogs[0].Mode != "baseline" {
+		t.Fatalf("expected a fresh baseline on first publish, got %+v", first.Catalogs)
+	}
+	if bs.data == nil || len(bs.data) == 0 {
+		t.Fatal("expected Publish to persist something to the blob store")
+	}
+
+	second, err := p.Publish(context.Background(), req)
+	if err != nil {
+		t.Fatalf("second Publish: %v", err)
+	}
+	if len(second.Catalogs) != 1 || second.Catalogs[0].Changed {
+		t.Fatalf("expected an unchanged outcome on second publish of identical content (prior state loaded from storage), got %+v", second.Catalogs)
+	}
+}
+
+// TestPublish_RegistryLinkCheckAddsWarning verifies Publish's own wiring of
+// the registry catalog-index-link check into PublishResult.Warnings when
+// CheckCatalogIndexLink is configured and the link is missing.
+func TestPublish_RegistryLinkCheckAddsWarning(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	km.domain = "example.test"
+	rm := &fakeRegistryMetadata{nodeRecord: &model.SubscriberRecord{}}
+	p, _, err := New(context.Background(), km, newFakeBlobStore(), rm, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: validCatalogJSON("CAT-1")}},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %+v", result.Warnings)
+	}
+}
+
+// TestPublish_RegistryLinkCheckNoWarningWhenLinked mirrors the above but
+// with the index URL already present -- Publish should produce no warning.
+func TestPublish_RegistryLinkCheckNoWarningWhenLinked(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	km.domain = "example.test"
+	p0, _, _ := New(context.Background(), km, newFakeBlobStore(), nil, &Config{SubscriberID: "k1"})
+	indexURL := p0.IndexURL()
+
+	rm := &fakeRegistryMetadata{nodeRecord: &model.SubscriberRecord{
+		MetaArrays: map[string][]string{catalogIndexMetaKey: {indexURL}},
+	}}
+	p, _, err := New(context.Background(), km, newFakeBlobStore(), rm, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: validCatalogJSON("CAT-1")}},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if len(result.Warnings) != 0 {
+		t.Fatalf("expected no warnings, got %+v", result.Warnings)
+	}
+	wantNodeID := "k1/" + dediSubscriberWildcardRegistry + "/k1"
+	if rm.lastNodeID != wantNodeID {
+		t.Errorf("LookupNode called with %q, want %q", rm.lastNodeID, wantNodeID)
 	}
 }
 
@@ -194,5 +365,98 @@ func TestDecodeKeyset_Valid(t *testing.T) {
 	}
 	if !gotPriv.Equal(priv) || !gotPub.Equal(pub) {
 		t.Error("decoded keys do not match input")
+	}
+}
+
+func testPublisher(t *testing.T) *Publisher {
+	t.Helper()
+	km := newFakeKeyManager(t, "k1")
+	km.domain = "example.test"
+	p, _, err := New(context.Background(), km, newFakeBlobStore(), nil, &Config{SubscriberID: "k1"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return p
+}
+
+func TestDecodeRequest_MethodNotAllowed(t *testing.T) {
+	p := testPublisher(t)
+	req := httptest.NewRequest(http.MethodGet, "/catalog/publish", nil)
+	if _, err := p.DecodeRequest(context.Background(), req); err == nil {
+		t.Fatal("expected error for non-POST method")
+	}
+}
+
+func TestDecodeRequest_InvalidJSON(t *testing.T) {
+	p := testPublisher(t)
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader("not json"))
+	if _, err := p.DecodeRequest(context.Background(), req); err == nil {
+		t.Fatal("expected error for invalid JSON body")
+	}
+}
+
+func TestDecodeRequest_RejectsEmptyRequest(t *testing.T) {
+	p := testPublisher(t)
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(`{}`))
+	if _, err := p.DecodeRequest(context.Background(), req); err == nil {
+		t.Fatal("expected error when message.catalogs and retire are both empty")
+	}
+}
+
+func TestDecodeRequest_AcceptsRetireOnlyRequest(t *testing.T) {
+	p := testPublisher(t)
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(`{"retire":["example.test/CAT-OLD"]}`))
+	got, err := p.DecodeRequest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("DecodeRequest: %v", err)
+	}
+	if len(got.Retire) != 1 || got.Retire[0] != "example.test/CAT-OLD" {
+		t.Fatalf("unexpected retire list: %+v", got.Retire)
+	}
+}
+
+func TestDecodeRequest_PublishDirectivesVisibleToMapsToNetworkIds(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{
+		"catalogs":[{"id":"example.test/CAT-1","descriptor":{"name":"Test"},"provider":{},"resources":[]}],
+		"publishDirectives":[{"catalogId":"example.test/CAT-1","visibleTo":["retail-network","mobility-network"]}]
+	}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	got, err := p.DecodeRequest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("DecodeRequest: %v", err)
+	}
+	if len(got.Catalogs) != 1 {
+		t.Fatalf("expected 1 catalog, got %+v", got.Catalogs)
+	}
+	c := got.Catalogs[0]
+	if c.CatalogID != "example.test/CAT-1" || len(c.NetworkIds) != 2 || c.NetworkIds[0] != "retail-network" || c.NetworkIds[1] != "mobility-network" {
+		t.Fatalf("unexpected catalog submission: %+v", c)
+	}
+}
+
+func TestDecodeRequest_MissingCatalogIDIsPreservedForNonFatalRejection(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"descriptor":{"name":"missing id"}}]}}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	got, err := p.DecodeRequest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("DecodeRequest: %v", err)
+	}
+	if len(got.Catalogs) != 1 || got.Catalogs[0].CatalogID != "" {
+		t.Fatalf("expected 1 catalog with empty CatalogID (so Publish reports a non-fatal error), got %+v", got.Catalogs)
+	}
+}
+
+func TestDecodeRequest_ForceBaseline(t *testing.T) {
+	p := testPublisher(t)
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"id":"example.test/CAT-1"}]},"forceBaseline":true}`
+	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
+	got, err := p.DecodeRequest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("DecodeRequest: %v", err)
+	}
+	if !got.ForceBaseline {
+		t.Fatal("expected ForceBaseline to be decoded as true")
 	}
 }

@@ -102,7 +102,11 @@ func (m *MockPluginManager) PayloadStore(_ context.Context, _ definition.Cache, 
 	return nil, nil
 }
 
-func (m *MockPluginManager) CatalogPublisher(_ context.Context, _ definition.KeyManager, _ *plugin.Config) (definition.CatalogPublisher, error) {
+func (m *MockPluginManager) CatalogPublisher(_ context.Context, _ definition.KeyManager, _ definition.CatalogBlobStore, _ definition.RegistryMetadataLookup, _ *plugin.Config) (definition.CatalogPublisher, error) {
+	return nil, nil
+}
+
+func (m *MockPluginManager) CatalogBlobStore(_ context.Context, _ *plugin.Config) (definition.CatalogBlobStore, error) {
 	return nil, nil
 }
 

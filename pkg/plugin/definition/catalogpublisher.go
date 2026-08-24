@@ -3,6 +3,7 @@ package definition
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"time"
 )
 
@@ -153,6 +154,16 @@ type PublishRequest struct {
 	// produce a change file instead of a fresh baseline. A submitted
 	// catalogId absent from this map is always published as a new
 	// baseline, same as when ForceBaseline is set.
+	//
+	// The catalogpublisher plugin implementation ignores this field: since
+	// Publish now owns the full publish operation end to end (see Publish's
+	// doc comment), it loads its own prior state from its configured
+	// CatalogBlobStore rather than trusting a caller-supplied snapshot. The
+	// field stays on this struct as a caller-supplied *override* path for a
+	// future/alternate CatalogPublisher implementation that might want one
+	// (e.g. a test double, or a caller that legitimately owns storage
+	// itself) -- deciding whether to formally repurpose or remove it is a
+	// separate, later, better-scoped change.
 	PriorState map[string]PriorCatalogState
 
 	// Retire marks these catalogIds RETIRED this call: a tombstone entry
@@ -285,6 +296,14 @@ type PublishResult struct {
 	// "latest" directly (never revisiting the index) can still learn the
 	// catalog is gone.
 	RetiredLatest []RetiredCatalogFile
+
+	// Warnings carries non-fatal operational notices produced alongside an
+	// otherwise-successful Publish call -- e.g. the registry catalog-index-
+	// link check reporting that this node's DeDi record doesn't yet list
+	// its catalog index. Distinct from Errors: an entry here is never a
+	// per-catalog business failure, just something an operator should look
+	// at.
+	Warnings []string
 }
 
 // RetirementOutcome is one retired catalog's signed tombstone entry --
@@ -310,19 +329,47 @@ type RetiredCatalogFile struct {
 // CatalogPublisher turns a publisher's catalog submissions into a catalog
 // index whose file entries carry their own signatures. It is the producing
 // side of the chain definition.Crawler consumes and verifies.
+//
+// Publish now owns the full publish operation end to end, not just the
+// diffing/signing math: it loads this catalog's prior state from its own
+// configured CatalogBlobStore, delegates diffing/signing/versioning to
+// pkg/catalog/publisher, persists the result back to that same storage
+// backend, and -- if configured -- checks whether this node's DeDi registry
+// record already links its catalog index, surfacing a miss as a
+// PublishResult.Warnings entry rather than failing the call. This replaces
+// the earlier design where Publish was a pure function of (submissions,
+// prior state) -> result with no storage of its own, and a caller (the
+// generic HTTP handler) owned loading/persisting state around it -- that
+// responsibility has moved into the plugin so the handler can stay fully
+// generic.
 type CatalogPublisher interface {
 	Publish(ctx context.Context, req PublishRequest) (PublishResult, error)
+
+	// DecodeRequest parses and validates an inbound HTTP request into a
+	// PublishRequest: method check, body read, wire-format JSON decoding,
+	// referential/business validation, and any request-shape-specific
+	// schema checks (e.g. NFH-014's schemaTypes). Any error here means the
+	// request itself is malformed or invalid, surfaced by the generic
+	// handler as a transport-level 400 -- never a partial/business failure
+	// (that's what Publish's own PublishError/Warnings are for).
+	DecodeRequest(ctx context.Context, r *http.Request) (PublishRequest, error)
 
 	// IndexURL returns the public location this publisher's catalog index
 	// is (or will be) reachable at -- callers use this to check the
 	// publisher's own DeDi registry record for a matching
 	// meta.catalog_index_url before publishing (see
-	// catalogPublishHandler.go), without this package knowing anything
-	// about DeDi or registries itself.
+	// pkg/plugin/implementation/catalogpublisher/registrylink.go), without
+	// this package knowing anything about DeDi or registries itself.
 	IndexURL() string
 }
 
-// CatalogPublisherProvider is the plugin constructor interface.
+// CatalogPublisherProvider is the plugin constructor interface. blobStore
+// is required (non-nil): Publish always persists what it produces
+// somewhere, so a CatalogPublisher implementation cannot be constructed
+// without one. registryMetadata is optional -- nil when the registry
+// catalog-index-link check isn't configured (or the configured Registry
+// plugin doesn't implement RegistryMetadataLookup); a non-nil value is only
+// ever used to run that check.
 type CatalogPublisherProvider interface {
-	New(ctx context.Context, keyManager KeyManager, config map[string]string) (CatalogPublisher, func() error, error)
+	New(ctx context.Context, keyManager KeyManager, blobStore CatalogBlobStore, registryMetadata RegistryMetadataLookup, config map[string]string) (CatalogPublisher, func() error, error)
 }
