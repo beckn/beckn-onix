@@ -15,22 +15,34 @@ func (fakeRegistry) Lookup(context.Context, *model.Subscription) ([]model.Subscr
 	return nil, nil
 }
 
+func (fakeRegistry) LookupRegistry(context.Context, string, string) (*model.RegistryMetadata, error) {
+	return nil, nil
+}
+
+func (fakeRegistry) LookupNode(context.Context, string) (*model.SubscriberRecord, error) {
+	return nil, nil
+}
+
+func (fakeRegistry) QueryByNetwork(context.Context, string) ([]model.SubscriberRecord, error) {
+	return nil, nil
+}
+
 func TestProvider_New_RequiresRegistry(t *testing.T) {
-	_, _, err := Provider{}.New(context.Background(), nil, map[string]string{cfgDBDSN: "x", cfgDiscoveryURL: "https://x"})
+	_, _, err := Provider{}.New(context.Background(), nil, fakeRegistry{}, map[string]string{cfgDBDSN: "x", cfgDiscoveryURL: "https://x"})
 	if err == nil {
 		t.Fatal("expected an error with no registry configured")
 	}
 }
 
 func TestProvider_New_RequiresDBDSN(t *testing.T) {
-	_, _, err := Provider{}.New(context.Background(), fakeRegistry{}, map[string]string{cfgDiscoveryURL: "https://x"})
+	_, _, err := Provider{}.New(context.Background(), fakeRegistry{}, fakeRegistry{}, map[string]string{cfgDiscoveryURL: "https://x"})
 	if err == nil {
 		t.Fatal("expected an error with no dbDsn configured")
 	}
 }
 
 func TestProvider_New_RequiresDiscoveryURL(t *testing.T) {
-	_, _, err := Provider{}.New(context.Background(), fakeRegistry{}, map[string]string{cfgDBDSN: "postgres://x"})
+	_, _, err := Provider{}.New(context.Background(), fakeRegistry{}, fakeRegistry{}, map[string]string{cfgDBDSN: "postgres://x"})
 	if err == nil {
 		t.Fatal("expected an error with no discoveryPushUrl configured")
 	}
@@ -41,7 +53,7 @@ func TestProvider_New_BadDSNFailsFast(t *testing.T) {
 	// only surfaces on Migrate -- which is exactly what New calls before
 	// returning, so a bad DSN should fail construction, not surface later at
 	// Start.
-	_, _, err := Provider{}.New(context.Background(), fakeRegistry{}, map[string]string{
+	_, _, err := Provider{}.New(context.Background(), fakeRegistry{}, fakeRegistry{}, map[string]string{
 		cfgDBDSN: "postgres://user:pass@nonexistent-host-xyz.invalid:5432/db?connect_timeout=1", cfgDiscoveryURL: "https://x",
 	})
 	if err == nil {

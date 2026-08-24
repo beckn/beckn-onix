@@ -25,6 +25,10 @@ func (stubRegistry) LookupNode(context.Context, string) (*model.SubscriberRecord
 	return nil, nil
 }
 
+func (stubRegistry) QueryByNetwork(context.Context, string) ([]model.SubscriberRecord, error) {
+	return nil, nil
+}
+
 func TestManifestLoaderProvider_New(t *testing.T) {
 	ctx := context.Background()
 	provider := manifestLoaderProvider{}

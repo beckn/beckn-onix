@@ -195,9 +195,9 @@ func (c *DeDiRegistryClient) parseSubscriptionFromData(ctx context.Context, data
 			Type:         detailsType,
 		},
 		SigningPublicKey: signingPublicKey,
-		EncrPublicKey:   encrPublicKey,
-		Created:         parseTime(createdAt),
-		Updated:         parseTime(updatedAt),
+		EncrPublicKey:    encrPublicKey,
+		Created:          parseTime(createdAt),
+		Updated:          parseTime(updatedAt),
 	}, nil
 }
 
@@ -439,6 +439,78 @@ func (c *DeDiRegistryClient) LookupNode(ctx context.Context, nodeID string) (*mo
 		Meta:         meta,
 		MetaArrays:   metaArrays,
 	}, nil
+}
+
+// queryEnvelope is the /query response shape: a list of records, one per
+// network participant, as opposed to /lookup's single-record "data" object.
+type queryEnvelope struct {
+	Data struct {
+		Records []map[string]any `json:"records"`
+	} `json:"data"`
+}
+
+// QueryByNetwork implements RegistryMetadataLookup — calls the DeDi /query endpoint
+// for networkID and returns one SubscriberRecord per live participant record.
+// A record that isn't state=="live", or whose details don't parse, is skipped
+// rather than failing the whole query -- consistent with LookupNode/parseMetaFromData's
+// skip-bad-record handling elsewhere in this file. Not cached: this is a bulk
+// discovery read, not the hot per-request signing-key lookup Lookup caches.
+func (c *DeDiRegistryClient) QueryByNetwork(ctx context.Context, networkID string) ([]model.SubscriberRecord, error) {
+	if networkID == "" {
+		return nil, fmt.Errorf("networkID is required for DeDi query")
+	}
+
+	queryURL := fmt.Sprintf("%s/query/%s", c.config.URL, networkID)
+
+	httpReq, err := retryablehttp.NewRequest("GET", queryURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create network query request: %w", err)
+	}
+	httpReq = httpReq.WithContext(ctx)
+
+	log.Debugf(ctx, "Making DeDi network query request to: %s", queryURL)
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send DeDi network query request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read network query response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Errorf(ctx, nil, "DeDi network query request failed with status: %s, response: %s", resp.Status, string(body))
+		return nil, fmt.Errorf("DeDi network query request failed with status: %s", resp.Status)
+	}
+
+	var envelope queryEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal network query response body: %w", err)
+	}
+
+	records := make([]model.SubscriberRecord, 0, len(envelope.Data.Records))
+	for i, data := range envelope.Data.Records {
+		state, _ := data["state"].(string)
+		if state != "live" {
+			continue
+		}
+		subscription, err := c.parseSubscriptionFromData(ctx, data, false)
+		if err != nil {
+			log.Warnf(ctx, "Skipping network query record at index %d for network %q: %v", i, networkID, err)
+			continue
+		}
+		meta, metaArrays := parseMetaFromData(ctx, data)
+		records = append(records, model.SubscriberRecord{
+			Subscription: *subscription,
+			Meta:         meta,
+			MetaArrays:   metaArrays,
+		})
+	}
+
+	log.Debugf(ctx, "DeDi network query successful for networkID: %s, live records: %d", networkID, len(records))
+	return records, nil
 }
 
 // parseTime converts string timestamp to time.Time

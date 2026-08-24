@@ -28,10 +28,15 @@ type Crawler interface {
 // CrawlerProvider initializes a new Crawler. It receives a RegistryLookup
 // (used to resolve publisher signing keys -- catalog index entries and files
 // self-sign, and the registry is the key distribution channel, exactly as
-// signvalidator verifies transport signatures) and the plugin's config map.
+// signvalidator verifies transport signatures), a RegistryMetadataLookup
+// (used to resolve each configured network's member providers via
+// QueryByNetwork, for registry-backed discovery), and the plugin's config
+// map.
 //
 // RegistryLookup is REQUIRED for an enabled crawler: there is deliberately
-// no per-deployment trusted-key configuration.
+// no per-deployment trusted-key configuration. RegistryMetadataLookup is
+// REQUIRED whenever registry-backed discovery (the "networks" config) is
+// used.
 type CrawlerProvider interface {
-	New(ctx context.Context, registry RegistryLookup, config map[string]string) (Crawler, func() error, error)
+	New(ctx context.Context, registry RegistryLookup, metadataLookup RegistryMetadataLookup, config map[string]string) (Crawler, func() error, error)
 }

@@ -45,12 +45,12 @@ func (m *mockCache) Delete(ctx context.Context, key string) error { delete(m.sto
 func (m *mockCache) Clear(ctx context.Context) error              { m.store = map[string]string{}; return nil }
 
 type mockRegistry struct {
-	meta        *model.RegistryMetadata
-	err         error
-	calls       int
-	nodeRecord  *model.SubscriberRecord
-	nodeErr     error
-	nodeCalls   int
+	meta       *model.RegistryMetadata
+	err        error
+	calls      int
+	nodeRecord *model.SubscriberRecord
+	nodeErr    error
+	nodeCalls  int
 }
 
 func (m *mockRegistry) LookupNode(_ context.Context, _ string) (*model.SubscriberRecord, error) {
@@ -61,6 +61,10 @@ func (m *mockRegistry) LookupNode(_ context.Context, _ string) (*model.Subscribe
 func (m *mockRegistry) LookupRegistry(ctx context.Context, namespaceIdentifier, registryName string) (*model.RegistryMetadata, error) {
 	m.calls++
 	return m.meta, m.err
+}
+
+func (m *mockRegistry) QueryByNetwork(context.Context, string) ([]model.SubscriberRecord, error) {
+	return nil, nil
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -203,8 +207,8 @@ func TestGetByNetworkIDResolvesMetadata(t *testing.T) {
 			NamespaceIdentifier: "nfo.example.org",
 			RegistryName:        "network",
 			RawMeta: map[string]string{
-				"manifestUrl":                  "https://example.org/manifest",
-				"manifestSignatureUrl":        "https://example.org/manifest.sig",
+				"manifestUrl":               "https://example.org/manifest",
+				"manifestSignatureUrl":      "https://example.org/manifest.sig",
 				"signingPublicKeyLookupUrl": "https://example.org/pubkey",
 			},
 		},
@@ -300,8 +304,8 @@ func TestGetByNetworkID_CacheWriteErrorStillReturnsManifest(t *testing.T) {
 			NamespaceIdentifier: "nfo.example.org",
 			RegistryName:        "network",
 			RawMeta: map[string]string{
-				"manifestUrl":                  "https://example.org/manifest",
-				"manifestSignatureUrl":        "https://example.org/manifest.sig",
+				"manifestUrl":               "https://example.org/manifest",
+				"manifestSignatureUrl":      "https://example.org/manifest.sig",
 				"signingPublicKeyLookupUrl": "https://example.org/pubkey",
 			},
 		},
@@ -473,16 +477,16 @@ func TestGetByNetworkID_DisableCacheBypassesAndDoesNotStore(t *testing.T) {
 		SigningPublicKeyLookupURL: "https://example.org/pubkey",
 	}
 	cache := &mockCache{store: map[string]string{
-		networkCacheKey("nfo.example.org/network"):  `{"network_id":"nfo.example.org/network","content":"c3RhbGU=","verified":true}`,
-		metadataCacheKey(staleMetadata2): `{"content":"c3RhbGU=","verified":true}`,
+		networkCacheKey("nfo.example.org/network"): `{"network_id":"nfo.example.org/network","content":"c3RhbGU=","verified":true}`,
+		metadataCacheKey(staleMetadata2):           `{"content":"c3RhbGU=","verified":true}`,
 	}}
 	registry := &mockRegistry{
 		meta: &model.RegistryMetadata{
 			NamespaceIdentifier: "nfo.example.org",
 			RegistryName:        "network",
 			RawMeta: map[string]string{
-				"manifestUrl":                  "https://example.org/manifest",
-				"manifestSignatureUrl":        "https://example.org/manifest.sig",
+				"manifestUrl":               "https://example.org/manifest",
+				"manifestSignatureUrl":      "https://example.org/manifest.sig",
 				"signingPublicKeyLookupUrl": "https://example.org/pubkey",
 			},
 		},
@@ -538,15 +542,15 @@ func TestGetByNetworkID_ForceRefreshOnStartBypassesOnce(t *testing.T) {
 	}
 	cache := &mockCache{store: map[string]string{
 		networkCacheKey("nfo.example.org/network"): `{"network_id":"nfo.example.org/network","content":"c3RhbGU=","verified":true}`,
-		metadataCacheKey(metadata):                        `{"content":"c3RhbGU=","verified":true}`,
+		metadataCacheKey(metadata):                 `{"content":"c3RhbGU=","verified":true}`,
 	}}
 	registry := &mockRegistry{
 		meta: &model.RegistryMetadata{
 			NamespaceIdentifier: "nfo.example.org",
 			RegistryName:        "network",
 			RawMeta: map[string]string{
-				"manifestUrl":                  metadata.ManifestURL,
-				"manifestSignatureUrl":        metadata.ManifestSignatureURL,
+				"manifestUrl":               metadata.ManifestURL,
+				"manifestSignatureUrl":      metadata.ManifestSignatureURL,
 				"signingPublicKeyLookupUrl": metadata.SigningPublicKeyLookupURL,
 			},
 		},

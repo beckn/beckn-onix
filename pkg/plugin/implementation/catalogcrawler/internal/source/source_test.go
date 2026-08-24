@@ -3,10 +3,9 @@ package source
 import (
 	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"testing"
-	"time"
+
+	"github.com/beckn-one/beckn-onix/pkg/model"
 )
 
 func TestConfigSource_DedupsByURL(t *testing.T) {
@@ -71,54 +70,60 @@ func TestRegistrySource_LookupErrorPropagates(t *testing.T) {
 	}
 }
 
-func TestDediQueryClient_ParsesNativeArrayMeta(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"data":{"records":[
-			{"state":"live","details":{"subscriber_id":"p1"},"meta":{"catalog_index_urls":[{"url":"https://a/index"},{"url":"https://b/index"}]}},
-			{"state":"inactive","details":{"subscriber_id":"p2"},"meta":{"catalog_index_urls":[{"url":"https://c/index"}]}},
-			{"state":"live","details":null,"meta":null}
-		]}}`))
-	}))
-	defer srv.Close()
+type fakeMetadataLookup struct {
+	byNetwork map[string][]model.SubscriberRecord
+	err       error
+}
 
-	c := NewDediQueryClient(srv.URL, 5*time.Second)
+func (f fakeMetadataLookup) LookupRegistry(_ context.Context, _, _ string) (*model.RegistryMetadata, error) {
+	panic("not used by metadataLookupClient")
+}
+
+func (f fakeMetadataLookup) LookupNode(_ context.Context, _ string) (*model.SubscriberRecord, error) {
+	panic("not used by metadataLookupClient")
+}
+
+func (f fakeMetadataLookup) QueryByNetwork(_ context.Context, networkID string) ([]model.SubscriberRecord, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.byNetwork[networkID], nil
+}
+
+func TestMetadataLookupClient_MapsRecordsToProviders(t *testing.T) {
+	lookup := fakeMetadataLookup{byNetwork: map[string][]model.SubscriberRecord{
+		"beckn.one/testnet": {
+			{
+				Subscription: model.Subscription{Subscriber: model.Subscriber{SubscriberID: "p1"}},
+				MetaArrays:   map[string][]string{"catalog_index_urls": {"https://a/index", "https://b/index"}},
+			},
+			{
+				Subscription: model.Subscription{Subscriber: model.Subscriber{SubscriberID: "p2"}},
+				MetaArrays:   map[string][]string{"catalog_index_urls": {""}},
+			},
+			{
+				Subscription: model.Subscription{Subscriber: model.Subscriber{SubscriberID: "p3"}},
+			},
+		},
+	}}
+	c := NewMetadataLookupClient(lookup)
 	provs, err := c.Providers(context.Background(), "beckn.one/testnet")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(provs) != 2 || provs[0].IndexURL != "https://a/index" || provs[1].IndexURL != "https://b/index" {
-		t.Fatalf("providers = %+v, want two live-node URLs (inactive/null-meta records excluded)", provs)
+		t.Fatalf("providers = %+v, want two entries from p1's catalog_index_urls (empty URL and p2/p3 with none excluded)", provs)
+	}
+	if provs[0].ParticipantID != "p1" || provs[1].ParticipantID != "p1" {
+		t.Fatalf("providers = %+v, want both attributed to p1", provs)
 	}
 }
 
-func TestDediQueryClient_ParsesDoubleEncodedMeta(t *testing.T) {
-	// catalog_index_urls as a JSON string containing the array, not a native
-	// array -- some records double-encode it.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"data":{"records":[
-			{"state":"live","details":{"subscriber_id":"p1"},"meta":{"catalog_index_urls":"[{\"url\":\"https://a/index\"}]"}}
-		]}}`))
-	}))
-	defer srv.Close()
-
-	c := NewDediQueryClient(srv.URL, 5*time.Second)
-	provs, err := c.Providers(context.Background(), "beckn.one/testnet")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(provs) != 1 || provs[0].IndexURL != "https://a/index" {
-		t.Fatalf("providers = %+v, want one entry from the double-encoded shape", provs)
-	}
-}
-
-func TestDediQueryClient_NonOKStatusIsError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	c := NewDediQueryClient(srv.URL, 5*time.Second)
-	if _, err := c.Providers(context.Background(), "beckn.one/testnet"); err == nil {
-		t.Fatal("expected an error for a 500 response")
+func TestMetadataLookupClient_LookupErrorPropagates(t *testing.T) {
+	wantErr := errors.New("registry down")
+	lookup := fakeMetadataLookup{err: wantErr}
+	c := NewMetadataLookupClient(lookup)
+	if _, err := c.Providers(context.Background(), "beckn.one/testnet"); !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want wrapping %v", err, wantErr)
 	}
 }
