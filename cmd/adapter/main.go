@@ -19,6 +19,7 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/catalogcrawler"
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"github.com/beckn-one/beckn-onix/pkg/version"
 	_ "go.uber.org/automaxprocs"
@@ -147,37 +148,42 @@ func initAppPlugins(ctx context.Context, mgr *plugin.Manager, cfg ApplicationPlu
 // to be constructed and started once here rather than left for a module to
 // load. Returns a no-op closer when Crawler isn't configured, so the caller
 // can unconditionally append the result to its shutdown closers.
-func initCrawler(ctx context.Context, mgr *plugin.Manager, cfg ApplicationPlugins) (func(), error) {
+// initCrawler returns the started Crawler instance (nil if unconfigured) in
+// addition to its shutdown closer, so the caller can wire an on-demand
+// crawl-trigger HTTP handler to this same running instance --
+// Crawler.CrawlRegistry requires the instance it's called on to already be
+// started.
+func initCrawler(ctx context.Context, mgr *plugin.Manager, cfg ApplicationPlugins) (definition.Crawler, func(), error) {
 	if cfg.Crawler == nil {
 		log.Debugf(ctx, "Skipping Crawler plugin: not configured")
-		return func() {}, nil
+		return nil, func() {}, nil
 	}
 	if cfg.Registry == nil {
-		return nil, fmt.Errorf("crawler plugin configured without a registry plugin (catalog signatures are verified against the publisher's registry key)")
+		return nil, nil, fmt.Errorf("crawler plugin configured without a registry plugin (catalog signatures are verified against the publisher's registry key)")
 	}
 
 	var cache definition.Cache
 	if cfg.Cache != nil {
 		c, err := mgr.Cache(ctx, cfg.Cache)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load Cache plugin (%s): %w", cfg.Cache.ID, err)
+			return nil, nil, fmt.Errorf("failed to load Cache plugin (%s): %w", cfg.Cache.ID, err)
 		}
 		cache = c
 	}
 	registry, err := mgr.Registry(ctx, cache, cfg.Registry)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load Registry plugin (%s): %w", cfg.Registry.ID, err)
+		return nil, nil, fmt.Errorf("failed to load Registry plugin (%s): %w", cfg.Registry.ID, err)
 	}
 	crawler, err := mgr.Crawler(ctx, registry, cfg.Crawler)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load Crawler plugin (%s): %w", cfg.Crawler.ID, err)
+		return nil, nil, fmt.Errorf("failed to load Crawler plugin (%s): %w", cfg.Crawler.ID, err)
 	}
 	if err := crawler.Start(ctx); err != nil {
-		return nil, fmt.Errorf("failed to start Crawler plugin (%s): %w", cfg.Crawler.ID, err)
+		return nil, nil, fmt.Errorf("failed to start Crawler plugin (%s): %w", cfg.Crawler.ID, err)
 	}
 	log.Infof(ctx, "Crawler plugin %s started", cfg.Crawler.ID)
 
-	return func() {
+	return crawler, func() {
 		if err := crawler.Stop(); err != nil {
 			log.Errorf(context.Background(), err, "Failed to stop crawler plugin")
 		}
@@ -228,11 +234,14 @@ func run(ctx context.Context, configPath string) error {
 	}
 
 	// Start the catalog crawler's background polling loop, if configured.
-	crawlerCloser, err := initCrawler(ctx, mgr, cfg.Plugins)
+	crawler, crawlerCloser, err := initCrawler(ctx, mgr, cfg.Plugins)
 	if err != nil {
 		return fmt.Errorf("failed to initialize crawler: %w", err)
 	}
 	closers = append(closers, crawlerCloser)
+	if crawler != nil {
+		catalogcrawler.RegisterHandler(crawler)
+	}
 
 	// Initialize HTTP server.
 	log.Infof(ctx, "Initializing HTTP server")

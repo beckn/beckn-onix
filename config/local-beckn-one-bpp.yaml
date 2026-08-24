@@ -34,6 +34,32 @@ plugins:
       timeInterval: "5"
       auditFieldsConfig: "/app/config/audit-fields.yaml" # this can be git url
       cacheTTL: "3600"
+  # Catalog crawler: a background job (see
+  # pkg/plugin/implementation/catalogcrawler/README.md), not a per-module
+  # plugin -- started once at process startup, independent of any request
+  # path. registry/cache here are the crawler's own key-distribution/lookup
+  # dependencies, separate from any module's own plugins.registry below.
+  # Uncomment and fill in dbDsn/discoveryPushUrl to enable it; the modules.
+  # crawl handler below is a no-op unless this is configured.
+  # registry:
+  #   id: dediregistry
+  #   config:
+  #     timeout: 10
+  #     retry_max: 3
+  #     retry_wait_min: 100ms
+  #     retry_wait_max: 500ms
+  # cache:
+  #   id: cache
+  #   config:
+  #     addr: redis:6379
+  # crawler:
+  #   id: catalogcrawler
+  #   config:
+  #     dbDsn: "postgres://user:pass@localhost:5432/catalogcrawler"
+  #     networks: "example.network.production"
+  #     discoveryPushUrl: "https://discovery.example.org/beckn/catalog/push"
+  #     participantId: "bpp.example.org"
+  #     bppUri: "https://bpp.example.org"
 modules:
   - name: bppTxnReceiver
     path: /bpp/receiver/
@@ -269,3 +295,15 @@ modules:
           id: schemav2validator
           config:
             cacheTTL: "3600"
+
+  # crawl: DS-internal on-demand trigger for the catalog crawler configured
+  # under the top-level plugins.crawler above (see its README). Unsigned,
+  # same-operator call -- no validateSign/addRoute/signAck. It calls
+  # CrawlRegistry on the single running Crawler instance directly, so it
+  # takes no plugins of its own; the request body is {networkId} or
+  # {networkIds: [...]}, and it 202s with a runId once the pass is queued.
+  # A no-op until plugins.crawler above is configured and running.
+  - name: crawl
+    path: /crawl
+    handler:
+      type: catalogCrawl
