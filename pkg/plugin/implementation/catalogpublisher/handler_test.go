@@ -152,6 +152,9 @@ func (m *catalogPublishTestManager) CatalogPublisher(ctx context.Context, km def
 	m.capturedPublisherCfg = cfg
 	return m.publisher, nil
 }
+func (m *catalogPublishTestManager) Crawler(context.Context, definition.RegistryLookup, *plugin.Config) (definition.Crawler, error) {
+	panic("unused")
+}
 func (m *catalogPublishTestManager) Middleware(context.Context, *plugin.Config) (func(http.Handler) http.Handler, error) {
 	panic("unused")
 }

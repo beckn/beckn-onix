@@ -9,12 +9,20 @@ import (
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/core/module/handler"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
 type fakeCrawler struct {
 	runID      string
 	err        error
 	gotNetwork []string
+
+	// statusRows/statusErr back Status; gotStatusSubscriber/gotStatusCatalog
+	// record its last call's arguments for assertions.
+	statusRows          []definition.CrawlStatus
+	statusErr           error
+	gotStatusSubscriber string
+	gotStatusCatalog    string
 }
 
 func (f *fakeCrawler) Start(ctx context.Context) error { return nil }
@@ -25,6 +33,13 @@ func (f *fakeCrawler) CrawlRegistry(ctx context.Context, networkIDs []string) (s
 		return "", f.err
 	}
 	return f.runID, nil
+}
+func (f *fakeCrawler) Status(ctx context.Context, subscriberID, catalogID string) ([]definition.CrawlStatus, error) {
+	f.gotStatusSubscriber, f.gotStatusCatalog = subscriberID, catalogID
+	if f.statusErr != nil {
+		return nil, f.statusErr
+	}
+	return f.statusRows, nil
 }
 
 func TestNewHandler_NoCrawlerErrors(t *testing.T) {

@@ -381,7 +381,7 @@ func (v *validateAckSignatureStep) RunOnResponse(ctx *model.StepContext, rctx *m
 	// so the header value is the one sent to the upstream BPP/BAP.
 	outboundAuth := extractAuthSignature(ctx.Request.Header.Get(model.AuthHeaderSubscriber))
 
-	parsed, err := parseHeader(sigHeader)
+	parsed, err := ParseAuthHeader(sigHeader)
 	if err != nil {
 		log.Warnf(ctx, "validateAckSign: failed to parse Signature header keyId: %v — degraded trust", err)
 		return nil

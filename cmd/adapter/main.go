@@ -242,6 +242,12 @@ func run(ctx context.Context, configPath string) error {
 	if crawler != nil {
 		catalogcrawler.RegisterHandler(crawler)
 	}
+	// Unlike RegisterHandler above, this doesn't need the running
+	// singleton -- a catalogCrawlStatus module builds its own Crawler
+	// instance from its own config -- so it's registered unconditionally,
+	// independent of whether plugins.crawler (the background job) is
+	// configured at all.
+	catalogcrawler.RegisterStatusHandler()
 
 	// Initialize HTTP server.
 	log.Infof(ctx, "Initializing HTTP server")

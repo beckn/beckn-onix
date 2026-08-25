@@ -27,6 +27,21 @@ func RegisterHandler(crawler definition.Crawler) {
 	})
 }
 
+// RegisterStatusHandler registers NewStatusHandler as the Provider for
+// HandlerTypeCatalogCrawlStatus. Unlike RegisterHandler, this takes no
+// singleton -- NewStatusHandler constructs its own (never-Started) Crawler
+// instance per module from PluginManager+config, the same as any other
+// per-request handler -- so this could in principle live in core/module's
+// static handlerProviders map like catalogPublish does. It doesn't, because
+// this package already imports core/module (for RegisterHandler above);
+// core/module importing this package back would be a cycle. Call this once
+// from main.go, unconditionally (not gated on the top-level crawler being
+// configured -- a catalogCrawlStatus module has its own, separate
+// plugins.crawler config and doesn't depend on the background one running).
+func RegisterStatusHandler() {
+	module.RegisterProvider(handler.HandlerTypeCatalogCrawlStatus, NewStatusHandler)
+}
+
 // crawlRequest is this endpoint's own request shape -- not a beckn.yaml
 // action, since this is a DS-internal trigger, not a network-facing call.
 // NetworkID and NetworkIDs are both accepted and merged, matching the

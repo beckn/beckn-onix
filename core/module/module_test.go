@@ -97,6 +97,10 @@ func (m *mockPluginManager) CatalogBlobStore(_ context.Context, _ *plugin.Config
 	return nil, nil
 }
 
+func (m *mockPluginManager) Crawler(_ context.Context, _ definition.RegistryLookup, _ *plugin.Config) (definition.Crawler, error) {
+	return nil, nil
+}
+
 func (m *mockPluginManager) SchemaVersionMediator(_ context.Context, _ definition.ManifestLoader, _ *plugin.Config) (definition.SchemaVersionMediator, error) {
 	return nil, nil
 }

@@ -31,6 +31,7 @@ type PluginManager interface {
 	PayloadStore(ctx context.Context, cache definition.Cache, namespace string, cfg *plugin.Config) (definition.PayloadStore, error)
 	CatalogPublisher(ctx context.Context, km definition.KeyManager, blobStore definition.CatalogBlobStore, registryMetadata definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.CatalogPublisher, error)
 	CatalogBlobStore(ctx context.Context, cfg *plugin.Config) (definition.CatalogBlobStore, error)
+	Crawler(ctx context.Context, registry definition.RegistryLookup, cfg *plugin.Config) (definition.Crawler, error)
 }
 
 // Type defines different handler types for processing requests.
@@ -55,6 +56,18 @@ const (
 	// main.go starts as a background job -- CrawlRegistry requires that
 	// instance to already be running.
 	HandlerTypeCatalogCrawl Type = "catalogCrawl"
+	// HandlerTypeCatalogCrawlStatus handles a signed, network-facing crawl/
+	// sync status query: unlike catalogCrawl/catalogPublish (DS-internal,
+	// unsigned, same-operator triggers), this answers an authenticated
+	// publisher about their own data, so it runs validateSign the same way
+	// any other subscriber-facing call does -- but inline in its own
+	// Decode, not via the std handler's step pipeline (see
+	// catalogcrawler.NewStatusHandler's doc comment for why). Its provider
+	// is a normal static handlerProviders entry: unlike catalogCrawl, it
+	// has no singleton dependency -- every query reads directly from
+	// Postgres, so a lazily-constructed, never-Start()-ed Crawler instance
+	// works fine here.
+	HandlerTypeCatalogCrawlStatus Type = "catalogCrawlStatus"
 )
 
 // PluginCfg holds the configuration for various plugins.
@@ -75,6 +88,7 @@ type PluginCfg struct {
 	PayloadStore          *plugin.Config  `yaml:"payloadStore,omitempty"`
 	CatalogPublisher      *plugin.Config  `yaml:"catalogPublisher,omitempty"`
 	CatalogBlobStore      *plugin.Config  `yaml:"catalogBlobStore,omitempty"`
+	Crawler               *plugin.Config  `yaml:"crawler,omitempty"`
 	Middleware            []plugin.Config `yaml:"middleware,omitempty"`
 	Steps                 []plugin.Config
 }
@@ -105,6 +119,7 @@ func (p *PluginCfg) PluginEntries() []telemetry.PluginEntry {
 	add("payload_store", p.PayloadStore)
 	add("catalog_publisher", p.CatalogPublisher)
 	add("catalog_blob_store", p.CatalogBlobStore)
+	add("crawler", p.Crawler)
 	for i := range p.Steps {
 		if p.Steps[i].ID != "" {
 			entries = append(entries, telemetry.PluginEntry{Type: "step", ID: p.Steps[i].ID})

@@ -65,8 +65,12 @@ func (s *Store) GetCatalogEnvelope(ctx context.Context, catalogID string) (descr
 // envelope (COALESCE(EXCLUDED, existing): a retire settle or a recorded
 // failure passes no envelope of its own and must not blank out one a
 // previous successful sync wrote -- that envelope is what a later retire
-// needs once the index stops carrying any content to refetch). Runs
-// standalone or inside Complete's transaction via execer.
+// needs once the index stops carrying any content to refetch). Clears
+// reason unconditionally: this only ever runs on a successful settle (via
+// Complete), so any reason RecordFailure previously stamped no longer
+// describes this catalog's current state and would otherwise report a
+// resolved failure as still-current to a status query. Runs standalone or
+// inside Complete's transaction via execer.
 func upsertCatalog(ctx context.Context, ex execer, c crawlmanager.CatalogCursor) error {
 	status := "active"
 	if c.Retired {
@@ -81,6 +85,7 @@ func upsertCatalog(ctx context.Context, ex execer, c crawlmanager.CatalogCursor)
 		   version        = EXCLUDED.version,
 		   entry_version  = EXCLUDED.entry_version,
 		   status         = EXCLUDED.status,
+		   reason         = NULL,
 		   descriptor     = COALESCE(EXCLUDED.descriptor, crawler_catalog.descriptor),
 		   provider       = COALESCE(EXCLUDED.provider, crawler_catalog.provider),
 		   catalog_type   = COALESCE(EXCLUDED.catalog_type, crawler_catalog.catalog_type),

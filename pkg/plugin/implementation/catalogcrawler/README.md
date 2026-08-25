@@ -92,3 +92,67 @@ POST /crawl
 ```
 
 The module takes no `handler.plugins` of its own -- unlike `catalogPublisher`'s module, which constructs its own plugins per-request, this handler is wired directly to the singleton above (`catalogcrawler.RegisterHandler`, called once from `main.go` after the crawler starts), since `CrawlRegistry` needs that exact running instance rather than a fresh one.
+
+### `/crawl/status` HTTP endpoint
+
+`Status(ctx, subscriberID, catalogID)` reports the last-known crawl/sync state persisted for a
+publisher's catalogs — a plain read against `crawler_catalog`/`crawler_queue`/`crawler_index`, not
+a live check, and not tied to any particular `/crawl` `runId` (a caller only ever knows their own
+`catalogId`, not a run's id).
+
+Unlike `/crawl`, this endpoint answers a specific authenticated publisher about their own data, so
+it is a **signed, network-facing call**, not a DS-internal unsigned trigger: it runs the same
+`signValidator` + `keyManager.LookupNPKeys` verification every subscriber-facing call in this
+codebase does, inlined into its own `Decode` rather than via the `std` handler's step pipeline (see
+[statushandler.go](statushandler.go)'s doc comment for why). The verified `subscriberId` — from the
+Authorization header's `keyId`, never a request parameter — is the only identity `Status` is ever
+scoped by: a `catalogId` belonging to a different subscriber is indistinguishable from one that
+doesn't exist at all, both a `404`.
+
+```yaml
+modules:
+  - name: crawlStatus
+    path: /crawl/status
+    handler:
+      type: catalogCrawlStatus
+      plugins:
+        registry: { id: dediregistry, config: { ... } }
+        keyManager: { id: simplekeymanager, config: { ... } }
+        signValidator: { id: signvalidator }
+        # Its own Crawler instance/config -- same dbDsn as the top-level
+        # plugins.crawler, so it reads the same Postgres tables, but never
+        # Start()-ed (Status only reads, it doesn't need the scheduler).
+        crawler:
+          id: catalogcrawler
+          config:
+            dbDsn: "postgres://user:pass@localhost:5432/catalogcrawler"
+            discoveryPushUrl: "https://discovery.example.org/beckn/catalog/push"
+```
+
+```
+GET /crawl/status?catalogId=staging.p-node.fabric.nfh.global/CAT-1
+Authorization: Signature keyId="staging.p-node.fabric.nfh.global|key-1|ed25519",...
+
+200 OK
+[
+  {
+    "catalogId": "staging.p-node.fabric.nfh.global/CAT-1",
+    "indexUrl": "https://angular-absently-gab.ngrok-free.dev/beckn/index/becknCatalogs.index.json",
+    "version": 2,
+    "entryVersion": 2,
+    "retired": false,
+    "queued": false,
+    "updatedAt": "2026-08-24T16:33:44Z",
+    "indexLastPolledAt": "2026-08-24T16:33:44Z"
+  }
+]
+```
+
+Omitting `catalogId` returns every catalog owned by the caller's subscriberId. `lastError` is
+present only if the catalog's most recent sync attempt failed (cleared on the next success); a
+non-empty `catalogId` matching nothing is a `404`, an empty `catalogId` matching nothing is a `200`
+with `[]`. `queued`/`attempts`/`nextAttemptAt` are only meaningful while `queued` is `true` (a sync
+still pending or retrying). There is no exact "next scheduled crawl" — `PollIndexes` polls every
+discovered index unconditionally on each tick, so the crawler has no per-index schedule of its own
+to report; `indexLastPolledAt` plus the deployment's own `indexIntervalSeconds` is the closest
+estimate available.

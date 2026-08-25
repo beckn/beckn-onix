@@ -130,6 +130,7 @@ func (Provider) New(ctx context.Context, registry definition.RegistryLookup, met
 		sched:          NewScheduler(params, schedCfg, log),
 		metadataLookup: metadataLookup,
 		log:            log,
+		st:             st,
 	}
 	return c, db.Close, nil
 }
@@ -229,6 +230,12 @@ type crawlerImpl struct {
 	sched          *Scheduler
 	metadataLookup definition.RegistryMetadataLookup
 	log            *slog.Logger
+
+	// st is the same *store.Store instance as params.Store, held separately
+	// (and typed concretely, not as crawlmanager.Store) because Status
+	// needs its own reporting query -- not part of crawlmanager.Store's
+	// narrow scheduler-facing surface.
+	st *store.Store
 }
 
 func (c *crawlerImpl) Start(ctx context.Context) error {
@@ -272,6 +279,33 @@ func (c *crawlerImpl) CrawlRegistry(ctx context.Context, networkIDs []string) (s
 		return "", fmt.Errorf("catalogcrawler: crawler is not running")
 	}
 	return runID, nil
+}
+
+// Status implements definition.Crawler. Unlike CrawlRegistry, this is a
+// plain read against persisted state -- it works whether or not the
+// scheduler has been Start()-ed, since it never touches c.sched.
+func (c *crawlerImpl) Status(ctx context.Context, subscriberID, catalogID string) ([]definition.CrawlStatus, error) {
+	rows, err := c.st.Status(ctx, subscriberID, catalogID)
+	if err != nil {
+		return nil, fmt.Errorf("catalogcrawler: Status: %w", err)
+	}
+	out := make([]definition.CrawlStatus, len(rows))
+	for i, r := range rows {
+		out[i] = definition.CrawlStatus{
+			CatalogID:         r.CatalogID,
+			IndexURL:          r.IndexURL,
+			Version:           r.Version,
+			EntryVersion:      r.EntryVersion,
+			Retired:           r.Retired,
+			LastError:         r.Reason,
+			Queued:            r.Queued,
+			Attempts:          r.Attempts,
+			NextAttemptAt:     r.NextAttemptAt,
+			UpdatedAt:         r.UpdatedAt,
+			IndexLastPolledAt: r.IndexPolledAt,
+		}
+	}
+	return out, nil
 }
 
 func splitNonEmpty(s string) []string {

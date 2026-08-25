@@ -10,7 +10,7 @@
 7. [Plugin Manager Configuration](#plugin-manager-configuration)
 8. [Application-Level Plugins Configuration](#application-level-plugins-configuration) (incl. [`plugins.crawler`](#pluginscrawler))
 9. [Module Configuration](#module-configuration)
-10. [Handler Configuration](#handler-configuration) (incl. [`catalogPublish`](#handler-type-catalogpublish) / [`catalogCrawl`](#handler-type-catalogcrawl) handler types)
+10. [Handler Configuration](#handler-configuration) (incl. [`catalogPublish`](#handler-type-catalogpublish) / [`catalogCrawl`](#handler-type-catalogcrawl) / [`catalogCrawlStatus`](#handler-type-catalogcrawlstatus) handler types)
 11. [Plugin Configuration](#plugin-configuration)
 12. [Routing Configuration](#routing-configuration)
 13. [Deployment Scenarios](#deployment-scenarios)
@@ -370,6 +370,8 @@ plugins:
 
 To also expose an on-demand HTTP trigger for this crawler, add a module with handler type `catalogCrawl` — see [`catalogCrawl` handler type](#handler-type-catalogcrawl) below. That module takes no `plugins` of its own: it calls `CrawlRegistry` directly on this same running crawler instance.
 
+To let publishers query their own crawl/sync status, add a module with handler type `catalogCrawlStatus` — see [`catalogCrawlStatus` handler type](#handler-type-catalogcrawlstatus) below. Unlike `catalogCrawl`, that module configures its *own* `crawler` plugin instance (same `dbDsn` as this top-level block, so it reads the same Postgres tables) rather than reusing this running one, since a status query only ever reads persisted state and doesn't need the scheduler to be running.
+
 ### Audit fields configuration
 
 When `config.auditFieldsConfig` points to a YAML file, audit logs (emitted via OTLP when `enableLogs: "true"`) include only the fields you list per action. The file format:
@@ -541,8 +543,8 @@ modules:
 ##### `type`
 **Type**: `string`  
 **Required**: Yes  
-**Options**: `std` (standard beckn-protocol handler), `catalogPublish` (DS-internal catalog/publish trigger), `catalogCrawl` (DS-internal on-demand crawl trigger)  
-**Description**: Type of handler. `std` is the standard Beckn-protocol request/response handler used by `bapTxnReceiver`/`bapTxnCaller`/`bppTxnReceiver`/`bppTxnCaller`-style modules; `catalogPublish` and `catalogCrawl` are unsigned, same-operator DS-internal triggers, not network-facing Beckn actions. See [`catalogPublish` handler type](#handler-type-catalogpublish) and [`catalogCrawl` handler type](#handler-type-catalogcrawl) below.
+**Options**: `std` (standard beckn-protocol handler), `catalogPublish` (DS-internal catalog/publish trigger), `catalogCrawl` (DS-internal on-demand crawl trigger), `catalogCrawlStatus` (signed, publisher-facing crawl/sync status query)  
+**Description**: Type of handler. `std` is the standard Beckn-protocol request/response handler used by `bapTxnReceiver`/`bapTxnCaller`/`bppTxnReceiver`/`bppTxnCaller`-style modules; `catalogPublish` and `catalogCrawl` are unsigned, same-operator DS-internal triggers, not network-facing Beckn actions. `catalogCrawlStatus` is different again — a signed, network-facing call answering a specific publisher about their own data. See [`catalogPublish`](#handler-type-catalogpublish), [`catalogCrawl`](#handler-type-catalogcrawl), and [`catalogCrawlStatus`](#handler-type-catalogcrawlstatus) below.
 
 <a name="handler-type-catalogpublish"></a>
 ###### Handler type: `catalogPublish`
@@ -629,6 +631,50 @@ modules:
     path: /crawl
     handler:
       type: catalogCrawl
+```
+
+<a name="handler-type-catalogcrawlstatus"></a>
+###### Handler type: `catalogCrawlStatus`
+
+A **signed, network-facing** crawl/sync status query — unlike `catalogCrawl`/`catalogPublish` (DS-internal, unsigned, same-operator triggers), this answers a specific authenticated publisher about their own data, so it runs the same `signValidator`/`keyManager` verification every subscriber-facing call in this codebase does. The caller's subscriberId comes only from the verified Authorization header's `keyId` — never a request parameter — so a publisher can only ever see their own catalogs' status.
+
+Takes its own `handler.plugins`: `registry`, `keyManager`, `signValidator`, and `crawler` (a `catalogcrawler` instance/config of its own — typically the same `dbDsn` as the top-level [`plugins.crawler`](#pluginscrawler) so it reads the same Postgres tables, but never `Start()`-ed, since this only reads persisted state). See the [plugin README](pkg/plugin/implementation/catalogcrawler/README.md#crawlstatus-http-endpoint) for the full field reference.
+
+**Request**: `GET`, optional `?catalogId=`. Absent, returns every catalog owned by the caller's subscriberId.
+
+**Response** — `200 OK`, one entry per catalog:
+```json
+[
+  {
+    "catalogId": "staging.p-node.fabric.nfh.global/CAT-1",
+    "indexUrl": "https://angular-absently-gab.ngrok-free.dev/beckn/index/becknCatalogs.index.json",
+    "version": 2,
+    "entryVersion": 2,
+    "retired": false,
+    "queued": false,
+    "updatedAt": "2026-08-24T16:33:44Z",
+    "indexLastPolledAt": "2026-08-24T16:33:44Z"
+  }
+]
+```
+`lastError`/`attempts`/`nextAttemptAt` appear only when relevant (a past failure, or `queued: true`). A non-empty `catalogId` matching nothing (never crawled, or belongs to a different subscriber — the two are indistinguishable on purpose) is a `404`; an absent `catalogId` matching nothing is a `200` with `[]`.
+
+**Example**:
+```yaml
+modules:
+  - name: crawlStatus
+    path: /crawl/status
+    handler:
+      type: catalogCrawlStatus
+      plugins:
+        registry: { id: dediregistry, config: { timeout: 10 } }
+        keyManager: { id: simplekeymanager, config: { subscriberId: bpp.example.com, ... } }
+        signValidator: { id: signvalidator }
+        crawler:
+          id: catalogcrawler
+          config:
+            dbDsn: "postgres://user:pass@localhost:5432/catalogcrawler"
+            discoveryPushUrl: "https://discovery.example.org/beckn/catalog/push"
 ```
 
 ##### `role`
