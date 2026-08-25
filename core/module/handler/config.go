@@ -177,4 +177,11 @@ type Config struct {
 	// better made deliberately, not as a side effect of this handler
 	// change.
 	OutputRoot string `yaml:"outputRoot,omitempty"`
+	// AuthDisabled, when true, skips signature verification on handlers that
+	// would otherwise require it (currently only catalogCrawlStatus). LOCAL
+	// DEV / TESTING ONLY -- with this set, the caller's identity comes from
+	// an unauthenticated subscriberId query param instead of a verified
+	// Authorization header, so any caller can query any subscriber's crawl
+	// status. Must stay false/unset for any network-facing deployment.
+	AuthDisabled bool `yaml:"authDisabled,omitempty"`
 }

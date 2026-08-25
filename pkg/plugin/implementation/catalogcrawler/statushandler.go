@@ -4,20 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/beckn-one/beckn-onix/core/module/handler"
 	"github.com/beckn-one/beckn-onix/pkg/log"
-	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
-// statusRequest is this endpoint's own request shape: SubscriberID comes
-// only from the verified Authorization header (never a request parameter --
-// see NewStatusHandler's doc comment), CatalogID from an optional query
-// param.
+// statusRequest is this endpoint's own request shape. Both fields come from
+// query params right now -- see NewStatusHandler's doc comment on
+// AuthDisabled for why SubscriberID isn't (yet) a verified identity.
 type statusRequest struct {
 	SubscriberID string
 	CatalogID    string
@@ -28,37 +25,39 @@ type statusResponse struct {
 }
 
 // NewStatusHandler builds the catalogCrawlStatus endpoint: a GET returning
-// the crawl/sync status of the authenticated caller's own catalogs (or just
-// one, via ?catalogId=). Unlike catalogPublish/catalogCrawl -- DS-internal,
-// unsigned, same-operator triggers -- this answers a specific publisher
-// about their own data, so it is a signed, network-facing call and must
-// authenticate the caller the same way every other subscriber-facing call
-// in this codebase does: verify the Authorization header via
-// signValidator + keyManager.LookupNPKeys, exactly as
-// core/module/handler's validateSign step does. That step isn't reusable
-// directly here -- it's wired into the std handler's step pipeline (a
-// hardcoded switch in stdHandler.go's initSteps, not a pluggable
-// mechanism), and std's pipeline drags in Beckn-action machinery
-// (addRoute, signAck, response steps) this endpoint has no use for. So the
-// same two calls (LookupNPKeys, Validate) are made directly in Decode
-// instead, using handler.ParseAuthHeader to parse the header exactly as
-// validateSign's own parseHeader would -- no new verification logic, just
-// inlined rather than routed through a step.
+// the crawl/sync status of the catalogs owned by ?subscriberId= (or just
+// one, via ?catalogId=).
 //
-// The verified subscriberId becomes the only identity Execute is ever
-// scoped by; there is no subscriberId request parameter, since it would be
-// redundant with (and could disagree with) the one the signature already
-// authenticates.
+// Signed-request verification is NOT implemented yet. Eventually this
+// answers a specific publisher about their own data and needs to
+// authenticate the caller the same way every other subscriber-facing call
+// in this codebase does (signValidator + keyManager.LookupNPKeys, the way
+// validateSign verifies inbound requests) -- but that's deliberately left
+// out of this first cut so the endpoint's actual query/response behavior
+// can be exercised end to end first. cfg.AuthDisabled is required to be
+// explicitly true to construct this handler at all, so a deployment can't
+// end up running this unauthenticated by omission -- leaving it
+// false/unset (the default) fails fast at startup instead of silently
+// serving every subscriber's status to anyone. Once signed verification
+// lands, AuthDisabled=false will wire it in and SubscriberID will come
+// from the verified Authorization header instead of this query param.
 func NewStatusHandler(ctx context.Context, mgr handler.PluginManager, cfg *handler.Config, moduleName string) (http.Handler, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("catalogCrawlStatus handler %s: config is required", moduleName)
 	}
+	if !cfg.AuthDisabled {
+		return nil, fmt.Errorf("catalogCrawlStatus handler %s: signed-request verification is not implemented yet; set authDisabled: true to run this endpoint unauthenticated until then", moduleName)
+	}
 
+	// registry here is unrelated to authenticating the caller (that's the
+	// AuthDisabled bit above) -- it's catalogcrawler.Provider.New's own
+	// hard dependency, used to verify fetched catalogs' self-signatures,
+	// required unconditionally regardless of how this endpoint verifies
+	// its own callers.
 	cache, err := handler.LoadPlugin(ctx, "Cache", cfg.Plugins.Cache, mgr.Cache)
 	if err != nil {
 		return nil, err
 	}
-
 	registry, err := handler.LoadPlugin(ctx, "Registry", cfg.Plugins.Registry, func(ctx context.Context, c *plugin.Config) (definition.RegistryLookup, error) {
 		return mgr.Registry(ctx, cache, c)
 	})
@@ -67,22 +66,6 @@ func NewStatusHandler(ctx context.Context, mgr handler.PluginManager, cfg *handl
 	}
 	if registry == nil {
 		return nil, fmt.Errorf("catalogCrawlStatus handler %s: registry plugin not configured", moduleName)
-	}
-
-	km, err := handler.LoadKeyManager(ctx, mgr, registry, cfg.Plugins.KeyManager)
-	if err != nil {
-		return nil, err
-	}
-	if km == nil {
-		return nil, fmt.Errorf("catalogCrawlStatus handler %s: keyManager plugin not configured", moduleName)
-	}
-
-	signValidator, err := handler.LoadPlugin(ctx, "SignValidator", cfg.Plugins.SignValidator, mgr.SignValidator)
-	if err != nil {
-		return nil, err
-	}
-	if signValidator == nil {
-		return nil, fmt.Errorf("catalogCrawlStatus handler %s: signValidator plugin not configured", moduleName)
 	}
 
 	if cfg.Plugins.Crawler == nil {
@@ -100,52 +83,15 @@ func NewStatusHandler(ctx context.Context, mgr handler.PluginManager, cfg *handl
 				Err:    fmt.Errorf("method not allowed: %s", r.Method),
 			}
 		}
-
-		authHeaderValue := r.Header.Get(model.AuthHeaderSubscriber)
-		if authHeaderValue == "" {
+		subscriberID := r.URL.Query().Get("subscriberId")
+		if subscriberID == "" {
 			return statusRequest{}, &handler.StatusError{
-				Status: http.StatusUnauthorized,
-				Err:    fmt.Errorf("%s header is required", model.AuthHeaderSubscriber),
+				Status: http.StatusBadRequest,
+				Err:    fmt.Errorf("subscriberId query param is required (authDisabled mode has no verified identity to derive it from)"),
 			}
 		}
-		headerVals, err := handler.ParseAuthHeader(authHeaderValue)
-		if err != nil {
-			return statusRequest{}, &handler.StatusError{Status: http.StatusUnauthorized, Err: err}
-		}
-		if headerVals.Algorithm != "ed25519" {
-			return statusRequest{}, &handler.StatusError{
-				Status: http.StatusUnauthorized,
-				Err:    fmt.Errorf("unsupported algorithm %q: only ed25519 is permitted", headerVals.Algorithm),
-			}
-		}
-
-		signingPublicKey, _, err := km.LookupNPKeys(ctx, headerVals.SubscriberID, headerVals.UniqueID)
-		if err != nil {
-			return statusRequest{}, &handler.StatusError{
-				Status: http.StatusUnauthorized,
-				Err:    fmt.Errorf("failed to get validation key: %w", err),
-			}
-		}
-
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			return statusRequest{}, fmt.Errorf("reading request body: %w", err)
-		}
-		// checkIdentity=true, same as every other subscriber-facing call --
-		// a bodyless GET has no context.bap_id/bpp_id to cross-check
-		// against, so checkSubscriberIdentity degrades to a no-op (already
-		// relied on elsewhere for bodyless GET/DELETE requests), not an
-		// error.
-		stepCtx := &model.StepContext{Context: ctx, Body: body}
-		if err := signValidator.Validate(stepCtx, authHeaderValue, signingPublicKey, true); err != nil {
-			return statusRequest{}, &handler.StatusError{
-				Status: http.StatusUnauthorized,
-				Err:    fmt.Errorf("sign validation failed: %w", err),
-			}
-		}
-
 		return statusRequest{
-			SubscriberID: headerVals.SubscriberID,
+			SubscriberID: subscriberID,
 			CatalogID:    r.URL.Query().Get("catalogId"),
 		}, nil
 	}
@@ -184,7 +130,7 @@ func NewStatusHandler(ctx context.Context, mgr handler.PluginManager, cfg *handl
 		}
 	}
 
-	log.Debugf(ctx, "catalogCrawlStatus handler %s initialized", moduleName)
+	log.Debugf(ctx, "catalogCrawlStatus handler %s initialized (authDisabled=true)", moduleName)
 	return &handler.EndpointHandler[statusRequest, statusResponse]{
 		Decode:  decode,
 		Execute: execute,

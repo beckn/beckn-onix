@@ -100,14 +100,16 @@ publisher's catalogs — a plain read against `crawler_catalog`/`crawler_queue`/
 a live check, and not tied to any particular `/crawl` `runId` (a caller only ever knows their own
 `catalogId`, not a run's id).
 
-Unlike `/crawl`, this endpoint answers a specific authenticated publisher about their own data, so
-it is a **signed, network-facing call**, not a DS-internal unsigned trigger: it runs the same
-`signValidator` + `keyManager.LookupNPKeys` verification every subscriber-facing call in this
-codebase does, inlined into its own `Decode` rather than via the `std` handler's step pipeline (see
-[statushandler.go](statushandler.go)'s doc comment for why). The verified `subscriberId` — from the
-Authorization header's `keyId`, never a request parameter — is the only identity `Status` is ever
-scoped by: a `catalogId` belonging to a different subscriber is indistinguishable from one that
-doesn't exist at all, both a `404`.
+Eventually this answers a specific authenticated publisher about their own data, so it's meant to
+be a **signed, network-facing call** — verifying the caller the same way every other
+subscriber-facing call in this codebase does (`signValidator` + `keyManager.LookupNPKeys`, inlined
+into `Decode` rather than via the `std` handler's step pipeline; see
+[statushandler.go](statushandler.go)'s doc comment for why it can't just reuse `validateSign`
+directly). **That verification is not implemented yet.** This first cut only supports
+`authDisabled: true`, which is required to construct the handler at all — omitting it (or setting
+it `false`) fails at startup rather than silently running unauthenticated. With `authDisabled: true`,
+`subscriberId` is a plain, unauthenticated query param instead of a verified identity: **do not run
+this in any real deployment as-is** — it lets any caller read any subscriber's crawl status.
 
 ```yaml
 modules:
@@ -115,10 +117,12 @@ modules:
     path: /crawl/status
     handler:
       type: catalogCrawlStatus
+      authDisabled: true # UNAUTHENTICATED -- see above; not for real deployments
       plugins:
+        # registry is unrelated to authenticating callers (there is none
+        # yet) -- it's catalogcrawler.Provider.New's own dependency, used
+        # to verify fetched catalogs' self-signatures.
         registry: { id: dediregistry, config: { ... } }
-        keyManager: { id: simplekeymanager, config: { ... } }
-        signValidator: { id: signvalidator }
         # Its own Crawler instance/config -- same dbDsn as the top-level
         # plugins.crawler, so it reads the same Postgres tables, but never
         # Start()-ed (Status only reads, it doesn't need the scheduler).
@@ -130,8 +134,7 @@ modules:
 ```
 
 ```
-GET /crawl/status?catalogId=staging.p-node.fabric.nfh.global/CAT-1
-Authorization: Signature keyId="staging.p-node.fabric.nfh.global|key-1|ed25519",...
+GET /crawl/status?subscriberId=staging.p-node.fabric.nfh.global&catalogId=staging.p-node.fabric.nfh.global/CAT-1
 
 200 OK
 [
@@ -148,7 +151,7 @@ Authorization: Signature keyId="staging.p-node.fabric.nfh.global|key-1|ed25519",
 ]
 ```
 
-Omitting `catalogId` returns every catalog owned by the caller's subscriberId. `lastError` is
+`subscriberId` is required; omitting `catalogId` returns every catalog owned by it. `lastError` is
 present only if the catalog's most recent sync attempt failed (cleared on the next success); a
 non-empty `catalogId` matching nothing is a `404`, an empty `catalogId` matching nothing is a `200`
 with `[]`. `queued`/`attempts`/`nextAttemptAt` are only meaningful while `queued` is `true` (a sync

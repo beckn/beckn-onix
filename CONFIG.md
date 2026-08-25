@@ -636,11 +636,11 @@ modules:
 <a name="handler-type-catalogcrawlstatus"></a>
 ###### Handler type: `catalogCrawlStatus`
 
-A **signed, network-facing** crawl/sync status query — unlike `catalogCrawl`/`catalogPublish` (DS-internal, unsigned, same-operator triggers), this answers a specific authenticated publisher about their own data, so it runs the same `signValidator`/`keyManager` verification every subscriber-facing call in this codebase does. The caller's subscriberId comes only from the verified Authorization header's `keyId` — never a request parameter — so a publisher can only ever see their own catalogs' status.
+Eventually a **signed, network-facing** crawl/sync status query, verifying the caller the same way every subscriber-facing call in this codebase does (`signValidator`/`keyManager`) so a publisher can only ever see their own catalogs' status. **That verification is not implemented yet.** Right now this handler only supports `authDisabled: true` on `handler.authDisabled` — required to construct it at all; omitting it (or `false`) fails at startup. With `authDisabled: true`, the caller's identity is an unauthenticated `?subscriberId=` query param, not a verified one — **do not use this in any real deployment as-is.**
 
-Takes its own `handler.plugins`: `registry`, `keyManager`, `signValidator`, and `crawler` (a `catalogcrawler` instance/config of its own — typically the same `dbDsn` as the top-level [`plugins.crawler`](#pluginscrawler) so it reads the same Postgres tables, but never `Start()`-ed, since this only reads persisted state). See the [plugin README](pkg/plugin/implementation/catalogcrawler/README.md#crawlstatus-http-endpoint) for the full field reference.
+Takes its own `handler.plugins`: `registry` (unrelated to caller auth — `catalogcrawler.Provider.New`'s own dependency for verifying fetched catalogs' self-signatures) and `crawler` (a `catalogcrawler` instance/config of its own — typically the same `dbDsn` as the top-level [`plugins.crawler`](#pluginscrawler) so it reads the same Postgres tables, but never `Start()`-ed, since this only reads persisted state). See the [plugin README](pkg/plugin/implementation/catalogcrawler/README.md#crawlstatus-http-endpoint) for the full field reference.
 
-**Request**: `GET`, optional `?catalogId=`. Absent, returns every catalog owned by the caller's subscriberId.
+**Request**: `GET`, required `?subscriberId=` (unauthenticated for now — see above), optional `?catalogId=`. `catalogId` absent, returns every catalog owned by `subscriberId`.
 
 **Response** — `200 OK`, one entry per catalog:
 ```json
@@ -666,10 +666,9 @@ modules:
     path: /crawl/status
     handler:
       type: catalogCrawlStatus
+      authDisabled: true # UNAUTHENTICATED -- see above; not for real deployments
       plugins:
         registry: { id: dediregistry, config: { timeout: 10 } }
-        keyManager: { id: simplekeymanager, config: { subscriberId: bpp.example.com, ... } }
-        signValidator: { id: signvalidator }
         crawler:
           id: catalogcrawler
           config:
@@ -688,6 +687,12 @@ modules:
 **Required**: No  
 **Description**: Subscriber ID for the participant. Used primarily for BPP modules.  
 **Example**: `bpp1`
+
+##### `authDisabled`
+**Type**: `boolean`  
+**Required**: No, only meaningful for [`catalogCrawlStatus`](#handler-type-catalogcrawlstatus)  
+**Default**: `false`  
+**Description**: For handler types that require signed-request verification, skips it and takes the caller's identity from a plain, unauthenticated request parameter instead. Currently the only such type is `catalogCrawlStatus`, whose signed-verification path isn't implemented yet — it requires `authDisabled: true` just to construct the handler at all (an unset/`false` value fails at startup rather than silently serving unauthenticated). **Never set `true` for a handler type whose auth is actually implemented, or in any real deployment.**
 
 ##### `httpClientConfig`
 **Type**: `object`  

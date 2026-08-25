@@ -308,21 +308,23 @@ modules:
     handler:
       type: catalogCrawl
 
-  # crawlStatus: signed, network-facing crawl/sync status query -- unlike
-  # crawl/catalogPublish above, this answers a specific authenticated
-  # publisher about their own data, so it runs the same signValidator/
-  # keyManager verification every subscriber-facing call does (see
-  # pkg/plugin/implementation/catalogcrawler/README.md). GET, optional
-  # ?catalogId=; absent, returns every catalog owned by the caller's own
-  # subscriberId (from the Authorization header, never a request param).
-  # plugins.crawler here is its own instance/config (same dbDsn as the
-  # top-level plugins.crawler above, so it reads the same Postgres tables)
-  # -- it's never Start()-ed, since Status only reads persisted state.
+  # crawlStatus: crawl/sync status query. Eventually a signed,
+  # network-facing call answering a specific authenticated publisher about
+  # their own data (see pkg/plugin/implementation/catalogcrawler/README.md)
+  # -- NOT YET IMPLEMENTED. authDisabled: true is required to construct
+  # this handler at all right now; it accepts subscriberId/catalogId as
+  # plain, UNAUTHENTICATED query params instead of a verified Authorization
+  # header. Remove authDisabled (or set it false) once signed verification
+  # lands -- do not run this in any real deployment as-is.
   - name: crawlStatus
     path: /crawl/status
     handler:
       type: catalogCrawlStatus
+      authDisabled: true
       plugins:
+        # registry is unrelated to authenticating callers (there is none
+        # yet) -- it's the catalogcrawler plugin's own dependency, used to
+        # verify fetched catalogs' self-signatures.
         registry:
           id: dediregistry
           config:
@@ -330,17 +332,9 @@ modules:
             retry_max: 3
             retry_wait_min: 100ms
             retry_wait_max: 500ms
-        keyManager:
-          id: simplekeymanager
-          config:
-            subscriberId: bpp.example.com
-            keyId: 76EU7ofwRCF1aobQkShARrf1PAUsNpHqWUJoynPu9w45YFKmzqaPmy
-            signingPrivateKey: 393fVJJsfqssJCRAjedKR2cKAjSLrjU3t+bICQ5KzYM=
-            signingPublicKey: CqVy97DW45bcZPPrWIYGe2ldl9C93NFeVciiAEYsvR0=
-            encrPrivateKey: 393fVJJsfqssJCRAjedKR2cKAjSLrjU3t+bICQ5KzYM=
-            encrPublicKey: CqVy97DW45bcZPPrWIYGe2ldl9C93NFeVciiAEYsvR0=
-        signValidator:
-          id: signvalidator
+        # Its own Crawler instance/config -- same dbDsn as the top-level
+        # plugins.crawler, so it reads the same Postgres tables, but never
+        # Start()-ed (Status only reads, it doesn't need the scheduler).
         crawler:
           id: catalogcrawler
           config:
