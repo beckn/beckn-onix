@@ -139,7 +139,13 @@ func NewHandler(ctx context.Context, mgr handler.PluginManager, cfg *handler.Con
 		if err != nil {
 			return definition.PublishRequest{}, err
 		}
-		log.Debugf(ctx, "catalogPublish: received %d catalog(s), %d retire(s), forceBaseline=%v", len(req.Catalogs), len(req.Retire), req.ForceBaseline)
+		forceBaselineCount := 0
+		for _, c := range req.Catalogs {
+			if c.ForceBaseline {
+				forceBaselineCount++
+			}
+		}
+		log.Debugf(ctx, "catalogPublish: received %d catalog(s), %d retire(s), %d forceBaseline", len(req.Catalogs), len(req.Retire), forceBaselineCount)
 
 		if len(req.Catalogs) > 0 {
 			if schemaValidator != nil {

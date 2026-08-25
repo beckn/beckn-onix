@@ -262,6 +262,83 @@ func TestPublish_LoadsPriorStateAndPersistsResult(t *testing.T) {
 	}
 }
 
+// TestPublish_ForceBaselineIsPerCatalog proves ForceBaseline (per
+// definition.CatalogSubmission, catalog-core's Submission.Directives) only
+// forces a fresh baseline for the catalog it's set on -- a sibling
+// submission in the same call with unchanged content and ForceBaseline
+// unset should still report Changed=false, not be swept along by the
+// other one's forced baseline.
+func TestPublish_ForceBaselineIsPerCatalog(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	km.domain = "example.test"
+	bs := newFakeBlobStore()
+	p, _, err := New(context.Background(), km, bs, nil, &Config{SubscriberID: "k1"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	seed := definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{
+			{CatalogID: "example.test/CAT-1", Catalog: validCatalogJSON("CAT-1")},
+			{CatalogID: "example.test/CAT-2", Catalog: validCatalogJSON("CAT-2")},
+		},
+	}
+	if _, err := p.Publish(context.Background(), seed); err != nil {
+		t.Fatalf("seeding Publish: %v", err)
+	}
+
+	req := definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{
+			{CatalogID: "example.test/CAT-1", Catalog: validCatalogJSON("CAT-1"), ForceBaseline: true},
+			{CatalogID: "example.test/CAT-2", Catalog: validCatalogJSON("CAT-2")},
+		},
+	}
+	result, err := p.Publish(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	byID := make(map[string]string, len(result.Catalogs))
+	for _, c := range result.Catalogs {
+		byID[c.CatalogID] = c.Mode
+	}
+	if byID["example.test/CAT-1"] != "baseline" {
+		t.Errorf("CAT-1 (ForceBaseline=true): mode = %q, want baseline", byID["example.test/CAT-1"])
+	}
+	if byID["example.test/CAT-2"] == "baseline" {
+		t.Errorf("CAT-2 (ForceBaseline unset, unchanged content): mode = %q, want it not to be forced to baseline", byID["example.test/CAT-2"])
+	}
+}
+
+// TestPublish_RetireSynthesizesSubmissionForUnsubmittedID proves a
+// catalogId named only in Retire (never in Catalogs) is still retired --
+// catalog-core needs a Submission to attach Directives.Retire to, so
+// Publish must synthesize one rather than requiring the caller to invent a
+// CatalogSubmission just to retire something.
+func TestPublish_RetireSynthesizesSubmissionForUnsubmittedID(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	km.domain = "example.test"
+	bs := newFakeBlobStore()
+	p, _, err := New(context.Background(), km, bs, nil, &Config{SubscriberID: "k1"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	seed := definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: validCatalogJSON("CAT-1")}},
+	}
+	if _, err := p.Publish(context.Background(), seed); err != nil {
+		t.Fatalf("seeding Publish: %v", err)
+	}
+
+	result, err := p.Publish(context.Background(), definition.PublishRequest{Retire: []string{"example.test/CAT-1"}})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if len(result.Retirements) != 1 || result.Retirements[0].CatalogID != "example.test/CAT-1" {
+		t.Fatalf("expected CAT-1 to be retired, got Retirements=%+v", result.Retirements)
+	}
+}
+
 // TestPublish_RegistryLinkCheckAddsWarning verifies Publish's own wiring of
 // the registry catalog-index-link check into PublishResult.Warnings when
 // CheckCatalogIndexLink is configured and the link is missing.
@@ -464,14 +541,24 @@ func TestDecodeRequest_MissingCatalogIDIsPreservedForNonFatalRejection(t *testin
 
 func TestDecodeRequest_ForceBaseline(t *testing.T) {
 	p := testPublisher(t)
-	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"id":"example.test/CAT-1"}]},"forceBaseline":true}`
+	body := `{"context":{"action":"catalog/publish"},"message":{"catalogs":[{"id":"example.test/CAT-1"},{"id":"example.test/CAT-2"}],"publishDirectives":[{"catalogId":"example.test/CAT-1","forceBaseline":true}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/catalog/publish", strings.NewReader(body))
 	got, err := p.DecodeRequest(context.Background(), req)
 	if err != nil {
 		t.Fatalf("DecodeRequest: %v", err)
 	}
-	if !got.ForceBaseline {
-		t.Fatal("expected ForceBaseline to be decoded as true")
+	if len(got.Catalogs) != 2 {
+		t.Fatalf("expected 2 catalogs, got %+v", got.Catalogs)
+	}
+	byID := make(map[string]bool, len(got.Catalogs))
+	for _, c := range got.Catalogs {
+		byID[c.CatalogID] = c.ForceBaseline
+	}
+	if !byID["example.test/CAT-1"] {
+		t.Fatal("expected CAT-1's ForceBaseline to be decoded as true")
+	}
+	if byID["example.test/CAT-2"] {
+		t.Fatal("expected CAT-2's ForceBaseline to stay false: forceBaseline is per-catalog, not batch-wide")
 	}
 }
 
