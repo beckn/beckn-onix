@@ -169,11 +169,25 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 		return definition.PublishResult{}, fmt.Errorf("catalogpublisher: loading prior state: %w", err)
 	}
 
+	// A catalogId present in both req.Retire and req.Catalogs is published
+	// normally, per PublishRequest.Retire's own doc comment -- so a
+	// synthetic retire Submission is only added for an id req.Catalogs
+	// doesn't already carry, avoiding two Submission entries for the same
+	// CatalogID.
+	submitted := make(map[string]bool, len(req.Catalogs))
+	for _, id := range nonEmptyCatalogIDs(req.Catalogs) {
+		submitted[id] = true
+	}
+	var retireOnly []string
+	for _, id := range req.Retire {
+		if !submitted[id] {
+			retireOnly = append(retireOnly, id)
+		}
+	}
+
 	result, err := publisher.Publish(ctx, publisher.Params{
-		Catalogs:      toSubmissions(req.Catalogs),
-		PriorState:    priorStates,
-		Retire:        req.Retire,
-		ForceBaseline: req.ForceBaseline,
+		Catalogs:   append(toSubmissions(req.Catalogs), retireSubmissions(retireOnly)...),
+		PriorState: priorStates,
 
 		CompactionChangeCountThreshold: p.config.CompactionChangeCountThreshold,
 		CompactionSizeRatioThreshold:   p.config.CompactionSizeRatioThreshold,

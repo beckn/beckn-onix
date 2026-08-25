@@ -31,7 +31,12 @@ import (
 // "What changes at each layer"). SchemaTypes is not a beckn.yaml field at
 // all -- it's an NFH-014 addition to the catalog index entry (see
 // validateSchemaTypes) -- carried here so a caller has one place to set
-// every per-catalog directive field.
+// every per-catalog directive field. ForceBaseline is also not a
+// beckn.yaml field -- a per-catalog control (catalog-core's own
+// publisher.Submission.Directives.ForceBaseline is per-submission, not
+// batch-wide), so it lives here alongside visibleTo/catalogType rather
+// than as a top-level field applying uniformly to every catalog in the
+// call.
 type publishDirective struct {
 	CatalogID          string              `json:"catalogId"`
 	VisibleTo          []string            `json:"visibleTo,omitempty"`
@@ -39,6 +44,7 @@ type publishDirective struct {
 	UpdateMode         string              `json:"updateMode,omitempty"`
 	ResourceDirectives []resourceDirective `json:"resourceDirectives,omitempty"`
 	SchemaTypes        []string            `json:"schemaTypes,omitempty"`
+	ForceBaseline      bool                `json:"forceBaseline,omitempty"`
 }
 
 // resourceDirective links one resource in a REGULAR catalog to the master
@@ -59,9 +65,13 @@ type resourceDirective struct {
 // only "action": this is still a DS-internal, unsigned, same-operator
 // trigger, not a signed/routed network-facing Beckn action, so none of
 // Context's other fields (bapId/bapUri/messageId/...) are meaningful here
-// and the real spec leaves all of them optional. Retire/ForceBaseline are
-// this plugin's own additions, with no beckn.yaml equivalent -- kept as
-// siblings of context/message rather than invented fields inside either.
+// and the real spec leaves all of them optional. Retire is this plugin's
+// own addition, with no beckn.yaml equivalent -- kept as a sibling of
+// context/message rather than an invented field inside either.
+// ForceBaseline lives per-catalog on publishDirective instead (see its own
+// doc comment) -- it used to be a sibling field here too, applying to
+// every submitted catalog uniformly; that stopped matching catalog-core's
+// own model once ForceBaseline became a per-Submission Directive there.
 type publishRequest struct {
 	Context struct {
 		Action string `json:"action"`
@@ -70,8 +80,7 @@ type publishRequest struct {
 		Catalogs          []json.RawMessage  `json:"catalogs"`
 		PublishDirectives []publishDirective `json:"publishDirectives,omitempty"`
 	} `json:"message"`
-	Retire        []string `json:"retire,omitempty"`
-	ForceBaseline bool     `json:"forceBaseline,omitempty"`
+	Retire []string `json:"retire,omitempty"`
 }
 
 // validatePublishRequest checks req is referentially/structurally sound
@@ -209,18 +218,18 @@ func (p *Publisher) DecodeRequest(ctx context.Context, r *http.Request) (definit
 		_ = json.Unmarshal(raw, &probe) // empty ID surfaces as a non-fatal PublishError from Publish
 		d := directives[probe.ID]
 		submissions = append(submissions, definition.CatalogSubmission{
-			CatalogID:   probe.ID,
-			Catalog:     raw,
-			NetworkIds:  d.VisibleTo,
-			CatalogType: d.CatalogType,
-			SchemaTypes: d.SchemaTypes,
+			CatalogID:     probe.ID,
+			Catalog:       raw,
+			NetworkIds:    d.VisibleTo,
+			CatalogType:   d.CatalogType,
+			SchemaTypes:   d.SchemaTypes,
+			ForceBaseline: d.ForceBaseline,
 		})
 	}
 
 	return definition.PublishRequest{
-		Catalogs:      submissions,
-		Retire:        req.Retire,
-		ForceBaseline: req.ForceBaseline,
+		Catalogs: submissions,
+		Retire:   req.Retire,
 	}, nil
 }
 

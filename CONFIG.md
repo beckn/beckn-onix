@@ -8,12 +8,13 @@
 5. [Logging Configuration](#logging-configuration)
 6. [Metrics Configuration](#metrics-configuration)
 7. [Plugin Manager Configuration](#plugin-manager-configuration)
-8. [Module Configuration](#module-configuration)
-9. [Handler Configuration](#handler-configuration)
-10. [Plugin Configuration](#plugin-configuration)
-11. [Routing Configuration](#routing-configuration)
-12. [Deployment Scenarios](#deployment-scenarios)
-13. [Configuration Examples](#configuration-examples)
+8. [Application-Level Plugins Configuration](#application-level-plugins-configuration) (incl. [`plugins.crawler`](#pluginscrawler))
+9. [Module Configuration](#module-configuration)
+10. [Handler Configuration](#handler-configuration) (incl. [`catalogPublish`](#handler-type-catalogpublish) / [`catalogCrawl`](#handler-type-catalogcrawl) handler types)
+11. [Plugin Configuration](#plugin-configuration)
+12. [Routing Configuration](#routing-configuration)
+13. [Deployment Scenarios](#deployment-scenarios)
+14. [Configuration Examples](#configuration-examples)
 
 ---
 
@@ -329,7 +330,45 @@ plugins:
       auditFieldsConfig: "/app/config/audit-fields.yaml"
 ```
 
+#### `plugins.crawler`
+**Type**: `object`  
+**Required**: No  
+**Description**: The catalog crawler's own configuration. Unlike `registry`/`signer`/etc. under a module's `handler.plugins`, this is an **application-level, singleton background job** — it is constructed and started once at process startup (independent of any module/HTTP path), not loaded lazily per request. It discovers Beckn catalog indexes on a schedule, fetches and self-signature-verifies changed catalogs, and pushes them to a Discovery service. See [`pkg/plugin/implementation/catalogcrawler/README.md`](pkg/plugin/implementation/catalogcrawler/README.md) for the full set of config keys (`dbDsn`, `networks`, `discoveryPushUrl`, etc.) and how signature verification works.
 
+Deliberately kept at this level rather than under a module: it lets a deployment run scheduled background crawling with **no** on-demand HTTP trigger exposed at all (omit the `catalogCrawl` module below), or both together (configure this plus the module). Omit `plugins.crawler` entirely to disable the crawler altogether — the `catalogCrawl` module, if present, will then fail to trigger anything since there is no running crawler.
+
+**Requires** `plugins.registry` (below) — every fetched index entry and catalog file is self-signed, and the registry plugin is the only source of the signing keys checked against.
+
+##### `plugins.registry` / `plugins.cache` (crawler's own)
+**Type**: `object`  
+**Required**: `registry` required whenever `plugins.crawler` is configured; `cache` optional  
+**Description**: The crawler's own `RegistryLookup`/`RegistryMetadataLookup` (key distribution + network-scoped provider discovery) and optional `Cache` in front of it. Same plugin config shape as the module-level [Registry Plugin](#1-registry-plugin) / [Cache Plugin](#4-cache-plugin) sections below — this is a separate instance from whatever a module's own `handler.plugins.registry` configures, since this one lives at the application level and is wired to the crawler, not to any request-handling module.
+
+**Example** (e.g. `config/local-beckn-one-bpp.yaml`):
+```yaml
+plugins:
+  registry:
+    id: dediregistry
+    config:
+      timeout: 10
+      retry_max: 3
+      retry_wait_min: 100ms
+      retry_wait_max: 500ms
+  cache:
+    id: cache
+    config:
+      addr: redis:6379
+  crawler:
+    id: catalogcrawler
+    config:
+      dbDsn: "postgres://user:pass@localhost:5432/catalogcrawler"
+      networks: "example.network.production"
+      discoveryPushUrl: "https://discovery.example.org/beckn/catalog/push"
+      participantId: "bpp.example.org"
+      bppUri: "https://bpp.example.org"
+```
+
+To also expose an on-demand HTTP trigger for this crawler, add a module with handler type `catalogCrawl` — see [`catalogCrawl` handler type](#handler-type-catalogcrawl) below. That module takes no `plugins` of its own: it calls `CrawlRegistry` directly on this same running crawler instance.
 
 ### Audit fields configuration
 
@@ -502,8 +541,95 @@ modules:
 ##### `type`
 **Type**: `string`  
 **Required**: Yes  
-**Options**: `std` (standard handler)  
-**Description**: Type of handler. Currently only `std` is supported.
+**Options**: `std` (standard beckn-protocol handler), `catalogPublish` (DS-internal catalog/publish trigger), `catalogCrawl` (DS-internal on-demand crawl trigger)  
+**Description**: Type of handler. `std` is the standard Beckn-protocol request/response handler used by `bapTxnReceiver`/`bapTxnCaller`/`bppTxnReceiver`/`bppTxnCaller`-style modules; `catalogPublish` and `catalogCrawl` are unsigned, same-operator DS-internal triggers, not network-facing Beckn actions. See [`catalogPublish` handler type](#handler-type-catalogpublish) and [`catalogCrawl` handler type](#handler-type-catalogcrawl) below.
+
+<a name="handler-type-catalogpublish"></a>
+###### Handler type: `catalogPublish`
+
+A DS-internal, unsigned catalog/publish trigger. It invokes the [`catalogPublisher` plugin](#15-catalogpublisher-plugin) (below) synchronously with the catalogs in the request body and returns a per-catalog `ACCEPTED`/`REJECTED` result — no `validateSign`/`addRoute`/`signAck` pipeline, since the caller is the operator's own tooling, not another network participant. See the [plugin README](pkg/plugin/implementation/catalogpublisher/README.md) for the full model.
+
+Unlike `catalogCrawl`, this handler type **does** take its own `handler.plugins` (`catalogPublisher`, `catalogBlobStore`, `keyManager`, and `registry`/`cache` to satisfy `keyManager`'s constructor) — see the [`catalogPublisher` plugin](#15-catalogpublisher-plugin) and [`catalogBlobStore` plugin](#16-catalogblobstore-plugin) sections for those.
+
+**Request body** — matches beckn.yaml's `CatalogPublishAction` envelope shape as closely as possible:
+```json
+{
+  "context": { "action": "catalog/publish" },
+  "message": {
+    "catalogs": [ { "id": "ds.local.dev/CAT-1", "descriptor": {"...": "..."}, "provider": {"...": "..."}, "resources": [] } ],
+    "publishDirectives": [
+      { "catalogId": "ds.local.dev/CAT-1", "catalogType": "REGULAR", "visibleTo": ["retail-network"], "forceBaseline": false }
+    ]
+  },
+  "retire": ["ds.local.dev/CAT-OLD"]
+}
+```
+- `message.catalogs[]`: plain Beckn `Catalog` objects, matched to a `publishDirectives[]` entry by top-level `id`.
+- `message.publishDirectives[].visibleTo`: restricts this catalog's Discovery-service relevance to the listed network ids (maps to `NetworkIds`); omitted means visible to all.
+- `message.publishDirectives[].catalogType`: `MASTER`/`REGULAR`, required once `schemaValidator` is configured (unlike the internal default of `REGULAR` when empty).
+- `message.publishDirectives[].forceBaseline`: **per-catalog** — bypasses diffing against prior state and always emits a fresh baseline for just this one catalog (also how to trigger compaction). Not a beckn.yaml field; lives here (not top-level) because a call publishing several catalogs at once may want to force a baseline for only one of them.
+- `retire`: top-level list of catalogIds to retire (tombstone) this call, independent of `message.catalogs[]`. A catalogId present in both `retire` and `message.catalogs[]` is published normally — `retire` is ignored for it.
+
+**Response** — `200 OK`:
+```json
+{
+  "status": "COMPLETED",
+  "results": [ { "catalogId": "ds.local.dev/CAT-1", "status": "ACCEPTED", "version": 3 } ],
+  "warnings": []
+}
+```
+`status` is `"FAILED"` if any catalog hit a fatal `PublishError`; individual outcomes are always in `results[]` regardless (`status: "ACCEPTED"` or `"REJECTED"` with a `reason`).
+
+**Example**:
+```yaml
+modules:
+  - name: catalogPublish
+    path: /catalog/publish
+    handler:
+      type: catalogPublish
+      role: bpp
+      plugins:
+        registry:
+          id: dediregistry
+          config: { timeout: 10 }
+        keyManager:
+          id: simplekeymanager
+          config: { subscriberId: bpp.example.com, ... }
+        catalogBlobStore:
+          id: localcatalogblobstore
+          config: { root: /catalog }
+        catalogPublisher:
+          id: catalogpublisher
+          config: { nextUpdateIn: "336h" }
+```
+
+<a name="handler-type-catalogcrawl"></a>
+###### Handler type: `catalogCrawl`
+
+A DS-internal, unsigned on-demand crawl trigger. It calls `CrawlRegistry` on the already-running crawler configured via [`plugins.crawler`](#pluginscrawler) (top-level, not per-module) and returns a run ID; it takes no `handler.plugins` of its own. Requires `plugins.crawler` to be configured — otherwise the module registers but every request to it fails with "no Crawler plugin configured/running".
+
+**Request body** — either form is accepted, and both may be combined (merged into one list):
+```json
+{ "networkId": "example.network.production" }
+```
+```json
+{ "networkIds": ["example.network.production", "example.network.staging"] }
+```
+
+**Response** — `202 Accepted` on success:
+```json
+{ "runId": "3fa2c1e0-4b1a-4c9e-9c3a-6a2f8e0b7d21" }
+```
+On failure (e.g. no `networkId(s)` given, or the crawler isn't running), a `400`/`500` with `{"error": "..."}`.
+
+**Example**:
+```yaml
+modules:
+  - name: crawl
+    path: /crawl
+    handler:
+      type: catalogCrawl
+```
 
 ##### `role`
 **Type**: `string`  
@@ -1185,6 +1311,56 @@ steps:
 - `maxCredentials`: Maximum embedded credentials per request; a request exceeding it is rejected with a Bad Request NACK before any network I/O. Default: `"10"`.
 - `allowPrivateNetworks`: Permit did:web / revocation fetches to private, loopback or link-local addresses. These URLs come from the request body, so the plugin blocks non-public destinations by default (SSRF protection, enforced on the resolved IP at the dial layer, redirects capped at 3 hops). Set to `"true"` only for local deployments whose issuers/registries live on a private network. Default: `"false"`.
 - `debugLogging`: Verbose per-credential logging. Default: `"false"`.
+
+#### 15. CatalogPublisher Plugin
+
+**Purpose**: Implements the DS-internal catalog/publish operation used by the [`catalogPublish` handler type](#handler-type-catalogpublish) — diffing a submitted catalog against its prior state (baseline vs. change file), signing the result, and optionally compacting/republishing a "latest" pointer. See the [plugin README](pkg/plugin/implementation/catalogpublisher/README.md) for the full baseline/change-file/compaction model. Requires a `keyManager` (for signing) and a [`catalogBlobStore`](#16-catalogblobstore-plugin) (below) — both configured as sibling entries under the same module's `handler.plugins`.
+
+**Configuration** (e.g. `config/local-beckn-one-bpp.yaml`'s `catalogPublish` module):
+```yaml
+plugins:
+  catalogPublisher:
+    id: catalogpublisher
+    config:
+      # subscriberId is optional here -- if omitted, the handler derives
+      # it automatically from this same module's keyManager.subscriberId.
+      # Set it explicitly only if it must legitimately differ.
+      catalogBaseURL: "https://your-tunnel.ngrok-free.app"
+      nextUpdateIn: "336h"
+      publishLatest: "true"
+      gzip: "true"
+      compactionChangeCountThreshold: "20"
+      compactionSizeRatioThreshold: "0.5"
+      checkCatalogIndexLink: "true"
+```
+
+**Parameters**:
+- `subscriberId`: The signing identity to load via `keyManager.Keyset`. Optional — defaults to this module's `handler.plugins.keyManager.config.subscriberId` when unset.
+- `catalogBaseURL`: The public URL prefix everything this plugin publishes is addressed under (index/catalog/change files). Unset leaves a `"pending-artifact-store://..."` placeholder in published URLs until you point it at a real public location (e.g. an ngrok tunnel onto `catalogBlobStore`'s `root`).
+- `nextUpdateIn`: A Go duration (e.g. `"336h"`) setting the index's freshness window (`next_update`). Zero/unset omits it from the index (a catalog file's own `next_update` is still stamped regardless).
+- `publishLatest`: Maintain each catalog's "latest" full-content pointer at a stable URL, for consumers who don't want to apply `changes[]` themselves. Default: `"true"`.
+- `gzip`: Serve every published file gzip-compressed. Default: `"true"`.
+- `compactionChangeCountThreshold`: Automatically compact (fresh baseline instead of another change file) once this many pending change files have accumulated. `0`/unset disables. Default: `0`.
+- `compactionSizeRatioThreshold`: Automatically compact once pending change files' combined size is at least this fraction of the baseline's size (e.g. `"0.5"` for 50%). `0`/unset disables. Default: `0`.
+- `checkCatalogIndexLink`: Read-only, warn-only check (via `dediregistry`, using this same module's `keyManager.subscriberId`/keyId) of whether this node's DeDi registry record already links this publisher's catalog index (`meta.catalog_index_url`). A miss is reported as a `PublishResult` warning, never a failure. Requires the module's `registry` plugin to implement `RegistryMetadataLookup` (e.g. `dediregistry`). Default: `"false"`.
+
+Per-catalog controls (`forceBaseline`, `visibleTo`, `catalogType`, `retire`) live in the **request body** (`message.publishDirectives[]`/top-level `retire`), not in this plugin config — see [`catalogPublish` handler type](#handler-type-catalogpublish) below.
+
+#### 16. CatalogBlobStore Plugin
+
+**Purpose**: Where `catalogPublisher` reads prior published state from and persists new publish results to. `localcatalogblobstore` is a filesystem-backed implementation.
+
+**Configuration**:
+```yaml
+plugins:
+  catalogBlobStore:
+    id: localcatalogblobstore
+    config:
+      root: /catalog
+```
+
+**Parameters**:
+- `root`: **Required**. Local directory root the store reads/writes under. Should be the same path a reverse proxy / tunnel serves publicly at `catalogPublisher.config.catalogBaseURL`, so published URLs actually resolve.
 
 ---
 

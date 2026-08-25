@@ -95,6 +95,27 @@ func toSubmissions(subs []definition.CatalogSubmission) []publisher.Submission {
 			Dependencies: toCatalogMasterDependencies(s.Dependencies),
 			CrawlHint:    s.CrawlHint,
 			Catalog:      s.Catalog,
+			Directives:   publisher.PublishDirectives{ForceBaseline: s.ForceBaseline},
+		}
+	}
+	return out
+}
+
+// retireSubmissions builds one synthetic publisher.Submission per id in
+// retire -- catalog-core's Submission.Directives.Retire needs a Submission
+// to attach to (Catalog is not required and is ignored when Retire is set,
+// per PublishDirectives.Retire's own doc comment), so this is the only way
+// to retire a catalogId that Catalogs itself doesn't already carry an entry
+// for.
+func retireSubmissions(retire []string) []publisher.Submission {
+	if len(retire) == 0 {
+		return nil
+	}
+	out := make([]publisher.Submission, len(retire))
+	for i, id := range retire {
+		out[i] = publisher.Submission{
+			CatalogID:  id,
+			Directives: publisher.PublishDirectives{Retire: true},
 		}
 	}
 	return out

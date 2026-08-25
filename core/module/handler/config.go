@@ -45,6 +45,16 @@ const (
 	// root, bypassing validateSign/signAck since the caller is the
 	// operator's own tooling, not another network participant.
 	HandlerTypeCatalogPublish Type = "catalogPublish"
+	// HandlerTypeCatalogCrawl handles a DS-internal, unsigned on-demand
+	// crawl trigger: it invokes the already-running Crawler plugin's
+	// CrawlRegistry against caller-supplied networkIds and returns a run
+	// ID. Unlike other handler types, its provider is registered at
+	// runtime (see module.RegisterProvider, called from
+	// catalogcrawler.RegisterHandler) rather than statically in
+	// handlerProviders, because it closes over the single Crawler instance
+	// main.go starts as a background job -- CrawlRegistry requires that
+	// instance to already be running.
+	HandlerTypeCatalogCrawl Type = "catalogCrawl"
 )
 
 // PluginCfg holds the configuration for various plugins.

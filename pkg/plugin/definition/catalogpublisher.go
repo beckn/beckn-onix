@@ -52,6 +52,17 @@ type CatalogSubmission struct {
 	CrawlHint string
 
 	Catalog json.RawMessage
+
+	// ForceBaseline bypasses diffing against PriorState and always emits a
+	// fresh baseline for this one catalog -- a per-catalog control, not a
+	// batch-wide one (mirroring catalog-core's own
+	// publisher.Submission.Directives.ForceBaseline): a caller submitting
+	// several catalogs in one call can force a baseline for one while
+	// leaving the others to diff normally. For a catalog with no prior
+	// state this is a no-op (already the default); for one with prior
+	// state, this is how a caller triggers compaction -- a fresh baseline
+	// at the next version, discarding the accumulated change list.
+	ForceBaseline bool
 }
 
 // MasterDependency is one MASTER catalog a REGULAR catalog's resources
@@ -174,14 +185,17 @@ type PublishRequest struct {
 	// those (NFH-014 Appendix A, Example 4's third entry), it only drops
 	// isActive/baseline/changes. A catalogId present in both Retire and
 	// Catalogs is published normally; Retire is ignored for it.
+	//
+	// This stays a batch-wide list here, kept distinct from
+	// CatalogSubmission, rather than becoming a third per-submission bool
+	// alongside ForceBaseline: catalog-core's own
+	// Submission.Directives.Retire needs a Submission to attach to, so the
+	// catalogpublisher plugin implementation synthesizes one (empty
+	// Catalog, Directives.Retire=true) per id here at Publish time --
+	// retiring a catalog you're not otherwise submitting content for
+	// should not require also inventing a CatalogSubmission for it at this
+	// layer.
 	Retire []string
-
-	// ForceBaseline bypasses diffing against PriorState and always emits a
-	// fresh baseline. For a catalog with no prior state this is a no-op
-	// (already the default); for one with prior state, this is how a
-	// caller triggers compaction -- a fresh baseline at the next version,
-	// discarding the accumulated change list (file spec, "Compaction").
-	ForceBaseline bool
 }
 
 // CatalogPublishOutcome reports what happened to one submitted catalog.

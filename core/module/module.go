@@ -28,6 +28,18 @@ var handlerProviders = map[handler.Type]Provider{
 	handler.HandlerTypeCatalogPublish: catalogpublisher.NewHandler,
 }
 
+// RegisterProvider adds or overrides the Provider used for a handler Type.
+// Most handler types are wired statically above via a PluginManager, which
+// lazily constructs everything a handler needs from its own config. A few
+// types instead need a process-wide singleton -- HandlerTypeCatalogCrawl
+// needs the one Crawler instance main.go starts as a background job, since
+// Crawler.CrawlRegistry requires it already be running -- that singleton
+// isn't expressible as a PluginManager-loaded plugin, so main.go calls this
+// once at startup to register a provider closing over it.
+func RegisterProvider(t handler.Type, p Provider) {
+	handlerProviders[t] = p
+}
+
 // Register initializes and registers handlers based on the provided configuration.
 // It iterates over the module configurations, retrieves appropriate handler providers,
 // and registers the handlers with the HTTP multiplexer.

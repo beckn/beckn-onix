@@ -298,9 +298,9 @@ raw request directly with no synthesized wrapper:
   "context": { "action": "catalog/publish" },
   "message": {
     "catalogs": [ { "id": "ds.local.dev/CAT-1", "descriptor": {...}, "provider": {...}, "resources": [...] } ],
-    "publishDirectives": [ { "catalogId": "ds.local.dev/CAT-1", "catalogType": "REGULAR", "visibleTo": ["retail-network"] } ]
+    "publishDirectives": [ { "catalogId": "ds.local.dev/CAT-1", "catalogType": "REGULAR", "visibleTo": ["retail-network"], "forceBaseline": false } ]
   },
-  "retire": ["..."], "forceBaseline": false
+  "retire": ["..."]
 }
 ```
 `context` carries only `action` -- the real spec leaves every other
@@ -316,8 +316,13 @@ defaults to `"REGULAR"` on its own when empty -- callers must still set it
 explicitly here once `schemaValidator` is configured) and `visibleTo` is
 wired onto `CatalogSubmission.NetworkIds`; both map directly onto the
 same-named fields (`catalogType`/`networkIds`) in the published index.
-`retire`/`forceBaseline` have no beckn.yaml equivalent and stay as this
-handler's own siblings of `context`/`message`. Each catalog's own top-level `"id"` is used verbatim
+`retire` has no beckn.yaml equivalent and stays this handler's own
+sibling of `context`/`message`. `forceBaseline` has no beckn.yaml
+equivalent either, but lives inside `publishDirectives[]` rather than as
+a sibling: it's a per-catalog control, not a batch-wide one (catalog-core's
+own `Submission.Directives.ForceBaseline` is per-submission) -- a call
+publishing several catalogs at once can force a baseline for one while
+leaving the rest to diff normally. Each catalog's own top-level `"id"` is used verbatim
 as its `catalogId` -- the handler does not prefix or derive it from a
 domain; submit the full id you want. Response borrows beckn.yaml's
 `CatalogPublishAction`/`CatalogProcessingResult` vocabulary
