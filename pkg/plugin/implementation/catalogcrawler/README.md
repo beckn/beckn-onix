@@ -30,6 +30,9 @@ catalogCrawler:
     maxDecompressedBytes: "20971520"
     maxPushBytes: "10485760"
     maxAttempts: "0"
+    parkSweepIntervalSeconds: "900"
+    parkOlderThanSeconds: "0"
+    maxParkCount: "0"
 ```
 
 Supported config keys:
@@ -47,12 +50,25 @@ Supported config keys:
 - `catalogIntervalSeconds`: optional, default `30`. How often the sync queue is drained.
 - `maxAttempts`: optional, default `0` (unlimited). Transient-failure retries before a queue item is parked; a fresh publish of the same catalog re-arms it regardless.
 - `allowPrivateHosts`: optional, default `false`. Allows loopback/private fetch targets. **Tests only — must stay `false` in production**, or the crawler's SSRF guard is defeated.
+- `parkSweepIntervalSeconds`: optional, default `900` (15 min). How often the revive-or-abandon sweep runs — see "Parked and abandoned catalogs" below. Independent of `indexIntervalSeconds`/`catalogIntervalSeconds`.
+- `parkOlderThanSeconds`: optional, default `0`. How long a catalog must have been sitting parked before a sweep acts on it. `0` means no extra grace period — each sweep acts on anything currently parked.
+- `maxParkCount`: optional, default `0`, meaning derived from `parkSweepIntervalSeconds` and a 12-hour total retry budget (e.g. the default 15-minute sweep interval yields 48). How many times a parked catalog is revived before being abandoned instead.
 
 ## Signature verification
 
 - Every fetched index entry and catalog file carries a self-signature, checked against the signing key the configured `RegistryLookup` returns for that entry's `(nodeId, keyId)`.
 - Key resolution and caching are entirely the `RegistryLookup` plugin's responsibility (e.g. `registry`, `dediregistry`) — this plugin does not add its own cache in front of it, to avoid a second, independently-expiring cache that could still trust a key after the registry plugin's own cache has already invalidated it (e.g. on revocation).
-- A signature failure (unknown key, revoked/expired subscription, malformed key material, bad signature) is permanent and the item is parked, not retried; a registry lookup failure (network/outage) is transient and retried on the next tick.
+- A signature failure (unknown key, revoked/expired subscription, malformed key material, bad signature) is permanent and the item is parked, not retried on its own schedule — but see "Parked and abandoned catalogs" below: a permanent failure isn't necessarily final if its underlying cause was transient in practice (e.g. the publisher's registered key gets corrected later). A registry lookup failure (network/outage) is transient and retried on the next tick.
+
+## Parked and abandoned catalogs
+
+A catalog whose sync keeps failing permanently (or exhausts `maxAttempts`) gets **parked**: `crawlmanager.SyncNext` stops retrying it on the normal `catalogIntervalSeconds` cadence. Without anything else, a parked catalog would stay parked forever unless its publisher republishes a *changed* index — an unchanged (304, or same declared version) index never re-triggers the decide loop that would otherwise notice the underlying cause cleared up.
+
+A separate, independent sweep (`parkSweepIntervalSeconds`) periodically revisits every parked catalog and either:
+- **revives** it back to the normal queue (if it's been parked fewer than `maxParkCount` times), giving it another chance without waiting for a republish, or
+- **abandons** it (once `maxParkCount` is reached) — terminal: no further automatic retries, though a fresh publish still reactivates it immediately regardless of abandonment.
+
+Both states are visible via [`/crawl/status`](#crawlstatus-http-endpoint)'s `parked`/`parkCount`/`abandoned`/`abandonedAt` fields — useful for exactly the kind of case that motivated this: a catalog failing signature verification against a registry key that turns out to be stale gets parked, retried a bounded number of times, and if the publisher never fixes it, surfaces as abandoned rather than silently retrying (or silently never retrying) forever with no visibility.
 
 ## On-demand crawl
 
@@ -158,6 +174,18 @@ GET /crawl/status?subscriberId=staging.p-node.fabric.nfh.global&catalogId=stagin
     "retired": false,
     "queued": true,
     "attempts": 0
+  },
+  {
+    "catalogId": "staging.p-node.fabric.nfh.global/CAT-3",
+    "everSynced": true,
+    "version": 1,
+    "entryVersion": 1,
+    "retired": false,
+    "queued": false,
+    "abandoned": true,
+    "parkCount": 48,
+    "abandonedAt": "2026-08-25T09:00:00Z",
+    "lastError": "crawler: signature verification failed: Ed25519 signature verification failed"
   }
 ]
 ```
@@ -169,8 +197,16 @@ yet); check `queued` to see whether that first sync is pending right now. `lastE
 only if the catalog's most recent sync attempt failed (cleared on the next success); a non-empty
 `catalogId` matching nothing at all (not even a pending first sync) is a `404`, an empty `catalogId`
 matching nothing is a `200` with `[]`. `queued`/`attempts`/`nextAttemptAt` are only meaningful
-while `queued` is `true` (a sync still pending or retrying). There is no exact "next scheduled
-crawl" — `PollIndexes` polls every discovered index unconditionally on each tick, so the crawler
-has no per-index schedule of its own
-to report; `indexLastPolledAt` plus the deployment's own `indexIntervalSeconds` is the closest
-estimate available.
+while `queued` is `true` (a sync still pending or retrying).
+
+`parked`/`parkCount` and `abandoned`/`abandonedAt`/`parkCount` (CAT-3 above) report the
+revive-or-abandon state described in "Parked and abandoned catalogs" above -- `parked`, `queued`,
+and `abandoned` are mutually exclusive. CAT-3's `lastError` is the actual reason it kept failing
+(RecordFailure's last-recorded error), so this is where a persistent signature-verification
+mismatch like the one that motivated this feature actually becomes visible, instead of silently
+parking forever.
+
+There is no exact "next scheduled crawl" — `PollIndexes` polls every discovered index
+unconditionally on each tick, so the crawler has no per-index schedule of its own to report;
+`indexLastPolledAt` plus the deployment's own `indexIntervalSeconds` is the closest estimate
+available.

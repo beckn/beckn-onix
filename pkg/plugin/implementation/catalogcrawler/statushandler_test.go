@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/beckn-one/beckn-onix/core/module/handler"
 	"github.com/beckn-one/beckn-onix/pkg/model"
@@ -185,6 +186,49 @@ func TestStatusHandler_QueuedButNeverSyncedCatalogIsVisible(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].EverSynced || !got[0].Queued {
 		t.Fatalf("expected 1 catalog with everSynced=false, queued=true, got: %s", rec.Body.String())
+	}
+}
+
+// TestStatusHandler_SurfacesParkedAndAbandonedState exercises the
+// handler/JSON boundary for the revive-or-abandon fields (catalog-core's
+// Store.RequeueOrAbandonParked/ListAbandoned) -- the underlying store
+// query was verified against a real Postgres instance separately.
+func TestStatusHandler_SurfacesParkedAndAbandonedState(t *testing.T) {
+	fc := &fakeCrawler{statusRows: []definition.CrawlStatus{
+		{CatalogID: "publisher.example.com/CAT-PARKED", EverSynced: true, Parked: true, ParkCount: 1},
+		{CatalogID: "publisher.example.com/CAT-ABANDONED", EverSynced: true, Abandoned: true, ParkCount: 48, AbandonedAt: time.Unix(1700000000, 0)},
+	}}
+	mgr := &statusTestManager{crawler: fc}
+	h, err := NewStatusHandler(context.Background(), mgr, testStatusConfig(true), "crawlStatus")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/crawl/status?subscriberId=publisher.example.com", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got []definition.CrawlStatus
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 catalogs, got: %s", rec.Body.String())
+	}
+	byID := map[string]definition.CrawlStatus{}
+	for _, c := range got {
+		byID[c.CatalogID] = c
+	}
+	parked := byID["publisher.example.com/CAT-PARKED"]
+	if !parked.Parked || parked.Abandoned || parked.ParkCount != 1 {
+		t.Fatalf("unexpected parked catalog: %+v", parked)
+	}
+	abandoned := byID["publisher.example.com/CAT-ABANDONED"]
+	if !abandoned.Abandoned || abandoned.Parked || abandoned.ParkCount != 48 || abandoned.AbandonedAt.IsZero() {
+		t.Fatalf("unexpected abandoned catalog: %+v", abandoned)
 	}
 }
 

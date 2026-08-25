@@ -76,12 +76,32 @@ type CrawlStatus struct {
 	// once-failed catalog that later succeeded reports LastError empty.
 	LastError string `json:"lastError,omitempty"`
 
-	// Queued is true while a sync for this catalog is pending or retrying
-	// (a crawler_queue row exists) -- Attempts/NextAttemptAt are only
-	// meaningful when this is true.
+	// Queued is true while a sync for this catalog is actively pending or
+	// in flight -- Attempts/NextAttemptAt are only meaningful when this is
+	// true. Parked and Abandoned are separate, mutually exclusive states
+	// (see their own doc comments below), not folded into Queued.
 	Queued        bool      `json:"queued"`
 	Attempts      int       `json:"attempts,omitempty"`
 	NextAttemptAt time.Time `json:"nextAttemptAt,omitempty"`
+
+	// Parked is true once a permanent (or retry-budget-exhausted) failure
+	// parked this catalog -- crawlmanager stops retrying it on its own
+	// schedule. It isn't necessarily stuck forever: a periodic sweep (see
+	// ParkCount) may revive it automatically, and publishing a fresh
+	// version of the catalog reactivates it immediately regardless.
+	Parked bool `json:"parked,omitempty"`
+	// ParkCount is how many times this catalog has been parked, ever
+	// (cumulative -- not reset by a revival). Compared against the
+	// deployment's own configured park-retry budget to decide whether the
+	// next park attempt abandons it instead.
+	ParkCount int `json:"parkCount,omitempty"`
+
+	// Abandoned is true once the periodic park sweep gave up on this
+	// catalog after too many parks -- terminal, no further automatic
+	// retries, though a fresh publish still reactivates it.
+	Abandoned bool `json:"abandoned,omitempty"`
+	// AbandonedAt is when Abandoned became true.
+	AbandonedAt time.Time `json:"abandonedAt,omitempty"`
 
 	// UpdatedAt is when this catalog's settled state was last written --
 	// i.e. its last successful sync or failure record, whichever is more

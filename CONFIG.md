@@ -660,10 +660,19 @@ Takes its own `handler.plugins`: `registry` (unrelated to caller auth — `catal
     "catalogId": "staging.p-node.fabric.nfh.global/CAT-2",
     "everSynced": false,
     "queued": true
+  },
+  {
+    "catalogId": "staging.p-node.fabric.nfh.global/CAT-3",
+    "everSynced": true,
+    "queued": false,
+    "abandoned": true,
+    "parkCount": 48,
+    "abandonedAt": "2026-08-25T09:00:00Z",
+    "lastError": "crawler: signature verification failed: Ed25519 signature verification failed"
   }
 ]
 ```
-`everSynced: false` (CAT-2 above) means this catalog is queued for its very first sync — `version`/`entryVersion`/`retired`/`lastError`/`updatedAt` are all zero-valued since nothing has settled yet; check `queued` for whether that first sync is pending right now. `lastError`/`attempts`/`nextAttemptAt` appear only when relevant (a past failure, or `queued: true`). A non-empty `catalogId` matching nothing at all — not even a pending first sync — (or belonging to a different subscriber — the two are indistinguishable on purpose) is a `404`; an absent `catalogId` matching nothing is a `200` with `[]`.
+`everSynced: false` (CAT-2 above) means this catalog is queued for its very first sync — `version`/`entryVersion`/`retired`/`lastError`/`updatedAt` are all zero-valued since nothing has settled yet; check `queued` for whether that first sync is pending right now. `lastError`/`attempts`/`nextAttemptAt` appear only when relevant (a past failure, or `queued: true`). `parked`/`abandoned` (CAT-3 above, mutually exclusive with `queued`) report the crawler's revive-or-abandon sweep state — see [`pkg/plugin/implementation/catalogcrawler/README.md`](pkg/plugin/implementation/catalogcrawler/README.md#parked-and-abandoned-catalogs) — with `parkCount`/`abandonedAt` alongside; `lastError` there is the actual reason the catalog kept failing (e.g. a persistent signature-verification mismatch), not just "something failed." A non-empty `catalogId` matching nothing at all — not even a pending first sync — (or belonging to a different subscriber — the two are indistinguishable on purpose) is a `404`; an absent `catalogId` matching nothing is a `200` with `[]`.
 
 **Example**:
 ```yaml

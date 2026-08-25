@@ -41,9 +41,30 @@ type CatalogStatus struct {
 	Reason       string
 	UpdatedAt    time.Time
 
+	// Queued is true while a sync for this catalog is actively pending or
+	// in flight (crawler_queue status 'queued'/'in_progress'). Parked and
+	// Abandoned are their own, mutually exclusive states -- see each
+	// field's own doc comment -- not folded into Queued, since a caller
+	// needs to tell "still trying" apart from "gave up on this one".
 	Queued        bool
 	Attempts      int
 	NextAttemptAt time.Time
+
+	// Parked is true once a permanent (or MaxAttempts-exhausted) failure
+	// has parked this catalog's queue row (crawlmanager's Park) -- it will
+	// no longer be retried on its own schedule, but RequeueOrAbandonParked
+	// (see ParkCount) may revive it, and a fresh publish reactivates it
+	// immediately regardless.
+	Parked    bool
+	ParkCount int
+
+	// Abandoned is true once RequeueOrAbandonParked gave up on this
+	// catalog after ParkCount reached the deployment's configured
+	// maxParkCount -- terminal: no further automatic retries, though a
+	// fresh publish still reactivates it (see Enqueue's own doc comment).
+	Abandoned   bool
+	AbandonedAt time.Time
+
 	IndexPolledAt time.Time
 }
 
@@ -52,11 +73,22 @@ type CatalogStatus struct {
 // both -- or just catalogID's if it's non-empty (and actually owned by
 // participantID -- a catalogID belonging to someone else yields an empty
 // result, not an error, same as one that doesn't exist at all).
+//
+// next_attempt_at is nulled out in SQL for anything not actively
+// queued/in_progress: Park sets it to 'infinity' (so ClaimNext's own SQL
+// comparisons never reclaim a parked row), but Postgres's infinity
+// timestamp has no time.Time representation -- scanning it directly
+// errors ("unsupported Scan ... storing driver.Value type string into
+// type *time.Time"). Every other query in this package only ever
+// compares next_attempt_at in SQL, never scans it into Go, which is why
+// this surfaced only here.
 func (s *Store) Status(ctx context.Context, participantID, catalogID string) ([]CatalogStatus, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT COALESCE(c.catalog_id, q.catalog_id), COALESCE(c.index_url, q.index_url),
 		        c.version, c.entry_version, c.status, c.reason, c.updated_at,
-		        q.attempts, q.next_attempt_at,
+		        q.status, q.attempts,
+		        CASE WHEN q.status IN ('queued','in_progress') THEN q.next_attempt_at END,
+		        q.park_count, q.abandoned_at,
 		        i.updated_at
 		   FROM crawler_catalog c
 		   FULL OUTER JOIN crawler_queue q ON q.catalog_id = c.catalog_id
@@ -73,16 +105,17 @@ func (s *Store) Status(ctx context.Context, participantID, catalogID string) ([]
 	var out []CatalogStatus
 	for rows.Next() {
 		var (
-			cs                    CatalogStatus
-			indexURL, status, rsn sql.NullString
-			version, entryVersion sql.NullInt64
-			updatedAt             sql.NullTime
-			attempts              sql.NullInt64
-			nextAttemptAt         sql.NullTime
-			indexPolledAt         sql.NullTime
+			cs                         CatalogStatus
+			indexURL, status, rsn      sql.NullString
+			version, entryVersion      sql.NullInt64
+			updatedAt                  sql.NullTime
+			queueStatus                sql.NullString
+			attempts, parkCount        sql.NullInt64
+			nextAttemptAt, abandonedAt sql.NullTime
+			indexPolledAt              sql.NullTime
 		)
 		if err := rows.Scan(&cs.CatalogID, &indexURL, &version, &entryVersion, &status, &rsn, &updatedAt,
-			&attempts, &nextAttemptAt, &indexPolledAt); err != nil {
+			&queueStatus, &attempts, &nextAttemptAt, &parkCount, &abandonedAt, &indexPolledAt); err != nil {
 			return nil, fmt.Errorf("store: Status: scanning row: %w", err)
 		}
 		cs.IndexURL = indexURL.String
@@ -92,9 +125,13 @@ func (s *Store) Status(ctx context.Context, participantID, catalogID string) ([]
 		cs.Retired = status.String == "retired"
 		cs.Reason = rsn.String
 		cs.UpdatedAt = updatedAt.Time
-		cs.Queued = attempts.Valid
+		cs.Queued = queueStatus.String == "queued" || queueStatus.String == "in_progress"
 		cs.Attempts = int(attempts.Int64)
 		cs.NextAttemptAt = nextAttemptAt.Time
+		cs.Parked = queueStatus.String == "parked"
+		cs.ParkCount = int(parkCount.Int64)
+		cs.Abandoned = queueStatus.String == "abandoned"
+		cs.AbandonedAt = abandonedAt.Time
 		cs.IndexPolledAt = indexPolledAt.Time
 		out = append(out, cs)
 	}

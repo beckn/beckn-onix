@@ -37,20 +37,23 @@ import (
 // matching onix's own config-key convention (e.g. schemaversionmediator's
 // fetchTimeout/artifactCacheTTL).
 const (
-	cfgDBDSN              = "dbDsn"
-	cfgNetworks           = "networks"        // comma-separated networkIds for registry-backed discovery
-	cfgStaticIndexURLs    = "staticIndexUrls" // comma-separated, optional fixed index URLs
-	cfgDiscoveryURL       = "discoveryPushUrl"
-	cfgParticipantID      = "participantId" // this deployment's own bppId
-	cfgBppURI             = "bppUri"        // this deployment's own bppUri
-	cfgFetchTimeoutSec    = "fetchTimeoutSeconds"
-	cfgMaxFetchBytes      = "maxFetchBytes"
-	cfgMaxDecompressed    = "maxDecompressedBytes"
-	cfgMaxPushBytes       = "maxPushBytes"
-	cfgIndexIntervalSec   = "indexIntervalSeconds"
-	cfgCatalogIntervalSec = "catalogIntervalSeconds"
-	cfgAllowPrivateHosts  = "allowPrivateHosts" // "true" to allow loopback/private fetch targets; tests only
-	cfgMaxAttempts        = "maxAttempts"       // transient-failure retries before parking; 0/unset => unlimited
+	cfgDBDSN                = "dbDsn"
+	cfgNetworks             = "networks"        // comma-separated networkIds for registry-backed discovery
+	cfgStaticIndexURLs      = "staticIndexUrls" // comma-separated, optional fixed index URLs
+	cfgDiscoveryURL         = "discoveryPushUrl"
+	cfgParticipantID        = "participantId" // this deployment's own bppId
+	cfgBppURI               = "bppUri"        // this deployment's own bppUri
+	cfgFetchTimeoutSec      = "fetchTimeoutSeconds"
+	cfgMaxFetchBytes        = "maxFetchBytes"
+	cfgMaxDecompressed      = "maxDecompressedBytes"
+	cfgMaxPushBytes         = "maxPushBytes"
+	cfgIndexIntervalSec     = "indexIntervalSeconds"
+	cfgCatalogIntervalSec   = "catalogIntervalSeconds"
+	cfgAllowPrivateHosts    = "allowPrivateHosts"        // "true" to allow loopback/private fetch targets; tests only
+	cfgMaxAttempts          = "maxAttempts"              // transient-failure retries before parking; 0/unset => unlimited
+	cfgParkSweepIntervalSec = "parkSweepIntervalSeconds" // how often RequeueOrAbandonParked runs; 0/unset => DefaultParkSweepInterval (15m)
+	cfgParkOlderThanSec     = "parkOlderThanSeconds"     // how long a catalog must sit parked before this sweep touches it; 0/unset => act on anything parked
+	cfgMaxParkCount         = "maxParkCount"             // revivals allowed before abandoning a parked catalog; 0/unset => derived from the sweep interval and DefaultMaxParkRetryBudget (12h)
 )
 
 const (
@@ -58,6 +61,11 @@ const (
 	defaultMaxFetchBytes   = 10 << 20
 	defaultMaxDecompressed = 20 << 20
 	defaultMaxPushBytes    = 10 << 20
+	// DefaultMaxParkRetryBudget is the total wall-clock time a parked
+	// catalog keeps getting revived before being abandoned, by default --
+	// combined with the actual (possibly overridden) park-sweep interval
+	// via crawlmanager.DeriveMaxParkCount to compute Params.MaxParkCount.
+	DefaultMaxParkRetryBudget = 12 * time.Hour
 )
 
 // Provider implements definition.CrawlerProvider.
@@ -116,13 +124,26 @@ func (Provider) New(ctx context.Context, registry definition.RegistryLookup, met
 	// (buildSource) and scope filtering (Params.Networks) -- one deployment
 	// concept, "which networks do I carry", not two.
 	networks := splitNonEmpty(config[cfgNetworks])
+	schedCfg := SchedulerConfig{
+		IndexInterval:     durationSecondsOr(config[cfgIndexIntervalSec], DefaultIndexInterval),
+		CatalogInterval:   durationSecondsOr(config[cfgCatalogIntervalSec], DefaultCatalogInterval),
+		ParkSweepInterval: durationSecondsOr(config[cfgParkSweepIntervalSec], DefaultParkSweepInterval),
+		ParkOlderThan:     durationSecondsOr(config[cfgParkOlderThanSec], 0),
+	}
+	// DefaultMaxParkRetryBudget/schedCfg's own (possibly overridden)
+	// ParkSweepInterval together give the actual default maxParkCount --
+	// crawlmanager.DefaultMaxParkCount (12) doesn't itself know this
+	// plugin's sweep cadence, so deriving it here (rather than leaving
+	// Params.MaxParkCount at 0) is what makes a 15-minute sweep actually
+	// mean "abandon after ~12h" instead of ~3h.
+	maxParkCount := int(int64Or(config[cfgMaxParkCount], 0))
+	if maxParkCount == 0 {
+		maxParkCount = crawlmanager.DeriveMaxParkCount(schedCfg.ParkSweepInterval, DefaultMaxParkRetryBudget)
+	}
 	params := crawlmanager.Params{
 		Fetcher: fetcher, Source: src, Sink: snk, Store: st, Log: log,
 		Networks: networks, MaxAttempts: int(int64Or(config[cfgMaxAttempts], 0)),
-	}
-	schedCfg := SchedulerConfig{
-		IndexInterval:   durationSecondsOr(config[cfgIndexIntervalSec], DefaultIndexInterval),
-		CatalogInterval: durationSecondsOr(config[cfgCatalogIntervalSec], DefaultCatalogInterval),
+		MaxParkCount: maxParkCount,
 	}
 
 	c := &crawlerImpl{
@@ -302,6 +323,10 @@ func (c *crawlerImpl) Status(ctx context.Context, subscriberID, catalogID string
 			Queued:            r.Queued,
 			Attempts:          r.Attempts,
 			NextAttemptAt:     r.NextAttemptAt,
+			Parked:            r.Parked,
+			ParkCount:         r.ParkCount,
+			Abandoned:         r.Abandoned,
+			AbandonedAt:       r.AbandonedAt,
 			UpdatedAt:         r.UpdatedAt,
 			IndexLastPolledAt: r.IndexPolledAt,
 		}
