@@ -296,47 +296,29 @@ modules:
           config:
             cacheTTL: "3600"
 
-  # crawl: DS-internal on-demand trigger for the catalog crawler configured
-  # under the top-level plugins.crawler above (see its README). Unsigned,
-  # same-operator call -- no validateSign/addRoute/signAck. It calls
-  # CrawlRegistry on the single running Crawler instance directly, so it
-  # takes no plugins of its own; the request body is {networkId} or
-  # {networkIds: [...]}, and it 202s with a runId once the pass is queued.
-  # A no-op until plugins.crawler above is configured and running.
+  # crawl: the whole /crawl/* endpoint family (see
+  # pkg/plugin/implementation/catalogcrawler/README.md) as one module, one
+  # handler type -- /crawl/trigger and /crawl/status are sub-routed
+  # internally (catalogcrawler.NewHandler), not registered as separate
+  # handler types/module blocks. Both operate on the single running
+  # Crawler instance configured under the top-level plugins.crawler above,
+  # so this module takes no plugins of its own and is a no-op until that's
+  # configured and running.
+  #
+  # /crawl/trigger: DS-internal on-demand trigger. Unsigned, same-operator
+  # call -- no validateSign/addRoute/signAck. Request body is {networkId}
+  # or {networkIds: [...]}; 202s with a runId once the pass is queued.
+  #
+  # /crawl/status: crawl/sync status query. Eventually a signed,
+  # network-facing call answering a specific authenticated publisher about
+  # their own data -- NOT YET IMPLEMENTED. authDisabled: true is required
+  # for this sub-endpoint to serve requests at all right now; it accepts
+  # subscriberId/catalogId as plain, UNAUTHENTICATED query params instead
+  # of a verified Authorization header. Remove authDisabled (or set it
+  # false) once signed verification lands -- do not run this in any real
+  # deployment as-is; /crawl/trigger is unaffected either way.
   - name: crawl
-    path: /crawl
+    path: /crawl/
     handler:
       type: catalogCrawl
-
-  # crawlStatus: crawl/sync status query. Eventually a signed,
-  # network-facing call answering a specific authenticated publisher about
-  # their own data (see pkg/plugin/implementation/catalogcrawler/README.md)
-  # -- NOT YET IMPLEMENTED. authDisabled: true is required to construct
-  # this handler at all right now; it accepts subscriberId/catalogId as
-  # plain, UNAUTHENTICATED query params instead of a verified Authorization
-  # header. Remove authDisabled (or set it false) once signed verification
-  # lands -- do not run this in any real deployment as-is.
-  - name: crawlStatus
-    path: /crawl/status
-    handler:
-      type: catalogCrawlStatus
       authDisabled: true
-      plugins:
-        # registry is unrelated to authenticating callers (there is none
-        # yet) -- it's the catalogcrawler plugin's own dependency, used to
-        # verify fetched catalogs' self-signatures.
-        registry:
-          id: dediregistry
-          config:
-            timeout: 10
-            retry_max: 3
-            retry_wait_min: 100ms
-            retry_wait_max: 500ms
-        # Its own Crawler instance/config -- same dbDsn as the top-level
-        # plugins.crawler, so it reads the same Postgres tables, but never
-        # Start()-ed (Status only reads, it doesn't need the scheduler).
-        crawler:
-          id: catalogcrawler
-          config:
-            dbDsn: "postgres://user:pass@localhost:5432/catalogcrawler"
-            discoveryPushUrl: "https://discovery.example.org/beckn/catalog/push"

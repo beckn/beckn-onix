@@ -1,7 +1,6 @@
 package catalogcrawler
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,118 +8,30 @@ import (
 	"time"
 
 	"github.com/beckn-one/beckn-onix/core/module/handler"
-	"github.com/beckn-one/beckn-onix/pkg/model"
-	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
-// statusTestManager implements handler.PluginManager, backing only what
-// NewStatusHandler actually calls (Cache/Registry/Crawler) while
-// AuthDisabled is the only supported mode; everything else panics if
-// reached.
-type statusTestManager struct {
-	crawler definition.Crawler
-}
+func TestStatusHandler_RejectsWhenAuthNotDisabled(t *testing.T) {
+	fc := &fakeCrawler{}
+	h := newStatusHandler(fc, &handler.Config{AuthDisabled: false})
 
-func (m *statusTestManager) Cache(context.Context, *plugin.Config) (definition.Cache, error) {
-	return nil, nil
-}
-func (m *statusTestManager) Registry(context.Context, definition.Cache, *plugin.Config) (definition.RegistryLookup, error) {
-	return fakeStatusRegistry{}, nil
-}
-func (m *statusTestManager) Crawler(context.Context, definition.RegistryLookup, *plugin.Config) (definition.Crawler, error) {
-	return m.crawler, nil
-}
-func (m *statusTestManager) Middleware(context.Context, *plugin.Config) (func(http.Handler) http.Handler, error) {
-	panic("unused")
-}
-func (m *statusTestManager) SignValidator(context.Context, *plugin.Config) (definition.SignValidator, error) {
-	panic("unused")
-}
-func (m *statusTestManager) Validator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
-	panic("unused")
-}
-func (m *statusTestManager) Router(context.Context, *plugin.Config) (definition.Router, error) {
-	panic("unused")
-}
-func (m *statusTestManager) Publisher(context.Context, *plugin.Config) (definition.Publisher, error) {
-	panic("unused")
-}
-func (m *statusTestManager) Signer(context.Context, *plugin.Config) (definition.Signer, error) {
-	panic("unused")
-}
-func (m *statusTestManager) Step(context.Context, *plugin.Config) (definition.Step, error) {
-	panic("unused")
-}
-func (m *statusTestManager) PolicyChecker(context.Context, definition.ManifestLoader, *plugin.Config) (definition.PolicyChecker, error) {
-	panic("unused")
-}
-func (m *statusTestManager) SchemaVersionMediator(context.Context, definition.ManifestLoader, *plugin.Config) (definition.SchemaVersionMediator, error) {
-	panic("unused")
-}
-func (m *statusTestManager) KeyManager(context.Context, definition.RegistryLookup, *plugin.Config) (definition.KeyManager, error) {
-	panic("unused")
-}
-func (m *statusTestManager) ManifestLoader(context.Context, definition.Cache, definition.RegistryMetadataLookup, *plugin.Config) (definition.ManifestLoader, error) {
-	panic("unused")
-}
-func (m *statusTestManager) TransportWrapper(context.Context, *plugin.Config) (definition.TransportWrapper, error) {
-	panic("unused")
-}
-func (m *statusTestManager) SchemaValidator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
-	panic("unused")
-}
-func (m *statusTestManager) PayloadStore(context.Context, definition.Cache, string, *plugin.Config) (definition.PayloadStore, error) {
-	panic("unused")
-}
-func (m *statusTestManager) CatalogPublisher(context.Context, definition.KeyManager, definition.CatalogBlobStore, definition.RegistryMetadataLookup, *plugin.Config) (definition.CatalogPublisher, error) {
-	panic("unused")
-}
-func (m *statusTestManager) CatalogBlobStore(context.Context, *plugin.Config) (definition.CatalogBlobStore, error) {
-	panic("unused")
-}
+	req := httptest.NewRequest(http.MethodGet, "/crawl/status?subscriberId=publisher.example.com", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
 
-type fakeStatusRegistry struct{}
-
-func (fakeStatusRegistry) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
-	panic("unused")
-}
-
-func testStatusConfig(authDisabled bool) *handler.Config {
-	return &handler.Config{
-		AuthDisabled: authDisabled,
-		Plugins: handler.PluginCfg{
-			Registry: &plugin.Config{ID: "dediregistry"},
-			Crawler:  &plugin.Config{ID: "catalogcrawler"},
-		},
-	}
-}
-
-func TestNewStatusHandler_AuthEnabledIsNotImplementedYet(t *testing.T) {
-	mgr := &statusTestManager{crawler: &fakeCrawler{}}
-	if _, err := NewStatusHandler(context.Background(), mgr, testStatusConfig(false), "crawlStatus"); err == nil {
-		t.Fatal("expected an error when authDisabled is not set -- signed auth isn't implemented yet")
-	}
-}
-
-func TestNewStatusHandler_MissingCrawlerConfigErrors(t *testing.T) {
-	mgr := &statusTestManager{crawler: &fakeCrawler{}}
-	cfg := testStatusConfig(true)
-	cfg.Plugins.Crawler = nil
-	if _, err := NewStatusHandler(context.Background(), mgr, cfg, "crawlStatus"); err == nil {
-		t.Fatal("expected an error when plugins.crawler is not configured")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
 }
 
 func TestStatusHandler_RequiresSubscriberIdParam(t *testing.T) {
-	mgr := &statusTestManager{crawler: &fakeCrawler{}}
-	h, err := NewStatusHandler(context.Background(), mgr, testStatusConfig(true), "crawlStatus")
-	if err != nil {
-		t.Fatal(err)
-	}
+	fc := &fakeCrawler{}
+	h := newStatusHandler(fc, &handler.Config{AuthDisabled: true})
+
 	req := httptest.NewRequest(http.MethodGet, "/crawl/status", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
+
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
@@ -128,11 +39,7 @@ func TestStatusHandler_RequiresSubscriberIdParam(t *testing.T) {
 
 func TestStatusHandler_ReturnsCatalogsForSubscriberIdParam(t *testing.T) {
 	fc := &fakeCrawler{statusRows: []definition.CrawlStatus{{CatalogID: "publisher.example.com/CAT-1", Version: 3, EntryVersion: 3}}}
-	mgr := &statusTestManager{crawler: fc}
-	h, err := NewStatusHandler(context.Background(), mgr, testStatusConfig(true), "crawlStatus")
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newStatusHandler(fc, &handler.Config{AuthDisabled: true})
 
 	req := httptest.NewRequest(http.MethodGet, "/crawl/status?subscriberId=publisher.example.com&catalogId=publisher.example.com/CAT-1", nil)
 	rec := httptest.NewRecorder()
@@ -167,11 +74,7 @@ func TestStatusHandler_QueuedButNeverSyncedCatalogIsVisible(t *testing.T) {
 	fc := &fakeCrawler{statusRows: []definition.CrawlStatus{
 		{CatalogID: "publisher.example.com/CAT-NEW", EverSynced: false, Queued: true},
 	}}
-	mgr := &statusTestManager{crawler: fc}
-	h, err := NewStatusHandler(context.Background(), mgr, testStatusConfig(true), "crawlStatus")
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newStatusHandler(fc, &handler.Config{AuthDisabled: true})
 
 	req := httptest.NewRequest(http.MethodGet, "/crawl/status?subscriberId=publisher.example.com&catalogId=publisher.example.com/CAT-NEW", nil)
 	rec := httptest.NewRecorder()
@@ -198,11 +101,7 @@ func TestStatusHandler_SurfacesParkedAndAbandonedState(t *testing.T) {
 		{CatalogID: "publisher.example.com/CAT-PARKED", EverSynced: true, Parked: true, ParkCount: 1},
 		{CatalogID: "publisher.example.com/CAT-ABANDONED", EverSynced: true, Abandoned: true, ParkCount: 48, AbandonedAt: time.Unix(1700000000, 0)},
 	}}
-	mgr := &statusTestManager{crawler: fc}
-	h, err := NewStatusHandler(context.Background(), mgr, testStatusConfig(true), "crawlStatus")
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newStatusHandler(fc, &handler.Config{AuthDisabled: true})
 
 	req := httptest.NewRequest(http.MethodGet, "/crawl/status?subscriberId=publisher.example.com", nil)
 	rec := httptest.NewRecorder()
@@ -234,11 +133,7 @@ func TestStatusHandler_SurfacesParkedAndAbandonedState(t *testing.T) {
 
 func TestStatusHandler_UnknownCatalogIdReturns404(t *testing.T) {
 	fc := &fakeCrawler{statusRows: nil}
-	mgr := &statusTestManager{crawler: fc}
-	h, err := NewStatusHandler(context.Background(), mgr, testStatusConfig(true), "crawlStatus")
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newStatusHandler(fc, &handler.Config{AuthDisabled: true})
 
 	req := httptest.NewRequest(http.MethodGet, "/crawl/status?subscriberId=publisher.example.com&catalogId=someone-elses.example.com/CAT-1", nil)
 	rec := httptest.NewRecorder()
@@ -251,11 +146,7 @@ func TestStatusHandler_UnknownCatalogIdReturns404(t *testing.T) {
 
 func TestStatusHandler_EmptyListWithNoCatalogIdIsOK(t *testing.T) {
 	fc := &fakeCrawler{statusRows: nil}
-	mgr := &statusTestManager{crawler: fc}
-	h, err := NewStatusHandler(context.Background(), mgr, testStatusConfig(true), "crawlStatus")
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newStatusHandler(fc, &handler.Config{AuthDisabled: true})
 
 	req := httptest.NewRequest(http.MethodGet, "/crawl/status?subscriberId=publisher.example.com", nil)
 	rec := httptest.NewRecorder()

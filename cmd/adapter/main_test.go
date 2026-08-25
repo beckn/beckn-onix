@@ -110,10 +110,6 @@ func (m *MockPluginManager) CatalogBlobStore(_ context.Context, _ *plugin.Config
 	return nil, nil
 }
 
-func (m *MockPluginManager) Crawler(_ context.Context, _ definition.RegistryLookup, _ *plugin.Config) (definition.Crawler, error) {
-	return nil, nil
-}
-
 // PolicyChecker returns a mock implementation of the PolicyChecker interface.
 func (m *MockPluginManager) PolicyChecker(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
 	if m.policyCheckerFunc != nil {

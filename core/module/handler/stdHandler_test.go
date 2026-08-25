@@ -173,10 +173,6 @@ func (noopPluginManager) CatalogBlobStore(_ context.Context, _ *plugin.Config) (
 	return nil, nil
 }
 
-func (noopPluginManager) Crawler(_ context.Context, _ definition.RegistryLookup, _ *plugin.Config) (definition.Crawler, error) {
-	return nil, nil
-}
-
 type registryWithoutMetadata struct{}
 
 func (registryWithoutMetadata) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {

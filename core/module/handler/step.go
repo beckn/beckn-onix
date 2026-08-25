@@ -257,7 +257,7 @@ func (s *validateSignStep) lookupCallbackRequestSig(ctx *model.StepContext, auth
 // to verify against the 4-line signing string (NFH-004 §3.3); otherwise it
 // calls Validate for the standard 3-line signing string.
 func (s *validateSignStep) validate(ctx *model.StepContext, value, requestSig string, checkIdentity bool) error {
-	headerVals, err := ParseAuthHeader(value)
+	headerVals, err := parseHeader(value)
 	if err != nil {
 		return fmt.Errorf("failed to parse header")
 	}
@@ -313,22 +313,16 @@ func authHeaderIncludesRequestSig(header string) bool {
 	return strings.Contains(header[idx:idx+end], "request-signature")
 }
 
-// AuthHeader holds the components parsed from an Authorization header's
-// keyId -- exported so other packages needing the same identity a
-// validateSign step already extracts (e.g. catalogcrawler's
-// catalogCrawlStatus handler, which authenticates a request the same way
-// but isn't itself a std-handler step) don't have to duplicate this
-// parsing.
-type AuthHeader struct {
+// ParsedKeyID holds the components from the parsed Authorization header's keyId.
+type authHeader struct {
 	SubscriberID string
 	UniqueID     string
 	Algorithm    string
 }
 
-// ParseAuthHeader extracts subscriber_id and unique_key_id from an
-// Authorization header's keyId. Example keyId format:
-// "{subscriber_id}|{unique_key_id}|{algorithm}"
-func ParseAuthHeader(header string) (*AuthHeader, error) {
+// keyID extracts subscriber_id and unique_key_id from the Authorization header.
+// Example keyId format: "{subscriber_id}|{unique_key_id}|{algorithm}"
+func parseHeader(header string) (*authHeader, error) {
 	// Example: Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",...
 	keyIDPart := ""
 	// Look for keyId="<value>"
@@ -351,7 +345,7 @@ func ParseAuthHeader(header string) (*AuthHeader, error) {
 		return nil, fmt.Errorf("keyId parameter has incorrect format, expected 3 components separated by '|', got %d for '%s'", len(keyIDComponents), keyIDPart)
 	}
 
-	return &AuthHeader{
+	return &authHeader{
 		SubscriberID: strings.TrimSpace(keyIDComponents[0]),
 		UniqueID:     strings.TrimSpace(keyIDComponents[1]),
 		Algorithm:    strings.TrimSpace(keyIDComponents[2]),

@@ -68,15 +68,25 @@ A separate, independent sweep (`parkSweepIntervalSeconds`) periodically revisits
 - **revives** it back to the normal queue (if it's been parked fewer than `maxParkCount` times), giving it another chance without waiting for a republish, or
 - **abandons** it (once `maxParkCount` is reached) — terminal: no further automatic retries, though a fresh publish still reactivates it immediately regardless of abandonment.
 
-Both states are visible via [`/crawl/status`](#crawlstatus-http-endpoint)'s `parked`/`parkCount`/`abandoned`/`abandonedAt` fields — useful for exactly the kind of case that motivated this: a catalog failing signature verification against a registry key that turns out to be stale gets parked, retried a bounded number of times, and if the publisher never fixes it, surfaces as abandoned rather than silently retrying (or silently never retrying) forever with no visibility.
+Both states are visible via [`GET /crawl/status`](#get-crawlstatus)'s `parked`/`parkCount`/`abandoned`/`abandonedAt` fields — useful for exactly the kind of case that motivated this: a catalog failing signature verification against a registry key that turns out to be stale gets parked, retried a bounded number of times, and if the publisher never fixes it, surfaces as abandoned rather than silently retrying (or silently never retrying) forever with no visibility.
 
 ## On-demand crawl
 
 `CrawlRegistry(ctx, networkIDs)` triggers an immediate registry-backed discovery pass against caller-supplied `networkIDs`, independent of the configured `networks` default, without waiting for the next scheduled tick. Discovery goes through the configured `RegistryMetadataLookup` plugin instance, which owns its own registry URL — there is no per-call registry URL, so this cannot target a different registry than the one the deployment is configured with. It returns a run ID immediately; the run's outcome is only observable via logs and the queue, the same as a scheduled tick. The run is tied to the plugin's own lifecycle (not the caller's context), so it is not cut short by a request-scoped caller and is waited for on shutdown. It requires the crawler already be running (`Start` already called) — calling it on a freshly-constructed, unstarted instance returns an error.
 
-### `/crawl` HTTP endpoint
+### The `/crawl/*` HTTP endpoint family
 
-`CrawlRegistry` is also reachable over HTTP via a `catalogCrawl`-type module (see [handler.go](handler.go) and [CONFIG.md](../../../../CONFIG.md#handler-type-catalogcrawl) for the full request/response shape). This endpoint always calls into the one crawler instance `cmd/adapter/main.go` constructs and starts as a background job from the top-level `plugins.crawler` config (see [CONFIG.md](../../../../CONFIG.md#pluginscrawler)) — it is not a separately-configured plugin instance, so `plugins.crawler` must be configured for this endpoint to do anything; without it, requests fail with "no Crawler plugin configured/running".
+`CrawlRegistry` and `Status` are both reachable over HTTP via a single `catalogCrawl`-type module
+mounted at `/crawl/` (see [handler.go](handler.go) and
+[CONFIG.md](../../../../CONFIG.md#handler-type-catalogcrawl) for the full reference). **One
+`handler.Type`, sub-routed internally** on the request path (`trigger.go`'s `/crawl/trigger`,
+`status.go`'s `/crawl/status`) rather than a separate handler type/module block per endpoint —
+adding a future `/crawl/*` endpoint means a new case in `handler.go`'s dispatch, not a new
+registration path through `core/module/handler`, `main.go`, and a YAML block. Both sub-endpoints
+operate on the one crawler instance `cmd/adapter/main.go` constructs and starts as a background
+job from the top-level `plugins.crawler` config (see [CONFIG.md](../../../../CONFIG.md#pluginscrawler))
+— neither is a separately-configured plugin instance, so `plugins.crawler` must be configured for
+either to do anything; without it, the whole module fails to register.
 
 ```yaml
 # top-level plugins block -- starts the crawler as a background job
@@ -92,62 +102,50 @@ plugins:
       # ... see Config above
 
 modules:
-  # exposes the on-demand trigger for the crawler configured above
+  # exposes /crawl/trigger and /crawl/status, both backed by the crawler
+  # instance configured above
   - name: crawl
-    path: /crawl
+    path: /crawl/
     handler:
       type: catalogCrawl
+      authDisabled: true # required for /crawl/status -- see below; /crawl/trigger is unaffected
 ```
 
+The module takes no `handler.plugins` of its own -- unlike `catalogPublisher`'s module, which
+constructs its own plugins per-request, this handler is wired directly to the singleton above
+(`catalogcrawler.RegisterHandler`, called once from `main.go` after the crawler starts).
+
+#### `POST /crawl/trigger`
+
 ```
-POST /crawl
+POST /crawl/trigger
 {"networkIds": ["example.network.production"]}
 
 202 Accepted
 {"runId": "3fa2c1e0-4b1a-4c9e-9c3a-6a2f8e0b7d21"}
 ```
 
-The module takes no `handler.plugins` of its own -- unlike `catalogPublisher`'s module, which constructs its own plugins per-request, this handler is wired directly to the singleton above (`catalogcrawler.RegisterHandler`, called once from `main.go` after the crawler starts), since `CrawlRegistry` needs that exact running instance rather than a fresh one.
+Unsigned, same-operator call -- no auth of any kind, and unaffected by `authDisabled` (that setting
+is only read by the status sub-endpoint below).
 
-### `/crawl/status` HTTP endpoint
+#### `GET /crawl/status`
 
 `Status(ctx, subscriberID, catalogID)` reports the last-known crawl/sync state persisted for a
 publisher's catalogs — a plain read against `crawler_catalog`/`crawler_queue`/`crawler_index`, not
-a live check, and not tied to any particular `/crawl` `runId` (a caller only ever knows their own
-`catalogId`, not a run's id).
+a live check, and not tied to any particular `/crawl/trigger` `runId` (a caller only ever knows
+their own `catalogId`, not a run's id).
 
 Eventually this answers a specific authenticated publisher about their own data, so it's meant to
 be a **signed, network-facing call** — verifying the caller the same way every other
 subscriber-facing call in this codebase does (`signValidator` + `keyManager.LookupNPKeys`, inlined
 into `Decode` rather than via the `std` handler's step pipeline; see
-[statushandler.go](statushandler.go)'s doc comment for why it can't just reuse `validateSign`
-directly). **That verification is not implemented yet.** This first cut only supports
-`authDisabled: true`, which is required to construct the handler at all — omitting it (or setting
-it `false`) fails at startup rather than silently running unauthenticated. With `authDisabled: true`,
-`subscriberId` is a plain, unauthenticated query param instead of a verified identity: **do not run
-this in any real deployment as-is** — it lets any caller read any subscriber's crawl status.
-
-```yaml
-modules:
-  - name: crawlStatus
-    path: /crawl/status
-    handler:
-      type: catalogCrawlStatus
-      authDisabled: true # UNAUTHENTICATED -- see above; not for real deployments
-      plugins:
-        # registry is unrelated to authenticating callers (there is none
-        # yet) -- it's catalogcrawler.Provider.New's own dependency, used
-        # to verify fetched catalogs' self-signatures.
-        registry: { id: dediregistry, config: { ... } }
-        # Its own Crawler instance/config -- same dbDsn as the top-level
-        # plugins.crawler, so it reads the same Postgres tables, but never
-        # Start()-ed (Status only reads, it doesn't need the scheduler).
-        crawler:
-          id: catalogcrawler
-          config:
-            dbDsn: "postgres://user:pass@localhost:5432/catalogcrawler"
-            discoveryPushUrl: "https://discovery.example.org/beckn/catalog/push"
-```
+[status.go](status.go)'s doc comment for why it can't just reuse `validateSign` directly). **That
+verification is not implemented yet.** This first cut only serves requests when the module's
+`authDisabled: true` is set — omitting it (or setting it `false`) rejects every `/crawl/status`
+request (checked per-request, not at module construction, so it can't take down `/crawl/trigger`).
+With `authDisabled: true`, `subscriberId` is a plain, unauthenticated query param instead of a
+verified identity: **do not run this in any real deployment as-is** — it lets any caller read any
+subscriber's crawl status.
 
 ```
 GET /crawl/status?subscriberId=staging.p-node.fabric.nfh.global&catalogId=staging.p-node.fabric.nfh.global/CAT-1
