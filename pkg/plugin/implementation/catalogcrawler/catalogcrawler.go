@@ -294,6 +294,7 @@ func (c *crawlerImpl) Status(ctx context.Context, subscriberID, catalogID string
 		out[i] = definition.CrawlStatus{
 			CatalogID:         r.CatalogID,
 			IndexURL:          r.IndexURL,
+			EverSynced:        r.EverSynced,
 			Version:           r.Version,
 			EntryVersion:      r.EntryVersion,
 			Retired:           r.Retired,

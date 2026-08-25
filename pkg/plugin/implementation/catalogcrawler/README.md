@@ -141,21 +141,36 @@ GET /crawl/status?subscriberId=staging.p-node.fabric.nfh.global&catalogId=stagin
   {
     "catalogId": "staging.p-node.fabric.nfh.global/CAT-1",
     "indexUrl": "https://angular-absently-gab.ngrok-free.dev/beckn/index/becknCatalogs.index.json",
+    "everSynced": true,
     "version": 2,
     "entryVersion": 2,
     "retired": false,
     "queued": false,
     "updatedAt": "2026-08-24T16:33:44Z",
     "indexLastPolledAt": "2026-08-24T16:33:44Z"
+  },
+  {
+    "catalogId": "staging.p-node.fabric.nfh.global/CAT-2",
+    "indexUrl": "https://angular-absently-gab.ngrok-free.dev/beckn/index/becknCatalogs.index.json",
+    "everSynced": false,
+    "version": 0,
+    "entryVersion": 0,
+    "retired": false,
+    "queued": true,
+    "attempts": 0
   }
 ]
 ```
 
-`subscriberId` is required; omitting `catalogId` returns every catalog owned by it. `lastError` is
-present only if the catalog's most recent sync attempt failed (cleared on the next success); a
-non-empty `catalogId` matching nothing is a `404`, an empty `catalogId` matching nothing is a `200`
-with `[]`. `queued`/`attempts`/`nextAttemptAt` are only meaningful while `queued` is `true` (a sync
-still pending or retrying). There is no exact "next scheduled crawl" — `PollIndexes` polls every
-discovered index unconditionally on each tick, so the crawler has no per-index schedule of its own
+`subscriberId` is required; omitting `catalogId` returns every catalog owned by it. `everSynced`
+is `false` for a catalog queued for its very first sync -- CAT-2 above -- in which case
+`version`/`entryVersion`/`retired`/`lastError`/`updatedAt` are all zero-valued (nothing has settled
+yet); check `queued` to see whether that first sync is pending right now. `lastError` is present
+only if the catalog's most recent sync attempt failed (cleared on the next success); a non-empty
+`catalogId` matching nothing at all (not even a pending first sync) is a `404`, an empty `catalogId`
+matching nothing is a `200` with `[]`. `queued`/`attempts`/`nextAttemptAt` are only meaningful
+while `queued` is `true` (a sync still pending or retrying). There is no exact "next scheduled
+crawl" — `PollIndexes` polls every discovered index unconditionally on each tick, so the crawler
+has no per-index schedule of its own
 to report; `indexLastPolledAt` plus the deployment's own `indexIntervalSeconds` is the closest
 estimate available.

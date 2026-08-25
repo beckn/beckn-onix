@@ -648,16 +648,22 @@ Takes its own `handler.plugins`: `registry` (unrelated to caller auth — `catal
   {
     "catalogId": "staging.p-node.fabric.nfh.global/CAT-1",
     "indexUrl": "https://angular-absently-gab.ngrok-free.dev/beckn/index/becknCatalogs.index.json",
+    "everSynced": true,
     "version": 2,
     "entryVersion": 2,
     "retired": false,
     "queued": false,
     "updatedAt": "2026-08-24T16:33:44Z",
     "indexLastPolledAt": "2026-08-24T16:33:44Z"
+  },
+  {
+    "catalogId": "staging.p-node.fabric.nfh.global/CAT-2",
+    "everSynced": false,
+    "queued": true
   }
 ]
 ```
-`lastError`/`attempts`/`nextAttemptAt` appear only when relevant (a past failure, or `queued: true`). A non-empty `catalogId` matching nothing (never crawled, or belongs to a different subscriber — the two are indistinguishable on purpose) is a `404`; an absent `catalogId` matching nothing is a `200` with `[]`.
+`everSynced: false` (CAT-2 above) means this catalog is queued for its very first sync — `version`/`entryVersion`/`retired`/`lastError`/`updatedAt` are all zero-valued since nothing has settled yet; check `queued` for whether that first sync is pending right now. `lastError`/`attempts`/`nextAttemptAt` appear only when relevant (a past failure, or `queued: true`). A non-empty `catalogId` matching nothing at all — not even a pending first sync — (or belonging to a different subscriber — the two are indistinguishable on purpose) is a `404`; an absent `catalogId` matching nothing is a `200` with `[]`.
 
 **Example**:
 ```yaml

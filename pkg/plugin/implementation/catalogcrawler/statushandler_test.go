@@ -155,6 +155,39 @@ func TestStatusHandler_ReturnsCatalogsForSubscriberIdParam(t *testing.T) {
 	}
 }
 
+// TestStatusHandler_QueuedButNeverSyncedCatalogIsVisible guards against a
+// real bug found in the underlying store query: a catalog queued for its
+// very first sync has no crawler_catalog row yet (that table is only
+// written on settle), so a naive query starting FROM crawler_catalog
+// silently omits it entirely instead of reporting queued=true. This test
+// exercises the handler/JSON boundary for that shape; internal/store's own
+// query fix was verified against a real Postgres instance separately.
+func TestStatusHandler_QueuedButNeverSyncedCatalogIsVisible(t *testing.T) {
+	fc := &fakeCrawler{statusRows: []definition.CrawlStatus{
+		{CatalogID: "publisher.example.com/CAT-NEW", EverSynced: false, Queued: true},
+	}}
+	mgr := &statusTestManager{crawler: fc}
+	h, err := NewStatusHandler(context.Background(), mgr, testStatusConfig(true), "crawlStatus")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/crawl/status?subscriberId=publisher.example.com&catalogId=publisher.example.com/CAT-NEW", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got []definition.CrawlStatus
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].EverSynced || !got[0].Queued {
+		t.Fatalf("expected 1 catalog with everSynced=false, queued=true, got: %s", rec.Body.String())
+	}
+}
+
 func TestStatusHandler_UnknownCatalogIdReturns404(t *testing.T) {
 	fc := &fakeCrawler{statusRows: nil}
 	mgr := &statusTestManager{crawler: fc}

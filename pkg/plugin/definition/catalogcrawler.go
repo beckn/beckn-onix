@@ -49,6 +49,14 @@ type CrawlStatus struct {
 	CatalogID string `json:"catalogId"`
 	IndexURL  string `json:"indexUrl,omitempty"`
 
+	// EverSynced is false for a catalog queued for its very first sync --
+	// Version/EntryVersion/Retired/LastError/UpdatedAt are all zero-valued
+	// in that case, since nothing has settled yet. Check this (not
+	// Version/EntryVersion being zero) to tell "never synced" apart from
+	// a genuinely zero version, and check Queued to see whether that first
+	// sync is in fact pending right now.
+	EverSynced bool `json:"everSynced"`
+
 	// Version/EntryVersion are this catalog's last-settled file-lineage and
 	// entry-level versions (see CatalogPublishOutcome's own fields for what
 	// each tracks) -- what the crawler last successfully applied, which may
