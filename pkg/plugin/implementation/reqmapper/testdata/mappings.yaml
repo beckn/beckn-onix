@@ -15,3 +15,10 @@ mappings:
         "context": $.context,
         "message": $.message
       }
+  # Always fails evaluation with a real D3030 error, for testing the T*/D*
+  # classification against the actual engine.
+  jsonata_dynamic_error:
+    bapMappings: |
+      $number("not-a-number")
+    bppMappings: |
+      $number("not-a-number")
