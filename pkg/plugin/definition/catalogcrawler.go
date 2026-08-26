@@ -50,19 +50,25 @@ type CrawlStatus struct {
 	IndexURL  string `json:"indexUrl,omitempty"`
 
 	// EverSynced is false for a catalog queued for its very first sync --
-	// Version/EntryVersion/Retired/LastError/UpdatedAt are all zero-valued
-	// in that case, since nothing has settled yet. Check this (not
-	// Version/EntryVersion being zero) to tell "never synced" apart from
-	// a genuinely zero version, and check Queued to see whether that first
-	// sync is in fact pending right now.
+	// EntryVersion/Retired/LastError/UpdatedAt are all zero-valued in that
+	// case, since nothing has settled yet. Check this (not EntryVersion
+	// being zero) to tell "never synced" apart from a genuinely zero
+	// version, and check Queued to see whether that first sync is in fact
+	// pending right now.
 	EverSynced bool `json:"everSynced"`
 
-	// Version/EntryVersion are this catalog's last-settled file-lineage and
-	// entry-level versions (see CatalogPublishOutcome's own fields for what
-	// each tracks) -- what the crawler last successfully applied, which may
-	// lag the publisher's actual current state if a sync is still queued or
-	// retrying (see Queued/Attempts/NextAttemptAt below).
-	Version      int64 `json:"version"`
+	// EntryVersion is this catalog's last-settled entry-level version (see
+	// CatalogPublishOutcome.EntryVersion for what it tracks) -- what the
+	// crawler last successfully applied, which may lag the publisher's
+	// actual current state if a sync is still queued or retrying (see
+	// Queued/Attempts/NextAttemptAt below). Deliberately the only version
+	// reported here, not the file-lineage Version CatalogPublishOutcome
+	// also carries: EntryVersion is what a publisher already has in hand
+	// from its own Publish call (RFC NFH-014's entry-level versioning) to
+	// cross-check the crawler actually caught up, and it bumps on every
+	// entry change -- content or metadata-only -- unlike Version, which can
+	// stay unchanged on a metadata-only publish and so would under-report
+	// staleness here.
 	EntryVersion int64 `json:"entryVersion"`
 
 	// Retired is true once this catalog's index entry carried a tombstone

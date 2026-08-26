@@ -38,7 +38,7 @@ func TestStatusHandler_RequiresSubscriberIdParam(t *testing.T) {
 }
 
 func TestStatusHandler_ReturnsCatalogsForSubscriberIdParam(t *testing.T) {
-	fc := &fakeCrawler{statusRows: []definition.CrawlStatus{{CatalogID: "publisher.example.com/CAT-1", Version: 3, EntryVersion: 3}}}
+	fc := &fakeCrawler{statusRows: []definition.CrawlStatus{{CatalogID: "publisher.example.com/CAT-1", EntryVersion: 3}}}
 	h := newStatusHandler(fc, &handler.Config{AuthDisabled: true})
 
 	req := httptest.NewRequest(http.MethodGet, "/crawl/status?subscriberId=publisher.example.com&catalogId=publisher.example.com/CAT-1", nil)

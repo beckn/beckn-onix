@@ -32,10 +32,9 @@ type CatalogStatus struct {
 	IndexURL  string
 
 	// EverSynced is false for a catalog queued for its first-ever sync --
-	// Version/EntryVersion/Retired/Reason/UpdatedAt are all zero-valued in
-	// that case, since crawler_catalog has no row for it yet.
+	// EntryVersion/Retired/Reason/UpdatedAt are all zero-valued in that
+	// case, since crawler_catalog has no row for it yet.
 	EverSynced   bool
-	Version      int64
 	EntryVersion int64
 	Retired      bool
 	Reason       string
@@ -85,7 +84,7 @@ type CatalogStatus struct {
 func (s *Store) Status(ctx context.Context, participantID, catalogID string) ([]CatalogStatus, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT COALESCE(c.catalog_id, q.catalog_id), COALESCE(c.index_url, q.index_url),
-		        c.version, c.entry_version, c.status, c.reason, c.updated_at,
+		        c.entry_version, c.status, c.reason, c.updated_at,
 		        q.status, q.attempts,
 		        CASE WHEN q.status IN ('queued','in_progress') THEN q.next_attempt_at END,
 		        q.park_count, q.abandoned_at,
@@ -107,20 +106,19 @@ func (s *Store) Status(ctx context.Context, participantID, catalogID string) ([]
 		var (
 			cs                         CatalogStatus
 			indexURL, status, rsn      sql.NullString
-			version, entryVersion      sql.NullInt64
+			entryVersion               sql.NullInt64
 			updatedAt                  sql.NullTime
 			queueStatus                sql.NullString
 			attempts, parkCount        sql.NullInt64
 			nextAttemptAt, abandonedAt sql.NullTime
 			indexPolledAt              sql.NullTime
 		)
-		if err := rows.Scan(&cs.CatalogID, &indexURL, &version, &entryVersion, &status, &rsn, &updatedAt,
+		if err := rows.Scan(&cs.CatalogID, &indexURL, &entryVersion, &status, &rsn, &updatedAt,
 			&queueStatus, &attempts, &nextAttemptAt, &parkCount, &abandonedAt, &indexPolledAt); err != nil {
 			return nil, fmt.Errorf("store: Status: scanning row: %w", err)
 		}
 		cs.IndexURL = indexURL.String
-		cs.EverSynced = version.Valid
-		cs.Version = version.Int64
+		cs.EverSynced = entryVersion.Valid
 		cs.EntryVersion = entryVersion.Int64
 		cs.Retired = status.String == "retired"
 		cs.Reason = rsn.String

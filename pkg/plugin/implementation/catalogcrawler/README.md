@@ -156,7 +156,6 @@ GET /crawl/status?subscriberId=staging.p-node.fabric.nfh.global&catalogId=stagin
     "catalogId": "staging.p-node.fabric.nfh.global/CAT-1",
     "indexUrl": "https://angular-absently-gab.ngrok-free.dev/beckn/index/becknCatalogs.index.json",
     "everSynced": true,
-    "version": 2,
     "entryVersion": 2,
     "retired": false,
     "queued": false,
@@ -167,7 +166,6 @@ GET /crawl/status?subscriberId=staging.p-node.fabric.nfh.global&catalogId=stagin
     "catalogId": "staging.p-node.fabric.nfh.global/CAT-2",
     "indexUrl": "https://angular-absently-gab.ngrok-free.dev/beckn/index/becknCatalogs.index.json",
     "everSynced": false,
-    "version": 0,
     "entryVersion": 0,
     "retired": false,
     "queued": true,
@@ -176,7 +174,6 @@ GET /crawl/status?subscriberId=staging.p-node.fabric.nfh.global&catalogId=stagin
   {
     "catalogId": "staging.p-node.fabric.nfh.global/CAT-3",
     "everSynced": true,
-    "version": 1,
     "entryVersion": 1,
     "retired": false,
     "queued": false,
@@ -190,8 +187,15 @@ GET /crawl/status?subscriberId=staging.p-node.fabric.nfh.global&catalogId=stagin
 
 `subscriberId` is required; omitting `catalogId` returns every catalog owned by it. `everSynced`
 is `false` for a catalog queued for its very first sync -- CAT-2 above -- in which case
-`version`/`entryVersion`/`retired`/`lastError`/`updatedAt` are all zero-valued (nothing has settled
-yet); check `queued` to see whether that first sync is pending right now. `lastError` is present
+`entryVersion`/`retired`/`lastError`/`updatedAt` are all zero-valued (nothing has settled
+yet); check `queued` to see whether that first sync is pending right now.
+
+`entryVersion` is deliberately the only version reported here, matching RFC NFH-014's entry-level
+versioning rather than a catalog file's own file-lineage version: it's the number a publisher
+already has in hand from its own `Publish` call
+(`CatalogPublishOutcome.EntryVersion`) to cross-check the crawler actually caught up with what it
+just published, and it bumps on every entry change -- content or metadata-only -- so it can't
+under-report staleness the way a file-lineage version could on a metadata-only publish. `lastError` is present
 only if the catalog's most recent sync attempt failed (cleared on the next success); a non-empty
 `catalogId` matching nothing at all (not even a pending first sync) is a `404`, an empty `catalogId`
 matching nothing is a `200` with `[]`. `queued`/`attempts`/`nextAttemptAt` are only meaningful
