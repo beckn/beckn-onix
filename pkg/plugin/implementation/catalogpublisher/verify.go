@@ -26,36 +26,61 @@ package catalogpublisher
 //
 // registryKeySource, below, adapts this onix deployment's own
 // definition.RegistryLookup to catalog-core's crawler.KeySource -- the
-// generic key-lookup function Fetcher calls internally. catalog-core knows
-// nothing about onix's Subscription/status model, so the base64 decoding,
-// usable-status check, and fault classification live here, not there. A
-// near-duplicate of the same handful of lines in catalogcrawler's own
-// keysource.go -- deliberately not imported from there (plugin
-// implementation packages don't cross-import each other in this codebase);
-// hoisting it into a shared internal package is a reasonable follow-up if a
-// third plugin ever needs it, not before. No caching is added at this
-// layer either: definition.RegistryLookup implementations (registry,
-// dediregistry) already cache Lookup results themselves; a second,
-// independently-expiring cache here would risk serving a revoked/rotated
-// key past the registry plugin's own cache invalidation.
+// generic key-lookup function Fetcher calls internally. The actual
+// registry-call/classification logic lives in the shared
+// pkg/plugin/implementation/internal/registrykey package (catalogcrawler's
+// own keysource.go needs the exact same thing).
+//
+// Verification for every touched catalog/retirement runs concurrently
+// (bounded, see verifyConcurrency) rather than one at a time: each is an
+// independent HTTP round trip against the same freshly re-fetched index, so
+// there is nothing to serialize them for.
 
 import (
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"fmt"
+	"time"
 
-	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/internal/registrykey"
 
 	"github.com/beckn/catalog-core/pkg/catalog"
 	"github.com/beckn/catalog-core/pkg/catalog/crawler"
+
+	"golang.org/x/sync/errgroup"
+)
+
+// verifyConcurrency bounds how many FetchFile/FetchIndex round trips
+// verifyPublished runs at once. Verifying each touched catalog is
+// independent I/O against the same freshly re-fetched index -- capped
+// rather than unbounded so one huge batch doesn't open dozens of
+// simultaneous connections against the blob store/CDN it just wrote to.
+const verifyConcurrency = 8
+
+// verifyRetryAttempts/verifyRetryBaseDelay bound the retries verifyPublished
+// gives a blob store/CDN with read-after-write consistency lag before
+// reporting a catalog REJECTED: the write in Publish already committed by
+// the time verification runs, so an entry that's merely not visible *yet*
+// (a plain "not found" on re-fetch, or a network/5xx fetch error) deserves a
+// couple of short, backed-off retries rather than an immediate false
+// rejection. A genuinely wrong publish -- bad digest, bad signature, SSRF,
+// oversize -- is a crawler.PermanentError and is never retried: retrying it
+// would only add latency, never a different answer. Total added worst-case
+// latency across all attempts is bounded (~1.4s at these defaults), which is
+// small next to the FetchFile round trips verification already makes.
+const (
+	verifyRetryAttempts  = 3
+	verifyRetryBaseDelay = 200 * time.Millisecond
 )
 
 // verifyPublished checks every outcome actually Changed this call, plus
 // every retirement, against the freshly re-fetched index -- one index
-// fetch for the whole call, since they all share it. Returns one
-// PublishError per catalog that fails.
+// fetch per attempt, since they all share it. Retries (see
+// verifyRetryAttempts) while at least one failure looks transient, so a
+// still-propagating write gets a fair chance to become visible before
+// being reported REJECTED. Returns one PublishError per catalog that still
+// fails after the final attempt.
 func (p *Publisher) verifyPublished(ctx context.Context, result definition.PublishResult) []definition.PublishError {
 	var changed []definition.CatalogPublishOutcome
 	for _, o := range result.Catalogs {
@@ -67,35 +92,92 @@ func (p *Publisher) verifyPublished(ctx context.Context, result definition.Publi
 		return nil
 	}
 
-	idxRes, err := p.fetcher.FetchIndex(ctx, p.IndexURL(), catalog.IndexConditions{})
-	if err != nil {
-		err = fmt.Errorf("fetching published index: %w", err)
-		var errs []definition.PublishError
-		for _, o := range changed {
-			errs = append(errs, definition.PublishError{CatalogID: o.CatalogID, Stage: "verify", Reason: err.Error(), Fatal: false})
-		}
-		for _, r := range result.Retirements {
-			errs = append(errs, definition.PublishError{CatalogID: r.CatalogID, Stage: "verify", Reason: err.Error(), Fatal: false})
-		}
-		return errs
-	}
-
-	var errs []definition.PublishError
-	for _, o := range changed {
-		if err := p.verifyOutcome(ctx, result.NodeID, idxRes.Index, o); err != nil {
-			errs = append(errs, definition.PublishError{CatalogID: o.CatalogID, Stage: "verify", Reason: err.Error(), Fatal: false})
-		}
-	}
 	retiredLatest := make(map[string]bool, len(result.RetiredLatest))
 	for _, rl := range result.RetiredLatest {
 		retiredLatest[rl.CatalogID] = true
 	}
-	for _, r := range result.Retirements {
-		if err := p.verifyRetirement(ctx, result.NodeID, idxRes.Index, r, retiredLatest[r.CatalogID]); err != nil {
-			errs = append(errs, definition.PublishError{CatalogID: r.CatalogID, Stage: "verify", Reason: err.Error(), Fatal: false})
+
+	var errs []definition.PublishError
+	for attempt := 0; attempt < verifyRetryAttempts; attempt++ {
+		if attempt > 0 {
+			if err := sleepOrDone(ctx, verifyRetryBaseDelay*time.Duration(1<<(attempt-1))); err != nil {
+				return errs
+			}
+		}
+
+		idxRes, err := p.fetcher.FetchIndex(ctx, p.IndexURL(), catalog.IndexConditions{})
+		if err != nil {
+			err = fmt.Errorf("fetching published index: %w", err)
+			errs = nil
+			for _, o := range changed {
+				errs = append(errs, definition.PublishError{CatalogID: o.CatalogID, Stage: "verify", Reason: err.Error(), Fatal: false})
+			}
+			for _, r := range result.Retirements {
+				errs = append(errs, definition.PublishError{CatalogID: r.CatalogID, Stage: "verify", Reason: err.Error(), Fatal: false})
+			}
+			continue // an index fetch failure is never a PermanentError -- always worth a retry.
+		}
+
+		changedErrs := runConcurrent(len(changed), verifyConcurrency, func(i int) error {
+			return p.verifyOutcome(ctx, result.NodeID, idxRes.Index, changed[i])
+		})
+		retireErrs := runConcurrent(len(result.Retirements), verifyConcurrency, func(i int) error {
+			r := result.Retirements[i]
+			return p.verifyRetirement(ctx, result.NodeID, idxRes.Index, r, retiredLatest[r.CatalogID])
+		})
+
+		errs = nil
+		anyTransient := false
+		for i, err := range changedErrs {
+			if err != nil {
+				errs = append(errs, definition.PublishError{CatalogID: changed[i].CatalogID, Stage: "verify", Reason: err.Error(), Fatal: false})
+				anyTransient = anyTransient || !crawler.IsPermanent(err)
+			}
+		}
+		for i, err := range retireErrs {
+			if err != nil {
+				errs = append(errs, definition.PublishError{CatalogID: result.Retirements[i].CatalogID, Stage: "verify", Reason: err.Error(), Fatal: false})
+				anyTransient = anyTransient || !crawler.IsPermanent(err)
+			}
+		}
+		if len(errs) == 0 || !anyTransient {
+			return errs
 		}
 	}
 	return errs
+}
+
+// runConcurrent runs work(0), work(1), ..., work(n-1) concurrently, at most
+// limit at a time, and returns each call's error at its own index -- so a
+// caller can still report per-item failures against the original slice
+// they came from, in the original order, despite the concurrent execution.
+func runConcurrent(n, limit int, work func(i int) error) []error {
+	if n == 0 {
+		return nil
+	}
+	errs := make([]error, n)
+	var g errgroup.Group
+	g.SetLimit(limit)
+	for i := range n {
+		g.Go(func() error {
+			errs[i] = work(i)
+			return nil
+		})
+	}
+	g.Wait()
+	return errs
+}
+
+// sleepOrDone waits d, or returns ctx.Err() early if ctx is done first.
+func sleepOrDone(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // verifyOutcome verifies o's own index entry is present (which itself
@@ -164,52 +246,16 @@ func changeAtVersion(changes []catalog.FileEntry, version int64) (catalog.FileEn
 }
 
 // registryKeySource adapts a definition.RegistryLookup to a
-// crawler.KeySource.
+// crawler.KeySource. See pkg/plugin/implementation/internal/registrykey for
+// the actual lookup/classification logic, shared with catalogcrawler's own
+// keysource.go.
 func registryKeySource(reg definition.RegistryLookup) crawler.KeySource {
-	return func(ctx context.Context, nodeID, keyID string) (ed25519.PublicKey, error) {
-		if reg == nil {
-			// Fail closed. Wired without a registry, there is no way to learn any
-			// key, so nothing can be verified.
-			return nil, crawler.PermanentFaultf(crawler.FaultSignature, "catalogpublisher: no registry configured, cannot resolve key %q", keyID)
-		}
-		if nodeID == "" {
-			return nil, crawler.PermanentFaultf(crawler.FaultSignature, "catalogpublisher: no nodeId given, cannot resolve key %q", keyID)
-		}
-		return resolveRegistryKey(ctx, reg, nodeID, keyID)
-	}
+	return registrykey.Source("catalogpublisher", reg)
 }
 
 // resolveRegistryKey asks the registry for {subscriberID, keyID} and turns
 // the answer into a usable Ed25519 key, or into a correctly classified
 // failure.
 func resolveRegistryKey(ctx context.Context, reg definition.RegistryLookup, nodeID, keyID string) (ed25519.PublicKey, error) {
-	subs, err := reg.Lookup(ctx, &model.Subscription{
-		Subscriber: model.Subscriber{SubscriberID: nodeID},
-		KeyID:      keyID,
-	})
-	if err != nil {
-		// TRANSIENT: a registry that is down, rate limiting, or timing out says
-		// nothing about this key. Returned unclassified, so ClassifyFault reports
-		// FaultTransient.
-		return nil, fmt.Errorf("catalogpublisher: registry lookup for node %q key %q: %w", nodeID, keyID, err)
-	}
-	if len(subs) == 0 {
-		return nil, crawler.PermanentFaultf(crawler.FaultSignature, "catalogpublisher: registry has no key %q for node %q", keyID, nodeID)
-	}
-	sub := subs[0]
-	if !model.IsKeyStatusUsable(sub.Status) {
-		return nil, crawler.PermanentFaultf(crawler.FaultSignature, "catalogpublisher: registry key %q for node %q has unusable status %q", keyID, nodeID, sub.Status)
-	}
-	if sub.SigningPublicKey == "" {
-		return nil, crawler.PermanentFaultf(crawler.FaultSignature, "catalogpublisher: registry key %q for node %q has no signing public key", keyID, nodeID)
-	}
-	raw, err := base64.StdEncoding.DecodeString(sub.SigningPublicKey)
-	if err != nil {
-		return nil, crawler.PermanentFaultf(crawler.FaultSignature, "catalogpublisher: registry key %q for node %q is not valid base64: %v", keyID, nodeID, err)
-	}
-	if len(raw) != ed25519.PublicKeySize {
-		return nil, crawler.PermanentFaultf(crawler.FaultSignature, "catalogpublisher: registry key %q for node %q decodes to %d bytes, want %d",
-			keyID, nodeID, len(raw), ed25519.PublicKeySize)
-	}
-	return ed25519.PublicKey(raw), nil
+	return registrykey.Resolve(ctx, "catalogpublisher", reg, nodeID, keyID)
 }

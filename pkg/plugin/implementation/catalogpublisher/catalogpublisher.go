@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -52,6 +53,16 @@ type Config struct {
 	// construction time so a missing dependency fails fast at startup
 	// rather than on the first Publish call.
 	CheckCatalogIndexLink bool
+
+	// AllowPrivateVerifyHosts, when true, lets post-write verification
+	// (verify.go) fetch PublicBaseURL even when it resolves to a private/
+	// loopback/link-local address -- off by default, so verification is
+	// SSRF-guarded the same way catalogcrawler's own fetch client is.
+	// Legitimate reason to turn it on: PublicBaseURL points at an internal
+	// reverse proxy or an air-gapped deployment with no public DNS/routing
+	// yet. Also what test doubles (httptest.Server, which always listens
+	// on loopback) need to set to exercise verification at all.
+	AllowPrivateVerifyHosts bool
 }
 
 // ParseCheckCatalogIndexLink parses the "checkCatalogIndexLink" plugin
@@ -117,6 +128,9 @@ func New(ctx context.Context, keyManager definition.KeyManager, blobStore defini
 	if registry == nil {
 		return nil, nil, fmt.Errorf("catalogpublisher: Registry plugin not configured (required to verify published files against the real registered signing key)")
 	}
+	if err := validatePublicBaseURL(cfg.PublicBaseURL); err != nil {
+		return nil, nil, err
+	}
 
 	if cfg.CheckCatalogIndexLink {
 		if registryMetadata == nil {
@@ -146,21 +160,15 @@ func New(ctx context.Context, keyManager definition.KeyManager, blobStore defini
 	// configured level, nothing further to wire up.
 	catalogStore := store.New(blobStore).WithLogger(slog.New(log.NewSlogHandler()))
 
-	// Fixed, generous defaults -- no new config keys for this (verify.go's
-	// fetches are of files this same process just wrote, not arbitrary
-	// third-party content, so there's no operator-facing tuning need the
-	// way catalogcrawler's own fetch limits have).
-	//
-	// allowPrivateHosts=true, unlike catalogcrawler's own client: that
-	// SSRF guard exists to stop an untrusted, externally-supplied index
-	// entry from tricking the crawler into fetching an internal-network
-	// target. cfg.PublicBaseURL carries no such risk -- it's the
-	// deployment operator's own trusted config (the same trust level as
-	// dbDsn/discoveryPushUrl elsewhere in this codebase, neither of which
-	// is SSRF-guarded either), and legitimately may point at a private
-	// network (an internal reverse proxy, an air-gapped deployment)
-	// before public DNS/routing exists.
-	client := crawler.NewClient(defaultVerifyFetchTimeout, defaultVerifyMaxFetchBytes, true)
+	// Fixed, generous fetch-size/timeout defaults -- no new config keys for
+	// those (verify.go's fetches are of files this same process just
+	// wrote, not arbitrary third-party content, so there's no operator-
+	// facing tuning need the way catalogcrawler's own fetch limits have).
+	// The SSRF guard itself (allowPrivateHosts) is configurable --
+	// cfg.AllowPrivateVerifyHosts, off by default -- matching
+	// catalogcrawler's own client rather than trusting PublicBaseURL
+	// unconditionally.
+	client := crawler.NewClient(defaultVerifyFetchTimeout, defaultVerifyMaxFetchBytes, cfg.AllowPrivateVerifyHosts)
 	fetcher := catalog.NewFetcher(client, registryKeySource(registry), defaultVerifyMaxDecompressedBytes)
 
 	return &Publisher{
@@ -180,6 +188,32 @@ const (
 	defaultVerifyMaxFetchBytes        = 10 << 20
 	defaultVerifyMaxDecompressedBytes = 20 << 20
 )
+
+// placeholderPublicBaseURL is the example value shown, commented out, in
+// this plugin's own config templates (e.g. config/local-beckn-one-bpp.yaml).
+// Operators who uncomment that line without replacing the host end up
+// publishing (and now, verifying) against a URL nobody actually serves --
+// rejected here rather than left to fail confusingly at Publish time.
+const placeholderPublicBaseURL = "https://your-tunnel.ngrok-free.app"
+
+// validatePublicBaseURL rejects the ways cfg.PublicBaseURL (catalogBaseURL)
+// can't actually be published/verified against: empty (there is no way to
+// derive it -- every deployment's real public URL is operator-specific),
+// the known unedited placeholder from the config templates, or anything
+// that doesn't parse as an absolute http(s) URL.
+func validatePublicBaseURL(raw string) error {
+	if raw == "" {
+		return fmt.Errorf("catalogpublisher: publicBaseURL (catalogBaseURL) is required")
+	}
+	if raw == placeholderPublicBaseURL {
+		return fmt.Errorf("catalogpublisher: publicBaseURL is still set to the config template's placeholder value %q; set it to this deployment's own public URL", raw)
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("catalogpublisher: publicBaseURL %q is not a valid absolute http(s) URL", raw)
+	}
+	return nil
+}
 
 // Publish resolves this call's signing keyset, loads prior state for the
 // submitted/retired catalogs from its own CatalogBlobStore, delegates the

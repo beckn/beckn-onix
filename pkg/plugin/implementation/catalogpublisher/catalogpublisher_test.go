@@ -112,6 +112,10 @@ func newVerifiablePublisher(t *testing.T, km *fakeKeyManager, bs *fakeBlobStore,
 	t.Helper()
 	srv := newVerifyingBlobServer(t, bs)
 	cfg.PublicBaseURL = srv.URL
+	// httptest.Server always listens on loopback -- opt this test double
+	// into the SSRF guard's private-host allowance the same way a real
+	// deployment would for an internal PublicBaseURL.
+	cfg.AllowPrivateVerifyHosts = true
 	p, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{PubB64: base64.StdEncoding.EncodeToString(km.pub)}, rm, cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -173,23 +177,23 @@ func TestNew_RequiresKeyManagerAndKeyID(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	bs := newFakeBlobStore()
 
-	if _, _, err := New(context.Background(), nil, bs, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1"}); err == nil {
+	if _, _, err := New(context.Background(), nil, bs, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", PublicBaseURL: "https://example.test"}); err == nil {
 		t.Fatal("expected error for nil KeyManager")
 	}
-	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, nil, &Config{}); err == nil {
+	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, nil, &Config{PublicBaseURL: "https://example.test"}); err == nil {
 		t.Fatal("expected error for missing keyID")
 	}
-	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1"}); err != nil {
+	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", PublicBaseURL: "https://example.test"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, _, err := New(context.Background(), km, bs, nil, nil, &Config{SubscriberID: "k1"}); err == nil {
+	if _, _, err := New(context.Background(), km, bs, nil, nil, &Config{SubscriberID: "k1", PublicBaseURL: "https://example.test"}); err == nil {
 		t.Fatal("expected error for nil Registry")
 	}
 }
 
 func TestNew_RequiresCatalogBlobStore(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
-	if _, _, err := New(context.Background(), km, nil, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1"}); err == nil {
+	if _, _, err := New(context.Background(), km, nil, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", PublicBaseURL: "https://example.test"}); err == nil {
 		t.Fatal("expected error for nil CatalogBlobStore")
 	}
 }
@@ -197,11 +201,11 @@ func TestNew_RequiresCatalogBlobStore(t *testing.T) {
 func TestNew_CheckCatalogIndexLinkRequiresRegistryMetadata(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	bs := newFakeBlobStore()
-	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true}); err == nil {
+	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true, PublicBaseURL: "https://example.test"}); err == nil {
 		t.Fatal("expected error when CheckCatalogIndexLink is true but registryMetadata is nil")
 	}
 	rm := &fakeRegistryMetadata{}
-	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, rm, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true}); err != nil {
+	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, rm, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true, PublicBaseURL: "https://example.test"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -210,8 +214,35 @@ func TestNew_RejectsSlashInSubscriberIDWhenCatalogIndexLinkCheckEnabled(t *testi
 	km := newFakeKeyManager(t, "k1")
 	bs := newFakeBlobStore()
 	rm := &fakeRegistryMetadata{}
-	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, rm, &Config{SubscriberID: "nfh.global/k1", CheckCatalogIndexLink: true}); err == nil {
+	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, rm, &Config{SubscriberID: "nfh.global/k1", CheckCatalogIndexLink: true, PublicBaseURL: "https://example.test"}); err == nil {
 		t.Fatal("expected error for a subscriberId containing \"/\" when the catalog-index link check is enabled")
+	}
+}
+
+func TestNew_RequiresPublicBaseURL(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	bs := newFakeBlobStore()
+
+	cases := []struct {
+		name string
+		url  string
+	}{
+		{"empty", ""},
+		{"unedited placeholder", "https://your-tunnel.ngrok-free.app"},
+		{"no scheme", "example.test/catalog"},
+		{"not absolute", "/catalog"},
+		{"unsupported scheme", "ftp://example.test"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", PublicBaseURL: c.url}); err == nil {
+				t.Fatalf("expected error for publicBaseURL %q", c.url)
+			}
+		})
+	}
+
+	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", PublicBaseURL: "https://example.test"}); err != nil {
+		t.Fatalf("unexpected error for a valid publicBaseURL: %v", err)
 	}
 }
 
@@ -264,7 +295,7 @@ func TestPublish_DelegatesToLibraryAndConvertsResult(t *testing.T) {
 
 func TestPublish_UnknownKeyIDFails(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
-	p, _, err := New(context.Background(), km, newFakeBlobStore(), fakeVerifyRegistry{}, nil, &Config{SubscriberID: "wrong-key"})
+	p, _, err := New(context.Background(), km, newFakeBlobStore(), fakeVerifyRegistry{}, nil, &Config{SubscriberID: "wrong-key", PublicBaseURL: "https://example.test"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -417,7 +448,7 @@ func TestPublish_RegistryLinkCheckNoWarningWhenLinked(t *testing.T) {
 		MetaArrays: map[string][]string{catalogIndexMetaKey: {indexURL}},
 	}}
 	p, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{PubB64: base64.StdEncoding.EncodeToString(km.pub)}, rm,
-		&Config{SubscriberID: "k1", CheckCatalogIndexLink: true, PublicBaseURL: srv.URL})
+		&Config{SubscriberID: "k1", CheckCatalogIndexLink: true, PublicBaseURL: srv.URL, AllowPrivateVerifyHosts: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -502,7 +533,7 @@ func testPublisher(t *testing.T) *Publisher {
 	t.Helper()
 	km := newFakeKeyManager(t, "k1")
 	km.domain = "example.test"
-	p, _, err := New(context.Background(), km, newFakeBlobStore(), fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1"})
+	p, _, err := New(context.Background(), km, newFakeBlobStore(), fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", PublicBaseURL: "https://example.test"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

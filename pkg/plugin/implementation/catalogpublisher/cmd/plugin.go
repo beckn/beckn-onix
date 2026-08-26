@@ -82,6 +82,21 @@ func (p catalogPublisherProvider) parseConfig(config map[string]string) (*catalo
 	}
 	cfg.CheckCatalogIndexLink = checkCatalogIndexLink
 
+	// allowPrivateHosts: off by default (verification fetches are SSRF-
+	// guarded, same as catalogcrawler's own client) -- turn on only for a
+	// deployment where catalogBaseURL legitimately points at a private
+	// network (an internal reverse proxy, an air-gapped deployment) before
+	// public DNS/routing exists. Same config key name as catalogcrawler's
+	// own cfgAllowPrivateHosts, so the same override is spelled the same
+	// way for either plugin.
+	if v, exists := config["allowPrivateHosts"]; exists && v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid allowPrivateHosts value '%s': %w", v, err)
+		}
+		cfg.AllowPrivateVerifyHosts = b
+	}
+
 	return cfg, nil
 }
 
