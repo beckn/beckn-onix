@@ -385,5 +385,5 @@ type CatalogPublisher interface {
 // plugin doesn't implement RegistryMetadataLookup); a non-nil value is only
 // ever used to run that check.
 type CatalogPublisherProvider interface {
-	New(ctx context.Context, keyManager KeyManager, blobStore CatalogBlobStore, registryMetadata RegistryMetadataLookup, config map[string]string) (CatalogPublisher, func() error, error)
+	New(ctx context.Context, keyManager KeyManager, blobStore CatalogBlobStore, registry RegistryLookup, registryMetadata RegistryMetadataLookup, config map[string]string) (CatalogPublisher, func() error, error)
 }

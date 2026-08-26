@@ -515,12 +515,12 @@ func (m *Manager) KeyManager(ctx context.Context, rClient definition.RegistryLoo
 
 // CatalogPublisher returns a CatalogPublisher instance based on the provided
 // configuration. It reuses the loaded provider.
-func (m *Manager) CatalogPublisher(ctx context.Context, km definition.KeyManager, blobStore definition.CatalogBlobStore, registryMetadata definition.RegistryMetadataLookup, cfg *Config) (definition.CatalogPublisher, error) {
+func (m *Manager) CatalogPublisher(ctx context.Context, km definition.KeyManager, blobStore definition.CatalogBlobStore, registry definition.RegistryLookup, registryMetadata definition.RegistryMetadataLookup, cfg *Config) (definition.CatalogPublisher, error) {
 	cpp, err := provider[definition.CatalogPublisherProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	cp, closer, err := cpp.New(ctx, km, blobStore, registryMetadata, cfg.Config)
+	cp, closer, err := cpp.New(ctx, km, blobStore, registry, registryMetadata, cfg.Config)
 	if err != nil {
 		return nil, err
 	}

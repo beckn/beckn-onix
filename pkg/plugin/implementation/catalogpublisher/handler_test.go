@@ -148,7 +148,7 @@ func (m *catalogPublishTestManager) KeyManager(context.Context, definition.Regis
 func (m *catalogPublishTestManager) CatalogBlobStore(context.Context, *plugin.Config) (definition.CatalogBlobStore, error) {
 	return fakeHandlerCatalogBlobStore{}, nil
 }
-func (m *catalogPublishTestManager) CatalogPublisher(ctx context.Context, km definition.KeyManager, blobStore definition.CatalogBlobStore, registryMetadata definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.CatalogPublisher, error) {
+func (m *catalogPublishTestManager) CatalogPublisher(ctx context.Context, km definition.KeyManager, blobStore definition.CatalogBlobStore, registry definition.RegistryLookup, registryMetadata definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.CatalogPublisher, error) {
 	m.capturedPublisherCfg = cfg
 	return m.publisher, nil
 }

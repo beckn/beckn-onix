@@ -21,6 +21,8 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn/catalog-core/pkg/catalog"
+	"github.com/beckn/catalog-core/pkg/catalog/crawler"
 	"github.com/beckn/catalog-core/pkg/catalog/publisher"
 	"github.com/beckn/catalog-core/pkg/catalog/store"
 )
@@ -81,8 +83,14 @@ type Publisher struct {
 	// index -- see registrylink.go's checkIndexLink. nil when
 	// config.CheckCatalogIndexLink is false.
 	registryMetadata definition.RegistryMetadataLookup
-	config           *Config
-	log              *slog.Logger
+	// fetcher re-fetches and re-verifies what Publish just wrote (see
+	// verify.go), against registry (below) -- the same RegistryLookup
+	// already required to load keyManager, reused here rather than adding
+	// a second registry config field.
+	fetcher  *catalog.Fetcher
+	registry definition.RegistryLookup
+	config   *Config
+	log      *slog.Logger
 }
 
 // New creates a Publisher instance. pkg/catalog/publisher's own logging
@@ -91,8 +99,12 @@ type Publisher struct {
 // the same log stream, at whatever level onix itself is configured for,
 // with nothing further to wire up. blobStore is required: Publish always
 // persists what it produces somewhere. registryMetadata is required only
-// when cfg.CheckCatalogIndexLink is true.
-func New(ctx context.Context, keyManager definition.KeyManager, blobStore definition.CatalogBlobStore, registryMetadata definition.RegistryMetadataLookup, cfg *Config) (*Publisher, func() error, error) {
+// when cfg.CheckCatalogIndexLink is true. registry is required
+// unconditionally: verify.go's post-write verification always re-resolves
+// the signing key via a real registry lookup (never the local keyset
+// Publish just signed with), and there is deliberately no way to disable
+// that check.
+func New(ctx context.Context, keyManager definition.KeyManager, blobStore definition.CatalogBlobStore, registry definition.RegistryLookup, registryMetadata definition.RegistryMetadataLookup, cfg *Config) (*Publisher, func() error, error) {
 	if keyManager == nil {
 		return nil, nil, fmt.Errorf("catalogpublisher: KeyManager plugin not configured")
 	}
@@ -101,6 +113,9 @@ func New(ctx context.Context, keyManager definition.KeyManager, blobStore defini
 	}
 	if blobStore == nil {
 		return nil, nil, fmt.Errorf("catalogpublisher: CatalogBlobStore plugin not configured")
+	}
+	if registry == nil {
+		return nil, nil, fmt.Errorf("catalogpublisher: Registry plugin not configured (required to verify published files against the real registered signing key)")
 	}
 
 	if cfg.CheckCatalogIndexLink {
@@ -131,15 +146,40 @@ func New(ctx context.Context, keyManager definition.KeyManager, blobStore defini
 	// configured level, nothing further to wire up.
 	catalogStore := store.New(blobStore).WithLogger(slog.New(log.NewSlogHandler()))
 
+	// Fixed, generous defaults -- no new config keys for this (verify.go's
+	// fetches are of files this same process just wrote, not arbitrary
+	// third-party content, so there's no operator-facing tuning need the
+	// way catalogcrawler's own fetch limits have).
+	//
+	// allowPrivateHosts=true, unlike catalogcrawler's own client: that
+	// SSRF guard exists to stop an untrusted, externally-supplied index
+	// entry from tricking the crawler into fetching an internal-network
+	// target. cfg.PublicBaseURL carries no such risk -- it's the
+	// deployment operator's own trusted config (the same trust level as
+	// dbDsn/discoveryPushUrl elsewhere in this codebase, neither of which
+	// is SSRF-guarded either), and legitimately may point at a private
+	// network (an internal reverse proxy, an air-gapped deployment)
+	// before public DNS/routing exists.
+	client := crawler.NewClient(defaultVerifyFetchTimeout, defaultVerifyMaxFetchBytes, true)
+	fetcher := catalog.NewFetcher(client, registryKeySource(registry), defaultVerifyMaxDecompressedBytes)
+
 	return &Publisher{
 		keyManager:       keyManager,
 		blobStore:        blobStore,
 		catalogStore:     catalogStore,
 		registryMetadata: registryMetadata,
+		fetcher:          fetcher,
+		registry:         registry,
 		config:           cfg,
 		log:              slog.New(log.NewSlogHandler()),
 	}, func() error { return nil }, nil
 }
+
+const (
+	defaultVerifyFetchTimeout         = 30 * time.Second
+	defaultVerifyMaxFetchBytes        = 10 << 20
+	defaultVerifyMaxDecompressedBytes = 20 << 20
+)
 
 // Publish resolves this call's signing keyset, loads prior state for the
 // submitted/retired catalogs from its own CatalogBlobStore, delegates the
@@ -211,6 +251,14 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 	if err := p.catalogStore.Publish(ctx, ToStorePublishRequest(definitionResult)); err != nil {
 		return definition.PublishResult{}, fmt.Errorf("catalogpublisher: persisting publish result: %w", err)
 	}
+
+	// Post-write verification (verify.go): re-fetch and re-verify whatever
+	// this call actually touched against a real registry key lookup. A
+	// failure here means the write committed but isn't actually
+	// crawlable, so it's appended to Errors -- the same non-fatal,
+	// per-catalog PublishError vocabulary as any other failure -- rather
+	// than left silently reported as a successful CatalogPublishOutcome.
+	definitionResult.Errors = append(definitionResult.Errors, p.verifyPublished(ctx, definitionResult)...)
 
 	if p.config.CheckCatalogIndexLink && p.registryMetadata != nil {
 		if warning, err := p.checkIndexLink(ctx); err != nil {
