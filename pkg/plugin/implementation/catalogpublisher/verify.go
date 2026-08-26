@@ -74,6 +74,46 @@ const (
 	verifyRetryBaseDelay = 200 * time.Millisecond
 )
 
+// logVerifyOutcome logs a summary of verifyPublished's result -- which
+// touched catalogs (Changed outcomes, plus retirements) passed and which
+// were rejected, named individually -- so a log stream alone answers
+// "did this call's writes actually verify" without requiring a caller to
+// inspect the HTTP response body's per-catalog results. Silent when
+// nothing was touched (verifyPublished itself returns nil in that case).
+func (p *Publisher) logVerifyOutcome(result definition.PublishResult, verifyErrs []definition.PublishError) {
+	var touched []string
+	for _, o := range result.Catalogs {
+		if o.Changed {
+			touched = append(touched, o.CatalogID)
+		}
+	}
+	for _, r := range result.Retirements {
+		touched = append(touched, r.CatalogID)
+	}
+	if len(touched) == 0 {
+		return
+	}
+
+	rejected := make(map[string]bool, len(verifyErrs))
+	for _, e := range verifyErrs {
+		rejected[e.CatalogID] = true
+	}
+	var passed, failed []string
+	for _, id := range touched {
+		if rejected[id] {
+			failed = append(failed, id)
+		} else {
+			passed = append(passed, id)
+		}
+	}
+
+	if len(failed) == 0 {
+		p.log.Info("catalogpublisher: post-write verification passed", "catalogs", passed)
+		return
+	}
+	p.log.Warn("catalogpublisher: post-write verification failed for one or more catalogs", "passed", passed, "rejected", failed)
+}
+
 // verifyPublished checks every outcome actually Changed this call, plus
 // every retirement, against the freshly re-fetched index -- one index
 // fetch per attempt, since they all share it. Retries (see

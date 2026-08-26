@@ -1,10 +1,13 @@
 package catalogpublisher
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -209,6 +212,60 @@ func TestVerifyPublished_PermanentFailureIsNotRetried(t *testing.T) {
 	// that.
 	if elapsed >= verifyRetryBaseDelay*3 {
 		t.Errorf("verifyPublished took %v for a permanent failure; expected it to short-circuit without retry backoff", elapsed)
+	}
+}
+
+// TestLogVerifyOutcome_Passed proves a clean verification logs at Info,
+// naming the touched catalog(s), so a log stream alone can confirm success
+// without inspecting the HTTP response body.
+func TestLogVerifyOutcome_Passed(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	km.domain = "example.test"
+	bs := newFakeBlobStore()
+	p := newVerifiablePublisher(t, km, bs, nil, &Config{SubscriberID: "k1"})
+
+	var buf bytes.Buffer
+	p.log = slog.New(slog.NewTextHandler(&buf, nil))
+
+	if _, err := p.Publish(context.Background(), definitionPublishRequestOneCatalog("example.test/CAT-1")); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "level=INFO") || !strings.Contains(out, "post-write verification passed") {
+		t.Fatalf("expected an Info-level post-write-verification-passed log line, got:\n%s", out)
+	}
+	if !strings.Contains(out, "example.test/CAT-1") {
+		t.Fatalf("expected the log line to name the passed catalog, got:\n%s", out)
+	}
+}
+
+// TestLogVerifyOutcome_Failed proves a verification failure logs at Warn,
+// naming which catalog was rejected.
+func TestLogVerifyOutcome_Failed(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	km.domain = "example.test"
+	bs := newFakeBlobStore()
+	p := newVerifiablePublisher(t, km, bs, nil, &Config{SubscriberID: "k1"})
+
+	// logVerifyOutcome is exercised directly against a synthetic
+	// verify-error here, rather than forcing a real Publish call through a
+	// genuine verification failure -- simpler, and the mapping from
+	// touched/failed catalog IDs to the logged message is what's under
+	// test, not verifyPublished's own fault-classification (already
+	// covered elsewhere in this file).
+	var buf bytes.Buffer
+	p.log = slog.New(slog.NewTextHandler(&buf, nil))
+	result := definitionPublishResultOneChanged("example.test/CAT-1")
+	verifyErrs := []definition.PublishError{{CatalogID: "example.test/CAT-1", Stage: "verify", Reason: "boom"}}
+	p.logVerifyOutcome(result, verifyErrs)
+
+	out := buf.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "post-write verification failed") {
+		t.Fatalf("expected a Warn-level post-write-verification-failed log line, got:\n%s", out)
+	}
+	if !strings.Contains(out, "example.test/CAT-1") {
+		t.Fatalf("expected the log line to name the rejected catalog, got:\n%s", out)
 	}
 }
 
