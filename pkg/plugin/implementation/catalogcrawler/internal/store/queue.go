@@ -127,12 +127,20 @@ func (s *Store) Park(ctx context.Context, id, claimID string) error {
 
 // RequeueOrAbandonParked implements crawlmanager.Store: sweeps every row
 // parked at least olderThan ago and, per row, either revives it back to
-// Queued (park_count < maxParkCount -- also resets attempts for a fresh
+// Queued (park_count <= maxParkCount -- also resets attempts for a fresh
 // MaxAttempts budget, and clears parked_at) or abandons it outright
-// (park_count >= maxParkCount -- status 'abandoned', abandoned_at stamped,
+// (park_count > maxParkCount -- status 'abandoned', abandoned_at stamped,
 // next_attempt_at left at infinity so it stays permanently unclaimable).
+// maxParkCount is inclusive of the park that triggers this check -- Park
+// has already incremented park_count by the time a sweep sees the row, so
+// comparing with <= (not <) is what makes maxParkCount actually mean "this
+// many revivals allowed before abandoning": at maxParkCount=1, the first
+// park (park_count=1) still gets revived, and only a second park would be
+// abandoned. A strict < here would silently grant one fewer revival than
+// configured -- abandoning on the very park that was supposed to earn the
+// last chance.
 // The two UPDATEs are mutually exclusive by construction (one requires
-// park_count < maxParkCount, the other >=), so running them in either
+// park_count <= maxParkCount, the other >), so running them in either
 // order can't double-process a row. Races against Enqueue landing on the
 // same row are safe: Enqueue's own coalescing WHERE (claimed_at IS NULL)
 // matches a parked row regardless of what this sweep does to it, so
@@ -142,7 +150,7 @@ func (s *Store) RequeueOrAbandonParked(ctx context.Context, olderThan time.Durat
 	revivedRes, err := s.db.ExecContext(ctx,
 		`UPDATE crawler_queue
 		    SET status = 'queued', attempts = 0, next_attempt_at = now(), parked_at = NULL
-		  WHERE status = 'parked' AND parked_at <= now() - $1::interval AND park_count < $2`,
+		  WHERE status = 'parked' AND parked_at <= now() - $1::interval AND park_count <= $2`,
 		olderThan.String(), maxParkCount)
 	if err != nil {
 		return 0, 0, fmt.Errorf("store: RequeueOrAbandonParked: reviving: %w", err)
@@ -155,7 +163,7 @@ func (s *Store) RequeueOrAbandonParked(ctx context.Context, olderThan time.Durat
 	abandonedRes, err := s.db.ExecContext(ctx,
 		`UPDATE crawler_queue
 		    SET status = 'abandoned', abandoned_at = now()
-		  WHERE status = 'parked' AND parked_at <= now() - $1::interval AND park_count >= $2`,
+		  WHERE status = 'parked' AND parked_at <= now() - $1::interval AND park_count > $2`,
 		olderThan.String(), maxParkCount)
 	if err != nil {
 		return int(revivedN), 0, fmt.Errorf("store: RequeueOrAbandonParked: abandoning: %w", err)

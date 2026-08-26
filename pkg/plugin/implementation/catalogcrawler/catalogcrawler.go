@@ -136,9 +136,22 @@ func (Provider) New(ctx context.Context, registry definition.RegistryLookup, met
 	// plugin's sweep cadence, so deriving it here (rather than leaving
 	// Params.MaxParkCount at 0) is what makes a 15-minute sweep actually
 	// mean "abandon after ~12h" instead of ~3h.
-	maxParkCount := int(int64Or(config[cfgMaxParkCount], 0))
-	if maxParkCount == 0 {
-		maxParkCount = crawlmanager.DeriveMaxParkCount(schedCfg.ParkSweepInterval, DefaultMaxParkRetryBudget)
+	//
+	// Deliberately not int64Or here (unlike cfgMaxAttempts below): for
+	// maxAttempts, 0 and "unset" really do mean the same thing
+	// ("unlimited"), so collapsing them is fine. Here they don't -- an
+	// operator writing maxParkCount: "0" means "abandon on the very first
+	// park, no revivals", a real, distinct value from "unset" (derive the
+	// ~12h default). int64Or's n<=0-means-default rule would silently
+	// discard that explicit "0" and substitute the derived default
+	// instead, so this parses the raw config value directly and only
+	// falls back to the derived default when it's actually empty (or not
+	// a valid non-negative integer).
+	maxParkCount := crawlmanager.DeriveMaxParkCount(schedCfg.ParkSweepInterval, DefaultMaxParkRetryBudget)
+	if v := strings.TrimSpace(config[cfgMaxParkCount]); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			maxParkCount = int(n)
+		}
 	}
 	params := crawlmanager.Params{
 		Fetcher: fetcher, Source: src, Sink: snk, Store: st, Log: log,
