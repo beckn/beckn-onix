@@ -165,7 +165,7 @@ func (noopPluginManager) PayloadStore(_ context.Context, _ definition.Cache, _ s
 	return nil, nil
 }
 
-func (noopPluginManager) CatalogPublisher(_ context.Context, _ definition.KeyManager, _ definition.CatalogBlobStore, _ definition.RegistryLookup, _ definition.RegistryMetadataLookup, _ *plugin.Config) (definition.CatalogPublisher, error) {
+func (noopPluginManager) CatalogPublisher(_ context.Context, _ definition.KeyManager, _ definition.CatalogBlobStore, _ definition.RegistryLookup, _ *plugin.Config) (definition.CatalogPublisher, error) {
 	return nil, nil
 }
 

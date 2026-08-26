@@ -514,13 +514,21 @@ func (m *Manager) KeyManager(ctx context.Context, rClient definition.RegistryLoo
 }
 
 // CatalogPublisher returns a CatalogPublisher instance based on the provided
-// configuration. It reuses the loaded provider.
-func (m *Manager) CatalogPublisher(ctx context.Context, km definition.KeyManager, blobStore definition.CatalogBlobStore, registry definition.RegistryLookup, registryMetadata definition.RegistryMetadataLookup, cfg *Config) (definition.CatalogPublisher, error) {
+// configuration. It reuses the loaded provider. If registry also implements
+// RegistryMetadataLookup (as dediregistry does), it is passed through too,
+// for the catalog-index link check -- narrowed here rather than by the
+// caller, since it's a generic interface check, not a catalogPublisher-
+// specific business rule (same reasoning as Manager.Crawler's identical
+// narrowing). Whether it's actually required (only when the plugin's own
+// "checkCatalogIndexLink" config is set) is validated inside the plugin's
+// own New, which is the only place that already knows that config key.
+func (m *Manager) CatalogPublisher(ctx context.Context, km definition.KeyManager, blobStore definition.CatalogBlobStore, registry definition.RegistryLookup, cfg *Config) (definition.CatalogPublisher, error) {
 	cpp, err := provider[definition.CatalogPublisherProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	cp, closer, err := cpp.New(ctx, km, blobStore, registry, registryMetadata, cfg.Config)
+	metadataLookup, _ := registry.(definition.RegistryMetadataLookup)
+	cp, closer, err := cpp.New(ctx, km, blobStore, registry, metadataLookup, cfg.Config)
 	if err != nil {
 		return nil, err
 	}

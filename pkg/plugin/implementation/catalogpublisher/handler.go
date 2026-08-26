@@ -85,26 +85,12 @@ func NewHandler(ctx context.Context, mgr handler.PluginManager, cfg *handler.Con
 		return nil, fmt.Errorf("catalogPublish handler %s: failed to load catalogBlobStore plugin (%s): %w", moduleName, cfg.Plugins.CatalogBlobStore.ID, err)
 	}
 
-	// checkCatalogIndexLink is resolved here only to decide whether to load
-	// registryMetadata (typed off the already-loaded `registry`) before
-	// constructing the catalogPublisher plugin -- ParseCheckCatalogIndexLink
-	// is the same parsing New itself uses (via cmd/plugin.go's parseConfig),
-	// so the two decisions can't drift apart. New still re-validates the
-	// subscriberId "/" check plus the fail-fast Keyset probe internally.
-	checkCatalogIndexLink, err := ParseCheckCatalogIndexLink(publisherCfg.Config)
-	if err != nil {
-		return nil, fmt.Errorf("catalogPublish handler %s: %w", moduleName, err)
-	}
-	var registryMetadata definition.RegistryMetadataLookup
-	if checkCatalogIndexLink {
-		var ok bool
-		registryMetadata, ok = registry.(definition.RegistryMetadataLookup)
-		if !ok {
-			return nil, fmt.Errorf("catalogPublish handler %s: Registry plugin does not implement RegistryMetadataLookup (needed for the catalog-index link check)", moduleName)
-		}
-	}
-
-	publisher, err := mgr.CatalogPublisher(ctx, km, blobStore, registry, registryMetadata, publisherCfg)
+	// mgr.CatalogPublisher narrows registry to RegistryMetadataLookup itself
+	// (as dediregistry implements it), the same way Manager.Crawler does --
+	// whether it's actually required is validated inside the plugin's own
+	// New, which is the only place that already knows the
+	// "checkCatalogIndexLink" config key.
+	publisher, err := mgr.CatalogPublisher(ctx, km, blobStore, registry, publisherCfg)
 	if err != nil {
 		return nil, fmt.Errorf("catalogPublish handler %s: failed to load catalogPublisher plugin (%s): %w", moduleName, cfg.Plugins.CatalogPublisher.ID, err)
 	}

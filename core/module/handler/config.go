@@ -29,7 +29,7 @@ type PluginManager interface {
 	TransportWrapper(ctx context.Context, cfg *plugin.Config) (definition.TransportWrapper, error)
 	SchemaValidator(ctx context.Context, cfg *plugin.Config) (definition.SchemaValidator, error)
 	PayloadStore(ctx context.Context, cache definition.Cache, namespace string, cfg *plugin.Config) (definition.PayloadStore, error)
-	CatalogPublisher(ctx context.Context, km definition.KeyManager, blobStore definition.CatalogBlobStore, registry definition.RegistryLookup, registryMetadata definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.CatalogPublisher, error)
+	CatalogPublisher(ctx context.Context, km definition.KeyManager, blobStore definition.CatalogBlobStore, registry definition.RegistryLookup, cfg *plugin.Config) (definition.CatalogPublisher, error)
 	CatalogBlobStore(ctx context.Context, cfg *plugin.Config) (definition.CatalogBlobStore, error)
 }
 

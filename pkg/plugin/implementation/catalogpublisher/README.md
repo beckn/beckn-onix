@@ -514,8 +514,8 @@ re-verifies whatever it just wrote using `catalog-core`'s own
 `catalog.Fetcher` -- the same reachability, digest, decompression, and
 self-signature checks a real crawler runs. This runs against a **registry**
 key lookup (reusing the same `Registry` plugin already configured for
-ordinary transaction verification, via `registryKeySource` -- see
-`keysource.go`), never the local signing key `Publish` itself just used, so
+ordinary transaction verification, via `registryKeySource` in
+`verify.go`), never the local signing key `Publish` itself just used, so
 a stale or wrong `keyManager` config can't mask a genuinely unverifiable
 publish. `Registry` is now a required constructor argument for this reason
 (`catalogpublisher.New` fails fast if it's nil); no new config field, per
