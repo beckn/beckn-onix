@@ -508,6 +508,53 @@ for an embedded `"/"` once at handler construction (it can't change
 afterward); `keyId` is checked for both emptiness and an embedded `"/"`
 on every check, since it's re-resolved fresh each time.
 
+**Post-write verification, always on, hard failures (not warn-only).**
+Immediately after `catalogStore.Publish` commits, the plugin re-fetches and
+re-verifies whatever it just wrote using `catalog-core`'s own
+`catalog.Fetcher` -- the same reachability, digest, decompression, and
+self-signature checks a real crawler runs. This runs against a **registry**
+key lookup (reusing the same `Registry` plugin already configured for
+ordinary transaction verification, via `registryKeySource` in
+`verify.go`), never the local signing key `Publish` itself just used, so
+a stale or wrong `keyManager` config can't mask a genuinely unverifiable
+publish. `Registry` is now a required constructor argument for this reason
+(`catalogpublisher.New` fails fast if it's nil); no new config field, per
+the "minimise config fields" principle used for `checkCatalogIndexLink`
+above.
+
+Only catalogs actually touched by *this* call are checked --
+`CatalogPublishOutcome.Changed == true`, plus every retirement -- so an
+unrelated catalog already sitting in the index untouched this call incurs
+no extra fetch. One index fetch (`FetchIndex`) covers the whole batch; a
+per-catalog entry's mere presence in that re-fetched index already proves
+its self-signature verified against the real registry key, since `Fetcher`
+silently drops any entry that doesn't (see `verifyOutcome`/
+`verifyRetirement` in `verify.go`). Whichever file(s) this call actually
+wrote -- baseline, a specific change version, and/or a refreshed `latest` --
+are then individually re-fetched and digest/signature-checked too.
+
+Unlike `checkCatalogIndexLink`, a verification failure here is **not** a
+warning: `definition.PublishError{Stage: "verify", Fatal: false}` is
+appended to the result, which makes the handler report that catalog as
+`REJECTED` even though its write already committed locally. This is
+deliberate -- a file that isn't actually reachable or verifiable by a real
+crawler is as good as unpublished no matter how cleanly it wrote, so
+reporting it as accepted would be misleading. `Fatal` stays `false` because
+the failure is scoped to that one catalog's re-fetch, not the request as a
+whole; other catalogs in the same batch that verify fine are still
+reported normally. There's no rollback of the already-committed write (the
+same write-then-verify ordering `checkCatalogIndexLink` also implicitly
+relies on, just applied here to a hard result instead of a soft one).
+
+The fetch client's SSRF guard is intentionally relaxed
+(`allowPrivate: true`) for this specific use, unlike `catalogcrawler`'s own
+fetch client: it's fetching `cfg.PublicBaseURL`, the deployment operator's
+own trusted config, not an attacker-supplied third-party URL, so blocking
+private/loopback targets here would only break legitimate internal or
+air-gapped deployments without adding any real protection. See the doc
+comment on the `crawler.NewClient` call in `catalogpublisher.go` for the
+full reasoning.
+
 ## Migrating from the old catalog/publish API to the decentralized catalog
 
 If you're publishing catalogs today via `catalog/publish` with ACK/NACK

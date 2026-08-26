@@ -85,26 +85,12 @@ func NewHandler(ctx context.Context, mgr handler.PluginManager, cfg *handler.Con
 		return nil, fmt.Errorf("catalogPublish handler %s: failed to load catalogBlobStore plugin (%s): %w", moduleName, cfg.Plugins.CatalogBlobStore.ID, err)
 	}
 
-	// checkCatalogIndexLink is resolved here only to decide whether to load
-	// registryMetadata (typed off the already-loaded `registry`) before
-	// constructing the catalogPublisher plugin -- ParseCheckCatalogIndexLink
-	// is the same parsing New itself uses (via cmd/plugin.go's parseConfig),
-	// so the two decisions can't drift apart. New still re-validates the
-	// subscriberId "/" check plus the fail-fast Keyset probe internally.
-	checkCatalogIndexLink, err := ParseCheckCatalogIndexLink(publisherCfg.Config)
-	if err != nil {
-		return nil, fmt.Errorf("catalogPublish handler %s: %w", moduleName, err)
-	}
-	var registryMetadata definition.RegistryMetadataLookup
-	if checkCatalogIndexLink {
-		var ok bool
-		registryMetadata, ok = registry.(definition.RegistryMetadataLookup)
-		if !ok {
-			return nil, fmt.Errorf("catalogPublish handler %s: Registry plugin does not implement RegistryMetadataLookup (needed for the catalog-index link check)", moduleName)
-		}
-	}
-
-	publisher, err := mgr.CatalogPublisher(ctx, km, blobStore, registryMetadata, publisherCfg)
+	// mgr.CatalogPublisher narrows registry to RegistryMetadataLookup itself
+	// (as dediregistry implements it), the same way Manager.Crawler does --
+	// whether it's actually required is validated inside the plugin's own
+	// New, which is the only place that already knows the
+	// "checkCatalogIndexLink" config key.
+	publisher, err := mgr.CatalogPublisher(ctx, km, blobStore, registry, publisherCfg)
 	if err != nil {
 		return nil, fmt.Errorf("catalogPublish handler %s: failed to load catalogPublisher plugin (%s): %w", moduleName, cfg.Plugins.CatalogPublisher.ID, err)
 	}
@@ -178,11 +164,16 @@ func NewHandler(ctx context.Context, mgr handler.PluginManager, cfg *handler.Con
 		}
 
 		results := make([]catalogProcessingResult, 0, len(resp.Catalogs)+len(resp.Errors)+len(req.Retire))
-		for _, c := range resp.Catalogs {
-			results = append(results, catalogProcessingResult{CatalogID: c.CatalogID, Status: catalogAccepted, Version: c.Version})
-		}
 		anyFatal := false
+		// rejected is built before the Catalogs/retire loops below so
+		// neither reports a catalogId as ACCEPTED/retired that also failed
+		// -- e.g. verify.go's post-write check can fail a catalog that
+		// Publish itself already produced a (now-unreachable/unverifiable)
+		// CatalogPublishOutcome for, and a retirement whose tombstone
+		// doesn't survive re-fetch. Errors is authoritative over both.
+		rejected := make(map[string]bool, len(resp.Errors))
 		for _, e := range resp.Errors {
+			rejected[e.CatalogID] = true
 			if e.Fatal {
 				anyFatal = true
 				log.Errorf(r.Context(), fmt.Errorf("%s", e.Reason), "catalogPublish: %s fatal publish error at stage %s", e.CatalogID, e.Stage)
@@ -191,18 +182,25 @@ func NewHandler(ctx context.Context, mgr handler.PluginManager, cfg *handler.Con
 			}
 			results = append(results, catalogProcessingResult{CatalogID: e.CatalogID, Status: catalogRejected, Reason: e.Reason})
 		}
+		for _, c := range resp.Catalogs {
+			if rejected[c.CatalogID] {
+				continue
+			}
+			results = append(results, catalogProcessingResult{CatalogID: c.CatalogID, Status: catalogAccepted, Version: c.Version})
+		}
 
 		submittedIDs := make(map[string]bool, len(req.Catalogs))
 		for _, id := range nonEmptyCatalogIDs(req.Catalogs) {
 			submittedIDs[id] = true
 		}
 		for _, id := range req.Retire {
-			if submittedIDs[id] {
+			if submittedIDs[id] || rejected[id] {
 				// Publish's own rule: submitting and retiring the same
 				// catalogId in one call means the submission wins, so no
 				// tombstone was actually written -- reporting "retired"
 				// here too would falsely tell the caller this catalog was
-				// retired.
+				// retired. Same reasoning for rejected: already reported
+				// REJECTED above, so not also "retired".
 				continue
 			}
 			results = append(results, catalogProcessingResult{CatalogID: id, Status: catalogAccepted, Reason: "retired"})

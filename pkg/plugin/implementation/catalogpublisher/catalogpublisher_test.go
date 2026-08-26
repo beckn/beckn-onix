@@ -15,6 +15,7 @@ import (
 	"github.com/beckn-one/beckn-onix/core/module/handler"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn/catalog-core/pkg/catalog/publisher"
 )
 
 // fakeBlobStore is an in-memory definition.CatalogBlobStore double.
@@ -65,6 +66,61 @@ func (f *fakeRegistryMetadata) LookupNode(_ context.Context, nodeID string) (*mo
 
 func (f *fakeRegistryMetadata) QueryByNetwork(context.Context, string) ([]model.SubscriberRecord, error) {
 	panic("unused")
+}
+
+// fakeVerifyRegistry is a definition.RegistryLookup double backing
+// verify.go's post-write verification. A zero-value fakeVerifyRegistry{}
+// (no PubB64 set) is fine for any test that never calls Publish, or whose
+// Publish call fails before verification runs -- New only requires a
+// non-nil Registry, it never calls Lookup itself. PubB64 set to a real
+// signing key (see newVerifyingBlobServer/newFakeRegistryLookup) is what
+// makes verification actually succeed.
+type fakeVerifyRegistry struct{ PubB64 string }
+
+func (f fakeVerifyRegistry) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
+	if f.PubB64 == "" {
+		return nil, nil
+	}
+	return []model.Subscription{{SigningPublicKey: f.PubB64, Status: "SUBSCRIBED"}}, nil
+}
+
+// newVerifyingBlobServer serves bs's own contents over HTTP, so a
+// Publisher's post-write verification (verify.go) can actually fetch what
+// it just wrote -- the same round trip a real deployment goes through,
+// just local. Registered for cleanup via t.Cleanup.
+func newVerifyingBlobServer(t *testing.T, bs *fakeBlobStore) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := bs.Get(r.Context(), strings.TrimPrefix(r.URL.Path, "/"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// newVerifiablePublisher builds a Publisher whose post-write verification
+// (verify.go) can actually succeed end to end: cfg.PublicBaseURL is
+// pointed at a local httptest server serving bs's own contents, and the
+// registry fake resolves km's real public key -- so Publish's re-fetch +
+// re-verify genuinely passes, the same as it would against a real
+// deployment. Mutates cfg.PublicBaseURL; use a fresh *Config per call.
+func newVerifiablePublisher(t *testing.T, km *fakeKeyManager, bs *fakeBlobStore, rm definition.RegistryMetadataLookup, cfg *Config) *Publisher {
+	t.Helper()
+	srv := newVerifyingBlobServer(t, bs)
+	cfg.PublicBaseURL = srv.URL
+	// httptest.Server always listens on loopback -- opt this test double
+	// into the SSRF guard's private-host allowance the same way a real
+	// deployment would for an internal PublicBaseURL.
+	cfg.AllowPrivateVerifyHosts = true
+	p, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{PubB64: base64.StdEncoding.EncodeToString(km.pub)}, rm, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return p
 }
 
 // fakeKeyManager returns a fixed Ed25519 keyset for one configured
@@ -121,20 +177,23 @@ func TestNew_RequiresKeyManagerAndKeyID(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	bs := newFakeBlobStore()
 
-	if _, _, err := New(context.Background(), nil, bs, nil, &Config{SubscriberID: "k1"}); err == nil {
+	if _, _, err := New(context.Background(), nil, bs, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", PublicBaseURL: "https://example.test"}); err == nil {
 		t.Fatal("expected error for nil KeyManager")
 	}
-	if _, _, err := New(context.Background(), km, bs, nil, &Config{}); err == nil {
+	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, nil, &Config{PublicBaseURL: "https://example.test"}); err == nil {
 		t.Fatal("expected error for missing keyID")
 	}
-	if _, _, err := New(context.Background(), km, bs, nil, &Config{SubscriberID: "k1"}); err != nil {
+	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", PublicBaseURL: "https://example.test"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, _, err := New(context.Background(), km, bs, nil, nil, &Config{SubscriberID: "k1", PublicBaseURL: "https://example.test"}); err == nil {
+		t.Fatal("expected error for nil Registry")
 	}
 }
 
 func TestNew_RequiresCatalogBlobStore(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
-	if _, _, err := New(context.Background(), km, nil, nil, &Config{SubscriberID: "k1"}); err == nil {
+	if _, _, err := New(context.Background(), km, nil, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", PublicBaseURL: "https://example.test"}); err == nil {
 		t.Fatal("expected error for nil CatalogBlobStore")
 	}
 }
@@ -142,11 +201,11 @@ func TestNew_RequiresCatalogBlobStore(t *testing.T) {
 func TestNew_CheckCatalogIndexLinkRequiresRegistryMetadata(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	bs := newFakeBlobStore()
-	if _, _, err := New(context.Background(), km, bs, nil, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true}); err == nil {
+	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true, PublicBaseURL: "https://example.test"}); err == nil {
 		t.Fatal("expected error when CheckCatalogIndexLink is true but registryMetadata is nil")
 	}
 	rm := &fakeRegistryMetadata{}
-	if _, _, err := New(context.Background(), km, bs, rm, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true}); err != nil {
+	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, rm, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true, PublicBaseURL: "https://example.test"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -155,8 +214,35 @@ func TestNew_RejectsSlashInSubscriberIDWhenCatalogIndexLinkCheckEnabled(t *testi
 	km := newFakeKeyManager(t, "k1")
 	bs := newFakeBlobStore()
 	rm := &fakeRegistryMetadata{}
-	if _, _, err := New(context.Background(), km, bs, rm, &Config{SubscriberID: "nfh.global/k1", CheckCatalogIndexLink: true}); err == nil {
+	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, rm, &Config{SubscriberID: "nfh.global/k1", CheckCatalogIndexLink: true, PublicBaseURL: "https://example.test"}); err == nil {
 		t.Fatal("expected error for a subscriberId containing \"/\" when the catalog-index link check is enabled")
+	}
+}
+
+func TestNew_RequiresPublicBaseURL(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	bs := newFakeBlobStore()
+
+	cases := []struct {
+		name string
+		url  string
+	}{
+		{"empty", ""},
+		{"unedited placeholder", "https://your-tunnel.ngrok-free.app"},
+		{"no scheme", "example.test/catalog"},
+		{"not absolute", "/catalog"},
+		{"unsupported scheme", "ftp://example.test"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", PublicBaseURL: c.url}); err == nil {
+				t.Fatalf("expected error for publicBaseURL %q", c.url)
+			}
+		})
+	}
+
+	if _, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", PublicBaseURL: "https://example.test"}); err != nil {
+		t.Fatalf("unexpected error for a valid publicBaseURL: %v", err)
 	}
 }
 
@@ -168,13 +254,7 @@ func TestNew_RejectsSlashInSubscriberIDWhenCatalogIndexLinkCheckEnabled(t *testi
 func TestPublish_DelegatesToLibraryAndConvertsResult(t *testing.T) {
 	km := newFakeKeyManager(t, "publisher-key-1")
 	km.domain = "example.test"
-	p, _, err := New(context.Background(), km, newFakeBlobStore(), nil, &Config{
-		SubscriberID:  "publisher-key-1",
-		PublicBaseURL: "https://cdn.example.test",
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	p := newVerifiablePublisher(t, km, newFakeBlobStore(), nil, &Config{SubscriberID: "publisher-key-1"})
 
 	result, err := p.Publish(context.Background(), definition.PublishRequest{
 		Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: validCatalogJSON("CAT-1")}},
@@ -215,7 +295,7 @@ func TestPublish_DelegatesToLibraryAndConvertsResult(t *testing.T) {
 
 func TestPublish_UnknownKeyIDFails(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
-	p, _, err := New(context.Background(), km, newFakeBlobStore(), nil, &Config{SubscriberID: "wrong-key"})
+	p, _, err := New(context.Background(), km, newFakeBlobStore(), fakeVerifyRegistry{}, nil, &Config{SubscriberID: "wrong-key", PublicBaseURL: "https://example.test"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -234,10 +314,7 @@ func TestPublish_LoadsPriorStateAndPersistsResult(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	km.domain = "example.test"
 	bs := newFakeBlobStore()
-	p, _, err := New(context.Background(), km, bs, nil, &Config{SubscriberID: "k1"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	p := newVerifiablePublisher(t, km, bs, nil, &Config{SubscriberID: "k1"})
 
 	req := definition.PublishRequest{
 		Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: validCatalogJSON("CAT-1")}},
@@ -272,10 +349,7 @@ func TestPublish_ForceBaselineIsPerCatalog(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	km.domain = "example.test"
 	bs := newFakeBlobStore()
-	p, _, err := New(context.Background(), km, bs, nil, &Config{SubscriberID: "k1"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	p := newVerifiablePublisher(t, km, bs, nil, &Config{SubscriberID: "k1"})
 
 	seed := definition.PublishRequest{
 		Catalogs: []definition.CatalogSubmission{
@@ -318,10 +392,7 @@ func TestPublish_RetireSynthesizesSubmissionForUnsubmittedID(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	km.domain = "example.test"
 	bs := newFakeBlobStore()
-	p, _, err := New(context.Background(), km, bs, nil, &Config{SubscriberID: "k1"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	p := newVerifiablePublisher(t, km, bs, nil, &Config{SubscriberID: "k1"})
 
 	seed := definition.PublishRequest{
 		Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: validCatalogJSON("CAT-1")}},
@@ -346,10 +417,7 @@ func TestPublish_RegistryLinkCheckAddsWarning(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	km.domain = "example.test"
 	rm := &fakeRegistryMetadata{nodeRecord: &model.SubscriberRecord{}}
-	p, _, err := New(context.Background(), km, newFakeBlobStore(), rm, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	p := newVerifiablePublisher(t, km, newFakeBlobStore(), rm, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true})
 
 	result, err := p.Publish(context.Background(), definition.PublishRequest{
 		Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: validCatalogJSON("CAT-1")}},
@@ -367,13 +435,20 @@ func TestPublish_RegistryLinkCheckAddsWarning(t *testing.T) {
 func TestPublish_RegistryLinkCheckNoWarningWhenLinked(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	km.domain = "example.test"
-	p0, _, _ := New(context.Background(), km, newFakeBlobStore(), nil, &Config{SubscriberID: "k1"})
-	indexURL := p0.IndexURL()
+	// p never publishes anything with a different PublicBaseURL than the
+	// indexURL computed below -- so indexURL is derived straight from
+	// publisher.IndexURL(baseURL) against the same server p itself will
+	// use, rather than via a second, throwaway Publisher/server pair that
+	// would compute a different (and thus mismatching) URL.
+	bs := newFakeBlobStore()
+	srv := newVerifyingBlobServer(t, bs)
+	indexURL := publisher.IndexURL(srv.URL)
 
 	rm := &fakeRegistryMetadata{nodeRecord: &model.SubscriberRecord{
 		MetaArrays: map[string][]string{catalogIndexMetaKey: {indexURL}},
 	}}
-	p, _, err := New(context.Background(), km, newFakeBlobStore(), rm, &Config{SubscriberID: "k1", CheckCatalogIndexLink: true})
+	p, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{PubB64: base64.StdEncoding.EncodeToString(km.pub)}, rm,
+		&Config{SubscriberID: "k1", CheckCatalogIndexLink: true, PublicBaseURL: srv.URL, AllowPrivateVerifyHosts: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -451,11 +526,14 @@ func TestDecodeKeyset_Valid(t *testing.T) {
 	}
 }
 
+// testPublisher builds a Publisher for DecodeRequest-only tests -- Publish
+// (and therefore verify.go) is never called against it, so a working
+// registry/server isn't needed, just a non-nil one to satisfy New.
 func testPublisher(t *testing.T) *Publisher {
 	t.Helper()
 	km := newFakeKeyManager(t, "k1")
 	km.domain = "example.test"
-	p, _, err := New(context.Background(), km, newFakeBlobStore(), nil, &Config{SubscriberID: "k1"})
+	p, _, err := New(context.Background(), km, newFakeBlobStore(), fakeVerifyRegistry{}, nil, &Config{SubscriberID: "k1", PublicBaseURL: "https://example.test"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

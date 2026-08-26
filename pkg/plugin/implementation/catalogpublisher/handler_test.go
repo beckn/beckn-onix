@@ -148,7 +148,7 @@ func (m *catalogPublishTestManager) KeyManager(context.Context, definition.Regis
 func (m *catalogPublishTestManager) CatalogBlobStore(context.Context, *plugin.Config) (definition.CatalogBlobStore, error) {
 	return fakeHandlerCatalogBlobStore{}, nil
 }
-func (m *catalogPublishTestManager) CatalogPublisher(ctx context.Context, km definition.KeyManager, blobStore definition.CatalogBlobStore, registryMetadata definition.RegistryMetadataLookup, cfg *plugin.Config) (definition.CatalogPublisher, error) {
+func (m *catalogPublishTestManager) CatalogPublisher(ctx context.Context, km definition.KeyManager, blobStore definition.CatalogBlobStore, registry definition.RegistryLookup, cfg *plugin.Config) (definition.CatalogPublisher, error) {
 	m.capturedPublisherCfg = cfg
 	return m.publisher, nil
 }
@@ -265,16 +265,6 @@ func TestNewCatalogPublishHandler_RequiresKeyManagerSubscriberID(t *testing.T) {
 	cfg.Plugins.KeyManager.Config = nil // no subscriberId to derive from
 	if _, err := NewHandler(context.Background(), mgr, cfg, "test"); err == nil {
 		t.Fatal("expected error when keyManager config has no subscriberId to derive from")
-	}
-}
-
-func TestNewCatalogPublishHandler_CheckCatalogIndexLinkRequiresRegistryMetadataLookup(t *testing.T) {
-	mgr := newTestManager(&fakeHandlerCatalogPublisher{})
-	mgr.registry = fakeHandlerRegistry{} // does not implement definition.RegistryMetadataLookup
-	cfg := newTestConfig()
-	cfg.Plugins.CatalogPublisher.Config = map[string]string{"checkCatalogIndexLink": "true"}
-	if _, err := NewHandler(context.Background(), mgr, cfg, "test"); err == nil {
-		t.Fatal("expected error when checkCatalogIndexLink is true but the Registry plugin doesn't implement RegistryMetadataLookup")
 	}
 }
 
