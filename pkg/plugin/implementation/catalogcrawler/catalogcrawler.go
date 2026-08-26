@@ -37,20 +37,23 @@ import (
 // matching onix's own config-key convention (e.g. schemaversionmediator's
 // fetchTimeout/artifactCacheTTL).
 const (
-	cfgDBDSN              = "dbDsn"
-	cfgNetworks           = "networks"        // comma-separated networkIds for registry-backed discovery
-	cfgStaticIndexURLs    = "staticIndexUrls" // comma-separated, optional fixed index URLs
-	cfgDiscoveryURL       = "discoveryPushUrl"
-	cfgParticipantID      = "participantId" // this deployment's own bppId
-	cfgBppURI             = "bppUri"        // this deployment's own bppUri
-	cfgFetchTimeoutSec    = "fetchTimeoutSeconds"
-	cfgMaxFetchBytes      = "maxFetchBytes"
-	cfgMaxDecompressed    = "maxDecompressedBytes"
-	cfgMaxPushBytes       = "maxPushBytes"
-	cfgIndexIntervalSec   = "indexIntervalSeconds"
-	cfgCatalogIntervalSec = "catalogIntervalSeconds"
-	cfgAllowPrivateHosts  = "allowPrivateHosts" // "true" to allow loopback/private fetch targets; tests only
-	cfgMaxAttempts        = "maxAttempts"       // transient-failure retries before parking; 0/unset => unlimited
+	cfgDBDSN                = "dbDsn"
+	cfgNetworks             = "networks"        // comma-separated networkIds for registry-backed discovery
+	cfgStaticIndexURLs      = "staticIndexUrls" // comma-separated, optional fixed index URLs
+	cfgDiscoveryURL         = "discoveryPushUrl"
+	cfgParticipantID        = "participantId" // this deployment's own bppId
+	cfgBppURI               = "bppUri"        // this deployment's own bppUri
+	cfgFetchTimeoutSec      = "fetchTimeoutSeconds"
+	cfgMaxFetchBytes        = "maxFetchBytes"
+	cfgMaxDecompressed      = "maxDecompressedBytes"
+	cfgMaxPushBytes         = "maxPushBytes"
+	cfgIndexIntervalSec     = "indexIntervalSeconds"
+	cfgCatalogIntervalSec   = "catalogIntervalSeconds"
+	cfgAllowPrivateHosts    = "allowPrivateHosts"        // "true" to allow loopback/private fetch targets; tests only
+	cfgMaxAttempts          = "maxAttempts"              // transient-failure retries before parking; 0/unset => unlimited
+	cfgParkSweepIntervalSec = "parkSweepIntervalSeconds" // how often RequeueOrAbandonParked runs; 0/unset => DefaultParkSweepInterval (15m)
+	cfgParkOlderThanSec     = "parkOlderThanSeconds"     // how long a catalog must sit parked before this sweep touches it; 0/unset => act on anything parked
+	cfgMaxParkCount         = "maxParkCount"             // revivals allowed before abandoning a parked catalog; 0/unset => derived from the sweep interval and DefaultMaxParkRetryBudget (12h)
 )
 
 const (
@@ -58,6 +61,11 @@ const (
 	defaultMaxFetchBytes   = 10 << 20
 	defaultMaxDecompressed = 20 << 20
 	defaultMaxPushBytes    = 10 << 20
+	// DefaultMaxParkRetryBudget is the total wall-clock time a parked
+	// catalog keeps getting revived before being abandoned, by default --
+	// combined with the actual (possibly overridden) park-sweep interval
+	// via crawlmanager.DeriveMaxParkCount to compute Params.MaxParkCount.
+	DefaultMaxParkRetryBudget = 12 * time.Hour
 )
 
 // Provider implements definition.CrawlerProvider.
@@ -116,13 +124,39 @@ func (Provider) New(ctx context.Context, registry definition.RegistryLookup, met
 	// (buildSource) and scope filtering (Params.Networks) -- one deployment
 	// concept, "which networks do I carry", not two.
 	networks := splitNonEmpty(config[cfgNetworks])
+	schedCfg := SchedulerConfig{
+		IndexInterval:     durationSecondsOr(config[cfgIndexIntervalSec], DefaultIndexInterval),
+		CatalogInterval:   durationSecondsOr(config[cfgCatalogIntervalSec], DefaultCatalogInterval),
+		ParkSweepInterval: durationSecondsOr(config[cfgParkSweepIntervalSec], DefaultParkSweepInterval),
+		ParkOlderThan:     durationSecondsOr(config[cfgParkOlderThanSec], 0),
+	}
+	// DefaultMaxParkRetryBudget/schedCfg's own (possibly overridden)
+	// ParkSweepInterval together give the actual default maxParkCount --
+	// crawlmanager.DefaultMaxParkCount (12) doesn't itself know this
+	// plugin's sweep cadence, so deriving it here (rather than leaving
+	// Params.MaxParkCount at 0) is what makes a 15-minute sweep actually
+	// mean "abandon after ~12h" instead of ~3h.
+	//
+	// Deliberately not int64Or here (unlike cfgMaxAttempts below): for
+	// maxAttempts, 0 and "unset" really do mean the same thing
+	// ("unlimited"), so collapsing them is fine. Here they don't -- an
+	// operator writing maxParkCount: "0" means "abandon on the very first
+	// park, no revivals", a real, distinct value from "unset" (derive the
+	// ~12h default). int64Or's n<=0-means-default rule would silently
+	// discard that explicit "0" and substitute the derived default
+	// instead, so this parses the raw config value directly and only
+	// falls back to the derived default when it's actually empty (or not
+	// a valid non-negative integer).
+	maxParkCount := crawlmanager.DeriveMaxParkCount(schedCfg.ParkSweepInterval, DefaultMaxParkRetryBudget)
+	if v := strings.TrimSpace(config[cfgMaxParkCount]); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			maxParkCount = int(n)
+		}
+	}
 	params := crawlmanager.Params{
 		Fetcher: fetcher, Source: src, Sink: snk, Store: st, Log: log,
 		Networks: networks, MaxAttempts: int(int64Or(config[cfgMaxAttempts], 0)),
-	}
-	schedCfg := SchedulerConfig{
-		IndexInterval:   durationSecondsOr(config[cfgIndexIntervalSec], DefaultIndexInterval),
-		CatalogInterval: durationSecondsOr(config[cfgCatalogIntervalSec], DefaultCatalogInterval),
+		MaxParkCount: maxParkCount,
 	}
 
 	c := &crawlerImpl{
@@ -130,6 +164,7 @@ func (Provider) New(ctx context.Context, registry definition.RegistryLookup, met
 		sched:          NewScheduler(params, schedCfg, log),
 		metadataLookup: metadataLookup,
 		log:            log,
+		st:             st,
 	}
 	return c, db.Close, nil
 }
@@ -229,6 +264,12 @@ type crawlerImpl struct {
 	sched          *Scheduler
 	metadataLookup definition.RegistryMetadataLookup
 	log            *slog.Logger
+
+	// st is the same *store.Store instance as params.Store, held separately
+	// (and typed concretely, not as crawlmanager.Store) because Status
+	// needs its own reporting query -- not part of crawlmanager.Store's
+	// narrow scheduler-facing surface.
+	st *store.Store
 }
 
 func (c *crawlerImpl) Start(ctx context.Context) error {
@@ -272,6 +313,37 @@ func (c *crawlerImpl) CrawlRegistry(ctx context.Context, networkIDs []string) (s
 		return "", fmt.Errorf("catalogcrawler: crawler is not running")
 	}
 	return runID, nil
+}
+
+// Status implements definition.Crawler. Unlike CrawlRegistry, this is a
+// plain read against persisted state -- it works whether or not the
+// scheduler has been Start()-ed, since it never touches c.sched.
+func (c *crawlerImpl) Status(ctx context.Context, subscriberID, catalogID string) ([]definition.CrawlStatus, error) {
+	rows, err := c.st.Status(ctx, subscriberID, catalogID)
+	if err != nil {
+		return nil, fmt.Errorf("catalogcrawler: Status: %w", err)
+	}
+	out := make([]definition.CrawlStatus, len(rows))
+	for i, r := range rows {
+		out[i] = definition.CrawlStatus{
+			CatalogID:         r.CatalogID,
+			IndexURL:          r.IndexURL,
+			EverSynced:        r.EverSynced,
+			EntryVersion:      r.EntryVersion,
+			Retired:           r.Retired,
+			LastError:         r.Reason,
+			Queued:            r.Queued,
+			Attempts:          r.Attempts,
+			NextAttemptAt:     r.NextAttemptAt,
+			Parked:            r.Parked,
+			ParkCount:         r.ParkCount,
+			Abandoned:         r.Abandoned,
+			AbandonedAt:       r.AbandonedAt,
+			UpdatedAt:         r.UpdatedAt,
+			IndexLastPolledAt: r.IndexPolledAt,
+		}
+	}
+	return out, nil
 }
 
 func splitNonEmpty(s string) []string {

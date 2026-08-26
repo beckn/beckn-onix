@@ -23,9 +23,16 @@ import (
 const claimLease = 15 * time.Minute
 
 // Enqueue upserts a work item. UNIQUE(catalog_id) coalesces repeated changes
-// into one pending item. A row that is NOT in progress is reset to a fresh
-// ready state; an in-progress row is left claimed, so a coalescing enqueue
-// can never yank a row out from under the worker holding it.
+// into one pending item. A row that is NOT in progress (claimed_at IS
+// NULL -- true for a plain queued row, but also for one currently Parked or
+// Abandoned) is reset to a fresh ready state, clearing parked_at/
+// abandoned_at too; an in-progress row is left claimed, so a coalescing
+// enqueue can never yank a row out from under the worker holding it. This
+// is also what reactivates a Parked (or even Abandoned) row when
+// decideCatalog re-enqueues a catalog whose index entry changed while it
+// sat parked -- park_count is deliberately left untouched here (it's
+// cumulative across the catalog's whole troubled history, not reset by a
+// fresh publish), unlike attempts.
 func (s *Store) Enqueue(ctx context.Context, item crawlmanager.QueueItem) error {
 	op := string(item.Op)
 	if op == "" {
@@ -40,7 +47,9 @@ func (s *Store) Enqueue(ctx context.Context, item crawlmanager.QueueItem) error 
 		   op           = EXCLUDED.op,
 		   status       = CASE WHEN crawler_queue.claimed_at IS NULL THEN 'queued' ELSE crawler_queue.status END,
 		   attempts     = CASE WHEN crawler_queue.claimed_at IS NULL THEN 0 ELSE crawler_queue.attempts END,
-		   next_attempt_at = CASE WHEN crawler_queue.claimed_at IS NULL THEN now() ELSE crawler_queue.next_attempt_at END`,
+		   next_attempt_at = CASE WHEN crawler_queue.claimed_at IS NULL THEN now() ELSE crawler_queue.next_attempt_at END,
+		   parked_at    = CASE WHEN crawler_queue.claimed_at IS NULL THEN NULL ELSE crawler_queue.parked_at END,
+		   abandoned_at = CASE WHEN crawler_queue.claimed_at IS NULL THEN NULL ELSE crawler_queue.abandoned_at END`,
 		item.CatalogID, item.IndexURL, op)
 	if err != nil {
 		return fmt.Errorf("store: Enqueue: %w", err)
@@ -95,22 +104,116 @@ func (s *Store) Reschedule(ctx context.Context, id, claimID string, nextAttemptA
 	return nil
 }
 
-// Park releases and parks an item that failed permanently: status 'failed',
-// next_attempt_at set to infinity so it is never re-claimed on its own. It
-// stays parked until a fresh Enqueue (a coalescing Enqueue on a
-// not-in-progress row resets it to ready) re-arms it, so a fixed/
-// re-published catalog recovers automatically without hot-retrying a
-// hopeless one.
+// Park releases and parks an item that failed permanently: status 'parked',
+// next_attempt_at set to infinity so ClaimNext never picks it back up on
+// its own, and park_count (this row's cumulative park count, distinct from
+// attempts) incremented. It stays parked until either a fresh Enqueue (a
+// coalescing Enqueue on a not-in-progress row resets it to ready -- see
+// Enqueue's own doc) re-arms it on a republish, or RequeueOrAbandonParked's
+// own sweep revives or abandons it.
 func (s *Store) Park(ctx context.Context, id, claimID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE crawler_queue
-		    SET attempts = attempts + 1, claimed_at = NULL, claim_id = NULL, status = 'failed', next_attempt_at = 'infinity'
+		    SET attempts = attempts + 1, claimed_at = NULL, claim_id = NULL,
+		        status = 'parked', next_attempt_at = 'infinity',
+		        park_count = park_count + 1, parked_at = now()
 		  WHERE id = $1 AND claim_id = $2`,
 		id, claimID)
 	if err != nil {
 		return fmt.Errorf("store: Park: %w", err)
 	}
 	return nil
+}
+
+// RequeueOrAbandonParked implements crawlmanager.Store: sweeps every row
+// parked at least olderThan ago and, per row, either revives it back to
+// Queued (park_count <= maxParkCount -- also resets attempts for a fresh
+// MaxAttempts budget, and clears parked_at) or abandons it outright
+// (park_count > maxParkCount -- status 'abandoned', abandoned_at stamped,
+// next_attempt_at left at infinity so it stays permanently unclaimable).
+// maxParkCount is inclusive of the park that triggers this check -- Park
+// has already incremented park_count by the time a sweep sees the row, so
+// comparing with <= (not <) is what makes maxParkCount actually mean "this
+// many revivals allowed before abandoning": at maxParkCount=1, the first
+// park (park_count=1) still gets revived, and only a second park would be
+// abandoned. A strict < here would silently grant one fewer revival than
+// configured -- abandoning on the very park that was supposed to earn the
+// last chance.
+// The two UPDATEs are mutually exclusive by construction (one requires
+// park_count <= maxParkCount, the other >), so running them in either
+// order can't double-process a row. Races against Enqueue landing on the
+// same row are safe: Enqueue's own coalescing WHERE (claimed_at IS NULL)
+// matches a parked row regardless of what this sweep does to it, so
+// whichever statement commits first simply wins -- there is no read-then-
+// write on either side for the two to interleave badly against.
+func (s *Store) RequeueOrAbandonParked(ctx context.Context, olderThan time.Duration, maxParkCount int) (revived, abandoned int, err error) {
+	revivedRes, err := s.db.ExecContext(ctx,
+		`UPDATE crawler_queue
+		    SET status = 'queued', attempts = 0, next_attempt_at = now(), parked_at = NULL
+		  WHERE status = 'parked' AND parked_at <= now() - $1::interval AND park_count <= $2`,
+		olderThan.String(), maxParkCount)
+	if err != nil {
+		return 0, 0, fmt.Errorf("store: RequeueOrAbandonParked: reviving: %w", err)
+	}
+	revivedN, err := revivedRes.RowsAffected()
+	if err != nil {
+		return 0, 0, fmt.Errorf("store: RequeueOrAbandonParked: reviving: %w", err)
+	}
+
+	abandonedRes, err := s.db.ExecContext(ctx,
+		`UPDATE crawler_queue
+		    SET status = 'abandoned', abandoned_at = now()
+		  WHERE status = 'parked' AND parked_at <= now() - $1::interval AND park_count > $2`,
+		olderThan.String(), maxParkCount)
+	if err != nil {
+		return int(revivedN), 0, fmt.Errorf("store: RequeueOrAbandonParked: abandoning: %w", err)
+	}
+	abandonedN, err := abandonedRes.RowsAffected()
+	if err != nil {
+		return int(revivedN), 0, fmt.Errorf("store: RequeueOrAbandonParked: abandoning: %w", err)
+	}
+
+	return int(revivedN), int(abandonedN), nil
+}
+
+// ListAbandoned implements crawlmanager.Store: every row currently
+// 'abandoned', joined to crawler_index for its participantId (crawler_queue
+// itself doesn't carry one -- same join ClaimNext already does) and to
+// crawler_catalog for its last recorded failure reason (RecordFailure
+// always runs before Park, so this is that abandoned catalog's actual last
+// error, not stale).
+func (s *Store) ListAbandoned(ctx context.Context) ([]crawlmanager.AbandonedCatalog, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT q.catalog_id, q.index_url, i.participant_id, q.park_count, c.reason, q.abandoned_at
+		   FROM crawler_queue q
+		   LEFT JOIN crawler_index i ON i.index_url = q.index_url
+		   LEFT JOIN crawler_catalog c ON c.catalog_id = q.catalog_id
+		  WHERE q.status = 'abandoned'
+		  ORDER BY q.abandoned_at`)
+	if err != nil {
+		return nil, fmt.Errorf("store: ListAbandoned: %w", err)
+	}
+	defer rows.Close()
+
+	var out []crawlmanager.AbandonedCatalog
+	for rows.Next() {
+		var (
+			ac                 crawlmanager.AbandonedCatalog
+			participantID, rsn sql.NullString
+			abandonedAt        sql.NullTime
+		)
+		if err := rows.Scan(&ac.CatalogID, &ac.IndexURL, &participantID, &ac.ParkCount, &rsn, &abandonedAt); err != nil {
+			return nil, fmt.Errorf("store: ListAbandoned: scanning row: %w", err)
+		}
+		ac.ParticipantID = participantID.String
+		ac.LastError = rsn.String
+		ac.AbandonedAt = abandonedAt.Time
+		out = append(out, ac)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: ListAbandoned: %w", err)
+	}
+	return out, nil
 }
 
 // Complete records the catalog's settled cursor and removes the queue row,

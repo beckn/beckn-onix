@@ -54,6 +54,16 @@ const (
 	// handlerProviders, because it closes over the single Crawler instance
 	// main.go starts as a background job -- CrawlRegistry requires that
 	// instance to already be running.
+	// HandlerTypeCatalogCrawl handles the /crawl/* endpoint family: an
+	// on-demand crawl trigger (invokes the already-running Crawler
+	// plugin's CrawlRegistry) and a crawl/sync status query, both
+	// sub-routed internally by catalogcrawler.NewHandler rather than
+	// registered as separate handler types -- see that function's own doc
+	// comment. Its provider is registered at runtime (see
+	// module.RegisterProvider, called from catalogcrawler.RegisterHandler)
+	// rather than statically in handlerProviders, because it closes over
+	// the single Crawler instance main.go starts as a background job --
+	// CrawlRegistry requires that instance to already be running.
 	HandlerTypeCatalogCrawl Type = "catalogCrawl"
 )
 
@@ -162,4 +172,11 @@ type Config struct {
 	// better made deliberately, not as a side effect of this handler
 	// change.
 	OutputRoot string `yaml:"outputRoot,omitempty"`
+	// AuthDisabled, when true, skips signature verification on handlers that
+	// would otherwise require it (currently only catalogCrawlStatus). LOCAL
+	// DEV / TESTING ONLY -- with this set, the caller's identity comes from
+	// an unauthenticated subscriberId query param instead of a verified
+	// Authorization header, so any caller can query any subscriber's crawl
+	// status. Must stay false/unset for any network-facing deployment.
+	AuthDisabled bool `yaml:"authDisabled,omitempty"`
 }

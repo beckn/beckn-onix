@@ -368,7 +368,7 @@ plugins:
       bppUri: "https://bpp.example.org"
 ```
 
-To also expose an on-demand HTTP trigger for this crawler, add a module with handler type `catalogCrawl` — see [`catalogCrawl` handler type](#handler-type-catalogcrawl) below. That module takes no `plugins` of its own: it calls `CrawlRegistry` directly on this same running crawler instance.
+To also expose the on-demand HTTP trigger and status query for this crawler, add a module with handler type `catalogCrawl` — see [`catalogCrawl` handler type](#handler-type-catalogcrawl) below. That module takes no `plugins` of its own: both its `/trigger` and `/status` sub-endpoints call directly into this same running crawler instance.
 
 ### Audit fields configuration
 
@@ -541,8 +541,8 @@ modules:
 ##### `type`
 **Type**: `string`  
 **Required**: Yes  
-**Options**: `std` (standard beckn-protocol handler), `catalogPublish` (DS-internal catalog/publish trigger), `catalogCrawl` (DS-internal on-demand crawl trigger)  
-**Description**: Type of handler. `std` is the standard Beckn-protocol request/response handler used by `bapTxnReceiver`/`bapTxnCaller`/`bppTxnReceiver`/`bppTxnCaller`-style modules; `catalogPublish` and `catalogCrawl` are unsigned, same-operator DS-internal triggers, not network-facing Beckn actions. See [`catalogPublish` handler type](#handler-type-catalogpublish) and [`catalogCrawl` handler type](#handler-type-catalogcrawl) below.
+**Options**: `std` (standard beckn-protocol handler), `catalogPublish` (DS-internal catalog/publish trigger), `catalogCrawl` (the `/crawl/*` endpoint family — trigger + status)  
+**Description**: Type of handler. `std` is the standard Beckn-protocol request/response handler used by `bapTxnReceiver`/`bapTxnCaller`/`bppTxnReceiver`/`bppTxnCaller`-style modules; `catalogPublish` is an unsigned, same-operator DS-internal trigger, not a network-facing Beckn action. `catalogCrawl` covers a whole sub-routed endpoint family under one type — an unsigned trigger (`/trigger`) and a status query (`/status`) that's eventually signed but not yet. See [`catalogPublish`](#handler-type-catalogpublish) and [`catalogCrawl`](#handler-type-catalogcrawl) below.
 
 <a name="handler-type-catalogpublish"></a>
 ###### Handler type: `catalogPublish`
@@ -606,9 +606,11 @@ modules:
 <a name="handler-type-catalogcrawl"></a>
 ###### Handler type: `catalogCrawl`
 
-A DS-internal, unsigned on-demand crawl trigger. It calls `CrawlRegistry` on the already-running crawler configured via [`plugins.crawler`](#pluginscrawler) (top-level, not per-module) and returns a run ID; it takes no `handler.plugins` of its own. Requires `plugins.crawler` to be configured — otherwise the module registers but every request to it fails with "no Crawler plugin configured/running".
+The whole `/crawl/*` endpoint family as **one handler type**, mounted at a path ending in `/` (e.g. `/crawl/`) and sub-routed internally on the remaining path — `trigger` and `status` today, a future addition is a new case inside the plugin's own dispatch rather than a new handler type/module block. Both sub-endpoints call into the already-running crawler configured via [`plugins.crawler`](#pluginscrawler) (top-level, not per-module); it takes no `handler.plugins` of its own. Requires `plugins.crawler` to be configured — otherwise the whole module fails to register (`RegisterHandler` is only called when the crawler exists — see [`pkg/plugin/implementation/catalogcrawler/README.md`](pkg/plugin/implementation/catalogcrawler/README.md)).
 
-**Request body** — either form is accepted, and both may be combined (merged into one list):
+**`POST {path}trigger`** — an on-demand crawl trigger, unsigned, unaffected by `authDisabled`:
+
+Request body — either form is accepted, and both may be combined (merged into one list):
 ```json
 { "networkId": "example.network.production" }
 ```
@@ -616,19 +618,65 @@ A DS-internal, unsigned on-demand crawl trigger. It calls `CrawlRegistry` on the
 { "networkIds": ["example.network.production", "example.network.staging"] }
 ```
 
-**Response** — `202 Accepted` on success:
+Response — `202 Accepted` on success:
 ```json
 { "runId": "3fa2c1e0-4b1a-4c9e-9c3a-6a2f8e0b7d21" }
 ```
 On failure (e.g. no `networkId(s)` given, or the crawler isn't running), a `400`/`500` with `{"error": "..."}`.
 
-**Example**:
+**`GET {path}status`** — crawl/sync status for a publisher's own catalogs. Eventually a **signed,
+network-facing** query, verifying the caller the same way every subscriber-facing call in this
+codebase does (`signValidator`/`keyManager`) so a publisher can only ever see their own catalogs'
+status. **That verification is not implemented yet.** Right now this sub-endpoint only serves
+requests when `handler.authDisabled` is `true` — checked per request (not at module construction,
+so a missing/false `authDisabled` can't take down `/trigger`); omitting it (or `false`) rejects
+every status request. With `authDisabled: true`, the caller's identity is an unauthenticated
+`?subscriberId=` query param, not a verified one — **do not use this in any real deployment
+as-is.**
+
+Request: `GET`, required `?subscriberId=` (unauthenticated for now — see above), optional
+`?catalogId=`. `catalogId` absent, returns every catalog owned by `subscriberId`.
+
+Response — `200 OK`, one entry per catalog:
+```json
+[
+  {
+    "catalogId": "staging.p-node.fabric.nfh.global/CAT-1",
+    "indexUrl": "https://angular-absently-gab.ngrok-free.dev/beckn/index/becknCatalogs.index.json",
+    "everSynced": true,
+    "version": 2,
+    "entryVersion": 2,
+    "retired": false,
+    "queued": false,
+    "updatedAt": "2026-08-24T16:33:44Z",
+    "indexLastPolledAt": "2026-08-24T16:33:44Z"
+  },
+  {
+    "catalogId": "staging.p-node.fabric.nfh.global/CAT-2",
+    "everSynced": false,
+    "queued": true
+  },
+  {
+    "catalogId": "staging.p-node.fabric.nfh.global/CAT-3",
+    "everSynced": true,
+    "queued": false,
+    "abandoned": true,
+    "parkCount": 48,
+    "abandonedAt": "2026-08-25T09:00:00Z",
+    "lastError": "crawler: signature verification failed: Ed25519 signature verification failed"
+  }
+]
+```
+`everSynced: false` (CAT-2 above) means this catalog is queued for its very first sync — `version`/`entryVersion`/`retired`/`lastError`/`updatedAt` are all zero-valued since nothing has settled yet; check `queued` for whether that first sync is pending right now. `lastError`/`attempts`/`nextAttemptAt` appear only when relevant (a past failure, or `queued: true`). `parked`/`abandoned` (CAT-3 above, mutually exclusive with `queued`) report the crawler's revive-or-abandon sweep state — see [`pkg/plugin/implementation/catalogcrawler/README.md`](pkg/plugin/implementation/catalogcrawler/README.md#parked-and-abandoned-catalogs) — with `parkCount`/`abandonedAt` alongside; `lastError` there is the actual reason the catalog kept failing (e.g. a persistent signature-verification mismatch), not just "something failed." A non-empty `catalogId` matching nothing at all — not even a pending first sync — (or belonging to a different subscriber — the two are indistinguishable on purpose) is a `404`; an absent `catalogId` matching nothing is a `200` with `[]`.
+
+**Example** (registers both `/crawl/trigger` and `/crawl/status`):
 ```yaml
 modules:
   - name: crawl
-    path: /crawl
+    path: /crawl/
     handler:
       type: catalogCrawl
+      authDisabled: true # required for /crawl/status -- see above; /crawl/trigger is unaffected
 ```
 
 ##### `role`
@@ -642,6 +690,12 @@ modules:
 **Required**: No  
 **Description**: Subscriber ID for the participant. Used primarily for BPP modules.  
 **Example**: `bpp1`
+
+##### `authDisabled`
+**Type**: `boolean`  
+**Required**: No, only meaningful for [`catalogCrawl`](#handler-type-catalogcrawl)'s `/status` sub-endpoint  
+**Default**: `false`  
+**Description**: For sub-endpoints that require signed-request verification, skips it and takes the caller's identity from a plain, unauthenticated request parameter instead. Currently the only such sub-endpoint is `catalogCrawl`'s `/status`, whose signed-verification path isn't implemented yet — it checks `authDisabled: true` per request (an unset/`false` value rejects every `/status` request, but never affects `/trigger`, which needs no auth of its own). **Never set `true` for a sub-endpoint whose auth is actually implemented, or in any real deployment.**
 
 ##### `httpClientConfig`
 **Type**: `object`  

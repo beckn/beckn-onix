@@ -240,6 +240,10 @@ func run(ctx context.Context, configPath string) error {
 	}
 	closers = append(closers, crawlerCloser)
 	if crawler != nil {
+		// Registers both /crawl/trigger and /crawl/status (one handler.Type,
+		// see catalogcrawler/handler.go) -- both need this same running
+		// instance, so neither is available unless the background crawler
+		// itself is configured.
 		catalogcrawler.RegisterHandler(crawler)
 	}
 

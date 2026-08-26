@@ -30,6 +30,9 @@ catalogCrawler:
     maxDecompressedBytes: "20971520"
     maxPushBytes: "10485760"
     maxAttempts: "0"
+    parkSweepIntervalSeconds: "900"
+    parkOlderThanSeconds: "0"
+    maxParkCount: "0"
 ```
 
 Supported config keys:
@@ -47,20 +50,43 @@ Supported config keys:
 - `catalogIntervalSeconds`: optional, default `30`. How often the sync queue is drained.
 - `maxAttempts`: optional, default `0` (unlimited). Transient-failure retries before a queue item is parked; a fresh publish of the same catalog re-arms it regardless.
 - `allowPrivateHosts`: optional, default `false`. Allows loopback/private fetch targets. **Tests only — must stay `false` in production**, or the crawler's SSRF guard is defeated.
+- `parkSweepIntervalSeconds`: optional, default `900` (15 min). How often the revive-or-abandon sweep runs — see "Parked and abandoned catalogs" below. Independent of `indexIntervalSeconds`/`catalogIntervalSeconds`.
+- `parkOlderThanSeconds`: optional, default `0`. How long a catalog must have been sitting parked before a sweep acts on it. `0` means no extra grace period — each sweep acts on anything currently parked.
+- `maxParkCount`: optional, default `0`, meaning derived from `parkSweepIntervalSeconds` and a 12-hour total retry budget (e.g. the default 15-minute sweep interval yields 48). How many times a parked catalog is revived before being abandoned instead.
 
 ## Signature verification
 
 - Every fetched index entry and catalog file carries a self-signature, checked against the signing key the configured `RegistryLookup` returns for that entry's `(nodeId, keyId)`.
 - Key resolution and caching are entirely the `RegistryLookup` plugin's responsibility (e.g. `registry`, `dediregistry`) — this plugin does not add its own cache in front of it, to avoid a second, independently-expiring cache that could still trust a key after the registry plugin's own cache has already invalidated it (e.g. on revocation).
-- A signature failure (unknown key, revoked/expired subscription, malformed key material, bad signature) is permanent and the item is parked, not retried; a registry lookup failure (network/outage) is transient and retried on the next tick.
+- A signature failure (unknown key, revoked/expired subscription, malformed key material, bad signature) is permanent and the item is parked, not retried on its own schedule — but see "Parked and abandoned catalogs" below: a permanent failure isn't necessarily final if its underlying cause was transient in practice (e.g. the publisher's registered key gets corrected later). A registry lookup failure (network/outage) is transient and retried on the next tick.
+
+## Parked and abandoned catalogs
+
+A catalog whose sync keeps failing permanently (or exhausts `maxAttempts`) gets **parked**: `crawlmanager.SyncNext` stops retrying it on the normal `catalogIntervalSeconds` cadence. Without anything else, a parked catalog would stay parked forever unless its publisher republishes a *changed* index — an unchanged (304, or same declared version) index never re-triggers the decide loop that would otherwise notice the underlying cause cleared up.
+
+A separate, independent sweep (`parkSweepIntervalSeconds`) periodically revisits every parked catalog and either:
+- **revives** it back to the normal queue (if it's been parked fewer than `maxParkCount` times), giving it another chance without waiting for a republish, or
+- **abandons** it (once `maxParkCount` is reached) — terminal: no further automatic retries, though a fresh publish still reactivates it immediately regardless of abandonment.
+
+Both states are visible via [`GET /crawl/status`](#get-crawlstatus)'s `parked`/`parkCount`/`abandoned`/`abandonedAt` fields — useful for exactly the kind of case that motivated this: a catalog failing signature verification against a registry key that turns out to be stale gets parked, retried a bounded number of times, and if the publisher never fixes it, surfaces as abandoned rather than silently retrying (or silently never retrying) forever with no visibility.
 
 ## On-demand crawl
 
 `CrawlRegistry(ctx, networkIDs)` triggers an immediate registry-backed discovery pass against caller-supplied `networkIDs`, independent of the configured `networks` default, without waiting for the next scheduled tick. Discovery goes through the configured `RegistryMetadataLookup` plugin instance, which owns its own registry URL — there is no per-call registry URL, so this cannot target a different registry than the one the deployment is configured with. It returns a run ID immediately; the run's outcome is only observable via logs and the queue, the same as a scheduled tick. The run is tied to the plugin's own lifecycle (not the caller's context), so it is not cut short by a request-scoped caller and is waited for on shutdown. It requires the crawler already be running (`Start` already called) — calling it on a freshly-constructed, unstarted instance returns an error.
 
-### `/crawl` HTTP endpoint
+### The `/crawl/*` HTTP endpoint family
 
-`CrawlRegistry` is also reachable over HTTP via a `catalogCrawl`-type module (see [handler.go](handler.go) and [CONFIG.md](../../../../CONFIG.md#handler-type-catalogcrawl) for the full request/response shape). This endpoint always calls into the one crawler instance `cmd/adapter/main.go` constructs and starts as a background job from the top-level `plugins.crawler` config (see [CONFIG.md](../../../../CONFIG.md#pluginscrawler)) — it is not a separately-configured plugin instance, so `plugins.crawler` must be configured for this endpoint to do anything; without it, requests fail with "no Crawler plugin configured/running".
+`CrawlRegistry` and `Status` are both reachable over HTTP via a single `catalogCrawl`-type module
+mounted at `/crawl/` (see [handler.go](handler.go) and
+[CONFIG.md](../../../../CONFIG.md#handler-type-catalogcrawl) for the full reference). **One
+`handler.Type`, sub-routed internally** on the request path (`trigger.go`'s `/crawl/trigger`,
+`status.go`'s `/crawl/status`) rather than a separate handler type/module block per endpoint —
+adding a future `/crawl/*` endpoint means a new case in `handler.go`'s dispatch, not a new
+registration path through `core/module/handler`, `main.go`, and a YAML block. Both sub-endpoints
+operate on the one crawler instance `cmd/adapter/main.go` constructs and starts as a background
+job from the top-level `plugins.crawler` config (see [CONFIG.md](../../../../CONFIG.md#pluginscrawler))
+— neither is a separately-configured plugin instance, so `plugins.crawler` must be configured for
+either to do anything; without it, the whole module fails to register.
 
 ```yaml
 # top-level plugins block -- starts the crawler as a background job
@@ -76,19 +102,113 @@ plugins:
       # ... see Config above
 
 modules:
-  # exposes the on-demand trigger for the crawler configured above
+  # exposes /crawl/trigger and /crawl/status, both backed by the crawler
+  # instance configured above
   - name: crawl
-    path: /crawl
+    path: /crawl/
     handler:
       type: catalogCrawl
+      authDisabled: true # required for /crawl/status -- see below; /crawl/trigger is unaffected
 ```
 
+The module takes no `handler.plugins` of its own -- unlike `catalogPublisher`'s module, which
+constructs its own plugins per-request, this handler is wired directly to the singleton above
+(`catalogcrawler.RegisterHandler`, called once from `main.go` after the crawler starts).
+
+#### `POST /crawl/trigger`
+
 ```
-POST /crawl
+POST /crawl/trigger
 {"networkIds": ["example.network.production"]}
 
 202 Accepted
 {"runId": "3fa2c1e0-4b1a-4c9e-9c3a-6a2f8e0b7d21"}
 ```
 
-The module takes no `handler.plugins` of its own -- unlike `catalogPublisher`'s module, which constructs its own plugins per-request, this handler is wired directly to the singleton above (`catalogcrawler.RegisterHandler`, called once from `main.go` after the crawler starts), since `CrawlRegistry` needs that exact running instance rather than a fresh one.
+Unsigned, same-operator call -- no auth of any kind, and unaffected by `authDisabled` (that setting
+is only read by the status sub-endpoint below).
+
+#### `GET /crawl/status`
+
+`Status(ctx, subscriberID, catalogID)` reports the last-known crawl/sync state persisted for a
+publisher's catalogs — a plain read against `crawler_catalog`/`crawler_queue`/`crawler_index`, not
+a live check, and not tied to any particular `/crawl/trigger` `runId` (a caller only ever knows
+their own `catalogId`, not a run's id).
+
+Eventually this answers a specific authenticated publisher about their own data, so it's meant to
+be a **signed, network-facing call** — verifying the caller the same way every other
+subscriber-facing call in this codebase does (`signValidator` + `keyManager.LookupNPKeys`, inlined
+into `Decode` rather than via the `std` handler's step pipeline; see
+[status.go](status.go)'s doc comment for why it can't just reuse `validateSign` directly). **That
+verification is not implemented yet.** This first cut only serves requests when the module's
+`authDisabled: true` is set — omitting it (or setting it `false`) rejects every `/crawl/status`
+request (checked per-request, not at module construction, so it can't take down `/crawl/trigger`).
+With `authDisabled: true`, `subscriberId` is a plain, unauthenticated query param instead of a
+verified identity: **do not run this in any real deployment as-is** — it lets any caller read any
+subscriber's crawl status.
+
+```
+GET /crawl/status?subscriberId=staging.p-node.fabric.nfh.global&catalogId=staging.p-node.fabric.nfh.global/CAT-1
+
+200 OK
+[
+  {
+    "catalogId": "staging.p-node.fabric.nfh.global/CAT-1",
+    "indexUrl": "https://angular-absently-gab.ngrok-free.dev/beckn/index/becknCatalogs.index.json",
+    "everSynced": true,
+    "entryVersion": 2,
+    "retired": false,
+    "queued": false,
+    "updatedAt": "2026-08-24T16:33:44Z",
+    "indexLastPolledAt": "2026-08-24T16:33:44Z"
+  },
+  {
+    "catalogId": "staging.p-node.fabric.nfh.global/CAT-2",
+    "indexUrl": "https://angular-absently-gab.ngrok-free.dev/beckn/index/becknCatalogs.index.json",
+    "everSynced": false,
+    "entryVersion": 0,
+    "retired": false,
+    "queued": true,
+    "attempts": 0
+  },
+  {
+    "catalogId": "staging.p-node.fabric.nfh.global/CAT-3",
+    "everSynced": true,
+    "entryVersion": 1,
+    "retired": false,
+    "queued": false,
+    "abandoned": true,
+    "parkCount": 48,
+    "abandonedAt": "2026-08-25T09:00:00Z",
+    "lastError": "crawler: signature verification failed: Ed25519 signature verification failed"
+  }
+]
+```
+
+`subscriberId` is required; omitting `catalogId` returns every catalog owned by it. `everSynced`
+is `false` for a catalog queued for its very first sync -- CAT-2 above -- in which case
+`entryVersion`/`retired`/`lastError`/`updatedAt` are all zero-valued (nothing has settled
+yet); check `queued` to see whether that first sync is pending right now.
+
+`entryVersion` is deliberately the only version reported here, matching RFC NFH-014's entry-level
+versioning rather than a catalog file's own file-lineage version: it's the number a publisher
+already has in hand from its own `Publish` call
+(`CatalogPublishOutcome.EntryVersion`) to cross-check the crawler actually caught up with what it
+just published, and it bumps on every entry change -- content or metadata-only -- so it can't
+under-report staleness the way a file-lineage version could on a metadata-only publish. `lastError` is present
+only if the catalog's most recent sync attempt failed (cleared on the next success); a non-empty
+`catalogId` matching nothing at all (not even a pending first sync) is a `404`, an empty `catalogId`
+matching nothing is a `200` with `[]`. `queued`/`attempts`/`nextAttemptAt` are only meaningful
+while `queued` is `true` (a sync still pending or retrying).
+
+`parked`/`parkCount` and `abandoned`/`abandonedAt`/`parkCount` (CAT-3 above) report the
+revive-or-abandon state described in "Parked and abandoned catalogs" above -- `parked`, `queued`,
+and `abandoned` are mutually exclusive. CAT-3's `lastError` is the actual reason it kept failing
+(RecordFailure's last-recorded error), so this is where a persistent signature-verification
+mismatch like the one that motivated this feature actually becomes visible, instead of silently
+parking forever.
+
+There is no exact "next scheduled crawl" — `PollIndexes` polls every discovered index
+unconditionally on each tick, so the crawler has no per-index schedule of its own to report;
+`indexLastPolledAt` plus the deployment's own `indexIntervalSeconds` is the closest estimate
+available.

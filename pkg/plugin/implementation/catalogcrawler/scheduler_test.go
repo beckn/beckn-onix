@@ -41,6 +41,10 @@ func noopFetcher() *catalog.Fetcher {
 type fakeStore struct {
 	mu    sync.Mutex
 	queue []crawlmanager.ClaimedItem
+
+	// parkSweeps, if non-nil, counts RequeueOrAbandonParked calls -- so a
+	// test can assert the park-sweep loop actually ticked.
+	parkSweeps *atomic.Int64
 }
 
 func (s *fakeStore) GetCatalogCursor(context.Context, string) (crawlmanager.CatalogCursor, bool, error) {
@@ -75,6 +79,15 @@ func (s *fakeStore) Complete(context.Context, string, string, crawlmanager.Catal
 }
 func (s *fakeStore) Reschedule(context.Context, string, string, time.Time) error { return nil }
 func (s *fakeStore) Park(context.Context, string, string) error                  { return nil }
+func (s *fakeStore) RequeueOrAbandonParked(context.Context, time.Duration, int) (int, int, error) {
+	if s.parkSweeps != nil {
+		s.parkSweeps.Add(1)
+	}
+	return 0, 0, nil
+}
+func (s *fakeStore) ListAbandoned(context.Context) ([]crawlmanager.AbandonedCatalog, error) {
+	return nil, nil
+}
 func (s *fakeStore) queueLen() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -188,6 +201,26 @@ func TestScheduler_RunOnceNeverOrphansAcrossConcurrentStop(t *testing.T) {
 
 		if started := <-done; started && !ran.Load() {
 			t.Fatalf("iteration %d: RunOnce reported started, but Stop returned before its goroutine ran -- orphaned", i)
+		}
+	}
+}
+
+func TestScheduler_ParkSweepTicksOnItsOwnIndependentCadence(t *testing.T) {
+	var parkSweeps atomic.Int64
+	fs := &fakeStore{parkSweeps: &parkSweeps}
+	sched := NewScheduler(
+		crawlmanager.Params{Source: &countingSource{}, Store: fs},
+		SchedulerConfig{IndexInterval: time.Hour, CatalogInterval: time.Hour, ParkSweepInterval: 10 * time.Millisecond}, nil,
+	)
+	sched.Start(context.Background())
+	defer sched.Stop()
+
+	deadline := time.After(2 * time.Second)
+	for parkSweeps.Load() < 3 {
+		select {
+		case <-deadline:
+			t.Fatalf("expected at least 3 park sweeps, got %d", parkSweeps.Load())
+		case <-time.After(5 * time.Millisecond):
 		}
 	}
 }

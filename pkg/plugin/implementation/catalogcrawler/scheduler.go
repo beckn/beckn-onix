@@ -19,17 +19,30 @@ import (
 	"github.com/beckn/catalog-core/pkg/catalog/crawlmanager"
 )
 
-// DefaultIndexInterval and DefaultCatalogInterval are used when
-// SchedulerConfig leaves the corresponding field at zero.
+// DefaultIndexInterval, DefaultCatalogInterval, and DefaultParkSweepInterval
+// are used when SchedulerConfig leaves the corresponding field at zero.
 const (
-	DefaultIndexInterval   = 5 * time.Minute
-	DefaultCatalogInterval = 30 * time.Second
+	DefaultIndexInterval     = 5 * time.Minute
+	DefaultCatalogInterval   = 30 * time.Second
+	DefaultParkSweepInterval = 15 * time.Minute
 )
 
 // SchedulerConfig is Scheduler's tunable cadence.
 type SchedulerConfig struct {
 	IndexInterval   time.Duration // 0 => DefaultIndexInterval
 	CatalogInterval time.Duration // 0 => DefaultCatalogInterval
+
+	// ParkSweepInterval is how often RequeueOrAbandonParked runs -- a third,
+	// independent cadence from IndexInterval/CatalogInterval (see
+	// crawlmanager.Params.RequeueOrAbandonParked's own doc comment for why
+	// it's deliberately decoupled from PollIndexes/SyncNext). 0 =>
+	// DefaultParkSweepInterval.
+	ParkSweepInterval time.Duration
+	// ParkOlderThan is how long a catalog must have been sitting parked
+	// before this sweep will revive or abandon it. Zero (the default) means
+	// no extra grace period beyond the sweep cadence itself -- each tick
+	// acts on anything currently parked.
+	ParkOlderThan time.Duration
 }
 
 func (c SchedulerConfig) indexInterval() time.Duration {
@@ -44,6 +57,13 @@ func (c SchedulerConfig) catalogInterval() time.Duration {
 		return c.CatalogInterval
 	}
 	return DefaultCatalogInterval
+}
+
+func (c SchedulerConfig) parkSweepInterval() time.Duration {
+	if c.ParkSweepInterval > 0 {
+		return c.ParkSweepInterval
+	}
+	return DefaultParkSweepInterval
 }
 
 // Scheduler runs Params.PollIndexes and Params.SyncNext on their own
@@ -68,8 +88,8 @@ func NewScheduler(params crawlmanager.Params, cfg SchedulerConfig, log *slog.Log
 	return &Scheduler{params: params, cfg: cfg, log: log}
 }
 
-// Start launches the index-poll and catalog-sync loops as two goroutines and
-// returns immediately; Stop drains them.
+// Start launches the index-poll, catalog-sync, and park-sweep loops as
+// three goroutines and returns immediately; Stop drains them.
 func (s *Scheduler) Start(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
@@ -78,6 +98,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 	s.mu.Unlock()
 	s.loop(ctx, s.cfg.indexInterval(), s.pollTick)
 	s.loop(ctx, s.cfg.catalogInterval(), s.syncTick)
+	s.loop(ctx, s.cfg.parkSweepInterval(), s.parkSweepTick)
 }
 
 // Stop signals both loops and waits for the in-flight tick (if any), and any
@@ -142,6 +163,16 @@ func (s *Scheduler) loop(ctx context.Context, interval time.Duration, fn func(co
 			}
 		}
 	}()
+}
+
+// parkSweepTick drives RequeueOrAbandonParked on its own independent
+// cadence -- Params.RequeueOrAbandonParked itself logs revived/abandoned
+// counts, so there's nothing further to log here beyond a transport-level
+// error.
+func (s *Scheduler) parkSweepTick(ctx context.Context) {
+	if err := s.params.RequeueOrAbandonParked(ctx, s.cfg.ParkOlderThan); err != nil {
+		s.log.ErrorContext(ctx, "catalogcrawler: park sweep failed", "error", err)
+	}
 }
 
 func (s *Scheduler) pollTick(ctx context.Context) {
