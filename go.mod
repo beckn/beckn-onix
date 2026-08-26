@@ -91,7 +91,7 @@ require (
 
 require (
 	github.com/alicebob/miniredis/v2 v2.37.0
-	github.com/beckn/catalog-core v0.1.1-0.20260825161132-f767689496a3
+	github.com/beckn/catalog-core v0.2.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/getkin/kin-openapi v0.144.0
 	github.com/google/uuid v1.6.0
