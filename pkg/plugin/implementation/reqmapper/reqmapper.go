@@ -263,7 +263,7 @@ func (e *MappingEngine) Transform(ctx context.Context, action string, req map[st
 	// the JSONata engine, so it's classified separately from Evaluate errors.
 	input, err := json.Marshal(req)
 	if err != nil {
-		return nil, model.NewCodedBadReqErr(codeBizGenericError, fmt.Errorf("failed to marshal request for mapping: %w", err))
+		return nil, model.NewBadReqErr(codeBizGenericError, fmt.Errorf("failed to marshal request for mapping: %w", err))
 	}
 
 	// Apply JSONata transformation
@@ -279,18 +279,18 @@ func (e *MappingEngine) Transform(ctx context.Context, action string, req map[st
 // classifyEvaluateErr maps JSONata Evaluate failures by v206.JSONataError code.
 // T*/D* map to codeSchemaAdaptationFailed; U* and other causes map to
 // codeBizGenericError. S* cannot occur here because mappings compile before Evaluate.
-func classifyEvaluateErr(err error) *model.BadReqErr {
+func classifyEvaluateErr(err error) *model.CodedErr {
 	wrapped := fmt.Errorf("JSONata evaluation failed: %w", err)
 
 	var jsonataErr *v206.JSONataError
 	if errors.As(err, &jsonataErr) && len(jsonataErr.Code) > 0 {
 		switch jsonataErr.Code[0] {
 		case 'T', 'D':
-			return model.NewCodedBadReqErr(codeSchemaAdaptationFailed, wrapped)
+			return model.NewBadReqErr(codeSchemaAdaptationFailed, wrapped)
 		}
 	}
 
-	return model.NewCodedBadReqErr(codeBizGenericError, wrapped)
+	return model.NewBadReqErr(codeBizGenericError, wrapped)
 }
 
 // ReloadMappings reloads all mapping files (useful for hot-reload scenarios)
