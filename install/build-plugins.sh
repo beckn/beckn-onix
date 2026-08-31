@@ -30,6 +30,7 @@ plugins=(
     "publisher"
     "registry"
     "dediregistry"
+    "oanregistry"
     "manifestloader"
     "reqpreprocessor"
     "otelsetup"

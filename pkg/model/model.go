@@ -71,6 +71,47 @@ type SubscriberRecord struct {
 	MetaArrays   map[string][]string // array-shaped meta values (e.g. NFH-014's meta.catalog_index_urls: [{url}, ...]) — kept separate from Meta rather than widening it to map[string]any, so every existing caller of Meta[key] keeps working unchanged
 }
 
+// ProviderRecord is the resolved call plan for one provider capability: what to
+// call, how to call it, and which mappings translate in and out. It is assembled
+// from two registry records -- the capability binding and the participant that
+// owns it -- so a caller resolves a whole plan in one lookup rather than knowing
+// how the registry splits them.
+//
+// Mapping references are carried verbatim. They are fully-qualified URLs the
+// mapper fetches; this type does not interpret them.
+type ProviderRecord struct {
+	BindingKey     string // "<participantId>|<capabilityCode>"
+	ParticipantID  string
+	CapabilityCode string
+
+	// BaseURL comes from the participant and is shared by every action: one
+	// provider, one host.
+	BaseURL string
+
+	// Actions is the call plan per Beckn action. A capability serves several --
+	// a select that reads and a confirm that commits -- and they rarely share an
+	// endpoint or a method, so each carries its own.
+	//
+	// An action absent here is one this capability does not serve.
+	Actions map[string]ActionPlan
+
+	RequestMapping  string
+	ResponseMapping string
+}
+
+// ActionPlan is how to make one action's upstream call.
+type ActionPlan struct {
+	Method string
+	Path   string
+
+	// TimeoutMs and RetryMax are this action's own budget, and are zero when the
+	// registry does not set them -- the caller applies its defaults. They are
+	// per action because a confirm that commits deserves a different budget from
+	// a select that reads.
+	TimeoutMs int
+	RetryMax  int
+}
+
 // Authorization-related constants for headers.
 const (
 	AuthHeaderSubscriber          string = "Authorization"
@@ -326,6 +367,7 @@ type StepContext struct {
 	MessageID            string // Message ID parsed from context.messageId in the request body
 	InboundAuthSignature string // Raw Base64 signature from the inbound Authorization header's signature="..." attribute
 	IsCallerHandler      bool   // True when the handler is a Caller (outbound); false for Receiver (inbound)
+
 }
 
 // WithContext updates the existing StepContext with a new context.
