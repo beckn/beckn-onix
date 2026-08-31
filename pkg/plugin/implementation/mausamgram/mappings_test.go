@@ -28,6 +28,10 @@ import (
 // mappingsDir is where the shipped mappings live, relative to this package.
 const mappingsDir = "../../../../config/mappings/mausamgram"
 
+// selectedResourceID is the resource the request selects, and therefore the one
+// the answer quotes. It is the same string in both directions on purpose.
+const selectedResourceID = "res:mausamgram:point-forecast"
+
 // shippedMapping is the file this binding-action publishes: one file, both
 // directions. The registry carries its full URL; the action segment of the name
 // must match the action that registry entry declares -- a mismatch would apply a
@@ -185,28 +189,42 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 		t.Error("the quoted commitment carries no offer")
 	}
 
+	// One resource, carrying the id the request selected. The consumer asked for
+	// a quote on one resource, so that is what is quoted -- the forecast days are
+	// content of it, not resources of their own.
+	//
+	// Minting a resource per day would leave offer.resourceIds pointing at an id
+	// that appears nowhere in the answer, because the offer is echoed from the
+	// request. Keeping the id is what makes that reference stay true.
 	resources, _ := commitment["resources"].([]any)
-	if len(resources) != 3 {
-		t.Fatalf("got %d resources, want 3 -- one per day the provider answered with", len(resources))
+	if len(resources) != 1 {
+		t.Fatalf("got %d resources, want 1 -- the one the request selected", len(resources))
 	}
 
-	// --- the first day, in full ---------------------------------------------
-	first, _ := resources[0].(map[string]any)
-	if first["id"] != "res:mausamgram:forecast:2026-08-26" {
-		t.Errorf("resource id = %v, want it derived from the forecast date", first["id"])
+	only, _ := resources[0].(map[string]any)
+	if only["id"] != selectedResourceID {
+		t.Errorf("resource id = %v, want the requested %q", only["id"], selectedResourceID)
 	}
 
-	attributes, _ := first["resourceAttributes"].(map[string]any)
+	// The offer's references must resolve against the resources actually
+	// returned. This is the assertion the previous shape could not satisfy.
+	offer, _ := commitment["offer"].(map[string]any)
+	referenced, _ := offer["resourceIds"].([]any)
+	if len(referenced) != 1 || referenced[0] != selectedResourceID {
+		t.Errorf("offer.resourceIds = %v, want exactly [%q]", referenced, selectedResourceID)
+	}
+
+	attributes, _ := only["resourceAttributes"].(map[string]any)
 	if attributes["@type"] != "openagrinet:WeatherObservation" {
 		t.Errorf("@type = %v, want openagrinet:WeatherObservation", attributes["@type"])
 	}
 	if attributes["observationType"] != "Forecast" {
 		t.Errorf("observationType = %v, want Forecast", attributes["observationType"])
 	}
-	if attributes["advisory"] != "Heavy rainfall warning" {
-		t.Errorf("advisory = %v, want the provider's warning", attributes["advisory"])
-	}
 
+	// The point, the source and the observation type are the same for every day,
+	// so they sit once at the top rather than being repeated per day.
+	//
 	// GeoJSON order, and the provider's own echo of the point: the mapping reads
 	// response.location rather than anything the step resolved.
 	location, _ := attributes["location"].(map[string]any)
@@ -215,7 +233,22 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 		t.Errorf("coordinates = %v, want [73.7898, 19.9975] in GeoJSON order", coordinates)
 	}
 
-	parameters, _ := attributes["parameters"].([]any)
+	// --- the days, inside the one resource ----------------------------------
+	observations, _ := attributes["observations"].([]any)
+	if len(observations) != 3 {
+		t.Fatalf("got %d observations, want 3 -- one per day the provider answered with", len(observations))
+	}
+
+	first, _ := observations[0].(map[string]any)
+	validity, _ := first["validity"].(map[string]any)
+	if validity["startsAt"] != "2026-08-26" {
+		t.Errorf("first observation starts at %v, want the provider's first forecast date", validity["startsAt"])
+	}
+	if first["advisory"] != "Heavy rainfall warning" {
+		t.Errorf("advisory = %v, want the provider's warning", first["advisory"])
+	}
+
+	parameters, _ := first["parameters"].([]any)
 	if len(parameters) != 6 {
 		t.Errorf("got %d parameters, want 6 for a fully-reported day", len(parameters))
 	}
@@ -226,14 +259,13 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 	// --- a day the provider reported only partially --------------------------
 	// Readings it did not take are absent, not present and empty: a consumer
 	// must be able to tell "no rainfall recorded" from "zero rainfall".
-	third, _ := resources[2].(map[string]any)
-	thirdAttributes, _ := third["resourceAttributes"].(map[string]any)
-	thirdParameters, _ := thirdAttributes["parameters"].([]any)
+	third, _ := observations[2].(map[string]any)
+	thirdParameters, _ := third["parameters"].([]any)
 	if len(thirdParameters) != 2 {
 		t.Errorf("got %d parameters for a partly-reported day, want only the 2 taken", len(thirdParameters))
 	}
-	if thirdAttributes["advisory"] != nil {
-		t.Errorf("advisory = %v, want it absent when the provider gave none", thirdAttributes["advisory"])
+	if third["advisory"] != nil {
+		t.Errorf("advisory = %v, want it absent when the provider gave none", third["advisory"])
 	}
 }
 

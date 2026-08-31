@@ -19,6 +19,19 @@
 # reading them back would be a second name for the same data. Where the answer
 # needs them, it takes them from what the provider echoed.
 
+# The answer quotes ONE resource, carrying the id the request selected. The
+# forecast days are content of that resource, under resourceAttributes.
+# observations -- not resources of their own.
+#
+# Minting a resource per day was the earlier shape, and it broke the offer: the
+# offer is echoed from the request, so its resourceIds still pointed at the id
+# the consumer selected while the resources carried freshly invented ones.
+# Nothing in the answer resolved that reference. Keeping the selected id is what
+# makes it stay true, rather than patching resourceIds to match.
+#
+# Fields that are the same for every day -- the point, the source, the
+# observation type -- sit once at the top. Only what varies per day repeats.
+
 # An empty request half means there is no request document to build. This
 # provider takes its parameters in the query string and the step resolved them
 # already, so it sends those directly. For a method that takes a body, an empty
@@ -46,6 +59,8 @@ response: |
       }
     };
 
+    $selected := beckn.message.contract.commitments[0];
+
     {
       "context": {
         "version": beckn.context.version,
@@ -66,10 +81,10 @@ response: |
               "status": {
                 "descriptor": { "code": "QUOTED", "name": "Quoted" }
               },
-              "offer": beckn.message.contract.commitments[0].offer,
-              "resources": $map($days, function($day) {
+              "offer": $selected.offer,
+              "resources": [
                 {
-                  "id": "res:mausamgram:forecast:" & $day.date,
+                  "id": $selected.resources[0].id,
                   "resourceAttributes": {
                     "@context": "https://schemas.openagrinet.global/schema/WeatherObservation/v0.1/context.jsonld",
                     "@type": "openagrinet:WeatherObservation",
@@ -84,22 +99,26 @@ response: |
                       "type": "Point",
                       "coordinates": [$lon, $lat]
                     },
-                    "validity": {
-                      "startsAt": $day.date,
-                      "endsAt": $day.date
-                    },
-                    "parameters": [
-                      $reading("Rainfall", "Total", "mm", $day.rain),
-                      $reading("Temperature", "Minimum", "Cel", $day.tmin),
-                      $reading("Temperature", "Maximum", "Cel", $day.tmax),
-                      $reading("Humidity", "Minimum", "%", $day.rhmin),
-                      $reading("Humidity", "Maximum", "%", $day.rhmax),
-                      $reading("WindSpeed", "Average", "m/s", $day.wspd)
-                    ],
-                    "advisory": $day.weather_warning ? $day.weather_warning : $day.cloud_message
+                    "observations": $map($days, function($day) {
+                      {
+                        "validity": {
+                          "startsAt": $day.date,
+                          "endsAt": $day.date
+                        },
+                        "parameters": [
+                          $reading("Rainfall", "Total", "mm", $day.rain),
+                          $reading("Temperature", "Minimum", "Cel", $day.tmin),
+                          $reading("Temperature", "Maximum", "Cel", $day.tmax),
+                          $reading("Humidity", "Minimum", "%", $day.rhmin),
+                          $reading("Humidity", "Maximum", "%", $day.rhmax),
+                          $reading("WindSpeed", "Average", "m/s", $day.wspd)
+                        ],
+                        "advisory": $day.weather_warning ? $day.weather_warning : $day.cloud_message
+                      }
+                    })
                   }
                 }
-              })
+              ]
             }
           ]
         }
