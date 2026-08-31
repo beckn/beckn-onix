@@ -18,12 +18,11 @@ import (
 )
 
 const (
-	testBindingKey      = "mausamgram|openagrinet:WeatherObservation"
-	testCapabilityCode  = "openagrinet:WeatherObservation"
-	testProviderID      = "mausamgram"
-	testBaseURL         = "https://mausamgram.imd.gov.in/nwpapi"
-	testRequestMapping  = "https://mappings.example.com/mausamgram/select.request.yaml"
-	testResponseMapping = "https://mappings.example.com/mausamgram/select.response.yaml"
+	testBindingKey     = "mausamgram|openagrinet:WeatherObservation"
+	testCapabilityCode = "openagrinet:WeatherObservation"
+	testProviderID     = "mausamgram"
+	testBaseURL        = "https://mausamgram.imd.gov.in/nwpapi"
+	testMappings       = "https://mappings.example.com/mausamgram/weather-observation.select.yaml"
 )
 
 // envelopeJSON renders a registry search response in the data-envelope form.
@@ -60,8 +59,9 @@ func arrayJSON[T any](t *testing.T, records ...T) string {
 func upstreamRecord() participant {
 	return participant{
 		ParticipantID: testProviderID,
+		Type:          "upstream",
 		Status:        "active",
-		Upstream:      upstream{BaseURL: testBaseURL},
+		BaseURL:       testBaseURL,
 	}
 }
 
@@ -72,11 +72,10 @@ func bindingRecord() providerBinding {
 		ParticipantID:  testProviderID,
 		CapabilityCode: testCapabilityCode,
 		Actions: []actionPlan{
-			{Action: "select", Method: "GET", Path: "/get-daily", TimeoutMs: 30000, RetryMax: 3},
+			{Action: "select", Method: "GET", Path: "/get-daily", Mappings: testMappings,
+				TimeoutMs: 30000, RetryMax: 3, Status: "active"},
 		},
-		RequestMapping:  testRequestMapping,
-		ResponseMapping: testResponseMapping,
-		Status:          "active",
+		Status: "active",
 	}
 }
 
@@ -129,8 +128,6 @@ func TestProviderRecordResolvesACallPlan(t *testing.T) {
 		{"participant id", got.ParticipantID, testProviderID},
 		{"capability code", got.CapabilityCode, testCapabilityCode},
 		{"base url", got.BaseURL, testBaseURL},
-		{"request mapping", got.RequestMapping, testRequestMapping},
-		{"response mapping", got.ResponseMapping, testResponseMapping},
 	} {
 		if field.got != field.want {
 			t.Errorf("%s = %q, want %q", field.name, field.got, field.want)
@@ -140,6 +137,9 @@ func TestProviderRecordResolvesACallPlan(t *testing.T) {
 	call, served := got.Actions["select"]
 	if !served {
 		t.Fatalf("no call plan for select, got actions %v", got.Actions)
+	}
+	if call.Mappings != testMappings {
+		t.Errorf("mappings = %q, want %q", call.Mappings, testMappings)
 	}
 	if call.Method != "GET" || call.Path != "/get-daily" {
 		t.Errorf("select call = %s %s, want GET /get-daily", call.Method, call.Path)
@@ -156,7 +156,8 @@ func TestProviderRecordResolvesAnEndpointPerAction(t *testing.T) {
 
 	binding := bindingRecord()
 	binding.Actions = append(binding.Actions,
-		actionPlan{Action: "confirm", Method: "POST", Path: "/book", TimeoutMs: 60000, RetryMax: 1})
+		actionPlan{Action: "confirm", Method: "POST", Path: "/book", Mappings: testMappings,
+			TimeoutMs: 60000, RetryMax: 1, Status: "active"})
 
 	srv := newRegistryServer(t, envelopeJSON(t, binding), envelopeJSON(t, upstreamRecord()))
 	defer srv.Close()
@@ -189,7 +190,8 @@ func TestProviderRecordLeavesAnAbsentBudgetAtZero(t *testing.T) {
 	t.Parallel()
 
 	binding := bindingRecord()
-	binding.Actions = []actionPlan{{Action: "select", Method: "GET", Path: "/get-daily"}}
+	binding.Actions = []actionPlan{{Action: "select", Method: "GET", Path: "/get-daily",
+		Mappings: testMappings, Status: "active"}}
 
 	srv := newRegistryServer(t, envelopeJSON(t, binding), envelopeJSON(t, upstreamRecord()))
 	defer srv.Close()
@@ -255,8 +257,12 @@ func TestProviderRecordRefusals(t *testing.T) {
 	noActionsBinding := bindingRecord()
 	noActionsBinding.Actions = nil
 
+	inactiveActionBinding := bindingRecord()
+	inactiveActionBinding.Actions = []actionPlan{{Action: "select", Method: "GET",
+		Path: "/get-daily", Mappings: testMappings, Status: "inactive"}}
+
 	unnamedActionBinding := bindingRecord()
-	unnamedActionBinding.Actions = []actionPlan{{Method: "GET", Path: "/get-daily"}}
+	unnamedActionBinding.Actions = []actionPlan{{Method: "GET", Path: "/get-daily", Status: "active"}}
 
 	inactiveUpstream := upstreamRecord()
 	inactiveUpstream.Status = "inactive"
@@ -265,7 +271,7 @@ func TestProviderRecordRefusals(t *testing.T) {
 	emptyStatusUpstream.Status = ""
 
 	noBaseURL := upstreamRecord()
-	noBaseURL.Upstream.BaseURL = ""
+	noBaseURL.BaseURL = ""
 
 	testCases := []struct {
 		name         string
@@ -279,6 +285,7 @@ func TestProviderRecordRefusals(t *testing.T) {
 		{"a binding naming no participant", envelopeJSON(t, noParticipantBinding), envelopeJSON(t, upstreamRecord())},
 		{"a binding serving no action", envelopeJSON(t, noActionsBinding), envelopeJSON(t, upstreamRecord())},
 		{"a binding whose only action is unnamed", envelopeJSON(t, unnamedActionBinding), envelopeJSON(t, upstreamRecord())},
+		{"a binding whose only action is retired", envelopeJSON(t, inactiveActionBinding), envelopeJSON(t, upstreamRecord())},
 		{"no participant owning the binding", envelopeJSON(t, bindingRecord()), envelopeJSON[participant](t)},
 		{"an inactive participant", envelopeJSON(t, bindingRecord()), envelopeJSON(t, inactiveUpstream)},
 		{"a participant with an empty status", envelopeJSON(t, bindingRecord()), envelopeJSON(t, emptyStatusUpstream)},

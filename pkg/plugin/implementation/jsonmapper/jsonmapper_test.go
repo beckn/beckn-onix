@@ -15,19 +15,20 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
-// twoActionMapping is the published form: one file, every action it serves.
-// Request files are keyed by the action they translate; response files by the
-// action they produce, which is why on_select rather than select appears there.
-const twoActionMapping = `actions:
-  select: |
-    { "lat": _local.lat, "txn": beckn.context.transactionId }
-  confirm: |
-    { "booking": beckn.context.messageId }
+// bothDirections is the published form: one binding-action, both halves. The
+// response half reads _local, which is what makes one file the right unit --
+// it only works because the request half put lat and lon there.
+const bothDirections = `request: |
+  { "lat": _local.lat, "txn": beckn.context.transactionId }
+
+response: |
+  { "lat": _local.lat, "txn": beckn.context.transactionId, "rain": response.fcstday1.rain }
 `
 
-const responseMapping = `actions:
-  on_select: |
-    { "lat": _local.lat, "txn": beckn.context.transactionId, "rain": response.fcstday1.rain }
+// requestOnly is the shape of a mapping for an action whose answer needs no
+// translation, or whose response half has not been written yet.
+const requestOnly = `request: |
+  { "lat": _local.lat }
 `
 
 func requestInput() map[string]any {
@@ -35,6 +36,12 @@ func requestInput() map[string]any {
 		"beckn":  map[string]any{"context": map[string]any{"transactionId": "txn-123", "messageId": "msg-1"}},
 		"_local": map[string]any{"lat": 19.9975, "lon": 73.7898},
 	}
+}
+
+func responseInput() map[string]any {
+	input := requestInput()
+	input["response"] = map[string]any{"fcstday1": map[string]any{"rain": 12.4}}
+	return input
 }
 
 // newMappingServer serves body at every path and counts what was asked for.
@@ -70,19 +77,22 @@ func newTestMapper(t *testing.T, tweak ...func(*Config)) *Mapper {
 	return mapper
 }
 
-// ref builds a mapping reference. The filename carries no meaning -- the file's
-// own keys say which actions it serves.
-func ref(base string) string { return base + "/mappings/anything.yaml" }
+// ref is what the registry carries: the fully-qualified URL of one published
+// file. Which action it serves is decided by the registry entry pointing at it,
+// so the name carries no meaning here.
+func ref(base string) string {
+	return base + "/mappings/mausamgram/weather-observation.select.yaml"
+}
 
 // --- transformation --------------------------------------------------------
 
-func TestTransformRunsTheMappingForTheRequestedAction(t *testing.T) {
+func TestTransformRunsTheRequestHalf(t *testing.T) {
 	t.Parallel()
 
-	srv := newMappingServer(t, twoActionMapping, nil)
+	srv := newMappingServer(t, bothDirections, nil)
 	defer srv.Close()
 
-	got, err := newTestMapper(t).Transform(context.Background(), ref(srv.URL), "select", requestInput())
+	got, err := newTestMapper(t).Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput())
 	if err != nil {
 		t.Fatalf("Transform() returned an unexpected error: %v", err)
 	}
@@ -99,44 +109,17 @@ func TestTransformRunsTheMappingForTheRequestedAction(t *testing.T) {
 	}
 }
 
-// One file, several actions, each reached by name. This is what the format
-// exists for: adding an action is a new key, not a new file.
-func TestTransformPicksTheRightActionFromOneFile(t *testing.T) {
+// The response half reads the upstream answer under response, and still reads
+// _local -- which is the argument for one file: the provider does not repeat the
+// point it was asked about, so the answer is only mappable next to the request
+// that produced it.
+func TestTransformRunsTheResponseHalfAlongsideTheRequest(t *testing.T) {
 	t.Parallel()
 
-	srv := newMappingServer(t, twoActionMapping, nil)
-	defer srv.Close()
-	mapper := newTestMapper(t)
-
-	selected, err := mapper.Transform(context.Background(), ref(srv.URL), "select", requestInput())
-	if err != nil {
-		t.Fatalf("select: %v", err)
-	}
-	confirmed, err := mapper.Transform(context.Background(), ref(srv.URL), "confirm", requestInput())
-	if err != nil {
-		t.Fatalf("confirm: %v", err)
-	}
-
-	if !strings.Contains(string(selected), `"lat"`) {
-		t.Errorf("select produced %s, want the select mapping's output", selected)
-	}
-	if !strings.Contains(string(confirmed), `"booking"`) {
-		t.Errorf("confirm produced %s, want the confirm mapping's output", confirmed)
-	}
-}
-
-// The response leg is keyed by the action it produces, so a caller asks for
-// on_select rather than select.
-func TestTransformExposesTheResponseAlongsideTheRequest(t *testing.T) {
-	t.Parallel()
-
-	srv := newMappingServer(t, responseMapping, nil)
+	srv := newMappingServer(t, bothDirections, nil)
 	defer srv.Close()
 
-	input := requestInput()
-	input["response"] = map[string]any{"fcstday1": map[string]any{"rain": 12.4}}
-
-	got, err := newTestMapper(t).Transform(context.Background(), ref(srv.URL), "on_select", input)
+	got, err := newTestMapper(t).Transform(context.Background(), ref(srv.URL), definition.DirectionResponse, responseInput())
 	if err != nil {
 		t.Fatalf("Transform() returned an unexpected error: %v", err)
 	}
@@ -155,107 +138,106 @@ func TestTransformExposesTheResponseAlongsideTheRequest(t *testing.T) {
 	}
 }
 
-// --- declared but empty -----------------------------------------------------
-
-// The ordinary case for a provider taking query parameters: the action is
-// declared so the file still says what the capability serves, but there is no
-// document to build.
-func TestTransformReportsADeclaredButEmptyAction(t *testing.T) {
+// The two halves are separate expressions, not one applied twice.
+func TestTransformKeepsTheHalvesApart(t *testing.T) {
 	t.Parallel()
 
-	mapping := `actions:
-  select: ""
-  confirm: |
-    { "booking": beckn.context.messageId }
+	mapping := `request: |
+  { "leg": "out" }
+
+response: |
+  { "leg": "back" }
 `
 	srv := newMappingServer(t, mapping, nil)
 	defer srv.Close()
 	mapper := newTestMapper(t)
 
-	_, err := mapper.Transform(context.Background(), ref(srv.URL), "select", requestInput())
-	if !errors.Is(err, definition.ErrNoTransform) {
-		t.Errorf("expected ErrNoTransform, got %v", err)
+	out, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput())
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	back, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionResponse, responseInput())
+	if err != nil {
+		t.Fatalf("response: %v", err)
 	}
 
-	// Its neighbours are unaffected: one action needing no transform says
-	// nothing about the rest of the file.
-	if _, err := mapper.Transform(context.Background(), ref(srv.URL), "confirm", requestInput()); err != nil {
-		t.Errorf("a sibling action must still be served: %v", err)
+	if !strings.Contains(string(out), `"out"`) {
+		t.Errorf("request produced %s, want the request half's output", out)
+	}
+	if !strings.Contains(string(back), `"back"`) {
+		t.Errorf("response produced %s, want the response half's output", back)
 	}
 }
 
-// Declared-but-empty and absent are different facts and must not collapse: the
-// first says "I serve this, build it yourself", the second says "I do not serve
-// this at all". Confusing them would send an empty request where the answer
-// should have been a refusal.
-func TestTransformSeparatesAnEmptyActionFromAnAbsentOne(t *testing.T) {
+// --- a half that supplies no transform --------------------------------------
+
+// The ordinary case for a provider taking query parameters, or one whose answer
+// is already in shape: the file carries the other half, and this one is reported
+// as its own sentinel so a caller that does not handle it fails loudly rather
+// than sending an empty document.
+func TestTransformReportsAHalfWithNoTransform(t *testing.T) {
 	t.Parallel()
 
-	srv := newMappingServer(t, "actions:\n  select: \"\"\n", nil)
+	testCases := []struct {
+		name    string
+		mapping string
+	}{
+		{"the half is absent", requestOnly},
+		{"the half is present and empty", "request: |\n  { \"lat\": _local.lat }\nresponse: \"\"\n"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := newMappingServer(t, tc.mapping, nil)
+			defer srv.Close()
+			mapper := newTestMapper(t)
+
+			_, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionResponse, responseInput())
+			if !errors.Is(err, definition.ErrNoTransform) {
+				t.Errorf("expected ErrNoTransform, got %v", err)
+			}
+
+			// The other half is unaffected: one direction needing no transform
+			// says nothing about the other.
+			if _, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput()); err != nil {
+				t.Errorf("the other half must still be served: %v", err)
+			}
+		})
+	}
+}
+
+// --- direction validation ---------------------------------------------------
+
+// A direction outside the two is a caller bug, not a mapping problem, and must
+// not be read as either half.
+func TestTransformRefusesAnUnknownDirection(t *testing.T) {
+	t.Parallel()
+
+	srv := newMappingServer(t, bothDirections, nil)
 	defer srv.Close()
 	mapper := newTestMapper(t)
 
-	if _, err := mapper.Transform(context.Background(), ref(srv.URL), "select", requestInput()); !errors.Is(err, definition.ErrNoTransform) {
-		t.Errorf("declared-but-empty should report ErrNoTransform, got %v", err)
-	}
-	err := func() error {
-		_, err := mapper.Transform(context.Background(), ref(srv.URL), "confirm", requestInput())
-		return err
-	}()
-	if errors.Is(err, definition.ErrNoTransform) {
-		t.Error("an absent action must not report ErrNoTransform -- it is not served at all")
-	}
-	if err == nil {
-		t.Error("expected an absent action to be refused")
+	for _, direction := range []definition.Direction{"", "on_select", "REQUEST"} {
+		if _, err := mapper.Transform(context.Background(), ref(srv.URL), direction, requestInput()); err == nil {
+			t.Errorf("expected direction %q to be refused", direction)
+		}
 	}
 }
 
-// --- an action the file does not serve --------------------------------------
-
-// A capability that publishes no mapping for an action does not serve it. The
-// refusal has to be clear, because the alternative -- running whichever mapping
-// happened to be there -- succeeds quietly and produces nonsense.
-func TestTransformRefusesAnActionTheFileDoesNotServe(t *testing.T) {
-	t.Parallel()
-
-	srv := newMappingServer(t, twoActionMapping, nil)
-	defer srv.Close()
-
-	_, err := newTestMapper(t).Transform(context.Background(), ref(srv.URL), "init", requestInput())
-	if err == nil {
-		t.Fatal("expected an unserved action to be refused")
-	}
-	if !strings.Contains(err.Error(), "init") {
-		t.Errorf("error %q should name the action that was asked for", err)
-	}
-	// Naming what it does serve turns a deploy mistake into a one-line fix.
-	if !strings.Contains(err.Error(), "select") {
-		t.Errorf("error %q should say which actions the mapping does serve", err)
-	}
-}
-
-func TestTransformRefusesAnEmptyAction(t *testing.T) {
-	t.Parallel()
-
-	srv := newMappingServer(t, twoActionMapping, nil)
-	defer srv.Close()
-
-	if _, err := newTestMapper(t).Transform(context.Background(), ref(srv.URL), "", requestInput()); err == nil {
-		t.Fatal("expected an empty action to be refused")
-	}
-}
-
-// The filename says nothing. Naming a file after one action while it serves
-// several would be worse than naming it nothing at all.
+// The filename says nothing: the registry entry that points at a file decides
+// which action it serves, so a mapper reading meaning into the path would give
+// the same file two answers.
 func TestTransformIgnoresTheFilename(t *testing.T) {
 	t.Parallel()
 
-	srv := newMappingServer(t, twoActionMapping, nil)
+	srv := newMappingServer(t, bothDirections, nil)
 	defer srv.Close()
 	mapper := newTestMapper(t)
 
 	for _, name := range []string{"/anything.yaml", "/confirm.yaml", "/x/y/z"} {
-		if _, err := mapper.Transform(context.Background(), srv.URL+name, "select", requestInput()); err != nil {
+		if _, err := mapper.Transform(context.Background(), srv.URL+name, definition.DirectionRequest, requestInput()); err != nil {
 			t.Errorf("Transform(%q) returned an unexpected error: %v", name, err)
 		}
 	}
@@ -263,12 +245,18 @@ func TestTransformIgnoresTheFilename(t *testing.T) {
 
 // --- reference validation ---------------------------------------------------
 
+// A reference comes from the registry, so it is external input rather than
+// something to trust. This cannot constrain WHICH host -- a registry record
+// chooses that -- but it can refuse a reference that is not a fetchable http
+// URL at all, which is what stops a record naming a local file and having the
+// adapter read it.
 func TestTransformRefusesAnUnusableReference(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct{ name, ref string }{
 		{"empty", ""},
 		{"a bare path with no scheme", "/mappings/select.yaml"},
+		{"a relative path", "mappings/select.yaml"},
 		{"a file url", "file:///etc/passwd"},
 		{"a scheme that is not http", "ftp://example.com/select.yaml"},
 		{"no host", "http:///select.yaml"},
@@ -278,7 +266,7 @@ func TestTransformRefusesAnUnusableReference(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := newTestMapper(t).Transform(context.Background(), tc.ref, "select", requestInput()); err == nil {
+			if _, err := newTestMapper(t).Transform(context.Background(), tc.ref, definition.DirectionRequest, requestInput()); err == nil {
 				t.Errorf("expected reference %q to be refused", tc.ref)
 			}
 		})
@@ -297,9 +285,12 @@ func TestTransformReportsAFailedFetch(t *testing.T) {
 	}{
 		{name: "a not-found status", status: http.StatusNotFound},
 		{name: "a server error status", status: http.StatusInternalServerError},
-		{name: "malformed yaml", status: http.StatusOK, body: "actions: [unclosed"},
-		{name: "no actions key", status: http.StatusOK, body: "other: value\n"},
-		{name: "an empty actions map", status: http.StatusOK, body: "actions: {}\n"},
+		{name: "malformed yaml", status: http.StatusOK, body: "request: [unclosed"},
+		{name: "neither half", status: http.StatusOK, body: "other: value\n"},
+		{name: "an empty document", status: http.StatusOK, body: "\n"},
+		// Both halves present and empty is a file that says nothing, and is
+		// refused whole rather than per half -- there is no half left to serve.
+		{name: "both halves empty", status: http.StatusOK, body: "request: \"\"\nresponse: \"\"\n"},
 	}
 
 	for _, tc := range testCases {
@@ -315,40 +306,44 @@ func TestTransformReportsAFailedFetch(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			if _, err := newTestMapper(t).Transform(context.Background(), ref(srv.URL), "select", requestInput()); err == nil {
+			if _, err := newTestMapper(t).Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput()); err == nil {
 				t.Error("expected an error")
 			}
 		})
 	}
 }
 
-// One unusable action must not take the rest of the file down with it: a typo
-// in confirm is no reason for select to stop being served.
-func TestTransformIsolatesABrokenAction(t *testing.T) {
+// One unusable half must not take the other down with it: a typo in the response
+// mapping is no reason to stop making the call, and finding out on the way back
+// beats finding out before the call was made.
+func TestTransformIsolatesABrokenHalf(t *testing.T) {
 	t.Parallel()
 
-	mapping := `actions:
-  select: |
-    { "lat": _local.lat }
-  confirm: |
-    {{{
-  init: ""
+	mapping := `request: |
+  { "lat": _local.lat }
+
+response: |
+  {{{
 `
 	srv := newMappingServer(t, mapping, nil)
 	defer srv.Close()
 	mapper := newTestMapper(t)
 
-	if _, err := mapper.Transform(context.Background(), ref(srv.URL), "select", requestInput()); err != nil {
-		t.Errorf("a healthy action must still be served: %v", err)
+	if _, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput()); err != nil {
+		t.Errorf("the healthy half must still be served: %v", err)
 	}
-	if _, err := mapper.Transform(context.Background(), ref(srv.URL), "confirm", requestInput()); err == nil {
-		t.Error("expected an uncompilable action to be refused")
+	err := func() error {
+		_, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionResponse, responseInput())
+		return err
+	}()
+	if err == nil {
+		t.Fatal("expected an uncompilable half to be refused")
 	}
-	// An action declared with no mapping is a statement, not a fault: the caller
-	// builds that request itself. It is reported as its own sentinel so a caller
-	// that does not handle it fails loudly rather than sending nothing.
-	if _, err := mapper.Transform(context.Background(), ref(srv.URL), "init", requestInput()); !errors.Is(err, definition.ErrNoTransform) {
-		t.Errorf("expected ErrNoTransform for a declared-but-empty action, got %v", err)
+	// A half that will not compile is broken, not absent, and must not be read
+	// as "supplies no transform" -- that would send the upstream answer through
+	// unmapped.
+	if errors.Is(err, definition.ErrNoTransform) {
+		t.Error("an uncompilable half must not report ErrNoTransform")
 	}
 }
 
@@ -357,12 +352,12 @@ func TestTransformIsolatesABrokenAction(t *testing.T) {
 func TestTransformEnforcesASizeCap(t *testing.T) {
 	t.Parallel()
 
-	oversized := "actions:\n  select: |\n    " + strings.Repeat("x", 2048) + "\n"
+	oversized := "request: |\n  " + strings.Repeat("x", 2048) + "\n"
 	srv := newMappingServer(t, oversized, nil)
 	defer srv.Close()
 
 	mapper := newTestMapper(t, func(c *Config) { c.MaxMappingBytes = 512 })
-	if _, err := mapper.Transform(context.Background(), ref(srv.URL), "select", requestInput()); err == nil {
+	if _, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput()); err == nil {
 		t.Fatal("expected an oversized mapping to be refused")
 	}
 }
@@ -383,7 +378,7 @@ func TestTransformBoundsTheFetch(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := mapper.Transform(context.Background(), ref(srv.URL), "select", requestInput())
+		_, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput())
 		done <- err
 	}()
 
@@ -405,12 +400,12 @@ func TestTransformCompilesEachMappingOnce(t *testing.T) {
 	t.Parallel()
 
 	var fetches atomic.Int32
-	srv := newMappingServer(t, twoActionMapping, &fetches)
+	srv := newMappingServer(t, bothDirections, &fetches)
 	defer srv.Close()
 
 	mapper := newTestMapper(t)
 	for i := 0; i < 3; i++ {
-		if _, err := mapper.Transform(context.Background(), ref(srv.URL), "select", requestInput()); err != nil {
+		if _, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput()); err != nil {
 			t.Fatalf("Transform() returned an unexpected error: %v", err)
 		}
 	}
@@ -419,24 +414,24 @@ func TestTransformCompilesEachMappingOnce(t *testing.T) {
 	}
 }
 
-// One fetch serves every action in the file. This is the whole reason a file
-// holds several: a transaction walking select then confirm pays one round trip,
-// not one per action.
-func TestTransformFetchesOnceForEveryActionInAFile(t *testing.T) {
+// One fetch serves both halves. This is the practical gain of one file: the
+// response leg of a round trip does not pay a second round trip to be mapped.
+func TestTransformFetchesOnceForBothHalves(t *testing.T) {
 	t.Parallel()
 
 	var fetches atomic.Int32
-	srv := newMappingServer(t, twoActionMapping, &fetches)
+	srv := newMappingServer(t, bothDirections, &fetches)
 	defer srv.Close()
 
 	mapper := newTestMapper(t)
-	for _, action := range []string{"select", "confirm", "select"} {
-		if _, err := mapper.Transform(context.Background(), ref(srv.URL), action, requestInput()); err != nil {
-			t.Fatalf("%s: %v", action, err)
-		}
+	if _, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput()); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if _, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionResponse, responseInput()); err != nil {
+		t.Fatalf("response: %v", err)
 	}
 	if got := fetches.Load(); got != 1 {
-		t.Errorf("fetched %d times, want 1 -- a second action refetched the file", got)
+		t.Errorf("fetched %d times, want 1 -- the response half refetched the file", got)
 	}
 }
 
@@ -445,12 +440,12 @@ func TestTransformCachesPerReference(t *testing.T) {
 	t.Parallel()
 
 	var fetches atomic.Int32
-	srv := newMappingServer(t, twoActionMapping, &fetches)
+	srv := newMappingServer(t, bothDirections, &fetches)
 	defer srv.Close()
 
 	mapper := newTestMapper(t)
 	for _, r := range []string{srv.URL + "/a.yaml", srv.URL + "/b.yaml"} {
-		if _, err := mapper.Transform(context.Background(), r, "select", requestInput()); err != nil {
+		if _, err := mapper.Transform(context.Background(), r, definition.DirectionRequest, requestInput()); err != nil {
 			t.Fatalf("Transform() returned an unexpected error: %v", err)
 		}
 	}
@@ -473,7 +468,7 @@ func TestTransformNegativeCachesAFailure(t *testing.T) {
 
 	mapper := newTestMapper(t)
 	for i := 0; i < 3; i++ {
-		if _, err := mapper.Transform(context.Background(), ref(srv.URL), "select", requestInput()); err == nil {
+		if _, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput()); err == nil {
 			t.Fatal("expected a missing mapping to fail")
 		}
 	}
@@ -488,15 +483,15 @@ func TestTransformRefetchesAfterTheTTL(t *testing.T) {
 	t.Parallel()
 
 	var fetches atomic.Int32
-	srv := newMappingServer(t, twoActionMapping, &fetches)
+	srv := newMappingServer(t, bothDirections, &fetches)
 	defer srv.Close()
 
 	mapper := newTestMapper(t, func(c *Config) { c.CacheTTL = 20 * time.Millisecond })
-	if _, err := mapper.Transform(context.Background(), ref(srv.URL), "select", requestInput()); err != nil {
+	if _, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput()); err != nil {
 		t.Fatalf("Transform() returned an unexpected error: %v", err)
 	}
 	time.Sleep(60 * time.Millisecond)
-	if _, err := mapper.Transform(context.Background(), ref(srv.URL), "select", requestInput()); err != nil {
+	if _, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput()); err != nil {
 		t.Fatalf("Transform() returned an unexpected error: %v", err)
 	}
 
@@ -510,13 +505,13 @@ func TestTransformRefetchesAfterTheTTL(t *testing.T) {
 func TestTransformBoundsTheCache(t *testing.T) {
 	t.Parallel()
 
-	srv := newMappingServer(t, twoActionMapping, nil)
+	srv := newMappingServer(t, bothDirections, nil)
 	defer srv.Close()
 
 	mapper := newTestMapper(t, func(c *Config) { c.MaxCacheEntries = 2 })
 	for i := 0; i < 5; i++ {
 		if _, err := mapper.Transform(context.Background(),
-			fmt.Sprintf("%s/%d.yaml", srv.URL, i), "select", requestInput()); err != nil {
+			fmt.Sprintf("%s/%d.yaml", srv.URL, i), definition.DirectionRequest, requestInput()); err != nil {
 			t.Fatalf("Transform() returned an unexpected error: %v", err)
 		}
 	}
@@ -529,20 +524,24 @@ func TestTransformBoundsTheCache(t *testing.T) {
 
 // Every inbound request shares one mapper, so the cache is read and written
 // concurrently, and jsonata.Expression.Evaluate mutates what it is called on.
-// Run with -race.
+// Both halves are exercised: they hold separate locks, so a request and a
+// response leg of the same mapping do run at the same time. Run with -race.
 func TestTransformIsSafeUnderConcurrentUse(t *testing.T) {
 	t.Parallel()
 
-	srv := newMappingServer(t, twoActionMapping, nil)
+	srv := newMappingServer(t, bothDirections, nil)
 	defer srv.Close()
 
 	mapper := newTestMapper(t)
-	actions := []string{"select", "confirm"}
 	errs := make(chan error, 20)
 	for i := 0; i < 20; i++ {
 		go func(i int) {
+			direction, input := definition.DirectionRequest, requestInput()
+			if i%2 == 1 {
+				direction, input = definition.DirectionResponse, responseInput()
+			}
 			_, err := mapper.Transform(context.Background(),
-				fmt.Sprintf("%s/%d.yaml", srv.URL, i%3), actions[i%2], requestInput())
+				fmt.Sprintf("%s/%d.yaml", srv.URL, i%3), direction, input)
 			errs <- err
 		}(i)
 	}

@@ -11,6 +11,7 @@ package mausamgram_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -20,12 +21,19 @@ import (
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/jsonmapper"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/mausamgram"
 )
 
 // mappingsDir is where the shipped mappings live, relative to this package.
 const mappingsDir = "../../../../config/mappings/mausamgram"
+
+// shippedMapping is the file this binding-action publishes: one file, both
+// directions. The registry carries its full URL; the action segment of the name
+// must match the action that registry entry declares -- a mismatch would apply a
+// correct mapping to the wrong call, silently.
+const shippedMapping = "weather-observation.select.yaml"
 
 // selectRequest is the verbatim /select captured from the OAN network.
 const selectRequest = `{
@@ -116,14 +124,13 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 	defer closeMapper()
 
 	registry := &stubRegistry{plan: &model.ProviderRecord{
-		BindingKey:      mausamgram.DefaultBindingKey,
-		ParticipantID:   "mausamgram",
-		CapabilityCode:  "openagrinet:WeatherObservation",
-		BaseURL:         upstream.URL,
-		RequestMapping:  mappings.URL + "/request.yaml",
-		ResponseMapping: mappings.URL + "/response.yaml",
+		BindingKey:     mausamgram.DefaultBindingKey,
+		ParticipantID:  "mausamgram",
+		CapabilityCode: "openagrinet:WeatherObservation",
+		BaseURL:        upstream.URL,
 		Actions: map[string]model.ActionPlan{
-			"select": {Method: http.MethodGet, Path: "/get-daily", TimeoutMs: 30000, RetryMax: 3},
+			"select": {Method: http.MethodGet, Path: "/get-daily",
+				Mappings: mappings.URL + "/" + shippedMapping, TimeoutMs: 30000, RetryMax: 3},
 		},
 	}}
 
@@ -139,7 +146,7 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 	}
 
 	// --- the request reached the provider correctly -------------------------
-	// request.yaml declares select with no transform, so these parameters are
+	// The request half is empty, so these parameters are
 	// the point the step resolved, not something a mapping produced.
 	for _, want := range []string{"lat=19.9975", "lon=73.7898"} {
 		if !strings.Contains(gotQuery, want) {
@@ -231,9 +238,11 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 	}
 }
 
-// A file serves the actions it declares and no others. An action it does not
-// carry is refused rather than served by whichever mapping happened to be there.
-func TestShippedMappingsAreRefusedForAnotherAction(t *testing.T) {
+// The shipped file's request half is deliberately empty: this provider takes
+// its parameters in the query string. That has to reach the step as
+// ErrNoTransform rather than as an empty document, or the step would send a
+// body-shaped nothing instead of building the query itself.
+func TestShippedMappingsDeclareNoRequestTransform(t *testing.T) {
 	mappings := serveMappings(t)
 	defer mappings.Close()
 
@@ -243,15 +252,16 @@ func TestShippedMappingsAreRefusedForAnotherAction(t *testing.T) {
 	}
 	defer closeMapper()
 
-	_, err = mapper.Transform(context.Background(), mappings.URL+"/request.yaml", "confirm",
-		map[string]any{"_local": map[string]any{"lat": 1.0, "lon": 2.0}})
-	if err == nil {
-		t.Fatal("expected an unserved action to be refused")
+	ref := mappings.URL + "/" + shippedMapping
+	input := map[string]any{"_local": map[string]any{"lat": 1.0, "lon": 2.0}}
+
+	if _, err := mapper.Transform(context.Background(), ref, definition.DirectionRequest, input); !errors.Is(err, definition.ErrNoTransform) {
+		t.Errorf("the request half should report ErrNoTransform, got %v", err)
 	}
-	// The refusal names what the file does serve, so a missing mapping is a
-	// one-line fix rather than a hunt.
-	if !strings.Contains(err.Error(), "select") {
-		t.Errorf("error %q should say which actions the file serves", err)
+	// The response half of the same file is unaffected -- which is the point of
+	// holding both in one file rather than inferring one from the other.
+	if _, err := mapper.Transform(context.Background(), ref, definition.DirectionResponse, input); errors.Is(err, definition.ErrNoTransform) {
+		t.Error("the response half must carry a transform")
 	}
 }
 

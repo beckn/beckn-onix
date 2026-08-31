@@ -34,8 +34,12 @@ const (
 	// so a deployment can rename the participant without a rebuild, but it has a
 	// default because a step that serves nothing is never what an operator meant.
 	DefaultBindingKey = "mausamgram|openagrinet:WeatherObservation"
-	DefaultTimeout    = 30 * time.Second
-	DefaultRetryMax   = 3
+	// DefaultTimeout and DefaultRetryMax are the registry contract's defaults
+	// for an action that leaves timeoutMs or retryMax out. Zero retries is
+	// deliberate: a provider that failed is retried only where the operator
+	// said so, because a retry on a non-idempotent action is a second booking.
+	DefaultTimeout  = 15 * time.Second
+	DefaultRetryMax = 0
 	// DefaultMaxResponseBytes caps what is read from the provider. The response
 	// is mapped in memory, so an unbounded one is an unbounded allocation.
 	DefaultMaxResponseBytes = 4 << 20 // 4 MiB
@@ -201,7 +205,7 @@ func (s *Step) serve(ctx *model.StepContext, plan *model.ProviderRecord) error {
 		return err
 	}
 
-	upstreamRequest, err := s.buildRequest(ctx, plan.RequestMapping, action, beckn, local)
+	upstreamRequest, err := s.buildRequest(ctx, call.Mappings, beckn, local)
 	if err != nil {
 		return err
 	}
@@ -219,10 +223,10 @@ func (s *Step) serve(ctx *model.StepContext, plan *model.ProviderRecord) error {
 	// _local stays in scope: the provider does not repeat the point it was asked
 	// about, so the output's own coordinates have no other source.
 	//
-	// The response mapping is asked for by the action it PRODUCES, not the one
-	// that arrived: a select is answered by an on_select. Each mapping file is
-	// therefore keyed by the Beckn actions it actually deals in.
-	becknResponse, err := s.mapper.Transform(ctx, plan.ResponseMapping, callbackAction(action), map[string]any{
+	// The same mapping reference as the request, other half: one file carries
+	// both directions for this action, because the response mapping usually
+	// depends on what the request mapping did.
+	becknResponse, err := s.mapper.Transform(ctx, call.Mappings, definition.DirectionResponse, map[string]any{
 		"beckn":    beckn,
 		"_local":   local,
 		"response": answer,
@@ -249,16 +253,16 @@ func servedActions(plan *model.ProviderRecord) []string {
 
 // buildRequest produces what the provider is sent.
 //
-// A mapping that declares the action but supplies no transform is saying the
-// request needs no document built for it: this provider takes its parameters in
-// the query, they are already resolved, and putting them through a fetch and a
-// compile to arrive at the same two fields buys nothing. In that case the
-// resolved values ARE the parameters.
+// A mapping whose request half is empty is saying the request needs no document
+// built for it: this provider takes its parameters in the query, they are
+// already resolved, and putting them through a fetch and a compile to arrive at
+// the same two fields buys nothing. In that case the resolved values ARE the
+// parameters.
 //
 // Anything else -- a provider wanting a body in its own shape -- goes through
 // the mapping, which is what the mapping is for.
-func (s *Step) buildRequest(ctx context.Context, mappingRef, action string, beckn any, local point) ([]byte, error) {
-	mapped, err := s.mapper.Transform(ctx, mappingRef, action, map[string]any{
+func (s *Step) buildRequest(ctx context.Context, mappingRef string, beckn any, local point) ([]byte, error) {
+	mapped, err := s.mapper.Transform(ctx, mappingRef, definition.DirectionRequest, map[string]any{
 		"beckn":  beckn,
 		"_local": local,
 	})
@@ -269,7 +273,7 @@ func (s *Step) buildRequest(ctx context.Context, mappingRef, action string, beck
 		return nil, err
 	}
 
-	log.Debugf(ctx, "mausamgram: %s declares %s with no transform; sending the resolved point", mappingRef, action)
+	log.Debugf(ctx, "mausamgram: %s carries no request half; sending the resolved point", mappingRef)
 	parameters, err := json.Marshal(local)
 	if err != nil {
 		return nil, fmt.Errorf("mausamgram: could not encode the resolved point: %w", err)
@@ -327,16 +331,6 @@ func resolvePoint(body []byte) (point, error) {
 		errors.New("mausamgram: request carries no location coordinates"))
 }
 
-// callbackAction is the action that answers the given one. Beckn pairs every
-// request with an on_-prefixed callback -- select with on_select, confirm with
-// on_confirm -- and that pairing is the protocol's, not this provider's.
-func callbackAction(action string) string {
-	if action == "" {
-		return ""
-	}
-	return "on_" + action
-}
-
 // extractAction reads the Beckn action a request is for.
 func extractAction(body []byte) string {
 	var payload struct {
@@ -371,10 +365,13 @@ func (s *Step) call(ctx context.Context, baseURL string, call model.ActionPlan, 
 	if call.TimeoutMs > 0 {
 		timeout = time.Duration(call.TimeoutMs) * time.Millisecond
 	}
-	attempts := DefaultRetryMax
+	// retryMax counts retries, not attempts, so the call itself is always made
+	// once. An absent retryMax and an explicit 0 are the same instruction.
+	retries := DefaultRetryMax
 	if call.RetryMax > 0 {
-		attempts = call.RetryMax
+		retries = call.RetryMax
 	}
+	attempts := retries + 1
 
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {

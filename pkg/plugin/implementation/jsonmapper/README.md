@@ -15,7 +15,7 @@ mapper serve all of them.
 
 Its first caller is the OAN provider flow, where it translates between Beckn
 payloads and each provider's own request and response shapes -- so adding a
-provider is two mapping files and a registry row rather than another
+provider is one mapping file and a registry row rather than another
 transformation routine.
 
 It is **not** a pipeline step. A provider plugin holds it and calls it twice --
@@ -25,39 +25,58 @@ generic.
 
 ## Mapping files
 
-A mapping file carries every action one capability serves, keyed by action name:
+One file per binding-action, carrying **both directions**:
 
 ```yaml
-actions:
-  select: |
-    {
-      "lat": _local.lat,
-      "lon": _local.lon
-    }
-  confirm: |
-    {
-      "booking_id": beckn.message.contract.commitments[0].id
-    }
+# mappings/mausamgram/weather-observation.select.yaml
+request: |
+  {
+    "lat": _local.lat,
+    "lon": _local.lon
+  }
+
+response: |
+  {
+    "rainfall": response.fcstday1.rain,
+    "at": { "type": "Point", "coordinates": [_local.lon, _local.lat] }
+  }
 ```
 
-**Request files are keyed by the action they translate** (`select`); **response
-files by the action they produce** (`on_select`). Each file therefore names the
-Beckn actions it actually deals in, and the filename carries no meaning — naming
-a file after one action while it serves several would be worse than not naming
-it.
+**One file rather than two because the halves are not independent.** The response
+above reads `_local`, and the only reason `_local` holds a lat and a lon is that
+the request put them there. Splitting them across two registry fields hid that;
+this does not. It also means the response leg of a round trip is already fetched
+and compiled by the time it is needed.
 
-One file per direction rather than per action means a transaction walking
-`select` then `confirm` pays one fetch, not one per step. An action the file does
-not declare is refused, and the error names the ones it does serve.
+A half that is absent or empty is a *statement*, not an omission: it reports
+`definition.ErrNoTransform`, so a caller that has nothing to build knows to build
+its own request rather than sending an empty document. A half that will not
+compile is a different thing and reported as an error — the two must not collapse,
+or an unmapped upstream answer would go out as a Beckn response.
 
-A mapping that fails to compile takes down only its own action: a typo in
-`confirm` is no reason for `select` to stop being served.
+A broken half takes down only itself: a typo in the response mapping is no reason
+to stop making the call, and finding out on the way back beats finding out before
+the call was made.
 
-References come from the registry (`requestMapping` / `responseMapping` on a
-capability binding) and are fully-qualified `http`/`https` URLs. Anything else --
-a bare path, a `file://`, a URL with no host -- is refused: references are
-external input, and an unchecked one would let a registry record name a local
-file and have the adapter read it.
+Which action a file serves is settled by the registry entry pointing at it, so
+nothing inside names it and the filename carries no meaning to this plugin. (The
+registry contract does require the filename's action segment to match the action
+it sits under — that is checked where the records are written.)
+
+### References
+
+The registry carries the full URL of one published file, and this plugin fetches
+it verbatim. Anything that is not a fetchable `http`/`https` URL — a bare path, a
+`file://`, a URL with no host — is refused: a reference is external input, and an
+unchecked one would let a registry record name a local file and have the adapter
+read it.
+
+**What that check cannot do is constrain which host.** A registry record chooses
+that, and this plugin fetches, *compiles* and runs what comes back. So who may
+write a registry record is part of this plugin's threat model. (A reference
+carried as a path under an operator-configured root would close that off; the
+network has not settled on a fixed location for published mappings, so the URL
+stays in the record for now.)
 
 ## What a mapping can read
 
@@ -71,13 +90,12 @@ file and have the adapter read it.
 rarely repeats what it was asked, so values resolved before the call are often
 the only source for them in the output — the coordinates of a forecast, say.
 
-## Why the action is a key, not a convention
+## Why the direction is a parameter, not a convention
 
-Nothing else in the pipeline knows the action. A binding key is
-`participantId|capabilityCode` and carries none, so without this a capability
-publishing one mapping would run it for every action that reached it — a
-`confirm` served by a `select` mapping, succeeding quietly and producing
-nonsense.
+The caller makes one round trip and needs both halves of it, and nothing in the
+file distinguishes them by position. Passing the direction explicitly is what
+keeps a response mapping from ever being applied to an outbound request —
+which would succeed quietly and produce nonsense.
 
 Making the action a key in the file rather than a part of its name means the file
 states which actions it serves, instead of a convention someone has to remember.

@@ -1,0 +1,106 @@
+# Mausamgram, openagrinet:WeatherObservation, select. Both directions, one file.
+#
+# One file per binding-action rather than one per direction, because the two
+# halves are not independent: the response half below reads _local, and the only
+# reason _local holds a lat and a lon is that the request half put them there.
+# Splitting them across two registry fields hid that dependency; this does not.
+#
+# The registry entry pointing here decides which action this serves, so nothing
+# in the file names it. The filename's action segment must match that entry --
+# a mismatch would apply a correct mapping to the wrong call, silently.
+#
+# Both halves read:
+#   beckn     the inbound Beckn payload -- the context to echo, the offer to
+#             quote against
+#   _local    whatever the provider step resolved before the call
+# and the response half additionally reads:
+#   response  the provider's answer, in its own shape
+
+# An empty request half is a statement, not an omission: this provider takes its
+# parameters in the query string, the step has already resolved them, and putting
+# them through a transform to arrive at the same two fields would buy nothing.
+# The step is told so explicitly (ErrNoTransform) rather than being handed an
+# empty document.
+request: ""
+
+# Keyed by direction, not by the action it produces: a select is answered by an
+# on_select over the same HTTP round trip, so the callback is this half rather
+# than an action of its own.
+response: |
+  (
+    $lat := _local.lat;
+    $lon := _local.lon;
+    $days := [
+      response.fcstday1, response.fcstday2, response.fcstday3,
+      response.fcstday4, response.fcstday5
+    ];
+
+    $reading := function($name, $aggregation, $unit, $value) {
+      $exists($value) ? {
+        "parameter": $name,
+        "aggregation": $aggregation,
+        "unit": $unit,
+        "value": $value
+      }
+    };
+
+    {
+      "context": {
+        "version": beckn.context.version,
+        "action": "on_select",
+        "networkId": beckn.context.networkId,
+        "bapId": beckn.context.bapId,
+        "bapUri": beckn.context.bapUri,
+        "bppId": beckn.context.bppId,
+        "bppUri": beckn.context.bppUri,
+        "transactionId": beckn.context.transactionId,
+        "messageId": beckn.context.messageId,
+        "timestamp": $now()
+      },
+      "message": {
+        "contract": {
+          "commitments": [
+            {
+              "status": {
+                "descriptor": { "code": "QUOTED", "name": "Quoted" }
+              },
+              "offer": beckn.message.contract.commitments[0].offer,
+              "resources": $map($days, function($day) {
+                {
+                  "id": "res:mausamgram:forecast:" & $day.date,
+                  "resourceAttributes": {
+                    "@context": "https://schemas.openagrinet.global/schema/WeatherObservation/v0.1/context.jsonld",
+                    "@type": "openagrinet:WeatherObservation",
+                    "informationMode": "Direct",
+                    "observationType": "Forecast",
+                    "subjectCategories": ["Weather"],
+                    "source": {
+                      "sourceId": "mausamgram",
+                      "sourceName": "IMD Mausamgram NWP"
+                    },
+                    "location": {
+                      "type": "Point",
+                      "coordinates": [$lon, $lat]
+                    },
+                    "validity": {
+                      "startsAt": $day.date,
+                      "endsAt": $day.date
+                    },
+                    "parameters": [
+                      $reading("Rainfall", "Total", "mm", $day.rain),
+                      $reading("Temperature", "Minimum", "Cel", $day.tmin),
+                      $reading("Temperature", "Maximum", "Cel", $day.tmax),
+                      $reading("Humidity", "Minimum", "%", $day.rhmin),
+                      $reading("Humidity", "Maximum", "%", $day.rhmax),
+                      $reading("WindSpeed", "Average", "m/s", $day.wspd)
+                    ],
+                    "advisory": $day.weather_warning ? $day.weather_warning : $day.cloud_message
+                  }
+                }
+              })
+            }
+          ]
+        }
+      }
+    }
+  )

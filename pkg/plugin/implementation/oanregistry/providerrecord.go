@@ -51,13 +51,11 @@ const (
 // the enricher name -- and none of it is modelled: the enricher is resolved by
 // the provider plugin from its own code, not from the registry.
 type providerBinding struct {
-	BindingKey      string       `json:"bindingKey"`
-	ParticipantID   string       `json:"participantId"`
-	CapabilityCode  string       `json:"capabilityCode"`
-	Actions         []actionPlan `json:"actions"`
-	RequestMapping  string       `json:"requestMapping"`
-	ResponseMapping string       `json:"responseMapping"`
-	Status          string       `json:"status"`
+	BindingKey     string       `json:"bindingKey"`
+	ParticipantID  string       `json:"participantId"`
+	CapabilityCode string       `json:"capabilityCode"`
+	Actions        []actionPlan `json:"actions"`
+	Status         string       `json:"status"`
 }
 
 // actionPlan is one action's upstream call, as the registry publishes it.
@@ -71,8 +69,10 @@ type actionPlan struct {
 	Action    string `json:"action"`
 	Method    string `json:"method"`
 	Path      string `json:"path"`
+	Mappings  string `json:"mappings"`
 	TimeoutMs int    `json:"timeoutMs"`
 	RetryMax  int    `json:"retryMax"`
+	Status    string `json:"status"`
 }
 
 var (
@@ -201,24 +201,29 @@ func (c *Client) activeBinding(ctx context.Context, tracer trace.Tracer, binding
 		log.Errorf(ctx, nil, "OAN registry capability binding bindingKey=%s names no participant", bindingKey)
 		return providerBinding{}, outcomeBindingUnowned, nil
 	}
-	if len(namedActions(binding)) == 0 {
+	if len(servableActions(binding)) == 0 {
 		// Active, owned, and callable for nothing. Refusing here says so, rather
 		// than letting every action fail one at a time further down.
-		log.Errorf(ctx, nil, "OAN registry capability binding bindingKey=%s serves no actions", bindingKey)
+		log.Errorf(ctx, nil, "OAN registry capability binding bindingKey=%s serves no active actions", bindingKey)
 		return providerBinding{}, outcomeBindingNoActions, nil
 	}
 	return binding, outcomeFound, nil
 }
 
-// namedActions returns the actions a binding can actually be reached by.
-func namedActions(binding providerBinding) []actionPlan {
-	named := make([]actionPlan, 0, len(binding.Actions))
+// servableActions returns the actions a binding can actually serve.
+//
+// An entry has to be named to be reachable at all, and active to be served: a
+// per-action status is how one action is retired while the capability and every
+// other action stay live, so an inactive entry is skipped rather than failing
+// the whole record.
+func servableActions(binding providerBinding) []actionPlan {
+	servable := make([]actionPlan, 0, len(binding.Actions))
 	for _, plan := range binding.Actions {
-		if plan.Action != "" {
-			named = append(named, plan)
+		if plan.Action != "" && isActive(plan.Status) {
+			servable = append(servable, plan)
 		}
 	}
-	return named
+	return servable
 }
 
 // activeUpstream reads the participant that owns a binding and reports whether
@@ -245,7 +250,7 @@ func (c *Client) activeUpstream(ctx context.Context, tracer trace.Tracer, partic
 		log.Infof(ctx, "OAN registry participantId=%s is not usable: status=%q", participantID, owner.Status)
 		return participant{}, outcomeParticipantInactive, nil
 	}
-	if owner.Upstream.BaseURL == "" {
+	if owner.BaseURL == "" {
 		// Active but unroutable. Denying here gives a clear reason rather than a
 		// request sent to an empty host further down.
 		log.Errorf(ctx, nil, "OAN registry participantId=%s publishes no upstream base url", participantID)
@@ -272,26 +277,22 @@ func toProviderRecord(binding providerBinding, owner participant) *model.Provide
 	// the whole record over one malformed row would take down the actions that
 	// are fine.
 	actions := make(map[string]model.ActionPlan, len(binding.Actions))
-	for _, plan := range binding.Actions {
-		if plan.Action == "" {
-			continue
-		}
+	for _, plan := range servableActions(binding) {
 		actions[plan.Action] = model.ActionPlan{
 			Method:    plan.Method,
 			Path:      plan.Path,
+			Mappings:  plan.Mappings,
 			TimeoutMs: plan.TimeoutMs,
 			RetryMax:  plan.RetryMax,
 		}
 	}
 
 	return &model.ProviderRecord{
-		BindingKey:      binding.BindingKey,
-		ParticipantID:   binding.ParticipantID,
-		CapabilityCode:  binding.CapabilityCode,
-		BaseURL:         owner.Upstream.BaseURL,
-		Actions:         actions,
-		RequestMapping:  binding.RequestMapping,
-		ResponseMapping: binding.ResponseMapping,
+		BindingKey:     binding.BindingKey,
+		ParticipantID:  binding.ParticipantID,
+		CapabilityCode: binding.CapabilityCode,
+		BaseURL:        owner.BaseURL,
+		Actions:        actions,
 	}
 }
 

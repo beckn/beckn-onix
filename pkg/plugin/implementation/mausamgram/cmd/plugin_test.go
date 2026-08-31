@@ -20,7 +20,9 @@ func (stubRegistry) ProviderRecord(context.Context, string) (*model.ProviderReco
 
 type stubMapper struct{}
 
-func (stubMapper) Transform(context.Context, string, string, any) ([]byte, error) { return nil, nil }
+func (stubMapper) Transform(context.Context, string, definition.Direction, any) ([]byte, error) {
+	return nil, nil
+}
 
 func TestParseConfig(t *testing.T) {
 	t.Parallel()

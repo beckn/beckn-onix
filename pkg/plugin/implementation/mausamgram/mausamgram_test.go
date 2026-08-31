@@ -37,6 +37,10 @@ func (s *stubRegistry) ProviderRecord(context.Context, string) (*model.ProviderR
 }
 
 // stubMapper records what it was asked and returns canned results, so a test can
+// testMappingRef is the one reference an action carries: the URL of a single
+// published file holding both halves.
+const testMappingRef = "https://mappings.example.com/mausamgram/weather-observation.select.yaml"
+
 // assert what reached the mapping without writing one.
 type stubMapper struct {
 	requestResult  []byte
@@ -46,17 +50,17 @@ type stubMapper struct {
 
 	requestInput  any
 	responseInput any
-	actions       []string
+	directions    []definition.Direction
 	refs          []string
 }
 
-func (s *stubMapper) Transform(_ context.Context, mappingRef, action string, input any) ([]byte, error) {
-	s.actions = append(s.actions, action)
+func (s *stubMapper) Transform(_ context.Context, mappingRef string, direction definition.Direction, input any) ([]byte, error) {
+	s.directions = append(s.directions, direction)
 	s.refs = append(s.refs, mappingRef)
 	if s.err != nil {
 		return nil, s.err
 	}
-	if strings.Contains(mappingRef, "request") {
+	if direction == definition.DirectionRequest {
 		s.requestInput = input
 		if s.requestErr != nil {
 			return nil, s.requestErr
@@ -69,14 +73,13 @@ func (s *stubMapper) Transform(_ context.Context, mappingRef, action string, inp
 
 func testPlan(baseURL, method string) *model.ProviderRecord {
 	return &model.ProviderRecord{
-		BindingKey:      DefaultBindingKey,
-		ParticipantID:   "mausamgram",
-		CapabilityCode:  "openagrinet:WeatherObservation",
-		BaseURL:         baseURL,
-		RequestMapping:  "https://mappings.example.com/request.yaml",
-		ResponseMapping: "https://mappings.example.com/response.yaml",
+		BindingKey:     DefaultBindingKey,
+		ParticipantID:  "mausamgram",
+		CapabilityCode: "openagrinet:WeatherObservation",
+		BaseURL:        baseURL,
 		Actions: map[string]model.ActionPlan{
-			"select": {Method: method, Path: "/get-daily", TimeoutMs: 2000, RetryMax: 1},
+			"select": {Method: method, Path: "/get-daily", Mappings: testMappingRef,
+				TimeoutMs: 2000, RetryMax: 1},
 		},
 	}
 }
@@ -216,8 +219,13 @@ func TestRunServesItsCapabilityEndToEnd(t *testing.T) {
 	// Each leg asks for the action it deals in: the request translates a select,
 	// the response produces an on_select. Asking for the same name on both would
 	// make one file unable to hold both directions.
-	if want := []string{"select", "on_select"}; !slices.Equal(mapper.actions, want) {
-		t.Errorf("mapper was asked for %v, want %v", mapper.actions, want)
+	if want := []definition.Direction{definition.DirectionRequest, definition.DirectionResponse}; !slices.Equal(mapper.directions, want) {
+		t.Errorf("mapper was asked for %v, want %v", mapper.directions, want)
+	}
+	// Both halves come from the one file the action names. Two references here
+	// would mean the step had gone back to treating the legs as separate.
+	if want := []string{testMappingRef, testMappingRef}; !slices.Equal(mapper.refs, want) {
+		t.Errorf("mapper was handed %v, want both halves from %q", mapper.refs, testMappingRef)
 	}
 }
 
@@ -442,20 +450,48 @@ func TestRunReportsAProviderThatWillNotAnswer(t *testing.T) {
 	defer upstream.Close()
 
 	plan := testPlan(upstream.URL, http.MethodGet)
-	plan.Actions["select"] = model.ActionPlan{Method: http.MethodGet, Path: "/get-daily", RetryMax: 3}
+	plan.Actions["select"] = model.ActionPlan{Method: http.MethodGet, Path: "/get-daily",
+		Mappings: testMappingRef, RetryMax: 3}
 	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
 
 	_, err := runStep(t, newStep(t, &stubRegistry{plan: plan}, mapper), selectBody)
 	if err == nil {
 		t.Fatal("expected a failing provider to be reported")
 	}
-	if got := attempts.Load(); got != 3 {
-		t.Errorf("made %d attempts, want the plan's 3", got)
+	// retryMax is retries, so the plan's 3 is the first call plus three more.
+	if got := attempts.Load(); got != 4 {
+		t.Errorf("made %d attempts, want 4 -- the call plus the plan's 3 retries", got)
 	}
 
 	var coded *model.CodedErr
 	if !errors.As(err, &coded) || coded.HTTPStatus() != http.StatusBadGateway {
 		t.Errorf("expected a 502 coded error, got %v", err)
+	}
+}
+
+// An action that leaves retryMax out is called once. The contract's default is
+// zero retries, and it has to stay zero: a retry on a non-idempotent action is
+// a second booking, so retrying is only ever what the operator asked for.
+func TestRunDoesNotRetryUnlessTheActionSaysSo(t *testing.T) {
+	t.Parallel()
+
+	var attempts atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer upstream.Close()
+
+	plan := testPlan(upstream.URL, http.MethodGet)
+	plan.Actions["select"] = model.ActionPlan{Method: http.MethodGet, Path: "/get-daily",
+		Mappings: testMappingRef}
+	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+
+	if _, err := runStep(t, newStep(t, &stubRegistry{plan: plan}, mapper), selectBody); err == nil {
+		t.Fatal("expected a failing provider to be reported")
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Errorf("made %d attempts, want 1 -- an absent retryMax must mean no retries", got)
 	}
 }
 

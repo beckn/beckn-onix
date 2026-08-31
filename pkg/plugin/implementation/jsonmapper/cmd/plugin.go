@@ -20,6 +20,7 @@ var newMapperFunc = jsonmapper.New
 
 // parseConfig turns the plugin config map into a typed Config. Anything absent
 // is left zero: jsonmapper.New applies the defaults, so they live in one place.
+
 func (o jsonMapperProvider) parseConfig(config map[string]string) (*jsonmapper.Config, error) {
 	cfg := &jsonmapper.Config{}
 

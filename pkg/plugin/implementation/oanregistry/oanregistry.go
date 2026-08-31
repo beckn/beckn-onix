@@ -155,39 +155,36 @@ type Client struct {
 	cacheTTL          time.Duration
 }
 
-// participant is the subset of a registry record this plugin reads. The registry
-// carries a good deal more -- Sunbird audit fields (osCreatedAt, osOwner, ...) and
-// the participant and node osids among them -- and none of it is modelled here.
-// encoding/json drops what it cannot place, so every field left out is one less
-// thing to break when the registry schema moves.
+// participant is the subset of a registry record this plugin reads. The
+// registry carries more -- Sunbird audit fields, the display name, an auth
+// block -- and none of it is modelled here. encoding/json drops what it cannot
+// place, so every field left out is one less thing to break when the schema
+// moves.
 //
-// Only the participant's own status sits at this level. Keys hang off the node,
-// each carrying its own identity and status, so resolving one is a walk rather
-// than a field read.
+// Flat, with no wrapper object, because type is the discriminator rather than
+// the shape: a node speaks Beckn and publishes keys, an upstream is an ordinary
+// API and publishes auth instead. baseUrl serves both -- for a node it is where
+// Beckn messages go, for an upstream it is what a binding's path is appended to.
+//
+// The auth block is left out DELIBERATELY, not pending. An upstream's credential
+// is the provider plugin's own configuration -- which scheme, and which
+// environment variables hold the values -- so nothing is gained by also reading
+// the registry's copy, and reading both would create two places that can
+// disagree about how to authenticate a call. The registry publishes it as
+// documentation of what a provider expects; the adapter presents what its
+// operator configured.
 type participant struct {
-	ParticipantID string   `json:"participantId"`
-	Status        string   `json:"status"`
-	Node          node     `json:"node"`
-	Upstream      upstream `json:"upstream"`
-}
-
-// upstream is the backend a provider participant fronts. It is present only on
-// records that front one: a participant is either a network peer publishing keys
-// under node, or a provider publishing an upstream, and the two do not overlap.
-type upstream struct {
-	BaseURL string `json:"baseUrl"`
-}
-
-// node is the network-facing half of a participant record.
-type node struct {
-	SubscriberURL string `json:"subscriberUrl"`
+	ParticipantID string `json:"participantId"`
 	Type          string `json:"type"`
+	Role          string `json:"role"`
+	Status        string `json:"status"`
+	BaseURL       string `json:"baseUrl"`
 	Keys          []key  `json:"keys"`
 }
 
-// key is one published key. A node publishes several -- separate signing and
-// encryption keys, and more than one signing key while a rotation is in flight --
-// so a key is identified by its own OSID rather than by its position.
+// key is one published key. A participant publishes several -- separate signing
+// and encryption keys, and more than one signing key while a rotation is in
+// flight -- so a key is identified by its own OSID rather than by its position.
 type key struct {
 	OSID       string `json:"osid"`
 	KeyID      string `json:"keyId"`
@@ -441,7 +438,7 @@ func (c *Client) search(ctx context.Context, tracer trace.Tracer, participantID,
 	// the case the second filter was originally meant to guard: a stale or
 	// soft-deleted record sharing the participantId.
 	for _, record := range records {
-		for _, k := range record.Node.Keys {
+		for _, k := range record.Keys {
 			if k.OSID != keyID {
 				continue
 			}
@@ -528,23 +525,27 @@ func toSubscription(p participant, k key, status string) model.Subscription {
 	return model.Subscription{
 		Subscriber: model.Subscriber{
 			SubscriberID: p.ParticipantID,
-			URL:          p.Node.SubscriberURL,
-			Type:         p.Node.Type,
+			URL:          p.BaseURL,
+			// role is the Beckn role -- BAP, BPP or NETWORK. type is the
+			// registry's own discriminator (node or upstream) and means
+			// something else entirely, so it is not what a subscriber's Type is.
+			Type: p.Role,
 		},
 		KeyID:            k.OSID,
 		SigningPublicKey: k.publicKey(),
-		EncrPublicKey:    encryptionKey(p.Node),
+		EncrPublicKey:    encryptionKey(p),
 		ValidFrom:        validFrom,
 		ValidUntil:       validUntil,
 		Status:           status,
 	}
 }
 
-// encryptionKey returns the node's active encryption key, or "" when it publishes
-// none. It is resolved by use rather than by id: the request header names the
-// signing key only, so there is nothing to match an encryption key against.
-func encryptionKey(n node) string {
-	for _, k := range n.Keys {
+// encryptionKey returns the participant's active encryption key, or "" when it
+// publishes none. It is resolved by use rather than by id: the request header
+// names the signing key only, so there is nothing to match an encryption key
+// against.
+func encryptionKey(p participant) string {
+	for _, k := range p.Keys {
 		if strings.EqualFold(k.Use, useEncr) && strings.EqualFold(k.Status, statusActive) {
 			return k.publicKey()
 		}

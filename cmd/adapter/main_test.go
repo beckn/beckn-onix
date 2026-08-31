@@ -74,6 +74,16 @@ func (m *MockPluginManager) Cache(ctx context.Context, cfg *plugin.Config) (defi
 	return nil, nil
 }
 
+// Mapper returns a mock implementation of the Mapper interface.
+func (m *MockPluginManager) Mapper(ctx context.Context, cfg *plugin.Config) (definition.Mapper, error) {
+	return nil, nil
+}
+
+// ProviderStep returns a mock implementation of the provider Step interface.
+func (m *MockPluginManager) ProviderStep(ctx context.Context, registry definition.ProviderRecordLookup, mapper definition.Mapper, cfg *plugin.Config) (definition.Step, error) {
+	return nil, nil
+}
+
 // Registry returns a mock implementation of the RegistryLookup interface.
 func (m *MockPluginManager) Registry(ctx context.Context, cache definition.Cache, cfg *plugin.Config) (definition.RegistryLookup, error) {
 	return nil, nil

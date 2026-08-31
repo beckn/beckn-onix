@@ -127,24 +127,41 @@ message.resourceAttributes["@type"]   ─┴─▶ bindingKey "<participantId>|<
 ```
 
 Two reads, joined into one `model.ProviderRecord`: `baseUrl` from the
-participant, the mappings and a **call plan per action** from the binding.
+participant, a **call plan per action** from the binding.
 
 ```json
 {
   "bindingKey": "mausamgram|openagrinet:WeatherObservation",
-  "requestMapping": "...", "responseMapping": "...",
-  "actions": {
-    "select":  { "method": "GET",  "path": "/get-daily", "timeoutMs": 30000, "retryMax": 3 },
-    "confirm": { "method": "POST", "path": "/book" }
-  }
+  "participantId": "mausamgram",
+  "capabilityCode": "openagrinet:WeatherObservation",
+  "status": "active",
+  "actions": [
+    { "action": "select", "method": "GET", "path": "/get-daily",
+      "mappings": "https://.../mausamgram/weather-observation.select.yaml",
+      "timeoutMs": 30000, "retryMax": 3, "status": "active" },
+    { "action": "confirm", "method": "POST", "path": "/book",
+      "mappings": "https://.../mausamgram/weather-observation.confirm.yaml",
+      "status": "inactive" }
+  ]
 }
 ```
 
-A capability serves several actions and they rarely share an endpoint — a
-`confirm` that commits does not post where a `select` that reads gets — so the
-endpoint, method and budget are per action. An action absent from `actions` is
-one the capability does not serve, and a binding serving none at all is refused
-outright rather than failing one action at a time.
+A capability serves several actions and they rarely share an endpoint, a method
+or a mapping — a `confirm` that commits does not post where a `select` that reads
+gets — so all of it is per action. An action absent from `actions` is one the
+capability does not serve, and a binding serving none at all is refused outright
+rather than failing one action at a time.
+
+**An array rather than a keyed object, for two reasons.** A per-action `status`
+is how one action is retired while the capability and every other action stay
+live, and an entry that is not `active` is skipped exactly as if it were absent.
+And the registry treats every nested object as an entity and injects an `osid`
+into it, which a keyed map cannot carry.
+
+`mappings` is one reference per action carrying **both directions**, because the
+response mapping usually depends on what the request mapping did. It is the
+published file's URL, passed through verbatim — this plugin does not interpret
+or resolve it.
 
 The owning participant is the one the **binding names**, not one parsed out of
 the binding key — the registry owns that relationship, not the key format.

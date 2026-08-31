@@ -71,14 +71,11 @@ type SubscriberRecord struct {
 	MetaArrays   map[string][]string // array-shaped meta values (e.g. NFH-014's meta.catalog_index_urls: [{url}, ...]) — kept separate from Meta rather than widening it to map[string]any, so every existing caller of Meta[key] keeps working unchanged
 }
 
-// ProviderRecord is the resolved call plan for one provider capability: what to
-// call, how to call it, and which mappings translate in and out. It is assembled
-// from two registry records -- the capability binding and the participant that
-// owns it -- so a caller resolves a whole plan in one lookup rather than knowing
-// how the registry splits them.
-//
-// Mapping references are carried verbatim. They are fully-qualified URLs the
-// mapper fetches; this type does not interpret them.
+// ProviderRecord is the resolved call plan for one provider capability: where
+// the provider is, and per Beckn action, how to reach it. It is assembled from
+// two registry records -- the capability binding and the participant that owns
+// it -- so a caller resolves a whole plan in one lookup rather than knowing how
+// the registry splits them.
 type ProviderRecord struct {
 	BindingKey     string // "<participantId>|<capabilityCode>"
 	ParticipantID  string
@@ -90,19 +87,25 @@ type ProviderRecord struct {
 
 	// Actions is the call plan per Beckn action. A capability serves several --
 	// a select that reads and a confirm that commits -- and they rarely share an
-	// endpoint or a method, so each carries its own.
+	// endpoint, a method or a mapping, so each carries its own.
 	//
 	// An action absent here is one this capability does not serve.
 	Actions map[string]ActionPlan
-
-	RequestMapping  string
-	ResponseMapping string
 }
 
 // ActionPlan is how to make one action's upstream call.
 type ActionPlan struct {
 	Method string
 	Path   string
+
+	// Mappings references one file carrying BOTH directions for this action.
+	// One file rather than two because the response mapping usually depends on
+	// what the request mapping did -- swapping GeoJSON coordinates into named
+	// lat/lon, say -- and splitting them across two references hides that.
+	//
+	// Carried verbatim: it is a URL the mapper fetches, and this type does not
+	// interpret it.
+	Mappings string
 
 	// TimeoutMs and RetryMax are this action's own budget, and are zero when the
 	// registry does not set them -- the caller applies its defaults. They are

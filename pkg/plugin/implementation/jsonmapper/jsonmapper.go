@@ -17,7 +17,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -43,18 +42,19 @@ const (
 // rather than a fault of this adapter.
 const codeAdaptationFailed = "SCH_SCHEMA_ADAPTATION_FAILED"
 
-// mappingFile is the published form of a mapping: every action one capability
-// serves, in one file, keyed by action name.
+// mappingFile is the published form of a mapping: one binding-action, both
+// directions.
 //
-// Request files are keyed by the action they translate ("select"); response
-// files by the action they produce ("on_select"). Each file therefore names the
-// Beckn actions it deals in, and the filename says nothing -- naming a file
-// after one action while it serves several would be worse than not naming it.
+// One file rather than two because the response mapping usually depends on what
+// the request mapping did -- swapping GeoJSON coordinates into named lat and lon,
+// say -- and splitting them across two registry fields hides that. Which action
+// the file serves is decided by the registry entry that points at it, so nothing
+// inside needs to name it.
 //
-// One file per direction rather than per action means a transaction walking
-// select then confirm pays one fetch, not one per step.
+// An empty request is a statement rather than an omission; see ErrNoTransform.
 type mappingFile struct {
-	Actions map[string]string `yaml:"actions"`
+	Request  string `yaml:"request"`
+	Response string `yaml:"response"`
 }
 
 // Config holds configuration parameters for the mapper.
@@ -96,20 +96,21 @@ type Config struct {
 // compiled expressions would remove even that, and is the upgrade if one
 // mapping ever becomes hot enough to matter.
 type cacheEntry struct {
-	// actions holds one compiled mapping per action the file serves. A file is
-	// fetched and compiled as a whole, so every action it declares is ready
-	// after the first request for any of them.
-	actions map[string]*compiledAction
+	// directions holds the compiled halves the file carries. A file is fetched
+	// and compiled as a whole, so both are ready after the first request for
+	// either.
+	directions map[definition.Direction]*compiledMapping
 	// err is a failure that applies to the whole file -- it could not be
 	// fetched, or not parsed -- as opposed to one action failing to compile.
 	err       error
 	expiresAt time.Time
 }
 
-// compiledAction is one action's mapping, or the failure that stopped it
-// compiling. Failures are held per action deliberately: a typo in confirm is no
-// reason for select to stop being served.
-type compiledAction struct {
+// compiledMapping is one half of a mapping, or the failure that stopped it
+// compiling. Failures are held per half deliberately: a typo in the response
+// mapping is no reason for the request half to stop working, and finding out on
+// the way out beats finding out before the call was even made.
+type compiledMapping struct {
 	expression jsonata.Expression
 	evaluating *sync.Mutex
 	err        error
@@ -174,10 +175,11 @@ func applyDefaults(cfg *Config) {
 	}
 }
 
-// Transform runs the mapping at mappingRef over input.
-func (m *Mapper) Transform(ctx context.Context, mappingRef, action string, input any) ([]byte, error) {
-	if action == "" {
-		return nil, fmt.Errorf("jsonmapper: cannot resolve a mapping in %q without an action", mappingRef)
+// Transform runs one direction of the mapping at mappingRef over input.
+func (m *Mapper) Transform(ctx context.Context, mappingRef string, direction definition.Direction, input any) ([]byte, error) {
+	if direction != definition.DirectionRequest && direction != definition.DirectionResponse {
+		return nil, fmt.Errorf("jsonmapper: mapping %q: %q is not a direction; want %q or %q",
+			mappingRef, direction, definition.DirectionRequest, definition.DirectionResponse)
 	}
 
 	entry, err := m.compiled(ctx, mappingRef)
@@ -185,28 +187,14 @@ func (m *Mapper) Transform(ctx context.Context, mappingRef, action string, input
 		return nil, err
 	}
 
-	mapping, served := entry.actions[action]
-	if !served {
-		// Naming what the file does serve turns a deploy mistake into a one-line
-		// fix, rather than a hunt through registry rows.
-		return nil, fmt.Errorf("jsonmapper: mapping %q does not serve action %q; it serves %s",
-			mappingRef, action, strings.Join(servedActions(entry), ", "))
+	mapping, present := entry.directions[direction]
+	if !present {
+		return nil, fmt.Errorf("jsonmapper: mapping %q carries no %s half", mappingRef, direction)
 	}
 	if mapping.err != nil {
 		return nil, mapping.err
 	}
-	return m.evaluate(ctx, mapping, mappingRef, action, input)
-}
-
-// servedActions lists the actions a file serves, in a stable order so the same
-// mistake reads the same way twice.
-func servedActions(entry cacheEntry) []string {
-	names := make([]string, 0, len(entry.actions))
-	for name := range entry.actions {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return m.evaluate(ctx, mapping, mappingRef, direction, input)
 }
 
 // compiled returns the compiled mapping for a reference, fetching and compiling
@@ -216,8 +204,8 @@ func (m *Mapper) compiled(ctx context.Context, mappingRef string) (cacheEntry, e
 		return entry, entry.err
 	}
 
-	actions, err := m.fetchAndCompile(ctx, mappingRef)
-	return m.remember(mappingRef, actions, err), err
+	directions, err := m.fetchAndCompile(ctx, mappingRef)
+	return m.remember(mappingRef, directions, err), err
 }
 
 // cached returns a live cache entry, if there is one.
@@ -235,15 +223,15 @@ func (m *Mapper) cached(mappingRef string) (cacheEntry, bool) {
 // remember caches a compiled mapping, or the failure that stopped it compiling.
 // A failure gets the shorter TTL: it should stop hammering a broken reference
 // without outlasting the fix.
-func (m *Mapper) remember(mappingRef string, actions map[string]*compiledAction, err error) cacheEntry {
+func (m *Mapper) remember(mappingRef string, directions map[definition.Direction]*compiledMapping, err error) cacheEntry {
 	ttl := m.config.CacheTTL
 	if err != nil {
 		ttl = m.config.NegativeTTL
 	}
 	entry := cacheEntry{
-		actions:   actions,
-		err:       err,
-		expiresAt: time.Now().Add(ttl),
+		directions: directions,
+		err:        err,
+		expiresAt:  time.Now().Add(ttl),
 	}
 
 	m.mu.Lock()
@@ -272,43 +260,41 @@ func (m *Mapper) cachedCount() int {
 }
 
 // fetchAndCompile retrieves a mapping and turns it into a runnable expression.
-func (m *Mapper) fetchAndCompile(ctx context.Context, mappingRef string) (map[string]*compiledAction, error) {
+func (m *Mapper) fetchAndCompile(ctx context.Context, mappingRef string) (map[definition.Direction]*compiledMapping, error) {
 	body, err := m.fetch(ctx, mappingRef)
 	if err != nil {
 		return nil, err
 	}
-	sources, err := parseActions(body)
+	file, err := parseMapping(body)
 	if err != nil {
 		return nil, fmt.Errorf("jsonmapper: mapping %q: %w", mappingRef, err)
 	}
 
-	// Every action is compiled now rather than on first use, so one fetch
-	// leaves the whole file ready. A compile failure is recorded against its own
-	// action and goes no further than that action.
-	actions := make(map[string]*compiledAction, len(sources))
-	for action, source := range sources {
-		actions[action] = m.compileAction(ctx, mappingRef, action, source)
-	}
-	log.Debugf(ctx, "JSON mapper compiled %d action(s) from mapping: %s", len(actions), mappingRef)
-	return actions, nil
+	// Both halves are compiled now rather than on first use, so one fetch leaves
+	// the file ready in both directions. A compile failure is recorded against
+	// its own half and goes no further.
+	directions := make(map[definition.Direction]*compiledMapping, 2)
+	directions[definition.DirectionRequest] = m.compileMapping(ctx, mappingRef, definition.DirectionRequest, file.Request)
+	directions[definition.DirectionResponse] = m.compileMapping(ctx, mappingRef, definition.DirectionResponse, file.Response)
+	log.Debugf(ctx, "JSON mapper compiled mapping: %s", mappingRef)
+	return directions, nil
 }
 
-// compileAction compiles one action's mapping, keeping any failure local to it.
-func (m *Mapper) compileAction(ctx context.Context, mappingRef, action, source string) *compiledAction {
+// compileMapping compiles one half, keeping any failure local to it.
+func (m *Mapper) compileMapping(ctx context.Context, mappingRef string, direction definition.Direction, source string) *compiledMapping {
 	if strings.TrimSpace(source) == "" {
-		// Declared, but with nothing to build. That is a statement rather than an
-		// omission -- see definition.ErrNoTransform -- so it is held as this
-		// action's outcome and reported to whoever asks for it, while every other
-		// action in the file is unaffected.
-		return &compiledAction{err: fmt.Errorf("jsonmapper: mapping %q action %q: %w",
-			mappingRef, action, definition.ErrNoTransform)}
+		// Present but empty. That is a statement rather than an omission -- see
+		// definition.ErrNoTransform -- so it is held as this half's outcome and
+		// reported to whoever asks for it, leaving the other half unaffected.
+		return &compiledMapping{err: fmt.Errorf("jsonmapper: mapping %q %s half: %w",
+			mappingRef, direction, definition.ErrNoTransform)}
 	}
 	expression, err := m.instance.Compile(source, false)
 	if err != nil {
-		log.Errorf(ctx, err, "JSON mapper could not compile action %s of %s: %v", action, mappingRef, err)
-		return &compiledAction{err: fmt.Errorf("jsonmapper: mapping %q action %q failed to compile: %w", mappingRef, action, err)}
+		log.Errorf(ctx, err, "JSON mapper could not compile the %s half of %s: %v", direction, mappingRef, err)
+		return &compiledMapping{err: fmt.Errorf("jsonmapper: mapping %q %s half failed to compile: %w", mappingRef, direction, err)}
 	}
-	return &compiledAction{expression: expression, evaluating: &sync.Mutex{}}
+	return &compiledMapping{expression: expression, evaluating: &sync.Mutex{}}
 }
 
 // fetch retrieves a mapping's bytes, bounded in both time and size.
@@ -348,9 +334,13 @@ func (m *Mapper) fetch(ctx context.Context, mappingRef string) ([]byte, error) {
 
 // verifyFetchable rejects a reference this mapper will not retrieve.
 //
-// References come from the registry, which makes them external input: an
-// unchecked one would let a registry record name a file path or an internal
-// scheme and have the adapter read it.
+// A reference is a fully-qualified http or https URL, carried verbatim from the
+// registry. That makes it external input, so it is checked rather than trusted:
+// without this a registry record could name a file path or an internal scheme
+// and have the adapter read it. What the check cannot constrain is WHICH host --
+// a registry record chooses that, and this mapper compiles and runs what comes
+// back from it. Who may write a registry record is therefore part of this
+// plugin's threat model, not an unrelated concern.
 func verifyFetchable(mappingRef string) error {
 	if mappingRef == "" {
 		return errors.New("jsonmapper: mapping reference is empty")
@@ -368,16 +358,18 @@ func verifyFetchable(mappingRef string) error {
 	return nil
 }
 
-// parseActions reads the actions a published mapping serves.
-func parseActions(body []byte) (map[string]string, error) {
+// parseMapping reads the two halves a published mapping carries.
+func parseMapping(body []byte) (mappingFile, error) {
 	var file mappingFile
 	if err := yaml.Unmarshal(body, &file); err != nil {
-		return nil, fmt.Errorf("could not be parsed: %w", err)
+		return mappingFile{}, fmt.Errorf("could not be parsed: %w", err)
 	}
-	if len(file.Actions) == 0 {
-		return nil, errors.New("serves no actions")
+	if strings.TrimSpace(file.Request) == "" && strings.TrimSpace(file.Response) == "" {
+		// Neither half present at all -- not an empty request, which is
+		// meaningful, but a file that says nothing.
+		return mappingFile{}, errors.New("carries neither a request nor a response half")
 	}
-	return file.Actions, nil
+	return file, nil
 }
 
 // marshalInput renders the named inputs a mapping reads -- beckn, _local and,
@@ -392,24 +384,24 @@ func marshalInput(input any) ([]byte, error) {
 }
 
 // evaluate runs a compiled mapping over the input document.
-func (m *Mapper) evaluate(ctx context.Context, mapping *compiledAction, mappingRef, action string, input any) ([]byte, error) {
+func (m *Mapper) evaluate(ctx context.Context, mapping *compiledMapping, mappingRef string, direction definition.Direction, input any) ([]byte, error) {
 	document, err := marshalInput(input)
 	if err != nil {
 		return nil, fmt.Errorf("jsonmapper: mapping %q: %w", mappingRef, err)
 	}
 
-	// See compiledAction: Evaluate mutates the expression, so one action's
-	// mapping serves one request at a time. Other actions in the same file are
-	// unaffected, and marshalling above is deliberately outside the lock.
+	// See compiledMapping: Evaluate mutates the expression, so one half serves
+	// one request at a time. The other half is unaffected, and marshalling above
+	// is deliberately outside the lock.
 	mapping.evaluating.Lock()
 	result, err := mapping.expression.Evaluate(document, nil)
 	mapping.evaluating.Unlock()
 	if err != nil {
 		// The mapping is valid and the payload is not what it expected, so this
 		// is the caller's request being wrong rather than this adapter failing.
-		log.Errorf(ctx, err, "JSON mapping %s action %s failed to evaluate: %v", mappingRef, action, err)
+		log.Errorf(ctx, err, "JSON mapping %s %s half failed to evaluate: %v", mappingRef, direction, err)
 		return nil, model.NewBadReqErr(codeAdaptationFailed,
-			fmt.Errorf("mapping %q action %q could not be applied: %w", mappingRef, action, err))
+			fmt.Errorf("mapping %q %s half could not be applied: %w", mappingRef, direction, err))
 	}
 	return result, nil
 }

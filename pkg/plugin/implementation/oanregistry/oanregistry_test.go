@@ -91,12 +91,11 @@ func signingKey() key {
 func activeRecord() participant {
 	return participant{
 		ParticipantID: testParticipantID,
+		Type:          "node",
+		Role:          "BPP",
 		Status:        "active",
-		Node: node{
-			SubscriberURL: "https://providera.example.com/onix",
-			Type:          "BPP",
-			Keys:          []key{signingKey()},
-		},
+		BaseURL:       "https://providera.example.com/onix",
+		Keys:          []key{signingKey()},
 	}
 }
 
@@ -445,14 +444,14 @@ func TestToSubscriptionMapsOptionalFields(t *testing.T) {
 		t.Parallel()
 
 		record := activeRecord()
-		record.Node.Keys = append(record.Node.Keys, key{
+		record.Keys = append(record.Keys, key{
 			OSID:   "1-abcdef00-0000-0000-0000-000000000000",
 			Use:    useEncr,
 			Value:  keyEncodingPrefix + "encryption-key",
 			Status: "active",
 		})
 
-		got := toSubscription(record, record.Node.Keys[0], statusSubscribed)
+		got := toSubscription(record, record.Keys[0], statusSubscribed)
 
 		if got.EncrPublicKey != "encryption-key" {
 			t.Errorf("expected encryption key to be mapped, got %q", got.EncrPublicKey)
@@ -474,7 +473,7 @@ func TestToSubscriptionMapsOptionalFields(t *testing.T) {
 		k := key{OSID: testOSID, Use: useSign, Value: testPublicKey, Status: "active"}
 		record := participant{
 			ParticipantID: testParticipantID,
-			Node:          node{Keys: []key{k}},
+			Keys:          []key{k},
 		}
 		got := toSubscription(record, k, statusSubscribed)
 
@@ -495,14 +494,14 @@ func TestToSubscriptionMapsOptionalFields(t *testing.T) {
 		t.Parallel()
 
 		record := activeRecord()
-		record.Node.Keys = append(record.Node.Keys, key{
+		record.Keys = append(record.Keys, key{
 			OSID:   "1-abcdef00-0000-0000-0000-000000000000",
 			Use:    useEncr,
 			Value:  keyEncodingPrefix + "retired-encryption-key",
 			Status: "inactive",
 		})
 
-		got := toSubscription(record, record.Node.Keys[0], statusSubscribed)
+		got := toSubscription(record, record.Keys[0], statusSubscribed)
 
 		if got.EncrPublicKey != "" {
 			t.Errorf("a retired encryption key must not be published, got %q", got.EncrPublicKey)
@@ -659,7 +658,7 @@ func TestLookupWarnsOnAlgorithmMismatch(t *testing.T) {
 	t.Parallel()
 
 	record := activeRecord()
-	record.Node.Keys[0].Algorithm = "rsa-2048"
+	record.Keys[0].Algorithm = "rsa-2048"
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, recordJSON(t, record))
@@ -774,7 +773,7 @@ func TestLookupRejectsAKeyIdMismatch(t *testing.T) {
 	t.Parallel()
 
 	record := activeRecord()
-	record.Node.Keys[0].OSID = "1-99999999-0000-0000-0000-000000000000"
+	record.Keys[0].OSID = "1-99999999-0000-0000-0000-000000000000"
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, recordJSON(t, record))
@@ -798,7 +797,7 @@ func TestSearchDistinguishesMismatchFromNotFound(t *testing.T) {
 	t.Parallel()
 
 	otherKey := activeRecord()
-	otherKey.Node.Keys[0].OSID = "1-99999999-0000-0000-0000-000000000000"
+	otherKey.Keys[0].OSID = "1-99999999-0000-0000-0000-000000000000"
 
 	testCases := []struct {
 		name     string
@@ -840,8 +839,8 @@ func TestLookupSelectsTheRecordCarryingTheKey(t *testing.T) {
 	t.Parallel()
 
 	stale := activeRecord()
-	stale.Node.Keys[0].OSID = "1-00000000-0000-0000-0000-000000000000"
-	stale.Node.Keys[0].Value = "stale-key"
+	stale.Keys[0].OSID = "1-00000000-0000-0000-0000-000000000000"
+	stale.Keys[0].Value = "stale-key"
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, recordJSON(t, stale, activeRecord()))
@@ -865,7 +864,7 @@ func TestLookupOnDuplicateRecords(t *testing.T) {
 	t.Parallel()
 
 	first, second := activeRecord(), activeRecord()
-	second.Node.Keys[0].Value = "a-different-key"
+	second.Keys[0].Value = "a-different-key"
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, recordJSON(t, first, second))
@@ -1359,62 +1358,59 @@ func assertOutcomeAttribute(t *testing.T, m metricdata.Metrics, outcome string) 
 }
 
 // TestLookupAgainstCapturedRegistryResponse runs the plugin against a verbatim
-// response captured from the real OAN registry on 29 Aug 2026, reformatted for
+// response captured from the real OAN registry on 31 Aug 2026, reformatted for
 // readability with field order and values untouched.
 //
-// It pins the deployed shape: the data envelope, keys nested under node as an
-// array, the camelCase field names, the "base64:" encoding label, and the
-// "active" status vocabulary at both levels. The capture it replaces described a
-// flat record with snake_case fields, and this is the test that said so.
+// It pins the deployed shape: the data envelope, one flat level with the keys
+// array beside participantId rather than under a wrapper, the camelCase field
+// names, the "base64:" encoding label, the osid the registry injects into every
+// nested object, and the "active" status vocabulary at both levels. The capture
+// it replaces described a record wrapped in a "node" object, and this is the
+// test that said so.
 func TestLookupAgainstCapturedRegistryResponse(t *testing.T) {
 	t.Parallel()
 
 	const (
-		capturedParticipantID   = "oan-provider"
-		capturedKeyOSID         = "1-e73cd04b-d992-4ecb-81e3-003f28ea36ea"
-		capturedNodeOSID        = "1-bc829800-6acb-48ec-86cd-0f52de25abb9"
-		capturedParticipantOSID = "1-e1072144-938e-4ab1-87c0-efd5cc45f6e6"
-		capturedKey             = "xq4+2oQ6MgSZdHHBMtNd1TmnPTmzY5UoZlqzf0yn6ZA="
-		capturedURL             = "https://provider-network-vistaar.da.gov.in/beckn"
+		capturedParticipantID   = "provider.oan.local"
+		capturedKeyOSID         = "1-d1a4a2b7-7bf5-42f5-bfc2-2c77119c4d64"
+		capturedParticipantOSID = "1-19087a97-f886-4fe4-bf14-3875437dc6f8"
+		capturedKey             = "w1wDdr/xnO2yQYxdR/88enTkg0B//vVeIkXOfreClUQ="
+		capturedURL             = "https://provider.oan.local/beckn"
 	)
 
 	const captured = `{
     "totalCount": 1,
     "data": [
         {
-            "participantId": "oan-provider",
-            "osUpdatedAt": "2026-08-29T06:47:56.019Z",
-            "osCreatedAt": "2026-08-29T06:47:56.019Z",
+            "osUpdatedAt": "2026-08-31T07:36:33.407Z",
+            "role": "BPP",
             "osUpdatedBy": "89bf9fcb-c6f7-4f08-80f9-18f47ce7667d",
-            "name": "OpenAgriNet provider adapter",
+            "osid": "1-19087a97-f886-4fe4-bf14-3875437dc6f8",
+            "type": "node",
+            "osOwner": [
+                "89bf9fcb-c6f7-4f08-80f9-18f47ce7667d"
+            ],
+            "keys": [
+                {
+                    "osUpdatedAt": "2026-08-31T07:36:33.407Z",
+                    "osUpdatedBy": "89bf9fcb-c6f7-4f08-80f9-18f47ce7667d",
+                    "use": "sign",
+                    "keyId": "k1",
+                    "osid": "1-d1a4a2b7-7bf5-42f5-bfc2-2c77119c4d64",
+                    "validFrom": "2026-01-01T00:00:00Z",
+                    "osCreatedAt": "2026-08-31T07:36:33.407Z",
+                    "osCreatedBy": "89bf9fcb-c6f7-4f08-80f9-18f47ce7667d",
+                    "validUntil": "2030-01-01T00:00:00Z",
+                    "alg": "ed25519",
+                    "key": "base64:w1wDdr/xnO2yQYxdR/88enTkg0B//vVeIkXOfreClUQ=",
+                    "status": "active"
+                }
+            ],
+            "participantId": "provider.oan.local",
+            "baseUrl": "https://provider.oan.local/beckn",
+            "osCreatedAt": "2026-08-31T07:36:33.407Z",
+            "name": "OAN provider layer adapter",
             "osCreatedBy": "89bf9fcb-c6f7-4f08-80f9-18f47ce7667d",
-            "osid": "1-e1072144-938e-4ab1-87c0-efd5cc45f6e6",
-            "osOwner": ["89bf9fcb-c6f7-4f08-80f9-18f47ce7667d"],
-            "node": {
-                "osid": "1-bc829800-6acb-48ec-86cd-0f52de25abb9",
-                "osUpdatedAt": "2026-08-29T06:47:56.019Z",
-                "osCreatedAt": "2026-08-29T06:47:56.019Z",
-                "osUpdatedBy": "89bf9fcb-c6f7-4f08-80f9-18f47ce7667d",
-                "subscriberUrl": "https://provider-network-vistaar.da.gov.in/beckn",
-                "osCreatedBy": "89bf9fcb-c6f7-4f08-80f9-18f47ce7667d",
-                "type": "BPP",
-                "keys": [
-                    {
-                        "osUpdatedAt": "2026-08-29T06:47:56.019Z",
-                        "osUpdatedBy": "89bf9fcb-c6f7-4f08-80f9-18f47ce7667d",
-                        "use": "sign",
-                        "keyId": "k1",
-                        "osid": "1-e73cd04b-d992-4ecb-81e3-003f28ea36ea",
-                        "validFrom": "2026-08-01T00:00:00Z",
-                        "osCreatedAt": "2026-08-29T06:47:56.019Z",
-                        "osCreatedBy": "89bf9fcb-c6f7-4f08-80f9-18f47ce7667d",
-                        "validUntil": "2026-11-01T00:00:00Z",
-                        "alg": "ed25519",
-                        "key": "base64:xq4+2oQ6MgSZdHHBMtNd1TmnPTmzY5UoZlqzf0yn6ZA=",
-                        "status": "active"
-                    }
-                ]
-            },
             "status": "active"
         }
     ]
@@ -1455,7 +1451,7 @@ func TestLookupAgainstCapturedRegistryResponse(t *testing.T) {
 		t.Errorf("key id = %q, want %q", got.KeyID, capturedKeyOSID)
 	}
 	if got.URL != capturedURL {
-		t.Errorf("endpoint url = %q, want the captured subscriberUrl %q", got.URL, capturedURL)
+		t.Errorf("endpoint url = %q, want the captured baseUrl %q", got.URL, capturedURL)
 	}
 	if got.Type != "BPP" {
 		t.Errorf("type = %q, want %q", got.Type, "BPP")
@@ -1467,13 +1463,12 @@ func TestLookupAgainstCapturedRegistryResponse(t *testing.T) {
 		t.Error("expected the validity window to be parsed from the key's validFrom/validUntil")
 	}
 
-	// The record carries three osids -- participant, node and key -- and only the
-	// key's identifies a signing key. Matching either of the other two would
-	// resolve the wrong thing, and would keep resolving it as soon as a second key
-	// were published.
+	// The record carries two osids -- the participant's and the key's -- and only
+	// the key's identifies a signing key. Matching the participant's would
+	// resolve the wrong thing, and would keep resolving it as soon as a second
+	// key were published.
 	for _, tc := range []struct{ name, keyID string }{
 		{"participant osid", capturedParticipantOSID},
-		{"node osid", capturedNodeOSID},
 		{"an unrelated osid", "1-00000000-0000-0000-0000-000000000000"},
 	} {
 		mismatched, err := resolve(tc.keyID)

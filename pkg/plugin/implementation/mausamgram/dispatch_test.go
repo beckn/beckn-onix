@@ -13,11 +13,15 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/mausamgram"
 )
 
+// dispatchMappingRef stands in for the one reference an action carries. This
+// test is about dispatch, so what is behind it never matters.
+const dispatchMappingRef = "https://m.example.com/mausamgram/weather-observation.select.yaml"
+
 // fixedMapper returns canned results, so this test is about dispatch and
 // nothing else.
 type fixedMapper struct{ answer string }
 
-func (m fixedMapper) Transform(_ context.Context, mappingRef, _ string, _ any) ([]byte, error) {
+func (m fixedMapper) Transform(_ context.Context, mappingRef string, _ definition.Direction, _ any) ([]byte, error) {
 	if strings.Contains(mappingRef, "request") {
 		return []byte(`{}`), nil
 	}
@@ -44,10 +48,9 @@ func TestTwoProviderStepsDispatchByBindingKey(t *testing.T) {
 		t.Helper()
 		plan := &model.ProviderRecord{
 			BindingKey: bindingKey, BaseURL: upstreamURL,
-			RequestMapping:  "https://m.example.com/request.yaml",
-			ResponseMapping: "https://m.example.com/response.yaml",
+
 			Actions: map[string]model.ActionPlan{
-				"select": {Method: http.MethodGet, Path: "/x", RetryMax: 1},
+				"select": {Method: http.MethodGet, Path: "/x", Mappings: dispatchMappingRef, RetryMax: 1},
 			},
 		}
 		step, closer, err := mausamgram.New(context.Background(),

@@ -5,6 +5,17 @@ import (
 	"errors"
 )
 
+// Direction names which half of a mapping to run. A mapping file carries both,
+// because the response half usually depends on what the request half did.
+type Direction string
+
+const (
+	// DirectionRequest translates an inbound payload into what the upstream wants.
+	DirectionRequest Direction = "request"
+	// DirectionResponse translates the upstream's answer back.
+	DirectionResponse Direction = "response"
+)
+
 // Mapper transforms a document with a mapping fetched from a reference.
 //
 // It exists so that translating between OAN's Beckn payloads and a provider's
@@ -16,11 +27,12 @@ type Mapper interface {
 	// Transform runs the mapping at mappingRef over input and returns the
 	// result.
 	//
-	// action is the Beckn action of the request being served. The mapping
-	// reference must identify itself as being for that action, and Transform
-	// refuses if it does not: running a select mapping over a confirm payload
-	// would otherwise succeed quietly and produce nonsense.
-	Transform(ctx context.Context, mappingRef, action string, input any) ([]byte, error)
+	// mappingRef is what the registry carries verbatim: the URL of one published
+	// file holding both directions.
+	//
+	// Which action the mapping serves is settled by the registry entry that
+	// named it, so only the direction is passed here.
+	Transform(ctx context.Context, mappingRef string, direction Direction, input any) ([]byte, error)
 }
 
 // MapperProvider initializes a new Mapper.
