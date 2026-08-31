@@ -59,8 +59,12 @@ type stdHandler struct {
 	// ackSigner is non-nil only when the "signAck" step is configured (Receiver
 	// modules). It is also used to sign pipeline-NACK responses so that ALL
 	// synchronous responses carry a Signature header per NFH-007 CON-004-02.
-	ackSigner    *ackSignerStep
-	SubscriberID string
+	ackSigner *ackSignerStep
+	// hasProviderSteps records whether this module serves capabilities itself.
+	// Such a module has no proxy behind it, which is what makes an unanswered
+	// request a dead end rather than work in flight -- see ServeHTTP.
+	hasProviderSteps bool
+	SubscriberID     string
 	role         model.Role
 	basePath     string
 	httpClient   *http.Client
@@ -216,6 +220,33 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Restore request body and metadata before forwarding or publishing.
 		syncRequestBody(r, stepCtx.Body)
 		if stepCtx.Route == nil {
+			// A module that serves capabilities itself has no proxy behind it, so
+			// an unanswered request here is a dead end: no route to forward it, and
+			// nobody to send a callback. An ACK would tell the caller "accepted,
+			// answer follows" and leave it waiting for a message nobody will send,
+			// which is how a stale binding key hides as a healthy response.
+			//
+			// 404 rather than AckNoCallbackErr, which exists for this shape and
+			// would be the obvious pick: it maps to 202 Accepted, and a 2xx is what
+			// let this hide in the first place. It is also for a business outcome
+			// -- no inventory, provider closed -- where this is "nothing here
+			// serves that", which is what a 404 says.
+			//
+			// Checked before the response steps rather than after, because
+			// ackSigner signs the body it expects to be written; NACKing later
+			// would ship a signature over the ACK with a NACK body.
+			//
+			// Only for modules with provider steps. Elsewhere an unanswered
+			// request is the publisher path doing exactly what it should.
+			if h.hasProviderSteps && len(stepCtx.ResponseBody) == 0 {
+				err = model.NewNotFoundErr("", fmt.Errorf(
+					"this module serves no capability matching the request"))
+				log.Errorf(stepCtx, err, "No step answered and no route was set: %v", err)
+				h.signNackResponse(stepCtx, err)
+				responseBody = sendNack(stepCtx, wrapped, err)
+				return
+			}
+
 			// No routing — ONIX writes the ACK directly. Run response steps here
 			// with resp=nil (publisher path semantics).
 			for _, step := range h.responseSteps {
@@ -653,6 +684,7 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 		}
 		steps[c.ID] = step
 	}
+	h.hasProviderSteps = len(cfg.Plugins.ProviderSteps) > 0
 
 	// Register processing steps
 	for _, step := range cfg.Steps {

@@ -166,6 +166,113 @@ func TestServeHTTPTreatsAnEmptyAnswerAsNoAnswer(t *testing.T) {
 	}
 }
 
+// --- an unanswered request in a provider module ------------------------------
+
+// silentStep is the dispatch no-op: a provider step recognising the request as
+// none of its business. Succeeding without answering is how several provider
+// steps coexist in one pipeline.
+type silentStep struct{}
+
+func (s *silentStep) Run(*model.StepContext) error { return nil }
+
+// A module that serves capabilities itself has no proxy behind it. When nothing
+// answered and no route was set, nothing ever will: there is nobody to send a
+// callback. An ACK there tells the caller "accepted, answer follows" and leaves
+// it waiting forever, so this is a NACK.
+func TestServeHTTPNacksAnUnansweredRequestInAProviderModule(t *testing.T) {
+	h := &stdHandler{
+		SubscriberID:     "test-sub",
+		role:             model.RoleBPP,
+		moduleName:       "test-module",
+		steps:            []definition.Step{&silentStep{}},
+		hasProviderSteps: true,
+	}
+
+	recorder := serve(t, h, v2SelectBody)
+
+	if recorder.Code == http.StatusOK {
+		t.Fatalf("status = 200 for a request nothing answered; that ACK promises a callback nobody will send")
+	}
+	var got model.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
+		t.Fatalf("failed to decode the response: %v", err)
+	}
+	if got.Message.Status == model.StatusACK {
+		t.Errorf("status = %q, want a NACK", got.Message.Status)
+	}
+}
+
+// The guard must not touch a request that was answered.
+func TestServeHTTPStillWritesAnAnswerInAProviderModule(t *testing.T) {
+	answer := []byte(`{"context":{"action":"on_select"}}`)
+	h := &stdHandler{
+		SubscriberID:     "test-sub",
+		role:             model.RoleBPP,
+		moduleName:       "test-module",
+		steps:            []definition.Step{&answeringStep{answer: answer}},
+		hasProviderSteps: true,
+	}
+
+	recorder := serve(t, h, v2SelectBody)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if recorder.Body.String() != string(answer) {
+		t.Errorf("body = %s, want the step's own answer", recorder.Body.String())
+	}
+}
+
+// A routed request is untouched even in a provider module. This is the ordinary
+// case for a module that serves one capability itself and proxies everything
+// else: the provider step passes through, the router sets a route, and the proxy
+// owns the response -- so the ACK it produces means what it says.
+func TestServeHTTPLeavesARoutedRequestAloneInAProviderModule(t *testing.T) {
+	h := &stdHandler{
+		SubscriberID: "test-sub",
+		role:         model.RoleBPP,
+		moduleName:   "test-module",
+		// proxy() reaches straight for httpClient.Transport, so a routed handler
+		// without one panics rather than failing.
+		httpClient:       http.DefaultClient,
+		steps:            []definition.Step{&silentStep{}, &routeSettingStep{}},
+		hasProviderSteps: true,
+	}
+
+	recorder := serve(t, h, v2SelectBody)
+
+	// The route points at an unreachable host, so what comes back is the proxy's
+	// own failure. What matters is that it is the proxy answering at all: the
+	// guard belongs to the no-route branch and must not have fired.
+	if strings.Contains(recorder.Body.String(), "NET_ENTITY_NOT_FOUND") {
+		t.Errorf("body = %s -- the unanswered guard fired on a routed request", recorder.Body.String())
+	}
+}
+
+// A module with no provider steps is untouched. Its ACK still means what it has
+// always meant: a proxy or a publisher carries the work on from here.
+func TestServeHTTPStillAcksInAModuleWithoutProviderSteps(t *testing.T) {
+	h := &stdHandler{
+		SubscriberID: "test-sub",
+		role:         model.RoleBAP,
+		moduleName:   "test-module",
+		steps:        []definition.Step{&silentStep{}},
+	}
+
+	recorder := serve(t, h, v2SelectBody)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var got model.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
+		t.Fatalf("failed to decode the response: %v", err)
+	}
+	if got.Message.Status != model.StatusACK {
+		t.Errorf("status = %q, want the generated ACK", got.Message.Status)
+	}
+}
+
 // The instrumentor shallow-copies the context in but copies only named fields
 // back out. An answer written by an instrumented step has to survive that, or
 // it works unwrapped and vanishes wrapped -- and wrapped is the default.
