@@ -1,9 +1,8 @@
 # Mausamgram, openagrinet:WeatherObservation, select. Both directions, one file.
 #
-# One file per binding-action rather than one per direction, because the two
-# halves are not independent: the response half below reads _local, and the only
-# reason _local holds a lat and a lon is that the request half put them there.
-# Splitting them across two registry fields hid that dependency; this does not.
+# One file per binding-action rather than one per direction, because both legs of
+# one upstream call are one unit of configuration: they are published, reviewed
+# and retired together, and a reference to one is a reference to the other.
 #
 # The registry entry pointing here decides which action this serves, so nothing
 # in the file names it. The filename's action segment must match that entry --
@@ -12,15 +11,18 @@
 # Both halves read:
 #   beckn     the inbound Beckn payload -- the context to echo, the offer to
 #             quote against
-#   _local    whatever the provider step resolved before the call
 # and the response half additionally reads:
 #   response  the provider's answer, in its own shape
+#
+# Nothing else is in scope. Values the provider step resolved before the call are
+# not passed in: the step holds them and used them to make the call, so a mapping
+# reading them back would be a second name for the same data. Where the answer
+# needs them, it takes them from what the provider echoed.
 
-# An empty request half is a statement, not an omission: this provider takes its
-# parameters in the query string, the step has already resolved them, and putting
-# them through a transform to arrive at the same two fields would buy nothing.
-# The step is told so explicitly (ErrNoTransform) rather than being handed an
-# empty document.
+# An empty request half means there is no request document to build. This
+# provider takes its parameters in the query string and the step resolved them
+# already, so it sends those directly. For a method that takes a body, an empty
+# half would mean exactly what it says: no body.
 request: ""
 
 # Keyed by direction, not by the action it produces: a select is answered by an
@@ -28,8 +30,8 @@ request: ""
 # than an action of its own.
 response: |
   (
-    $lat := _local.lat;
-    $lon := _local.lon;
+    $lat := response.location.lat;
+    $lon := response.location.lon;
     $days := [
       response.fcstday1, response.fcstday2, response.fcstday3,
       response.fcstday4, response.fcstday5

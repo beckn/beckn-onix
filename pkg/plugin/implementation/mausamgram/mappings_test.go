@@ -11,7 +11,6 @@ package mausamgram_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -208,8 +207,8 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 		t.Errorf("advisory = %v, want the provider's warning", attributes["advisory"])
 	}
 
-	// The point came from _local, not from the provider: it is the request's
-	// own coordinates, in GeoJSON order.
+	// GeoJSON order, and the provider's own echo of the point: the mapping reads
+	// response.location rather than anything the step resolved.
 	location, _ := attributes["location"].(map[string]any)
 	coordinates, _ := location["coordinates"].([]any)
 	if len(coordinates) != 2 || coordinates[0] != 73.7898 || coordinates[1] != 19.9975 {
@@ -238,11 +237,10 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 	}
 }
 
-// The shipped file's request half is deliberately empty: this provider takes
-// its parameters in the query string. That has to reach the step as
-// ErrNoTransform rather than as an empty document, or the step would send a
-// body-shaped nothing instead of building the query itself.
-func TestShippedMappingsDeclareNoRequestTransform(t *testing.T) {
+// The shipped file's request half is deliberately empty: this provider takes its
+// parameters in the query string. That has to produce nothing rather than an
+// empty document, so the step builds the query itself.
+func TestShippedMappingsProduceNoRequestDocument(t *testing.T) {
 	mappings := serveMappings(t)
 	defer mappings.Close()
 
@@ -253,15 +251,14 @@ func TestShippedMappingsDeclareNoRequestTransform(t *testing.T) {
 	defer closeMapper()
 
 	ref := mappings.URL + "/" + shippedMapping
-	input := map[string]any{"_local": map[string]any{"lat": 1.0, "lon": 2.0}}
+	input := map[string]any{"beckn": map[string]any{"context": map[string]any{"action": "select"}}}
 
-	if _, err := mapper.Transform(context.Background(), ref, definition.DirectionRequest, input); !errors.Is(err, definition.ErrNoTransform) {
-		t.Errorf("the request half should report ErrNoTransform, got %v", err)
+	got, err := mapper.Transform(context.Background(), ref, definition.DirectionRequest, input)
+	if err != nil {
+		t.Errorf("the empty request half must not be an error, got %v", err)
 	}
-	// The response half of the same file is unaffected -- which is the point of
-	// holding both in one file rather than inferring one from the other.
-	if _, err := mapper.Transform(context.Background(), ref, definition.DirectionResponse, input); errors.Is(err, definition.ErrNoTransform) {
-		t.Error("the response half must carry a transform")
+	if len(got) != 0 {
+		t.Errorf("the request half produced %q, want nothing", got)
 	}
 }
 

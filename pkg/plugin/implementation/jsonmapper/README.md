@@ -31,28 +31,26 @@ One file per binding-action, carrying **both directions**:
 # mappings/mausamgram/weather-observation.select.yaml
 request: |
   {
-    "lat": _local.lat,
-    "lon": _local.lon
+    "lat": beckn.message.contract.commitments[0].resources[0].resourceAttributes.location.coordinates[1]
   }
 
 response: |
   {
     "rainfall": response.fcstday1.rain,
-    "at": { "type": "Point", "coordinates": [_local.lon, _local.lat] }
+    "at": response.location
   }
 ```
 
-**One file rather than two because the halves are not independent.** The response
-above reads `_local`, and the only reason `_local` holds a lat and a lon is that
-the request put them there. Splitting them across two registry fields hid that;
-this does not. It also means the response leg of a round trip is already fetched
-and compiled by the time it is needed.
+**One file rather than two because both legs of one upstream call are one unit of
+configuration.** They are published, reviewed and retired together, and a
+reference to one is a reference to the other. It also means the response leg is
+already fetched and compiled by the time it is needed — one round trip, one fetch.
 
-A half that is absent or empty is a *statement*, not an omission: it reports
-`definition.ErrNoTransform`, so a caller that has nothing to build knows to build
-its own request rather than sending an empty document. A half that will not
-compile is a different thing and reported as an error — the two must not collapse,
-or an unmapped upstream answer would go out as a Beckn response.
+**A half that is absent or empty produces nothing, with no error.** What nothing
+means belongs to the caller: on the request leg it means there is no document to
+send. A half that will not compile is a different thing and reported as an error —
+the two must not collapse, or an unmapped upstream answer would go out as a Beckn
+response.
 
 A broken half takes down only itself: a typo in the response mapping is no reason
 to stop making the call, and finding out on the way back beats finding out before
@@ -83,12 +81,13 @@ stays in the record for now.)
 | key | request leg | response leg |
 |---|---|---|
 | `beckn` | the inbound Beckn payload | the inbound Beckn payload |
-| `_local` | values the provider plugin resolved | the same values |
 | `response` | — | the provider's raw answer |
 
-`_local` stays in scope on the response leg on purpose. A provider's answer
-rarely repeats what it was asked, so values resolved before the call are often
-the only source for them in the output — the coordinates of a forecast, say.
+**What a party sent, and nothing else.** Values a provider plugin resolved before
+the call are deliberately not passed in: the plugin holds them and used them to
+make the call, so a mapping reading them back would be a detour and a second name
+for the same data. Where the answer needs such a value, it takes it from what the
+provider echoed.
 
 ## Why the direction is a parameter, not a convention
 

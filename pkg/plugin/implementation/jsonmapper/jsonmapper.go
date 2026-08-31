@@ -45,13 +45,14 @@ const codeAdaptationFailed = "SCH_SCHEMA_ADAPTATION_FAILED"
 // mappingFile is the published form of a mapping: one binding-action, both
 // directions.
 //
-// One file rather than two because the response mapping usually depends on what
-// the request mapping did -- swapping GeoJSON coordinates into named lat and lon,
-// say -- and splitting them across two registry fields hides that. Which action
-// the file serves is decided by the registry entry that points at it, so nothing
-// inside needs to name it.
+// One file rather than two because both legs of one upstream call are one unit
+// of configuration: they are published, reviewed and retired together, and a
+// reference to one is a reference to the other. Which action the file serves is
+// decided by the registry entry that points at it, so nothing inside names it.
 //
-// An empty request is a statement rather than an omission; see ErrNoTransform.
+// A half may be absent or empty. That is not an omission to report -- it means
+// there is no transform for that direction, and what that means belongs to the
+// caller.
 type mappingFile struct {
 	Request  string `yaml:"request"`
 	Response string `yaml:"response"`
@@ -110,10 +111,19 @@ type cacheEntry struct {
 // compiling. Failures are held per half deliberately: a typo in the response
 // mapping is no reason for the request half to stop working, and finding out on
 // the way out beats finding out before the call was even made.
+//
+// A nil expression with no error is a half the file carries no transform for --
+// held rather than treated as absent, so "there is no request half" and "the
+// file could not be read" stay different answers.
 type compiledMapping struct {
 	expression jsonata.Expression
 	evaluating *sync.Mutex
 	err        error
+}
+
+// hasTransform reports whether this half has something to run.
+func (m *compiledMapping) hasTransform() bool {
+	return m != nil && m.expression != nil
 }
 
 // Mapper fetches, compiles and runs mappings. It is safe for concurrent use:
@@ -193,6 +203,12 @@ func (m *Mapper) Transform(ctx context.Context, mappingRef string, direction def
 	}
 	if mapping.err != nil {
 		return nil, mapping.err
+	}
+	if !mapping.hasTransform() {
+		// Nothing to apply. That is an answer, not a failure: the caller decides
+		// what an absent transform means for the leg it is on.
+		log.Debugf(ctx, "JSON mapping %s carries no %s transform", mappingRef, direction)
+		return nil, nil
 	}
 	return m.evaluate(ctx, mapping, mappingRef, direction, input)
 }
@@ -283,11 +299,9 @@ func (m *Mapper) fetchAndCompile(ctx context.Context, mappingRef string) (map[de
 // compileMapping compiles one half, keeping any failure local to it.
 func (m *Mapper) compileMapping(ctx context.Context, mappingRef string, direction definition.Direction, source string) *compiledMapping {
 	if strings.TrimSpace(source) == "" {
-		// Present but empty. That is a statement rather than an omission -- see
-		// definition.ErrNoTransform -- so it is held as this half's outcome and
-		// reported to whoever asks for it, leaving the other half unaffected.
-		return &compiledMapping{err: fmt.Errorf("jsonmapper: mapping %q %s half: %w",
-			mappingRef, direction, definition.ErrNoTransform)}
+		// No transform for this direction. Not an error: a request half is
+		// legitimately empty when the caller builds its own request.
+		return &compiledMapping{}
 	}
 	expression, err := m.instance.Compile(source, false)
 	if err != nil {
@@ -372,9 +386,9 @@ func parseMapping(body []byte) (mappingFile, error) {
 	return file, nil
 }
 
-// marshalInput renders the named inputs a mapping reads -- beckn, _local and,
-// on the response leg, response -- as the single JSON document JSONata
-// evaluates against.
+// marshalInput renders the named inputs a mapping reads -- beckn and, on the
+// response leg, response -- as the single JSON document JSONata evaluates
+// against.
 func marshalInput(input any) ([]byte, error) {
 	document, err := json.Marshal(input)
 	if err != nil {

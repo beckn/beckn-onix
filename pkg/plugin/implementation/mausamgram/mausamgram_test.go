@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -249,20 +250,55 @@ func TestRunKeepsResolvedValuesInScopeForTheResponse(t *testing.T) {
 	if !ok {
 		t.Fatalf("response input = %T, want a map", mapper.responseInput)
 	}
-	for _, key := range []string{"beckn", "_local", "response"} {
+	for _, key := range []string{"beckn", "response"} {
 		if _, present := input[key]; !present {
 			t.Errorf("response mapping cannot see %q", key)
 		}
 	}
 
-	local, ok := input["_local"].(point)
-	if !ok {
-		t.Fatalf("_local = %T, want a point", input["_local"])
+	// A mapping is handed only what a party sent. Values this step resolved
+	// before the call stay in the step: it holds them already and uses them
+	// directly, so passing them through the mapping would be a detour and a
+	// second name for the same data.
+	if len(input) != 2 {
+		t.Errorf("response input carries %d keys (%v), want exactly beckn and response",
+			len(input), keysOf(input))
 	}
-	// GeoJSON order: the payload carries [lon, lat], so reading it positionally
-	// the other way round would put this point in the wrong hemisphere.
-	if local.Lat != 19.9975 || local.Lon != 73.7898 {
-		t.Errorf("_local = %+v, want lat 19.9975 lon 73.7898", local)
+}
+
+// keysOf names what an input document carries, for a readable failure.
+func keysOf(input map[string]any) []string {
+	names := make([]string, 0, len(input))
+	for name := range input {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// The request leg is handed the payload and nothing else.
+func TestRunGivesTheRequestMappingOnlyTheInboundPayload(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{}`)
+	}))
+	defer upstream.Close()
+
+	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+	if _, err := runStep(t, newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper), selectBody); err != nil {
+		t.Fatalf("Run() returned an unexpected error: %v", err)
+	}
+
+	input, ok := mapper.requestInput.(map[string]any)
+	if !ok {
+		t.Fatalf("request input = %T, want a map", mapper.requestInput)
+	}
+	if len(input) != 1 {
+		t.Errorf("request input carries %v, want only beckn", keysOf(input))
+	}
+	if _, present := input["beckn"]; !present {
+		t.Error("request mapping cannot see beckn")
 	}
 }
 
@@ -292,10 +328,11 @@ func TestRunSendsTheMappedBodyForAMethodThatTakesOne(t *testing.T) {
 	}
 }
 
-// A provider taking query parameters needs no request document built: the
-// mapping declares the action and leaves it empty, and the values the step
-// already resolved become the parameters.
-func TestRunSendsResolvedValuesWhenTheMappingDeclaresNoTransform(t *testing.T) {
+// A provider taking query parameters needs no request document built. The
+// mapping produces nothing, and the values this step resolved become the
+// parameters -- the step knows this provider, so it does not need the mapping's
+// help to call it.
+func TestRunSendsResolvedValuesWhenTheMappingProducesNothing(t *testing.T) {
 	t.Parallel()
 
 	var gotQuery string
@@ -305,7 +342,7 @@ func TestRunSendsResolvedValuesWhenTheMappingDeclaresNoTransform(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	mapper := &stubMapper{requestErr: definition.ErrNoTransform, responseResult: []byte(`{}`)}
+	mapper := &stubMapper{requestResult: nil, responseResult: []byte(`{}`)}
 	if _, err := runStep(t, newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper), selectBody); err != nil {
 		t.Fatalf("Run() returned an unexpected error: %v", err)
 	}
@@ -317,8 +354,56 @@ func TestRunSendsResolvedValuesWhenTheMappingDeclaresNoTransform(t *testing.T) {
 	}
 }
 
-// Only ErrNoTransform means "build it yourself". Any other mapping failure is a
-// real failure and must not be papered over by sending the resolved values.
+// A method that takes a body, and a mapping that produces nothing, means no
+// body -- not the resolved values dressed up as one. Query parameters are the
+// step's own doing; a body is the mapping's, and there is nothing to send.
+func TestRunSendsNoBodyWhenTheMappingProducesNothing(t *testing.T) {
+	t.Parallel()
+
+	var gotBody string
+	var gotLength int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotLength = r.ContentLength
+		body := make([]byte, 64)
+		n, _ := r.Body.Read(body)
+		gotBody = string(body[:n])
+		fmt.Fprint(w, `{}`)
+	}))
+	defer upstream.Close()
+
+	mapper := &stubMapper{requestResult: nil, responseResult: []byte(`{}`)}
+	if _, err := runStep(t, newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodPost)}, mapper), selectBody); err != nil {
+		t.Fatalf("Run() returned an unexpected error: %v", err)
+	}
+
+	if gotLength > 0 || gotBody != "" {
+		t.Errorf("upstream got a %d byte body (%q), want none", gotLength, gotBody)
+	}
+}
+
+// A response half that produces nothing leaves no Beckn answer to return.
+// Failing is the only honest outcome: answering with the provider's own shape
+// would put a non-Beckn body on the wire under a valid signature.
+func TestRunRefusesWhenTheResponseMappingProducesNothing(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"fcstday1":{"rain":12.4}}`)
+	}))
+	defer upstream.Close()
+
+	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: nil}
+	ctx, err := runStep(t, newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper), selectBody)
+	if err == nil {
+		t.Fatal("expected an empty response mapping to be refused")
+	}
+	if len(ctx.ResponseBody) != 0 {
+		t.Errorf("ResponseBody = %q, want nothing written", ctx.ResponseBody)
+	}
+}
+
+// A mapping that failed is a failure, and must not be papered over by sending
+// the resolved values instead.
 func TestRunDoesNotSubstituteForARealMappingFailure(t *testing.T) {
 	t.Parallel()
 

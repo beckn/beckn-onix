@@ -205,7 +205,7 @@ func (s *Step) serve(ctx *model.StepContext, plan *model.ProviderRecord) error {
 		return err
 	}
 
-	upstreamRequest, err := s.buildRequest(ctx, call.Mappings, beckn, local)
+	upstreamRequest, err := s.buildRequest(ctx, call, beckn, local)
 	if err != nil {
 		return err
 	}
@@ -220,19 +220,27 @@ func (s *Step) serve(ctx *model.StepContext, plan *model.ProviderRecord) error {
 		return fmt.Errorf("mausamgram: provider answered with something that is not JSON: %w", err)
 	}
 
-	// _local stays in scope: the provider does not repeat the point it was asked
-	// about, so the output's own coordinates have no other source.
-	//
 	// The same mapping reference as the request, other half: one file carries
-	// both directions for this action, because the response mapping usually
-	// depends on what the request mapping did.
+	// both directions for this action.
+	//
+	// The mapping is handed what each party sent and nothing else. The values
+	// resolved above are not passed in: this step holds them and used them to
+	// make the call, so handing them to the mapping would be a second name for
+	// the same data.
 	becknResponse, err := s.mapper.Transform(ctx, call.Mappings, definition.DirectionResponse, map[string]any{
 		"beckn":    beckn,
-		"_local":   local,
 		"response": answer,
 	})
 	if err != nil {
 		return err
+	}
+	if len(becknResponse) == 0 {
+		// Either the file has no response half, or its transform matched nothing
+		// in this answer. Both leave no Beckn response to return, and returning
+		// the provider's own shape instead would be worse than failing. The
+		// message says what was observed rather than guessing which it was.
+		return fmt.Errorf("mausamgram: the response half of %s produced nothing, so %s cannot be answered",
+			call.Mappings, plan.BindingKey)
 	}
 
 	ctx.ResponseBody = becknResponse
@@ -253,27 +261,40 @@ func servedActions(plan *model.ProviderRecord) []string {
 
 // buildRequest produces what the provider is sent.
 //
-// A mapping whose request half is empty is saying the request needs no document
-// built for it: this provider takes its parameters in the query, they are
-// already resolved, and putting them through a fetch and a compile to arrive at
-// the same two fields buys nothing. In that case the resolved values ARE the
-// parameters.
+// The mapping is handed the inbound payload and nothing else, and it produces a
+// document or it produces nothing. Nothing is the ordinary case here: this
+// provider takes its parameters in the query string, this step resolved them
+// already, and putting them through a fetch and a compile to arrive at the same
+// two fields would buy nothing.
 //
-// Anything else -- a provider wanting a body in its own shape -- goes through
-// the mapping, which is what the mapping is for.
-func (s *Step) buildRequest(ctx context.Context, mappingRef string, beckn any, local point) ([]byte, error) {
-	mapped, err := s.mapper.Transform(ctx, mappingRef, definition.DirectionRequest, map[string]any{
-		"beckn":  beckn,
-		"_local": local,
+// What nothing means depends on the method, and both readings are deliberate:
+//
+//   - a method with no body -- the resolved values ARE the parameters. This step
+//     knows this provider, so it does not need the mapping's help to call it.
+//   - a method with a body -- there is no body. An empty mapping means an empty
+//     request, not the resolved values dressed up as one; a body is the
+//     mapping's business and it supplied none.
+//
+// A half with no transform and a transform that matched nothing are treated
+// alike here, deliberately: for the request leg there is no document either way,
+// and inventing one would send the provider something nobody asked for.
+func (s *Step) buildRequest(ctx context.Context, call model.ActionPlan, beckn any, local point) ([]byte, error) {
+	mapped, err := s.mapper.Transform(ctx, call.Mappings, definition.DirectionRequest, map[string]any{
+		"beckn": beckn,
 	})
-	if err == nil {
-		return mapped, nil
-	}
-	if !errors.Is(err, definition.ErrNoTransform) {
+	if err != nil {
 		return nil, err
 	}
+	if len(mapped) > 0 {
+		return mapped, nil
+	}
 
-	log.Debugf(ctx, "mausamgram: %s carries no request half; sending the resolved point", mappingRef)
+	if hasBody(call.Method) {
+		log.Debugf(ctx, "mausamgram: the request half of %s produced nothing; sending no body", call.Mappings)
+		return nil, nil
+	}
+
+	log.Debugf(ctx, "mausamgram: the request half of %s produced nothing; sending the resolved point", call.Mappings)
 	parameters, err := json.Marshal(local)
 	if err != nil {
 		return nil, fmt.Errorf("mausamgram: could not encode the resolved point: %w", err)

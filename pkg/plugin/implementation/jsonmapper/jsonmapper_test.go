@@ -3,7 +3,6 @@ package jsonmapper
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,26 +14,28 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
-// bothDirections is the published form: one binding-action, both halves. The
-// response half reads _local, which is what makes one file the right unit --
-// it only works because the request half put lat and lon there.
+// bothDirections is the published form: one binding-action, both halves.
+//
+// A mapping reads only what a party sent -- the inbound payload, and on the way
+// back the provider's answer. Values a provider plugin resolved before the call
+// are not passed in: the plugin holds them already and uses them directly, so
+// routing them through the mapping would be a detour.
 const bothDirections = `request: |
-  { "lat": _local.lat, "txn": beckn.context.transactionId }
+  { "txn": beckn.context.transactionId }
 
 response: |
-  { "lat": _local.lat, "txn": beckn.context.transactionId, "rain": response.fcstday1.rain }
+  { "txn": beckn.context.transactionId, "rain": response.fcstday1.rain }
 `
 
-// requestOnly is the shape of a mapping for an action whose answer needs no
-// translation, or whose response half has not been written yet.
+// requestOnly is the shape of a mapping whose answer needs no translation, or
+// whose response half has not been written yet.
 const requestOnly = `request: |
-  { "lat": _local.lat }
+  { "txn": beckn.context.transactionId }
 `
 
 func requestInput() map[string]any {
 	return map[string]any{
-		"beckn":  map[string]any{"context": map[string]any{"transactionId": "txn-123", "messageId": "msg-1"}},
-		"_local": map[string]any{"lat": 19.9975, "lon": 73.7898},
+		"beckn": map[string]any{"context": map[string]any{"transactionId": "txn-123", "messageId": "msg-1"}},
 	}
 }
 
@@ -101,18 +102,14 @@ func TestTransformRunsTheRequestHalf(t *testing.T) {
 	if err := json.Unmarshal(got, &result); err != nil {
 		t.Fatalf("failed to decode the result: %v", err)
 	}
-	if result["lat"] != 19.9975 {
-		t.Errorf("lat = %v, want 19.9975 -- _local was not reachable", result["lat"])
-	}
 	if result["txn"] != "txn-123" {
 		t.Errorf("txn = %v, want txn-123 -- beckn was not reachable", result["txn"])
 	}
 }
 
-// The response half reads the upstream answer under response, and still reads
-// _local -- which is the argument for one file: the provider does not repeat the
-// point it was asked about, so the answer is only mappable next to the request
-// that produced it.
+// The response half reads the upstream answer under response, alongside the
+// original payload under beckn -- the context to echo and the offer to quote
+// against are only in the request that produced the answer.
 func TestTransformRunsTheResponseHalfAlongsideTheRequest(t *testing.T) {
 	t.Parallel()
 
@@ -131,7 +128,7 @@ func TestTransformRunsTheResponseHalfAlongsideTheRequest(t *testing.T) {
 	for _, field := range []struct {
 		key  string
 		want any
-	}{{"lat", 19.9975}, {"txn", "txn-123"}, {"rain", 12.4}} {
+	}{{"txn", "txn-123"}, {"rain", 12.4}} {
 		if result[field.key] != field.want {
 			t.Errorf("%s = %v, want %v", field.key, result[field.key], field.want)
 		}
@@ -169,13 +166,13 @@ response: |
 	}
 }
 
-// --- a half that supplies no transform --------------------------------------
+// --- a half with no transform ----------------------------------------------
 
-// The ordinary case for a provider taking query parameters, or one whose answer
-// is already in shape: the file carries the other half, and this one is reported
-// as its own sentinel so a caller that does not handle it fails loudly rather
-// than sending an empty document.
-func TestTransformReportsAHalfWithNoTransform(t *testing.T) {
+// A half that is absent, or present and empty, has no transform to apply. That
+// is not a failure and not a special case: it produces nothing, and the caller
+// decides what nothing means for the leg it is on. A request half with no
+// transform means no request document -- so no body.
+func TestTransformProducesNothingForAHalfWithNoTransform(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
@@ -183,7 +180,7 @@ func TestTransformReportsAHalfWithNoTransform(t *testing.T) {
 		mapping string
 	}{
 		{"the half is absent", requestOnly},
-		{"the half is present and empty", "request: |\n  { \"lat\": _local.lat }\nresponse: \"\"\n"},
+		{"the half is present and empty", "request: |\n  { \"txn\": beckn.context.transactionId }\nresponse: \"\"\n"},
 	}
 
 	for _, tc := range testCases {
@@ -194,17 +191,49 @@ func TestTransformReportsAHalfWithNoTransform(t *testing.T) {
 			defer srv.Close()
 			mapper := newTestMapper(t)
 
-			_, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionResponse, responseInput())
-			if !errors.Is(err, definition.ErrNoTransform) {
-				t.Errorf("expected ErrNoTransform, got %v", err)
+			got, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionResponse, responseInput())
+			if err != nil {
+				t.Errorf("a half with no transform is not an error, got %v", err)
+			}
+			if len(got) != 0 {
+				t.Errorf("produced %q, want nothing", got)
 			}
 
-			// The other half is unaffected: one direction needing no transform
+			// The other half is unaffected: one direction having no transform
 			// says nothing about the other.
-			if _, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput()); err != nil {
+			out, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput())
+			if err != nil {
 				t.Errorf("the other half must still be served: %v", err)
 			}
+			if len(out) == 0 {
+				t.Error("the other half produced nothing, want its output")
+			}
 		})
+	}
+}
+
+// Nothing and a failure must stay distinguishable. A half that will not compile
+// produces an error, not nothing -- reading it as nothing would send an unmapped
+// upstream answer out as a Beckn response.
+func TestTransformSeparatesNothingFromAFailure(t *testing.T) {
+	t.Parallel()
+
+	mapping := `request: ""
+
+response: |
+  {{{
+`
+	srv := newMappingServer(t, mapping, nil)
+	defer srv.Close()
+	mapper := newTestMapper(t)
+
+	got, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionRequest, requestInput())
+	if err != nil || len(got) != 0 {
+		t.Errorf("the empty half: got %q, %v -- want nothing and no error", got, err)
+	}
+
+	if _, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionResponse, responseInput()); err == nil {
+		t.Error("the uncompilable half must report an error, not nothing")
 	}
 }
 
@@ -320,7 +349,7 @@ func TestTransformIsolatesABrokenHalf(t *testing.T) {
 	t.Parallel()
 
 	mapping := `request: |
-  { "lat": _local.lat }
+  { "txn": beckn.context.transactionId }
 
 response: |
   {{{
@@ -338,12 +367,6 @@ response: |
 	}()
 	if err == nil {
 		t.Fatal("expected an uncompilable half to be refused")
-	}
-	// A half that will not compile is broken, not absent, and must not be read
-	// as "supplies no transform" -- that would send the upstream answer through
-	// unmapped.
-	if errors.Is(err, definition.ErrNoTransform) {
-		t.Error("an uncompilable half must not report ErrNoTransform")
 	}
 }
 

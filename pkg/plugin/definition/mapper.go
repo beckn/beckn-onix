@@ -2,11 +2,10 @@ package definition
 
 import (
 	"context"
-	"errors"
 )
 
 // Direction names which half of a mapping to run. A mapping file carries both,
-// because the response half usually depends on what the request half did.
+// because both legs of one upstream call belong together.
 type Direction string
 
 const (
@@ -32,6 +31,15 @@ type Mapper interface {
 	//
 	// Which action the mapping serves is settled by the registry entry that
 	// named it, so only the direction is passed here.
+	//
+	// input carries what a party sent: the inbound payload, and on the way back
+	// the provider's answer. It deliberately does not carry values the caller
+	// resolved for itself -- the caller holds those already, so routing them
+	// through a mapping would be a detour and a second name for the same data.
+	//
+	// A direction the file has no transform for produces nothing, with no error.
+	// What nothing means belongs to the caller: on the request leg it means there
+	// is no document to send.
 	Transform(ctx context.Context, mappingRef string, direction Direction, input any) ([]byte, error)
 }
 
@@ -39,19 +47,3 @@ type Mapper interface {
 type MapperProvider interface {
 	New(ctx context.Context, config map[string]string) (Mapper, func() error, error)
 }
-
-// ErrNoTransform reports an action a mapping file declares but leaves empty.
-//
-// An empty mapping is a statement, not an omission: this action needs no
-// document built for it, because the caller supplies the request itself. A
-// provider taking two query parameters is the ordinary case -- the values are
-// already resolved, and passing them through a fetch and a compile to arrive at
-// the same two fields buys nothing.
-//
-// It is a sentinel rather than an empty result so that a caller which does not
-// handle it fails loudly. Returning (nil, nil) would let one send an empty
-// request instead, which a provider answers with a 200 and the wrong data.
-//
-// An action absent from the file is a different thing entirely: that capability
-// does not serve it, and Transform refuses.
-var ErrNoTransform = errors.New("mapping declares this action but supplies no transform")
