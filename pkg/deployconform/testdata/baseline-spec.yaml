@@ -1,0 +1,55 @@
+# Example deployment-baseline SPEC — the document a network facilitator (NFO)
+# authors by hand, once per devkit release. It is the input to:
+#
+#   deployconform baseline --root <devkit> --spec baseline-spec.yaml --out baseline.yaml
+#
+# which fills in the computed fields (per-role artifact hashes, canonical
+# content, root hashes) from the reference devkit checkout. The generated
+# baseline.yaml is then signed (detached signature) and referenced from the
+# network manifest's `deployment:` section.
+#
+# This spec targets the miniature devkit under testdata/devkit and is
+# exercised by the package test suite, so it is guaranteed to be a working
+# example.
+
+# ----- Identity: binds the baseline to one network and one devkit release --
+networkId: "example.org/testnet"
+devkitId: "mini-devkit"
+releaseId: "2026.07"
+
+# ----- Where the compose file lives, relative to the devkit root -----------
+composePath: "install/docker-compose.yml"
+
+# ----- Variance rules: the ONLY paths participants may change --------------
+# Everything not listed here is network-fixed and hash-pinned. Artifact globs
+# match artifact IDs (root-relative file paths, or "compose:<service>" for
+# compose service definitions). Paths are dot notation; lists are traversed
+# transparently; "*" matches any key. A rule with `artifacts` but no `paths`
+# marks the whole artifact participant-owned (only its presence is checked).
+variance:
+  # Adapter configs: identity and infrastructure knobs vary per participant;
+  # pipeline steps, plugin wiring, and policy references stay network-fixed.
+  - artifacts: ["config/adapter-*.yaml"]
+    paths:
+      - "http.port"
+      - "modules.handler.plugins.keyManager.config"
+
+  # Routing configs are wholly participant-owned: each participant points
+  # callbacks at their own backend (sandbox in the devkit, real systems in
+  # production).
+  - artifacts: ["config/routing-*.yaml"]
+
+  # Compose service definitions: host ports, container names, and the redis
+  # address vary per deployment; images and commands stay network-fixed.
+  - artifacts: ["compose:*"]
+    paths: ["ports", "container_name", "environment.REDIS_ADDR"]
+
+# ----- Roles: the slice of the devkit each participant type runs -----------
+# Only listed services (and the files reachable from them) are verified.
+# Sandbox/mock services are deliberately not listed in any role: they are
+# replaced by real systems in production and are out of conformance scope.
+roles:
+  alpha:
+    services: ["onix-alpha", "redis-alpha"]
+  beta:
+    services: ["onix-beta"]

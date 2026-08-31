@@ -1,0 +1,7 @@
+# Policy config referenced from adapter-alpha.yaml; references the rego file
+# to exercise a second level of recursive discovery.
+networkPolicies:
+  default:
+    type: file
+    location: ./policies/network.rego
+    query: data.test.policy.result

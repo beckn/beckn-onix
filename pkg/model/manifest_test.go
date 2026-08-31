@@ -21,11 +21,11 @@ func validNetworkManifestForTest(networkID string, now time.Time) NetworkManifes
 			Type:   PolicyTypeRego,
 			Source: PolicySourceFile,
 			File: &NetworkManifestFile{
-				ID:                       "network-policy-file",
-				URL:                      "https://example.com/policy.rego",
-				PolicyQueryPath:          "data.logistics.result",
-				Signed:                   true,
-				SignatureURL:             "https://example.com/policy.rego.sig",
+				ID:                        "network-policy-file",
+				URL:                       "https://example.com/policy.rego",
+				PolicyQueryPath:           "data.logistics.result",
+				Signed:                    true,
+				SignatureURL:              "https://example.com/policy.rego.sig",
 				SigningPublicKeyLookupURL: "https://example.com/public-key",
 			},
 		},
@@ -34,6 +34,37 @@ func validNetworkManifestForTest(networkID string, now time.Time) NetworkManifes
 			EffectiveUntil: now.Add(1 * time.Hour).Format(time.RFC3339),
 			Signed:         &signed,
 		},
+	}
+}
+
+// validDeploymentForTest returns a deployment section that passes validation,
+// for mutation-based failure cases.
+func validDeploymentForTest() *NetworkManifestDeployment {
+	return &NetworkManifestDeployment{
+		DevkitID: "p2p-trading-devkit",
+		Baseline: &NetworkManifestArtifactRef{
+			ID:                        "deployment-baseline-v1",
+			URL:                       "https://example.com/baseline.yaml",
+			Signed:                    true,
+			SignatureURL:              "https://example.com/baseline.yaml.sig",
+			SigningPublicKeyLookupURL: "https://example.com/public-key",
+		},
+	}
+}
+
+// validObservabilityForTest returns an observability section that passes
+// validation, for mutation-based failure cases.
+func validObservabilityForTest() *NetworkManifestObservability {
+	return &NetworkManifestObservability{
+		Enabled: true,
+		Config: &NetworkManifestArtifactRef{
+			ID:                        "observability-fields-v1",
+			URL:                       "https://example.com/fields.yaml",
+			Signed:                    true,
+			SignatureURL:              "https://example.com/fields.yaml.sig",
+			SigningPublicKeyLookupURL: "https://example.com/public-key",
+		},
+		Collector: &NetworkManifestCollector{URL: "https://telemetry.example.com/v1/network/events"},
 	}
 }
 
@@ -112,6 +143,84 @@ func TestValidateNetworkManifest(t *testing.T) {
 				}
 			},
 			wantErrSub: "requires policies.bundle.signingPublicKeyLookupUrl",
+		},
+		{
+			name: "valid deployment section",
+			mutate: func(manifest *NetworkManifest) {
+				manifest.Deployment = validDeploymentForTest()
+			},
+		},
+		{
+			name: "deployment missing devkit id",
+			mutate: func(manifest *NetworkManifest) {
+				manifest.Deployment = validDeploymentForTest()
+				manifest.Deployment.DevkitID = " "
+			},
+			wantErrSub: "missing deployment.devkitId",
+		},
+		{
+			name: "deployment missing baseline",
+			mutate: func(manifest *NetworkManifest) {
+				manifest.Deployment = validDeploymentForTest()
+				manifest.Deployment.Baseline = nil
+			},
+			wantErrSub: "missing deployment.baseline",
+		},
+		{
+			name: "deployment signed baseline missing signature url",
+			mutate: func(manifest *NetworkManifest) {
+				manifest.Deployment = validDeploymentForTest()
+				manifest.Deployment.Baseline.SignatureURL = ""
+			},
+			wantErrSub: "requires deployment.baseline.signatureUrl",
+		},
+		{
+			name: "deployment policy with unsupported source",
+			mutate: func(manifest *NetworkManifest) {
+				manifest.Deployment = validDeploymentForTest()
+				manifest.Deployment.Policy = &NetworkManifestPolicies{
+					Type:   PolicyTypeRego,
+					Source: "archive",
+				}
+			},
+			wantErrSub: `unsupported deployment.policy.source "archive"`,
+		},
+		{
+			name: "deployment policy file missing query path",
+			mutate: func(manifest *NetworkManifest) {
+				manifest.Deployment = validDeploymentForTest()
+				manifest.Deployment.Policy = &NetworkManifestPolicies{
+					Type:   PolicyTypeRego,
+					Source: PolicySourceFile,
+					File: &NetworkManifestFile{
+						ID:  "deployment-policy",
+						URL: "https://example.com/deployment.rego",
+					},
+				}
+			},
+			wantErrSub: "missing required deployment.policy.file fields",
+		},
+		{
+			name: "valid observability section",
+			mutate: func(manifest *NetworkManifest) {
+				manifest.Observability = validObservabilityForTest()
+			},
+		},
+		{
+			name: "observability signed config missing key lookup",
+			mutate: func(manifest *NetworkManifest) {
+				manifest.Observability = validObservabilityForTest()
+				manifest.Observability.Config.SigningPublicKeyLookupURL = ""
+			},
+			wantErrSub: "requires observability.config.signingPublicKeyLookupUrl",
+		},
+		{
+			name: "observability collector missing url",
+			mutate: func(manifest *NetworkManifest) {
+				manifest.Observability = validObservabilityForTest()
+				manifest.Observability.Collector.URL = " "
+			},
+			wantErrSub: "missing observability.collector.url",
 		},
 	}
 
