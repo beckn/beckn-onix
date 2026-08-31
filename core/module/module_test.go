@@ -93,6 +93,14 @@ func (m *mockPluginManager) CatalogPublisher(_ context.Context, _ definition.Key
 	return nil, nil
 }
 
+func (m *mockPluginManager) Mapper(_ context.Context, _ *plugin.Config) (definition.Mapper, error) {
+	return nil, nil
+}
+
+func (m *mockPluginManager) ProviderStep(_ context.Context, _ definition.ProviderRecordLookup, _ definition.Mapper, _ *plugin.Config) (definition.Step, error) {
+	return nil, nil
+}
+
 func (m *mockPluginManager) CatalogBlobStore(_ context.Context, _ *plugin.Config) (definition.CatalogBlobStore, error) {
 	return nil, nil
 }

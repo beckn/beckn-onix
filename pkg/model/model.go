@@ -368,6 +368,15 @@ type StepContext struct {
 	InboundAuthSignature string // Raw Base64 signature from the inbound Authorization header's signature="..." attribute
 	IsCallerHandler      bool   // True when the handler is a Caller (outbound); false for Receiver (inbound)
 
+	// ResponseBody, when non-empty, is written as the synchronous response in
+	// place of the generated ACK envelope. It is how a step that has already
+	// obtained an answer -- a provider plugin that called upstream itself, rather
+	// than routing -- returns that answer to the caller.
+	//
+	// Empty means "generate the ACK", which is every module that does not set it.
+	// It is only consulted on the no-route path: once a Route is set the proxy
+	// owns the response.
+	ResponseBody []byte
 }
 
 // WithContext updates the existing StepContext with a new context.

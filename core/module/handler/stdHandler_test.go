@@ -169,6 +169,14 @@ func (noopPluginManager) CatalogPublisher(_ context.Context, _ definition.KeyMan
 	return nil, nil
 }
 
+func (noopPluginManager) Mapper(_ context.Context, _ *plugin.Config) (definition.Mapper, error) {
+	return nil, nil
+}
+
+func (noopPluginManager) ProviderStep(_ context.Context, _ definition.ProviderRecordLookup, _ definition.Mapper, _ *plugin.Config) (definition.Step, error) {
+	return nil, nil
+}
+
 func (noopPluginManager) CatalogBlobStore(_ context.Context, _ *plugin.Config) (definition.CatalogBlobStore, error) {
 	return nil, nil
 }

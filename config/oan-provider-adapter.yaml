@@ -1,0 +1,88 @@
+# OAN provider adapter.
+#
+# Serves /select synchronously: verifies the sender, resolves the capability's
+# call plan from the registry, calls the provider, and answers with the mapped
+# result. There is no callback -- the answer is the HTTP response.
+#
+# Adding a provider is three things and no Go changes to this file's shape:
+#   1. a registry row binding "<participantId>|<capabilityCode>" to a call plan
+#   2. two mapping files, published at the URLs that row names
+#   3. one more entry under providerSteps
+appName: "oan-provider-adapter"
+
+log:
+  level: debug
+  destinations:
+    - type: stdout
+  contextKeys: [transaction_id, message_id, subscriber_id, module_id]
+
+http:
+  port: 8080
+  timeout:
+    read: 30
+    write: 30
+    idle: 30
+
+pluginManager:
+  root: ./plugins
+
+modules:
+  - name: oanProvider
+    # A subtree, not one action. The trailing slash matters: Go's ServeMux
+    # treats a path without one as an exact match, so /beckn/select would mount
+    # that action and 404 every other. Every action lands here, and which one it
+    # is comes from the payload's context.action, never from the URL.
+    path: /beckn/
+    handler:
+      type: std
+      role: bpp
+      subscriberId: provider-network-vistaar.da.gov.in
+
+      plugins:
+        # Serves both halves: the sender's signing key for validateSign, and the
+        # capability call plans the provider steps resolve against.
+        registry:
+          id: oanregistry
+          config:
+            url: http://registry:8081/api/v1
+            entity: Participant
+            providerEntity: ProviderSchema
+            # Opt-in. This is exactly how long a suspended participant keeps
+            # verifying, and a withdrawn capability keeps being called.
+            cacheTTL: 60s
+
+        keyManager:
+          id: simplekeymanager
+          config:
+            subscriberId: provider-network-vistaar.da.gov.in
+
+        signer:
+          id: signer
+        signValidator:
+          id: signvalidator
+
+        # Generic. Knows nothing about any provider; fetches, compiles and
+        # caches whatever the registry's mapping URLs point at.
+        mapper:
+          id: jsonmapper
+          config:
+            fetchTimeout: 5s
+            cacheTTL: 1h
+            negativeTTL: 1m
+
+        # One entry per provider capability. Each recognises its own binding key
+        # and passes through anything else, which is the whole dispatch
+        # mechanism. Credentials are named, never held: authScheme says how to
+        # present them, and the *Env keys name environment variables.
+        providerSteps:
+          - id: mausamgram
+            config:
+              bindingKey: "mausamgram|openagrinet:WeatherObservation"
+              authScheme: basic
+              usernameEnv: MAUSAMGRAM_USER
+              passwordEnv: MAUSAMGRAM_X_API_KEY
+
+      steps:
+        - validateSign   # the sender's key, from the registry
+        - mausamgram     # resolve, map out, call, map back
+        - signAck        # signs whatever the step answered with

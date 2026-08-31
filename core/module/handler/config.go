@@ -31,6 +31,8 @@ type PluginManager interface {
 	PayloadStore(ctx context.Context, cache definition.Cache, namespace string, cfg *plugin.Config) (definition.PayloadStore, error)
 	CatalogPublisher(ctx context.Context, km definition.KeyManager, blobStore definition.CatalogBlobStore, registry definition.RegistryLookup, cfg *plugin.Config) (definition.CatalogPublisher, error)
 	CatalogBlobStore(ctx context.Context, cfg *plugin.Config) (definition.CatalogBlobStore, error)
+	Mapper(ctx context.Context, cfg *plugin.Config) (definition.Mapper, error)
+	ProviderStep(ctx context.Context, registry definition.ProviderRecordLookup, mapper definition.Mapper, cfg *plugin.Config) (definition.Step, error)
 }
 
 // Type defines different handler types for processing requests.
@@ -85,8 +87,14 @@ type PluginCfg struct {
 	PayloadStore          *plugin.Config  `yaml:"payloadStore,omitempty"`
 	CatalogPublisher      *plugin.Config  `yaml:"catalogPublisher,omitempty"`
 	CatalogBlobStore      *plugin.Config  `yaml:"catalogBlobStore,omitempty"`
+	Mapper                *plugin.Config  `yaml:"mapper,omitempty"`
 	Middleware            []plugin.Config `yaml:"middleware,omitempty"`
 	Steps                 []plugin.Config
+	// ProviderSteps are steps that serve one provider capability end to end.
+	// Separate from Steps because they are handed a registry and a mapper, which
+	// the plain StepProvider contract cannot do. They resolve by id in a step
+	// list exactly as Steps entries do.
+	ProviderSteps []plugin.Config `yaml:"providerSteps,omitempty"`
 }
 
 // PluginEntries returns a flat list of all configured plugins in this PluginCfg.
@@ -115,9 +123,15 @@ func (p *PluginCfg) PluginEntries() []telemetry.PluginEntry {
 	add("payload_store", p.PayloadStore)
 	add("catalog_publisher", p.CatalogPublisher)
 	add("catalog_blob_store", p.CatalogBlobStore)
+	add("mapper", p.Mapper)
 	for i := range p.Steps {
 		if p.Steps[i].ID != "" {
 			entries = append(entries, telemetry.PluginEntry{Type: "step", ID: p.Steps[i].ID})
+		}
+	}
+	for i := range p.ProviderSteps {
+		if p.ProviderSteps[i].ID != "" {
+			entries = append(entries, telemetry.PluginEntry{Type: "provider_step", ID: p.ProviderSteps[i].ID})
 		}
 	}
 	for i := range p.Middleware {

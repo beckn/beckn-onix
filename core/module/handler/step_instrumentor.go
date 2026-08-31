@@ -93,6 +93,7 @@ func (is *InstrumentedStep) Run(ctx *model.StepContext) error {
 	}
 
 	ctx.Body = stepCtx.Body
+	ctx.ResponseBody = stepCtx.ResponseBody
 	ctx.Route = stepCtx.Route
 	ctx.SubID = stepCtx.SubID
 	ctx.Role = stepCtx.Role

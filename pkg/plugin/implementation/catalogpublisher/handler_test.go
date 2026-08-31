@@ -145,6 +145,14 @@ func (m *catalogPublishTestManager) Registry(context.Context, definition.Cache, 
 func (m *catalogPublishTestManager) KeyManager(context.Context, definition.RegistryLookup, *plugin.Config) (definition.KeyManager, error) {
 	return fakeHandlerKeyManager{}, nil
 }
+func (m *catalogPublishTestManager) Mapper(context.Context, *plugin.Config) (definition.Mapper, error) {
+	return nil, nil
+}
+
+func (m *catalogPublishTestManager) ProviderStep(context.Context, definition.ProviderRecordLookup, definition.Mapper, *plugin.Config) (definition.Step, error) {
+	return nil, nil
+}
+
 func (m *catalogPublishTestManager) CatalogBlobStore(context.Context, *plugin.Config) (definition.CatalogBlobStore, error) {
 	return fakeHandlerCatalogBlobStore{}, nil
 }

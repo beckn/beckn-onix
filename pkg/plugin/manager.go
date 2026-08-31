@@ -700,6 +700,47 @@ func (m *Manager) Crawler(ctx context.Context, registry definition.RegistryLooku
 	return crawler, nil
 }
 
+// Mapper returns a Mapper instance based on the provided configuration.
+func (m *Manager) Mapper(ctx context.Context, cfg *Config) (definition.Mapper, error) {
+	mp, err := provider[definition.MapperProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	mapper, closer, err := mp.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.closers = append(m.closers, func() {
+			if err := closer(); err != nil {
+				log.Errorf(context.Background(), err, "Failed to close mapper plugin")
+			}
+		})
+	}
+	return mapper, nil
+}
+
+// ProviderStep returns a ProviderStep instance based on the provided
+// configuration, handing it the registry and mapper it needs.
+func (m *Manager) ProviderStep(ctx context.Context, registry definition.ProviderRecordLookup, mapper definition.Mapper, cfg *Config) (definition.Step, error) {
+	pp, err := provider[definition.ProviderStepProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	step, closer, err := pp.New(ctx, registry, mapper, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.closers = append(m.closers, func() {
+			if err := closer(); err != nil {
+				log.Errorf(context.Background(), err, "Failed to close provider step plugin %s", cfg.ID)
+			}
+		})
+	}
+	return step, nil
+}
+
 // Validator implements handler.PluginManager.
 func (m *Manager) Validator(ctx context.Context, cfg *Config) (definition.SchemaValidator, error) {
 	panic("unimplemented")

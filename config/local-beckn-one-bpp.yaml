@@ -79,6 +79,33 @@ modules:
             retry_max: 3
             retry_wait_min: 100ms
             retry_wait_max: 500ms
+
+        # To resolve signing keys from an OAN Registry (SunbirdRC) instead,
+        # swap the block above for this one. Both implement RegistryLookup, so
+        # nothing else in the module changes. See
+        # pkg/plugin/implementation/oanregistry/README.md.
+        #
+        # registry:
+        #   id: oanregistry
+        #   config:
+        #     # Required, and the only setting with no default. Include the API
+        #     # version prefix -- the plugin appends /{entity}/search. Use the
+        #     # service name, not localhost: in a container localhost is the
+        #     # adapter itself.
+        #     url: http://registry:8081/api/v1
+        #     entity: Participant
+        #     # Tighter than dediregistry's on purpose: this runs inside
+        #     # signature validation on every inbound message, so
+        #     # timeout x (retry_max + 1) is time a request waits before it can
+        #     # even be rejected.
+        #     timeout: 2
+        #     retry_max: 1
+        #     retry_wait_min: 100ms
+        #     retry_wait_max: 500ms
+        #     # Omitted means caching is off. The TTL is how long a suspended
+        #     # participant keeps verifying, so it is opt-in. Needs a cache
+        #     # plugin configured as well.
+        #     # cacheTTL: 60s
         keyManager:
           id: simplekeymanager
           config:
@@ -154,6 +181,33 @@ modules:
             retry_max: 3
             retry_wait_min: 100ms
             retry_wait_max: 500ms
+
+        # To resolve signing keys from an OAN Registry (SunbirdRC) instead,
+        # swap the block above for this one. Both implement RegistryLookup, so
+        # nothing else in the module changes. See
+        # pkg/plugin/implementation/oanregistry/README.md.
+        #
+        # registry:
+        #   id: oanregistry
+        #   config:
+        #     # Required, and the only setting with no default. Include the API
+        #     # version prefix -- the plugin appends /{entity}/search. Use the
+        #     # service name, not localhost: in a container localhost is the
+        #     # adapter itself.
+        #     url: http://registry:8081/api/v1
+        #     entity: Participant
+        #     # Tighter than dediregistry's on purpose: this runs inside
+        #     # signature validation on every inbound message, so
+        #     # timeout x (retry_max + 1) is time a request waits before it can
+        #     # even be rejected.
+        #     timeout: 2
+        #     retry_max: 1
+        #     retry_wait_min: 100ms
+        #     retry_wait_max: 500ms
+        #     # Omitted means caching is off. The TTL is how long a suspended
+        #     # participant keeps verifying, so it is opt-in. Needs a cache
+        #     # plugin configured as well.
+        #     # cacheTTL: 60s
         keyManager:
           id: simplekeymanager
           config:
@@ -238,6 +292,33 @@ modules:
             retry_max: 3
             retry_wait_min: 100ms
             retry_wait_max: 500ms
+
+        # To resolve signing keys from an OAN Registry (SunbirdRC) instead,
+        # swap the block above for this one. Both implement RegistryLookup, so
+        # nothing else in the module changes. See
+        # pkg/plugin/implementation/oanregistry/README.md.
+        #
+        # registry:
+        #   id: oanregistry
+        #   config:
+        #     # Required, and the only setting with no default. Include the API
+        #     # version prefix -- the plugin appends /{entity}/search. Use the
+        #     # service name, not localhost: in a container localhost is the
+        #     # adapter itself.
+        #     url: http://registry:8081/api/v1
+        #     entity: Participant
+        #     # Tighter than dediregistry's on purpose: this runs inside
+        #     # signature validation on every inbound message, so
+        #     # timeout x (retry_max + 1) is time a request waits before it can
+        #     # even be rejected.
+        #     timeout: 2
+        #     retry_max: 1
+        #     retry_wait_min: 100ms
+        #     retry_wait_max: 500ms
+        #     # Omitted means caching is off. The TTL is how long a suspended
+        #     # participant keeps verifying, so it is opt-in. Needs a cache
+        #     # plugin configured as well.
+        #     # cacheTTL: 60s
         cache:
           id: cache
           config:

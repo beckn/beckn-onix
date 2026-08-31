@@ -55,6 +55,7 @@ type stdHandler struct {
 	transportWrapper   definition.TransportWrapper
 	payloadTransformer definition.Step
 	payloadStore       definition.PayloadStore
+	mapper             definition.Mapper
 	// ackSigner is non-nil only when the "signAck" step is configured (Receiver
 	// modules). It is also used to sign pipeline-NACK responses so that ALL
 	// synchronous responses carry a Signature header per NFH-007 CON-004-02.
@@ -227,7 +228,7 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			responseBody = sendAck(stepCtx, wrapped)
+			responseBody = sendResponse(stepCtx, wrapped)
 			return
 		}
 		// Handle routing based on the defined route type.
@@ -596,9 +597,37 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.payloadTransformer, err = loadPayloadTransformerStep(ctx, mgr, cfg.PayloadTransformer); err != nil {
 		return err
 	}
+	if h.mapper, err = LoadPlugin(ctx, "Mapper", cfg.Mapper, mgr.Mapper); err != nil {
+		return err
+	}
 
 	log.Debugf(ctx, "All required plugins successfully loaded for stdHandler")
 	return nil
+}
+
+// loadProviderStep loads one provider step, checking up front for the
+// dependencies it cannot be built without. Each produces a clear startup
+// failure rather than a nil dereference on the first request to reach the step.
+func (h *stdHandler) loadProviderStep(ctx context.Context, mgr PluginManager, cfg *plugin.Config) (definition.Step, error) {
+	if h.mapper == nil {
+		return nil, fmt.Errorf("failed to load ProviderStep plugin (%s): Mapper plugin not configured", cfg.ID)
+	}
+	if h.registry == nil {
+		return nil, fmt.Errorf("failed to load ProviderStep plugin (%s): Registry plugin not configured", cfg.ID)
+	}
+	// A registry serving signing keys need not also serve call plans -- they are
+	// separate interfaces for that reason -- so this narrowing is checked rather
+	// than assumed.
+	recordLookup, ok := h.registry.(definition.ProviderRecordLookup)
+	if !ok {
+		return nil, fmt.Errorf("failed to load ProviderStep plugin (%s): Registry plugin does not implement ProviderRecordLookup", cfg.ID)
+	}
+	step, err := mgr.ProviderStep(ctx, recordLookup, h.mapper, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load ProviderStep plugin (%s): %w", cfg.ID, err)
+	}
+	log.Debugf(ctx, "Loaded ProviderStep plugin: %s", cfg.ID)
+	return step, nil
 }
 
 // initSteps initializes and validates processing steps for the processor.
@@ -610,6 +639,17 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 		step, err := mgr.Step(ctx, &c)
 		if err != nil {
 			return fmt.Errorf("failed to initialize plugin step %s: %w", c.ID, err)
+		}
+		steps[c.ID] = step
+	}
+
+	// Load provider steps, which are handed the registry and mapper that plain
+	// plugin steps cannot receive. They land in the same id-keyed map, so a step
+	// list names them exactly like any other plugin step.
+	for _, c := range cfg.Plugins.ProviderSteps {
+		step, err := h.loadProviderStep(ctx, mgr, &c)
+		if err != nil {
+			return err
 		}
 		steps[c.ID] = step
 	}

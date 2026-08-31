@@ -32,6 +32,7 @@ plugins=(
     "dediregistry"
     "oanregistry"
     "jsonmapper"
+    "mausamgram"
     "manifestloader"
     "reqpreprocessor"
     "otelsetup"
