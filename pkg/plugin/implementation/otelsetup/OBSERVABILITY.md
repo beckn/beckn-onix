@@ -301,6 +301,29 @@ At `SIGINT`/`SIGTERM`, the adapter calls the `otelsetup` closer, which flushes a
 
 ---
 
+### Schema version mediation
+
+Emitted by the `schemaversionmediator` plugin when it is configured on a handler.
+
+| Metric | Type | Unit | Description |
+|---|---|---|---|
+| `onix_schema_mediation_outcomes_total` | Counter | `{mediation}` | Mediation decisions by outcome |
+| `onix_schema_mediation_cache_hits_total` | Counter | `{hit}` | Mediator cache lookups served from memory |
+| `onix_schema_mediation_cache_misses_total` | Counter | `{miss}` | Mediator cache lookups that had to fetch or compile |
+
+**Labels:**
+
+| Metric | Labels |
+|---|---|
+| `onix_schema_mediation_outcomes_total` | `outcome`, `action`, `counterparty_id`, `network_id` |
+| `onix_schema_mediation_cache_hits_total`, `onix_schema_mediation_cache_misses_total` | `cache` (`artifact` / `expression`) |
+
+**`outcome` values:** `translation_applied`, `translation_skipped_compatible`, `translation_skipped_no_manifest`, `translation_rejected_by_policy`, `artifact_fetch_failure`, `translation_failed`, `data_loss_detected`, `rejected_not_onboarded`, `skipped_no_counterparty`.
+
+Exactly one outcome is recorded per mediation call, so the sum across outcomes is the call count and each value is directly a rate. The last two values are node-wide misconfigurations that fire on every request — a sustained rate on either means the node is mediating nothing at all. See the [plugin README](../schemaversionmediator/README.md#metrics) for what each outcome means and for the `counterparty_id` cardinality note.
+
+---
+
 ### Automatic instrumentation
 
 The following metric groups are collected without any configuration and flow through the node pipeline:
