@@ -31,6 +31,7 @@ plugins=(
     "registry"
     "dediregistry"
     "oanregistry"
+    "jsonmapper"
     "manifestloader"
     "reqpreprocessor"
     "otelsetup"
