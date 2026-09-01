@@ -440,6 +440,109 @@ func TestRunRefusesWhenTheResponseMappingProducesNothing(t *testing.T) {
 	}
 }
 
+// --- several capabilities, one step -------------------------------------------
+//
+// A provider can serve more than one capability -- the registry contract says so
+// outright: "a provider serving two capabilities is one Participant and two
+// ProviderSchema rows". The step has to be able to answer to all of them.
+//
+// It used to hold a single binding key, so a second capability meant a second
+// providerSteps entry with the same plugin id. Those collide in the handler's
+// id-keyed step map and the second silently wins, which loses a capability with
+// no error anywhere.
+
+func TestRunServesEveryBindingKeyItIsConfiguredFor(t *testing.T) {
+	t.Parallel()
+
+	for _, capability := range []string{
+		"openagrinet:WeatherObservation",
+		"openagrinet:WeatherAdvisory",
+	} {
+		t.Run(capability, func(t *testing.T) {
+			t.Parallel()
+
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, `{}`)
+			}))
+			defer upstream.Close()
+
+			key := "mausamgram|" + capability
+			plan := testPlan(upstream.URL, http.MethodGet)
+			plan.BindingKey = key
+
+			mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+			step := newStep(t, &stubRegistry{plan: plan}, mapper, func(c *Config) {
+				c.BindingKeys = []string{
+					"mausamgram|openagrinet:WeatherObservation",
+					"mausamgram|openagrinet:WeatherAdvisory",
+				}
+			})
+
+			body := strings.Replace(selectBody, "openagrinet:WeatherObservation", capability, 1)
+			ctx, err := runStep(t, step, body)
+			if err != nil {
+				t.Fatalf("Run() returned an unexpected error: %v", err)
+			}
+			if len(ctx.ResponseBody) == 0 {
+				t.Errorf("%s was not served, though the step is configured for it", key)
+			}
+		})
+	}
+}
+
+// A capability the step is not configured for still passes through untouched --
+// that is the dispatch mechanism, and widening to a list must not widen it into
+// answering for everything.
+func TestRunStillPassesThroughACapabilityItIsNotConfiguredFor(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the provider must not be called for another capability")
+	}))
+	defer upstream.Close()
+
+	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+	step := newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper,
+		func(c *Config) { c.BindingKeys = []string{"someone-else|openagrinet:MandiPrice"} })
+
+	ctx, err := runStep(t, step, selectBody)
+	if err != nil {
+		t.Fatalf("passing through must not be an error: %v", err)
+	}
+	if len(ctx.ResponseBody) != 0 {
+		t.Error("the step answered for a capability it is not configured for")
+	}
+}
+
+// Configured for nothing means the default capability, so an operator who names
+// no binding key gets the one this plugin was written for rather than a step
+// that answers to nothing.
+func TestNewDefaultsToTheCapabilityThePluginIsFor(t *testing.T) {
+	t.Parallel()
+
+	step, closer, err := New(context.Background(), &stubRegistry{}, &stubMapper{}, &Config{})
+	if err != nil {
+		t.Fatalf("New() returned an unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = closer() })
+
+	if got := step.config.BindingKeys; len(got) != 1 || got[0] != DefaultBindingKey {
+		t.Errorf("binding keys = %v, want just the default %q", got, DefaultBindingKey)
+	}
+}
+
+// A binding key naming no capability is a config mistake that would otherwise
+// make the step answer to a key nothing can produce.
+func TestNewRefusesAnEmptyBindingKey(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := New(context.Background(), &stubRegistry{}, &stubMapper{},
+		&Config{BindingKeys: []string{"mausamgram|openagrinet:WeatherObservation", "  "}})
+	if err == nil {
+		t.Error("expected an empty binding key to be refused")
+	}
+}
+
 // --- preconditions ----------------------------------------------------------
 
 // selectWithLocation renders a select payload whose resource carries the given

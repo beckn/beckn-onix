@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
@@ -163,6 +165,32 @@ func TestServeHTTPTreatsAnEmptyAnswerAsNoAnswer(t *testing.T) {
 	}
 	if got.Message.Status != model.StatusACK {
 		t.Errorf("expected the generated ACK, got status %q", got.Message.Status)
+	}
+}
+
+// Provider steps land in the same id-keyed map as plain steps, so two entries
+// sharing an id would leave one silently overwritten -- a capability lost with
+// no error anywhere. Refused at startup instead.
+//
+// With binding keys a list, one entry serves several capabilities, so a repeated
+// id is now a mistake rather than the way to configure a second one.
+func TestInitStepsRefusesTwoProviderStepsWithTheSameID(t *testing.T) {
+	h := &stdHandler{moduleName: "test-module"}
+	cfg := &Config{
+		Plugins: PluginCfg{
+			ProviderSteps: []plugin.Config{
+				{ID: "mausamgram", Config: map[string]string{}},
+				{ID: "mausamgram", Config: map[string]string{}},
+			},
+		},
+	}
+
+	err := h.initSteps(context.Background(), noopPluginManager{}, cfg)
+	if err == nil {
+		t.Fatal("expected two provider steps with the same id to be refused")
+	}
+	if !strings.Contains(err.Error(), "mausamgram") {
+		t.Errorf("error %q should name the id that repeats", err)
 	}
 }
 

@@ -45,7 +45,7 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "reads every supported setting",
 			config: map[string]string{
-				"bindingKey":       "other|capability",
+				"bindingKeys":      "other|capability",
 				"authScheme":       "basic",
 				"usernameEnv":      "U",
 				"passwordEnv":      "P",
@@ -54,7 +54,7 @@ func TestParseConfig(t *testing.T) {
 				"maxResponseBytes": "2048",
 			},
 			expected: &mausamgram.Config{
-				BindingKey:       "other|capability",
+				BindingKeys:      []string{"other|capability"},
 				AuthScheme:       "basic",
 				UsernameEnv:      "U",
 				PasswordEnv:      "P",
@@ -98,6 +98,29 @@ func TestParseConfig(t *testing.T) {
 				t.Errorf("expected config %+v, got %+v", tc.expected, got)
 			}
 		})
+	}
+}
+
+// A plugin config is map[string]string, so a list arrives comma-separated --
+// the convention reqpreprocessor and schemav2validator already use. Binding keys
+// separate their own halves with a pipe, so a comma is unambiguous.
+func TestParseConfigReadsSeveralBindingKeys(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := mausamgramProvider{}.parseConfig(map[string]string{
+		"bindingKeys": "a|openagrinet:One, b|openagrinet:Two ,,  ",
+	})
+	if err != nil {
+		t.Fatalf("parseConfig() returned an unexpected error: %v", err)
+	}
+	want := []string{"a|openagrinet:One", "b|openagrinet:Two"}
+	if len(cfg.BindingKeys) != len(want) {
+		t.Fatalf("binding keys = %v, want %v -- blanks should be dropped and spaces trimmed", cfg.BindingKeys, want)
+	}
+	for i, key := range want {
+		if cfg.BindingKeys[i] != key {
+			t.Errorf("binding key %d = %q, want %q", i, cfg.BindingKeys[i], key)
+		}
 	}
 }
 

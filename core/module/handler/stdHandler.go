@@ -678,6 +678,14 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 	// plugin steps cannot receive. They land in the same id-keyed map, so a step
 	// list names them exactly like any other plugin step.
 	for _, c := range cfg.Plugins.ProviderSteps {
+		// The same map as plain steps, so a repeated id would leave one entry
+		// silently overwritten -- a capability lost with no error anywhere. A
+		// provider step serving several capabilities says so in its own config
+		// rather than by appearing twice.
+		if _, taken := steps[c.ID]; taken {
+			return fmt.Errorf("provider step %q is configured more than once; "+
+				"a step serving several capabilities lists them in its own config", c.ID)
+		}
 		step, err := h.loadProviderStep(ctx, mgr, &c)
 		if err != nil {
 			return err

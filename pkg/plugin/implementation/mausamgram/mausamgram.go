@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,9 +62,18 @@ const codeUpstreamUnavailable = "NET_DOWNSTREAM_UNAVAILABLE"
 
 // Config holds configuration parameters for the step.
 type Config struct {
-	// BindingKey is the capability this step answers to. A request for anything
-	// else passes through untouched.
-	BindingKey string `yaml:"bindingKey" json:"bindingKey"`
+	// BindingKeys are the capabilities this step answers to. A request for
+	// anything else passes through untouched.
+	//
+	// A list because a provider can serve more than one: the registry contract
+	// says a provider serving two capabilities is one Participant and two
+	// ProviderSchema rows. Configuring a second entry with the same plugin id
+	// instead would collide in the handler's id-keyed step map, and one
+	// capability would be lost with no error anywhere.
+	//
+	// What differs per capability -- the endpoint, the mapping, the budget --
+	// comes from the registry, so one step serving several needs nothing else.
+	BindingKeys []string `yaml:"bindingKeys" json:"bindingKeys"`
 
 	// AuthScheme is how credentials are presented upstream: none, basic or
 	// header. Providers differ here -- basic auth, a raw token header, a field
@@ -122,14 +132,19 @@ func New(ctx context.Context, registry definition.ProviderRecordLookup, mapper d
 		return nil
 	}
 
-	log.Infof(ctx, "Mausamgram step created for binding %s", cfg.BindingKey)
+	log.Infof(ctx, "Mausamgram step created for %s", strings.Join(cfg.BindingKeys, ", "))
 	return step, closer, nil
 }
 
 // applyDefaults fills in what was left out and rejects what cannot be defaulted.
 func applyDefaults(cfg *Config) error {
-	if cfg.BindingKey == "" {
-		cfg.BindingKey = DefaultBindingKey
+	if len(cfg.BindingKeys) == 0 {
+		cfg.BindingKeys = []string{DefaultBindingKey}
+	}
+	for _, key := range cfg.BindingKeys {
+		if strings.TrimSpace(key) == "" {
+			return errors.New("mausamgram: bindingKeys carries an empty entry")
+		}
 	}
 	if cfg.AuthScheme == "" {
 		cfg.AuthScheme = AuthSchemeNone
@@ -168,8 +183,8 @@ func (s *Step) Run(ctx *model.StepContext) error {
 	if err != nil {
 		return err
 	}
-	if binding.Key() != s.config.BindingKey {
-		log.Debugf(ctx, "mausamgram: %s is not this step's capability, passing through", binding.Key())
+	if !s.serves(binding.Key()) {
+		log.Debugf(ctx, "mausamgram: %s is not one of this step's capabilities, passing through", binding.Key())
 		return nil
 	}
 
@@ -179,6 +194,15 @@ func (s *Step) Run(ctx *model.StepContext) error {
 	}
 
 	return s.serve(ctx, plan)
+}
+
+// serves reports whether a binding key is one this step answers to.
+//
+// A slice rather than a set: a step serves a handful of capabilities at most, so
+// the scan costs less than the map would, and the config order is preserved in
+// the log line above.
+func (s *Step) serves(key string) bool {
+	return slices.Contains(s.config.BindingKeys, key)
 }
 
 // serve runs the exchange this step exists for: resolve, map out, call, map back.

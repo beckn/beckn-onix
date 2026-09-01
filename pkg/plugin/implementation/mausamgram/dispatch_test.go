@@ -49,8 +49,8 @@ func TestTwoProviderStepsDispatchByBindingKey(t *testing.T) {
 	newProviderStep := func(t *testing.T, bindingKey, upstreamURL, answer string) definition.Step {
 		t.Helper()
 		plan := &model.ProviderRecord{
-			BindingKey: bindingKey, BaseURL: upstreamURL,
-
+			BindingKey: bindingKey,
+			BaseURL:    upstreamURL,
 			Actions: map[string]model.ActionPlan{
 				"select": {Method: http.MethodGet, Path: "/x", Mappings: dispatchMappingRef, RetryMax: 1},
 			},
@@ -58,7 +58,7 @@ func TestTwoProviderStepsDispatchByBindingKey(t *testing.T) {
 		step, closer, err := mausamgram.New(context.Background(),
 			&stubRegistry{plan: plan},
 			fixedMapper{answer: answer},
-			&mausamgram.Config{BindingKey: bindingKey})
+			&mausamgram.Config{BindingKeys: []string{bindingKey}})
 		if err != nil {
 			t.Fatal(err)
 		}

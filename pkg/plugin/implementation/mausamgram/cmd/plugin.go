@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
@@ -22,7 +23,7 @@ var newStepFunc = mausamgram.New
 // scheme, so those rules live in one place.
 func (p mausamgramProvider) parseConfig(config map[string]string) (*mausamgram.Config, error) {
 	cfg := &mausamgram.Config{
-		BindingKey:     config["bindingKey"],
+		BindingKeys:    splitList(config["bindingKeys"]),
 		AuthScheme:     config["authScheme"],
 		UsernameEnv:    config["usernameEnv"],
 		PasswordEnv:    config["passwordEnv"],
@@ -67,6 +68,25 @@ func (p mausamgramProvider) New(ctx context.Context, registry definition.Provide
 }
 
 // Provider is the exported plugin instance.
+// splitList reads a comma-separated config value, which is how a list reaches a
+// plugin -- the config is map[string]string. Blanks are dropped and spaces
+// trimmed, so a trailing comma or a wrapped line is not a config error.
+//
+// A comma is unambiguous here: a binding key separates its own halves with a
+// pipe.
+func splitList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
 var Provider = mausamgramProvider{}
 
 // Compile-time proof the provider satisfies the interface the manager asserts
