@@ -25,10 +25,17 @@ generic.
 
 ## Mapping files
 
-One file per binding-action, carrying **both directions**:
+One file per binding-action, carrying **both directions** and what the capability
+requires of a payload:
 
 ```yaml
 # mappings/mausamgram/weather-observation.select.yaml
+required:
+  - check: |
+      ( $ra := beckn.message.contract.commitments[0].resources[0].resourceAttributes;
+        $ra.location.type = "Point" )
+    message: "this capability needs a Point location"
+
 request: |
   {
     "lat": beckn.message.contract.commitments[0].resources[0].resourceAttributes.location.coordinates[1]
@@ -40,6 +47,8 @@ response: |
     "at": response.location
   }
 ```
+
+The three keys are checked and run in the order they appear.
 
 **One file rather than two because both legs of one upstream call are one unit of
 configuration.** They are published, reviewed and retired together, and a
@@ -55,6 +64,45 @@ response.
 A broken half takes down only itself: a typo in the response mapping is no reason
 to stop making the call, and finding out on the way back beats finding out before
 the call was made.
+
+### `required`
+
+A list of preconditions, each a JSONata predicate and the message to refuse with.
+Named `check`/`message` so each field says what it is: `check` is what has to
+hold, `message` is what the caller is told when it does not. A neutral name like
+`test` says nothing about which way the predicate must answer, and `otherwise`
+reads like an alternative value rather than an error.
+
+**It exists because a mapping otherwise cannot refuse.** Without it, every
+judgement about whether a payload can be served at all lives in Go — so a
+provider with its own rule needs its own build, and the rule ends up in a
+different place from the extraction it guards.
+
+`Verify` evaluates them in order and **the first failure is the one reported**.
+Reporting the last, or all of them, buries the thing to fix.
+
+Four ways this refuses rather than passing quietly:
+
+- a predicate that is false → the caller gets its `message`, as a `400`
+- a predicate answering anything but `true`/`false` → a mapping fault, **not**
+  permission. A typo yielding nothing would otherwise wave through every request
+  the check existed to stop.
+- a predicate with no `message` → a mapping fault. Refusing without saying why
+  is the failure this key exists to avoid.
+- a predicate that will not compile → its own error, and it does not take the
+  halves down with it
+
+Each predicate is a separate expression, so each binds its own variables — there
+is no shared scope with the halves.
+
+**A mapping declaring no `required` imposes nothing.** That is deliberate: it lets
+one provider adopt preconditions while others have not, so a second provider
+arriving with its own rules does not force every existing mapping to be rewritten.
+
+The consequence is worth stating plainly: **nothing in the adapter enforces a
+payload rule any more.** Whatever a mapping does not require, it accepts. That is
+the point — the rule is configuration — and it is why the responsibility sits in
+the published file.
 
 Which action a file serves is settled by the registry entry pointing at it, so
 nothing inside names it and the filename carries no meaning to this plugin. (The

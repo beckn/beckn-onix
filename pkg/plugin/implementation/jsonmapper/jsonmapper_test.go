@@ -3,6 +3,7 @@ package jsonmapper
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 )
 
@@ -234,6 +236,215 @@ response: |
 
 	if _, err := mapper.Transform(context.Background(), ref(srv.URL), definition.DirectionResponse, responseInput()); err == nil {
 		t.Error("the uncompilable half must report an error, not nothing")
+	}
+}
+
+// --- preconditions ----------------------------------------------------------
+//
+// A mapping decides what a provider is asked for. It has to be able to decide
+// that a request cannot be served at all, or that judgement stays in Go and
+// every provider with its own rule needs its own build.
+//
+// required is a list of predicates over the same payload the request half reads.
+// A predicate that is false refuses the request, carrying the message the
+// mapping supplied -- so the caller gets a sentence about their payload rather
+// than a mapping error about ours.
+
+const withChecks = `required:
+  - check: beckn.message.location.type = "Point"
+    message: "this capability needs a Point location"
+  - check: $exists(beckn.message.validity)
+    message: "this capability needs a validity window"
+
+request: |
+  { "txn": beckn.context.transactionId }
+
+response: |
+  { "txn": beckn.context.transactionId }
+`
+
+// verifyInput is a payload that satisfies withChecks. The beckn wrapper is
+// what the caller passes, so a precondition reads the payload by the same name
+// the request half does.
+func verifyInput() map[string]any {
+	return map[string]any{
+		"beckn": map[string]any{
+			"context": map[string]any{"transactionId": "txn-123"},
+			"message": map[string]any{
+				"location": map[string]any{"type": "Point", "coordinates": []any{73.7898, 19.9975}},
+				"validity": map[string]any{"startsAt": "2026-09-01"},
+			},
+		},
+	}
+}
+
+// becknOf reaches into the wrapper, so a test can spoil one field.
+func becknOf(input map[string]any) map[string]any {
+	return input["beckn"].(map[string]any)
+}
+
+func TestVerifyPassesWhenEveryPredicateHolds(t *testing.T) {
+	t.Parallel()
+
+	srv := newMappingServer(t, withChecks, nil)
+	defer srv.Close()
+
+	if err := newTestMapper(t).Verify(context.Background(), ref(srv.URL), verifyInput()); err != nil {
+		t.Errorf("Verify() refused a payload that satisfies every predicate: %v", err)
+	}
+}
+
+// The message belongs to the mapping, so the caller is told what is wrong with
+// their payload rather than that an expression failed.
+func TestVerifyRefusesWithTheMappingsOwnMessage(t *testing.T) {
+	t.Parallel()
+
+	srv := newMappingServer(t, withChecks, nil)
+	defer srv.Close()
+
+	input := verifyInput()
+	becknOf(input)["message"].(map[string]any)["location"] = map[string]any{"type": "Polygon"}
+
+	err := newTestMapper(t).Verify(context.Background(), ref(srv.URL), input)
+	if err == nil {
+		t.Fatal("expected a payload failing a predicate to be refused")
+	}
+	if !strings.Contains(err.Error(), "needs a Point location") {
+		t.Errorf("error %q should carry the mapping's own message", err)
+	}
+
+	// A bad request: the payload is the caller's, so this must not read as a
+	// fault of this adapter.
+	var coded *model.CodedErr
+	if !errors.As(err, &coded) || coded.HTTPStatus() != http.StatusBadRequest {
+		t.Errorf("error is %T, want a 400 so the caller is not blamed for our fault: %v", err, err)
+	}
+}
+
+// Predicates are checked in order and the first failure is the one reported.
+// Reporting the last, or all of them, buries the thing to fix.
+func TestVerifyReportsTheFirstFailure(t *testing.T) {
+	t.Parallel()
+
+	srv := newMappingServer(t, withChecks, nil)
+	defer srv.Close()
+
+	// Both predicates fail.
+	input := verifyInput()
+	becknOf(input)["message"] = map[string]any{"location": map[string]any{"type": "Polygon"}}
+
+	err := newTestMapper(t).Verify(context.Background(), ref(srv.URL), input)
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if !strings.Contains(err.Error(), "needs a Point location") {
+		t.Errorf("error %q should report the first failing predicate", err)
+	}
+	if strings.Contains(err.Error(), "validity window") {
+		t.Error("only the first failure should be reported")
+	}
+}
+
+// A mapping that declares no preconditions imposes none. That is what lets one
+// provider adopt the key while others have not, so a second provider arriving
+// with its own rules does not force every existing mapping to be rewritten.
+func TestVerifyAllowsAMappingWithNoChecks(t *testing.T) {
+	t.Parallel()
+
+	srv := newMappingServer(t, bothDirections, nil)
+	defer srv.Close()
+
+	if err := newTestMapper(t).Verify(context.Background(), ref(srv.URL), requestInput()); err != nil {
+		t.Errorf("a mapping with no required block must impose nothing: %v", err)
+	}
+}
+
+// A predicate has to answer true or false. Anything else -- a string, a number,
+// nothing at all -- is a mapping fault, and must not be read as permission: a
+// typo that yields undefined would otherwise wave every request through.
+func TestVerifyRefusesAPredicateThatIsNotABoolean(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct{ name, check string }{
+		{"a string", `"yes"`},
+		{"a number", `1`},
+		{"a field that does not exist", `beckn.message.nothing.here`},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			mapping := "required:\n  - check: " + tc.check + "\n    message: \"nope\"\n\nrequest: |\n  { \"a\": 1 }\n"
+			srv := newMappingServer(t, mapping, nil)
+			defer srv.Close()
+
+			if err := newTestMapper(t).Verify(context.Background(), ref(srv.URL), verifyInput()); err == nil {
+				t.Error("a predicate that is not a boolean must be refused, not treated as permission")
+			}
+		})
+	}
+}
+
+// A predicate that will not compile is the mapping's fault, and is reported as
+// one -- but it must not take the halves down with it, exactly as a broken half
+// does not take its sibling down.
+func TestVerifyIsolatesAPredicateThatWillNotCompile(t *testing.T) {
+	t.Parallel()
+
+	mapping := `required:
+  - check: "{{{"
+    message: "unreachable"
+
+request: |
+  { "txn": beckn.context.transactionId }
+`
+	srv := newMappingServer(t, mapping, nil)
+	defer srv.Close()
+	mapper := newTestMapper(t)
+
+	if err := mapper.Verify(context.Background(), ref(srv.URL), verifyInput()); err == nil {
+		t.Error("expected an uncompilable predicate to be reported")
+	}
+	// The request half still works: a broken precondition is not a broken file.
+	if _, err := mapper.Transform(context.Background(), ref(srv.URL),
+		definition.DirectionRequest, verifyInput()); err != nil {
+		t.Errorf("the request half must still be served: %v", err)
+	}
+}
+
+// An entry with no message is a mapping that refuses without saying why, which
+// is the failure this whole key exists to avoid.
+func TestVerifyRefusesAPredicateWithNoMessage(t *testing.T) {
+	t.Parallel()
+
+	srv := newMappingServer(t, "required:\n  - check: 'false'\n\nrequest: |\n  { \"a\": 1 }\n", nil)
+	defer srv.Close()
+
+	if err := newTestMapper(t).Verify(context.Background(), ref(srv.URL), verifyInput()); err == nil {
+		t.Error("a predicate with no reject message must be refused as a mapping fault")
+	}
+}
+
+// Preconditions are fetched and compiled with the halves: one round trip leaves
+// the whole file ready.
+func TestVerifyCompilesWithTheRestOfTheFile(t *testing.T) {
+	t.Parallel()
+
+	var fetches atomic.Int32
+	srv := newMappingServer(t, withChecks, &fetches)
+	defer srv.Close()
+	mapper := newTestMapper(t)
+
+	if err := mapper.Verify(context.Background(), ref(srv.URL), verifyInput()); err != nil {
+		t.Fatalf("Verify() returned an unexpected error: %v", err)
+	}
+	if _, err := mapper.Transform(context.Background(), ref(srv.URL),
+		definition.DirectionRequest, verifyInput()); err != nil {
+		t.Fatalf("Transform() returned an unexpected error: %v", err)
+	}
+	if got := fetches.Load(); got != 1 {
+		t.Errorf("fetched %d times, want 1 -- preconditions refetched the file", got)
 	}
 }
 

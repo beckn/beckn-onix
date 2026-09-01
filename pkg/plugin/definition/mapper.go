@@ -41,6 +41,18 @@ type Mapper interface {
 	// What nothing means belongs to the caller: on the request leg it means there
 	// is no document to send.
 	Transform(ctx context.Context, mappingRef string, direction Direction, input any) ([]byte, error)
+
+	// Verify checks the preconditions the mapping at mappingRef declares, and
+	// returns an error carrying the mapping's own explanation when one fails.
+	//
+	// It exists because a mapping otherwise cannot refuse. Without it, every
+	// judgement about whether a payload can be served at all lives in Go, so a
+	// provider with its own rule needs its own build -- and the rule and the
+	// extraction it guards end up in different places.
+	//
+	// A mapping declaring no preconditions imposes none. That is what lets the
+	// facility be adopted per provider rather than all at once.
+	Verify(ctx context.Context, mappingRef string, input any) error
 }
 
 // MapperProvider initializes a new Mapper.

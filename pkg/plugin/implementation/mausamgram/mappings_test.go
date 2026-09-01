@@ -355,6 +355,133 @@ func TestShippedMappingsExtractTheQueryFromThePayload(t *testing.T) {
 	}
 }
 
+// The shipped mapping's own preconditions, against the published file. This is
+// where "which geometries does this capability serve" is now answered -- in
+// configuration, not in Go.
+func TestShippedMappingsPreconditions(t *testing.T) {
+	mappings := serveMappings(t)
+	defer mappings.Close()
+
+	mapper, closeMapper, err := jsonmapper.New(context.Background(), &jsonmapper.Config{})
+	if err != nil {
+		t.Fatalf("failed to build the mapper: %v", err)
+	}
+	defer closeMapper()
+	ref := mappings.URL + "/" + shippedMapping
+
+	payload := func(t *testing.T, geometry string) map[string]any {
+		t.Helper()
+		location := ""
+		if geometry != "" {
+			location = `"location": ` + geometry + `,`
+		}
+		body := `{"context":{"action":"select"},"message":{"contract":{"commitments":[{"resources":[{"resourceAttributes":{` +
+			location + `"@type":"openagrinet:WeatherObservation"}}]}]}}}`
+		var beckn any
+		if err := json.Unmarshal([]byte(body), &beckn); err != nil {
+			t.Fatalf("failed to build the payload: %v", err)
+		}
+		return map[string]any{"beckn": beckn}
+	}
+
+	t.Run("a Point is served", func(t *testing.T) {
+		if err := mapper.Verify(context.Background(), ref,
+			payload(t, `{"type":"Point","coordinates":[73.7898,19.9975]}`)); err != nil {
+			t.Errorf("a Point must be served: %v", err)
+		}
+	})
+
+	for _, tc := range []struct{ name, geometry string }{
+		{"a polygon", `{"type":"Polygon","coordinates":[[[73.0,19.0],[74.0,19.0],[74.0,20.0],[73.0,19.0]]]}`},
+		{"a line string", `{"type":"LineString","coordinates":[[73.0,19.0],[74.0,20.0]]}`},
+		{"several points", `{"type":"MultiPoint","coordinates":[[73.7898,19.9975]]}`},
+		{"no location at all", ``},
+	} {
+		t.Run(tc.name+" is refused", func(t *testing.T) {
+			err := mapper.Verify(context.Background(), ref, payload(t, tc.geometry))
+			if err == nil {
+				t.Fatalf("expected %s to be refused", tc.name)
+			}
+			// The message is the mapping's, and has to name what is needed.
+			if !strings.Contains(err.Error(), "Point") {
+				t.Errorf("error %q should say a Point is what this capability needs", err)
+			}
+		})
+	}
+}
+
+// How many days the provider answers with is the provider's business, not the
+// mapping's. It returns fcstday1..fcstdayN and N is whatever the forecast ran
+// to, so a mapping naming five would truncate a ten-day answer and pad a
+// three-day one.
+//
+// The ordering matters as much as the count: the keys sort lexically as
+// fcstday1, fcstday10, fcstday2, so the mapping sorts on the numeric suffix. A
+// ten-day forecast delivered in that order would be wrong in a way nothing
+// downstream could detect.
+func TestShippedMappingsTakeHoweverManyDaysTheProviderSent(t *testing.T) {
+	mappings := serveMappings(t)
+	defer mappings.Close()
+
+	mapper, closeMapper, err := jsonmapper.New(context.Background(), &jsonmapper.Config{})
+	if err != nil {
+		t.Fatalf("failed to build the mapper: %v", err)
+	}
+	defer closeMapper()
+
+	var beckn any
+	if err := json.Unmarshal([]byte(selectRequest), &beckn); err != nil {
+		t.Fatalf("failed to decode the request: %v", err)
+	}
+
+	for _, days := range []int{1, 3, 10} {
+		t.Run(fmt.Sprintf("%d days", days), func(t *testing.T) {
+			provider := map[string]any{"location": map[string]any{"lat": 19.9975, "lon": 73.7898}}
+			for i := 1; i <= days; i++ {
+				provider[fmt.Sprintf("fcstday%d", i)] = map[string]any{
+					"date": fmt.Sprintf("2026-09-%02d", i),
+					"rain": float64(i),
+				}
+			}
+
+			got, err := mapper.Transform(context.Background(), mappings.URL+"/"+shippedMapping,
+				definition.DirectionResponse,
+				map[string]any{"beckn": beckn, "response": provider})
+			if err != nil {
+				t.Fatalf("Transform() returned an unexpected error: %v", err)
+			}
+
+			var answer map[string]any
+			if err := json.Unmarshal(got, &answer); err != nil {
+				t.Fatalf("failed to decode the answer: %v", err)
+			}
+			attributes := firstCommitment(t, answer)["resources"].([]any)[0].(map[string]any)["resourceAttributes"].(map[string]any)
+			observations, _ := attributes["observations"].([]any)
+
+			if len(observations) != days {
+				t.Fatalf("got %d observations, want %d -- the mapping is not reading the provider's own count",
+					len(observations), days)
+			}
+
+			// In the provider's order, not the keys' lexical order.
+			for i, entry := range observations {
+				validity := entry.(map[string]any)["validity"].(map[string]any)
+				want := fmt.Sprintf("2026-09-%02d", i+1)
+				if validity["startsAt"] != want {
+					t.Errorf("observation %d covers %v, want %s -- days are out of order",
+						i, validity["startsAt"], want)
+				}
+			}
+
+			// The resource-level window still spans first to last.
+			window, _ := attributes["validity"].(map[string]any)
+			if window["endsAt"] != fmt.Sprintf("2026-09-%02d", days) {
+				t.Errorf("validity ends at %v, want the last day the provider sent", window["endsAt"])
+			}
+		})
+	}
+}
+
 func firstCommitment(t *testing.T, answer map[string]any) map[string]any {
 	t.Helper()
 	message, _ := answer["message"].(map[string]any)

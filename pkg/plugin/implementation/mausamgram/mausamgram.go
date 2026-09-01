@@ -195,12 +195,16 @@ func (s *Step) serve(ctx *model.StepContext, plan *model.ProviderRecord) error {
 			plan.BindingKey, action, strings.Join(servedActions(plan), ", ")))
 	}
 
-	if err := verifyGeometry(ctx.Body); err != nil {
+	beckn, err := decodeBody(ctx.Body)
+	if err != nil {
 		return err
 	}
 
-	beckn, err := decodeBody(ctx.Body)
-	if err != nil {
+	// What this provider requires of a payload is declared by its mapping, not
+	// by this step. A capability with a different rule is a different mapping
+	// file rather than a different build -- and the rule sits beside the
+	// extraction it guards.
+	if err := s.mapper.Verify(ctx, call.Mappings, map[string]any{"beckn": beckn}); err != nil {
 		return err
 	}
 
@@ -276,70 +280,6 @@ func (s *Step) buildRequest(ctx context.Context, call model.ActionPlan, beckn an
 		log.Debugf(ctx, "mausamgram: the request half of %s produced nothing; sending an empty request", call.Mappings)
 	}
 	return mapped, nil
-}
-
-// geometryPoint is the GeoJSON type this capability can serve. IMD takes one
-// latitude and one longitude, so an area or a set of points has no single answer
-// -- and picking a centroid would invent a location the caller did not ask about.
-const geometryPoint = "Point"
-
-// verifyGeometry refuses a request whose location this capability cannot serve.
-//
-// It reads the geometry's type and NOTHING ELSE. Coordinates, dates and every
-// other field are the mapping's to extract, which is what keeps "the provider
-// wants another parameter" a mapping edit rather than a rebuild. This exists
-// only because a mapping cannot refuse: JSONata would turn a Polygon's nested
-// coordinates into a query parameter that is not a scalar, and surface as an
-// error naming neither the geometry nor the reason.
-//
-// A location that is absent is refused too, and separately: that is a different
-// fact from a geometry this provider does not serve, and a caller can act on the
-// difference.
-func verifyGeometry(body []byte) error {
-	var payload struct {
-		Message struct {
-			Contract struct {
-				Commitments []struct {
-					Resources []struct {
-						ResourceAttributes struct {
-							Location *struct {
-								Type string `json:"type"`
-							} `json:"location"`
-						} `json:"resourceAttributes"`
-					} `json:"resources"`
-				} `json:"commitments"`
-			} `json:"contract"`
-		} `json:"message"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return model.NewBadReqErr("",
-			fmt.Errorf("mausamgram: request could not be read: %w", err))
-	}
-
-	var unsupported string
-	for _, commitment := range payload.Message.Contract.Commitments {
-		for _, resource := range commitment.Resources {
-			location := resource.ResourceAttributes.Location
-			if location == nil {
-				continue
-			}
-			if location.Type == geometryPoint {
-				return nil
-			}
-			unsupported = location.Type
-			if unsupported == "" {
-				unsupported = "a geometry with no type"
-			}
-		}
-	}
-
-	if unsupported != "" {
-		return model.NewBadReqErr("", fmt.Errorf(
-			"mausamgram: request carries %s; this capability needs a %s",
-			unsupported, geometryPoint))
-	}
-	return model.NewBadReqErr("",
-		errors.New("mausamgram: request carries no location"))
 }
 
 // extractAction reads the Beckn action a request is for.
