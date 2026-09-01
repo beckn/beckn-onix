@@ -316,10 +316,10 @@ func assertAlert(t *testing.T, parameters []any, want string) {
 	t.Errorf("no Alert parameter; want one carrying %q", want)
 }
 
-// The shipped file's request half is deliberately empty: this provider takes its
-// parameters in the query string. That has to produce nothing rather than an
-// empty document, so the step builds the query itself.
-func TestShippedMappingsProduceNoRequestDocument(t *testing.T) {
+// The shipped file's request half extracts what the provider is asked for. That
+// is the point of it living in the mapping: when this provider wants another
+// parameter -- a date range, say -- it is an edit here and nothing else.
+func TestShippedMappingsExtractTheQueryFromThePayload(t *testing.T) {
 	mappings := serveMappings(t)
 	defer mappings.Close()
 
@@ -329,15 +329,29 @@ func TestShippedMappingsProduceNoRequestDocument(t *testing.T) {
 	}
 	defer closeMapper()
 
-	ref := mappings.URL + "/" + shippedMapping
-	input := map[string]any{"beckn": map[string]any{"context": map[string]any{"action": "select"}}}
-
-	got, err := mapper.Transform(context.Background(), ref, definition.DirectionRequest, input)
-	if err != nil {
-		t.Errorf("the empty request half must not be an error, got %v", err)
+	var beckn any
+	if err := json.Unmarshal([]byte(selectRequest), &beckn); err != nil {
+		t.Fatalf("failed to decode the request: %v", err)
 	}
-	if len(got) != 0 {
-		t.Errorf("the request half produced %q, want nothing", got)
+
+	got, err := mapper.Transform(context.Background(), mappings.URL+"/"+shippedMapping,
+		definition.DirectionRequest, map[string]any{"beckn": beckn})
+	if err != nil {
+		t.Fatalf("the request half returned an unexpected error: %v", err)
+	}
+
+	var query map[string]any
+	if err := json.Unmarshal(got, &query); err != nil {
+		t.Fatalf("the request half produced something that is not an object: %v", err)
+	}
+
+	// GeoJSON is [lon, lat]. Reading them the other way round yields a point in
+	// the wrong hemisphere that is still a valid request.
+	if query["lat"] != 19.9975 {
+		t.Errorf("lat = %v, want 19.9975 taken from coordinates[1]", query["lat"])
+	}
+	if query["lon"] != 73.7898 {
+		t.Errorf("lon = %v, want 73.7898 taken from coordinates[0]", query["lon"])
 	}
 }
 

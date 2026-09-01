@@ -328,11 +328,42 @@ func TestRunSendsTheMappedBodyForAMethodThatTakesOne(t *testing.T) {
 	}
 }
 
-// A provider taking query parameters needs no request document built. The
-// mapping produces nothing, and the values this step resolved become the
-// parameters -- the step knows this provider, so it does not need the mapping's
-// help to call it.
-func TestRunSendsResolvedValuesWhenTheMappingProducesNothing(t *testing.T) {
+// The mapping decides what the provider is asked, so what it produces IS the
+// request. Nothing is substituted when it produces nothing: an empty request
+// half means an empty request, on a method with a body or without one.
+//
+// This step used to extract a point itself and fall back to sending it. That put
+// the choice of which payload fields reach the provider in Go, so adding a
+// parameter meant a rebuild. It is the mapping's now.
+func TestRunSendsWhatTheMappingProducedAsQueryParameters(t *testing.T) {
+	t.Parallel()
+
+	var gotQuery string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		fmt.Fprint(w, `{}`)
+	}))
+	defer upstream.Close()
+
+	// Four fields, none of them known to this step: whatever the mapping named.
+	mapper := &stubMapper{
+		requestResult:  []byte(`{"lat":19.9975,"lon":73.7898,"from":"2026-08-30","to":"2026-09-03"}`),
+		responseResult: []byte(`{}`),
+	}
+	if _, err := runStep(t, newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper), selectBody); err != nil {
+		t.Fatalf("Run() returned an unexpected error: %v", err)
+	}
+
+	for _, want := range []string{"lat=19.9975", "lon=73.7898", "from=2026-08-30", "to=2026-09-03"} {
+		if !strings.Contains(gotQuery, want) {
+			t.Errorf("query %q is missing %q", gotQuery, want)
+		}
+	}
+}
+
+// An empty request half on a method with no body means no query parameters. The
+// step has nothing of its own to send in their place.
+func TestRunSendsNoQueryWhenTheMappingProducesNothing(t *testing.T) {
 	t.Parallel()
 
 	var gotQuery string
@@ -346,11 +377,8 @@ func TestRunSendsResolvedValuesWhenTheMappingProducesNothing(t *testing.T) {
 	if _, err := runStep(t, newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper), selectBody); err != nil {
 		t.Fatalf("Run() returned an unexpected error: %v", err)
 	}
-
-	for _, want := range []string{"lat=19.9975", "lon=73.7898"} {
-		if !strings.Contains(gotQuery, want) {
-			t.Errorf("query %q is missing %q -- the resolved point was not sent", gotQuery, want)
-		}
+	if gotQuery != "" {
+		t.Errorf("query = %q, want none -- nothing is substituted for an empty mapping", gotQuery)
 	}
 }
 
@@ -399,6 +427,148 @@ func TestRunRefusesWhenTheResponseMappingProducesNothing(t *testing.T) {
 	}
 	if len(ctx.ResponseBody) != 0 {
 		t.Errorf("ResponseBody = %q, want nothing written", ctx.ResponseBody)
+	}
+}
+
+// --- the geometry the request carries ---------------------------------------
+
+// selectWithLocation renders a select payload whose resource carries the given
+// GeoJSON geometry verbatim, or none at all when geometry is empty.
+func selectWithLocation(t *testing.T, geometry string) string {
+	t.Helper()
+	location := ""
+	if geometry != "" {
+		location = `"location": ` + geometry + `,`
+	}
+	return `{
+  "context": { "version": "2.0.0", "action": "select", "transactionId": "txn-1" },
+  "message": { "contract": { "commitments": [ {
+    "resources": [ { "id": "res:x", "resourceAttributes": {
+      ` + location + `
+      "@type": "openagrinet:WeatherObservation"
+    } } ],
+    "offer": { "id": "offer:x", "provider": { "id": "mausamgram" } }
+  } ] } }
+}`
+}
+
+// This capability needs one point. A request carrying any other geometry is the
+// caller sending something this provider cannot serve, so it has to come back as
+// a bad request naming what was sent -- not as a 500, which says the fault is
+// ours and tells the caller nothing.
+//
+// Before this was fixed, a Polygon reached json.Unmarshal as a three-deep array
+// where a flat pair was expected, failed there, and surfaced as
+// NET_INTERNAL_ERROR.
+func TestRunRefusesAGeometryThatIsNotAPoint(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name     string
+		geometry string
+	}{
+		{"a polygon", `{"type":"Polygon","coordinates":[[[73.0,19.0],[74.0,19.0],[74.0,20.0],[73.0,19.0]]]}`},
+		{"a line string", `{"type":"LineString","coordinates":[[73.0,19.0],[74.0,20.0]]}`},
+		{"several points", `{"type":"MultiPoint","coordinates":[[73.7898,19.9975],[75.0,21.0]]}`},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Error("the provider must not be called for a geometry this capability cannot serve")
+			}))
+			defer upstream.Close()
+
+			mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+			_, err := runStep(t, newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper),
+				selectWithLocation(t, tc.geometry))
+			if err == nil {
+				t.Fatal("expected an unsupported geometry to be refused")
+			}
+
+			var coded *model.CodedErr
+			if !errors.As(err, &coded) {
+				t.Fatalf("error is %T, want a coded error so it NACKs as a bad request: %v", err, err)
+			}
+			if coded.HTTPStatus() != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400 -- the payload is the caller's, not our fault", coded.HTTPStatus())
+			}
+			// Naming the geometry that arrived is what makes this actionable.
+			if !strings.Contains(err.Error(), "Point") {
+				t.Errorf("error %q should say a Point is what this capability needs", err)
+			}
+		})
+	}
+}
+
+// A Point passes the guard and reaches the mapping.
+func TestRunAcceptsAPoint(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{}`)
+	}))
+	defer upstream.Close()
+
+	mapper := &stubMapper{requestResult: []byte(`{"lat":19.9975}`), responseResult: []byte(`{}`)}
+	if _, err := runStep(t, newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper),
+		selectWithLocation(t, `{"type":"Point","coordinates":[73.7898,19.9975]}`)); err != nil {
+		t.Fatalf("Run() returned an unexpected error: %v", err)
+	}
+	if mapper.requestInput == nil {
+		t.Error("the request mapping was never called for a Point")
+	}
+}
+
+// The guard checks the geometry and nothing else. It does not read coordinates,
+// so which payload fields reach the provider stays entirely the mapping's --
+// adding a parameter is a mapping edit, never a rebuild.
+func TestRunGuardsGeometryWithoutReadingCoordinates(t *testing.T) {
+	t.Parallel()
+
+	var gotQuery string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		fmt.Fprint(w, `{}`)
+	}))
+	defer upstream.Close()
+
+	// A Point whose coordinates the step never looks at, and a mapping that
+	// names something else entirely.
+	mapper := &stubMapper{requestResult: []byte(`{"station":"NASHIK-1"}`), responseResult: []byte(`{}`)}
+	if _, err := runStep(t, newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper),
+		selectWithLocation(t, `{"type":"Point","coordinates":[1.0,2.0]}`)); err != nil {
+		t.Fatalf("Run() returned an unexpected error: %v", err)
+	}
+	if !strings.Contains(gotQuery, "station=NASHIK-1") {
+		t.Errorf("query = %q, want the mapping's own field", gotQuery)
+	}
+	if strings.Contains(gotQuery, "lat=") || strings.Contains(gotQuery, "lon=") {
+		t.Errorf("query = %q -- the step is still injecting coordinates of its own", gotQuery)
+	}
+}
+
+// An absent location was already a bad request, and stays one. Kept alongside the
+// geometry cases so the two failures are visibly the same kind of thing.
+func TestRunRefusesAMissingLocation(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the provider must not be called without a location")
+	}))
+	defer upstream.Close()
+
+	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+	_, err := runStep(t, newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper),
+		selectWithLocation(t, ""))
+	if err == nil {
+		t.Fatal("expected a request with no location to be refused")
+	}
+	var coded *model.CodedErr
+	if !errors.As(err, &coded) || coded.HTTPStatus() != http.StatusBadRequest {
+		t.Errorf("expected a 400, got %v", err)
 	}
 }
 

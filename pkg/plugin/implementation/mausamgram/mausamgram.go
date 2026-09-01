@@ -195,8 +195,7 @@ func (s *Step) serve(ctx *model.StepContext, plan *model.ProviderRecord) error {
 			plan.BindingKey, action, strings.Join(servedActions(plan), ", ")))
 	}
 
-	local, err := resolvePoint(ctx.Body)
-	if err != nil {
+	if err := verifyGeometry(ctx.Body); err != nil {
 		return err
 	}
 
@@ -205,7 +204,7 @@ func (s *Step) serve(ctx *model.StepContext, plan *model.ProviderRecord) error {
 		return err
 	}
 
-	upstreamRequest, err := s.buildRequest(ctx, call, beckn, local)
+	upstreamRequest, err := s.buildRequest(ctx, call, beckn)
 	if err != nil {
 		return err
 	}
@@ -223,10 +222,7 @@ func (s *Step) serve(ctx *model.StepContext, plan *model.ProviderRecord) error {
 	// The same mapping reference as the request, other half: one file carries
 	// both directions for this action.
 	//
-	// The mapping is handed what each party sent and nothing else. The values
-	// resolved above are not passed in: this step holds them and used them to
-	// make the call, so handing them to the mapping would be a second name for
-	// the same data.
+	// The mapping is handed what each party sent and nothing else.
 	becknResponse, err := s.mapper.Transform(ctx, call.Mappings, definition.DirectionResponse, map[string]any{
 		"beckn":    beckn,
 		"response": answer,
@@ -261,69 +257,53 @@ func servedActions(plan *model.ProviderRecord) []string {
 
 // buildRequest produces what the provider is sent.
 //
-// The mapping is handed the inbound payload and nothing else, and it produces a
-// document or it produces nothing. Nothing is the ordinary case here: this
-// provider takes its parameters in the query string, this step resolved them
-// already, and putting them through a fetch and a compile to arrive at the same
-// two fields would buy nothing.
+// Whatever the mapping produces IS the request: a body for a method that takes
+// one, query parameters for a method that does not. Nothing is substituted when
+// it produces nothing, so an empty request half means an empty request.
 //
-// What nothing means depends on the method, and both readings are deliberate:
-//
-//   - a method with no body -- the resolved values ARE the parameters. This step
-//     knows this provider, so it does not need the mapping's help to call it.
-//   - a method with a body -- there is no body. An empty mapping means an empty
-//     request, not the resolved values dressed up as one; a body is the
-//     mapping's business and it supplied none.
-//
-// A half with no transform and a transform that matched nothing are treated
-// alike here, deliberately: for the request leg there is no document either way,
-// and inventing one would send the provider something nobody asked for.
-func (s *Step) buildRequest(ctx context.Context, call model.ActionPlan, beckn any, local point) ([]byte, error) {
+// This step used to extract a point from the payload and fall back to sending
+// that. It meant the choice of which payload fields reach the provider lived in
+// Go, so adding a parameter -- a date range, say -- was a rebuild. Now it is a
+// mapping edit and nothing else.
+func (s *Step) buildRequest(ctx context.Context, call model.ActionPlan, beckn any) ([]byte, error) {
 	mapped, err := s.mapper.Transform(ctx, call.Mappings, definition.DirectionRequest, map[string]any{
 		"beckn": beckn,
 	})
 	if err != nil {
 		return nil, err
 	}
-	if len(mapped) > 0 {
-		return mapped, nil
+	if len(mapped) == 0 {
+		log.Debugf(ctx, "mausamgram: the request half of %s produced nothing; sending an empty request", call.Mappings)
 	}
-
-	if hasBody(call.Method) {
-		log.Debugf(ctx, "mausamgram: the request half of %s produced nothing; sending no body", call.Mappings)
-		return nil, nil
-	}
-
-	log.Debugf(ctx, "mausamgram: the request half of %s produced nothing; sending the resolved point", call.Mappings)
-	parameters, err := json.Marshal(local)
-	if err != nil {
-		return nil, fmt.Errorf("mausamgram: could not encode the resolved point: %w", err)
-	}
-	return parameters, nil
+	return mapped, nil
 }
 
-// point is what this provider needs beyond the Beckn payload: a latitude and a
-// longitude, as separate numbers.
-type point struct {
-	Lat float64 `json:"lat"`
-	Lon float64 `json:"lon"`
-}
+// geometryPoint is the GeoJSON type this capability can serve. IMD takes one
+// latitude and one longitude, so an area or a set of points has no single answer
+// -- and picking a centroid would invent a location the caller did not ask about.
+const geometryPoint = "Point"
 
-// resolvePoint reads the coordinates the request is asking about.
+// verifyGeometry refuses a request whose location this capability cannot serve.
 //
-// This is the prerequisite step: the work a provider needs done before it can be
-// called, which in the old per-provider services was tangled together with
-// building the response. Here it produces values and nothing else, and the
-// mapping decides what they are called upstream.
-func resolvePoint(body []byte) (point, error) {
+// It reads the geometry's type and NOTHING ELSE. Coordinates, dates and every
+// other field are the mapping's to extract, which is what keeps "the provider
+// wants another parameter" a mapping edit rather than a rebuild. This exists
+// only because a mapping cannot refuse: JSONata would turn a Polygon's nested
+// coordinates into a query parameter that is not a scalar, and surface as an
+// error naming neither the geometry nor the reason.
+//
+// A location that is absent is refused too, and separately: that is a different
+// fact from a geometry this provider does not serve, and a caller can act on the
+// difference.
+func verifyGeometry(body []byte) error {
 	var payload struct {
 		Message struct {
 			Contract struct {
 				Commitments []struct {
 					Resources []struct {
 						ResourceAttributes struct {
-							Location struct {
-								Coordinates []float64 `json:"coordinates"`
+							Location *struct {
+								Type string `json:"type"`
 							} `json:"location"`
 						} `json:"resourceAttributes"`
 					} `json:"resources"`
@@ -332,24 +312,34 @@ func resolvePoint(body []byte) (point, error) {
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return point{}, fmt.Errorf("mausamgram: request could not be read: %w", err)
+		return model.NewBadReqErr("",
+			fmt.Errorf("mausamgram: request could not be read: %w", err))
 	}
 
+	var unsupported string
 	for _, commitment := range payload.Message.Contract.Commitments {
 		for _, resource := range commitment.Resources {
-			coordinates := resource.ResourceAttributes.Location.Coordinates
-			if len(coordinates) < 2 {
+			location := resource.ResourceAttributes.Location
+			if location == nil {
 				continue
 			}
-			// GeoJSON order: longitude first, then latitude. Reading these the
-			// other way round yields a point in the wrong hemisphere that is
-			// still a valid request, so it fails as wrong data rather than as an
-			// error.
-			return point{Lon: coordinates[0], Lat: coordinates[1]}, nil
+			if location.Type == geometryPoint {
+				return nil
+			}
+			unsupported = location.Type
+			if unsupported == "" {
+				unsupported = "a geometry with no type"
+			}
 		}
 	}
-	return point{}, model.NewBadReqErr("",
-		errors.New("mausamgram: request carries no location coordinates"))
+
+	if unsupported != "" {
+		return model.NewBadReqErr("", fmt.Errorf(
+			"mausamgram: request carries %s; this capability needs a %s",
+			unsupported, geometryPoint))
+	}
+	return model.NewBadReqErr("",
+		errors.New("mausamgram: request carries no location"))
 }
 
 // extractAction reads the Beckn action a request is for.

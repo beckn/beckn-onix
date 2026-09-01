@@ -59,11 +59,35 @@
 # Fields that are the same for every day -- the point, the source, the
 # observation type -- sit once at the top. Only what varies per day repeats.
 
-# An empty request half means there is no request document to build. This
-# provider takes its parameters in the query string and the step resolved them
-# already, so it sends those directly. For a method that takes a body, an empty
-# half would mean exactly what it says: no body.
-request: ""
+# The request half decides what the provider is asked for. Whatever it produces
+# IS the request: query parameters for a method with no body, a body for one that
+# takes it.
+#
+# This is where the extraction lives, deliberately. The step reads only the
+# geometry's type -- enough to refuse a Polygon with a clear error, because a
+# mapping cannot refuse -- and nothing else. So when this provider wants another
+# parameter, it is an edit here and nothing else: no Go, no rebuild, live on the
+# next cache expiry.
+#
+# A date range, for instance, is already in the payload and would be two lines:
+#
+#   "from": $ra.validity.startsAt,
+#   "to":   $ra.validity.endsAt
+#
+# $ra is bound once so the rest reads as plain field access rather than four
+# repetitions of the same path.
+#
+# GeoJSON is [lon, lat] -- longitude first. Reading them the other way round
+# gives a point in the wrong hemisphere that is still a valid request, so it
+# fails as wrong data rather than as an error.
+request: |
+  (
+    $ra := beckn.message.contract.commitments[0].resources[0].resourceAttributes;
+    {
+      "lat": $ra.location.coordinates[1],
+      "lon": $ra.location.coordinates[0]
+    }
+  )
 
 # Keyed by direction, not by the action it produces: a select is answered by an
 # on_select over the same HTTP round trip, so the callback is this half rather
