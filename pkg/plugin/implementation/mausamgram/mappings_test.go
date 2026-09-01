@@ -214,12 +214,24 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 		t.Errorf("offer.resourceIds = %v, want exactly [%q]", referenced, selectedResourceID)
 	}
 
+	// --- the WeatherObservation schema pack, Direct mode ---------------------
+	// openagrinet:WeatherObservation v0.1 requires all five of these when
+	// informationMode is Direct. Two of them were missing before the pack was
+	// read: generatedAt, and a validity for the resource as a whole.
 	attributes, _ := only["resourceAttributes"].(map[string]any)
-	if attributes["@type"] != "openagrinet:WeatherObservation" {
-		t.Errorf("@type = %v, want openagrinet:WeatherObservation", attributes["@type"])
+	for _, f := range []struct{ key, want string }{
+		{"@type", "openagrinet:WeatherObservation"},
+		{"informationMode", "Direct"},
+		{"observationType", "Forecast"},
+	} {
+		if attributes[f.key] != f.want {
+			t.Errorf("%s = %v, want %v", f.key, attributes[f.key], f.want)
+		}
 	}
-	if attributes["observationType"] != "Forecast" {
-		t.Errorf("observationType = %v, want Forecast", attributes["observationType"])
+	for _, required := range []string{"source", "location", "generatedAt", "validity", "observations"} {
+		if attributes[required] == nil {
+			t.Errorf("resourceAttributes carries no %q", required)
+		}
 	}
 
 	// The point, the source and the observation type are the same for every day,
@@ -233,40 +245,75 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 		t.Errorf("coordinates = %v, want [73.7898, 19.9975] in GeoJSON order", coordinates)
 	}
 
-	// --- the days, inside the one resource ----------------------------------
+	// The resource-level validity spans the whole forecast, first day to last.
+	validity, _ := attributes["validity"].(map[string]any)
+	if validity["startsAt"] != "2026-08-26" || validity["endsAt"] != "2026-08-28" {
+		t.Errorf("validity = %v, want the span of the days the provider answered with", validity)
+	}
+
+	// --- the days ------------------------------------------------------------
+	// observations is NOT a pack field. The pack carries one validity and one
+	// flat parameters array per resource, so it cannot express a multi-day
+	// forecast in the resource the request selected. Keeping the selected id
+	// matters more, so the days go in an extra field -- which validates, because
+	// the pack sets no additionalProperties, but is not governed by it.
 	observations, _ := attributes["observations"].([]any)
 	if len(observations) != 3 {
 		t.Fatalf("got %d observations, want 3 -- one per day the provider answered with", len(observations))
 	}
 
 	first, _ := observations[0].(map[string]any)
-	validity, _ := first["validity"].(map[string]any)
-	if validity["startsAt"] != "2026-08-26" {
-		t.Errorf("first observation starts at %v, want the provider's first forecast date", validity["startsAt"])
-	}
-	if first["advisory"] != "Heavy rainfall warning" {
-		t.Errorf("advisory = %v, want the provider's warning", first["advisory"])
+	dayValidity, _ := first["validity"].(map[string]any)
+	if dayValidity["startsAt"] != "2026-08-26" {
+		t.Errorf("first observation starts at %v, want the provider's first forecast date", dayValidity["startsAt"])
 	}
 
 	parameters, _ := first["parameters"].([]any)
-	if len(parameters) != 6 {
-		t.Errorf("got %d parameters, want 6 for a fully-reported day", len(parameters))
+	if len(parameters) != 7 {
+		t.Errorf("got %d parameters, want 7 for a fully-reported day with a warning", len(parameters))
 	}
 	assertParameter(t, parameters, "Rainfall", "Total", "mm", 12.4)
 	assertParameter(t, parameters, "Temperature", "Minimum", "Cel", 22.1)
 	assertParameter(t, parameters, "WindSpeed", "Average", "m/s", 4.2)
 
+	// A warning is a parameter, not a field of its own: the pack has no advisory
+	// property but does have an Alert parameter, and unit "1" is what it
+	// prescribes for a value that has no unit.
+	assertAlert(t, parameters, "Heavy rainfall warning")
+
 	// --- a day the provider reported only partially --------------------------
 	// Readings it did not take are absent, not present and empty: a consumer
-	// must be able to tell "no rainfall recorded" from "zero rainfall".
+	// must be able to tell "no rainfall recorded" from "zero rainfall". A day
+	// with no warning carries no Alert parameter at all.
 	third, _ := observations[2].(map[string]any)
 	thirdParameters, _ := third["parameters"].([]any)
 	if len(thirdParameters) != 2 {
 		t.Errorf("got %d parameters for a partly-reported day, want only the 2 taken", len(thirdParameters))
 	}
-	if third["advisory"] != nil {
-		t.Errorf("advisory = %v, want it absent when the provider gave none", third["advisory"])
+	for _, entry := range thirdParameters {
+		if p, _ := entry.(map[string]any); p["parameter"] == "Alert" {
+			t.Error("a day the provider gave no warning for must carry no Alert parameter")
+		}
 	}
+}
+
+// assertAlert finds the Alert parameter and checks its value and unit.
+func assertAlert(t *testing.T, parameters []any, want string) {
+	t.Helper()
+	for _, entry := range parameters {
+		p, _ := entry.(map[string]any)
+		if p["parameter"] != "Alert" {
+			continue
+		}
+		if p["value"] != want {
+			t.Errorf("Alert value = %v, want %q", p["value"], want)
+		}
+		if p["unit"] != "1" {
+			t.Errorf("Alert unit = %v, want \"1\" -- the pack's code for a unitless value", p["unit"])
+		}
+		return
+	}
+	t.Errorf("no Alert parameter; want one carrying %q", want)
 }
 
 // The shipped file's request half is deliberately empty: this provider takes its
