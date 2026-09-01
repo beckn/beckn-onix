@@ -89,6 +89,18 @@ type Config struct {
 	// comes from the registry, so one step serving several needs nothing else.
 	BindingKeys []string `yaml:"bindingKeys" json:"bindingKeys"`
 
+	// ProviderIDAt and CapabilityCodeAt override where the two halves of a
+	// binding key sit in a payload. Absent means the Beckn v2 convention, which
+	// is what every deployment should be using.
+	//
+	// This is a network convention rather than a deployment's preference --
+	// every participant must agree, or two adapters disagree about what a
+	// binding key is and requests silently fail to match. It is configurable
+	// only so that a spec change can be tracked without waiting for a release,
+	// and both must be given together.
+	ProviderIDAt     string `yaml:"providerIdAt" json:"providerIdAt"`
+	CapabilityCodeAt string `yaml:"capabilityCodeAt" json:"capabilityCodeAt"`
+
 	// AuthScheme is how credentials are presented upstream: none, basic or
 	// header. Providers differ here -- basic auth, a raw token header, a field
 	// in the body -- which is why it is configuration and not an assumption.
@@ -111,6 +123,7 @@ type Config struct {
 // Step serves the Mausamgram capability. It is safe for concurrent use.
 type Step struct {
 	config        *Config
+	paths         oanbinding.Paths
 	prerequisites Prerequisites
 	registry      definition.ProviderRecordLookup
 	mapper        definition.Mapper
@@ -133,8 +146,14 @@ func New(ctx context.Context, registry definition.ProviderRecordLookup, mapper d
 		return nil, nil, err
 	}
 
+	paths, err := bindingPaths(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	step := &Step{
 		config:        cfg,
+		paths:         paths,
 		prerequisites: prerequisites,
 		registry:      registry,
 		mapper:        mapper,
@@ -151,6 +170,28 @@ func New(ctx context.Context, registry definition.ProviderRecordLookup, mapper d
 
 	log.Infof(ctx, "Upstream step created for %s", strings.Join(cfg.BindingKeys, ", "))
 	return step, closer, nil
+}
+
+// bindingPaths resolves where this step reads a binding key from.
+//
+// Both halves or neither: overriding one and leaving the other on the default
+// is a half-configured deployment that would match nothing, and it would do so
+// silently on every request rather than once at startup.
+func bindingPaths(cfg *Config) (oanbinding.Paths, error) {
+	if cfg.ProviderIDAt == "" && cfg.CapabilityCodeAt == "" {
+		return oanbinding.BecknV2, nil
+	}
+	if cfg.ProviderIDAt == "" {
+		return oanbinding.Paths{}, errors.New("upstream: capabilityCodeAt is set without providerIdAt")
+	}
+	if cfg.CapabilityCodeAt == "" {
+		return oanbinding.Paths{}, errors.New("upstream: providerIdAt is set without capabilityCodeAt")
+	}
+	paths := oanbinding.Paths{ProviderID: cfg.ProviderIDAt, CapabilityCode: cfg.CapabilityCodeAt}
+	if err := paths.Validate(); err != nil {
+		return oanbinding.Paths{}, err
+	}
+	return paths, nil
 }
 
 // applyDefaults fills in what was left out and rejects what cannot be defaulted.
@@ -196,7 +237,7 @@ func applyDefaults(cfg *Config) error {
 // pipeline and each recognises its own work, so adding a provider is one more
 // entry rather than a change to a routing table.
 func (s *Step) Run(ctx *model.StepContext) error {
-	binding, err := oanbinding.From(ctx.Body)
+	binding, err := oanbinding.From(s.paths, ctx.Body)
 	if errors.Is(err, oanbinding.ErrNoBinding) {
 		return nil
 	}

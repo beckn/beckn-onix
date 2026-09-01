@@ -14,6 +14,7 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/internal/oanbinding"
 )
 
 const selectBody = `{
@@ -449,6 +450,67 @@ func TestRunRefusesWhenTheResponseMappingProducesNothing(t *testing.T) {
 	}
 	if len(ctx.ResponseBody) != 0 {
 		t.Errorf("ResponseBody = %q, want nothing written", ctx.ResponseBody)
+	}
+}
+
+// --- where the binding key lives ----------------------------------------------
+//
+// A default, not a setting: every participant must agree where the halves of a
+// binding key sit, or two adapters disagree about what a binding key is and
+// requests silently fail to match. The override exists so a spec change can be
+// tracked without waiting for a release, and has to be typed deliberately.
+
+func TestNewUsesTheBecknConventionByDefault(t *testing.T) {
+	t.Parallel()
+
+	step := newStep(t, &stubRegistry{}, &stubMapper{})
+	if step.paths != oanbinding.BecknV2 {
+		t.Errorf("paths = %+v, want the Beckn v2 convention", step.paths)
+	}
+}
+
+// An override reads the halves from somewhere else, end to end through the step.
+func TestRunReadsTheBindingKeyFromOverriddenPaths(t *testing.T) {
+	t.Parallel()
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{}`)
+	}))
+	defer upstreamServer.Close()
+
+	plan := testPlan(upstreamServer.URL, http.MethodGet)
+	plan.BindingKey = "agmarknet|openagrinet:MandiPrice"
+	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+
+	step := newStep(t, &stubRegistry{plan: plan}, mapper, func(c *Config) {
+		c.BindingKeys = []string{"agmarknet|openagrinet:MandiPrice"}
+		c.ProviderIDAt = "who.provider"
+		c.CapabilityCodeAt = "what[].type"
+	})
+
+	ctx, err := runStep(t, step, `{"context":{"action":"select"},"who":{"provider":"agmarknet"},"what":[{"type":"openagrinet:MandiPrice"}]}`)
+	if err != nil {
+		t.Fatalf("Run() returned an unexpected error: %v", err)
+	}
+	if len(ctx.ResponseBody) == 0 {
+		t.Error("the step did not recognise a binding key at the overridden paths")
+	}
+}
+
+// Overriding one half and not the other is a half-configured deployment that
+// would match nothing. Refused at startup rather than at every request.
+func TestNewRefusesAHalfConfiguredOverride(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := New(context.Background(), &stubRegistry{}, &stubMapper{}, nil, &Config{
+		BindingKeys:  []string{testBindingKey},
+		ProviderIDAt: "who.provider",
+	})
+	if err == nil {
+		t.Fatal("expected one path without the other to be refused")
+	}
+	if !strings.Contains(err.Error(), "capabilityCodeAt") {
+		t.Errorf("error %q should name the path that is missing", err)
 	}
 }
 

@@ -124,6 +124,37 @@ func TestParseConfigReadsSeveralBindingKeys(t *testing.T) {
 	}
 }
 
+// The override is two keys, both or neither. Absent leaves the step on the
+// Beckn v2 convention, which is what every deployment should be running.
+func TestParseConfigReadsTheBindingKeyOverride(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := weatherProvider{}.parseConfig(map[string]string{
+		"bindingKeys":      "a|openagrinet:One",
+		"providerIdAt":     "who.provider",
+		"capabilityCodeAt": "what[].type",
+	})
+	if err != nil {
+		t.Fatalf("parseConfig() returned an unexpected error: %v", err)
+	}
+	if cfg.ProviderIDAt != "who.provider" || cfg.CapabilityCodeAt != "what[].type" {
+		t.Errorf("override = %q / %q, want the configured paths", cfg.ProviderIDAt, cfg.CapabilityCodeAt)
+	}
+}
+
+// Absent leaves them empty, and upstream reads that as "use the convention".
+func TestParseConfigLeavesTheOverrideUnsetByDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := weatherProvider{}.parseConfig(map[string]string{"bindingKeys": "a|openagrinet:One"})
+	if err != nil {
+		t.Fatalf("parseConfig() returned an unexpected error: %v", err)
+	}
+	if cfg.ProviderIDAt != "" || cfg.CapabilityCodeAt != "" {
+		t.Errorf("override = %q / %q, want both empty", cfg.ProviderIDAt, cfg.CapabilityCodeAt)
+	}
+}
+
 func TestNew(t *testing.T) {
 	t.Parallel()
 

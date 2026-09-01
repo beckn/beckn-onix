@@ -42,7 +42,7 @@ const realSelectPayload = `{
 func TestFromReadsARealSelectPayload(t *testing.T) {
 	t.Parallel()
 
-	got, err := From([]byte(realSelectPayload))
+	got, err := From(BecknV2, []byte(realSelectPayload))
 	if err != nil {
 		t.Fatalf("From() returned an unexpected error: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestFromReportsAPayloadWithNoBinding(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := From([]byte(tc.body)); !errors.Is(err, ErrNoBinding) {
+			if _, err := From(BecknV2, []byte(tc.body)); !errors.Is(err, ErrNoBinding) {
 				t.Errorf("expected ErrNoBinding, got %v", err)
 			}
 		})
@@ -114,7 +114,7 @@ func TestFromRefusesAnAmbiguousPayload(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := From([]byte(tc.body))
+			_, err := From(BecknV2, []byte(tc.body))
 			if err == nil {
 				t.Fatal("expected an ambiguous payload to be refused")
 			}
@@ -137,7 +137,7 @@ func TestFromAcceptsRepetitionOfTheSameBinding(t *testing.T) {
 		{"offer":{"provider":{"id":"p"}},"resources":[{"resourceAttributes":{"@type":"t"}}]},
 		{"offer":{"provider":{"id":"p"}},"resources":[{"resourceAttributes":{"@type":"t"}}]}]}}}`
 
-	got, err := From([]byte(body))
+	got, err := From(BecknV2, []byte(body))
 	if err != nil {
 		t.Fatalf("From() returned an unexpected error: %v", err)
 	}
@@ -149,11 +149,154 @@ func TestFromAcceptsRepetitionOfTheSameBinding(t *testing.T) {
 func TestFromReportsAnUnreadablePayload(t *testing.T) {
 	t.Parallel()
 
-	_, err := From([]byte(`{"message":`))
+	_, err := From(BecknV2, []byte(`{"message":`))
 	if err == nil {
 		t.Fatal("expected unreadable JSON to be reported")
 	}
 	if errors.Is(err, ErrNoBinding) {
 		t.Error("a broken payload is not an absent binding")
+	}
+}
+
+// --- where the binding key lives ---------------------------------------------
+//
+// The two halves of a binding key sit at a fixed place in a Beckn v2 payload.
+// That is a NETWORK convention: every participant must agree, or two adapters
+// disagree about what a binding key even is and requests silently fail to match.
+//
+// So it is a default, not a setting. BecknV2 is what every deployment uses. An
+// override exists only so a spec change can be tracked without waiting for a
+// release, and it has to be typed deliberately -- absent means correct.
+
+func TestBecknV2IsTheDefault(t *testing.T) {
+	t.Parallel()
+
+	if BecknV2.ProviderID == "" || BecknV2.CapabilityCode == "" {
+		t.Fatal("the default paths must be set")
+	}
+	got, err := From(BecknV2, []byte(realSelectPayload))
+	if err != nil {
+		t.Fatalf("From() returned an unexpected error: %v", err)
+	}
+	if got.ParticipantID != "mausamgram" || got.CapabilityCode != "openagrinet:WeatherObservation" {
+		t.Errorf("binding = %+v, want the Beckn v2 convention's answer", got)
+	}
+}
+
+// An override reads the halves from somewhere else entirely, which is what makes
+// a spec change survivable without a build.
+func TestFromReadsAnOverriddenPath(t *testing.T) {
+	t.Parallel()
+
+	body := `{"who":{"provider":"agmarknet"},"what":[{"type":"openagrinet:MandiPrice"}]}`
+	got, err := From(Paths{
+		ProviderID:     "who.provider",
+		CapabilityCode: "what[].type",
+	}, []byte(body))
+	if err != nil {
+		t.Fatalf("From() returned an unexpected error: %v", err)
+	}
+	if got.Key() != "agmarknet|openagrinet:MandiPrice" {
+		t.Errorf("binding key = %q, want it read from the overridden paths", got.Key())
+	}
+}
+
+// A path that matches nothing is a request this step is not meant to serve --
+// the ordinary case, and the same answer the typed walk gave.
+func TestFromReportsNoBindingWhenAPathMatchesNothing(t *testing.T) {
+	t.Parallel()
+
+	_, err := From(Paths{ProviderID: "nowhere.at.all", CapabilityCode: "what[].type"},
+		[]byte(`{"what":[{"type":"x"}]}`))
+	if !errors.Is(err, ErrNoBinding) {
+		t.Errorf("expected ErrNoBinding, got %v", err)
+	}
+}
+
+// Several distinct values stays a refusal whatever path found them: one request
+// maps to one call, and guessing which would serve part of it silently.
+func TestFromStillRefusesSeveralValuesUnderAnOverride(t *testing.T) {
+	t.Parallel()
+
+	_, err := From(Paths{ProviderID: "who[].provider", CapabilityCode: "what[].type"},
+		[]byte(`{"who":[{"provider":"a"},{"provider":"b"}],"what":[{"type":"x"}]}`))
+	if err == nil || errors.Is(err, ErrNoBinding) {
+		t.Errorf("expected a refusal naming both providers, got %v", err)
+	}
+}
+
+// The walk is deliberately small: dotted segments, and [] to flatten an array.
+// No wildcards, no filters, no indices -- it is an escape hatch, not a query
+// language, and every one of those would be a way to write something subtly
+// wrong in config nobody reviews.
+func TestPathWalk(t *testing.T) {
+	t.Parallel()
+
+	doc := map[string]any{
+		"a": map[string]any{"b": "flat"},
+		"list": []any{
+			map[string]any{"v": "one"},
+			map[string]any{"v": "two"},
+		},
+		"nested": []any{
+			map[string]any{"inner": []any{map[string]any{"v": "deep"}}},
+		},
+		"number": 42,
+	}
+
+	testCases := []struct {
+		name string
+		path string
+		want []string
+	}{
+		{"a flat field", "a.b", []string{"flat"}},
+		{"through an array", "list[].v", []string{"one", "two"}},
+		{"through two arrays", "nested[].inner[].v", []string{"deep"}},
+		{"a path that is not there", "a.missing", nil},
+		{"a value that is not a string", "number", nil},
+		{"an array not marked", "list.v", nil},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := valuesAt(doc, tc.path)
+			if len(got) != len(tc.want) {
+				t.Fatalf("valuesAt(%q) = %v, want %v", tc.path, got, tc.want)
+			}
+			for i, want := range tc.want {
+				if got[i] != want {
+					t.Errorf("valuesAt(%q)[%d] = %q, want %q", tc.path, i, got[i], want)
+				}
+			}
+		})
+	}
+}
+
+// An override that names no path at all would match nothing and make every
+// request unservable, silently. Refused where it is configured instead.
+func TestPathsValidate(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		paths Paths
+	}{
+		{"no provider path", Paths{CapabilityCode: "a.b"}},
+		{"no capability path", Paths{ProviderID: "a.b"}},
+		{"a blank segment", Paths{ProviderID: "a..b", CapabilityCode: "a.b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if err := tc.paths.Validate(); err == nil {
+				t.Error("expected an unusable path pair to be refused")
+			}
+		})
+	}
+
+	if err := BecknV2.Validate(); err != nil {
+		t.Errorf("the default paths must validate: %v", err)
 	}
 }

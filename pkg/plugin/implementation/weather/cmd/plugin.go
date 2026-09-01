@@ -23,12 +23,16 @@ var newStepFunc = weather.New
 // scheme, so those rules live in one place.
 func (p weatherProvider) parseConfig(config map[string]string) (*weather.Config, error) {
 	cfg := &weather.Config{
-		BindingKeys:    splitList(config["bindingKeys"]),
-		AuthScheme:     config["authScheme"],
-		UsernameEnv:    config["usernameEnv"],
-		PasswordEnv:    config["passwordEnv"],
-		HeaderName:     config["headerName"],
-		HeaderValueEnv: config["headerValueEnv"],
+		BindingKeys: splitList(config["bindingKeys"]),
+		// Absent means the Beckn v2 convention. See upstream.Config for why
+		// this is a default rather than something to set.
+		ProviderIDAt:     config["providerIdAt"],
+		CapabilityCodeAt: config["capabilityCodeAt"],
+		AuthScheme:       config["authScheme"],
+		UsernameEnv:      config["usernameEnv"],
+		PasswordEnv:      config["passwordEnv"],
+		HeaderName:       config["headerName"],
+		HeaderValueEnv:   config["headerValueEnv"],
 	}
 
 	if raw, exists := config["maxResponseBytes"]; exists && raw != "" {

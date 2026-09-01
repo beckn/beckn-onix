@@ -32,31 +32,6 @@ func (b Binding) Key() string {
 	return b.ParticipantID + separator + b.CapabilityCode
 }
 
-// selectPayload is the part of a Beckn v2 payload a binding is derived from.
-//
-// Both commitments and resources are arrays, and both are read as such. The
-// provider is named once per commitment and the type once per resource, so a
-// single request can in principle carry several -- see From for what happens
-// when it does.
-type selectPayload struct {
-	Message struct {
-		Contract struct {
-			Commitments []struct {
-				Offer struct {
-					Provider struct {
-						ID string `json:"id"`
-					} `json:"provider"`
-				} `json:"offer"`
-				Resources []struct {
-					ResourceAttributes struct {
-						Type string `json:"@type"`
-					} `json:"resourceAttributes"`
-				} `json:"resources"`
-			} `json:"commitments"`
-		} `json:"contract"`
-	} `json:"message"`
-}
-
 // From derives the capability binding a payload is asking for.
 //
 // Returns ErrNoBinding when the payload names no provider or no type, which is
@@ -66,19 +41,17 @@ type selectPayload struct {
 // than resolved to its first: the two halves index one registry row describing
 // one upstream call, so a request spanning several is asking for something this
 // design cannot express. Guessing would silently serve part of it.
-func From(body []byte) (Binding, error) {
-	var payload selectPayload
+//
+// Where the halves live is BecknV2 unless a deployment says otherwise -- see
+// Paths for why that is a default and not a setting.
+func From(paths Paths, body []byte) (Binding, error) {
+	var payload any
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return Binding{}, fmt.Errorf("oanbinding: payload could not be read: %w", err)
 	}
 
-	var providers, types []string
-	for _, commitment := range payload.Message.Contract.Commitments {
-		providers = appendDistinct(providers, commitment.Offer.Provider.ID)
-		for _, resource := range commitment.Resources {
-			types = appendDistinct(types, resource.ResourceAttributes.Type)
-		}
-	}
+	providers := distinct(valuesAt(payload, paths.ProviderID))
+	types := distinct(valuesAt(payload, paths.CapabilityCode))
 
 	if len(providers) == 0 || len(types) == 0 {
 		return Binding{}, ErrNoBinding
@@ -93,6 +66,16 @@ func From(body []byte) (Binding, error) {
 	}
 
 	return Binding{ParticipantID: providers[0], CapabilityCode: types[0]}, nil
+}
+
+// distinct drops blanks and repeats, keeping the order they were found in so a
+// refusal names them the way the payload did.
+func distinct(values []string) []string {
+	var out []string
+	for _, value := range values {
+		out = appendDistinct(out, value)
+	}
+	return out
 }
 
 // appendDistinct adds value if it is neither empty nor already present.
