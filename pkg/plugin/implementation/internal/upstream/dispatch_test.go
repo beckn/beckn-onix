@@ -1,4 +1,4 @@
-package mausamgram_test
+package upstream_test
 
 import (
 	"context"
@@ -10,12 +10,32 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/mausamgram"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/internal/upstream"
 )
 
 // dispatchMappingRef stands in for the one reference an action carries. This
 // test is about dispatch, so what is behind it never matters.
 const dispatchMappingRef = "https://m.example.com/mausamgram/weather-observation.select.yaml"
+
+// dispatchRequest names a provider and a capability, which is all dispatch reads.
+// Kept minimal on purpose: this test is about which step claims a request, not
+// about what any of them would do with it.
+const dispatchRequest = `{
+  "context": { "version": "2.0.0", "action": "select" },
+  "message": { "contract": { "commitments": [ {
+    "resources": [ { "resourceAttributes": { "@type": "openagrinet:WeatherObservation" } } ],
+    "offer": { "provider": { "id": "mausamgram" } }
+  } ] } }
+}`
+
+// stubRegistry answers with one call plan, whatever is asked. This file's own,
+// because it is an external test: it exercises the package exactly as the
+// adapter does, through the exported surface and nothing else.
+type stubRegistry struct{ plan *model.ProviderRecord }
+
+func (s *stubRegistry) ProviderRecord(context.Context, string) (*model.ProviderRecord, error) {
+	return s.plan, nil
+}
 
 // fixedMapper returns canned results, so this test is about dispatch and
 // nothing else.
@@ -55,10 +75,11 @@ func TestTwoProviderStepsDispatchByBindingKey(t *testing.T) {
 				"select": {Method: http.MethodGet, Path: "/x", Mappings: dispatchMappingRef, RetryMax: 1},
 			},
 		}
-		step, closer, err := mausamgram.New(context.Background(),
+		step, closer, err := upstream.New(context.Background(),
 			&stubRegistry{plan: plan},
 			fixedMapper{answer: answer},
-			&mausamgram.Config{BindingKeys: []string{bindingKey}})
+			nil,
+			&upstream.Config{BindingKeys: []string{bindingKey}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -73,7 +94,7 @@ func TestTwoProviderStepsDispatchByBindingKey(t *testing.T) {
 
 	// A request for the FIRST capability, run through both steps in order, as a
 	// pipeline would.
-	ctx := &model.StepContext{Context: t.Context(), Body: []byte(selectRequest)}
+	ctx := &model.StepContext{Context: t.Context(), Body: []byte(dispatchRequest)}
 	for i, step := range steps {
 		if err := step.Run(ctx); err != nil {
 			t.Fatalf("step %d: %v", i, err)

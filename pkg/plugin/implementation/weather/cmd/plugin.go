@@ -9,20 +9,20 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/mausamgram"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/weather"
 )
 
-// mausamgramProvider implements definition.ProviderStepProvider.
-type mausamgramProvider struct{}
+// weatherProvider implements definition.ProviderStepProvider.
+type weatherProvider struct{}
 
 // newStepFunc creates a new step. Indirected for tests.
-var newStepFunc = mausamgram.New
+var newStepFunc = weather.New
 
 // parseConfig turns the plugin config map into a typed Config. Anything absent
-// is left zero: mausamgram.New applies the defaults and validates the auth
+// is left zero: weather.New applies the defaults and validates the auth
 // scheme, so those rules live in one place.
-func (p mausamgramProvider) parseConfig(config map[string]string) (*mausamgram.Config, error) {
-	cfg := &mausamgram.Config{
+func (p weatherProvider) parseConfig(config map[string]string) (*weather.Config, error) {
+	cfg := &weather.Config{
 		BindingKeys:    splitList(config["bindingKeys"]),
 		AuthScheme:     config["authScheme"],
 		UsernameEnv:    config["usernameEnv"],
@@ -45,21 +45,21 @@ func (p mausamgramProvider) parseConfig(config map[string]string) (*mausamgram.C
 	return cfg, nil
 }
 
-// New creates a new mausamgram provider step instance.
-func (p mausamgramProvider) New(ctx context.Context, registry definition.ProviderRecordLookup, mapper definition.Mapper, config map[string]string) (definition.Step, func() error, error) {
+// New creates a new weather provider step instance.
+func (p weatherProvider) New(ctx context.Context, registry definition.ProviderRecordLookup, mapper definition.Mapper, config map[string]string) (definition.Step, func() error, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("context cannot be nil")
 	}
 
 	cfg, err := p.parseConfig(config)
 	if err != nil {
-		log.Errorf(ctx, err, "Failed to parse mausamgram configuration")
-		return nil, nil, fmt.Errorf("failed to parse mausamgram configuration: %w", err)
+		log.Errorf(ctx, err, "Failed to parse weather configuration")
+		return nil, nil, fmt.Errorf("failed to parse weather configuration: %w", err)
 	}
 
 	step, closer, err := newStepFunc(ctx, registry, mapper, cfg)
 	if err != nil {
-		log.Errorf(ctx, err, "Failed to create mausamgram step")
+		log.Errorf(ctx, err, "Failed to create weather step")
 		return nil, nil, err
 	}
 
@@ -87,7 +87,7 @@ func splitList(raw string) []string {
 	return out
 }
 
-var Provider = mausamgramProvider{}
+var Provider = weatherProvider{}
 
 // Compile-time proof the provider satisfies the interface the manager asserts
 // against. A mismatch is otherwise a runtime cast failure at startup.

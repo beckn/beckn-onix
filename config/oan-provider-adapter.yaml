@@ -75,14 +75,14 @@ modules:
         # mechanism. Credentials are named, never held: authScheme says how to
         # present them, and the *Env keys name environment variables.
         providerSteps:
-          - id: mausamgram
+          - id: weather
             config:
-              bindingKey: "mausamgram|openagrinet:WeatherObservation"
+              bindingKeys: "mausamgram|openagrinet:WeatherObservation"
               authScheme: basic
               usernameEnv: MAUSAMGRAM_USER
               passwordEnv: MAUSAMGRAM_X_API_KEY
 
       steps:
         - validateSign   # the sender's key, from the registry
-        - mausamgram     # resolve, map out, call, map back
+        - weather        # resolve, map out, call, map back
         - signAck        # signs whatever the step answered with

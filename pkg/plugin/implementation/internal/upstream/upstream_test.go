@@ -1,4 +1,4 @@
-package mausamgram
+package upstream
 
 import (
 	"context"
@@ -40,6 +40,10 @@ func (s *stubRegistry) ProviderRecord(context.Context, string) (*model.ProviderR
 // stubMapper records what it was asked and returns canned results, so a test can
 // testMappingRef is the one reference an action carries: the URL of a single
 // published file holding both halves.
+// testBindingKey is what these tests configure the step for. There is no
+// default any more: this package serves whatever a domain package points it at.
+const testBindingKey = "mausamgram|openagrinet:WeatherObservation"
+
 const testMappingRef = "https://mappings.example.com/mausamgram/weather-observation.select.yaml"
 
 // assert what reached the mapping without writing one.
@@ -84,7 +88,7 @@ func (s *stubMapper) Transform(_ context.Context, mappingRef string, direction d
 
 func testPlan(baseURL, method string) *model.ProviderRecord {
 	return &model.ProviderRecord{
-		BindingKey:     DefaultBindingKey,
+		BindingKey:     testBindingKey,
 		ParticipantID:  "mausamgram",
 		CapabilityCode: "openagrinet:WeatherObservation",
 		BaseURL:        baseURL,
@@ -98,11 +102,11 @@ func testPlan(baseURL, method string) *model.ProviderRecord {
 func newStep(t *testing.T, registry definition.ProviderRecordLookup, mapper definition.Mapper, tweak ...func(*Config)) *Step {
 	t.Helper()
 
-	cfg := &Config{}
+	cfg := &Config{BindingKeys: []string{testBindingKey}}
 	for _, apply := range tweak {
 		apply(cfg)
 	}
-	step, closer, err := New(context.Background(), registry, mapper, cfg)
+	step, closer, err := New(context.Background(), registry, mapper, nil, cfg)
 	if err != nil {
 		t.Fatalf("New() returned an unexpected error: %v", err)
 	}
@@ -121,10 +125,10 @@ func runStep(t *testing.T, step *Step, body string) (*model.StepContext, error) 
 func TestNewRequiresItsDependencies(t *testing.T) {
 	t.Parallel()
 
-	if _, _, err := New(context.Background(), nil, &stubMapper{}, &Config{}); err == nil {
+	if _, _, err := New(context.Background(), nil, &stubMapper{}, nil, minimalConfig()); err == nil {
 		t.Error("expected a missing registry to be refused")
 	}
-	if _, _, err := New(context.Background(), &stubRegistry{}, nil, &Config{}); err == nil {
+	if _, _, err := New(context.Background(), &stubRegistry{}, nil, nil, minimalConfig()); err == nil {
 		t.Error("expected a missing mapper to be refused")
 	}
 }
@@ -150,7 +154,8 @@ func TestNewValidatesTheAuthScheme(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, _, err := New(context.Background(), &stubRegistry{}, &stubMapper{}, tc.config)
+			tc.config.BindingKeys = []string{testBindingKey}
+			_, _, err := New(context.Background(), &stubRegistry{}, &stubMapper{}, nil, tc.config)
 			if tc.valid && err != nil {
 				t.Errorf("expected the config to be accepted, got %v", err)
 			}
@@ -260,19 +265,24 @@ func TestRunKeepsResolvedValuesInScopeForTheResponse(t *testing.T) {
 	if !ok {
 		t.Fatalf("response input = %T, want a map", mapper.responseInput)
 	}
-	for _, key := range []string{"beckn", "response"} {
+	for _, key := range []string{"beckn", "_local", "response"} {
 		if _, present := input[key]; !present {
 			t.Errorf("response mapping cannot see %q", key)
 		}
 	}
+	if len(input) != 3 {
+		t.Errorf("response input carries %v, want beckn, _local and response", keysOf(input))
+	}
 
-	// A mapping is handed only what a party sent. Values this step resolved
-	// before the call stay in the step: it holds them already and uses them
-	// directly, so passing them through the mapping would be a detour and a
-	// second name for the same data.
-	if len(input) != 2 {
-		t.Errorf("response input carries %d keys (%v), want exactly beckn and response",
-			len(input), keysOf(input))
+	// _local is empty when nothing was resolved, not absent: a mapping reading
+	// it on a capability with no prerequisites should find a missing field
+	// rather than fail.
+	local, ok := input["_local"].(map[string]any)
+	if !ok {
+		t.Fatalf("_local = %T, want a map", input["_local"])
+	}
+	if len(local) != 0 {
+		t.Errorf("_local = %v, want empty -- this capability resolves nothing", local)
 	}
 }
 
@@ -304,11 +314,13 @@ func TestRunGivesTheRequestMappingOnlyTheInboundPayload(t *testing.T) {
 	if !ok {
 		t.Fatalf("request input = %T, want a map", mapper.requestInput)
 	}
-	if len(input) != 1 {
-		t.Errorf("request input carries %v, want only beckn", keysOf(input))
+	if len(input) != 2 {
+		t.Errorf("request input carries %v, want beckn and _local", keysOf(input))
 	}
-	if _, present := input["beckn"]; !present {
-		t.Error("request mapping cannot see beckn")
+	for _, key := range []string{"beckn", "_local"} {
+		if _, present := input[key]; !present {
+			t.Errorf("request mapping cannot see %q", key)
+		}
 	}
 }
 
@@ -514,20 +526,24 @@ func TestRunStillPassesThroughACapabilityItIsNotConfiguredFor(t *testing.T) {
 	}
 }
 
-// Configured for nothing means the default capability, so an operator who names
-// no binding key gets the one this plugin was written for rather than a step
-// that answers to nothing.
-func TestNewDefaultsToTheCapabilityThePluginIsFor(t *testing.T) {
+// minimalConfig is the least a step needs: what it answers to.
+func minimalConfig() *Config {
+	return &Config{BindingKeys: []string{testBindingKey}}
+}
+
+// There is no default capability, and there cannot be a sensible one: this
+// package serves whatever a domain package points it at, so a default would name
+// one provider's capability and be wrong for every other domain built on it.
+// Refused at startup, where an operator is watching.
+func TestNewRequiresBindingKeys(t *testing.T) {
 	t.Parallel()
 
-	step, closer, err := New(context.Background(), &stubRegistry{}, &stubMapper{}, &Config{})
-	if err != nil {
-		t.Fatalf("New() returned an unexpected error: %v", err)
+	_, _, err := New(context.Background(), &stubRegistry{}, &stubMapper{}, nil, &Config{})
+	if err == nil {
+		t.Fatal("expected a step configured for no capability to be refused")
 	}
-	t.Cleanup(func() { _ = closer() })
-
-	if got := step.config.BindingKeys; len(got) != 1 || got[0] != DefaultBindingKey {
-		t.Errorf("binding keys = %v, want just the default %q", got, DefaultBindingKey)
+	if !strings.Contains(err.Error(), "bindingKeys") {
+		t.Errorf("error %q should name the setting that is missing", err)
 	}
 }
 
@@ -536,8 +552,8 @@ func TestNewDefaultsToTheCapabilityThePluginIsFor(t *testing.T) {
 func TestNewRefusesAnEmptyBindingKey(t *testing.T) {
 	t.Parallel()
 
-	_, _, err := New(context.Background(), &stubRegistry{}, &stubMapper{},
-		&Config{BindingKeys: []string{"mausamgram|openagrinet:WeatherObservation", "  "}})
+	_, _, err := New(context.Background(), &stubRegistry{}, &stubMapper{}, nil,
+		&Config{BindingKeys: []string{testBindingKey, "  "}})
 	if err == nil {
 		t.Error("expected an empty binding key to be refused")
 	}

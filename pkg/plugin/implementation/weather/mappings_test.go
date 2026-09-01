@@ -1,4 +1,4 @@
-package mausamgram_test
+package weather_test
 
 // mappings_test.go runs the shipped mapping files through the real mapper and
 // the real provider step. It is the only test that proves the three pieces fit:
@@ -22,7 +22,7 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/jsonmapper"
-	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/mausamgram"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/weather"
 )
 
 // mappingsDir is where the shipped mappings live, relative to this package.
@@ -36,6 +36,10 @@ const selectedResourceID = "res:mausamgram:point-forecast"
 // directions. The registry carries its full URL; the action segment of the name
 // must match the action that registry entry declares -- a mismatch would apply a
 // correct mapping to the wrong call, silently.
+// shippedBindingKey is the capability these tests exercise. Named here because
+// the package has no default: it serves whatever a deployment configures.
+const shippedBindingKey = "mausamgram|openagrinet:WeatherObservation"
+
 const shippedMapping = "weather-observation.select.yaml"
 
 // selectRequest is the verbatim /select captured from the OAN network.
@@ -127,7 +131,7 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 	defer closeMapper()
 
 	registry := &stubRegistry{plan: &model.ProviderRecord{
-		BindingKey:     mausamgram.DefaultBindingKey,
+		BindingKey:     shippedBindingKey,
 		ParticipantID:  "mausamgram",
 		CapabilityCode: "openagrinet:WeatherObservation",
 		BaseURL:        upstream.URL,
@@ -137,7 +141,8 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 		},
 	}}
 
-	step, closeStep, err := mausamgram.New(context.Background(), registry, mapper, &mausamgram.Config{})
+	step, closeStep, err := weather.New(context.Background(), registry, mapper,
+		&weather.Config{BindingKeys: []string{shippedBindingKey}})
 	if err != nil {
 		t.Fatalf("failed to build the step: %v", err)
 	}

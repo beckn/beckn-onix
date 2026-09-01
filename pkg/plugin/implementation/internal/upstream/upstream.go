@@ -1,11 +1,17 @@
-// Package mausamgram serves the IMD Mausamgram point-forecast capability.
+// Package upstream serves a Beckn capability by calling an ordinary API that has
+// never heard of Beckn.
 //
-// It is the first provider step, and the shape every other one follows: it
-// recognises its own capability, resolves what the provider needs beyond the
-// Beckn payload, calls it, and lets the mapper translate in both directions.
-// Nothing about weather forecasts appears outside this package, and nothing
-// about mapping appears inside it.
-package mausamgram
+// "upstream" is the registry's own word for such an API -- a Participant of type
+// upstream, as against a node that speaks Beckn. This package is the machinery
+// for calling one: recognise the capability, resolve the call plan, translate
+// out, call, translate back.
+//
+// It holds nothing about any provider or any domain. What varies per capability
+// comes from the registry (endpoint, method, budget, which mapping) and from the
+// mapping itself (what the payload must satisfy, what to send, what to return).
+// A domain package wraps this, supplying only its name and whatever prerequisite
+// work a mapping cannot express.
+package upstream
 
 import (
 	"bytes"
@@ -31,10 +37,6 @@ import (
 
 // Defaults applied when the registry or the operator leaves a setting out.
 const (
-	// DefaultBindingKey is the capability this step serves. It is configurable
-	// so a deployment can rename the participant without a rebuild, but it has a
-	// default because a step that serves nothing is never what an operator meant.
-	DefaultBindingKey = "mausamgram|openagrinet:WeatherObservation"
 	// DefaultTimeout and DefaultRetryMax are the registry contract's defaults
 	// for an action that leaves timeoutMs or retryMax out. Zero retries is
 	// deliberate: a provider that failed is retried only where the operator
@@ -59,6 +61,18 @@ const (
 // codeUpstreamUnavailable reports a provider that could not be reached or
 // answered with a failure. It is not this adapter's fault and not the caller's.
 const codeUpstreamUnavailable = "NET_DOWNSTREAM_UNAVAILABLE"
+
+// Prerequisites are the values a capability needs that its payload does not
+// carry, keyed by binding key.
+//
+// A mapping cannot produce them: a station id comes from a spatial lookup, a
+// session token from an exchange, a market code from a table. That is real I/O,
+// and no expression language should be able to do it.
+//
+// Whatever a function returns is handed to the mapping as _local, so the mapping
+// still decides what the provider is finally asked for. A capability with no
+// entry needs nothing, which is the common case.
+type Prerequisites map[string]func(context.Context, any) (map[string]any, error)
 
 // Config holds configuration parameters for the step.
 type Config struct {
@@ -96,19 +110,21 @@ type Config struct {
 
 // Step serves the Mausamgram capability. It is safe for concurrent use.
 type Step struct {
-	config     *Config
-	registry   definition.ProviderRecordLookup
-	mapper     definition.Mapper
-	httpClient *http.Client
+	config        *Config
+	prerequisites Prerequisites
+	registry      definition.ProviderRecordLookup
+	mapper        definition.Mapper
+	httpClient    *http.Client
 }
 
 // New creates the step.
-func New(ctx context.Context, registry definition.ProviderRecordLookup, mapper definition.Mapper, cfg *Config) (*Step, func() error, error) {
+func New(ctx context.Context, registry definition.ProviderRecordLookup, mapper definition.Mapper,
+	prerequisites Prerequisites, cfg *Config) (*Step, func() error, error) {
 	if registry == nil {
-		return nil, nil, errors.New("mausamgram: a provider record lookup is required")
+		return nil, nil, errors.New("upstream: a provider record lookup is required")
 	}
 	if mapper == nil {
-		return nil, nil, errors.New("mausamgram: a mapper is required")
+		return nil, nil, errors.New("upstream: a mapper is required")
 	}
 	if cfg == nil {
 		cfg = &Config{}
@@ -118,32 +134,36 @@ func New(ctx context.Context, registry definition.ProviderRecordLookup, mapper d
 	}
 
 	step := &Step{
-		config:   cfg,
-		registry: registry,
-		mapper:   mapper,
+		config:        cfg,
+		prerequisites: prerequisites,
+		registry:      registry,
+		mapper:        mapper,
 		// Timeout is set per request from the registry's own budget, so the
 		// client carries none of its own.
 		httpClient: &http.Client{},
 	}
 
 	closer := func() error {
-		log.Debugf(ctx, "Cleaning up mausamgram step resources")
+		log.Debugf(ctx, "Cleaning up upstream step resources")
 		step.httpClient.CloseIdleConnections()
 		return nil
 	}
 
-	log.Infof(ctx, "Mausamgram step created for %s", strings.Join(cfg.BindingKeys, ", "))
+	log.Infof(ctx, "Upstream step created for %s", strings.Join(cfg.BindingKeys, ", "))
 	return step, closer, nil
 }
 
 // applyDefaults fills in what was left out and rejects what cannot be defaulted.
 func applyDefaults(cfg *Config) error {
+	// No default. This package serves whatever a domain package configures it
+	// for, so a default would have to name one provider's capability -- wrong
+	// for every other domain built on it, and silently wrong rather than loudly.
 	if len(cfg.BindingKeys) == 0 {
-		cfg.BindingKeys = []string{DefaultBindingKey}
+		return errors.New("upstream: bindingKeys is required: it is what this step answers to")
 	}
 	for _, key := range cfg.BindingKeys {
 		if strings.TrimSpace(key) == "" {
-			return errors.New("mausamgram: bindingKeys carries an empty entry")
+			return errors.New("upstream: bindingKeys carries an empty entry")
 		}
 	}
 	if cfg.AuthScheme == "" {
@@ -157,14 +177,14 @@ func applyDefaults(cfg *Config) error {
 	case AuthSchemeNone:
 	case AuthSchemeBasic:
 		if cfg.UsernameEnv == "" || cfg.PasswordEnv == "" {
-			return errors.New("mausamgram: authScheme basic requires usernameEnv and passwordEnv")
+			return errors.New("upstream: authScheme basic requires usernameEnv and passwordEnv")
 		}
 	case AuthSchemeHeader:
 		if cfg.HeaderName == "" || cfg.HeaderValueEnv == "" {
-			return errors.New("mausamgram: authScheme header requires headerName and headerValueEnv")
+			return errors.New("upstream: authScheme header requires headerName and headerValueEnv")
 		}
 	default:
-		return fmt.Errorf("mausamgram: unknown authScheme %q: must be none, basic or header", cfg.AuthScheme)
+		return fmt.Errorf("upstream: unknown authScheme %q: must be none, basic or header", cfg.AuthScheme)
 	}
 	return nil
 }
@@ -184,16 +204,36 @@ func (s *Step) Run(ctx *model.StepContext) error {
 		return err
 	}
 	if !s.serves(binding.Key()) {
-		log.Debugf(ctx, "mausamgram: %s is not one of this step's capabilities, passing through", binding.Key())
+		log.Debugf(ctx, "upstream: %s is not one of this step's capabilities, passing through", binding.Key())
 		return nil
 	}
 
 	plan, err := s.registry.ProviderRecord(ctx, binding.Key())
 	if err != nil {
-		return fmt.Errorf("mausamgram: no call plan for %s: %w", binding.Key(), err)
+		return fmt.Errorf("upstream: no call plan for %s: %w", binding.Key(), err)
 	}
 
 	return s.serve(ctx, plan)
+}
+
+// resolve runs whatever prerequisite work this capability needs, and returns the
+// values for the mapping to read under _local.
+//
+// Empty rather than nil when there is nothing: a mapping referring to _local on
+// a capability that resolves nothing should read a missing field, not fail.
+func (s *Step) resolve(ctx context.Context, bindingKey string, beckn any) (map[string]any, error) {
+	prerequisite, needed := s.prerequisites[bindingKey]
+	if !needed {
+		return map[string]any{}, nil
+	}
+	local, err := prerequisite(ctx, beckn)
+	if err != nil {
+		return nil, fmt.Errorf("upstream: %s could not resolve what it needs before the call: %w", bindingKey, err)
+	}
+	if local == nil {
+		return map[string]any{}, nil
+	}
+	return local, nil
 }
 
 // serves reports whether a binding key is one this step answers to.
@@ -215,7 +255,7 @@ func (s *Step) serve(ctx *model.StepContext, plan *model.ProviderRecord) error {
 		// happened to be on the record -- naming what it does serve turns a
 		// registry mistake into a one-line fix.
 		return model.NewBadReqErr("", fmt.Errorf(
-			"mausamgram: %s does not serve action %q; it serves %s",
+			"upstream: %s does not serve action %q; it serves %s",
 			plan.BindingKey, action, strings.Join(servedActions(plan), ", ")))
 	}
 
@@ -232,7 +272,14 @@ func (s *Step) serve(ctx *model.StepContext, plan *model.ProviderRecord) error {
 		return err
 	}
 
-	upstreamRequest, err := s.buildRequest(ctx, call, beckn)
+	// Whatever this capability needs that its payload does not carry. Empty for
+	// most: the mapping reads the payload directly and needs nothing resolved.
+	local, err := s.resolve(ctx, plan.BindingKey, beckn)
+	if err != nil {
+		return err
+	}
+
+	upstreamRequest, err := s.buildRequest(ctx, call, beckn, local)
 	if err != nil {
 		return err
 	}
@@ -244,7 +291,7 @@ func (s *Step) serve(ctx *model.StepContext, plan *model.ProviderRecord) error {
 
 	answer, err := decodeBody(upstreamResponse)
 	if err != nil {
-		return fmt.Errorf("mausamgram: provider answered with something that is not JSON: %w", err)
+		return fmt.Errorf("upstream: provider answered with something that is not JSON: %w", err)
 	}
 
 	// The same mapping reference as the request, other half: one file carries
@@ -253,6 +300,7 @@ func (s *Step) serve(ctx *model.StepContext, plan *model.ProviderRecord) error {
 	// The mapping is handed what each party sent and nothing else.
 	becknResponse, err := s.mapper.Transform(ctx, call.Mappings, definition.DirectionResponse, map[string]any{
 		"beckn":    beckn,
+		"_local":   local,
 		"response": answer,
 	})
 	if err != nil {
@@ -263,12 +311,12 @@ func (s *Step) serve(ctx *model.StepContext, plan *model.ProviderRecord) error {
 		// in this answer. Both leave no Beckn response to return, and returning
 		// the provider's own shape instead would be worse than failing. The
 		// message says what was observed rather than guessing which it was.
-		return fmt.Errorf("mausamgram: the response half of %s produced nothing, so %s cannot be answered",
+		return fmt.Errorf("upstream: the response half of %s produced nothing, so %s cannot be answered",
 			call.Mappings, plan.BindingKey)
 	}
 
 	ctx.ResponseBody = becknResponse
-	log.Infof(ctx, "mausamgram: served %s in %d bytes", plan.BindingKey, len(becknResponse))
+	log.Infof(ctx, "upstream: served %s in %d bytes", plan.BindingKey, len(becknResponse))
 	return nil
 }
 
@@ -293,15 +341,16 @@ func servedActions(plan *model.ProviderRecord) []string {
 // that. It meant the choice of which payload fields reach the provider lived in
 // Go, so adding a parameter -- a date range, say -- was a rebuild. Now it is a
 // mapping edit and nothing else.
-func (s *Step) buildRequest(ctx context.Context, call model.ActionPlan, beckn any) ([]byte, error) {
+func (s *Step) buildRequest(ctx context.Context, call model.ActionPlan, beckn any, local map[string]any) ([]byte, error) {
 	mapped, err := s.mapper.Transform(ctx, call.Mappings, definition.DirectionRequest, map[string]any{
-		"beckn": beckn,
+		"beckn":  beckn,
+		"_local": local,
 	})
 	if err != nil {
 		return nil, err
 	}
 	if len(mapped) == 0 {
-		log.Debugf(ctx, "mausamgram: the request half of %s produced nothing; sending an empty request", call.Mappings)
+		log.Debugf(ctx, "upstream: the request half of %s produced nothing; sending an empty request", call.Mappings)
 	}
 	return mapped, nil
 }
@@ -323,7 +372,7 @@ func extractAction(body []byte) string {
 func decodeBody(body []byte) (any, error) {
 	var decoded any
 	if err := json.Unmarshal(body, &decoded); err != nil {
-		return nil, fmt.Errorf("mausamgram: could not read JSON: %w", err)
+		return nil, fmt.Errorf("upstream: could not read JSON: %w", err)
 	}
 	return decoded, nil
 }
@@ -355,10 +404,10 @@ func (s *Step) call(ctx context.Context, baseURL string, call model.ActionPlan, 
 			return body, nil
 		}
 		lastErr = err
-		log.Warnf(ctx, "mausamgram: attempt %d/%d failed: %v", attempt, attempts, err)
+		log.Warnf(ctx, "upstream: attempt %d/%d failed: %v", attempt, attempts, err)
 	}
 	return nil, model.NewCodedErr(http.StatusBadGateway, codeUpstreamUnavailable,
-		fmt.Errorf("mausamgram: provider did not answer after %d attempts: %w", attempts, lastErr))
+		fmt.Errorf("upstream: provider did not answer after %d attempts: %w", attempts, lastErr))
 }
 
 // attempt makes one upstream request.
@@ -403,14 +452,14 @@ func (s *Step) authenticate(req *http.Request) error {
 	case AuthSchemeBasic:
 		username, password := os.Getenv(s.config.UsernameEnv), os.Getenv(s.config.PasswordEnv)
 		if username == "" || password == "" {
-			return fmt.Errorf("mausamgram: %s and %s must both be set for basic auth",
+			return fmt.Errorf("upstream: %s and %s must both be set for basic auth",
 				s.config.UsernameEnv, s.config.PasswordEnv)
 		}
 		req.SetBasicAuth(username, password)
 	case AuthSchemeHeader:
 		value := os.Getenv(s.config.HeaderValueEnv)
 		if value == "" {
-			return fmt.Errorf("mausamgram: %s must be set for header auth", s.config.HeaderValueEnv)
+			return fmt.Errorf("upstream: %s must be set for header auth", s.config.HeaderValueEnv)
 		}
 		req.Header.Set(s.config.HeaderName, value)
 	}
@@ -450,14 +499,14 @@ func asQuery(mapped []byte) (string, error) {
 	}
 	var fields map[string]any
 	if err := json.Unmarshal(mapped, &fields); err != nil {
-		return "", fmt.Errorf("mausamgram: mapped request is not an object, so it cannot become a query: %w", err)
+		return "", fmt.Errorf("upstream: mapped request is not an object, so it cannot become a query: %w", err)
 	}
 
 	values := url.Values{}
 	for name, value := range fields {
 		rendered, ok := renderScalar(value)
 		if !ok {
-			return "", fmt.Errorf("mausamgram: mapped field %q is not a scalar and cannot become a query parameter", name)
+			return "", fmt.Errorf("upstream: mapped field %q is not a scalar and cannot become a query parameter", name)
 		}
 		values.Set(name, rendered)
 	}

@@ -9,7 +9,7 @@ import (
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
-	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/mausamgram"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/weather"
 )
 
 type stubRegistry struct{}
@@ -32,15 +32,15 @@ func TestParseConfig(t *testing.T) {
 	testCases := []struct {
 		name        string
 		config      map[string]string
-		expected    *mausamgram.Config
+		expected    *weather.Config
 		expectedErr string
 	}{
 		{
-			// Everything absent is left zero: mausamgram.New defaults it, so the
+			// Everything absent is left zero: weather.New defaults it, so the
 			// rules are defined in exactly one place.
 			name:     "leaves everything unset for New to default",
 			config:   map[string]string{},
-			expected: &mausamgram.Config{},
+			expected: &weather.Config{},
 		},
 		{
 			name: "reads every supported setting",
@@ -53,7 +53,7 @@ func TestParseConfig(t *testing.T) {
 				"headerValueEnv":   "V",
 				"maxResponseBytes": "2048",
 			},
-			expected: &mausamgram.Config{
+			expected: &weather.Config{
 				BindingKeys:      []string{"other|capability"},
 				AuthScheme:       "basic",
 				UsernameEnv:      "U",
@@ -79,7 +79,7 @@ func TestParseConfig(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := mausamgramProvider{}.parseConfig(tc.config)
+			got, err := weatherProvider{}.parseConfig(tc.config)
 
 			if tc.expectedErr != "" {
 				if err == nil {
@@ -107,7 +107,7 @@ func TestParseConfig(t *testing.T) {
 func TestParseConfigReadsSeveralBindingKeys(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := mausamgramProvider{}.parseConfig(map[string]string{
+	cfg, err := weatherProvider{}.parseConfig(map[string]string{
 		"bindingKeys": "a|openagrinet:One, b|openagrinet:Two ,,  ",
 	})
 	if err != nil {
@@ -131,7 +131,7 @@ func TestNew(t *testing.T) {
 		t.Parallel()
 
 		//nolint:staticcheck // deliberately passing a nil context to assert the guard.
-		_, _, err := mausamgramProvider{}.New(nil, stubRegistry{}, stubMapper{}, map[string]string{})
+		_, _, err := weatherProvider{}.New(nil, stubRegistry{}, stubMapper{}, map[string]string{})
 		if err == nil {
 			t.Fatal("expected an error for a nil context, got none")
 		}
@@ -140,7 +140,7 @@ func TestNew(t *testing.T) {
 	t.Run("rejects an unparseable config", func(t *testing.T) {
 		t.Parallel()
 
-		_, _, err := mausamgramProvider{}.New(context.Background(), stubRegistry{}, stubMapper{},
+		_, _, err := weatherProvider{}.New(context.Background(), stubRegistry{}, stubMapper{},
 			map[string]string{"maxResponseBytes": "lots"})
 		if err == nil {
 			t.Fatal("expected an error for an invalid cap, got none")
@@ -150,17 +150,30 @@ func TestNew(t *testing.T) {
 	t.Run("propagates an invalid auth scheme from New", func(t *testing.T) {
 		t.Parallel()
 
-		_, _, err := mausamgramProvider{}.New(context.Background(), stubRegistry{}, stubMapper{},
+		_, _, err := weatherProvider{}.New(context.Background(), stubRegistry{}, stubMapper{},
 			map[string]string{"authScheme": "oauth"})
 		if err == nil {
 			t.Fatal("expected an unknown auth scheme to be refused")
 		}
 	})
 
-	t.Run("builds a step from an empty config", func(t *testing.T) {
+	// A domain plugin serves a family of capabilities, so it cannot guess which
+	// of them a deployment has providers for. Refused at startup rather than
+	// answering to nothing.
+	t.Run("refuses a config naming no capability", func(t *testing.T) {
 		t.Parallel()
 
-		step, closer, err := mausamgramProvider{}.New(context.Background(), stubRegistry{}, stubMapper{}, map[string]string{})
+		if _, _, err := (weatherProvider{}).New(context.Background(), stubRegistry{}, stubMapper{},
+			map[string]string{}); err == nil {
+			t.Fatal("expected a config with no bindingKeys to be refused")
+		}
+	})
+
+	t.Run("builds a step from the capabilities it is given", func(t *testing.T) {
+		t.Parallel()
+
+		step, closer, err := weatherProvider{}.New(context.Background(), stubRegistry{}, stubMapper{},
+			map[string]string{"bindingKeys": "imd|openagrinet:WeatherObservation"})
 		if err != nil {
 			t.Fatalf("expected no error, got: %v", err)
 		}
@@ -178,11 +191,11 @@ func TestNew(t *testing.T) {
 		t.Cleanup(func() { newStepFunc = original })
 
 		wantErr := errors.New("boom")
-		newStepFunc = func(context.Context, definition.ProviderRecordLookup, definition.Mapper, *mausamgram.Config) (*mausamgram.Step, func() error, error) {
+		newStepFunc = func(context.Context, definition.ProviderRecordLookup, definition.Mapper, *weather.Config) (definition.Step, func() error, error) {
 			return nil, nil, wantErr
 		}
 
-		_, _, err := mausamgramProvider{}.New(context.Background(), stubRegistry{}, stubMapper{}, map[string]string{})
+		_, _, err := weatherProvider{}.New(context.Background(), stubRegistry{}, stubMapper{}, map[string]string{})
 		if !errors.Is(err, wantErr) {
 			t.Errorf("expected the construction error to propagate, got %v", err)
 		}
