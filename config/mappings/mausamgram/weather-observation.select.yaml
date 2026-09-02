@@ -34,24 +34,20 @@
 # resource advertising this capability is OnDemand instead, and carries
 # supportedParameters rather than values.
 #
-# The answer quotes ONE resource, carrying the id the request selected. The
-# forecast days are content of that resource, under observations.
+# The answer returns ONE RESOURCE PER FORECAST DAY, each with its own id derived
+# from its date. That is the shape the pack describes: every WeatherObservation
+# example carries a single validity and a flat parameters array, so a period is a
+# resource and there is no form for several in one.
 #
-# Minting a resource per day was the earlier shape, and it broke the offer: the
-# offer is echoed from the request, so its resourceIds still pointed at the id
-# the consumer selected while the resources carried freshly invented ones.
-# Nothing in the answer resolved that reference. Keeping the selected id is what
-# makes it stay true.
+# The ids are therefore new -- the request named an abstract point forecast, the
+# answer returns the concrete days that satisfy it. Which is why the offer's
+# resourceIds are rewritten below rather than echoed: the offer arrives naming
+# the id that was asked for, and leaving it would point the offer at something
+# that appears nowhere in the answer.
 #
-# TWO FIELDS HERE ARE NOT IN THE PACK, and both are deliberate. The pack sets no
-# additionalProperties, so they validate; they are simply not governed by it.
+# ONE FIELD HERE IS NOT IN THE PACK, deliberately. The pack sets no
+# additionalProperties, so it validates; it is simply not governed.
 #
-#   observations   The pack carries one validity and one flat parameters array
-#                  per resource, so it cannot express a five-day forecast in the
-#                  one resource the request selected. Its own examples show one
-#                  resource per period. Keeping the selected id was judged worth
-#                  more than splitting into five resources the consumer never
-#                  asked for. Revisit if the packs gain a series field.
 #   aggregation    The pack's parameter entry is parameter/value/unit only. This
 #                  provider reports a minimum AND a maximum for temperature and
 #                  humidity, which are indistinguishable without it.
@@ -162,6 +158,11 @@ response: |
 
     $selected := beckn.message.contract.commitments[0];
 
+    /* Bound once because it is used twice -- for a resource's own id and for the
+       offer's reference to it. Two copies of the same expression is how a
+       dangling reference gets reintroduced. */
+    $resourceId := function($day) { "res:mausamgram:forecast:" & $day.date };
+
     {
       "context": {
         "version": beckn.context.version,
@@ -182,10 +183,29 @@ response: |
               "status": {
                 "descriptor": { "code": "QUOTED", "name": "Quoted" }
               },
-              "offer": $selected.offer,
-              "resources": [
+              /* The offer is echoed, but its references are not: the request
+                 named the abstract point forecast, and the answer returns the
+                 concrete days. Leaving resourceIds as they arrived would point
+                 the offer at an id that appears nowhere in the answer.
+
+                 $merge keeps everything else the request offered -- the id, the
+                 descriptor, the provider -- and replaces one key. */
+              "offer": $merge([
+                $selected.offer,
+                { "resourceIds": [$map($days, function($day) { $resourceId($day) })] }
+              ]),
+              /* One resource per forecast day, which is what the pack describes:
+                 every WeatherObservation example carries a single validity and a
+                 flat parameters array, so a period is a resource and there is no
+                 form for several in one.
+
+                 Wrapped for the same reason as the resourceIds above: JSONata
+                 collapses a one-element sequence to a bare value, so a one-day
+                 forecast would answer with an object where every other N answers
+                 with a list. */
+              "resources": [$map($days, function($day) {
                 {
-                  "id": $selected.resources[0].id,
+                  "id": $resourceId($day),
                   "resourceAttributes": {
                     "@context": "https://schemas.openagrinet.global/schema/WeatherObservation/v0.1/context.jsonld",
                     "@type": "openagrinet:WeatherObservation",
@@ -201,33 +221,24 @@ response: |
                       "coordinates": [$lon, $lat]
                     },
                     "generatedAt": $now(),
+                    /* This resource reports one day, so its validity opens and
+                       closes on it. */
                     "validity": {
-                      "startsAt": $days[0].date,
-                      "endsAt": $days[-1].date
+                      "startsAt": $day.date,
+                      "endsAt": $day.date
                     },
-                    /* Wrapped: JSONata collapses a one-element sequence to a
-                       bare value, so a single-day forecast would answer with an
-                       object where every other N answers with a list. */
-                    "observations": [$map($days, function($day) {
-                      {
-                        "validity": {
-                          "startsAt": $day.date,
-                          "endsAt": $day.date
-                        },
-                        "parameters": [
-                          $reading("Rainfall", "Total", "mm", $day.rain),
-                          $reading("Temperature", "Minimum", "Cel", $day.tmin),
-                          $reading("Temperature", "Maximum", "Cel", $day.tmax),
-                          $reading("Humidity", "Minimum", "%", $day.rhmin),
-                          $reading("Humidity", "Maximum", "%", $day.rhmax),
-                          $reading("WindSpeed", "Average", "m/s", $day.wspd),
-                          $alert($day.weather_warning ? $day.weather_warning : $day.cloud_message)
-                        ]
-                      }
-                    })]
+                    "parameters": [
+                      $reading("Rainfall", "Total", "mm", $day.rain),
+                      $reading("Temperature", "Minimum", "Cel", $day.tmin),
+                      $reading("Temperature", "Maximum", "Cel", $day.tmax),
+                      $reading("Humidity", "Minimum", "%", $day.rhmin),
+                      $reading("Humidity", "Maximum", "%", $day.rhmax),
+                      $reading("WindSpeed", "Average", "m/s", $day.wspd),
+                      $alert($day.weather_warning ? $day.weather_warning : $day.cloud_message)
+                    ]
                   }
                 }
-              ]
+              })]
             }
           ]
         }

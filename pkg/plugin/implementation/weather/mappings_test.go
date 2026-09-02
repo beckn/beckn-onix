@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -194,36 +195,56 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 		t.Error("the quoted commitment carries no offer")
 	}
 
-	// One resource, carrying the id the request selected. The consumer asked for
-	// a quote on one resource, so that is what is quoted -- the forecast days are
-	// content of it, not resources of their own.
+	// One resource per forecast day, each with its own id. That is what the
+	// openagrinet:WeatherObservation pack describes -- every one of its examples
+	// carries a single validity and a flat parameters array, so a period is a
+	// resource and there is no form for several in one.
 	//
-	// Minting a resource per day would leave offer.resourceIds pointing at an id
-	// that appears nowhere in the answer, because the offer is echoed from the
-	// request. Keeping the id is what makes that reference stay true.
+	// The ids are new: the consumer selected an abstract point forecast and gets
+	// back the concrete days that answer it. Which means the offer's references
+	// have to be rewritten, because the offer is echoed from the request and its
+	// resourceIds still name the id that was asked for. Leaving them was the
+	// dangling reference this file used to carry.
 	resources, _ := commitment["resources"].([]any)
-	if len(resources) != 1 {
-		t.Fatalf("got %d resources, want 1 -- the one the request selected", len(resources))
+	if len(resources) != 3 {
+		t.Fatalf("got %d resources, want 3 -- one per day the provider answered with", len(resources))
 	}
 
-	only, _ := resources[0].(map[string]any)
-	if only["id"] != selectedResourceID {
-		t.Errorf("resource id = %v, want the requested %q", only["id"], selectedResourceID)
+	returned := make([]string, 0, len(resources))
+	for _, entry := range resources {
+		resource, _ := entry.(map[string]any)
+		id, _ := resource["id"].(string)
+		if !strings.HasPrefix(id, "res:mausamgram:forecast:") {
+			t.Errorf("resource id = %q, want one derived from the forecast date", id)
+		}
+		returned = append(returned, id)
 	}
 
-	// The offer's references must resolve against the resources actually
-	// returned. This is the assertion the previous shape could not satisfy.
+	// The offer must reference the resources actually returned, not the one that
+	// was asked for. This is the assertion that fails the moment the offer is
+	// echoed unchanged.
 	offer, _ := commitment["offer"].(map[string]any)
 	referenced, _ := offer["resourceIds"].([]any)
-	if len(referenced) != 1 || referenced[0] != selectedResourceID {
-		t.Errorf("offer.resourceIds = %v, want exactly [%q]", referenced, selectedResourceID)
+	if len(referenced) != len(returned) {
+		t.Fatalf("offer.resourceIds has %d entries, want %d -- one per resource returned",
+			len(referenced), len(returned))
+	}
+	for _, reference := range referenced {
+		if !slices.Contains(returned, reference.(string)) {
+			t.Errorf("offer references %v, which is not among the resources returned", reference)
+		}
+	}
+	// And the descriptor the request offered is still there: only the references
+	// are rewritten, not the offer.
+	if offer["id"] != "offer:mausamgram:open-data" {
+		t.Errorf("offer id = %v, want the one the request offered", offer["id"])
 	}
 
 	// --- the WeatherObservation schema pack, Direct mode ---------------------
 	// openagrinet:WeatherObservation v0.1 requires all five of these when
-	// informationMode is Direct. Two of them were missing before the pack was
-	// read: generatedAt, and a validity for the resource as a whole.
-	attributes, _ := only["resourceAttributes"].(map[string]any)
+	// informationMode is Direct, and each resource is one Direct observation.
+	first, _ := resources[0].(map[string]any)
+	attributes, _ := first["resourceAttributes"].(map[string]any)
 	for _, f := range []struct{ key, want string }{
 		{"@type", "openagrinet:WeatherObservation"},
 		{"informationMode", "Direct"},
@@ -233,15 +254,12 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 			t.Errorf("%s = %v, want %v", f.key, attributes[f.key], f.want)
 		}
 	}
-	for _, required := range []string{"source", "location", "generatedAt", "validity", "observations"} {
+	for _, required := range []string{"source", "location", "generatedAt", "validity", "parameters"} {
 		if attributes[required] == nil {
 			t.Errorf("resourceAttributes carries no %q", required)
 		}
 	}
 
-	// The point, the source and the observation type are the same for every day,
-	// so they sit once at the top rather than being repeated per day.
-	//
 	// GeoJSON order, and the provider's own echo of the point: the mapping reads
 	// response.location rather than anything the step resolved.
 	location, _ := attributes["location"].(map[string]any)
@@ -250,30 +268,13 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 		t.Errorf("coordinates = %v, want [73.7898, 19.9975] in GeoJSON order", coordinates)
 	}
 
-	// The resource-level validity spans the whole forecast, first day to last.
+	// This resource covers one day, so its validity opens and closes on it.
 	validity, _ := attributes["validity"].(map[string]any)
-	if validity["startsAt"] != "2026-08-26" || validity["endsAt"] != "2026-08-28" {
-		t.Errorf("validity = %v, want the span of the days the provider answered with", validity)
+	if validity["startsAt"] != "2026-08-26" || validity["endsAt"] != "2026-08-26" {
+		t.Errorf("validity = %v, want the single day this resource reports", validity)
 	}
 
-	// --- the days ------------------------------------------------------------
-	// observations is NOT a pack field. The pack carries one validity and one
-	// flat parameters array per resource, so it cannot express a multi-day
-	// forecast in the resource the request selected. Keeping the selected id
-	// matters more, so the days go in an extra field -- which validates, because
-	// the pack sets no additionalProperties, but is not governed by it.
-	observations, _ := attributes["observations"].([]any)
-	if len(observations) != 3 {
-		t.Fatalf("got %d observations, want 3 -- one per day the provider answered with", len(observations))
-	}
-
-	first, _ := observations[0].(map[string]any)
-	dayValidity, _ := first["validity"].(map[string]any)
-	if dayValidity["startsAt"] != "2026-08-26" {
-		t.Errorf("first observation starts at %v, want the provider's first forecast date", dayValidity["startsAt"])
-	}
-
-	parameters, _ := first["parameters"].([]any)
+	parameters, _ := attributes["parameters"].([]any)
 	if len(parameters) != 7 {
 		t.Errorf("got %d parameters, want 7 for a fully-reported day with a warning", len(parameters))
 	}
@@ -290,8 +291,9 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 	// Readings it did not take are absent, not present and empty: a consumer
 	// must be able to tell "no rainfall recorded" from "zero rainfall". A day
 	// with no warning carries no Alert parameter at all.
-	third, _ := observations[2].(map[string]any)
-	thirdParameters, _ := third["parameters"].([]any)
+	third, _ := resources[2].(map[string]any)
+	thirdAttributes, _ := third["resourceAttributes"].(map[string]any)
+	thirdParameters, _ := thirdAttributes["parameters"].([]any)
 	if len(thirdParameters) != 2 {
 		t.Errorf("got %d parameters for a partly-reported day, want only the 2 taken", len(thirdParameters))
 	}
@@ -460,28 +462,30 @@ func TestShippedMappingsTakeHoweverManyDaysTheProviderSent(t *testing.T) {
 			if err := json.Unmarshal(got, &answer); err != nil {
 				t.Fatalf("failed to decode the answer: %v", err)
 			}
-			attributes := firstCommitment(t, answer)["resources"].([]any)[0].(map[string]any)["resourceAttributes"].(map[string]any)
-			observations, _ := attributes["observations"].([]any)
+			commitment := firstCommitment(t, answer)
+			resources, _ := commitment["resources"].([]any)
 
-			if len(observations) != days {
-				t.Fatalf("got %d observations, want %d -- the mapping is not reading the provider's own count",
-					len(observations), days)
+			if len(resources) != days {
+				t.Fatalf("got %d resources, want %d -- the mapping is not reading the provider's own count",
+					len(resources), days)
 			}
 
 			// In the provider's order, not the keys' lexical order.
-			for i, entry := range observations {
-				validity := entry.(map[string]any)["validity"].(map[string]any)
+			for i, entry := range resources {
+				attributes := entry.(map[string]any)["resourceAttributes"].(map[string]any)
+				validity := attributes["validity"].(map[string]any)
 				want := fmt.Sprintf("2026-09-%02d", i+1)
 				if validity["startsAt"] != want {
-					t.Errorf("observation %d covers %v, want %s -- days are out of order",
+					t.Errorf("resource %d covers %v, want %s -- days are out of order",
 						i, validity["startsAt"], want)
 				}
 			}
 
-			// The resource-level window still spans first to last.
-			window, _ := attributes["validity"].(map[string]any)
-			if window["endsAt"] != fmt.Sprintf("2026-09-%02d", days) {
-				t.Errorf("validity ends at %v, want the last day the provider sent", window["endsAt"])
+			// However many resources there are, the offer references all of them.
+			offer, _ := commitment["offer"].(map[string]any)
+			referenced, _ := offer["resourceIds"].([]any)
+			if len(referenced) != days {
+				t.Errorf("offer references %d resources, want %d", len(referenced), days)
 			}
 		})
 	}
