@@ -1481,6 +1481,115 @@ func TestLookupAgainstCapturedRegistryResponse(t *testing.T) {
 	}
 }
 
+// TestLookupAgainstCurrentRegistryResponse runs the plugin against a verbatim
+// response captured from an OAN registry on 2 Sep 2026, after the Participant
+// schema dropped three things from a published key.
+//
+// It pins the shape a registry writes TODAY, and every difference from the
+// capture above is deliberate:
+//
+//	role       one of consumer, provider and network. The Beckn acronyms are
+//	           gone; a role now says what a party does.
+//	keyId      absent. Nothing could look one up: the registry assigns an
+//	           osid on write, and that is what a sender names in the
+//	           Authorization header, so the friendly id was decoration.
+//	use        absent. alg carries the purpose -- ed25519 signs -- and the
+//	           plugin already treats a missing use as "may sign".
+//	key        bare base64, no "base64:" label. The label is still tolerated
+//	           by the test above, because a row written before this change
+//	           keeps it forever: the registry is append-only.
+func TestLookupAgainstCurrentRegistryResponse(t *testing.T) {
+	t.Parallel()
+
+	const (
+		capturedParticipantID = "provider.oan.dev"
+		capturedKeyOSID       = "1-d5b6c5ee-206c-4529-bf9d-803138ff067a"
+		capturedKey           = "Hcmx3AEVSeHT+1J3ggqhzlbTTtTYP0tQ2eUfotR5lUI="
+		capturedURL           = "https://provider.oan.dev/beckn"
+	)
+
+	const captured = `{
+    "totalCount": 1,
+    "data": [
+        {
+            "osUpdatedAt": "2026-09-02T07:25:29.977Z",
+            "role": "provider",
+            "osUpdatedBy": "1e52cfea-50a1-4a64-814e-0d44aaa38c29",
+            "osid": "1-686a5071-b300-4899-94e2-7f95155ca41d",
+            "type": "node",
+            "keys": [
+                {
+                    "osUpdatedAt": "2026-09-02T07:25:29.977Z",
+                    "osCreatedAt": "2026-09-02T07:25:29.977Z",
+                    "osUpdatedBy": "1e52cfea-50a1-4a64-814e-0d44aaa38c29",
+                    "osCreatedBy": "1e52cfea-50a1-4a64-814e-0d44aaa38c29",
+                    "validUntil": "2030-01-01T00:00:00Z",
+                    "osid": "1-d5b6c5ee-206c-4529-bf9d-803138ff067a",
+                    "validFrom": "2026-01-01T00:00:00Z",
+                    "alg": "ed25519",
+                    "key": "Hcmx3AEVSeHT+1J3ggqhzlbTTtTYP0tQ2eUfotR5lUI=",
+                    "status": "active"
+                }
+            ],
+            "osOwner": [
+                "1e52cfea-50a1-4a64-814e-0d44aaa38c29"
+            ],
+            "participantId": "provider.oan.dev",
+            "baseUrl": "https://provider.oan.dev/beckn",
+            "osCreatedAt": "2026-09-02T07:25:29.977Z",
+            "name": "OAN provider layer adapter",
+            "osCreatedBy": "1e52cfea-50a1-4a64-814e-0d44aaa38c29",
+            "status": "active"
+        }
+    ]
+}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, captured)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv.URL, nil)
+	results, err := client.Lookup(context.Background(), &model.Subscription{
+		Subscriber: model.Subscriber{SubscriberID: capturedParticipantID},
+		KeyID:      capturedKeyOSID,
+	})
+	if err != nil {
+		t.Fatalf("Lookup() returned an unexpected error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected exactly 1 result, got %d", len(results))
+	}
+
+	got := results[0]
+	// The point of the whole test: a key with no encoding label arrives intact.
+	// Trimming a prefix that is not there must not disturb the value, because
+	// what reaches the verifier goes straight to a base64 decoder.
+	if got.SigningPublicKey != capturedKey {
+		t.Errorf("signing key = %q, want the bare base64 %q", got.SigningPublicKey, capturedKey)
+	}
+	// A key with no "use" still resolves. Were that treated as "unknown, so
+	// refuse", every key this registry now writes would be unusable.
+	if !model.IsKeyStatusUsable(got.Status) {
+		t.Errorf("an active participant with an active key must be usable, got status %q", got.Status)
+	}
+	if got.KeyID != capturedKeyOSID {
+		t.Errorf("key id = %q, want the key's osid %q", got.KeyID, capturedKeyOSID)
+	}
+	if got.SubscriberID != capturedParticipantID {
+		t.Errorf("subscriber id = %q, want %q", got.SubscriberID, capturedParticipantID)
+	}
+	if got.URL != capturedURL {
+		t.Errorf("endpoint url = %q, want the captured baseUrl %q", got.URL, capturedURL)
+	}
+	if got.Type != "provider" {
+		t.Errorf("role = %q, want %q -- not a Beckn acronym", got.Type, "provider")
+	}
+	if got.ValidFrom.IsZero() || got.ValidUntil.IsZero() {
+		t.Error("expected the validity window to be parsed from the key's validFrom/validUntil")
+	}
+}
+
 // --- cache write and metrics edge cases -----------------------------------
 
 // TestCacheResultSkipsWhenDisabled: cacheTTL of 0 means the cache is not
