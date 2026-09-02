@@ -164,14 +164,22 @@ response: |
     $resourceId := function($day) { "res:mausamgram:forecast:" & $day.date };
 
     {
+      /* Correlation only: the ids that tie this answer to the request that
+         asked for it, and nothing that asserts who anybody is.
+
+         bapId, bapUri, bppId and bppUri are deliberately absent. A mapping is
+         a payload transformation -- it has no business asserting network
+         identity, and the two Uri fields it could copy are whatever the caller
+         happened to send, which in a deployed stack is a container-internal
+         address that means nothing to anyone outside it. Echoing them would
+         republish another party's routing details as if they were ours.
+
+         Identity on the wire is the adapter's own: it signs what it answers
+         with, using the key the registry publishes for it. */
       "context": {
         "version": beckn.context.version,
         "action": "on_select",
         "networkId": beckn.context.networkId,
-        "bapId": beckn.context.bapId,
-        "bapUri": beckn.context.bapUri,
-        "bppId": beckn.context.bppId,
-        "bppUri": beckn.context.bppUri,
         "transactionId": beckn.context.transactionId,
         "messageId": beckn.context.messageId,
         "timestamp": $now()

@@ -181,8 +181,15 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 	if beckncontext["transactionId"] != "9f2c1a8e-4b70-4d31-9c55-6f2e0b1d7a44" {
 		t.Errorf("transactionId = %v, want the one from the request", beckncontext["transactionId"])
 	}
-	if beckncontext["bppId"] != "provider-network-vistaar.da.gov.in" {
-		t.Errorf("bppId = %v, want the one from the request", beckncontext["bppId"])
+	// A mapping transforms a payload; it does not assert who anyone is. The two
+	// Uri fields in particular are only whatever the caller sent -- in a
+	// deployed stack a container-internal address -- so echoing them would
+	// republish another party's routing details as ours. The adapter signs what
+	// it answers with instead, and that signature is what carries identity.
+	for _, field := range []string{"bapId", "bapUri", "bppId", "bppUri"} {
+		if _, present := beckncontext[field]; present {
+			t.Errorf("response context carries %q; a mapping must not assert identity", field)
+		}
 	}
 
 	commitment := firstCommitment(t, answer)
