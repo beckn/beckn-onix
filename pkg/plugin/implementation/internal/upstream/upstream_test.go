@@ -453,6 +453,91 @@ func TestRunRefusesWhenTheResponseMappingProducesNothing(t *testing.T) {
 	}
 }
 
+// --- the endpoint the registry publishes -------------------------------------
+//
+// baseUrl and path are joined and sent. The registry constrains both, but it is
+// a separate deployable that may not be updated in step, so a row that slipped
+// through has to fail here with something an operator can act on rather than as
+// a provider's 404 three hops away.
+//
+// An EMPTY SEGMENT is the case worth catching: "//get-daily" is never what
+// anyone meant, and many servers answer it differently from "/get-daily". A
+// TRAILING slash is left alone deliberately -- "/api/" and "/api" are a
+// distinction some APIs genuinely make, so silently stripping it would change
+// the URL the operator asked for.
+func TestRunRefusesANonCanonicalPath(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"//get-daily", "/v1//get-daily", "/get-daily//"} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+
+			upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Error("the provider must not be called with a path nobody meant")
+			}))
+			defer upstreamServer.Close()
+
+			plan := testPlan(upstreamServer.URL, http.MethodGet)
+			plan.Actions["select"] = model.ActionPlan{Method: http.MethodGet, Path: path, Mappings: testMappingRef}
+			mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+
+			_, err := runStep(t, newStep(t, &stubRegistry{plan: plan}, mapper), selectBody)
+			if err == nil {
+				t.Fatal("expected a path with an empty segment to be refused")
+			}
+			// Naming the path and the binding key is what makes this a one-line
+			// fix in the registry rather than a hunt.
+			if !strings.Contains(err.Error(), path) {
+				t.Errorf("error %q should name the path that is wrong", err)
+			}
+		})
+	}
+}
+
+// A trailing slash is meaningful, so it goes through untouched.
+func TestRunKeepsATrailingSlashOnThePath(t *testing.T) {
+	t.Parallel()
+
+	var gotPath string
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		fmt.Fprint(w, `{}`)
+	}))
+	defer upstreamServer.Close()
+
+	plan := testPlan(upstreamServer.URL, http.MethodGet)
+	plan.Actions["select"] = model.ActionPlan{Method: http.MethodGet, Path: "/get-daily/", Mappings: testMappingRef}
+	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+
+	if _, err := runStep(t, newStep(t, &stubRegistry{plan: plan}, mapper), selectBody); err != nil {
+		t.Fatalf("Run() returned an unexpected error: %v", err)
+	}
+	if gotPath != "/get-daily/" {
+		t.Errorf("provider was called at %q, want the path exactly as published", gotPath)
+	}
+}
+
+// The join itself: baseUrl cannot end in a slash and path must begin with one,
+// so exactly one separator appears between them. Asserted so a change to either
+// side cannot quietly produce a doubled or missing slash.
+func TestBuildEndpointJoinsWithOneSlash(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ base, path, want string }{
+		{"http://host:9100", "/get-daily", "http://host:9100/get-daily"},
+		{"http://host:9100/api", "/get-daily", "http://host:9100/api/get-daily"},
+		{"http://host:9100/", "/get-daily", "http://host:9100/get-daily"},
+	} {
+		got, err := buildEndpoint(tc.base, model.ActionPlan{Method: http.MethodPost, Path: tc.path}, nil)
+		if err != nil {
+			t.Fatalf("buildEndpoint(%q, %q) returned an unexpected error: %v", tc.base, tc.path, err)
+		}
+		if got != tc.want {
+			t.Errorf("buildEndpoint(%q, %q) = %q, want %q", tc.base, tc.path, got, tc.want)
+		}
+	}
+}
+
 // --- where the binding key lives ----------------------------------------------
 //
 // A default, not a setting: every participant must agree where the halves of a

@@ -510,6 +510,14 @@ func (s *Step) authenticate(req *http.Request) error {
 // buildEndpoint joins the plan's base URL and path, carrying the mapped request
 // as query parameters when the method takes no body.
 func buildEndpoint(baseURL string, call model.ActionPlan, mapped []byte) (string, error) {
+	if err := verifyPath(call.Path); err != nil {
+		return "", err
+	}
+
+	// baseUrl cannot end in a slash and path must begin with one, so exactly one
+	// separator appears between them. The trim is belt and braces: the registry
+	// refuses a trailing slash on baseUrl, and this keeps a row that predates
+	// that from producing a doubled one.
 	endpoint := strings.TrimSuffix(baseURL, "/") + call.Path
 	if hasBody(call.Method) {
 		return endpoint, nil
@@ -526,6 +534,32 @@ func buildEndpoint(baseURL string, call model.ActionPlan, mapped []byte) (string
 		return endpoint + "&" + query, nil
 	}
 	return endpoint + "?" + query, nil
+}
+
+// verifyPath refuses a published path nobody could have meant.
+//
+// The registry constrains this, but it is a separate deployable that may not be
+// updated in step, so a row that slipped through has to fail here with something
+// an operator can act on rather than as a provider's 404 three hops away.
+//
+// An empty segment is the case worth catching: "//get-daily" is never
+// deliberate, and plenty of servers answer it differently from "/get-daily". A
+// trailing slash is deliberately left alone -- "/api/" and "/api" are a
+// distinction some APIs genuinely make, so stripping it would silently change
+// the URL the operator published.
+func verifyPath(path string) error {
+	if path == "" {
+		return model.NewBadReqErr("", errors.New("upstream: the registry publishes no path for this action"))
+	}
+	if !strings.HasPrefix(path, "/") {
+		return model.NewBadReqErr("", fmt.Errorf(
+			"upstream: path %q does not begin with a slash, so it cannot be joined to a base url", path))
+	}
+	if strings.Contains(path, "//") {
+		return model.NewBadReqErr("", fmt.Errorf(
+			"upstream: path %q has an empty segment; write it with single slashes", path))
+	}
+	return nil
 }
 
 // asQuery renders a mapped request as query parameters.
