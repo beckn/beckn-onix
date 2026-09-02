@@ -195,8 +195,11 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 	commitment := firstCommitment(t, answer)
 	status, _ := commitment["status"].(map[string]any)
 	descriptor, _ := status["descriptor"].(map[string]any)
-	if descriptor["code"] != "QUOTED" {
-		t.Errorf("status = %v, want QUOTED", descriptor["code"])
+	// DRAFT rather than QUOTED: the Beckn v2 status enum is DRAFT, ACTIVE and
+	// CLOSED, so QUOTED was refused by base schema validation. A quote is a
+	// draft commitment -- nothing is committed until init and confirm.
+	if descriptor["code"] != "DRAFT" {
+		t.Errorf("status = %v, want DRAFT -- QUOTED is not in the spec's enum", descriptor["code"])
 	}
 	if commitment["offer"] == nil {
 		t.Error("the quoted commitment carries no offer")
@@ -223,6 +226,12 @@ func TestShippedMappingsServeARealSelect(t *testing.T) {
 		id, _ := resource["id"].(string)
 		if !strings.HasPrefix(id, "res:mausamgram:forecast:") {
 			t.Errorf("resource id = %q, want one derived from the forecast date", id)
+		}
+		// Required by Commitment.resources in the spec even though the spec
+		// defines no quantity property -- a consumer that validates refuses an
+		// answer without it.
+		if _, present := resource["quantity"]; !present {
+			t.Errorf("resource %s carries no quantity; the spec requires one on every commitment resource", id)
 		}
 		returned = append(returned, id)
 	}

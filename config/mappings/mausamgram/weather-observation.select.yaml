@@ -188,8 +188,12 @@ response: |
         "contract": {
           "commitments": [
             {
+              /* DRAFT, not QUOTED. The Beckn v2 status enum is DRAFT, ACTIVE
+                 and CLOSED, and a quote is still a draft: nothing is committed
+                 until init and confirm. QUOTED read better and validated
+                 nowhere -- base schema validation refuses it. */
               "status": {
-                "descriptor": { "code": "QUOTED", "name": "Quoted" }
+                "descriptor": { "code": "DRAFT", "name": "Draft" }
               },
               /* The offer is echoed, but its references are not: the request
                  named the abstract point forecast, and the answer returns the
@@ -214,6 +218,12 @@ response: |
               "resources": [$map($days, function($day) {
                 {
                   "id": $resourceId($day),
+                  /* Required by Commitment.resources in the spec, which defines
+                     no quantity property and no Quantity schema anywhere -- a
+                     defect upstream. One resource is one day's observation, so
+                     one. Omitting it makes every answer fail validation for a
+                     consumer who validates. */
+                  "quantity": 1,
                   "resourceAttributes": {
                     "@context": "https://schemas.openagrinet.global/schema/WeatherObservation/v0.1/context.jsonld",
                     "@type": "openagrinet:WeatherObservation",
