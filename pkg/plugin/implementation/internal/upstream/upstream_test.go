@@ -358,6 +358,142 @@ func TestRunSeparatesAWithdrawnBindingFromAnUnreachableRegistry(t *testing.T) {
 	}
 }
 
+// --- what counts as an answer ------------------------------------------------
+
+// Any 2xx is an answer. Only 200 used to be, so a provider entitled to reply
+// 202 for accepted work or 201 for something created had its perfectly good
+// exchange refused.
+func TestRunAcceptsAnyTwoHundred(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []int{http.StatusOK, http.StatusCreated, http.StatusAccepted} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				fmt.Fprint(w, `{"answered":true}`)
+			}))
+			defer upstream.Close()
+
+			mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{"ok":1}`)}
+			step := newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper)
+
+			ctx, err := runStep(t, step, selectBody)
+			if err != nil {
+				t.Fatalf("%d should be an answer, got %v", status, err)
+			}
+			if len(ctx.ResponseBody) == 0 {
+				t.Errorf("%d produced no answer", status)
+			}
+		})
+	}
+}
+
+// A 204 passes the status check and then fails decoding, because there is no
+// JSON to map. Asserted rather than left to be discovered: the failure names
+// the empty body instead of the status, and if a provider ever uses 204 for
+// "nothing to report" this is the line that will need a decision.
+func TestRunReportsAnEmptyBodyRatherThanTheStatus(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+	step := newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper)
+
+	_, err := runStep(t, step, selectBody)
+	if err == nil {
+		t.Fatal("expected a 204 with no body to be reported")
+	}
+	if !strings.Contains(err.Error(), "not JSON") {
+		t.Errorf("error %q should say the body could not be read, not blame the status", err)
+	}
+}
+
+// A provider's own account of the failure has to survive. The body was read and
+// then thrown away, so a 400 carrying {"message":"no data"} reached an operator
+// as "provider returned 400 Bad Request" and nothing else -- which is the first
+// thing anyone needs and the thing that makes a real provider observable.
+func TestRunQuotesTheProvidersExplanation(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, "{\n  \"message\": \"no data available\"\n}")
+	}))
+	defer upstream.Close()
+
+	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+	step := newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper)
+
+	_, err := runStep(t, step, selectBody)
+	if err == nil {
+		t.Fatal("expected the failure to be reported")
+	}
+	if !strings.Contains(err.Error(), "no data available") {
+		t.Errorf("error %q should carry the provider's own message", err)
+	}
+	// Whitespace collapsed, so an indented body does not spread one failure
+	// over several log lines.
+	if strings.Contains(err.Error(), "\n") {
+		t.Errorf("error %q should have its whitespace collapsed", err)
+	}
+}
+
+// A body is quoted, not dumped: a provider answering with a page of HTML must
+// not put all of it in a log line or a NACK.
+func TestExplainTruncatesAndHandlesAnEmptyBody(t *testing.T) {
+	t.Parallel()
+
+	if got := explain(nil); got != "(no body)" {
+		t.Errorf("explain(nil) = %q, want a marker rather than an empty string", got)
+	}
+	long := explain([]byte(strings.Repeat("x", explainLimit+50)))
+	if len(long) > explainLimit+len("... (truncated)") {
+		t.Errorf("explain kept %d characters, want it truncated near %d", len(long), explainLimit)
+	}
+	if !strings.HasSuffix(long, "(truncated)") {
+		t.Errorf("a truncated body should say so, got %q", long[len(long)-20:])
+	}
+}
+
+// The quoted body goes through the same redaction as everything else, or a
+// provider that echoes the query string back would defeat it.
+func TestRunRedactsACredentialEchoedInABody(t *testing.T) {
+	// No t.Parallel: t.Setenv forbids it.
+	t.Setenv("TEST_ECHO_TOKEN", "s3cr3t")
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		// A provider quoting the request it rejected, credential and all.
+		fmt.Fprintf(w, `{"rejected":%q}`, r.URL.RawQuery)
+	}))
+	defer upstream.Close()
+
+	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+	step := newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper,
+		func(c *Config) {
+			c.AuthScheme = AuthSchemeQuery
+			c.QueryName = "token"
+			c.QueryValueEnv = "TEST_ECHO_TOKEN"
+		})
+
+	_, err := runStep(t, step, selectBody)
+	if err == nil {
+		t.Fatal("expected the failure to be reported")
+	}
+	if strings.Contains(err.Error(), "s3cr3t") {
+		t.Errorf("the credential leaked through the quoted body: %v", err)
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Errorf("error %q should show the credential was removed", err)
+	}
+}
+
 // --- query-string auth ------------------------------------------------------
 
 // Some upstreams take their credential as a query parameter. It arrives on the

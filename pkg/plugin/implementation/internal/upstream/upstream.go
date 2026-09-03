@@ -594,8 +594,12 @@ func (s *Step) attempt(ctx context.Context, call model.ActionPlan, endpoint stri
 		// Asking again will not make the answer smaller.
 		return nil, doNotRetry(fmt.Errorf("response exceeds the %d byte limit", s.config.MaxResponseBytes))
 	}
-	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("provider returned %s", resp.Status)
+	// Any 2xx, not 200 alone. A provider is entitled to answer 202 for work it
+	// accepted, 204 for nothing to report, or 201 for something it created, and
+	// treating those as failures would refuse a perfectly good exchange. 3xx
+	// does not reach here: the client follows redirects.
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		err := fmt.Errorf("provider returned %s: %s", resp.Status, explain(body))
 		// 5xx and 429 are the provider asking to be tried again. Every other
 		// 4xx is a statement about the request, which will not improve.
 		if resp.StatusCode < http.StatusInternalServerError && resp.StatusCode != http.StatusTooManyRequests {
@@ -604,6 +608,32 @@ func (s *Step) attempt(ctx context.Context, call model.ActionPlan, endpoint stri
 		return nil, err
 	}
 	return body, nil
+}
+
+// explainLimit is how much of a failed response is quoted. Enough for a
+// provider's own message, short enough not to put a page of HTML in a log line
+// or a NACK.
+const explainLimit = 300
+
+// explain renders a failed response body for a human.
+//
+// The body was already read and then thrown away, so a provider's own account
+// of what was wrong -- Agmarknet says "no data" in the body of a 400 -- never
+// reached anyone. The status alone says a call failed and nothing about why,
+// which is the first thing an operator needs and the thing that makes a real
+// provider's behaviour observable at all.
+func explain(body []byte) string {
+	text := strings.TrimSpace(string(body))
+	if text == "" {
+		return "(no body)"
+	}
+	// Collapse whitespace: a provider that answers with indented JSON or an
+	// HTML error page should not spread one failure over forty log lines.
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) > explainLimit {
+		return text[:explainLimit] + "... (truncated)"
+	}
+	return text
 }
 
 // authenticate presents this provider's credentials, read from the environment
