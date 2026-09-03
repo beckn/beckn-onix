@@ -168,6 +168,160 @@ func TestNewValidatesTheAuthScheme(t *testing.T) {
 	}
 }
 
+// --- what is worth retrying -------------------------------------------------
+
+// A 4xx is a statement about the request. Repeating it changes nothing, and
+// the whole budget was previously spent inside a couple of milliseconds.
+func TestRunDoesNotRetryAClientError(t *testing.T) {
+	t.Parallel()
+
+	var attempts int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer upstream.Close()
+
+	plan := testPlan(upstream.URL, http.MethodGet)
+	plan.Actions["select"] = model.ActionPlan{
+		Method: http.MethodGet, Path: "/x", Mappings: testMappingRef, RetryMax: 5,
+	}
+	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+	step := newStep(t, &stubRegistry{plan: plan}, mapper)
+
+	if _, err := runStep(t, step, selectBody); err == nil {
+		t.Fatal("expected a 400 from the provider to be reported")
+	}
+	if attempts != 1 {
+		t.Errorf("the provider was called %d times, want 1 -- a 400 is not worth retrying", attempts)
+	}
+}
+
+// 5xx and 429 are the provider asking to be tried again, so those still are.
+func TestRunRetriesWhatTheProviderAsksItTo(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []int{http.StatusInternalServerError, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+
+			var attempts int
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts++
+				w.WriteHeader(status)
+			}))
+			defer upstream.Close()
+
+			plan := testPlan(upstream.URL, http.MethodGet)
+			plan.Actions["select"] = model.ActionPlan{
+				Method: http.MethodGet, Path: "/x", Mappings: testMappingRef, RetryMax: 2,
+			}
+			mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+			step := newStep(t, &stubRegistry{plan: plan}, mapper)
+
+			if _, err := runStep(t, step, selectBody); err == nil {
+				t.Fatal("expected the failure to be reported")
+			}
+			if attempts != 3 {
+				t.Errorf("the provider was called %d times, want 3 (1 + retryMax 2)", attempts)
+			}
+		})
+	}
+}
+
+// An operator's missing environment variable is configuration, not the provider
+// being down. Retrying it reported the wrong system as broken.
+func TestRunDoesNotRetryAMissingCredential(t *testing.T) {
+	t.Parallel()
+
+	var called int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called++
+		fmt.Fprint(w, `{}`)
+	}))
+	defer upstream.Close()
+
+	plan := testPlan(upstream.URL, http.MethodGet)
+	plan.Actions["select"] = model.ActionPlan{
+		Method: http.MethodGet, Path: "/x", Mappings: testMappingRef, RetryMax: 4,
+	}
+	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+	step := newStep(t, &stubRegistry{plan: plan}, mapper, func(c *Config) {
+		c.AuthScheme = AuthSchemeBasic
+		c.UsernameEnv = "TEST_ABSENT_USER_FOR_RETRY"
+		c.PasswordEnv = "TEST_ABSENT_PASS_FOR_RETRY"
+	})
+
+	_, err := runStep(t, step, selectBody)
+	if err == nil {
+		t.Fatal("expected a missing credential to be reported")
+	}
+	if called != 0 {
+		t.Errorf("the provider was called %d times; a credential this step cannot read never reaches it", called)
+	}
+	if !strings.Contains(err.Error(), "TEST_ABSENT_USER_FOR_RETRY") {
+		t.Errorf("error %q should name the variable that is unset", err)
+	}
+}
+
+// A caller that has gone away gets no further attempts.
+func TestRunStopsWhenTheCallerHasGone(t *testing.T) {
+	t.Parallel()
+
+	var attempts int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer upstream.Close()
+
+	plan := testPlan(upstream.URL, http.MethodGet)
+	plan.Actions["select"] = model.ActionPlan{
+		Method: http.MethodGet, Path: "/x", Mappings: testMappingRef, RetryMax: 5,
+	}
+	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+	step := newStep(t, &stubRegistry{plan: plan}, mapper)
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	stepCtx := &model.StepContext{Context: cancelled, Body: []byte(selectBody)}
+	if err := step.Run(stepCtx); err == nil {
+		t.Fatal("expected a cancelled request to be reported")
+	}
+	if attempts != 0 {
+		t.Errorf("the provider was called %d times for an abandoned request, want 0", attempts)
+	}
+}
+
+// A withdrawn binding is the caller naming something that is not there, so 404
+// -- the same reasoning the no-route path uses. A registry that could not be
+// consulted is this adapter failing, and stays unclassified.
+func TestRunSeparatesAWithdrawnBindingFromAnUnreachableRegistry(t *testing.T) {
+	t.Parallel()
+
+	withdrawn := &stubRegistry{err: definition.ErrProviderRecordNotFound}
+	_, err := runStep(t, newStep(t, withdrawn, &stubMapper{}), selectBody)
+	if err == nil {
+		t.Fatal("expected a withdrawn binding to be refused")
+	}
+	var coded *model.CodedErr
+	if !errors.As(err, &coded) || coded.HTTPStatus() != http.StatusNotFound {
+		t.Errorf("a withdrawn binding gave %v, want a 404 -- a 500 hides it as this adapter's fault", err)
+	}
+	if !strings.Contains(err.Error(), testBindingKey) {
+		t.Errorf("error %q should name the binding with no record", err)
+	}
+
+	unreachable := &stubRegistry{err: errors.New("registry unreachable")}
+	_, err = runStep(t, newStep(t, unreachable, &stubMapper{}), selectBody)
+	if err == nil {
+		t.Fatal("expected an unreachable registry to be reported")
+	}
+	if errors.As(err, &coded) && coded.HTTPStatus() == http.StatusNotFound {
+		t.Error("an unreachable registry must not report as not-found; it is this adapter failing")
+	}
+}
+
 // --- query-string auth ------------------------------------------------------
 
 // Some upstreams take their credential as a query parameter. It arrives on the

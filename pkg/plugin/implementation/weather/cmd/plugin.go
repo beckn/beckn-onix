@@ -69,11 +69,10 @@ func (p weatherProvider) New(ctx context.Context, registry definition.ProviderRe
 		return nil, nil, err
 	}
 
-	log.Infof(ctx, "Mausamgram step created successfully")
+	log.Infof(ctx, "Weather step created successfully")
 	return step, closer, nil
 }
 
-// Provider is the exported plugin instance.
 // splitList reads a comma-separated config value, which is how a list reaches a
 // plugin -- the config is map[string]string. Blanks are dropped and spaces
 // trimmed, so a trailing comma or a wrapped line is not a config error.
@@ -93,6 +92,7 @@ func splitList(raw string) []string {
 	return out
 }
 
+// Provider is the exported plugin instance.
 var Provider = weatherProvider{}
 
 // Compile-time proof the provider satisfies the interface the manager asserts

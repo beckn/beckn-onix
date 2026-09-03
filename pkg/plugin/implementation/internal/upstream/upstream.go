@@ -53,6 +53,13 @@ const (
 // variable to read, so a secret reaches the process through its environment and
 // nothing else.
 const (
+	// RetryBackoffBase is the first wait between attempts, doubling from there
+	// up to RetryBackoffMax. Short, because the retry budget comes from the
+	// registry and an operator setting 5 retries did not ask for seconds of
+	// latency -- only for the provider's brief unavailability to be ridden out.
+	RetryBackoffBase = 50 * time.Millisecond
+	RetryBackoffMax  = 800 * time.Millisecond
+
 	AuthSchemeNone   = "none"
 	AuthSchemeBasic  = "basic"
 	AuthSchemeHeader = "header"
@@ -133,7 +140,8 @@ type Config struct {
 	MaxResponseBytes int64 `yaml:"maxResponseBytes" json:"maxResponseBytes"`
 }
 
-// Step serves the Mausamgram capability. It is safe for concurrent use.
+// Step serves whatever capabilities a domain package configures it for. It is
+// safe for concurrent use.
 type Step struct {
 	config        *Config
 	paths         oanbinding.Paths
@@ -269,6 +277,17 @@ func (s *Step) Run(ctx *model.StepContext) error {
 
 	plan, err := s.registry.ProviderRecord(ctx, binding.Key())
 	if err != nil {
+		// A definite "no such binding" is the caller naming something that is
+		// not there, so 404 -- the same reasoning the no-route path uses to
+		// refuse an unrecognised capability rather than ACK it. A registry that
+		// could not be consulted is different and stays a 500: unclassified,
+		// because it is this adapter that failed.
+		if errors.Is(err, definition.ErrProviderRecordNotFound) {
+			// %w, not %v: the sentinel has to stay unwrappable, or anything
+			// upstream testing errors.Is against it silently stops matching.
+			return model.NewNotFoundErr("", fmt.Errorf(
+				"upstream: the registry publishes no active binding for %s: %w", binding.Key(), err))
+		}
 		return fmt.Errorf("upstream: no call plan for %s: %w", binding.Key(), err)
 	}
 
@@ -458,15 +477,80 @@ func (s *Step) call(ctx context.Context, baseURL string, call model.ActionPlan, 
 
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
+		// A caller that has gone away is not worth another attempt, and neither
+		// is a budget already spent. Checked before the call rather than after,
+		// so a cancelled request costs nothing.
+		if err := ctx.Err(); err != nil {
+			if lastErr == nil {
+				lastErr = err
+			}
+			break
+		}
+
 		body, err := s.attempt(ctx, call, endpoint, mapped, timeout)
 		if err == nil {
 			return body, nil
 		}
 		lastErr = s.redact(err)
 		log.Warnf(ctx, "upstream: attempt %d/%d failed: %v", attempt, attempts, lastErr)
+
+		// Only some failures are worth repeating. A 4xx, a request this step
+		// could not build and a credential it could not read will fail
+		// identically however many times they are tried -- and retrying the
+		// credential case is the worst of them, because it reports an
+		// operator's missing environment variable as the provider being down.
+		if isPermanent(err) {
+			break
+		}
+		if attempt < attempts {
+			if err := sleep(ctx, backoff(attempt)); err != nil {
+				break
+			}
+		}
 	}
 	return nil, model.NewCodedErr(http.StatusBadGateway, codeUpstreamUnavailable,
 		fmt.Errorf("upstream: provider did not answer after %d attempts: %w", attempts, lastErr))
+}
+
+// permanentErr marks a failure no retry can fix. Kept unexported and detected
+// with errors.As, so a caller of this package sees only the underlying error.
+type permanentErr struct{ error }
+
+func (p permanentErr) Unwrap() error { return p.error }
+
+// doNotRetry marks err as not worth repeating.
+func doNotRetry(err error) error { return permanentErr{err} }
+
+// isPermanent reports whether err is one no further attempt would change.
+func isPermanent(err error) bool {
+	var permanent permanentErr
+	return errors.As(err, &permanent)
+}
+
+// backoff is how long to wait before the next attempt.
+//
+// Exponential from a short base and capped, because the provider being briefly
+// busy is the case worth waiting out; anything longer is a timeout's job. With
+// no wait at all a retryMax of 5 spends its whole budget inside a couple of
+// milliseconds, which is not a retry so much as the same failure six times.
+func backoff(attempt int) time.Duration {
+	wait := RetryBackoffBase << (attempt - 1)
+	if wait > RetryBackoffMax {
+		return RetryBackoffMax
+	}
+	return wait
+}
+
+// sleep waits, or reports that the context ended first.
+func sleep(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // attempt makes one upstream request.
@@ -476,13 +560,14 @@ func (s *Step) attempt(ctx context.Context, call model.ActionPlan, endpoint stri
 
 	req, err := http.NewRequestWithContext(attemptCtx, call.Method, endpoint, requestBody(call.Method, mapped))
 	if err != nil {
-		return nil, fmt.Errorf("could not build the request: %w", err)
+		return nil, doNotRetry(fmt.Errorf("could not build the request: %w", err))
 	}
 	if hasBody(call.Method) {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if err := s.authenticate(req); err != nil {
-		return nil, err
+		// A missing or unreadable credential is configuration, not weather.
+		return nil, doNotRetry(err)
 	}
 
 	// The URL as it actually went on the wire, credential removed. At info
@@ -502,10 +587,17 @@ func (s *Step) attempt(ctx context.Context, call model.ActionPlan, endpoint stri
 	}
 	log.Infof(ctx, "upstream: %s %s -> %s, %d bytes", call.Method, requested, resp.Status, len(body))
 	if int64(len(body)) > s.config.MaxResponseBytes {
-		return nil, fmt.Errorf("response exceeds the %d byte limit", s.config.MaxResponseBytes)
+		// Asking again will not make the answer smaller.
+		return nil, doNotRetry(fmt.Errorf("response exceeds the %d byte limit", s.config.MaxResponseBytes))
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("provider returned %s", resp.Status)
+		err := fmt.Errorf("provider returned %s", resp.Status)
+		// 5xx and 429 are the provider asking to be tried again. Every other
+		// 4xx is a statement about the request, which will not improve.
+		if resp.StatusCode < http.StatusInternalServerError && resp.StatusCode != http.StatusTooManyRequests {
+			return nil, doNotRetry(err)
+		}
+		return nil, err
 	}
 	return body, nil
 }

@@ -234,7 +234,13 @@ response: |
                       "sourceId": "mausamgram",
                       "sourceName": "IMD Mausamgram NWP"
                     },
-                    "location": {
+                    /* Emitted only when the provider echoed both coordinates.
+                       JSONata drops undefined values inside an array, so a
+                       provider that answered without its location echo would
+                       otherwise produce "coordinates": [] -- an invalid Point,
+                       signed and delivered. Absent is honest; empty is a lie
+                       in the shape of an answer. */
+                    "location": $exists($lat) and $exists($lon) ? {
                       "type": "Point",
                       "coordinates": [$lon, $lat]
                     },

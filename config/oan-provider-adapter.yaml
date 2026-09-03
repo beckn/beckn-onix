@@ -47,9 +47,19 @@ modules:
             url: http://registry:8081/api/v1
             entity: Participant
             providerEntity: ProviderSchema
-            # Opt-in. This is exactly how long a suspended participant keeps
-            # verifying, and a withdrawn capability keeps being called.
-            cacheTTL: 60s
+            # cacheTTL is deliberately unset. It needs a cache plugin alongside
+            # it -- this client caches nothing without one -- and this sample
+            # runs no redis, so a TTL here would look like caching while every
+            # message still made its three registry calls: key lookup, binding
+            # search, participant search, each inside signature validation's
+            # budget. The plugin now says so at startup if the two are not
+            # configured together.
+            #
+            # Adding a cache plugin? Read the number carefully. It is exactly
+            # how long a suspended participant keeps verifying, and a withdrawn
+            # capability keeps being called.
+            #
+            #   cacheTTL: 60s
 
         keyManager:
           id: simplekeymanager

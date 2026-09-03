@@ -249,6 +249,15 @@ func New(ctx context.Context, cache definition.Cache, cfg *Config) (*Client, fun
 		return nil, nil, err
 	}
 
+	// A TTL with no cache plugin is caching silently switched off, and the cost
+	// is three registry round trips inside every request -- key lookup, binding
+	// search, participant search -- each inside signature validation's budget.
+	// Said out loud at startup, because nothing downstream ever complains.
+	if cfg.CacheTTL > 0 && cache == nil {
+		log.Warnf(ctx, "OAN registry: cacheTTL is %s but no cache plugin is configured, "+
+			"so nothing is cached and every message makes its registry calls again", cfg.CacheTTL)
+	}
+
 	entity := cfg.Entity
 	if entity == "" {
 		entity = DefaultEntity

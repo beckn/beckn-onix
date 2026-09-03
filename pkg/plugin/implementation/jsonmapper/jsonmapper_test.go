@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -751,6 +752,100 @@ func TestTransformBoundsTheCache(t *testing.T) {
 	}
 	if got := mapper.cachedCount(); got > 2 {
 		t.Errorf("cache holds %d entries, want at most 2", got)
+	}
+}
+
+// Expired entries must not hold the cap. They used to: cached() treats an
+// expiry as a miss but left the entry in the map, nothing ever deleted one, so
+// the count only grew -- and once it reached MaxCacheEntries the cache refused
+// every reference it was not already holding, permanently. The effect was not
+// "compile again next time" but compile every time, for every mapping the
+// deployment had.
+func TestTransformKeepsCachingAfterEntriesExpire(t *testing.T) {
+	t.Parallel()
+
+	var fetches int
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		fetches++
+		mu.Unlock()
+		fmt.Fprint(w, bothDirections)
+	}))
+	defer srv.Close()
+
+	// A TTL short enough to expire between calls, and a cap small enough that
+	// stale entries would fill it.
+	mapper := newTestMapper(t, func(c *Config) {
+		c.MaxCacheEntries = 3
+		c.CacheTTL = time.Millisecond
+	})
+
+	// Fill the cache and let everything in it go stale.
+	for i := 0; i < 3; i++ {
+		if _, err := mapper.Transform(context.Background(),
+			fmt.Sprintf("%s/%d.yaml", srv.URL, i), definition.DirectionRequest, requestInput()); err != nil {
+			t.Fatalf("Transform() returned an unexpected error: %v", err)
+		}
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	mu.Lock()
+	before := fetches
+	mu.Unlock()
+
+	// A fourth reference, asked for repeatedly. It should be cached after the
+	// first fetch, because the three stale entries no longer occupy the cap.
+	fourth := srv.URL + "/fourth.yaml"
+	for i := 0; i < 5; i++ {
+		if _, err := mapper.Transform(context.Background(), fourth,
+			definition.DirectionRequest, requestInput()); err != nil {
+			t.Fatalf("Transform() returned an unexpected error: %v", err)
+		}
+	}
+
+	mu.Lock()
+	after := fetches
+	mu.Unlock()
+	if got := after - before; got != 1 {
+		t.Errorf("a new reference was fetched %d times over 5 requests, want 1 -- "+
+			"stale entries are holding the cap", got)
+	}
+}
+
+// A failure on the response leg is not the caller's fault. The input there is
+// the PROVIDER's answer, so a provider that changed shape, or a bug in the
+// response half, used to return 400 and send the caller off to fix a request
+// that was fine.
+func TestTransformBlamesTheRightPartyForEachDirection(t *testing.T) {
+	t.Parallel()
+
+	// A mapping whose halves both fail at evaluation: $number over a value that
+	// is not a number.
+	failing := "request: |\n  $number(beckn.notANumber)\nresponse: |\n  $number(response.notANumber)\n"
+	srv := newMappingServer(t, failing, nil)
+	defer srv.Close()
+
+	mapper := newTestMapper(t)
+	ref := srv.URL + "/failing.yaml"
+
+	_, err := mapper.Transform(context.Background(), ref, definition.DirectionRequest,
+		map[string]any{"beckn": map[string]any{"notANumber": "abc"}})
+	if err == nil {
+		t.Fatal("expected the request half to fail")
+	}
+	var coded *model.CodedErr
+	if !errors.As(err, &coded) || coded.HTTPStatus() != http.StatusBadRequest {
+		t.Errorf("request leg gave %v, want a 400 -- the caller's payload is what the mapping could not read", err)
+	}
+
+	_, err = mapper.Transform(context.Background(), ref, definition.DirectionResponse,
+		map[string]any{"response": map[string]any{"notANumber": "abc"}})
+	if err == nil {
+		t.Fatal("expected the response half to fail")
+	}
+	if !errors.As(err, &coded) || coded.HTTPStatus() != http.StatusBadGateway {
+		t.Errorf("response leg gave %v, want a 502 -- the provider's answer is what failed, not the request", err)
 	}
 }
 

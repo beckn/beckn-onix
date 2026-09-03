@@ -98,7 +98,11 @@ func TestFromRefusesAnAmbiguousPayload(t *testing.T) {
 			body: `{"message":{"contract":{"commitments":[
 				{"offer":{"provider":{"id":"one"}},"resources":[{"resourceAttributes":{"@type":"t"}}]},
 				{"offer":{"provider":{"id":"two"}},"resources":[{"resourceAttributes":{"@type":"t"}}]}]}}}`,
-			wants: "2 providers",
+			// Two providers means two commitments under the Beckn v2 paths, so
+			// the commitment check refuses it first -- and its advice is the
+			// more useful of the two. The provider count still guards a
+			// deployment whose overridden path yields several within one.
+			wants: "2 commitments",
 		},
 		{
 			name: "two types within one commitment",
@@ -125,24 +129,6 @@ func TestFromRefusesAnAmbiguousPayload(t *testing.T) {
 				t.Errorf("error %q should say %q", err, tc.wants)
 			}
 		})
-	}
-}
-
-// Repetition is not ambiguity: several commitments naming the same provider and
-// type describe one call, and must resolve rather than be refused.
-func TestFromAcceptsRepetitionOfTheSameBinding(t *testing.T) {
-	t.Parallel()
-
-	body := `{"message":{"contract":{"commitments":[
-		{"offer":{"provider":{"id":"p"}},"resources":[{"resourceAttributes":{"@type":"t"}}]},
-		{"offer":{"provider":{"id":"p"}},"resources":[{"resourceAttributes":{"@type":"t"}}]}]}}}`
-
-	got, err := From(BecknV2, []byte(body))
-	if err != nil {
-		t.Fatalf("From() returned an unexpected error: %v", err)
-	}
-	if got.Key() != "p|t" {
-		t.Errorf("key = %q, want p|t", got.Key())
 	}
 }
 
@@ -298,5 +284,45 @@ func TestPathsValidate(t *testing.T) {
 
 	if err := BecknV2.Validate(); err != nil {
 		t.Errorf("the default paths must validate: %v", err)
+	}
+}
+
+// Several commitments naming the same provider and capability used to resolve
+// to one binding key without complaint -- and then the mapping read
+// commitments[0] and the rest were dropped, leaving the caller a confident,
+// signed, spec-valid answer to part of what it asked. One request maps to one
+// call, so it is refused.
+func TestFromRefusesSeveralCommitments(t *testing.T) {
+	t.Parallel()
+
+	body := `{"message":{"contract":{"commitments":[
+		{"offer":{"provider":{"id":"mausamgram"}},
+		 "resources":[{"resourceAttributes":{"@type":"openagrinet:WeatherObservation"}}]},
+		{"offer":{"provider":{"id":"mausamgram"}},
+		 "resources":[{"resourceAttributes":{"@type":"openagrinet:WeatherObservation"}}]}
+	]}}}`
+
+	_, err := From(BecknV2, []byte(body))
+	if err == nil {
+		t.Fatal("expected two commitments to be refused rather than halved")
+	}
+	if errors.Is(err, ErrNoBinding) {
+		t.Error("this is not an absent binding; it is one request asking for two calls")
+	}
+	if !strings.Contains(err.Error(), "2 commitments") {
+		t.Errorf("error %q should say how many were sent", err)
+	}
+
+	// One commitment still resolves, obviously.
+	single := `{"message":{"contract":{"commitments":[
+		{"offer":{"provider":{"id":"mausamgram"}},
+		 "resources":[{"resourceAttributes":{"@type":"openagrinet:WeatherObservation"}}]}
+	]}}}`
+	binding, err := From(BecknV2, []byte(single))
+	if err != nil {
+		t.Fatalf("one commitment must still resolve: %v", err)
+	}
+	if binding.Key() != "mausamgram|openagrinet:WeatherObservation" {
+		t.Errorf("binding key = %q", binding.Key())
 	}
 }

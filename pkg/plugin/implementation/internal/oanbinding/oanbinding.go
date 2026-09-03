@@ -50,7 +50,21 @@ func From(paths Paths, body []byte) (Binding, error) {
 		return Binding{}, fmt.Errorf("oanbinding: payload could not be read: %w", err)
 	}
 
-	providers := distinct(valuesAt(payload, paths.ProviderID))
+	// Before distinctness: N commitments naming the SAME provider and type
+	// collapse to one binding key, so they would resolve here without
+	// complaint -- and then the mapping reads commitments[0] and the rest are
+	// dropped, leaving the caller a confident, signed, spec-valid answer to
+	// part of what it asked. One request maps to one call, so several is a
+	// request this design cannot express and is refused rather than halved.
+	providerValues := valuesAt(payload, paths.ProviderID)
+	if len(providerValues) > 1 {
+		return Binding{}, fmt.Errorf(
+			"oanbinding: payload carries %d commitments; one request maps to one call, "+
+				"so send them separately rather than have all but the first dropped",
+			len(providerValues))
+	}
+
+	providers := distinct(providerValues)
 	types := distinct(valuesAt(payload, paths.CapabilityCode))
 
 	if len(providers) == 0 || len(types) == 0 {

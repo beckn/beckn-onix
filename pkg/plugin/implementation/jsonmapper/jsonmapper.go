@@ -349,11 +349,22 @@ func (m *Mapper) remember(mappingRef string, directions map[definition.Direction
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Expired entries are dropped before the cap is measured. Without this the
+	// map only ever grows: cached() treats an expiry as a miss but leaves the
+	// entry behind, so the count reaches the cap and then refuses every ref it
+	// is not already holding -- permanently, for the life of the process. The
+	// cost is not "compile again next time" but compile every time, for every
+	// mapping the deployment has.
+	//
+	// A sweep rather than an eviction policy: the entries are few, this runs
+	// only on a store, and it drops nothing that was still usable.
+	m.purgeExpired()
+
 	// Bounded rather than evicting: references come from the registry, and a
-	// deployment serving more capabilities than the cap wants a bigger cap, not
-	// a cache that silently thrashes. The entry is still returned to its caller
-	// when it is not stored, so a request over the cap is served rather than
-	// refused -- it just pays to compile again next time.
+	// deployment serving more live capabilities than the cap wants a bigger
+	// cap, not a cache that silently thrashes. The entry is still returned to
+	// its caller when it is not stored, so a request over the cap is served
+	// rather than refused -- it just pays to compile again next time.
 	if len(m.entries) >= m.config.MaxCacheEntries {
 		if _, replacing := m.entries[mappingRef]; !replacing {
 			return entry
@@ -361,6 +372,16 @@ func (m *Mapper) remember(mappingRef string, directions map[definition.Direction
 	}
 	m.entries[mappingRef] = entry
 	return entry
+}
+
+// purgeExpired drops entries past their TTL. The caller holds m.mu.
+func (m *Mapper) purgeExpired() {
+	now := time.Now()
+	for ref, entry := range m.entries {
+		if now.After(entry.expiresAt) {
+			delete(m.entries, ref)
+		}
+	}
 }
 
 // cachedCount reports how many mappings are held. Used by tests to assert the
@@ -538,11 +559,19 @@ func (m *Mapper) evaluate(ctx context.Context, mapping *compiledMapping, mapping
 	result, err := mapping.expression.Evaluate(document, nil)
 	mapping.evaluating.Unlock()
 	if err != nil {
-		// The mapping is valid and the payload is not what it expected, so this
-		// is the caller's request being wrong rather than this adapter failing.
 		log.Errorf(ctx, err, "JSON mapping %s %s half failed to evaluate: %v", mappingRef, direction, err)
-		return nil, model.NewBadReqErr(codeAdaptationFailed,
-			fmt.Errorf("mapping %q %s half could not be applied: %w", mappingRef, direction, err))
+		wrapped := fmt.Errorf("mapping %q %s half could not be applied: %w", mappingRef, direction, err)
+		if direction == definition.DirectionResponse {
+			// The input here is the PROVIDER's answer, not the caller's
+			// request. A provider that changed shape, or a bug in the response
+			// half, is nothing the caller did -- reporting 400 sends them off
+			// to fix a request that was fine. 502: the upstream exchange is
+			// what failed.
+			return nil, model.NewCodedErr(http.StatusBadGateway, codeAdaptationFailed, wrapped)
+		}
+		// On the request leg the mapping is valid and the payload is not what it
+		// expected, so this is the caller's request being wrong.
+		return nil, model.NewBadReqErr(codeAdaptationFailed, wrapped)
 	}
 	return result, nil
 }
