@@ -1,0 +1,200 @@
+# Agmarknet Vistaar, openagrinet:MandiPrice, select. Both directions, one file.
+#
+# One file per binding-action rather than one per direction, because both legs of
+# an exchange are one contract: the response has to answer the request that was
+# sent, and splitting them lets one change without the other.
+#
+# The upstream is Agmarknet's Vistaar select. It takes governed codes -- state,
+# district, market, commodity -- plus a date range, and every one of them is in
+# the payload, so nothing here needs resolving before the call. That is why the
+# mandi plugin has no prerequisites: a MandiPrice select names the market it
+# wants rather than a point to search from.
+#
+# NOTHING HERE IS OUTSIDE THE PACK. openagrinet:MandiPrice v0.1 carries every
+# field this answer sets. Where the upstream reports something the pack has no
+# home for, it is dropped rather than invented.
+
+# What this capability cannot serve, refused before the provider is called.
+#
+# The pack requires none of these: a MandiPrice select is OnDemand, and that
+# branch requires only supportedCommodities and supportedPriceFields. It leaves
+# market and validity optional, and defines market.district and market.state as
+# "name or governed code". So a payload can be perfectly valid and still be
+# unanswerable by this upstream, which wants codes and a date range.
+#
+# Refusing here names what is missing. Sending it anyway earns a 400 from
+# Agmarknet, or worse an empty result that reads as "no prices".
+required:
+  - check: |
+      (
+        $ra := beckn.message.contract.commitments[0].resources[0].resourceAttributes;
+        $exists($ra.supportedCommodities[0].code)
+      )
+    message: "this capability needs a commodity code in supportedCommodities[0].code"
+  - check: |
+      (
+        $ra := beckn.message.contract.commitments[0].resources[0].resourceAttributes;
+        $exists($ra.market.state) and $exists($ra.market.district)
+      )
+    message: "this capability needs governed state and district codes in market"
+  - check: |
+      (
+        $ra := beckn.message.contract.commitments[0].resources[0].resourceAttributes;
+        $exists($ra.validity.startsAt) and $exists($ra.validity.endsAt)
+      )
+    message: "this capability needs a validity window; it reports prices over a date range"
+
+# The upstream is a GET, so this object becomes the query string. The token is
+# not here and must never be: it comes from the adapter's authScheme query,
+# whose value is read from an environment variable. This file is published.
+#
+# marketcode is sent when the payload names one and omitted otherwise, which is
+# what the upstream expects: without it the query widens from one market to the
+# whole district.
+request: |
+  (
+    $ra := beckn.message.contract.commitments[0].resources[0].resourceAttributes;
+
+    /* The upstream wants dd-MM-yyyy; the pack's validity is an ISO date. A
+       substring reorder rather than a date library, because these are dates
+       with no time and no zone, and $fromMillis would invent both. */
+    $ddmmyyyy := function($iso) {
+      $substring($iso, 8, 2) & "-" & $substring($iso, 5, 2) & "-" & $substring($iso, 0, 4)
+    };
+
+    $base := {
+      "statecode":     $ra.market.state,
+      "districtcode":  $ra.market.district,
+      "commoditycode": $ra.supportedCommodities[0].code,
+      "from_date":     $ddmmyyyy($ra.validity.startsAt),
+      "to_date":       $ddmmyyyy($ra.validity.endsAt)
+    };
+
+    $exists($ra.market.marketCode)
+      ? $merge([$base, {"marketcode": $ra.market.marketCode}])
+      : $base
+  )
+
+# One resource per price record, in Direct mode.
+#
+# Direct is what the pack requires of an answer: the resource now CARRIES the
+# observation rather than advertising that it could obtain one. It requires
+# source, commodity, market, arrivalDate, prices and generatedAt, and all six
+# are set below.
+#
+# The upstream's records use Title Case keys WITH SPACES -- `Modal Price`, not
+# modalPrice -- so they need backticks, and its prices are STRINGS, so they need
+# $number() before they satisfy the pack's numeric types.
+response: |
+  (
+    $records := $type(response) = "array" ? response
+              : $exists(response.data) ? response.data
+              : $exists(response.records) ? response.records
+              : [];
+
+    $selected := beckn.message.contract.commitments[0];
+    $ra := $selected.resources[0].resourceAttributes;
+
+    /* Bound once because it is used twice -- for a resource's own id and for
+       the offer's reference to it. Two copies of one expression is how a
+       dangling reference gets reintroduced. */
+    /* Built from CODES, not the names the upstream reports. A market name
+       carries spaces and a commodity name carries brackets -- "Kasdol APMC",
+       "Paddy(Common)" -- and an identifier that a consumer may put in a URL or
+       a filter should not. The codes are already in the payload, so they cost
+       nothing, and they are stable where a display name is not.
+
+       The market code is optional: without it the query widened to the whole
+       district, so the district code is what identifies the scope. */
+    $iso := function($ddmmyyyy) {
+      $substring($ddmmyyyy, 6, 4) & "-" & $substring($ddmmyyyy, 3, 2) & "-" & $substring($ddmmyyyy, 0, 2)
+    };
+
+    $scope := $exists($ra.market.marketCode) ? $ra.market.marketCode : $ra.market.district;
+    $resourceId := function($r) {
+      "res:agmarknet:" & $scope & ":" & $ra.supportedCommodities[0].code
+        & ":" & $iso($r.`Arrival Date`)
+    };
+
+    /* dd-MM-yyyy back to ISO, so the answer speaks the pack's date format
+       rather than the upstream's. */
+
+    /* Absent rather than present-and-empty: a consumer must be able to tell
+       "the market reported no minimum" from "the minimum was zero". */
+    $priced := function($value) { $exists($value) ? $number($value) };
+
+    {
+      "context": {
+        "version":       beckn.context.version,
+        "action":        "on_select",
+        "networkId":     beckn.context.networkId,
+        "transactionId": beckn.context.transactionId,
+        "messageId":     beckn.context.messageId,
+        "timestamp":     $now()
+      },
+      "message": {
+        "contract": {
+          "commitments": [
+            {
+              "status": {
+                "descriptor": { "code": "DRAFT", "name": "Draft" }
+              },
+              /* The offer is echoed, but its references are not: the request
+                 named an abstract price enquiry and the answer returns the
+                 concrete observations. Leaving resourceIds as they arrived
+                 would point the offer at an id appearing nowhere here. */
+              "offer": $merge([
+                $selected.offer,
+                { "resourceIds": [$map($records, function($r) { $resourceId($r) })] }
+              ]),
+              /* Wrapped: JSONata collapses a one-element sequence to a bare
+                 value, so a single-record answer would return an object where
+                 every other count returns a list. */
+              "resources": [$map($records, function($r) {
+                {
+                  "id": $resourceId($r),
+                  /* Required by Commitment.resources in the Beckn v2 spec,
+                     which defines no quantity property and carries no Quantity
+                     schema at all -- a defect upstream. One resource is one
+                     market's observation for one day, so one. */
+                  "quantity": 1,
+                  "resourceAttributes": {
+                    "@context": "https://schemas.openagrinet.global/schema/MandiPrice/v0.1/context.jsonld",
+                    "@type": "openagrinet:MandiPrice",
+                    "informationMode": "Direct",
+                    "subjectCategories": $ra.subjectCategories,
+                    "source": {
+                      "sourceId": "agmarknet",
+                      "sourceName": "Agmarknet Vistaar"
+                    },
+                    "commodity": {
+                      "code": $ra.supportedCommodities[0].code,
+                      "name": $r.Commodity
+                    },
+                    "commodityGroup": $r.Group,
+                    "variety":        $r.Variety,
+                    "grade":          $r.Grade,
+                    "market": {
+                      "marketName": $r.Market,
+                      "marketCode": $ra.market.marketCode,
+                      "district":   $r.District,
+                      "state":      $r.State
+                    },
+                    "arrivalDate": $iso($r.`Arrival Date`),
+                    "prices": {
+                      "minimum":  $priced($r.`Min Price`),
+                      "maximum":  $priced($r.`Max Price`),
+                      "modal":    $number($r.`Modal Price`),
+                      "currency": "INR",
+                      "unit":     $r.`Price Unit`
+                    },
+                    "generatedAt": $now()
+                  }
+                }
+              })]
+            }
+          ]
+        }
+      }
+    }
+  )
