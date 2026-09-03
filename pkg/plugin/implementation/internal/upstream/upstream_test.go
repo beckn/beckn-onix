@@ -168,6 +168,42 @@ func TestNewValidatesTheAuthScheme(t *testing.T) {
 	}
 }
 
+// A payload this step cannot derive a binding from is the caller's mistake, so
+// it must not surface as a 500 with the reason only in our log. Found by
+// checking the live stack after refusing multi-commitment payloads: the refusal
+// was right and the status was not.
+func TestRunReportsAnUnservablePayloadAsABadRequest(t *testing.T) {
+	t.Parallel()
+
+	twoCommitments := `{"context":{"action":"select"},"message":{"contract":{"commitments":[
+		{"offer":{"provider":{"id":"mausamgram"}},
+		 "resources":[{"resourceAttributes":{"@type":"openagrinet:WeatherObservation"}}]},
+		{"offer":{"provider":{"id":"mausamgram"}},
+		 "resources":[{"resourceAttributes":{"@type":"openagrinet:WeatherObservation"}}]}
+	]}}}`
+
+	for _, tc := range []struct{ name, body, wants string }{
+		{"two commitments", twoCommitments, "2 commitments"},
+		{"unreadable json", `{"message":`, "could not be read"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := runStep(t, newStep(t, &stubRegistry{}, &stubMapper{}), tc.body)
+			if err == nil {
+				t.Fatal("expected the payload to be refused")
+			}
+			var coded *model.CodedErr
+			if !errors.As(err, &coded) || coded.HTTPStatus() != http.StatusBadRequest {
+				t.Errorf("got %v, want a 400 -- a 500 blames this adapter for the caller's payload", err)
+			}
+			if !strings.Contains(err.Error(), tc.wants) {
+				t.Errorf("error %q should say %q so the caller can act on it", err, tc.wants)
+			}
+		})
+	}
+}
+
 // --- what is worth retrying -------------------------------------------------
 
 // A 4xx is a statement about the request. Repeating it changes nothing, and

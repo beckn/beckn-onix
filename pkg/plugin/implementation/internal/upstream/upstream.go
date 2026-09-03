@@ -268,7 +268,11 @@ func (s *Step) Run(ctx *model.StepContext) error {
 		return nil
 	}
 	if err != nil {
-		return err
+		// Everything From refuses is a statement about the payload: unreadable
+		// JSON, or a request naming more than one call. Unclassified it becomes
+		// a 500, which says this adapter broke and leaves the reason in a log
+		// the caller cannot read.
+		return model.NewBadReqErr("", err)
 	}
 	if !s.serves(binding.Key()) {
 		log.Debugf(ctx, "upstream: %s is not one of this step's capabilities, passing through", binding.Key())
