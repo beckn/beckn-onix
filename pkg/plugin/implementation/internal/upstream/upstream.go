@@ -485,6 +485,11 @@ func (s *Step) attempt(ctx context.Context, call model.ActionPlan, endpoint stri
 		return nil, err
 	}
 
+	// The URL as it actually went on the wire, credential removed. At info
+	// rather than debug because this is the line that answers "what did we ask,
+	// and what came back" -- the question every provider problem starts with.
+	requested := s.redactString(req.URL.String())
+
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -495,6 +500,7 @@ func (s *Step) attempt(ctx context.Context, call model.ActionPlan, endpoint stri
 	if err != nil {
 		return nil, fmt.Errorf("could not read the response: %w", err)
 	}
+	log.Infof(ctx, "upstream: %s %s -> %s, %d bytes", call.Method, requested, resp.Status, len(body))
 	if int64(len(body)) > s.config.MaxResponseBytes {
 		return nil, fmt.Errorf("response exceeds the %d byte limit", s.config.MaxResponseBytes)
 	}
@@ -547,18 +553,31 @@ func (s *Step) authenticate(req *http.Request) error {
 // what we hold. Parsing the error to find it would assume a shape net/http does
 // not promise.
 func (s *Step) redact(err error) error {
-	if err == nil || s.config.AuthScheme != AuthSchemeQuery {
-		return err
+	if err == nil {
+		return nil
 	}
-	value := os.Getenv(s.config.QueryValueEnv)
-	if value == "" {
-		return err
-	}
-	text := strings.ReplaceAll(err.Error(), value, "REDACTED")
+	text := s.redactString(err.Error())
 	if text == err.Error() {
 		return err
 	}
 	return errors.New(text)
+}
+
+// redactString removes a query-string credential from any text about to be
+// logged or returned -- an error, or the URL that was requested.
+//
+// Logging the URL is deliberate: it says what was asked of whom, which is the
+// first thing anyone wants when a provider misbehaves. This is what makes that
+// safe to do at info level.
+func (s *Step) redactString(text string) string {
+	if s.config.AuthScheme != AuthSchemeQuery {
+		return text
+	}
+	value := os.Getenv(s.config.QueryValueEnv)
+	if value == "" {
+		return text
+	}
+	return strings.ReplaceAll(text, value, "REDACTED")
 }
 
 // buildEndpoint joins the plan's base URL and path, carrying the mapped request

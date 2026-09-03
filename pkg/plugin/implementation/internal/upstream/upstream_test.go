@@ -236,6 +236,33 @@ func TestRunRedactsAQueryCredentialFromAnError(t *testing.T) {
 	}
 }
 
+// The URL is logged so a provider problem can be diagnosed from what was asked
+// of whom. That makes the credential's absence from it load-bearing, not
+// incidental: with a query-string scheme the token is in the URL by definition.
+func TestRedactStringRemovesTheCredentialFromTheURL(t *testing.T) {
+	// No t.Parallel: t.Setenv forbids it.
+	t.Setenv("TEST_MANDI_TOKEN", "s3cr3t")
+
+	step := &Step{config: &Config{
+		AuthScheme:    AuthSchemeQuery,
+		QueryName:     "token",
+		QueryValueEnv: "TEST_MANDI_TOKEN",
+	}}
+	got := step.redactString("http://host/v1/x?statecode=CG&token=s3cr3t")
+	if strings.Contains(got, "s3cr3t") {
+		t.Errorf("the credential survived redaction: %s", got)
+	}
+	if !strings.Contains(got, "REDACTED") || !strings.Contains(got, "statecode=CG") {
+		t.Errorf("redacted url = %q, want the credential replaced and the rest intact", got)
+	}
+
+	// Any other scheme has nothing to hide in a URL, so the text is untouched.
+	plain := &Step{config: &Config{AuthScheme: AuthSchemeNone}}
+	if out := plain.redactString("http://host/v1/x?statecode=CG"); out != "http://host/v1/x?statecode=CG" {
+		t.Errorf("a url with no credential must pass through unchanged, got %q", out)
+	}
+}
+
 // Half a configuration is refused at startup, the same way the header scheme's
 // is: a scheme that cannot present a credential would fail on every call.
 func TestNewRefusesAHalfConfiguredQueryScheme(t *testing.T) {
