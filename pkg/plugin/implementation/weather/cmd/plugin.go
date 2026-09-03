@@ -33,6 +33,8 @@ func (p weatherProvider) parseConfig(config map[string]string) (*weather.Config,
 		PasswordEnv:      config["passwordEnv"],
 		HeaderName:       config["headerName"],
 		HeaderValueEnv:   config["headerValueEnv"],
+		QueryName:        config["queryName"],
+		QueryValueEnv:    config["queryValueEnv"],
 	}
 
 	if raw, exists := config["maxResponseBytes"]; exists && raw != "" {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -162,6 +163,102 @@ func TestNewValidatesTheAuthScheme(t *testing.T) {
 			}
 			if !tc.valid && err == nil {
 				t.Error("expected the config to be refused")
+			}
+		})
+	}
+}
+
+// --- query-string auth ------------------------------------------------------
+
+// Some upstreams take their credential as a query parameter. It arrives on the
+// request, alongside whatever the mapping produced rather than replacing it.
+func TestRunSendsTheCredentialAsAQueryParameter(t *testing.T) {
+	// No t.Parallel: t.Setenv forbids it, and the credential has to come
+	// from the environment for this to be testing anything.
+	t.Setenv("TEST_MANDI_TOKEN", "s3cr3t")
+
+	var got url.Values
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		fmt.Fprint(w, `{}`)
+	}))
+	defer upstream.Close()
+
+	mapper := &stubMapper{requestResult: []byte(`{"statecode":"CG"}`), responseResult: []byte(`{}`)}
+	step := newStep(t, &stubRegistry{plan: testPlan(upstream.URL, http.MethodGet)}, mapper,
+		func(c *Config) {
+			c.AuthScheme = AuthSchemeQuery
+			c.QueryName = "token"
+			c.QueryValueEnv = "TEST_MANDI_TOKEN"
+		})
+
+	if _, err := runStep(t, step, selectBody); err != nil {
+		t.Fatalf("Run() returned an unexpected error: %v", err)
+	}
+	if got.Get("token") != "s3cr3t" {
+		t.Errorf("token = %q, want the value from the environment", got.Get("token"))
+	}
+	// The mapping's own parameters must survive: the credential is added, not
+	// substituted for the request.
+	if got.Get("statecode") != "CG" {
+		t.Errorf("statecode = %q, want the mapped request to be intact", got.Get("statecode"))
+	}
+}
+
+// The whole reason this scheme is treated as the least safe of the four: Go
+// quotes the full URL in a transport error, so an unreachable host would
+// otherwise write the credential into the log at warn level.
+func TestRunRedactsAQueryCredentialFromAnError(t *testing.T) {
+	// No t.Parallel: t.Setenv forbids it, and the credential has to come
+	// from the environment for this to be testing anything.
+	t.Setenv("TEST_MANDI_TOKEN", "s3cr3t")
+
+	plan := testPlan("http://upstream.invalid", http.MethodGet)
+	plan.Actions["select"] = model.ActionPlan{
+		Method: http.MethodGet, Path: "/get", Mappings: testMappingRef, RetryMax: 0,
+	}
+	mapper := &stubMapper{requestResult: []byte(`{}`), responseResult: []byte(`{}`)}
+	step := newStep(t, &stubRegistry{plan: plan}, mapper, func(c *Config) {
+		c.AuthScheme = AuthSchemeQuery
+		c.QueryName = "token"
+		c.QueryValueEnv = "TEST_MANDI_TOKEN"
+	})
+
+	_, err := runStep(t, step, selectBody)
+	if err == nil {
+		t.Fatal("expected an unreachable host to fail")
+	}
+	if strings.Contains(err.Error(), "s3cr3t") {
+		t.Errorf("the credential leaked into the error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Errorf("error %q should show the credential was removed", err)
+	}
+}
+
+// Half a configuration is refused at startup, the same way the header scheme's
+// is: a scheme that cannot present a credential would fail on every call.
+func TestNewRefusesAHalfConfiguredQueryScheme(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		cfg  *Config
+	}{
+		{"no queryName", &Config{BindingKeys: []string{testBindingKey},
+			AuthScheme: AuthSchemeQuery, QueryValueEnv: "TEST_MANDI_TOKEN"}},
+		{"no queryValueEnv", &Config{BindingKeys: []string{testBindingKey},
+			AuthScheme: AuthSchemeQuery, QueryName: "token"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, err := New(context.Background(), &stubRegistry{}, &stubMapper{}, nil, tc.cfg)
+			if err == nil {
+				t.Fatal("expected a half-configured query scheme to be refused")
+			}
+			if !strings.Contains(err.Error(), "queryName") {
+				t.Errorf("error %q should name what is missing", err)
 			}
 		})
 	}

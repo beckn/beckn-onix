@@ -56,6 +56,12 @@ const (
 	AuthSchemeNone   = "none"
 	AuthSchemeBasic  = "basic"
 	AuthSchemeHeader = "header"
+	// AuthSchemeQuery puts the credential in the query string, which some
+	// upstreams are built around whatever anyone thinks of it. It is the least
+	// safe of the four -- a query string is logged by proxies and appears in a
+	// transport error -- so the value is redacted from anything this package
+	// logs or returns. See redact.
+	AuthSchemeQuery = "query"
 )
 
 // codeUpstreamUnavailable reports a provider that could not be reached or
@@ -115,6 +121,13 @@ type Config struct {
 	// set, and which environment variable holds its value.
 	HeaderName     string `yaml:"headerName" json:"headerName"`
 	HeaderValueEnv string `yaml:"headerValueEnv" json:"headerValueEnv"`
+
+	// QueryName and QueryValueEnv configure authScheme query: the parameter
+	// name to add, and the environment variable holding its value. Named the
+	// same way as the header pair, for the same reason -- the credential is
+	// never in this config, only the name of the variable carrying it.
+	QueryName     string `yaml:"queryName" json:"queryName"`
+	QueryValueEnv string `yaml:"queryValueEnv" json:"queryValueEnv"`
 
 	// MaxResponseBytes caps what is read from the provider.
 	MaxResponseBytes int64 `yaml:"maxResponseBytes" json:"maxResponseBytes"`
@@ -224,8 +237,13 @@ func applyDefaults(cfg *Config) error {
 		if cfg.HeaderName == "" || cfg.HeaderValueEnv == "" {
 			return errors.New("upstream: authScheme header requires headerName and headerValueEnv")
 		}
+	case AuthSchemeQuery:
+		if cfg.QueryName == "" || cfg.QueryValueEnv == "" {
+			return errors.New("upstream: authScheme query requires queryName and queryValueEnv")
+		}
 	default:
-		return fmt.Errorf("upstream: unknown authScheme %q: must be none, basic or header", cfg.AuthScheme)
+		return fmt.Errorf(
+			"upstream: unknown authScheme %q: must be none, basic, header or query", cfg.AuthScheme)
 	}
 	return nil
 }
@@ -444,8 +462,8 @@ func (s *Step) call(ctx context.Context, baseURL string, call model.ActionPlan, 
 		if err == nil {
 			return body, nil
 		}
-		lastErr = err
-		log.Warnf(ctx, "upstream: attempt %d/%d failed: %v", attempt, attempts, err)
+		lastErr = s.redact(err)
+		log.Warnf(ctx, "upstream: attempt %d/%d failed: %v", attempt, attempts, lastErr)
 	}
 	return nil, model.NewCodedErr(http.StatusBadGateway, codeUpstreamUnavailable,
 		fmt.Errorf("upstream: provider did not answer after %d attempts: %w", attempts, lastErr))
@@ -503,8 +521,44 @@ func (s *Step) authenticate(req *http.Request) error {
 			return fmt.Errorf("upstream: %s must be set for header auth", s.config.HeaderValueEnv)
 		}
 		req.Header.Set(s.config.HeaderName, value)
+	case AuthSchemeQuery:
+		value := os.Getenv(s.config.QueryValueEnv)
+		if value == "" {
+			return fmt.Errorf("upstream: %s must be set for query auth", s.config.QueryValueEnv)
+		}
+		// Set rather than Add: a second copy of the parameter is not a
+		// credential, it is an ambiguity, and which one an upstream reads is
+		// its own business.
+		query := req.URL.Query()
+		query.Set(s.config.QueryName, value)
+		req.URL.RawQuery = query.Encode()
 	}
 	return nil
+}
+
+// redact removes a query-string credential from an error's text.
+//
+// Go's transport errors quote the whole URL -- `Get "http://host/p?token=..."
+// dial tcp: ...` -- so without this, one unreachable host writes the credential
+// into the log at warn level. Nothing else in this package puts a URL in a
+// message, which is why this is the only place it is needed.
+//
+// A plain string replacement, because the value is what leaks and the value is
+// what we hold. Parsing the error to find it would assume a shape net/http does
+// not promise.
+func (s *Step) redact(err error) error {
+	if err == nil || s.config.AuthScheme != AuthSchemeQuery {
+		return err
+	}
+	value := os.Getenv(s.config.QueryValueEnv)
+	if value == "" {
+		return err
+	}
+	text := strings.ReplaceAll(err.Error(), value, "REDACTED")
+	if text == err.Error() {
+		return err
+	}
+	return errors.New(text)
 }
 
 // buildEndpoint joins the plan's base URL and path, carrying the mapped request
