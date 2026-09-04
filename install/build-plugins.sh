@@ -34,6 +34,7 @@ plugins=(
     "jsonmapper"
     "weather"
     "mandi"
+    "agrifacility"
     "manifestloader"
     "reqpreprocessor"
     "otelsetup"

@@ -162,3 +162,14 @@ test_request.json
 
 # catalogPublish handler's local output root (config/local-beckn-one-bap.yaml)
 /catalog/
+
+# macOS archive artifacts. Unzipping a Mac-made archive (schemas.zip) creates
+# __MACOSX/ alongside the real tree, holding one AppleDouble sidecar per file --
+# ._schemas, ._select.json and so on. Never source, and it puts 60+ untracked
+# entries in `git status` where they hide real changes.
+__MACOSX/
+._*
+
+# Go test and profiling output. coverage.out and coverage.html are above.
+*.test
+*.prof

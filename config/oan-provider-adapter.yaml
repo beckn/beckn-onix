@@ -92,7 +92,17 @@ modules:
               usernameEnv: MAUSAMGRAM_USER
               passwordEnv: MAUSAMGRAM_X_API_KEY
 
+          - id: agrifacility
+            config:
+              bindingKeys: "pocra|openagrinet:AgricultureFacility"
+              # POCRA's search takes no credential, which is what lets its
+              # baseUrl be published without one. Against a provider that does,
+              # the credential is named here as an environment variable and
+              # never held in this file or in the registry.
+              authScheme: none
+
       steps:
         - validateSign   # the sender's key, from the registry
         - weather        # resolve, map out, call, map back
+        - agrifacility   # the same, for facility searches
         - signAck        # signs whatever the step answered with
