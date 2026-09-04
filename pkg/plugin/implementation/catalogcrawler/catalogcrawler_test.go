@@ -72,8 +72,10 @@ func TestProvider_New_RequiresMetadataLookupWhenNetworksConfigured(t *testing.T)
 }
 
 type fakeMetadataLookup struct {
-	byNetwork    map[string][]model.SubscriberRecord
-	err          error
+	byNetwork map[string][]model.SubscriberRecord
+	// errByNetwork lets a test fail QueryByNetwork for specific network IDs
+	// only, so partial-failure and all-failed scenarios can both be
+	// expressed precisely.
 	errByNetwork map[string]error
 }
 
@@ -86,9 +88,6 @@ func (fakeMetadataLookup) LookupNode(context.Context, string) (*model.Subscriber
 }
 
 func (f fakeMetadataLookup) QueryByNetwork(_ context.Context, networkID string) ([]model.SubscriberRecord, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
 	if err, ok := f.errByNetwork[networkID]; ok {
 		return nil, err
 	}
@@ -191,6 +190,42 @@ func TestRegistryDiscoverer_NoNetworksConfiguredIsNotAFailure(t *testing.T) {
 	}
 }
 
+// TestRegistryDiscoverer_TracksConsecutiveFailuresPerNetworkAcrossTicks
+// checks the streak-tracking a persistently broken network needs to
+// eventually escalate from Warn to Error logging (consecutiveFailEscalateThreshold):
+// the streak must accumulate across repeated Discover calls (one call per
+// poll tick) for a network that keeps failing, and reset the moment that
+// network succeeds again, without affecting an unrelated healthy network.
+func TestRegistryDiscoverer_TracksConsecutiveFailuresPerNetworkAcrossTicks(t *testing.T) {
+	lookup := fakeMetadataLookup{
+		byNetwork:    map[string][]model.SubscriberRecord{"net-ok": {}},
+		errByNetwork: map[string]error{"net-bad": errors.New("registry down")},
+	}
+	d := &registryDiscoverer{lookup: lookup, networkIDs: []string{"net-ok", "net-bad"}, log: slog.Default()}
+
+	for tick := 1; tick <= consecutiveFailEscalateThreshold; tick++ {
+		if _, err := d.Discover(context.Background()); err != nil {
+			t.Fatalf("tick %d: Discover returned error %v, want nil (net-ok keeps the call from being all-failed)", tick, err)
+		}
+	}
+	if got := d.consecutiveFails["net-bad"]; got != consecutiveFailEscalateThreshold {
+		t.Fatalf("net-bad consecutive failures = %d, want %d after %d failing ticks", got, consecutiveFailEscalateThreshold, consecutiveFailEscalateThreshold)
+	}
+	if _, tracked := d.consecutiveFails["net-ok"]; tracked {
+		t.Fatalf("net-ok should never accumulate a failure streak, got %d", d.consecutiveFails["net-ok"])
+	}
+
+	// net-bad recovers: its streak must reset.
+	lookup.errByNetwork = nil
+	d.lookup = lookup
+	if _, err := d.Discover(context.Background()); err != nil {
+		t.Fatalf("Discover returned error %v, want nil once net-bad recovers", err)
+	}
+	if _, tracked := d.consecutiveFails["net-bad"]; tracked {
+		t.Fatalf("net-bad's failure streak should be cleared after a successful lookup, got %d", d.consecutiveFails["net-bad"])
+	}
+}
+
 type stubSource struct {
 	refs []crawlmanager.IndexRef
 	err  error
@@ -216,6 +251,41 @@ func TestMultiSource_PropagatesError(t *testing.T) {
 	m := multiSource{stubSource{err: wantErr}}
 	if _, err := m.Discover(context.Background()); !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want wrapping %v", err, wantErr)
+	}
+}
+
+// TestMultiSource_ToleratesOneSourceFailingWhenAnotherSucceeds guards the
+// source-level half of #921/#922: one source erroring (e.g. a registry
+// outage) must not discard refs a sibling source (e.g. staticIndexUrls)
+// already found.
+func TestMultiSource_ToleratesOneSourceFailingWhenAnotherSucceeds(t *testing.T) {
+	ok := stubSource{refs: []crawlmanager.IndexRef{{IndexURL: "https://static/index"}}}
+	broken := stubSource{err: errors.New("registry unreachable")}
+	m := multiSource{ok, broken}
+	refs, err := m.Discover(context.Background())
+	if err != nil {
+		t.Fatalf("Discover returned error %v, want nil (one failing source must not abort the tick)", err)
+	}
+	if len(refs) != 1 || refs[0].IndexURL != "https://static/index" {
+		t.Fatalf("refs = %+v, want the one ref from the succeeding source", refs)
+	}
+}
+
+// TestMultiSource_AllSourcesFailingReturnsError mirrors
+// TestRegistryDiscoverer_AllNetworksFailingReturnsError one layer up: if
+// every source fails, that's a real outage and must still surface as an
+// error rather than silently returning zero indexes.
+func TestMultiSource_AllSourcesFailingReturnsError(t *testing.T) {
+	m := multiSource{
+		stubSource{err: errors.New("registry unreachable")},
+		stubSource{err: errors.New("static config fetch failed")},
+	}
+	refs, err := m.Discover(context.Background())
+	if err == nil {
+		t.Fatal("Discover returned nil error, want an error when every source fails")
+	}
+	if refs != nil {
+		t.Fatalf("refs = %+v, want nil when every source fails", refs)
 	}
 }
 

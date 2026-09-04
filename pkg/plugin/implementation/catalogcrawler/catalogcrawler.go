@@ -16,10 +16,12 @@ package catalogcrawler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
@@ -193,7 +195,24 @@ type registryDiscoverer struct {
 	lookup     definition.RegistryMetadataLookup
 	networkIDs []string
 	log        *slog.Logger
+
+	// mu guards consecutiveFails, which persists across Discover calls (one
+	// registryDiscoverer is built once and polled every tick) so a network
+	// that keeps failing tick after tick can be escalated instead of only
+	// ever logging at Warn -- see consecutiveFailEscalateThreshold below.
+	// Discover can, in principle, run concurrently with itself (e.g. a
+	// manually triggered crawl overlapping a scheduled tick), so this state
+	// needs its own lock rather than relying on single-goroutine use.
+	mu               sync.Mutex
+	consecutiveFails map[string]int
 }
+
+// consecutiveFailEscalateThreshold is the number of consecutive per-network
+// lookup failures after which a network's failure log is escalated from
+// Warn to Error -- a single bad tick is expected and recoverable (see
+// Discover's doc comment), but a network stuck failing for several ticks in
+// a row is worth surfacing loudly even while other networks keep succeeding.
+const consecutiveFailEscalateThreshold = 3
 
 // Discover queries lookup once per configured network and returns one
 // IndexRef per catalog index URL any record declares in its
@@ -212,14 +231,20 @@ type registryDiscoverer struct {
 func (d *registryDiscoverer) Discover(ctx context.Context) ([]crawlmanager.IndexRef, error) {
 	seen := make(map[string]bool)
 	var refs []crawlmanager.IndexRef
-	failures := 0
+	var failed []error
 	for _, net := range d.networkIDs {
 		records, err := d.lookup.QueryByNetwork(ctx, net)
 		if err != nil {
-			failures++
-			d.log.WarnContext(ctx, "catalogcrawler: registry lookup failed, skipping network", "networkId", net, "error", err)
+			netErr := fmt.Errorf("networkId %q: %w", net, err)
+			failed = append(failed, netErr)
+			if streak := d.recordFailure(net); streak >= consecutiveFailEscalateThreshold {
+				d.log.ErrorContext(ctx, "catalogcrawler: registry lookup failing repeatedly, skipping network", "networkId", net, "consecutiveFailures", streak, "error", err)
+			} else {
+				d.log.WarnContext(ctx, "catalogcrawler: registry lookup failed, skipping network", "networkId", net, "error", err)
+			}
 			continue
 		}
+		d.recordSuccess(net)
 		// found counts every non-empty catalog_index_urls entry the registry
 		// returned for this network, before the cross-network seen-URL dedup
 		// below -- so it reflects what the registry actually reported, not
@@ -243,25 +268,54 @@ func (d *registryDiscoverer) Discover(ctx context.Context) ([]crawlmanager.Index
 		}
 		d.log.InfoContext(ctx, "catalogcrawler: registry lookup succeeded", "networkId", net, "providersFound", found)
 	}
-	if len(d.networkIDs) > 0 && failures == len(d.networkIDs) {
-		err := fmt.Errorf("catalogcrawler: registry lookup failed for all %d configured network(s)", failures)
+	if len(d.networkIDs) > 0 && len(failed) == len(d.networkIDs) {
+		err := fmt.Errorf("catalogcrawler: registry lookup failed for all %d configured network(s): %w", len(failed), errors.Join(failed...))
 		d.log.ErrorContext(ctx, "catalogcrawler: registry lookup failed for every configured network", "networks", d.networkIDs, "error", err)
 		return nil, err
 	}
 	return refs, nil
 }
 
+// recordFailure tracks a network's consecutive lookup-failure streak across
+// Discover calls and returns the updated count.
+func (d *registryDiscoverer) recordFailure(networkID string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.consecutiveFails == nil {
+		d.consecutiveFails = make(map[string]int)
+	}
+	d.consecutiveFails[networkID]++
+	return d.consecutiveFails[networkID]
+}
+
+// recordSuccess resets a network's consecutive-failure streak once its
+// lookup succeeds again.
+func (d *registryDiscoverer) recordSuccess(networkID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.consecutiveFails, networkID)
+}
+
 // multiSource unions several Sources' Discover results, deduped by index
 // URL -- one provider found via more than one source is crawled once.
+//
+// One source erroring (e.g. registryDiscoverer's all-networks-failed case)
+// does not discard refs another source already found -- the same
+// partial-failure tolerance registryDiscoverer applies across networks
+// applies here across sources, so a broken registry doesn't also blank out
+// a working staticIndexUrls config, or vice versa. Only when every source
+// errors is that fatal. See #921/#922.
 type multiSource []crawlmanager.Source
 
 func (m multiSource) Discover(ctx context.Context) ([]crawlmanager.IndexRef, error) {
 	seen := make(map[string]bool)
 	var refs []crawlmanager.IndexRef
+	var failed []error
 	for _, s := range m {
 		found, err := s.Discover(ctx)
 		if err != nil {
-			return nil, err
+			failed = append(failed, err)
+			continue
 		}
 		for _, r := range found {
 			if seen[r.IndexURL] {
@@ -270,6 +324,9 @@ func (m multiSource) Discover(ctx context.Context) ([]crawlmanager.IndexRef, err
 			seen[r.IndexURL] = true
 			refs = append(refs, r)
 		}
+	}
+	if len(m) > 0 && len(failed) == len(m) {
+		return nil, fmt.Errorf("catalogcrawler: all %d discovery source(s) failed: %w", len(failed), errors.Join(failed...))
 	}
 	return refs, nil
 }
