@@ -331,13 +331,16 @@ func TestMultiSource_AllSourcesFailingReturnsError(t *testing.T) {
 	}
 }
 
-// TestMultiSource_LogsErrorOnPartialSourceFailure guards the round-2
-// self-review finding that a total registry outage would otherwise be
-// invisible whenever a healthy staticIndexUrls source papers over it: the
-// tick still succeeds (partial tolerance), but the partial failure must
-// still be logged at Error so it's discoverable without correlating tick
-// success against per-source internals.
-func TestMultiSource_LogsErrorOnPartialSourceFailure(t *testing.T) {
+// TestMultiSource_LogsOnPartialSourceFailure guards the round-2 self-review
+// finding that a total registry outage would otherwise be invisible
+// whenever a healthy staticIndexUrls source papers over it: the tick still
+// succeeds (partial tolerance), but the partial failure must still be
+// logged so it's discoverable without correlating tick success against
+// per-source internals. Warn, not Error, since a single failing tick can be
+// a transient blip that self-recovers -- a source failing repeatedly is
+// what registryDiscoverer's own per-network Warn-to-Error escalation is
+// for (see round-3 self-review).
+func TestMultiSource_LogsOnPartialSourceFailure(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, nil))
 	ok := stubSource{refs: []crawlmanager.IndexRef{{IndexURL: "https://static/index"}}}
@@ -347,8 +350,11 @@ func TestMultiSource_LogsErrorOnPartialSourceFailure(t *testing.T) {
 		t.Fatalf("Discover returned error %v, want nil", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "one or more discovery sources failed") {
-		t.Fatalf("log output = %q, want an ERROR-level line about the partial source failure", out)
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "one or more discovery sources failed") {
+		t.Fatalf("log output = %q, want a WARN-level line about the partial source failure", out)
+	}
+	if strings.Contains(out, "level=ERROR") {
+		t.Fatalf("log output = %q, a single-tick partial failure should not escalate to ERROR", out)
 	}
 }
 

@@ -185,20 +185,6 @@ func buildSource(config map[string]string, metadataLookup definition.RegistryMet
 	return multiSource{sources: sources, log: log}
 }
 
-// errIfAllFailed returns a wrapped error joining errs when every one of
-// total attempts failed (len(errs) == total > 0), and nil otherwise -- the
-// shared "tolerate partial failure, only escalate to a hard error when
-// everything failed" policy both registryDiscoverer.Discover (across
-// networks) and multiSource.Discover (across sources) apply. what describes
-// what failed, e.g. "registry lookup failed for all %d configured
-// network(s)".
-func errIfAllFailed(total int, errs []error, what string) error {
-	if total == 0 || len(errs) != total {
-		return nil
-	}
-	return fmt.Errorf("%s: %w", what, errors.Join(errs...))
-}
-
 // registryDiscoverer implements crawlmanager.Source by asking the
 // configured registry plugin's RegistryMetadataLookup.QueryByNetwork for the
 // participant records of each configured networkId -- the registry plugin
@@ -325,12 +311,17 @@ func (d *registryDiscoverer) recordSuccess(networkID string) {
 // a working staticIndexUrls config, or vice versa. Only when every source
 // errors is that fatal. See #921/#922.
 //
-// A partial failure (some, not all, sources erroring) still logs at Error:
+// A partial failure (some, not all, sources erroring) still logs at Warn:
 // unlike the all-failed case, it doesn't fail the tick, so without its own
-// loud log line it would be invisible to anything watching only for a
-// failed poll tick or /crawl/status -- a fully broken registry sitting
-// behind an otherwise-healthy staticIndexUrls config would otherwise look
-// identical to a fully healthy tick.
+// log line it would be invisible to anything watching only for a failed
+// poll tick or /crawl/status -- a fully broken registry sitting behind an
+// otherwise-healthy staticIndexUrls config would otherwise look identical
+// to a fully healthy tick. Warn rather than Error because a source can fail
+// on a single tick and recover on the next (e.g. a transient network blip);
+// an Error-level alert firing on that self-recovering case would be noisier
+// than the condition warrants -- a source repeatedly failing tick after
+// tick is exactly what registryDiscoverer's own per-network Warn-to-Error
+// escalation (consecutiveFailEscalateThreshold) is for.
 type multiSource struct {
 	sources []crawlmanager.Source
 	log     *slog.Logger
@@ -358,7 +349,7 @@ func (m multiSource) Discover(ctx context.Context) ([]crawlmanager.IndexRef, err
 		return nil, err
 	}
 	if len(failed) > 0 {
-		m.log.ErrorContext(ctx, "catalogcrawler: one or more discovery sources failed this tick, continuing with partial results from the rest", "failedSources", len(failed), "totalSources", len(m.sources), "error", errors.Join(failed...))
+		m.log.WarnContext(ctx, "catalogcrawler: one or more discovery sources failed this tick, continuing with partial results from the rest", "failedSources", len(failed), "totalSources", len(m.sources), "error", errors.Join(failed...))
 	}
 	return refs, nil
 }
@@ -484,4 +475,18 @@ func int64Or(s string, def int64) int64 {
 		return def
 	}
 	return n
+}
+
+// errIfAllFailed returns a wrapped error joining errs when every one of
+// total attempts failed (len(errs) == total > 0), and nil otherwise -- the
+// shared "tolerate partial failure, only escalate to a hard error when
+// everything failed" policy both registryDiscoverer.Discover (across
+// networks) and multiSource.Discover (across sources) apply. what describes
+// what failed, e.g. "registry lookup failed for all %d configured
+// network(s)".
+func errIfAllFailed(total int, errs []error, what string) error {
+	if total == 0 || len(errs) != total {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", what, errors.Join(errs...))
 }
