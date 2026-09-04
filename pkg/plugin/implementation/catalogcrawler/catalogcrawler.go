@@ -200,14 +200,25 @@ type registryDiscoverer struct {
 // meta.catalog_index_urls (a record with more than one URL yields more than
 // one ref, one per catalog per node), deduped by index URL so a provider
 // found in multiple networks is crawled once.
+//
+// A single network's lookup failing (e.g. an unregistered/misconfigured
+// networkId 404ing against the registry) does not fail the whole call --
+// it's logged and skipped so every other configured network still gets
+// discovered and polled this tick. Only when every configured network fails
+// is that treated as fatal (returned as an error) -- a single bad network is
+// an expected, recoverable config state, but a registry that's unreachable
+// for all of them is a real outage that should still surface loudly instead
+// of quietly discovering zero indexes every tick. See #921.
 func (d *registryDiscoverer) Discover(ctx context.Context) ([]crawlmanager.IndexRef, error) {
 	seen := make(map[string]bool)
 	var refs []crawlmanager.IndexRef
+	failures := 0
 	for _, net := range d.networkIDs {
 		records, err := d.lookup.QueryByNetwork(ctx, net)
 		if err != nil {
-			d.log.ErrorContext(ctx, "catalogcrawler: registry lookup failed", "networkId", net, "error", err)
-			return nil, fmt.Errorf("catalogcrawler: registry lookup %q: %w", net, err)
+			failures++
+			d.log.WarnContext(ctx, "catalogcrawler: registry lookup failed, skipping network", "networkId", net, "error", err)
+			continue
 		}
 		// found counts every non-empty catalog_index_urls entry the registry
 		// returned for this network, before the cross-network seen-URL dedup
@@ -231,6 +242,11 @@ func (d *registryDiscoverer) Discover(ctx context.Context) ([]crawlmanager.Index
 			}
 		}
 		d.log.InfoContext(ctx, "catalogcrawler: registry lookup succeeded", "networkId", net, "providersFound", found)
+	}
+	if len(d.networkIDs) > 0 && failures == len(d.networkIDs) {
+		err := fmt.Errorf("catalogcrawler: registry lookup failed for all %d configured network(s)", failures)
+		d.log.ErrorContext(ctx, "catalogcrawler: registry lookup failed for every configured network", "networks", d.networkIDs, "error", err)
+		return nil, err
 	}
 	return refs, nil
 }

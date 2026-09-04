@@ -72,8 +72,9 @@ func TestProvider_New_RequiresMetadataLookupWhenNetworksConfigured(t *testing.T)
 }
 
 type fakeMetadataLookup struct {
-	byNetwork map[string][]model.SubscriberRecord
-	err       error
+	byNetwork    map[string][]model.SubscriberRecord
+	err          error
+	errByNetwork map[string]error
 }
 
 func (fakeMetadataLookup) LookupRegistry(context.Context, string, string) (*model.RegistryMetadata, error) {
@@ -87,6 +88,9 @@ func (fakeMetadataLookup) LookupNode(context.Context, string) (*model.Subscriber
 func (f fakeMetadataLookup) QueryByNetwork(_ context.Context, networkID string) ([]model.SubscriberRecord, error) {
 	if f.err != nil {
 		return nil, f.err
+	}
+	if err, ok := f.errByNetwork[networkID]; ok {
+		return nil, err
 	}
 	return f.byNetwork[networkID], nil
 }
@@ -125,11 +129,65 @@ func TestRegistryDiscoverer_MapsRecordsAndDedupsAcrossNetworks(t *testing.T) {
 	}
 }
 
-func TestRegistryDiscoverer_LookupErrorPropagates(t *testing.T) {
-	wantErr := errors.New("registry down")
-	d := &registryDiscoverer{lookup: fakeMetadataLookup{err: wantErr}, networkIDs: []string{"net-a"}, log: slog.Default()}
-	if _, err := d.Discover(context.Background()); !errors.Is(err, wantErr) {
-		t.Fatalf("err = %v, want wrapping %v", err, wantErr)
+// TestRegistryDiscoverer_SkipsFailingNetworkWithoutAbortingOthers guards
+// against #921: a single network's lookup failing (e.g. an unregistered
+// networkId 404ing against the registry) must not abort discovery for the
+// other configured networks.
+func TestRegistryDiscoverer_SkipsFailingNetworkWithoutAbortingOthers(t *testing.T) {
+	lookup := fakeMetadataLookup{
+		byNetwork: map[string][]model.SubscriberRecord{
+			"net-a": {
+				{
+					Subscription: model.Subscription{Subscriber: model.Subscriber{SubscriberID: "p1"}},
+					MetaArrays:   map[string][]string{"catalog_index_urls": {"https://x/index"}},
+				},
+			},
+		},
+		errByNetwork: map[string]error{"net-b": errors.New("registry down: 404")},
+	}
+	d := &registryDiscoverer{lookup: lookup, networkIDs: []string{"net-a", "net-b"}, log: slog.Default()}
+	refs, err := d.Discover(context.Background())
+	if err != nil {
+		t.Fatalf("Discover returned error %v, want nil (per-network failures must not abort the tick)", err)
+	}
+	if len(refs) != 1 || refs[0].IndexURL != "https://x/index" {
+		t.Fatalf("refs = %+v, want the one ref from net-a despite net-b failing", refs)
+	}
+}
+
+// TestRegistryDiscoverer_AllNetworksFailingReturnsError guards the other
+// half of #921: partial failures must be tolerated, but a registry that is
+// unreachable for every configured network is a real outage and must still
+// surface as an error, not silently discover zero indexes.
+func TestRegistryDiscoverer_AllNetworksFailingReturnsError(t *testing.T) {
+	lookup := fakeMetadataLookup{
+		errByNetwork: map[string]error{
+			"net-a": errors.New("registry down: 404"),
+			"net-b": errors.New("registry down: timeout"),
+		},
+	}
+	d := &registryDiscoverer{lookup: lookup, networkIDs: []string{"net-a", "net-b"}, log: slog.Default()}
+	refs, err := d.Discover(context.Background())
+	if err == nil {
+		t.Fatal("Discover returned nil error, want an error when every configured network fails")
+	}
+	if refs != nil {
+		t.Fatalf("refs = %+v, want nil when every configured network fails", refs)
+	}
+}
+
+// TestRegistryDiscoverer_NoNetworksConfiguredIsNotAFailure guards against a
+// regression of the all-failed check: zero configured networks is a valid,
+// non-error state (e.g. only staticIndexUrls in use) and must not be
+// mistaken for "0 out of 0 failed".
+func TestRegistryDiscoverer_NoNetworksConfiguredIsNotAFailure(t *testing.T) {
+	d := &registryDiscoverer{lookup: fakeMetadataLookup{}, networkIDs: nil, log: slog.Default()}
+	refs, err := d.Discover(context.Background())
+	if err != nil {
+		t.Fatalf("Discover returned error %v, want nil when no networks are configured", err)
+	}
+	if refs != nil {
+		t.Fatalf("refs = %+v, want nil", refs)
 	}
 }
 
