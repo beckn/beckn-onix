@@ -14,7 +14,7 @@ plugins:
     config:
       serviceName: "beckn-onix"
       serviceVersion: "1.0.0"
-      enableMetrics: "true"
+      enableMetrics: "false"
       environment: "development"
 http:
   port: 8081
@@ -55,7 +55,7 @@ modules:
         cache:
           id: cache
           config:
-            addr: redis:6379
+            addr: localhost:6379
         schemaValidator:
           id: schemavalidator
           config:
@@ -114,7 +114,7 @@ modules:
         cache:
           id: cache
           config:
-            addr: redis:6379
+            addr: localhost:6379
         router:
           id: router
           config:
@@ -160,7 +160,7 @@ modules:
         cache:
           id: cache
           config:
-            addr: redis:6379
+            addr: localhost:6379
         schemaValidator:
           id: schemavalidator
           config:
@@ -214,7 +214,7 @@ modules:
         cache:
           id: cache
           config:
-            addr: redis:6379
+            addr: localhost:6379
         router:
           id: router
           config:
