@@ -182,7 +182,21 @@ func buildSource(config map[string]string, metadataLookup definition.RegistryMet
 	if networks := splitNonEmpty(config[cfgNetworks]); len(networks) > 0 && metadataLookup != nil {
 		sources = append(sources, &registryDiscoverer{lookup: metadataLookup, networkIDs: networks, log: log})
 	}
-	return multiSource(sources)
+	return multiSource{sources: sources, log: log}
+}
+
+// errIfAllFailed returns a wrapped error joining errs when every one of
+// total attempts failed (len(errs) == total > 0), and nil otherwise -- the
+// shared "tolerate partial failure, only escalate to a hard error when
+// everything failed" policy both registryDiscoverer.Discover (across
+// networks) and multiSource.Discover (across sources) apply. what describes
+// what failed, e.g. "registry lookup failed for all %d configured
+// network(s)".
+func errIfAllFailed(total int, errs []error, what string) error {
+	if total == 0 || len(errs) != total {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", what, errors.Join(errs...))
 }
 
 // registryDiscoverer implements crawlmanager.Source by asking the
@@ -196,13 +210,19 @@ type registryDiscoverer struct {
 	networkIDs []string
 	log        *slog.Logger
 
-	// mu guards consecutiveFails, which persists across Discover calls (one
-	// registryDiscoverer is built once and polled every tick) so a network
-	// that keeps failing tick after tick can be escalated instead of only
-	// ever logging at Warn -- see consecutiveFailEscalateThreshold below.
-	// Discover can, in principle, run concurrently with itself (e.g. a
-	// manually triggered crawl overlapping a scheduled tick), so this state
-	// needs its own lock rather than relying on single-goroutine use.
+	// mu guards consecutiveFails, which persists across Discover calls on
+	// this instance (the scheduler builds one registryDiscoverer in
+	// buildSource and polls it every tick from its own single goroutine, so
+	// a network that keeps failing tick after tick can be escalated instead
+	// of only ever logging at Warn -- see consecutiveFailEscalateThreshold
+	// below). The lock isn't guarding against a concurrent caller that
+	// exists today -- CrawlRegistry (the on-demand /crawl/trigger path)
+	// builds its own separate registryDiscoverer per call rather than
+	// reusing this one, so it never contends with the scheduled tick or
+	// with itself, and consequently never accumulates or benefits from a
+	// failure streak across repeated triggers either. It's here as cheap
+	// insurance against a future change (e.g. concurrent scheduled +
+	// triggered polling sharing one instance) rather than an active need.
 	mu               sync.Mutex
 	consecutiveFails map[string]int
 }
@@ -268,8 +288,7 @@ func (d *registryDiscoverer) Discover(ctx context.Context) ([]crawlmanager.Index
 		}
 		d.log.InfoContext(ctx, "catalogcrawler: registry lookup succeeded", "networkId", net, "providersFound", found)
 	}
-	if len(d.networkIDs) > 0 && len(failed) == len(d.networkIDs) {
-		err := fmt.Errorf("catalogcrawler: registry lookup failed for all %d configured network(s): %w", len(failed), errors.Join(failed...))
+	if err := errIfAllFailed(len(d.networkIDs), failed, fmt.Sprintf("registry lookup failed for all %d configured network(s)", len(failed))); err != nil {
 		d.log.ErrorContext(ctx, "catalogcrawler: registry lookup failed for every configured network", "networks", d.networkIDs, "error", err)
 		return nil, err
 	}
@@ -305,13 +324,23 @@ func (d *registryDiscoverer) recordSuccess(networkID string) {
 // applies here across sources, so a broken registry doesn't also blank out
 // a working staticIndexUrls config, or vice versa. Only when every source
 // errors is that fatal. See #921/#922.
-type multiSource []crawlmanager.Source
+//
+// A partial failure (some, not all, sources erroring) still logs at Error:
+// unlike the all-failed case, it doesn't fail the tick, so without its own
+// loud log line it would be invisible to anything watching only for a
+// failed poll tick or /crawl/status -- a fully broken registry sitting
+// behind an otherwise-healthy staticIndexUrls config would otherwise look
+// identical to a fully healthy tick.
+type multiSource struct {
+	sources []crawlmanager.Source
+	log     *slog.Logger
+}
 
 func (m multiSource) Discover(ctx context.Context) ([]crawlmanager.IndexRef, error) {
 	seen := make(map[string]bool)
 	var refs []crawlmanager.IndexRef
 	var failed []error
-	for _, s := range m {
+	for _, s := range m.sources {
 		found, err := s.Discover(ctx)
 		if err != nil {
 			failed = append(failed, err)
@@ -325,8 +354,11 @@ func (m multiSource) Discover(ctx context.Context) ([]crawlmanager.IndexRef, err
 			refs = append(refs, r)
 		}
 	}
-	if len(m) > 0 && len(failed) == len(m) {
-		return nil, fmt.Errorf("catalogcrawler: all %d discovery source(s) failed: %w", len(failed), errors.Join(failed...))
+	if err := errIfAllFailed(len(m.sources), failed, fmt.Sprintf("all %d discovery source(s) failed", len(failed))); err != nil {
+		return nil, err
+	}
+	if len(failed) > 0 {
+		m.log.ErrorContext(ctx, "catalogcrawler: one or more discovery sources failed this tick, continuing with partial results from the rest", "failedSources", len(failed), "totalSources", len(m.sources), "error", errors.Join(failed...))
 	}
 	return refs, nil
 }
@@ -366,6 +398,15 @@ func (c *crawlerImpl) Stop() error {
 // lifecycle (via Scheduler.RunOnce), not the caller's context, so it
 // survives a request-scoped caller returning and is still waited-for (not
 // orphaned) by Stop.
+//
+// Each call builds its own registryDiscoverer rather than reusing the
+// scheduled crawler's -- this is a one-off diagnostic/backfill action, not a
+// monitored recurring path, so it intentionally starts with a clean
+// per-network failure streak every time and never contributes to or
+// benefits from the scheduled tick's consecutiveFailEscalateThreshold
+// escalation (see registryDiscoverer.mu's doc comment). Repeated triggers
+// against a persistently broken network will each log at Warn, not escalate
+// to Error, unlike the scheduled path.
 func (c *crawlerImpl) CrawlRegistry(ctx context.Context, networkIDs []string) (string, error) {
 	if len(networkIDs) == 0 {
 		return "", fmt.Errorf("catalogcrawler: at least one networkID is required")

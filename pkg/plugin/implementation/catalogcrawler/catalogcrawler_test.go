@@ -1,9 +1,11 @@
 package catalogcrawler
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
@@ -226,6 +228,43 @@ func TestRegistryDiscoverer_TracksConsecutiveFailuresPerNetworkAcrossTicks(t *te
 	}
 }
 
+// TestRegistryDiscoverer_EscalatesLogLevelAtThreshold complements the
+// counter-only check above by asserting the actual observable behavior the
+// streak exists to drive: log output stays at Warn for ticks before the
+// threshold and switches to Error exactly on the tick that reaches it. A
+// bug in the `streak >= consecutiveFailEscalateThreshold` branch itself
+// (off-by-one, inverted comparison, wrong log method) would pass a
+// counter-only assertion but fail this one.
+func TestRegistryDiscoverer_EscalatesLogLevelAtThreshold(t *testing.T) {
+	lookup := fakeMetadataLookup{errByNetwork: map[string]error{"net-bad": errors.New("registry down")}}
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	d := &registryDiscoverer{lookup: lookup, networkIDs: []string{"net-bad"}, log: log}
+
+	for tick := 1; tick < consecutiveFailEscalateThreshold; tick++ {
+		buf.Reset()
+		if _, err := d.Discover(context.Background()); err == nil {
+			t.Fatalf("tick %d: Discover returned nil error, want an error (net-bad is the only configured network)", tick)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "level=WARN") {
+			t.Fatalf("tick %d: log output = %q, want a WARN-level per-network line before the escalation threshold", tick, out)
+		}
+		if strings.Contains(out, "level=ERROR") && strings.Contains(out, "registry lookup failing repeatedly") {
+			t.Fatalf("tick %d: log output = %q, escalated to ERROR before reaching the threshold", tick, out)
+		}
+	}
+
+	buf.Reset()
+	if _, err := d.Discover(context.Background()); err == nil {
+		t.Fatal("final tick: Discover returned nil error, want an error")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "registry lookup failing repeatedly") {
+		t.Fatalf("final tick: log output = %q, want the per-network line escalated to ERROR at the threshold", out)
+	}
+}
+
 type stubSource struct {
 	refs []crawlmanager.IndexRef
 	err  error
@@ -236,7 +275,7 @@ func (s stubSource) Discover(context.Context) ([]crawlmanager.IndexRef, error) {
 func TestMultiSource_UnionsAndDedupsAcrossSources(t *testing.T) {
 	a := stubSource{refs: []crawlmanager.IndexRef{{IndexURL: "https://a"}, {IndexURL: "https://shared"}}}
 	b := stubSource{refs: []crawlmanager.IndexRef{{IndexURL: "https://shared"}, {IndexURL: "https://b"}}}
-	m := multiSource{a, b}
+	m := multiSource{sources: []crawlmanager.Source{a, b}, log: slog.Default()}
 	refs, err := m.Discover(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +287,7 @@ func TestMultiSource_UnionsAndDedupsAcrossSources(t *testing.T) {
 
 func TestMultiSource_PropagatesError(t *testing.T) {
 	wantErr := errors.New("boom")
-	m := multiSource{stubSource{err: wantErr}}
+	m := multiSource{sources: []crawlmanager.Source{stubSource{err: wantErr}}, log: slog.Default()}
 	if _, err := m.Discover(context.Background()); !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want wrapping %v", err, wantErr)
 	}
@@ -261,7 +300,7 @@ func TestMultiSource_PropagatesError(t *testing.T) {
 func TestMultiSource_ToleratesOneSourceFailingWhenAnotherSucceeds(t *testing.T) {
 	ok := stubSource{refs: []crawlmanager.IndexRef{{IndexURL: "https://static/index"}}}
 	broken := stubSource{err: errors.New("registry unreachable")}
-	m := multiSource{ok, broken}
+	m := multiSource{sources: []crawlmanager.Source{ok, broken}, log: slog.Default()}
 	refs, err := m.Discover(context.Background())
 	if err != nil {
 		t.Fatalf("Discover returned error %v, want nil (one failing source must not abort the tick)", err)
@@ -277,8 +316,11 @@ func TestMultiSource_ToleratesOneSourceFailingWhenAnotherSucceeds(t *testing.T) 
 // error rather than silently returning zero indexes.
 func TestMultiSource_AllSourcesFailingReturnsError(t *testing.T) {
 	m := multiSource{
-		stubSource{err: errors.New("registry unreachable")},
-		stubSource{err: errors.New("static config fetch failed")},
+		sources: []crawlmanager.Source{
+			stubSource{err: errors.New("registry unreachable")},
+			stubSource{err: errors.New("static config fetch failed")},
+		},
+		log: slog.Default(),
 	}
 	refs, err := m.Discover(context.Background())
 	if err == nil {
@@ -286,6 +328,27 @@ func TestMultiSource_AllSourcesFailingReturnsError(t *testing.T) {
 	}
 	if refs != nil {
 		t.Fatalf("refs = %+v, want nil when every source fails", refs)
+	}
+}
+
+// TestMultiSource_LogsErrorOnPartialSourceFailure guards the round-2
+// self-review finding that a total registry outage would otherwise be
+// invisible whenever a healthy staticIndexUrls source papers over it: the
+// tick still succeeds (partial tolerance), but the partial failure must
+// still be logged at Error so it's discoverable without correlating tick
+// success against per-source internals.
+func TestMultiSource_LogsErrorOnPartialSourceFailure(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	ok := stubSource{refs: []crawlmanager.IndexRef{{IndexURL: "https://static/index"}}}
+	broken := stubSource{err: errors.New("registry unreachable")}
+	m := multiSource{sources: []crawlmanager.Source{ok, broken}, log: log}
+	if _, err := m.Discover(context.Background()); err != nil {
+		t.Fatalf("Discover returned error %v, want nil", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "one or more discovery sources failed") {
+		t.Fatalf("log output = %q, want an ERROR-level line about the partial source failure", out)
 	}
 }
 
