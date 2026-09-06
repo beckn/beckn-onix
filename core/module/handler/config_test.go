@@ -17,9 +17,9 @@ func TestPluginEntries_AllNil(t *testing.T) {
 
 func TestPluginEntries_EmptyIDSkipped(t *testing.T) {
 	p := PluginCfg{
-		Router:  &plugin.Config{ID: ""},
-		Signer:  &plugin.Config{ID: ""},
-		Steps:   []plugin.Config{{ID: ""}},
+		Router:     &plugin.Config{ID: ""},
+		Signer:     &plugin.Config{ID: ""},
+		Steps:      []plugin.Config{{ID: ""}},
 		Middleware: []plugin.Config{{ID: ""}},
 	}
 	assert.Empty(t, p.PluginEntries(), "configs with empty ID should be skipped")
@@ -27,19 +27,21 @@ func TestPluginEntries_EmptyIDSkipped(t *testing.T) {
 
 func TestPluginEntries_AllNamedSlots(t *testing.T) {
 	p := PluginCfg{
-		SchemaValidator:  cfg("schemav2validator"),
-		SignValidator:    cfg("beckn_sign_validator"),
-		Router:           cfg("static_router"),
-		Registry:         cfg("dediregistry"),
-		Publisher:        cfg("kafka"),
-		Signer:           cfg("ed25519_signer"),
-		Cache:            cfg("redis"),
-		TransportWrapper: cfg("http_wrapper"),
-		PolicyChecker:    cfg("opa_policy"),
-		KeyManager:       cfg("beckn_key_mgr"),
+		SchemaValidator:    cfg("schemav2validator"),
+		SignValidator:      cfg("beckn_sign_validator"),
+		Router:             cfg("static_router"),
+		Registry:           cfg("dediregistry"),
+		Publisher:          cfg("kafka"),
+		Signer:             cfg("ed25519_signer"),
+		Cache:              cfg("redis"),
+		TransportWrapper:   cfg("http_wrapper"),
+		PolicyChecker:      cfg("opa_policy"),
+		KeyManager:         cfg("beckn_key_mgr"),
+		PayloadTransformer: cfg("reqmapper"),
+		Translator:         cfg("jsonatatranslator"),
 	}
 	entries := p.PluginEntries()
-	assert.Len(t, entries, 10)
+	assert.Len(t, entries, 12)
 
 	byType := make(map[string]string)
 	for _, e := range entries {
@@ -55,6 +57,8 @@ func TestPluginEntries_AllNamedSlots(t *testing.T) {
 	assert.Equal(t, "http_wrapper", byType["transport_wrapper"])
 	assert.Equal(t, "opa_policy", byType["policy_checker"])
 	assert.Equal(t, "beckn_key_mgr", byType["key_manager"])
+	assert.Equal(t, "reqmapper", byType["payload_transformer"])
+	assert.Equal(t, "jsonatatranslator", byType["translator"])
 }
 
 func TestPluginEntries_StepsAndMiddleware(t *testing.T) {

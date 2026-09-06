@@ -534,13 +534,32 @@ func loadSchemaVersionMediator(ctx context.Context, mgr PluginManager, manifestL
 	return mediator, nil
 }
 
-func loadPayloadTransformerStep(ctx context.Context, mgr PluginManager, cfg *plugin.Config) (definition.Step, error) {
+// defaultTranslatorID is the Translator used when payloadTransformer is
+// configured without an explicit translator block.
+const defaultTranslatorID = "jsonatatranslator"
+
+func loadTranslator(ctx context.Context, mgr PluginManager, cfg *plugin.Config) (definition.Translator, error) {
+	if cfg == nil {
+		log.Debug(ctx, "Skipping Translator plugin: not configured")
+		return nil, nil
+	}
+
+	translator, err := mgr.Translator(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load Translator plugin (%s): %w", cfg.ID, err)
+	}
+
+	log.Debugf(ctx, "Loaded Translator plugin: %s", cfg.ID)
+	return translator, nil
+}
+
+func loadPayloadTransformerStep(ctx context.Context, mgr PluginManager, translator definition.Translator, cfg *plugin.Config) (definition.Step, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping PayloadTransformer plugin: not configured")
 		return nil, nil
 	}
 
-	step, err := mgr.Step(ctx, cfg)
+	step, err := mgr.PayloadTransformer(ctx, translator, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load PayloadTransformer plugin (%s): %w", cfg.ID, err)
 	}
@@ -593,7 +612,16 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.schemaVersionMediator, err = loadSchemaVersionMediator(ctx, mgr, h.manifestLoader, cfg.SchemaVersionMediator); err != nil {
 		return err
 	}
-	if h.payloadTransformer, err = loadPayloadTransformerStep(ctx, mgr, cfg.PayloadTransformer); err != nil {
+	translatorCfg := cfg.Translator
+	if translatorCfg == nil && cfg.PayloadTransformer != nil {
+		translatorCfg = &plugin.Config{ID: defaultTranslatorID}
+		cfg.Translator = translatorCfg // keep PluginEntries() in sync
+	}
+	translator, err := loadTranslator(ctx, mgr, translatorCfg)
+	if err != nil {
+		return err
+	}
+	if h.payloadTransformer, err = loadPayloadTransformerStep(ctx, mgr, translator, cfg.PayloadTransformer); err != nil {
 		return err
 	}
 

@@ -25,3 +25,9 @@ type ResponseStep interface {
 type StepProvider interface {
 	New(context.Context, map[string]string) (Step, func(), error)
 }
+
+// PayloadTransformerProvider initializes a payload-transforming Step with an
+// injected Translator, keeping the execution engine a config-driven choice.
+type PayloadTransformerProvider interface {
+	New(ctx context.Context, translator Translator, config map[string]string) (Step, func(), error)
+}

@@ -101,6 +101,14 @@ func (m *mockPluginManager) SchemaVersionMediator(_ context.Context, _ definitio
 	return nil, nil
 }
 
+func (m *mockPluginManager) Translator(_ context.Context, _ *plugin.Config) (definition.Translator, error) {
+	return nil, nil
+}
+
+func (m *mockPluginManager) PayloadTransformer(_ context.Context, _ definition.Translator, _ *plugin.Config) (definition.Step, error) {
+	return nil, nil
+}
+
 // PolicyChecker returns a mock policy checker implementation.
 func (m *mockPluginManager) PolicyChecker(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error) {
 	if m.policyCheckerFunc != nil {
