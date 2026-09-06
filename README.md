@@ -131,7 +131,8 @@ The **Beckn Protocol** is an open protocol that enables location-aware, local co
 - **Encrypter**: AES encryption for sensitive data protection
 - **Decrypter**: AES decryption for encrypted data processing
 - **ReqPreprocessor**: Request preprocessing (UUID generation, headers)
-- **ReqMapper**: Step plugin (id: `reqmapper`) used by the handler's `transformPayload` step to transform payloads at an explicit point in the pipeline.
+- **ReqMapper**: Step plugin (id: `reqmapper`) used by the handler's `transformPayload` step to transform payloads at an explicit point in the pipeline. Delegates execution to an injected `Translator` plugin instead of owning JSONata directly.
+- **JSONataTranslator**: `Translator` plugin (id: `jsonatatranslator`) that compiles and evaluates JSONata expressions. Used by `reqmapper` by default. See [plugin docs](pkg/plugin/implementation/jsonatatranslator/README.md).
 - **OtelSetup**: Observability setup for metrics, traces, and logs (OTLP). Supports optional audit log configuration via `auditFieldsConfig` (YAML mapping actions to fields) . See [CONFIG.md](CONFIG.md) for details.
 - **OpaPolicyChecker**: OPA-based network business policy enforcement. Evaluates Rego policies per request; supports network-specific policy configs, signed policy artifact verification, manifest-backed policies, and hot-reload. See [plugin docs](pkg/plugin/implementation/opapolicychecker/README.md).
 - **ManifestLoader**: Fetches a network manifest published by a Network Facilitator Organization (NFO), verifies its detached signature, and caches the verified document for downstream consumers such as `opapolicychecker`. See [plugin docs](pkg/plugin/implementation/manifestloader/README.md).
