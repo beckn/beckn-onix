@@ -43,6 +43,8 @@ On every inbound request, `Mediate` runs the following sequence:
 plugins:
   manifestLoader:
     id: manifestloader          # required — backed by dediregistry
+  translator:                   # optional — defaults to jsonatatranslator when omitted
+    id: jsonatatranslator
   schemaVersionMediator:
     id: schemaversionmediator
     config:
@@ -57,6 +59,7 @@ plugins:
 |---|---|
 | `manifestLoader` | Fetches counterparty node manifests from DeDi at request time (caller path) and the local manifest at startup |
 | `dediregistry` (backing the manifestLoader) | Resolves subscriber manifest URLs via DeDi |
+| `translator` | Executes fetched translation artifacts. Optional to configure explicitly — defaults to `jsonatatranslator` when omitted, same as `reqmapper`'s `payloadTransformer` step. |
 | `reqpreprocessor` (middleware) | Extracts the counterparty subscriber ID from the inbound Authorization header and stores it in `ContextKeyRemoteID`. Without it, `counterpartyID` is empty and mediation is skipped with a warning on every request. |
 
 **`nodeId`** is an **operator-facing config field** set under `schemaVersionMediator.config`. It is the three-part DeDi subscriber identity for this node (`namespace/registry/recordId`, e.g. `nfh.global/subscribers.beckn.one/open-kitchen-bpp`). At startup the plugin calls `ManifestLoader.GetBySubscriberID(nodeId)` to load the local node manifest. If `nodeId` is absent or the manifest cannot be loaded, the mediator marks itself as `notOnboarded` and rejects every request.
@@ -247,6 +250,6 @@ After translation, the plugin compares the flattened dot-notation key paths of t
 
 ## Known Limitations
 
-- Non-JSONata translator types are not yet supported. The translation dispatch layer is in place; additional content types will be wired in future releases.
+- All translation runs through one injected `Translator` (`jsonatatranslator` by default) — per-artifact dispatch by `Content-Type` isn't implemented, so non-JSONata artifacts aren't supported yet.
 - Observed seeding (auto-updating the local node manifest from live traffic) is not implemented. Tracked in [#822](https://github.com/beckn/beckn-onix/issues/822).
 - `RunOnResponse` is not implemented — Beckn responses arrive as separate inbound requests and are mediated by `Mediate` on the receiver handler, not via a response hook.

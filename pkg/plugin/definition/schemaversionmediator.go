@@ -20,6 +20,7 @@ type SchemaVersionMediator interface {
 // SchemaVersionMediatorProvider initializes a SchemaVersionMediator with its
 // dependencies. loader is injected so the mediator can fetch the node manifest
 // for the network at runtime without owning the fetch/cache lifecycle.
+// translator executes fetched translation artifacts.
 type SchemaVersionMediatorProvider interface {
-	New(ctx context.Context, loader ManifestLoader, config map[string]string) (SchemaVersionMediator, func() error, error)
+	New(ctx context.Context, loader ManifestLoader, translator Translator, config map[string]string) (SchemaVersionMediator, func() error, error)
 }

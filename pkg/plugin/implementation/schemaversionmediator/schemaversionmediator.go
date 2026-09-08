@@ -20,7 +20,6 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
-	"github.com/jsonata-go/jsonata"
 )
 
 // PolicyAction defines what the mediator does when schema incompatibility is
@@ -242,9 +241,9 @@ var httpClientFunc = func(timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout}
 }
 
-// TranslationArtifact holds a fetched translation artifact and the Content-Type
-// returned by the server. ContentType determines which Translator implementation
-// the mediation loop dispatches to (e.g. "application/jsonata").
+// TranslationArtifact holds a fetched translation artifact and the
+// Content-Type returned by the server. ContentType isn't used for dispatch
+// yet — every artifact goes through the single injected Translator.
 type TranslationArtifact struct {
 	Content     []byte
 	ContentType string
@@ -326,41 +325,20 @@ func (c *artifactCache) set(key string, artifact *TranslationArtifact) {
 	c.entries[key] = &artifactCacheEntry{artifact: artifact, fetchedAt: time.Now()}
 }
 
-// defaultMaxExprCacheEntries caps the compiled-expression cache. Expressions are
-// deterministic and never expire, but the cap prevents unbounded growth on nodes
-// that encounter an unusually large number of distinct schema version pairs.
-// When the cap is reached, new expressions are compiled and returned but not cached.
-const defaultMaxExprCacheEntries = 200
-
-// exprCache stores compiled JSONata expressions keyed by the raw expression string.
-// Entries never expire — expressions are deterministic and there are very few
-// unique ones in practice (bounded by the set of schema version pairs deployed
-// on a given node). See defaultMaxExprCacheEntries for the size cap.
-type exprCache struct {
-	mu      sync.RWMutex
-	entries map[string]jsonata.Expression
-	max     int
-}
-
-func newExprCache() *exprCache {
-	return &exprCache{entries: make(map[string]jsonata.Expression), max: defaultMaxExprCacheEntries}
-}
-
 // mediator is the runtime state for the SchemaVersionMediator plugin.
 type mediator struct {
-	policy          TranslationPolicy
-	loader          definition.ManifestLoader
-	httpClient      *http.Client
-	cache           *artifactCache
-	jsonataInstance jsonata.JSONataInstance
-	exprs           *exprCache
-	notOnboarded    bool                // set at New() when local manifest is absent or has no schemaObjects
-	localManifest   *model.NodeManifest // local node manifest loaded at startup; nil when notOnboarded
+	policy        TranslationPolicy
+	loader        definition.ManifestLoader
+	translator    definition.Translator
+	httpClient    *http.Client
+	cache         *artifactCache
+	notOnboarded  bool                // set at New() when local manifest is absent or has no schemaObjects
+	localManifest *model.NodeManifest // local node manifest loaded at startup; nil when notOnboarded
 }
 
 // New is the package-level constructor used by the plugin entrypoint.
-func New(ctx context.Context, loader definition.ManifestLoader, cfg map[string]string) (definition.SchemaVersionMediator, func() error, error) {
-	return (&provider{}).New(ctx, loader, cfg)
+func New(ctx context.Context, loader definition.ManifestLoader, translator definition.Translator, cfg map[string]string) (definition.SchemaVersionMediator, func() error, error) {
+	return (&provider{}).New(ctx, loader, translator, cfg)
 }
 
 // provider is the factory for mediator instances. It implements
@@ -371,7 +349,7 @@ type provider struct{}
 // check. If the local node manifest is absent or carries no schemaObjects the
 // mediator's notOnboarded flag is set; Mediate will reject every inbound
 // request until the manifest is published and the adapter is restarted.
-func (p *provider) New(ctx context.Context, loader definition.ManifestLoader, cfg map[string]string) (definition.SchemaVersionMediator, func() error, error) {
+func (p *provider) New(ctx context.Context, loader definition.ManifestLoader, translator definition.Translator, cfg map[string]string) (definition.SchemaVersionMediator, func() error, error) {
 	log.Infof(ctx, "schemaversionmediator: loading plugin build=bfbc645")
 	policy, err := loadTranslationPolicy(cfg)
 	if err != nil {
@@ -383,18 +361,12 @@ func (p *provider) New(ctx context.Context, loader definition.ManifestLoader, cf
 		return nil, nil, err
 	}
 
-	instance, err := jsonata.OpenLatest()
-	if err != nil {
-		return nil, nil, fmt.Errorf("schemaversionmediator: open jsonata: %w", err)
-	}
-
 	m := &mediator{
-		policy:          *policy,
-		loader:          loader,
-		httpClient:      httpClientFunc(fetchTimeout),
-		cache:           newArtifactCache(positiveTTL, negativeTTL, maxEntries),
-		jsonataInstance: instance,
-		exprs:           newExprCache(),
+		policy:     *policy,
+		loader:     loader,
+		translator: translator,
+		httpClient: httpClientFunc(fetchTimeout),
+		cache:      newArtifactCache(positiveTTL, negativeTTL, maxEntries),
 	}
 
 	// Cold-start check: attempt to load the local node manifest. If it is
@@ -785,8 +757,8 @@ func (m *mediator) httpFetch(ctx context.Context, artifactURL string) (*Translat
 	}
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
-		// Artifact URL convention omits file extensions, so Content-Type is the
-		// only reliable signal for which Translator to dispatch to.
+		// Artifact URL convention omits file extensions, so Content-Type is
+		// the only signal identifying the artifact format.
 		return nil, fmt.Errorf("schemaversionmediator: artifact %q: missing Content-Type header", artifactURL)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxArtifactBodySize))
@@ -1026,41 +998,11 @@ func ComposeExpression(entries []MappingEntry) (string, error) {
 	return "$merge([$, " + strings.Join(patches, ", ") + "])", nil
 }
 
-// compiledExpr returns a cached compiled JSONata expression for the given
-// expression string, compiling and caching it on the first call.
-func (m *mediator) compiledExpr(expression string) (jsonata.Expression, error) {
-	m.exprs.mu.RLock()
-	if expr, ok := m.exprs.entries[expression]; ok {
-		m.exprs.mu.RUnlock()
-		return expr, nil
-	}
-	m.exprs.mu.RUnlock()
-
-	expr, err := m.jsonataInstance.Compile(expression, false)
-	if err != nil {
-		return nil, fmt.Errorf("schemaversionmediator: compile expression: %w", err)
-	}
-
-	m.exprs.mu.Lock()
-	if len(m.exprs.entries) < m.exprs.max {
-		m.exprs.entries[expression] = expr
-	}
-	m.exprs.mu.Unlock()
-	return expr, nil
-}
-
-// Execute compiles (with caching) and evaluates a JSONata expression against
-// the Beckn message subtree bytes. It returns the transformed message bytes.
-// The expression is typically produced by ComposeExpression.
-// ctx is accepted for interface consistency; jsonata-go does not support
-// context cancellation, so it is not forwarded to the evaluator.
+// Execute evaluates a JSONata expression against the Beckn message subtree
+// via the injected Translator. The expression is typically produced by
+// ComposeExpression.
 func (m *mediator) Execute(ctx context.Context, expression string, message []byte) ([]byte, error) {
-	_ = ctx
-	expr, err := m.compiledExpr(expression)
-	if err != nil {
-		return nil, err
-	}
-	result, err := expr.Evaluate(message, nil)
+	result, err := m.translator.Translate(ctx, []byte(expression), message)
 	if err != nil {
 		return nil, fmt.Errorf("schemaversionmediator: execute expression: %w", err)
 	}

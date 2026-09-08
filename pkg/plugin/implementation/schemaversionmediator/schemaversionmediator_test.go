@@ -11,8 +11,20 @@ import (
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
-	"github.com/jsonata-go/jsonata"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/jsonatatranslator"
 )
+
+// newTestTranslator returns a real jsonatatranslator instance, so mediator
+// tests keep exercising the actual JSONata engine end-to-end.
+func newTestTranslator(t *testing.T) definition.Translator {
+	t.Helper()
+	translator, _, err := jsonatatranslator.New(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("jsonatatranslator.New: %v", err)
+	}
+	return translator
+}
 
 // mockManifestLoader is a test double for definition.ManifestLoader.
 type mockManifestLoader struct {
@@ -896,15 +908,10 @@ func TestComposeExpression_EmptyExpressionReturnsError(t *testing.T) {
 
 func newTestTranslatorMediator(t *testing.T) *mediator {
 	t.Helper()
-	instance, err := jsonata.OpenLatest()
-	if err != nil {
-		t.Fatalf("jsonata.OpenLatest: %v", err)
-	}
 	return &mediator{
-		jsonataInstance: instance,
-		exprs:           newExprCache(),
-		cache:           newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
-		httpClient:      &http.Client{},
+		translator: newTestTranslator(t),
+		cache:      newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+		httpClient: &http.Client{},
 	}
 }
 
@@ -991,24 +998,18 @@ func TestExecute_MultiPathComposed(t *testing.T) {
 	}
 }
 
-func TestExecute_ExpressionCacheHit(t *testing.T) {
+// TestExecute_RepeatedCallsSucceed calls Execute twice with the same
+// expression; caching itself is tested in the jsonatatranslator package.
+func TestExecute_RepeatedCallsSucceed(t *testing.T) {
 	m := newTestTranslatorMediator(t)
 	message := []byte(`{"status":"ACTIVE"}`)
 	expr := `$merge([$, {"state": status}])`
 
-	// First call compiles and caches.
 	if _, err := m.Execute(context.Background(), expr, message); err != nil {
 		t.Fatalf("first Execute: %v", err)
 	}
-	// Second call should hit cache (same compiled expression returned).
 	if _, err := m.Execute(context.Background(), expr, message); err != nil {
 		t.Fatalf("second Execute: %v", err)
-	}
-	m.exprs.mu.RLock()
-	_, cached := m.exprs.entries[expr]
-	m.exprs.mu.RUnlock()
-	if !cached {
-		t.Error("expression should be in cache after first Execute call")
 	}
 }
 
@@ -1191,7 +1192,7 @@ func TestNew_ColdStart_LoaderError(t *testing.T) {
 		},
 	}
 	p := &provider{}
-	svm, _, err := p.New(context.Background(), loader, map[string]string{"nodeId": "test-node"})
+	svm, _, err := p.New(context.Background(), loader, newTestTranslator(t), map[string]string{"nodeId": "test-node"})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -1208,7 +1209,7 @@ func TestNew_ColdStart_EmptySchemaObjects(t *testing.T) {
 		},
 	}
 	p := &provider{}
-	svm, _, err := p.New(context.Background(), loader, map[string]string{"nodeId": "test-node"})
+	svm, _, err := p.New(context.Background(), loader, newTestTranslator(t), map[string]string{"nodeId": "test-node"})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -1220,7 +1221,7 @@ func TestNew_ColdStart_EmptySchemaObjects(t *testing.T) {
 
 func TestNew_ColdStart_MissingNodeId(t *testing.T) {
 	p := &provider{}
-	svm, _, err := p.New(context.Background(), &mockManifestLoader{}, map[string]string{})
+	svm, _, err := p.New(context.Background(), &mockManifestLoader{}, newTestTranslator(t), map[string]string{})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -1241,7 +1242,7 @@ func TestNew_ValidManifest_NotOnboarded_False(t *testing.T) {
 		},
 	}
 	p := &provider{}
-	svm, _, err := p.New(context.Background(), loader, map[string]string{"nodeId": "test-node"})
+	svm, _, err := p.New(context.Background(), loader, newTestTranslator(t), map[string]string{"nodeId": "test-node"})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -1265,22 +1266,17 @@ func buildPayload(networkID, counterpartyID string, msgContextURL, msgType strin
 
 func newTestMediatorFull(t *testing.T, loader *mockManifestLoader, cfg map[string]string, localManifest *model.NodeManifest) *mediator {
 	t.Helper()
-	instance, err := jsonata.OpenLatest()
-	if err != nil {
-		t.Fatalf("jsonata.OpenLatest: %v", err)
-	}
 	policy, err := loadTranslationPolicy(cfg)
 	if err != nil {
 		t.Fatalf("loadTranslationPolicy: %v", err)
 	}
 	return &mediator{
-		policy:          *policy,
-		loader:          loader,
-		httpClient:      &http.Client{},
-		cache:           newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
-		jsonataInstance: instance,
-		exprs:           newExprCache(),
-		localManifest:   localManifest,
+		policy:        *policy,
+		loader:        loader,
+		translator:    newTestTranslator(t),
+		httpClient:    &http.Client{},
+		cache:         newArtifactCache(defaultPositiveTTL, defaultNegativeTTL, defaultMaxCacheEntries),
+		localManifest: localManifest,
 	}
 }
 

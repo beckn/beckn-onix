@@ -23,7 +23,7 @@ type PluginManager interface {
 	Translator(ctx context.Context, cfg *plugin.Config) (definition.Translator, error)
 	PayloadTransformer(ctx context.Context, translator definition.Translator, cfg *plugin.Config) (definition.Step, error)
 	PolicyChecker(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error)
-	SchemaVersionMediator(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.SchemaVersionMediator, error)
+	SchemaVersionMediator(ctx context.Context, manifestLoader definition.ManifestLoader, translator definition.Translator, cfg *plugin.Config) (definition.SchemaVersionMediator, error)
 	Cache(ctx context.Context, cfg *plugin.Config) (definition.Cache, error)
 	Registry(ctx context.Context, cache definition.Cache, cfg *plugin.Config) (definition.RegistryLookup, error)
 	KeyManager(ctx context.Context, rLookup definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error)
@@ -74,8 +74,8 @@ type PluginCfg struct {
 	SchemaValidator    *plugin.Config `yaml:"schemaValidator,omitempty"`
 	PolicyChecker      *plugin.Config `yaml:"checkPolicy,omitempty"`
 	PayloadTransformer *plugin.Config `yaml:"payloadTransformer,omitempty"`
-	// Translator executes PayloadTransformer's artifacts. Defaults to
-	// jsonatatranslator when omitted.
+	// Translator executes PayloadTransformer's and SchemaVersionMediator's
+	// translation artifacts. Defaults to jsonatatranslator when omitted.
 	Translator            *plugin.Config  `yaml:"translator,omitempty"`
 	SignValidator         *plugin.Config  `yaml:"signValidator,omitempty"`
 	Publisher             *plugin.Config  `yaml:"publisher,omitempty"`

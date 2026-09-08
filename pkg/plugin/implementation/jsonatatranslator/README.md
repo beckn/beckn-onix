@@ -2,7 +2,7 @@
 
 `jsonatatranslator` implements the `Translator` plugin interface (`pkg/plugin/definition/translator.go`) using the JSONata expression language. `Translate(ctx, artifact, payload)` treats `artifact` as JSONata expression text, compiles it (cached by expression text, up to 500 entries), and evaluates it against `payload`.
 
-It's the default execution engine for `reqmapper`'s `payloadTransformer` step — see [CONFIG.md](../../../../CONFIG.md#12-reqmapper-plugin-step).
+It's the default `translator` for `reqmapper`'s `payloadTransformer` step and `schemaversionmediator` — see [CONFIG.md](../../../../CONFIG.md#12-reqmapper-plugin-step). Both share one instance (and its expression cache) when configured on the same handler.
 
 ## Config
 

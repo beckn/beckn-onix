@@ -56,7 +56,7 @@ func New(_ context.Context, _ map[string]string) (definition.Translator, func() 
 // bytes. ctx is accepted for interface consistency; jsonata-go does not
 // support context cancellation, so it is not forwarded to the evaluator.
 func (t *Translator) Translate(_ context.Context, artifact []byte, payload []byte) ([]byte, error) {
-	expr, err := t.compiledExpr(string(artifact))
+	expr, err := t.compiledExpr(artifact)
 	if err != nil {
 		return nil, fmt.Errorf("jsonatatranslator: compile expression: %w", err)
 	}
@@ -67,16 +67,18 @@ func (t *Translator) Translate(_ context.Context, artifact []byte, payload []byt
 	return result, nil
 }
 
-// compiledExpr returns a cached compiled JSONata expression for the given
-// expression text, compiling and caching it on the first call.
-func (t *Translator) compiledExpr(expression string) (jsonata.Expression, error) {
+// compiledExpr returns a cached compiled JSONata expression for artifact,
+// compiling and caching it on a miss. Indexing the map with artifact
+// directly avoids a string allocation on a hit.
+func (t *Translator) compiledExpr(artifact []byte) (jsonata.Expression, error) {
 	t.exprs.mu.RLock()
-	if expr, ok := t.exprs.entries[expression]; ok {
-		t.exprs.mu.RUnlock()
+	expr, ok := t.exprs.entries[string(artifact)]
+	t.exprs.mu.RUnlock()
+	if ok {
 		return expr, nil
 	}
-	t.exprs.mu.RUnlock()
 
+	expression := string(artifact)
 	expr, err := t.instance.Compile(expression, false)
 	if err != nil {
 		return nil, err

@@ -402,12 +402,12 @@ func (m *Manager) PolicyChecker(ctx context.Context, manifestLoader definition.M
 }
 
 // SchemaVersionMediator returns a SchemaVersionMediator instance based on the provided configuration.
-func (m *Manager) SchemaVersionMediator(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *Config) (definition.SchemaVersionMediator, error) {
+func (m *Manager) SchemaVersionMediator(ctx context.Context, manifestLoader definition.ManifestLoader, translator definition.Translator, cfg *Config) (definition.SchemaVersionMediator, error) {
 	pp, err := provider[definition.SchemaVersionMediatorProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	mediator, closer, err := pp.New(ctx, manifestLoader, cfg.Config)
+	mediator, closer, err := pp.New(ctx, manifestLoader, translator, cfg.Config)
 	if err != nil {
 		return nil, err
 	}

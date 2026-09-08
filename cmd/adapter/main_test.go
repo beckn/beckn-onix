@@ -128,7 +128,7 @@ func (m *MockPluginManager) PolicyChecker(ctx context.Context, manifestLoader de
 	return nil, nil
 }
 
-func (m *MockPluginManager) SchemaVersionMediator(_ context.Context, _ definition.ManifestLoader, _ *plugin.Config) (definition.SchemaVersionMediator, error) {
+func (m *MockPluginManager) SchemaVersionMediator(_ context.Context, _ definition.ManifestLoader, _ definition.Translator, _ *plugin.Config) (definition.SchemaVersionMediator, error) {
 	return nil, nil
 }
 

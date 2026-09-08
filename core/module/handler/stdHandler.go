@@ -518,7 +518,7 @@ func LoadPolicyChecker(ctx context.Context, mgr PluginManager, manifestLoader de
 	return checker, nil
 }
 
-func loadSchemaVersionMediator(ctx context.Context, mgr PluginManager, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
+func loadSchemaVersionMediator(ctx context.Context, mgr PluginManager, manifestLoader definition.ManifestLoader, translator definition.Translator, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping SchemaVersionMediator plugin: not configured")
 		return nil, nil
@@ -526,7 +526,10 @@ func loadSchemaVersionMediator(ctx context.Context, mgr PluginManager, manifestL
 	if manifestLoader == nil {
 		return nil, fmt.Errorf("failed to load SchemaVersionMediator plugin (%s): ManifestLoader plugin not configured", cfg.ID)
 	}
-	mediator, err := mgr.SchemaVersionMediator(ctx, manifestLoader, cfg)
+	if translator == nil {
+		return nil, fmt.Errorf("failed to load SchemaVersionMediator plugin (%s): Translator plugin not configured", cfg.ID)
+	}
+	mediator, err := mgr.SchemaVersionMediator(ctx, manifestLoader, translator, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load SchemaVersionMediator plugin (%s): %w", cfg.ID, err)
 	}
@@ -534,24 +537,9 @@ func loadSchemaVersionMediator(ctx context.Context, mgr PluginManager, manifestL
 	return mediator, nil
 }
 
-// defaultTranslatorID is the Translator used when payloadTransformer is
-// configured without an explicit translator block.
+// defaultTranslatorID is the Translator used when PayloadTransformer or
+// SchemaVersionMediator is configured without an explicit translator block.
 const defaultTranslatorID = "jsonatatranslator"
-
-func loadTranslator(ctx context.Context, mgr PluginManager, cfg *plugin.Config) (definition.Translator, error) {
-	if cfg == nil {
-		log.Debug(ctx, "Skipping Translator plugin: not configured")
-		return nil, nil
-	}
-
-	translator, err := mgr.Translator(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load Translator plugin (%s): %w", cfg.ID, err)
-	}
-
-	log.Debugf(ctx, "Loaded Translator plugin: %s", cfg.ID)
-	return translator, nil
-}
 
 func loadPayloadTransformerStep(ctx context.Context, mgr PluginManager, translator definition.Translator, cfg *plugin.Config) (definition.Step, error) {
 	if cfg == nil {
@@ -609,16 +597,16 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.policyChecker, err = LoadPolicyChecker(ctx, mgr, h.manifestLoader, cfg.PolicyChecker); err != nil {
 		return err
 	}
-	if h.schemaVersionMediator, err = loadSchemaVersionMediator(ctx, mgr, h.manifestLoader, cfg.SchemaVersionMediator); err != nil {
-		return err
-	}
 	translatorCfg := cfg.Translator
-	if translatorCfg == nil && cfg.PayloadTransformer != nil {
+	if translatorCfg == nil && (cfg.PayloadTransformer != nil || cfg.SchemaVersionMediator != nil) {
 		translatorCfg = &plugin.Config{ID: defaultTranslatorID}
 		cfg.Translator = translatorCfg // keep PluginEntries() in sync
 	}
-	translator, err := loadTranslator(ctx, mgr, translatorCfg)
+	translator, err := LoadPlugin(ctx, "Translator", translatorCfg, mgr.Translator)
 	if err != nil {
+		return err
+	}
+	if h.schemaVersionMediator, err = loadSchemaVersionMediator(ctx, mgr, h.manifestLoader, translator, cfg.SchemaVersionMediator); err != nil {
 		return err
 	}
 	if h.payloadTransformer, err = loadPayloadTransformerStep(ctx, mgr, translator, cfg.PayloadTransformer); err != nil {

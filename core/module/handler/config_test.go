@@ -27,21 +27,22 @@ func TestPluginEntries_EmptyIDSkipped(t *testing.T) {
 
 func TestPluginEntries_AllNamedSlots(t *testing.T) {
 	p := PluginCfg{
-		SchemaValidator:    cfg("schemav2validator"),
-		SignValidator:      cfg("beckn_sign_validator"),
-		Router:             cfg("static_router"),
-		Registry:           cfg("dediregistry"),
-		Publisher:          cfg("kafka"),
-		Signer:             cfg("ed25519_signer"),
-		Cache:              cfg("redis"),
-		TransportWrapper:   cfg("http_wrapper"),
-		PolicyChecker:      cfg("opa_policy"),
-		KeyManager:         cfg("beckn_key_mgr"),
-		PayloadTransformer: cfg("reqmapper"),
-		Translator:         cfg("jsonatatranslator"),
+		SchemaValidator:       cfg("schemav2validator"),
+		SignValidator:         cfg("beckn_sign_validator"),
+		Router:                cfg("static_router"),
+		Registry:              cfg("dediregistry"),
+		Publisher:             cfg("kafka"),
+		Signer:                cfg("ed25519_signer"),
+		Cache:                 cfg("redis"),
+		TransportWrapper:      cfg("http_wrapper"),
+		PolicyChecker:         cfg("opa_policy"),
+		KeyManager:            cfg("beckn_key_mgr"),
+		PayloadTransformer:    cfg("reqmapper"),
+		Translator:            cfg("jsonatatranslator"),
+		SchemaVersionMediator: cfg("schemaversionmediator"),
 	}
 	entries := p.PluginEntries()
-	assert.Len(t, entries, 12)
+	assert.Len(t, entries, 13)
 
 	byType := make(map[string]string)
 	for _, e := range entries {
@@ -59,6 +60,7 @@ func TestPluginEntries_AllNamedSlots(t *testing.T) {
 	assert.Equal(t, "beckn_key_mgr", byType["key_manager"])
 	assert.Equal(t, "reqmapper", byType["payload_transformer"])
 	assert.Equal(t, "jsonatatranslator", byType["translator"])
+	assert.Equal(t, "schemaversionmediator", byType["schema_version_mediator"])
 }
 
 func TestPluginEntries_StepsAndMiddleware(t *testing.T) {
