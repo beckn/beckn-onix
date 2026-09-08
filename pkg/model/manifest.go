@@ -303,7 +303,7 @@ type NodeManifestSchema struct {
 // verification is handled by the manifest loader infrastructure.
 type NodeManifestGovernance struct {
 	EffectiveFrom  string `yaml:"effectiveFrom"`
-	EffectiveUntil string `yaml:"effectiveUntil"` // optional — omit for indefinite validity
+	EffectiveUntil string `yaml:"effectiveUntil,omitempty"` // optional — omit for indefinite validity
 }
 
 // NodeManifest is the typed YAML schema for a node-manifest document.
