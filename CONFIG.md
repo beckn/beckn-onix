@@ -1221,6 +1221,7 @@ schemaVersionMediator:
     artifactCacheTTL: "24h"
     negativeCacheTTL: "5m"
     maxCacheEntries: "500"
+    manifestPath: "/etc/beckn-onix/node-manifest.yaml"
 ```
 
 **Parameters**:
@@ -1234,6 +1235,7 @@ schemaVersionMediator:
 | `artifactCacheTTL` | duration string | `"24h"` | How long to cache successfully fetched translation artifacts. |
 | `negativeCacheTTL` | duration string | `"5m"` | How long to cache artifact-not-found responses. |
 | `maxCacheEntries` | integer string | `"500"` | Maximum entries in the artifact cache. |
+| `manifestPath` | string (absolute path) | — | Absolute path to the local `node-manifest.yaml`. Enables observed seeding — new schema types/versions seen in traffic get appended to the file. Absent disables it. See [plugin README](pkg/plugin/implementation/schemaversionmediator/README.md#observed-seeding). |
 
 **Step ordering — `validateSchema` must come before `mediateSchema`:**
 

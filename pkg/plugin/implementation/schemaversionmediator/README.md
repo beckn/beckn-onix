@@ -16,7 +16,8 @@
 8. [Error Codes](#error-codes)
 9. [Translation Artifacts](#translation-artifacts)
 10. [Data-Loss Detection](#data-loss-detection)
-11. [Known Limitations](#known-limitations)
+11. [Observed Seeding](#observed-seeding)
+12. [Known Limitations](#known-limitations)
 
 ---
 
@@ -74,6 +75,7 @@ plugins:
 | `artifactCacheTTL` | duration string | `"24h"` | How long to cache successfully fetched artifacts |
 | `negativeCacheTTL` | duration string | `"5m"` | How long to cache artifact-not-found responses |
 | `maxCacheEntries` | integer string | `"500"` | Maximum number of entries in the artifact cache |
+| `manifestPath` | string (absolute path) | — | **Optional.** Absolute path to the local `node-manifest.yaml` file on disk. When set, [observed seeding](#observed-seeding) is enabled: schema objects seen in successfully-mediated traffic are appended to this file. If absent, observed seeding is disabled. |
 
 **`action` values:**
 
@@ -245,8 +247,30 @@ After translation, the plugin compares the flattened dot-notation key paths of t
 
 ---
 
+## Observed Seeding
+
+Keeps the local `node-manifest.yaml` aligned with schema objects seen in live traffic, so it doesn't go stale as the application's schema coverage changes.
+
+Enable it by setting `manifestPath` (absolute path to `node-manifest.yaml`) on a `schemaVersionMediator` config block; absent, seeding is disabled. Caller and receiver each run their own `schemaVersionMediator` instance, so seeding can be turned on per handler. It's not gated on caller/receiver — that direction is derived per request from role + action (`deriveDirection` in `core/module/handler/stdHandler.go`) and swaps between a BAP and a BPP, so gating on it here would only cover half the traffic on one of the two roles.
+
+Runs at the end of every `Mediate` call that succeeds, against the payload as received (not the translated output):
+
+1. Load the manifest at `manifestPath` (cached after the first read).
+2. For each `@context`/`@type` pair: an unknown type gets a new `schemaObjects` entry; a known type with an unseen version gets that version appended; anything already declared is skipped.
+3. If anything changed, atomically rewrite the file (temp file + rename) under a mutex spanning the load-diff-write.
+
+A ref is skipped unless `@context` is a well-formed absolute URL, `@type` is non-empty, and a version segment can be extracted — guards against a malformed or adversarial payload.
+
+**Limitations:**
+
+- Does not re-publish to DeDi — that's still a separate, manual step.
+- Never removes schema objects or versions that stop appearing in traffic.
+- Never fails `Mediate` — a seeding error is logged and otherwise ignored.
+- Rewrites the file from the parsed struct, so comments and custom formatting in the source YAML are lost on the first write.
+
+---
+
 ## Known Limitations
 
 - Non-JSONata translator types are not yet supported. The translation dispatch layer is in place; additional content types will be wired in future releases.
-- Observed seeding (auto-updating the local node manifest from live traffic) is not implemented. Tracked in [#822](https://github.com/beckn/beckn-onix/issues/822).
 - `RunOnResponse` is not implemented — Beckn responses arrive as separate inbound requests and are mediated by `Mediate` on the receiver handler, not via a response hook.
