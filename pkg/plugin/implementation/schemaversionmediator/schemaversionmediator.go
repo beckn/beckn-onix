@@ -356,6 +356,7 @@ type mediator struct {
 	exprs           *exprCache
 	notOnboarded    bool                // set at New() when local manifest is absent or has no schemaObjects
 	localManifest   *model.NodeManifest // local node manifest loaded at startup; nil when notOnboarded
+	seeder          *observedSeeder     // nil when manifestPath is not configured
 }
 
 // New is the package-level constructor used by the plugin entrypoint.
@@ -395,6 +396,7 @@ func (p *provider) New(ctx context.Context, loader definition.ManifestLoader, cf
 		cache:           newArtifactCache(positiveTTL, negativeTTL, maxEntries),
 		jsonataInstance: instance,
 		exprs:           newExprCache(),
+		seeder:          newObservedSeeder(strings.TrimSpace(cfg["manifestPath"])),
 	}
 
 	// Cold-start check: attempt to load the local node manifest. If it is
@@ -471,6 +473,7 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 	}
 	if len(needs) == 0 {
 		log.Debugf(ctx, "schemaversionmediator: compatibilityCheck counterparty=%q result=compatible objects=%d", counterpartyID, len(refs))
+		m.observeSeed(ctx, refs)
 		return nil // fully compatible
 	}
 	log.Debugf(ctx, "schemaversionmediator: compatibilityCheck counterparty=%q result=incompatible needs=%d", counterpartyID, len(needs))
@@ -575,7 +578,20 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 	for _, n := range needs {
 		log.Infof(ctx, "schemaversionmediator: translatedObject counterparty=%q type=%q from=%q to=%q", counterpartyID, n.From.Type, n.From.ContextURL, n.ToContextURL())
 	}
+	m.observeSeed(ctx, refs)
 	return nil
+}
+
+// observeSeed appends any new schema objects in refs to the local manifest
+// file. Errors are logged and otherwise ignored; seeding never affects the
+// mediation outcome.
+func (m *mediator) observeSeed(ctx context.Context, refs []SchemaObjectRef) {
+	if m.seeder == nil {
+		return
+	}
+	if err := m.seeder.observe(refs); err != nil {
+		log.Warnf(ctx, "schemaversionmediator: observedSeedingFailed reason=%v", err)
+	}
 }
 
 // applyOnFailure returns the appropriate error or nil depending on policy.OnFailure.
