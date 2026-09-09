@@ -134,6 +134,18 @@ func (p *PluginCfg) PluginEntries() []telemetry.PluginEntry {
 	return entries
 }
 
+// defaultTranslatorID is the Translator used when a consumer needs one but
+// none was explicitly configured.
+const defaultTranslatorID = "jsonatatranslator"
+
+// applyTranslatorDefault sets Translator to defaultTranslatorID when
+// PayloadTransformer or SchemaVersionMediator is configured without one.
+func (p *PluginCfg) applyTranslatorDefault() {
+	if p.Translator == nil && (p.PayloadTransformer != nil || p.SchemaVersionMediator != nil) {
+		p.Translator = &plugin.Config{ID: defaultTranslatorID}
+	}
+}
+
 // HttpClientConfig defines the configuration for the HTTP transport layer.
 type HttpClientConfig struct {
 	// MaxIdleConns controls the maximum number of idle (keep-alive)

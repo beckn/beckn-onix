@@ -6,6 +6,7 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin"
 	"github.com/beckn-one/beckn-onix/pkg/telemetry"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func cfg(id string) *plugin.Config { return &plugin.Config{ID: id} }
@@ -93,4 +94,33 @@ func TestPluginEntries_StepsAndMiddleware(t *testing.T) {
 	assert.Equal(t, "step_two", steps[1].ID)
 	assert.Equal(t, "mw_one", mws[0].ID)
 	assert.Equal(t, "mw_two", mws[1].ID)
+}
+
+func TestApplyTranslatorDefault_SetsDefaultForPayloadTransformer(t *testing.T) {
+	p := PluginCfg{PayloadTransformer: cfg("reqmapper")}
+	p.applyTranslatorDefault()
+	require.NotNil(t, p.Translator)
+	assert.Equal(t, defaultTranslatorID, p.Translator.ID)
+}
+
+func TestApplyTranslatorDefault_SetsDefaultForSchemaVersionMediator(t *testing.T) {
+	p := PluginCfg{SchemaVersionMediator: cfg("schemaversionmediator")}
+	p.applyTranslatorDefault()
+	require.NotNil(t, p.Translator)
+	assert.Equal(t, defaultTranslatorID, p.Translator.ID)
+}
+
+func TestApplyTranslatorDefault_NoOpWhenNeitherConfigured(t *testing.T) {
+	p := PluginCfg{}
+	p.applyTranslatorDefault()
+	assert.Nil(t, p.Translator)
+}
+
+func TestApplyTranslatorDefault_DoesNotOverrideExplicit(t *testing.T) {
+	p := PluginCfg{
+		PayloadTransformer: cfg("reqmapper"),
+		Translator:         cfg("customtranslator"),
+	}
+	p.applyTranslatorDefault()
+	assert.Equal(t, "customtranslator", p.Translator.ID)
 }

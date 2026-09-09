@@ -105,6 +105,7 @@ func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleNa
 		moduleName:    moduleName,
 	}
 	// Initialize plugins.
+	cfg.Plugins.applyTranslatorDefault()
 	if err := h.initPlugins(ctx, mgr, &cfg.Plugins); err != nil {
 		return nil, fmt.Errorf("failed to initialize plugins: %w", err)
 	}
@@ -537,10 +538,6 @@ func loadSchemaVersionMediator(ctx context.Context, mgr PluginManager, manifestL
 	return mediator, nil
 }
 
-// defaultTranslatorID is the Translator used when PayloadTransformer or
-// SchemaVersionMediator is configured without an explicit translator block.
-const defaultTranslatorID = "jsonatatranslator"
-
 func loadPayloadTransformerStep(ctx context.Context, mgr PluginManager, translator definition.Translator, cfg *plugin.Config) (definition.Step, error) {
 	if cfg == nil {
 		log.Debug(ctx, "Skipping PayloadTransformer plugin: not configured")
@@ -597,12 +594,7 @@ func (h *stdHandler) initPlugins(ctx context.Context, mgr PluginManager, cfg *Pl
 	if h.policyChecker, err = LoadPolicyChecker(ctx, mgr, h.manifestLoader, cfg.PolicyChecker); err != nil {
 		return err
 	}
-	translatorCfg := cfg.Translator
-	if translatorCfg == nil && (cfg.PayloadTransformer != nil || cfg.SchemaVersionMediator != nil) {
-		translatorCfg = &plugin.Config{ID: defaultTranslatorID}
-		cfg.Translator = translatorCfg // keep PluginEntries() in sync
-	}
-	translator, err := LoadPlugin(ctx, "Translator", translatorCfg, mgr.Translator)
+	translator, err := LoadPlugin(ctx, "Translator", cfg.Translator, mgr.Translator)
 	if err != nil {
 		return err
 	}

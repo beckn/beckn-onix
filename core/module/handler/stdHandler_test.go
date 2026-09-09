@@ -210,6 +210,30 @@ func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	}
 }
 
+// TestNewStdHandler_AppliesTranslatorDefault verifies NewStdHandler applies
+// PluginCfg.applyTranslatorDefault before initPlugins runs.
+func TestNewStdHandler_AppliesTranslatorDefault(t *testing.T) {
+	var capturedTranslatorID string
+	mgr := &injectCaptureMgr{
+		translatorFunc: func(_ context.Context, cfg *plugin.Config) (definition.Translator, error) {
+			capturedTranslatorID = cfg.ID
+			return stubTranslator{}, nil
+		},
+		payloadTransformerFunc: func(context.Context, definition.Translator, *plugin.Config) (definition.Step, error) {
+			return nil, nil
+		},
+	}
+	cfg := &Config{
+		Plugins: PluginCfg{PayloadTransformer: &plugin.Config{ID: "reqmapper"}},
+	}
+	if _, err := NewStdHandler(context.Background(), mgr, cfg, "testModule"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedTranslatorID != defaultTranslatorID {
+		t.Errorf("expected default translator id %q, got %q", defaultTranslatorID, capturedTranslatorID)
+	}
+}
+
 func TestDeriveDirection(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -421,35 +445,8 @@ func TestLoadPayloadTransformerStep_PassesTranslatorThrough(t *testing.T) {
 	}
 }
 
-// TestInitPlugins_DefaultsTranslatorForPayloadTransformer verifies initPlugins
-// defaults Translator to jsonatatranslator when PayloadTransformer is
-// configured without one.
-func TestInitPlugins_DefaultsTranslatorForPayloadTransformer(t *testing.T) {
-	var capturedTranslatorID string
-	mgr := &injectCaptureMgr{
-		translatorFunc: func(_ context.Context, cfg *plugin.Config) (definition.Translator, error) {
-			capturedTranslatorID = cfg.ID
-			return stubTranslator{}, nil
-		},
-		payloadTransformerFunc: func(context.Context, definition.Translator, *plugin.Config) (definition.Step, error) {
-			return nil, nil
-		},
-	}
-	h := &stdHandler{}
-	cfg := &PluginCfg{PayloadTransformer: &plugin.Config{ID: "reqmapper"}}
-	if err := h.initPlugins(context.Background(), mgr, cfg); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if capturedTranslatorID != defaultTranslatorID {
-		t.Errorf("expected default translator id %q, got %q", defaultTranslatorID, capturedTranslatorID)
-	}
-	if cfg.Translator == nil || cfg.Translator.ID != defaultTranslatorID {
-		t.Error("expected cfg.Translator to be set to the default so PluginEntries() reflects it")
-	}
-}
-
-// TestInitPlugins_ExplicitTranslatorNotOverridden verifies an
-// operator-configured Translator isn't replaced by the default.
+// TestInitPlugins_ExplicitTranslatorNotOverridden verifies initPlugins
+// passes cfg.Translator through to LoadPlugin unchanged.
 func TestInitPlugins_ExplicitTranslatorNotOverridden(t *testing.T) {
 	var capturedTranslatorID string
 	mgr := &injectCaptureMgr{
@@ -474,41 +471,9 @@ func TestInitPlugins_ExplicitTranslatorNotOverridden(t *testing.T) {
 	}
 }
 
-// TestInitPlugins_DefaultsTranslatorForSchemaVersionMediator mirrors the
-// PayloadTransformer defaulting test for the SchemaVersionMediator slot.
-func TestInitPlugins_DefaultsTranslatorForSchemaVersionMediator(t *testing.T) {
-	var capturedTranslatorID string
-	var svmTranslator definition.Translator
-	mgr := &injectCaptureMgr{
-		translatorFunc: func(_ context.Context, cfg *plugin.Config) (definition.Translator, error) {
-			capturedTranslatorID = cfg.ID
-			return stubTranslator{}, nil
-		},
-		schemaVersionMediatorFunc: func(_ context.Context, _ definition.ManifestLoader, translator definition.Translator, _ *plugin.Config) (definition.SchemaVersionMediator, error) {
-			svmTranslator = translator
-			return nil, nil
-		},
-	}
-	h := &stdHandler{}
-	cfg := &PluginCfg{
-		Cache:                 &plugin.Config{ID: "cache"},
-		Registry:              &plugin.Config{ID: "registry"},
-		ManifestLoader:        &plugin.Config{ID: "manifestloader"},
-		SchemaVersionMediator: &plugin.Config{ID: "schemaversionmediator", Config: map[string]string{"nodeId": "test-node"}},
-	}
-	if err := h.initPlugins(context.Background(), mgr, cfg); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if capturedTranslatorID != defaultTranslatorID {
-		t.Errorf("expected default translator id %q, got %q", defaultTranslatorID, capturedTranslatorID)
-	}
-	if svmTranslator != definition.Translator(stubTranslator{}) {
-		t.Error("expected default translator to be passed through to SchemaVersionMediator")
-	}
-}
-
 // TestInitPlugins_SharesTranslatorBetweenPayloadTransformerAndSchemaVersionMediator
 // verifies Translator is resolved once and the same instance reaches both.
+// cfg.Translator is set explicitly; defaulting is applyTranslatorDefault's job.
 func TestInitPlugins_SharesTranslatorBetweenPayloadTransformerAndSchemaVersionMediator(t *testing.T) {
 	var translatorCalls int
 	var svmTranslator, ptTranslator definition.Translator
@@ -533,6 +498,7 @@ func TestInitPlugins_SharesTranslatorBetweenPayloadTransformerAndSchemaVersionMe
 		ManifestLoader:        &plugin.Config{ID: "manifestloader"},
 		SchemaVersionMediator: &plugin.Config{ID: "schemaversionmediator", Config: map[string]string{"nodeId": "test-node"}},
 		PayloadTransformer:    &plugin.Config{ID: "reqmapper"},
+		Translator:            &plugin.Config{ID: defaultTranslatorID},
 	}
 	if err := h.initPlugins(context.Background(), mgr, cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
