@@ -3,6 +3,7 @@ package jsonatatranslator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -70,13 +71,19 @@ func TestTranslate_ConcurrentAccess(t *testing.T) {
 	translator := newTestTranslator(t)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 50; i++ {
 		wg.Add(1)
-		go func() {
+		go func(n int) {
 			defer wg.Done()
-			_, err := translator.Translate(context.Background(), []byte(`$`), []byte(`{"x":1}`))
-			require.NoError(t, err)
-		}()
+			for j := 0; j < 10; j++ {
+				payload := []byte(fmt.Sprintf(`{"x":%d}`, n))
+				result, err := translator.Translate(context.Background(), []byte(`{"y": x}`), payload)
+				require.NoError(t, err)
+				var out map[string]int
+				require.NoError(t, json.Unmarshal(result, &out))
+				require.Equal(t, n, out["y"])
+			}
+		}(i)
 	}
 	wg.Wait()
 }

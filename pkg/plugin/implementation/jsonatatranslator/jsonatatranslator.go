@@ -21,12 +21,21 @@ const defaultMaxExprCacheEntries = 500
 // still compiled and evaluated but not cached.
 type exprCache struct {
 	mu      sync.RWMutex
-	entries map[string]jsonata.Expression
+	entries map[string]*cachedExpr
 	max     int
 }
 
+// cachedExpr pairs a compiled expression with a mutex serializing Evaluate
+// calls on it — jsonata.Expression.Evaluate mutates the compiled
+// expression's own state (its environment, its timestamp), so concurrent
+// calls on the same expression race.
+type cachedExpr struct {
+	mu   sync.Mutex
+	expr jsonata.Expression
+}
+
 func newExprCache(max int) *exprCache {
-	return &exprCache{entries: make(map[string]jsonata.Expression), max: max}
+	return &exprCache{entries: make(map[string]*cachedExpr), max: max}
 }
 
 // Translator implements definition.Translator by compiling (with caching)
@@ -55,12 +64,18 @@ func New(_ context.Context, _ map[string]string) (definition.Translator, func() 
 // artifact and evaluates it against payload, returning the transformed JSON
 // bytes. ctx is accepted for interface consistency; jsonata-go does not
 // support context cancellation, so it is not forwarded to the evaluator.
+//
+// Access to the cached expression is serialized — see cachedExpr. The
+// non-nil bindings map also makes Evaluate allocate a fresh per-call frame
+// instead of reusing the expression's shared one.
 func (t *Translator) Translate(_ context.Context, artifact []byte, payload []byte) ([]byte, error) {
-	expr, err := t.compiledExpr(artifact)
+	ce, err := t.compiledExpr(artifact)
 	if err != nil {
 		return nil, fmt.Errorf("jsonatatranslator: compile expression: %w", err)
 	}
-	result, err := expr.Evaluate(payload, nil)
+	ce.mu.Lock()
+	defer ce.mu.Unlock()
+	result, err := ce.expr.Evaluate(payload, map[string]interface{}{})
 	if err != nil {
 		return nil, fmt.Errorf("jsonatatranslator: evaluate expression: %w", err)
 	}
@@ -70,12 +85,12 @@ func (t *Translator) Translate(_ context.Context, artifact []byte, payload []byt
 // compiledExpr returns a cached compiled JSONata expression for artifact,
 // compiling and caching it on a miss. Indexing the map with artifact
 // directly avoids a string allocation on a hit.
-func (t *Translator) compiledExpr(artifact []byte) (jsonata.Expression, error) {
+func (t *Translator) compiledExpr(artifact []byte) (*cachedExpr, error) {
 	t.exprs.mu.RLock()
-	expr, ok := t.exprs.entries[string(artifact)]
+	ce, ok := t.exprs.entries[string(artifact)]
 	t.exprs.mu.RUnlock()
 	if ok {
-		return expr, nil
+		return ce, nil
 	}
 
 	expression := string(artifact)
@@ -83,13 +98,14 @@ func (t *Translator) compiledExpr(artifact []byte) (jsonata.Expression, error) {
 	if err != nil {
 		return nil, err
 	}
+	ce = &cachedExpr{expr: expr}
 
 	t.exprs.mu.Lock()
 	if len(t.exprs.entries) < t.exprs.max {
-		t.exprs.entries[expression] = expr
+		t.exprs.entries[expression] = ce
 	}
 	t.exprs.mu.Unlock()
-	return expr, nil
+	return ce, nil
 }
 
 // provider implements definition.TranslatorProvider.
