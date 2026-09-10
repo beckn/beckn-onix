@@ -1080,6 +1080,8 @@ middleware:
 
 **Purpose**: Run payload transformation at an explicit point in the step pipeline. This is the safe option for receiver flows where signature and schema validation must happen on the original inbound network payload before any mutation.
 
+`reqmapper` owns the mappings file; execution of each mapping is delegated to an injected `Translator` plugin, so the expression language is a config-driven choice, not something `reqmapper` hard-codes.
+
 ```yaml
 plugins:
   payloadTransformer:
@@ -1087,6 +1089,8 @@ plugins:
     config:
       role: bap               # Use `bpp` when running inside a BPP handler
       mappingsFile: ./config/mappings.yaml
+  translator:                 # Optional — defaults to jsonatatranslator when omitted
+    id: jsonatatranslator
 steps:
   - validateSign
   - validateSchema
@@ -1107,6 +1111,7 @@ steps:
 **Parameters**:
 - `role`: Required. Determines which JSONata expression is evaluated (`bapMappings` or `bppMappings`) for the current action.
 - `mappingsFile`: Required. Absolute or relative path to a YAML file that contains the JSONata expressions for every action.
+- `translator`: Optional. Plugin ID of the `Translator` that executes mappings. Defaults to `jsonatatranslator` (built by `install/build-plugins.sh`), shared with `schemaVersionMediator` if both are configured on the same handler. Swap it to run mappings through a different execution engine without changing `reqmapper` itself. Note: a malformed mapping now fails at first use rather than at adapter startup, since compilation moved behind the `Translator` interface.
 
 **Mapping file structure**:
 ```yaml
@@ -1208,9 +1213,11 @@ The sample illustrates how a single mapping file can convert `search` requests a
 
 **Purpose**: Mediate schema version differences between Beckn participants. When a BAP and BPP declare different schema object versions in their node manifests, this plugin fetches JSONata translation artifacts from the network's artifact registry and transforms the payload so each side receives data in the version it expects.
 
-**Requirements**: A `manifestLoader` plugin must be configured in the same handler.
+**Requirements**: A `manifestLoader` plugin must be configured in the same handler. Translation artifacts are executed via an injected `Translator` — optional to configure explicitly; defaults to `jsonatatranslator` when omitted, shared with `reqmapper`'s `payloadTransformer` step if both are configured on the same handler.
 
 ```yaml
+translator:                 # optional — defaults to jsonatatranslator when omitted
+  id: jsonatatranslator
 schemaVersionMediator:
   id: schemaversionmediator
   config:

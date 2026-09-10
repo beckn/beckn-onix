@@ -13,7 +13,6 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
-	"github.com/jsonata-go/jsonata"
 	v206 "github.com/jsonata-go/jsonata/v206"
 	"gopkg.in/yaml.v3"
 )
@@ -33,16 +32,15 @@ type Config struct {
 	MappingsFile string `yaml:"mappingsFile"` // required path to mappings YAML
 }
 
-// MappingEngine handles JSONata-based transformations
+// MappingEngine loads mapping artifacts from the configured mappings file
+// and delegates their execution to an injected Translator.
 type MappingEngine struct {
-	config          *Config
-	jsonataInstance jsonata.JSONataInstance
-	bapMaps         map[string]jsonata.Expression
-	bppMaps         map[string]jsonata.Expression
-	mappings        map[string]builtinMapping
-	mappingSource   string
-	mutex           sync.RWMutex
-	initialized     bool
+	config        *Config
+	translator    definition.Translator
+	mappings      map[string]builtinMapping
+	mappingSource string
+	mutex         sync.RWMutex
+	initialized   bool
 }
 
 type builtinMapping struct {
@@ -65,12 +63,13 @@ type parsedRequest struct {
 }
 
 // NewReqMapperStep returns a handler step that applies the same reqmapper transformation logic.
-func NewReqMapperStep(cfg *Config) (definition.Step, error) {
+// translator must be non-nil.
+func NewReqMapperStep(cfg *Config, translator definition.Translator) (definition.Step, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
 	}
 
-	engine, err := initMappingEngine(cfg)
+	engine, err := initMappingEngine(cfg, translator)
 	if err != nil {
 		return nil, err
 	}
@@ -148,23 +147,19 @@ func BuildConfig(c map[string]string) *Config {
 	return cfg
 }
 
-// initMappingEngine initializes a mapping engine for the provided config.
-func initMappingEngine(cfg *Config) (*MappingEngine, error) {
+// initMappingEngine initializes a mapping engine for the provided config and translator.
+func initMappingEngine(cfg *Config, translator definition.Translator) (*MappingEngine, error) {
 	if cfg == nil {
 		return nil, errors.New("config cannot be nil")
 	}
+	if translator == nil {
+		return nil, errors.New("translator cannot be nil")
+	}
 
 	engine := &MappingEngine{
-		config:  cfg,
-		bapMaps: make(map[string]jsonata.Expression),
-		bppMaps: make(map[string]jsonata.Expression),
+		config:     cfg,
+		translator: translator,
 	}
-
-	instance, err := jsonata.OpenLatest()
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize jsonata: %w", err)
-	}
-	engine.jsonataInstance = instance
 
 	if err := engine.loadBuiltinMappings(); err != nil {
 		return nil, err
@@ -197,28 +192,13 @@ func (e *MappingEngine) loadMappingsFromConfig() (map[string]builtinMapping, str
 	return parsed.Mappings, source, nil
 }
 
-// loadBuiltinMappings compiles JSONata expressions for every action/direction pair from the configured mappings file.
+// loadBuiltinMappings reads every action/direction artifact from the
+// configured mappings file. Artifacts aren't compiled here, so a malformed
+// one now surfaces at transform time instead of at load.
 func (e *MappingEngine) loadBuiltinMappings() error {
 	mappings, source, err := e.loadMappingsFromConfig()
 	if err != nil {
 		return err
-	}
-
-	e.bapMaps = make(map[string]jsonata.Expression, len(mappings))
-	e.bppMaps = make(map[string]jsonata.Expression, len(mappings))
-
-	for action, mapping := range mappings {
-		bapExpr, err := e.jsonataInstance.Compile(mapping.BAP, false)
-		if err != nil {
-			return fmt.Errorf("failed to compile BAP mapping for action %s: %w", action, err)
-		}
-		bppExpr, err := e.jsonataInstance.Compile(mapping.BPP, false)
-		if err != nil {
-			return fmt.Errorf("failed to compile BPP mapping for action %s: %w", action, err)
-		}
-
-		e.bapMaps[action] = bapExpr
-		e.bppMaps[action] = bppExpr
 	}
 
 	e.mappings = mappings
@@ -226,9 +206,8 @@ func (e *MappingEngine) loadBuiltinMappings() error {
 
 	log.Infof(
 		context.Background(),
-		"Loaded %d BAP mappings and %d BPP mappings from %s",
-		len(e.bapMaps),
-		len(e.bppMaps),
+		"Loaded %d action mapping(s) from %s",
+		len(e.mappings),
 		source,
 	)
 
@@ -238,36 +217,33 @@ func (e *MappingEngine) loadBuiltinMappings() error {
 // Transform applies the appropriate mapping based on role and action
 func (e *MappingEngine) Transform(ctx context.Context, action string, req map[string]interface{}, role string) ([]byte, error) {
 	e.mutex.RLock()
-	defer e.mutex.RUnlock()
+	mapping, found := e.mappings[action]
+	e.mutex.RUnlock()
 
-	var expr jsonata.Expression
-	var found bool
-
-	// Select appropriate mapping based on role
+	var artifact string
 	switch role {
 	case "bap":
-		expr, found = e.bapMaps[action]
+		artifact = mapping.BAP
 	case "bpp":
-		expr, found = e.bppMaps[action]
+		artifact = mapping.BPP
 	default:
 		return json.Marshal(req)
 	}
 
 	// If no mapping found, return original request
-	if !found || expr == nil {
+	if !found {
 		log.Debugf(ctx, "No mapping found for action: %s, role: %s", action, role)
 		return json.Marshal(req)
 	}
 
-	// Marshal request for JSONata evaluation. A failure here never reaches
-	// the JSONata engine, so it's classified separately from Evaluate errors.
+	// Marshal request for the translator. A failure here never reaches the
+	// translator, so it's classified separately from Translate errors.
 	input, err := json.Marshal(req)
 	if err != nil {
 		return nil, model.NewBadReqErr(codeBizGenericError, fmt.Errorf("failed to marshal request for mapping: %w", err))
 	}
 
-	// Apply JSONata transformation
-	result, err := expr.Evaluate(input, nil)
+	result, err := e.translator.Translate(ctx, []byte(artifact), input)
 	if err != nil {
 		return nil, classifyEvaluateErr(err)
 	}
@@ -276,9 +252,9 @@ func (e *MappingEngine) Transform(ctx context.Context, action string, req map[st
 	return result, nil
 }
 
-// classifyEvaluateErr maps JSONata Evaluate failures by v206.JSONataError code.
-// T*/D* map to codeSchemaAdaptationFailed; U* and other causes map to
-// codeBizGenericError. S* cannot occur here because mappings compile before Evaluate.
+// classifyEvaluateErr maps a Translate failure's v206.JSONataError code, when
+// present, onto the Beckn error taxonomy. T*/D* map to
+// codeSchemaAdaptationFailed; everything else maps to codeBizGenericError.
 func classifyEvaluateErr(err error) *model.CodedErr {
 	wrapped := fmt.Errorf("JSONata evaluation failed: %w", err)
 
@@ -306,19 +282,14 @@ func (e *MappingEngine) GetMappingInfo() map[string]interface{} {
 	e.mutex.RLock()
 	defer e.mutex.RUnlock()
 
-	bapActions := make([]string, 0, len(e.bapMaps))
-	for action := range e.bapMaps {
-		bapActions = append(bapActions, action)
-	}
-
-	bppActions := make([]string, 0, len(e.bppMaps))
-	for action := range e.bppMaps {
-		bppActions = append(bppActions, action)
+	actions := make([]string, 0, len(e.mappings))
+	for action := range e.mappings {
+		actions = append(actions, action)
 	}
 
 	return map[string]interface{}{
-		"bap_mappings":    bapActions,
-		"bpp_mappings":    bppActions,
+		"bap_mappings":    actions,
+		"bpp_mappings":    actions,
 		"mappings_source": e.mappingSource,
 		"action_count":    len(e.mappings),
 	}

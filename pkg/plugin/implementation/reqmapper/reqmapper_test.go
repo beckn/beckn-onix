@@ -9,55 +9,45 @@ import (
 	"math"
 	"net/http"
 	"path/filepath"
-	"sync"
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
+	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/jsonatatranslator"
 	"github.com/beckn-one/beckn-onix/pkg/testutil"
-	"github.com/jsonata-go/jsonata"
 	v206 "github.com/jsonata-go/jsonata/v206"
 	"github.com/stretchr/testify/require"
 )
 
-type failingExpression struct{}
+// failingTranslator returns a generic (non-JSONataError) failure from
+// Translate, for exercising classifyEvaluateErr's default branch.
+type failingTranslator struct{}
 
-func (failingExpression) Evaluate(inputJSON []byte, bindings map[string]interface{}) ([]byte, error) {
+func (failingTranslator) Translate(ctx context.Context, artifact, payload []byte) ([]byte, error) {
 	return nil, errors.New("boom")
 }
 
-func (failingExpression) SetMaxDepth(maxDepth int) {}
-
-func (failingExpression) SetMaxTime(maxMs int) {}
-
-func (failingExpression) SetMaxRange(maxRange int) {}
-
-func (failingExpression) Assign(name string, value interface{}) {}
-
-func (failingExpression) RegisterFunction(name string, implementation interface{}, signature string) error {
-	return nil
-}
-
-func (failingExpression) AST() interface{} { return nil }
-
-func (failingExpression) Errors() []error { return nil }
-
-var _ jsonata.Expression = failingExpression{}
-
-// jsonataErrExpression fails Evaluate with a *v206.JSONataError carrying the
+// jsonataErrTranslator fails Translate with a *v206.JSONataError carrying the
 // given Code, for driving classifyEvaluateErr's branches directly.
-type jsonataErrExpression struct {
-	failingExpression
+type jsonataErrTranslator struct {
 	code string
 }
 
-func (e jsonataErrExpression) Evaluate(inputJSON []byte, bindings map[string]interface{}) ([]byte, error) {
-	return nil, &v206.JSONataError{Code: e.code, Message: "synthetic error for test"}
+func (t jsonataErrTranslator) Translate(ctx context.Context, artifact, payload []byte) ([]byte, error) {
+	return nil, &v206.JSONataError{Code: t.code, Message: "synthetic error for test"}
 }
-
-var _ jsonata.Expression = jsonataErrExpression{}
 
 func testMappingsFile() string {
 	return filepath.Join("testdata", "mappings.yaml")
+}
+
+// newTestTranslator returns a real jsonatatranslator instance, so reqmapper
+// tests keep exercising the actual JSONata engine end-to-end.
+func newTestTranslator(t *testing.T) definition.Translator {
+	t.Helper()
+	translator, _, err := jsonatatranslator.New(context.Background(), nil)
+	require.NoError(t, err)
+	return translator
 }
 
 func newTestEngine(t *testing.T) *MappingEngine {
@@ -66,7 +56,7 @@ func newTestEngine(t *testing.T) *MappingEngine {
 	engine, err := initMappingEngine(&Config{
 		Role:         "bap",
 		MappingsFile: testMappingsFile(),
-	})
+	}, newTestTranslator(t))
 	require.NoError(t, err)
 	return engine
 }
@@ -100,8 +90,10 @@ func testSearchPayload(t *testing.T) []byte {
 }
 
 func TestNewReqMapperStep(t *testing.T) {
+	translator := newTestTranslator(t)
+
 	t.Run("nil config", func(t *testing.T) {
-		step, err := NewReqMapperStep(nil)
+		step, err := NewReqMapperStep(nil, translator)
 		require.Error(t, err)
 		require.Nil(t, step)
 	})
@@ -110,7 +102,16 @@ func TestNewReqMapperStep(t *testing.T) {
 		step, err := NewReqMapperStep(&Config{
 			Role:         "invalid",
 			MappingsFile: testMappingsFile(),
-		})
+		}, translator)
+		require.Error(t, err)
+		require.Nil(t, step)
+	})
+
+	t.Run("nil translator", func(t *testing.T) {
+		step, err := NewReqMapperStep(&Config{
+			Role:         "bap",
+			MappingsFile: testMappingsFile(),
+		}, nil)
 		require.Error(t, err)
 		require.Nil(t, step)
 	})
@@ -119,7 +120,7 @@ func TestNewReqMapperStep(t *testing.T) {
 		step, err := NewReqMapperStep(&Config{
 			Role:         "bap",
 			MappingsFile: testMappingsFile(),
-		})
+		}, translator)
 		require.NoError(t, err)
 		require.NotNil(t, step)
 	})
@@ -129,7 +130,7 @@ func TestReqMapperStepRun_Success(t *testing.T) {
 	step, err := NewReqMapperStep(&Config{
 		Role:         "bap",
 		MappingsFile: testMappingsFile(),
-	})
+	}, newTestTranslator(t))
 	require.NoError(t, err)
 
 	body := testSearchPayload(t)
@@ -168,11 +169,10 @@ func TestReqMapperStepRun_TransformFailureNacksInsteadOfFallingBack(t *testing.T
 	step := &reqMapperStep{
 		role: "bap",
 		engine: &MappingEngine{
-			bapMaps: map[string]jsonata.Expression{
-				"search": failingExpression{},
+			translator: failingTranslator{},
+			mappings: map[string]builtinMapping{
+				"search": {BAP: "$", BPP: "$"},
 			},
-			bppMaps: make(map[string]jsonata.Expression),
-			mutex:   sync.RWMutex{},
 		},
 	}
 
@@ -197,7 +197,7 @@ func TestReqMapperStepRun_EmptyBody(t *testing.T) {
 	step, err := NewReqMapperStep(&Config{
 		Role:         "bap",
 		MappingsFile: testMappingsFile(),
-	})
+	}, newTestTranslator(t))
 	require.NoError(t, err)
 
 	req, err := http.NewRequest(http.MethodPost, "http://example.com/search", bytes.NewReader(nil))
@@ -279,11 +279,11 @@ func TestMappingEngineTransform(t *testing.T) {
 		require.JSONEq(t, string(expected), string(result))
 	})
 
-	t.Run("marshal failure ahead of jsonata evaluation classifies as BIZ_GENERIC_ERROR", func(t *testing.T) {
+	t.Run("marshal failure ahead of translation classifies as BIZ_GENERIC_ERROR", func(t *testing.T) {
 		req := map[string]interface{}{
 			"context": map[string]interface{}{"action": "search"},
 			// math.Inf isn't representable in JSON, so json.Marshal fails
-			// here without the JSONata engine ever being reached.
+			// here without the translator ever being reached.
 			"message": map[string]interface{}{"badValue": math.Inf(1)},
 		}
 
@@ -293,7 +293,7 @@ func TestMappingEngineTransform(t *testing.T) {
 	})
 
 	// jsonata_dynamic_error (testdata/mappings.yaml) triggers a real v206 D3030 error,
-	// exercising the actual JSONata T*/D* error path instead of a mock.
+	// exercising the actual JSONata T*/D* error path via jsonatatranslator instead of a mock.
 	t.Run("genuine JSONata dynamic error classifies as SCH_SCHEMA_ADAPTATION_FAILED", func(t *testing.T) {
 		req := map[string]interface{}{
 			"context": map[string]interface{}{"action": "jsonata_dynamic_error"},
@@ -311,24 +311,23 @@ func TestMappingEngineTransform(t *testing.T) {
 
 func TestMappingEngineTransform_ClassifiesEvaluateFailures(t *testing.T) {
 	tests := []struct {
-		name     string
-		expr     jsonata.Expression
-		wantCode string
+		name       string
+		translator definition.Translator
+		wantCode   string
 	}{
-		{"type-mismatch JSONataError (T*) -> SCH_SCHEMA_ADAPTATION_FAILED", jsonataErrExpression{code: "T2001"}, "SCH_SCHEMA_ADAPTATION_FAILED"},
-		{"dynamic JSONataError (D*) -> SCH_SCHEMA_ADAPTATION_FAILED", jsonataErrExpression{code: "D3030"}, "SCH_SCHEMA_ADAPTATION_FAILED"},
-		{"recursion-depth JSONataError (U1001) -> BIZ_GENERIC_ERROR", jsonataErrExpression{code: "U1001"}, "BIZ_GENERIC_ERROR"},
-		{"timeout JSONataError (U1002) -> BIZ_GENERIC_ERROR", jsonataErrExpression{code: "U1002"}, "BIZ_GENERIC_ERROR"},
-		{"panic-recovery JSONataError (U1003) -> BIZ_GENERIC_ERROR", jsonataErrExpression{code: "U1003"}, "BIZ_GENERIC_ERROR"},
-		{"non-JSONataError cause -> BIZ_GENERIC_ERROR", failingExpression{}, "BIZ_GENERIC_ERROR"},
+		{"type-mismatch JSONataError (T*) -> SCH_SCHEMA_ADAPTATION_FAILED", jsonataErrTranslator{code: "T2001"}, "SCH_SCHEMA_ADAPTATION_FAILED"},
+		{"dynamic JSONataError (D*) -> SCH_SCHEMA_ADAPTATION_FAILED", jsonataErrTranslator{code: "D3030"}, "SCH_SCHEMA_ADAPTATION_FAILED"},
+		{"recursion-depth JSONataError (U1001) -> BIZ_GENERIC_ERROR", jsonataErrTranslator{code: "U1001"}, "BIZ_GENERIC_ERROR"},
+		{"timeout JSONataError (U1002) -> BIZ_GENERIC_ERROR", jsonataErrTranslator{code: "U1002"}, "BIZ_GENERIC_ERROR"},
+		{"panic-recovery JSONataError (U1003) -> BIZ_GENERIC_ERROR", jsonataErrTranslator{code: "U1003"}, "BIZ_GENERIC_ERROR"},
+		{"non-JSONataError cause -> BIZ_GENERIC_ERROR", failingTranslator{}, "BIZ_GENERIC_ERROR"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			engine := &MappingEngine{
-				bapMaps: map[string]jsonata.Expression{"search": tt.expr},
-				bppMaps: make(map[string]jsonata.Expression),
-				mutex:   sync.RWMutex{},
+				translator: tt.translator,
+				mappings:   map[string]builtinMapping{"search": {BAP: "$", BPP: "$"}},
 			}
 			req := map[string]interface{}{"context": map[string]interface{}{"action": "search"}}
 
@@ -341,18 +340,15 @@ func TestMappingEngineTransform_ClassifiesEvaluateFailures(t *testing.T) {
 
 func TestMappingEngineReloadMappings(t *testing.T) {
 	engine := newTestEngine(t)
-	originalBAP := len(engine.bapMaps)
-	originalBPP := len(engine.bppMaps)
-	require.NotZero(t, originalBAP)
-	require.NotZero(t, originalBPP)
+	original := len(engine.mappings)
+	require.NotZero(t, original)
 
-	for action := range engine.bapMaps {
-		delete(engine.bapMaps, action)
+	for action := range engine.mappings {
+		delete(engine.mappings, action)
 		break
 	}
-	require.NotEqual(t, originalBAP, len(engine.bapMaps))
+	require.NotEqual(t, original, len(engine.mappings))
 
 	require.NoError(t, engine.ReloadMappings())
-	require.Equal(t, originalBAP, len(engine.bapMaps))
-	require.Equal(t, originalBPP, len(engine.bppMaps))
+	require.Equal(t, original, len(engine.mappings))
 }

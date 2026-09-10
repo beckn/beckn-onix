@@ -20,8 +20,10 @@ type PluginManager interface {
 	Publisher(ctx context.Context, cfg *plugin.Config) (definition.Publisher, error)
 	Signer(ctx context.Context, cfg *plugin.Config) (definition.Signer, error)
 	Step(ctx context.Context, cfg *plugin.Config) (definition.Step, error)
+	Translator(ctx context.Context, cfg *plugin.Config) (definition.Translator, error)
+	PayloadTransformer(ctx context.Context, translator definition.Translator, cfg *plugin.Config) (definition.Step, error)
 	PolicyChecker(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.PolicyChecker, error)
-	SchemaVersionMediator(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *plugin.Config) (definition.SchemaVersionMediator, error)
+	SchemaVersionMediator(ctx context.Context, manifestLoader definition.ManifestLoader, translator definition.Translator, cfg *plugin.Config) (definition.SchemaVersionMediator, error)
 	Cache(ctx context.Context, cfg *plugin.Config) (definition.Cache, error)
 	Registry(ctx context.Context, cache definition.Cache, cfg *plugin.Config) (definition.RegistryLookup, error)
 	KeyManager(ctx context.Context, rLookup definition.RegistryLookup, cfg *plugin.Config) (definition.KeyManager, error)
@@ -69,9 +71,12 @@ const (
 
 // PluginCfg holds the configuration for various plugins.
 type PluginCfg struct {
-	SchemaValidator       *plugin.Config  `yaml:"schemaValidator,omitempty"`
-	PolicyChecker         *plugin.Config  `yaml:"checkPolicy,omitempty"`
-	PayloadTransformer    *plugin.Config  `yaml:"payloadTransformer,omitempty"`
+	SchemaValidator    *plugin.Config `yaml:"schemaValidator,omitempty"`
+	PolicyChecker      *plugin.Config `yaml:"checkPolicy,omitempty"`
+	PayloadTransformer *plugin.Config `yaml:"payloadTransformer,omitempty"`
+	// Translator executes PayloadTransformer's and SchemaVersionMediator's
+	// translation artifacts. Defaults to jsonatatranslator when omitted.
+	Translator            *plugin.Config  `yaml:"translator,omitempty"`
 	SignValidator         *plugin.Config  `yaml:"signValidator,omitempty"`
 	Publisher             *plugin.Config  `yaml:"publisher,omitempty"`
 	Signer                *plugin.Config  `yaml:"signer,omitempty"`
@@ -111,6 +116,7 @@ func (p *PluginCfg) PluginEntries() []telemetry.PluginEntry {
 	add("policy_checker", p.PolicyChecker)
 	add("schema_version_mediator", p.SchemaVersionMediator)
 	add("payload_transformer", p.PayloadTransformer)
+	add("translator", p.Translator)
 	add("key_manager", p.KeyManager)
 	add("payload_store", p.PayloadStore)
 	add("catalog_publisher", p.CatalogPublisher)
@@ -126,6 +132,18 @@ func (p *PluginCfg) PluginEntries() []telemetry.PluginEntry {
 		}
 	}
 	return entries
+}
+
+// defaultTranslatorID is the Translator used when a consumer needs one but
+// none was explicitly configured.
+const defaultTranslatorID = "jsonatatranslator"
+
+// applyTranslatorDefault sets Translator to defaultTranslatorID when
+// PayloadTransformer or SchemaVersionMediator is configured without one.
+func (p *PluginCfg) applyTranslatorDefault() {
+	if p.Translator == nil && (p.PayloadTransformer != nil || p.SchemaVersionMediator != nil) {
+		p.Translator = &plugin.Config{ID: defaultTranslatorID}
+	}
 }
 
 // HttpClientConfig defines the configuration for the HTTP transport layer.

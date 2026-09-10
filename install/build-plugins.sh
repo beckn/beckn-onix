@@ -33,6 +33,7 @@ plugins=(
     "manifestloader"
     "reqpreprocessor"
     "otelsetup"
+    "jsonatatranslator"
     "reqmapper"
     "router"
     "schemavalidator"

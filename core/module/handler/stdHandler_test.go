@@ -137,6 +137,12 @@ func (noopPluginManager) Signer(context.Context, *plugin.Config) (definition.Sig
 func (noopPluginManager) Step(context.Context, *plugin.Config) (definition.Step, error) {
 	return nil, nil
 }
+func (noopPluginManager) Translator(context.Context, *plugin.Config) (definition.Translator, error) {
+	return nil, nil
+}
+func (noopPluginManager) PayloadTransformer(context.Context, definition.Translator, *plugin.Config) (definition.Step, error) {
+	return nil, nil
+}
 func (noopPluginManager) PolicyChecker(context.Context, definition.ManifestLoader, *plugin.Config) (definition.PolicyChecker, error) {
 	return nil, nil
 }
@@ -158,7 +164,7 @@ func (noopPluginManager) TransportWrapper(context.Context, *plugin.Config) (defi
 func (noopPluginManager) SchemaValidator(context.Context, *plugin.Config) (definition.SchemaValidator, error) {
 	return nil, nil
 }
-func (noopPluginManager) SchemaVersionMediator(context.Context, definition.ManifestLoader, *plugin.Config) (definition.SchemaVersionMediator, error) {
+func (noopPluginManager) SchemaVersionMediator(context.Context, definition.ManifestLoader, definition.Translator, *plugin.Config) (definition.SchemaVersionMediator, error) {
 	return nil, nil
 }
 func (noopPluginManager) PayloadStore(_ context.Context, _ definition.Cache, _ string, _ *plugin.Config) (definition.PayloadStore, error) {
@@ -201,6 +207,30 @@ func TestNewStdHandler_CheckPolicyStepWithoutPluginFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "PolicyChecker plugin not configured") {
 		t.Fatalf("expected explicit PolicyChecker config error, got: %v", err)
+	}
+}
+
+// TestNewStdHandler_AppliesTranslatorDefault verifies NewStdHandler applies
+// PluginCfg.applyTranslatorDefault before initPlugins runs.
+func TestNewStdHandler_AppliesTranslatorDefault(t *testing.T) {
+	var capturedTranslatorID string
+	mgr := &injectCaptureMgr{
+		translatorFunc: func(_ context.Context, cfg *plugin.Config) (definition.Translator, error) {
+			capturedTranslatorID = cfg.ID
+			return stubTranslator{}, nil
+		},
+		payloadTransformerFunc: func(context.Context, definition.Translator, *plugin.Config) (definition.Step, error) {
+			return nil, nil
+		},
+	}
+	cfg := &Config{
+		Plugins: PluginCfg{PayloadTransformer: &plugin.Config{ID: "reqmapper"}},
+	}
+	if _, err := NewStdHandler(context.Background(), mgr, cfg, "testModule"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedTranslatorID != defaultTranslatorID {
+		t.Errorf("expected default translator id %q, got %q", defaultTranslatorID, capturedTranslatorID)
 	}
 }
 
@@ -263,7 +293,7 @@ func TestLoadManifestLoader_RequiresRegistryMetadataLookup(t *testing.T) {
 }
 
 func TestLoadSchemaVersionMediator_NilCfg_Skipped(t *testing.T) {
-	svm, err := loadSchemaVersionMediator(context.Background(), noopPluginManager{}, nil, nil)
+	svm, err := loadSchemaVersionMediator(context.Background(), noopPluginManager{}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("expected nil error when cfg is nil, got %v", err)
 	}
@@ -273,22 +303,29 @@ func TestLoadSchemaVersionMediator_NilCfg_Skipped(t *testing.T) {
 }
 
 func TestLoadSchemaVersionMediator_RequiresManifestLoader(t *testing.T) {
-	_, err := loadSchemaVersionMediator(context.Background(), noopPluginManager{}, nil, &plugin.Config{ID: "translationmapmediator"})
+	_, err := loadSchemaVersionMediator(context.Background(), noopPluginManager{}, nil, nil, &plugin.Config{ID: "translationmapmediator"})
 	if err == nil || !strings.Contains(err.Error(), "ManifestLoader plugin not configured") {
 		t.Fatalf("expected ManifestLoader error, got %v", err)
+	}
+}
+
+func TestLoadSchemaVersionMediator_RequiresTranslator(t *testing.T) {
+	_, err := loadSchemaVersionMediator(context.Background(), noopPluginManager{}, &stubManifestLoader{}, nil, &plugin.Config{ID: "translationmapmediator"})
+	if err == nil || !strings.Contains(err.Error(), "Translator plugin not configured") {
+		t.Fatalf("expected Translator error, got %v", err)
 	}
 }
 
 func TestLoadSchemaVersionMediator_PassesLoaderThrough(t *testing.T) {
 	var capturedLoader definition.ManifestLoader
 	mgr := &injectCaptureMgr{
-		schemaVersionMediatorFunc: func(_ context.Context, loader definition.ManifestLoader, _ *plugin.Config) (definition.SchemaVersionMediator, error) {
+		schemaVersionMediatorFunc: func(_ context.Context, loader definition.ManifestLoader, _ definition.Translator, _ *plugin.Config) (definition.SchemaVersionMediator, error) {
 			capturedLoader = loader
 			return nil, nil
 		},
 	}
 	loader := &stubManifestLoader{}
-	_, err := loadSchemaVersionMediator(context.Background(), mgr, loader, &plugin.Config{ID: "translationmapmediator"})
+	_, err := loadSchemaVersionMediator(context.Background(), mgr, loader, stubTranslator{}, &plugin.Config{ID: "translationmapmediator"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -297,16 +334,34 @@ func TestLoadSchemaVersionMediator_PassesLoaderThrough(t *testing.T) {
 	}
 }
 
+func TestLoadSchemaVersionMediator_PassesTranslatorThrough(t *testing.T) {
+	var capturedTranslator definition.Translator
+	stub := stubTranslator{}
+	mgr := &injectCaptureMgr{
+		schemaVersionMediatorFunc: func(_ context.Context, _ definition.ManifestLoader, translator definition.Translator, _ *plugin.Config) (definition.SchemaVersionMediator, error) {
+			capturedTranslator = translator
+			return nil, nil
+		},
+	}
+	_, err := loadSchemaVersionMediator(context.Background(), mgr, &stubManifestLoader{}, stub, &plugin.Config{ID: "translationmapmediator"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedTranslator != definition.Translator(stub) {
+		t.Error("expected translator to be passed through to SchemaVersionMediator")
+	}
+}
+
 func TestLoadSchemaVersionMediator_OperatorNodeIdPassedThrough(t *testing.T) {
 	var capturedCfg map[string]string
 	mgr := &injectCaptureMgr{
-		schemaVersionMediatorFunc: func(_ context.Context, _ definition.ManifestLoader, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
+		schemaVersionMediatorFunc: func(_ context.Context, _ definition.ManifestLoader, _ definition.Translator, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
 			capturedCfg = cfg.Config
 			return nil, nil
 		},
 	}
 	loader := &stubManifestLoader{}
-	_, err := loadSchemaVersionMediator(context.Background(), mgr, loader, &plugin.Config{
+	_, err := loadSchemaVersionMediator(context.Background(), mgr, loader, stubTranslator{}, &plugin.Config{
 		ID:     "translationmapmediator",
 		Config: map[string]string{"nodeId": "nfh.global/subscribers.beckn.one/sandbox.open-kitchen.com"},
 	})
@@ -318,16 +373,192 @@ func TestLoadSchemaVersionMediator_OperatorNodeIdPassedThrough(t *testing.T) {
 	}
 }
 
-// injectCaptureMgr is a PluginManager stub that captures the cfg passed to SchemaVersionMediator.
-type injectCaptureMgr struct {
-	noopPluginManager
-	schemaVersionMediatorFunc func(context.Context, definition.ManifestLoader, *plugin.Config) (definition.SchemaVersionMediator, error)
+func TestLoadTranslator_NilCfg_Skipped(t *testing.T) {
+	translator, err := LoadPlugin(context.Background(), "Translator", nil, noopPluginManager{}.Translator)
+	if err != nil {
+		t.Fatalf("expected nil error when cfg is nil, got %v", err)
+	}
+	if translator != nil {
+		t.Error("expected nil Translator when cfg is nil")
+	}
 }
 
-func (m *injectCaptureMgr) SchemaVersionMediator(ctx context.Context, loader definition.ManifestLoader, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
-	if m.schemaVersionMediatorFunc != nil {
-		return m.schemaVersionMediatorFunc(ctx, loader, cfg)
+func TestLoadTranslator_PassesCfgThrough(t *testing.T) {
+	var capturedCfg *plugin.Config
+	stub := stubTranslator{}
+	mgr := &injectCaptureMgr{
+		translatorFunc: func(_ context.Context, cfg *plugin.Config) (definition.Translator, error) {
+			capturedCfg = cfg
+			return stub, nil
+		},
 	}
+	cfg := &plugin.Config{ID: "jsonatatranslator"}
+	got, err := LoadPlugin(context.Background(), "Translator", cfg, mgr.Translator)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != definition.Translator(stub) {
+		t.Error("expected the Translator returned by the manager to be forwarded")
+	}
+	if capturedCfg != cfg {
+		t.Error("expected cfg to be passed through to Translator")
+	}
+}
+
+func TestLoadTranslator_ProviderErrorWrapped(t *testing.T) {
+	mgr := &injectCaptureMgr{
+		translatorFunc: func(context.Context, *plugin.Config) (definition.Translator, error) {
+			return nil, errors.New("translator boom")
+		},
+	}
+	_, err := LoadPlugin(context.Background(), "Translator", &plugin.Config{ID: "jsonatatranslator"}, mgr.Translator)
+	if err == nil || !strings.Contains(err.Error(), "translator boom") {
+		t.Fatalf("expected wrapped provider error, got %v", err)
+	}
+}
+
+func TestLoadPayloadTransformerStep_NilCfg_Skipped(t *testing.T) {
+	step, err := loadPayloadTransformerStep(context.Background(), noopPluginManager{}, stubTranslator{}, nil)
+	if err != nil {
+		t.Fatalf("expected nil error when cfg is nil, got %v", err)
+	}
+	if step != nil {
+		t.Error("expected nil Step when cfg is nil")
+	}
+}
+
+func TestLoadPayloadTransformerStep_PassesTranslatorThrough(t *testing.T) {
+	var capturedTranslator definition.Translator
+	stub := stubTranslator{}
+	mgr := &injectCaptureMgr{
+		payloadTransformerFunc: func(_ context.Context, translator definition.Translator, _ *plugin.Config) (definition.Step, error) {
+			capturedTranslator = translator
+			return nil, nil
+		},
+	}
+	_, err := loadPayloadTransformerStep(context.Background(), mgr, stub, &plugin.Config{ID: "reqmapper"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedTranslator != definition.Translator(stub) {
+		t.Error("expected translator to be passed through to PayloadTransformer")
+	}
+}
+
+// TestInitPlugins_ExplicitTranslatorNotOverridden verifies initPlugins
+// passes cfg.Translator through to LoadPlugin unchanged.
+func TestInitPlugins_ExplicitTranslatorNotOverridden(t *testing.T) {
+	var capturedTranslatorID string
+	mgr := &injectCaptureMgr{
+		translatorFunc: func(_ context.Context, cfg *plugin.Config) (definition.Translator, error) {
+			capturedTranslatorID = cfg.ID
+			return stubTranslator{}, nil
+		},
+		payloadTransformerFunc: func(context.Context, definition.Translator, *plugin.Config) (definition.Step, error) {
+			return nil, nil
+		},
+	}
+	h := &stdHandler{}
+	cfg := &PluginCfg{
+		PayloadTransformer: &plugin.Config{ID: "reqmapper"},
+		Translator:         &plugin.Config{ID: "customtranslator"},
+	}
+	if err := h.initPlugins(context.Background(), mgr, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedTranslatorID != "customtranslator" {
+		t.Errorf("expected operator-configured translator id to be used, got %q", capturedTranslatorID)
+	}
+}
+
+// TestInitPlugins_SharesTranslatorBetweenPayloadTransformerAndSchemaVersionMediator
+// verifies Translator is resolved once and the same instance reaches both.
+// cfg.Translator is set explicitly; defaulting is applyTranslatorDefault's job.
+func TestInitPlugins_SharesTranslatorBetweenPayloadTransformerAndSchemaVersionMediator(t *testing.T) {
+	var translatorCalls int
+	var svmTranslator, ptTranslator definition.Translator
+	mgr := &injectCaptureMgr{
+		translatorFunc: func(context.Context, *plugin.Config) (definition.Translator, error) {
+			translatorCalls++
+			return stubTranslator{}, nil
+		},
+		schemaVersionMediatorFunc: func(_ context.Context, _ definition.ManifestLoader, translator definition.Translator, _ *plugin.Config) (definition.SchemaVersionMediator, error) {
+			svmTranslator = translator
+			return nil, nil
+		},
+		payloadTransformerFunc: func(_ context.Context, translator definition.Translator, _ *plugin.Config) (definition.Step, error) {
+			ptTranslator = translator
+			return nil, nil
+		},
+	}
+	h := &stdHandler{}
+	cfg := &PluginCfg{
+		Cache:                 &plugin.Config{ID: "cache"},
+		Registry:              &plugin.Config{ID: "registry"},
+		ManifestLoader:        &plugin.Config{ID: "manifestloader"},
+		SchemaVersionMediator: &plugin.Config{ID: "schemaversionmediator", Config: map[string]string{"nodeId": "test-node"}},
+		PayloadTransformer:    &plugin.Config{ID: "reqmapper"},
+		Translator:            &plugin.Config{ID: defaultTranslatorID},
+	}
+	if err := h.initPlugins(context.Background(), mgr, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if translatorCalls != 1 {
+		t.Errorf("expected Translator to be resolved once and shared, got %d calls", translatorCalls)
+	}
+	if svmTranslator == nil || ptTranslator == nil || svmTranslator != ptTranslator {
+		t.Error("expected SchemaVersionMediator and PayloadTransformer to receive the same Translator instance")
+	}
+}
+
+// injectCaptureMgr is a PluginManager stub that captures the cfg/dependency
+// passed to SchemaVersionMediator, Translator, and PayloadTransformer.
+type injectCaptureMgr struct {
+	noopPluginManager
+	schemaVersionMediatorFunc func(context.Context, definition.ManifestLoader, definition.Translator, *plugin.Config) (definition.SchemaVersionMediator, error)
+	translatorFunc            func(context.Context, *plugin.Config) (definition.Translator, error)
+	payloadTransformerFunc    func(context.Context, definition.Translator, *plugin.Config) (definition.Step, error)
+}
+
+func (m *injectCaptureMgr) SchemaVersionMediator(ctx context.Context, loader definition.ManifestLoader, translator definition.Translator, cfg *plugin.Config) (definition.SchemaVersionMediator, error) {
+	if m.schemaVersionMediatorFunc != nil {
+		return m.schemaVersionMediatorFunc(ctx, loader, translator, cfg)
+	}
+	return nil, nil
+}
+
+func (m *injectCaptureMgr) Translator(ctx context.Context, cfg *plugin.Config) (definition.Translator, error) {
+	if m.translatorFunc != nil {
+		return m.translatorFunc(ctx, cfg)
+	}
+	return nil, nil
+}
+
+func (m *injectCaptureMgr) PayloadTransformer(ctx context.Context, translator definition.Translator, cfg *plugin.Config) (definition.Step, error) {
+	if m.payloadTransformerFunc != nil {
+		return m.payloadTransformerFunc(ctx, translator, cfg)
+	}
+	return nil, nil
+}
+
+// Cache, Registry, and ManifestLoader satisfy h.manifestLoader's loading
+// chain so SchemaVersionMediator tests don't need real plugin config.
+func (m *injectCaptureMgr) Cache(context.Context, *plugin.Config) (definition.Cache, error) {
+	return stubCache{}, nil
+}
+
+func (m *injectCaptureMgr) Registry(context.Context, definition.Cache, *plugin.Config) (definition.RegistryLookup, error) {
+	return stubRegistryWithMetadata{}, nil
+}
+
+func (m *injectCaptureMgr) ManifestLoader(context.Context, definition.Cache, definition.RegistryMetadataLookup, *plugin.Config) (definition.ManifestLoader, error) {
+	return stubManifestLoader{}, nil
+}
+
+// stubTranslator satisfies definition.Translator with a no-op implementation.
+type stubTranslator struct{}
+
+func (stubTranslator) Translate(context.Context, []byte, []byte) ([]byte, error) {
 	return nil, nil
 }
 
@@ -341,6 +572,22 @@ func (stubManifestLoader) GetBySubscriberID(context.Context, string) (*model.Man
 	return nil, nil
 }
 func (stubManifestLoader) GetByMetadata(context.Context, model.ManifestMetadata) (*model.ManifestDocument, error) {
+	return nil, nil
+}
+
+// stubRegistryWithMetadata satisfies RegistryLookup and RegistryMetadataLookup with no-op implementations.
+type stubRegistryWithMetadata struct{}
+
+func (stubRegistryWithMetadata) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
+	return nil, nil
+}
+func (stubRegistryWithMetadata) LookupRegistry(context.Context, string, string) (*model.RegistryMetadata, error) {
+	return nil, nil
+}
+func (stubRegistryWithMetadata) LookupNode(context.Context, string) (*model.SubscriberRecord, error) {
+	return nil, nil
+}
+func (stubRegistryWithMetadata) QueryByNetwork(context.Context, string) ([]model.SubscriberRecord, error) {
 	return nil, nil
 }
 

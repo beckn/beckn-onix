@@ -3087,3 +3087,219 @@ func TestSignerCloserPanicsOnError(t *testing.T) {
 	require.Len(t, m.closers, 1)
 	assert.Panics(t, func() { m.closers[0]() })
 }
+
+type mockTranslator struct{ definition.Translator }
+
+type mockTranslatorProvider struct {
+	translator *mockTranslator
+	err        error
+	errFunc    func() error
+}
+
+func (m *mockTranslatorProvider) New(ctx context.Context, config map[string]string) (definition.Translator, func() error, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	closer := m.errFunc
+	if closer == nil {
+		closer = func() error { return nil }
+	}
+	return m.translator, closer, nil
+}
+
+// TestTranslator_Success tests Translator returns the translator on success.
+func TestTranslator_Success(t *testing.T) {
+	translator := &mockTranslator{}
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"jsonatatranslator": &mockPlugin{symbol: &mockTranslatorProvider{translator: translator}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "jsonatatranslator", Config: map[string]string{}}
+	got, err := m.Translator(context.Background(), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, translator, got)
+	assert.Len(t, m.closers, 1)
+}
+
+// TestTranslator_ProviderError tests Translator returns an error when the provider fails.
+func TestTranslator_ProviderError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"jsonatatranslator": &mockPlugin{symbol: &mockTranslatorProvider{err: errors.New("translator error")}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "jsonatatranslator", Config: map[string]string{}}
+	_, err := m.Translator(context.Background(), cfg)
+	assert.Error(t, err)
+}
+
+// TestTranslator_PluginNotFound tests Translator returns an error when the plugin is not registered.
+func TestTranslator_PluginNotFound(t *testing.T) {
+	m := &Manager{plugins: map[string]onixPlugin{}, closers: []func(){}}
+	cfg := &Config{ID: "missing-translator", Config: map[string]string{}}
+	_, err := m.Translator(context.Background(), cfg)
+	assert.Error(t, err)
+}
+
+// TestTranslatorCloserPanicsOnError tests that the closer registered by Translator panics on error.
+func TestTranslatorCloserPanicsOnError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"jsonatatranslator": &mockPlugin{symbol: &mockTranslatorProvider{
+				translator: &mockTranslator{},
+				errFunc:    func() error { return errors.New("close failed") },
+			}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "jsonatatranslator", Config: map[string]string{}}
+	_, err := m.Translator(context.Background(), cfg)
+	require.NoError(t, err)
+	require.Len(t, m.closers, 1)
+	assert.Panics(t, func() { m.closers[0]() })
+}
+
+type mockPayloadTransformerProvider struct {
+	step             *mockStep
+	err              error
+	gotTranslator    definition.Translator
+	capturedInjected bool
+}
+
+func (m *mockPayloadTransformerProvider) New(ctx context.Context, translator definition.Translator, config map[string]string) (definition.Step, func(), error) {
+	m.gotTranslator = translator
+	m.capturedInjected = true
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return m.step, func() {}, nil
+}
+
+// TestPayloadTransformer_Success tests PayloadTransformer forwards the injected Translator to the provider.
+func TestPayloadTransformer_Success(t *testing.T) {
+	step := &mockStep{}
+	providerMock := &mockPayloadTransformerProvider{step: step}
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"reqmapper": &mockPlugin{symbol: providerMock},
+		},
+		closers: []func(){},
+	}
+	translator := &mockTranslator{}
+	cfg := &Config{ID: "reqmapper", Config: map[string]string{}}
+	got, err := m.PayloadTransformer(context.Background(), translator, cfg)
+	require.NoError(t, err)
+	assert.Equal(t, step, got)
+	assert.True(t, providerMock.capturedInjected)
+	assert.Equal(t, definition.Translator(translator), providerMock.gotTranslator)
+	assert.Len(t, m.closers, 1)
+}
+
+// TestPayloadTransformer_ProviderError tests PayloadTransformer returns an error when the provider fails.
+func TestPayloadTransformer_ProviderError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"reqmapper": &mockPlugin{symbol: &mockPayloadTransformerProvider{err: errors.New("transformer error")}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "reqmapper", Config: map[string]string{}}
+	_, err := m.PayloadTransformer(context.Background(), &mockTranslator{}, cfg)
+	assert.Error(t, err)
+}
+
+// TestPayloadTransformer_PluginNotFound tests PayloadTransformer returns an error when the plugin is not registered.
+func TestPayloadTransformer_PluginNotFound(t *testing.T) {
+	m := &Manager{plugins: map[string]onixPlugin{}, closers: []func(){}}
+	cfg := &Config{ID: "missing-reqmapper", Config: map[string]string{}}
+	_, err := m.PayloadTransformer(context.Background(), &mockTranslator{}, cfg)
+	assert.Error(t, err)
+}
+
+type mockSchemaVersionMediator struct {
+	definition.SchemaVersionMediator
+}
+
+type mockSchemaVersionMediatorProvider struct {
+	mediator      *mockSchemaVersionMediator
+	err           error
+	gotLoader     definition.ManifestLoader
+	gotTranslator definition.Translator
+}
+
+func (m *mockSchemaVersionMediatorProvider) New(ctx context.Context, loader definition.ManifestLoader, translator definition.Translator, config map[string]string) (definition.SchemaVersionMediator, func() error, error) {
+	m.gotLoader = loader
+	m.gotTranslator = translator
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return m.mediator, func() error { return nil }, nil
+}
+
+// TestSchemaVersionMediator_Success tests SchemaVersionMediator forwards the injected ManifestLoader and Translator to the provider.
+func TestSchemaVersionMediator_Success(t *testing.T) {
+	mediator := &mockSchemaVersionMediator{}
+	providerMock := &mockSchemaVersionMediatorProvider{mediator: mediator}
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"schemaversionmediator": &mockPlugin{symbol: providerMock},
+		},
+		closers: []func(){},
+	}
+	loader := &mockManifestLoader{}
+	translator := &mockTranslator{}
+	cfg := &Config{ID: "schemaversionmediator", Config: map[string]string{}}
+	got, err := m.SchemaVersionMediator(context.Background(), loader, translator, cfg)
+	require.NoError(t, err)
+	assert.Equal(t, mediator, got)
+	assert.Equal(t, definition.ManifestLoader(loader), providerMock.gotLoader)
+	assert.Equal(t, definition.Translator(translator), providerMock.gotTranslator)
+	assert.Len(t, m.closers, 1)
+}
+
+// TestSchemaVersionMediator_ProviderError tests SchemaVersionMediator returns an error when the provider fails.
+func TestSchemaVersionMediator_ProviderError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"schemaversionmediator": &mockPlugin{symbol: &mockSchemaVersionMediatorProvider{err: errors.New("mediator error")}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "schemaversionmediator", Config: map[string]string{}}
+	_, err := m.SchemaVersionMediator(context.Background(), &mockManifestLoader{}, &mockTranslator{}, cfg)
+	assert.Error(t, err)
+}
+
+// TestSchemaVersionMediator_PluginNotFound tests SchemaVersionMediator returns an error when the plugin is not registered.
+func TestSchemaVersionMediator_PluginNotFound(t *testing.T) {
+	m := &Manager{plugins: map[string]onixPlugin{}, closers: []func(){}}
+	cfg := &Config{ID: "missing-mediator", Config: map[string]string{}}
+	_, err := m.SchemaVersionMediator(context.Background(), &mockManifestLoader{}, &mockTranslator{}, cfg)
+	assert.Error(t, err)
+}
+
+// TestSchemaVersionMediatorCloserPanicsOnError tests that the closer registered by SchemaVersionMediator panics on error.
+func TestSchemaVersionMediatorCloserPanicsOnError(t *testing.T) {
+	m := &Manager{
+		plugins: map[string]onixPlugin{
+			"schemaversionmediator": &mockPlugin{symbol: &failingCloserSchemaVersionMediatorProvider{mediator: &mockSchemaVersionMediator{}}},
+		},
+		closers: []func(){},
+	}
+	cfg := &Config{ID: "schemaversionmediator", Config: map[string]string{}}
+	_, err := m.SchemaVersionMediator(context.Background(), &mockManifestLoader{}, &mockTranslator{}, cfg)
+	require.NoError(t, err)
+	require.Len(t, m.closers, 1)
+	assert.Panics(t, func() { m.closers[0]() })
+}
+
+type failingCloserSchemaVersionMediatorProvider struct {
+	mediator *mockSchemaVersionMediator
+}
+
+func (p *failingCloserSchemaVersionMediatorProvider) New(ctx context.Context, loader definition.ManifestLoader, translator definition.Translator, config map[string]string) (definition.SchemaVersionMediator, func() error, error) {
+	return p.mediator, func() error { return errors.New("close failed") }, nil
+}

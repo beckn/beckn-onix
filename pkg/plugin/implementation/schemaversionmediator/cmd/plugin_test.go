@@ -21,6 +21,13 @@ func (stubLoader) GetByMetadata(context.Context, model.ManifestMetadata) (*model
 	return nil, nil
 }
 
+// stubTranslator is a no-op Translator for smoke-testing provider construction.
+type stubTranslator struct{}
+
+func (stubTranslator) Translate(context.Context, []byte, []byte) ([]byte, error) {
+	return nil, nil
+}
+
 func TestProvider_SymbolType(t *testing.T) {
 	// Verify the exported Provider symbol satisfies SchemaVersionMediatorProvider.
 	// This mirrors the type assertion the plugin manager performs at runtime.
@@ -28,7 +35,7 @@ func TestProvider_SymbolType(t *testing.T) {
 }
 
 func TestProvider_New_ReturnsMediator(t *testing.T) {
-	mediator, closer, err := Provider.New(context.Background(), stubLoader{}, map[string]string{
+	mediator, closer, err := Provider.New(context.Background(), stubLoader{}, stubTranslator{}, map[string]string{
 		"nodeId": "nfh.global/subscribers.beckn.one/bap.example.com",
 	})
 	if err != nil {
@@ -46,7 +53,7 @@ func TestProvider_New_ReturnsMediator(t *testing.T) {
 }
 
 func TestProvider_New_InvalidAction_ReturnsError(t *testing.T) {
-	_, _, err := Provider.New(context.Background(), stubLoader{}, map[string]string{
+	_, _, err := Provider.New(context.Background(), stubLoader{}, stubTranslator{}, map[string]string{
 		"nodeId": "nfh.global/subscribers.beckn.one/bap.example.com",
 		"action": "passThrough",
 	})

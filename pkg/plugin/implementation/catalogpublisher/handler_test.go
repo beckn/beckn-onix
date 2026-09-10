@@ -173,13 +173,19 @@ func (m *catalogPublishTestManager) Signer(context.Context, *plugin.Config) (def
 func (m *catalogPublishTestManager) Step(context.Context, *plugin.Config) (definition.Step, error) {
 	panic("unused")
 }
+func (m *catalogPublishTestManager) Translator(context.Context, *plugin.Config) (definition.Translator, error) {
+	panic("unused")
+}
+func (m *catalogPublishTestManager) PayloadTransformer(context.Context, definition.Translator, *plugin.Config) (definition.Step, error) {
+	panic("unused")
+}
 func (m *catalogPublishTestManager) PolicyChecker(_ context.Context, _ definition.ManifestLoader, _ *plugin.Config) (definition.PolicyChecker, error) {
 	if m.policyChecker == nil {
 		panic("unused")
 	}
 	return m.policyChecker, nil
 }
-func (m *catalogPublishTestManager) SchemaVersionMediator(context.Context, definition.ManifestLoader, *plugin.Config) (definition.SchemaVersionMediator, error) {
+func (m *catalogPublishTestManager) SchemaVersionMediator(context.Context, definition.ManifestLoader, definition.Translator, *plugin.Config) (definition.SchemaVersionMediator, error) {
 	panic("unused")
 }
 func (m *catalogPublishTestManager) ManifestLoader(context.Context, definition.Cache, definition.RegistryMetadataLookup, *plugin.Config) (definition.ManifestLoader, error) {

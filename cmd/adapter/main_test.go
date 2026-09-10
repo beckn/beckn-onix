@@ -69,6 +69,16 @@ func (m *MockPluginManager) Step(ctx context.Context, cfg *plugin.Config) (defin
 	return nil, nil
 }
 
+// Translator returns a mock implementation of the Translator interface.
+func (m *MockPluginManager) Translator(ctx context.Context, cfg *plugin.Config) (definition.Translator, error) {
+	return nil, nil
+}
+
+// PayloadTransformer returns a mock implementation of the Step interface.
+func (m *MockPluginManager) PayloadTransformer(ctx context.Context, translator definition.Translator, cfg *plugin.Config) (definition.Step, error) {
+	return nil, nil
+}
+
 // Cache returns a mock implementation of the Cache interface.
 func (m *MockPluginManager) Cache(ctx context.Context, cfg *plugin.Config) (definition.Cache, error) {
 	return nil, nil
@@ -118,7 +128,7 @@ func (m *MockPluginManager) PolicyChecker(ctx context.Context, manifestLoader de
 	return nil, nil
 }
 
-func (m *MockPluginManager) SchemaVersionMediator(_ context.Context, _ definition.ManifestLoader, _ *plugin.Config) (definition.SchemaVersionMediator, error) {
+func (m *MockPluginManager) SchemaVersionMediator(_ context.Context, _ definition.ManifestLoader, _ definition.Translator, _ *plugin.Config) (definition.SchemaVersionMediator, error) {
 	return nil, nil
 }
 

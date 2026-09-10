@@ -11,8 +11,8 @@ import (
 
 type mediatorProvider struct{}
 
-func (p mediatorProvider) New(ctx context.Context, loader definition.ManifestLoader, cfg map[string]string) (definition.SchemaVersionMediator, func() error, error) {
-	return schemaversionmediator.New(ctx, loader, cfg)
+func (p mediatorProvider) New(ctx context.Context, loader definition.ManifestLoader, translator definition.Translator, cfg map[string]string) (definition.SchemaVersionMediator, func() error, error) {
+	return schemaversionmediator.New(ctx, loader, translator, cfg)
 }
 
 // Provider is the exported symbol that beckn-onix plugin manager looks up.

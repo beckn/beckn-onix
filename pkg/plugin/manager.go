@@ -346,6 +346,44 @@ func (m *Manager) Step(ctx context.Context, cfg *Config) (definition.Step, error
 	return step, error
 }
 
+// Translator returns a Translator instance based on the provided configuration.
+// It registers a cleanup function for resource management.
+func (m *Manager) Translator(ctx context.Context, cfg *Config) (definition.Translator, error) {
+	tp, err := provider[definition.TranslatorProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	translator, closer, err := tp.New(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.closers = append(m.closers, func() {
+			if err := closer(); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return translator, nil
+}
+
+// PayloadTransformer returns a Step instance for the payloadTransformer slot,
+// injecting the resolved Translator into the underlying plugin.
+func (m *Manager) PayloadTransformer(ctx context.Context, translator definition.Translator, cfg *Config) (definition.Step, error) {
+	pp, err := provider[definition.PayloadTransformerProvider](m.plugins, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
+	}
+	step, closer, err := pp.New(ctx, translator, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	if closer != nil {
+		m.closers = append(m.closers, closer)
+	}
+	return step, nil
+}
+
 // PolicyChecker returns a PolicyChecker instance based on the provided configuration.
 // It registers a cleanup function for resource management.
 func (m *Manager) PolicyChecker(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *Config) (definition.PolicyChecker, error) {
@@ -364,12 +402,12 @@ func (m *Manager) PolicyChecker(ctx context.Context, manifestLoader definition.M
 }
 
 // SchemaVersionMediator returns a SchemaVersionMediator instance based on the provided configuration.
-func (m *Manager) SchemaVersionMediator(ctx context.Context, manifestLoader definition.ManifestLoader, cfg *Config) (definition.SchemaVersionMediator, error) {
+func (m *Manager) SchemaVersionMediator(ctx context.Context, manifestLoader definition.ManifestLoader, translator definition.Translator, cfg *Config) (definition.SchemaVersionMediator, error) {
 	pp, err := provider[definition.SchemaVersionMediatorProvider](m.plugins, cfg.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load provider for %s: %w", cfg.ID, err)
 	}
-	mediator, closer, err := pp.New(ctx, manifestLoader, cfg.Config)
+	mediator, closer, err := pp.New(ctx, manifestLoader, translator, cfg.Config)
 	if err != nil {
 		return nil, err
 	}
