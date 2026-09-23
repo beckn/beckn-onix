@@ -818,8 +818,9 @@ registry:
 ```
 
 **Parameters**:
-- `url`: Beckn registry base URL including the `/dedi` path (Required)
+- `url`: Beckn registry base URL including the `/dedi` path (Required; must be an absolute `http://` or `https://` URL with a host and no query or fragment, checked at startup; a trailing slash is trimmed)
 - `allowedNetworkIDs`: Comma-separated list of allowed network IDs used to restrict lookup results to specific networks. See [Beckn network setup documentation](https://docs.beckn.io/creating-an-open-network/setting-up-the-network-environment#registering-the-network-on-beckn-fabric) for more on network IDs. (Optional)
+- `cacheTTL`: How long a `Lookup` result is cached: a Go duration with a unit (e.g. `300s`, `5m`); a bare number is rejected with a warning and the default is used, and zero or negative also means the default. A positive `data.ttl` in the DeDi response (in seconds) overrides it. Unlike `schemav2validator`'s `cacheTTL`, this is not a number of seconds. (Optional, default: 5m)
 - `timeout`: Request timeout in seconds (Optional, default: client default)
 - `retry_max`: Maximum number of retry attempts (Optional, default: 4)
 - `retry_wait_min`: Minimum wait time between retries in duration format (Optional, default: 1s)
@@ -1236,7 +1237,7 @@ schemaVersionMediator:
 |---|---|---|---|
 | `nodeId` | string | — | **Required.** Three-part DeDi subscriber identity for this node (`namespace/registry/recordId`). Used at startup to load the local node manifest. |
 | `action` | `translate` \| `reject` | `translate` | What to do when schema objects are incompatible. `translate` fetches and applies an artifact; `reject` returns `SCH_SCHEMA_ADAPTATION_FAILED` immediately. |
-| `onFailure` | `reject` \| `passThrough` | `reject` | Applied when `action=translate` but no artifact can be fetched. `passThrough` forwards the untranslated payload — operator escape hatch only, not for production. |
+| `onFailure` | `reject` \| `passThrough` | `reject` | Applied when an artifact cannot be fetched (`action=translate`), or, on caller handlers, the counterparty manifest cannot be loaded (any `action`). `passThrough` forwards the untranslated payload — operator escape hatch only, not for production. |
 | `fetchTimeout` | duration string | `"30s"` | HTTP timeout for each artifact fetch (e.g. `"10s"`, `"1m"`). |
 | `artifactCacheTTL` | duration string | `"24h"` | How long to cache successfully fetched translation artifacts. |
 | `negativeCacheTTL` | duration string | `"5m"` | How long to cache artifact-not-found responses. |
@@ -1298,7 +1299,7 @@ modules:
 | Code | Cause |
 |---|---|
 | `SCH_SUBSCRIBER_NOT_FOUND` | Local node manifest absent or has no `schemaObjects` at startup. Restart after publishing the manifest to DeDi. |
-| `SCH_SCHEMA_ADAPTATION_FAILED` | Two causes share this code: (1) incompatible schema objects and `action=reject`, or artifact fetch failed and `onFailure=reject`; (2) translation artifact dropped fields present in the source payload — review the artifact. |
+| `SCH_SCHEMA_ADAPTATION_FAILED` | Two causes share this code: (1) incompatible schema objects and `action=reject`, or artifact fetch or counterparty-manifest lookup failed and `onFailure=reject`; (2) translation artifact dropped fields present in the source payload (not yet implemented — no code path constructs this case). |
 
 ---
 

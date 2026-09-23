@@ -291,9 +291,11 @@ func (km *KeyMgr) Keyset(ctx context.Context, keyID string) (*model.Keyset, erro
 //
 // A zero-result lookup and a matched-but-unusable-status subscriber are both
 // AUT_* authentication failures, so both are returned already classified as
-// a 401 *model.CodedErr — the caller (signvalidator's validateSignStep)
-// propagates this as-is; it does not need to know keymanager's own sentinel
-// errors to build the correct NACK code.
+// a 401 *model.CodedErr — the caller (core's validateSignStep,
+// core/module/handler/step.go) propagates this as-is; it does not need to
+// know keymanager's own sentinel errors to build the correct NACK code. A
+// registry error is wrapped with %w, keeping the registry's own
+// classification (e.g. a 5xx when it is down).
 func (km *KeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueKeyID string) (string, string, error) {
 	subscribers, err := km.Registry.Lookup(ctx, &model.Subscription{
 		Subscriber: model.Subscriber{

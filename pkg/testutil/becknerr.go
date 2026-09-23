@@ -22,13 +22,23 @@ import (
 // 404, so matching the type alone would also accept the other two.
 func RequireBadReqCode(t *testing.T, err error, wantCode string) {
 	t.Helper()
+	RequireCodedErr(t, err, http.StatusBadRequest, wantCode)
+}
+
+// RequireCodedErr asserts that errors.As finds a *model.CodedErr in err, that
+// its HTTPStatus() equals wantStatus, and that its BecknError().Code equals
+// wantCode. For plugins that classify failures across several statuses
+// (e.g. dediregistry's 401/404/5xx split), where RequireBadReqCode's fixed
+// 400 doesn't fit.
+func RequireCodedErr(t *testing.T, err error, wantStatus int, wantCode string) {
+	t.Helper()
 
 	var codedErr *model.CodedErr
 	if !errors.As(err, &codedErr) {
 		t.Fatalf("expected errors.As to find a *model.CodedErr in %v (%T)", err, err)
 	}
-	if status := codedErr.HTTPStatus(); status != http.StatusBadRequest {
-		t.Errorf("HTTPStatus() = %d, want %d", status, http.StatusBadRequest)
+	if status := codedErr.HTTPStatus(); status != wantStatus {
+		t.Errorf("HTTPStatus() = %d, want %d", status, wantStatus)
 	}
 	if code := codedErr.BecknError().Code; code != wantCode {
 		t.Errorf("BecknError().Code = %s, want %s", code, wantCode)

@@ -1332,10 +1332,14 @@ func TestMediate_NoCounterpartyID_PassThrough(t *testing.T) {
 }
 
 func TestMediate_CounterpartyManifestUnavailable_Reject(t *testing.T) {
-	// Caller path: counterparty manifest fetch fails → onFailure=reject.
+	// Caller path: counterparty manifest fetch fails → onFailure=reject. The
+	// registry returns a classified error, as dediregistry does; it must not
+	// stay reachable through errors.As, or nackBecknError would pick it over
+	// MediationError and send the registry's code and text instead.
 	loader := &mockManifestLoader{
 		bySubscriberID: func(_ context.Context, _ string) (*model.ManifestDocument, error) {
-			return nil, errors.New("dedi lookup failed")
+			return nil, model.NewCodedErr(http.StatusNotFound, "NET_ENTITY_NOT_FOUND",
+				errors.New("DeDi node lookup request failed with status: 404 Not Found"))
 		},
 	}
 	m := newTestMediatorFull(t, loader, map[string]string{"onFailure": "reject"}, nil)
@@ -1348,6 +1352,13 @@ func TestMediate_CounterpartyManifestUnavailable_Reject(t *testing.T) {
 	}
 	if me.Code != "SCH_SCHEMA_ADAPTATION_FAILED" {
 		t.Errorf("expected SCH_SCHEMA_ADAPTATION_FAILED, got %q", me.Code)
+	}
+	var codedErr *model.CodedErr
+	if errors.As(err, &codedErr) {
+		t.Errorf("registry CodedErr %q is reachable through MediationError", codedErr.Code)
+	}
+	if cause := errors.Unwrap(me); cause == nil || !strings.Contains(cause.Error(), "404 Not Found") {
+		t.Errorf("expected the cause text to be kept, got %v", cause)
 	}
 }
 

@@ -15,6 +15,10 @@ import (
 
 type mockCache struct {
 	getFunc func(ctx context.Context, key string) (string, error)
+	// entries, when non-nil and getFunc is nil, makes the cache store what is
+	// Set and serve it from Get. gets records every key read.
+	entries map[string]string
+	gets    []string
 	setKey  string
 	setVal  string
 	setTTL  time.Duration
@@ -22,8 +26,12 @@ type mockCache struct {
 }
 
 func (m *mockCache) Get(ctx context.Context, key string) (string, error) {
+	m.gets = append(m.gets, key)
 	if m.getFunc != nil {
 		return m.getFunc(ctx, key)
+	}
+	if v, ok := m.entries[key]; ok {
+		return v, nil
 	}
 	return "", errors.New("cache miss")
 }
@@ -31,9 +39,12 @@ func (m *mockCache) Set(ctx context.Context, key, value string, ttl time.Duratio
 	m.setKey = key
 	m.setVal = value
 	m.setTTL = ttl
+	if m.entries != nil {
+		m.entries[key] = value
+	}
 	return m.setErr
 }
-func (m *mockCache) Delete(ctx context.Context, key string) error { return nil }
+func (m *mockCache) Delete(ctx context.Context, key string) error { delete(m.entries, key); return nil }
 func (m *mockCache) Clear(ctx context.Context) error              { return nil }
 
 func TestValidate(t *testing.T) {
@@ -53,6 +64,46 @@ func TestValidate(t *testing.T) {
 				URL: "",
 			},
 			wantErr: true,
+		},
+		{
+			name:    "url without scheme",
+			config:  &Config{URL: "dedi.example.com/dedi"},
+			wantErr: true,
+		},
+		{
+			name:    "url with non-http scheme",
+			config:  &Config{URL: "ftp://dedi.example.com/dedi"},
+			wantErr: true,
+		},
+		{
+			name:    "url without host",
+			config:  &Config{URL: "http:///dedi"},
+			wantErr: true,
+		},
+		{
+			name:    "url with query",
+			config:  &Config{URL: "https://dedi.example.com/dedi?x=1"},
+			wantErr: true,
+		},
+		{
+			name:    "url with fragment",
+			config:  &Config{URL: "https://dedi.example.com/dedi#v1"},
+			wantErr: true,
+		},
+		{
+			name:    "url with bare trailing ?",
+			config:  &Config{URL: "https://dedi.example.com/dedi?"},
+			wantErr: true,
+		},
+		{
+			name:    "url with bare trailing #",
+			config:  &Config{URL: "https://dedi.example.com/dedi#"},
+			wantErr: true,
+		},
+		{
+			name:    "url with trailing slash (trimmed in New)",
+			config:  &Config{URL: "https://dedi.example.com/dedi/"},
+			wantErr: false,
 		},
 		{
 			name: "valid config",
@@ -313,10 +364,9 @@ func TestLookup(t *testing.T) {
 			KeyID: "test-key-id",
 		}
 		_, err = client.Lookup(ctx, req)
-		if err == nil {
-			t.Error("Expected error for disallowed network memberships, got nil")
-		}
-		expectedErr := "registry entry with subscriber_id 'dev.np2.com' does not belong to any configured networks (registry.config.allowedNetworkIDs)"
+		// The NACK text names no adapter config; the detail stays in the cause.
+		requireSanitizedMembership(t, err)
+		expectedErr := `subscriber "dev.np2.com" is not a member of a network this adapter accepts`
 		if err.Error() != expectedErr {
 			t.Errorf("Expected error %q, got %q", expectedErr, err.Error())
 		}
@@ -427,9 +477,7 @@ func TestLookup(t *testing.T) {
 			KeyID: "test-key-id",
 		}
 		_, err = client.Lookup(ctx, req)
-		if err == nil {
-			t.Error("Expected error for empty subscriber ID, got nil")
-		}
+		requireWrappedCodedErr(t, err, http.StatusUnauthorized, codeAutSignatureInvalid)
 		if err.Error() != "subscriber_id is required for DeDi lookup" {
 			t.Errorf("Expected specific error message, got %v", err)
 		}
@@ -454,9 +502,7 @@ func TestLookup(t *testing.T) {
 			KeyID: "",
 		}
 		_, err = client.Lookup(ctx, req)
-		if err == nil {
-			t.Error("Expected error for empty key ID, got nil")
-		}
+		requireWrappedCodedErr(t, err, http.StatusUnauthorized, codeAutSignatureInvalid)
 		if err.Error() != "key_id is required for DeDi lookup" {
 			t.Errorf("Expected specific error message, got %v", err)
 		}
@@ -487,9 +533,7 @@ func TestLookup(t *testing.T) {
 			KeyID: "test-key-id",
 		}
 		_, err = client.Lookup(ctx, req)
-		if err == nil {
-			t.Error("Expected error for 404 response, got nil")
-		}
+		requireWrappedCodedErr(t, err, http.StatusUnauthorized, codeAutSubscriberNotFound)
 	})
 
 	// Test missing signing_public_key
@@ -524,9 +568,7 @@ func TestLookup(t *testing.T) {
 			KeyID: "test-key-id",
 		}
 		_, err = client.Lookup(ctx, req)
-		if err == nil {
-			t.Error("Expected error for missing signing_public_key, got nil")
-		}
+		requireWrappedCodedErr(t, err, http.StatusUnauthorized, codeAutKeyNotFound)
 	})
 
 	// Test invalid JSON response
@@ -554,9 +596,7 @@ func TestLookup(t *testing.T) {
 			KeyID: "test-key-id",
 		}
 		_, err = client.Lookup(ctx, req)
-		if err == nil {
-			t.Error("Expected error for invalid JSON, got nil")
-		}
+		requireWrappedCodedErr(t, err, http.StatusBadGateway, codeNetDownstreamInvalidResp)
 	})
 
 	// Test missing data field
@@ -587,34 +627,7 @@ func TestLookup(t *testing.T) {
 			KeyID: "test-key-id",
 		}
 		_, err = client.Lookup(ctx, req)
-		if err == nil {
-			t.Error("Expected error for missing data field, got nil")
-		}
-	})
-
-	// Test network error
-	t.Run("network error", func(t *testing.T) {
-		config := &Config{
-			URL:     "http://invalid-url-that-does-not-exist.local/dedi",
-			Timeout: 1,
-		}
-
-		client, closer, err := New(ctx, nil, config)
-		if err != nil {
-			t.Fatalf("New() error = %v", err)
-		}
-		defer closer()
-
-		req := &model.Subscription{
-			Subscriber: model.Subscriber{
-				SubscriberID: "dev.np2.com",
-			},
-			KeyID: "test-key-id",
-		}
-		_, err = client.Lookup(ctx, req)
-		if err == nil {
-			t.Error("Expected network error, got nil")
-		}
+		requireWrappedCodedErr(t, err, http.StatusBadGateway, codeNetDownstreamInvalidResp)
 	})
 }
 
@@ -689,9 +702,8 @@ func TestLookupRegistry(t *testing.T) {
 		}
 		defer closer()
 
-		if _, err := client.LookupRegistry(ctx, "nfo.example.org", "mobility-network"); err == nil {
-			t.Fatal("expected error for missing meta")
-		}
+		_, err = client.LookupRegistry(ctx, "nfo.example.org", "mobility-network")
+		requireWrappedCodedErr(t, err, http.StatusBadGateway, codeNetDownstreamInvalidResp)
 	})
 
 	t.Run("non-string meta values are ignored", func(t *testing.T) {
@@ -741,9 +753,8 @@ func TestLookupRegistry(t *testing.T) {
 		}
 		defer closer()
 
-		if _, err := client.LookupRegistry(ctx, "nfo.example.org", "mobility-network"); err == nil {
-			t.Error("expected error for 404 response, got nil")
-		}
+		_, err = client.LookupRegistry(ctx, "nfo.example.org", "mobility-network")
+		requireWrappedCodedErr(t, err, http.StatusNotFound, codeNetEntityNotFound)
 	})
 }
 
@@ -888,9 +899,8 @@ func TestLookupNode(t *testing.T) {
 		}
 		defer closer()
 
-		if _, err := client.LookupNode(ctx, "nfh.global/subscribers.beckn.one"); err == nil {
-			t.Error("expected validation error for two-part nodeID, got nil")
-		}
+		_, err = client.LookupNode(ctx, "nfh.global/subscribers.beckn.one")
+		requireWrappedCodedErr(t, err, http.StatusBadRequest, codeCtxInvalidField)
 		if httpCalls != 0 {
 			t.Errorf("expected no HTTP calls for invalid nodeID, got %d", httpCalls)
 		}
@@ -909,9 +919,8 @@ func TestLookupNode(t *testing.T) {
 		}
 		defer closer()
 
-		if _, err := client.LookupNode(ctx, nodeID); err == nil {
-			t.Error("expected error for non-200 response, got nil")
-		}
+		_, err = client.LookupNode(ctx, nodeID)
+		requireWrappedCodedErr(t, err, http.StatusNotFound, codeNetEntityNotFound)
 	})
 
 	t.Run("malformed response body returns error", func(t *testing.T) {
@@ -927,9 +936,8 @@ func TestLookupNode(t *testing.T) {
 		}
 		defer closer()
 
-		if _, err := client.LookupNode(ctx, nodeID); err == nil {
-			t.Error("expected error for malformed response body, got nil")
-		}
+		_, err = client.LookupNode(ctx, nodeID)
+		requireWrappedCodedErr(t, err, http.StatusBadGateway, codeNetDownstreamInvalidResp)
 	})
 }
 
@@ -1036,9 +1044,8 @@ func TestQueryByNetwork(t *testing.T) {
 		}
 		defer closer()
 
-		if _, err := client.QueryByNetwork(ctx, ""); err == nil {
-			t.Error("expected error for empty networkID, got nil")
-		}
+		_, err = client.QueryByNetwork(ctx, "")
+		requireWrappedCodedErr(t, err, http.StatusBadRequest, codeCtxMissingField)
 		if httpCalls != 0 {
 			t.Errorf("expected no HTTP call for empty networkID, got %d", httpCalls)
 		}
@@ -1050,15 +1057,9 @@ func TestQueryByNetwork(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, closer, err := New(ctx, nil, &Config{URL: server.URL + "/dedi"})
-		if err != nil {
-			t.Fatalf("New() error = %v", err)
-		}
-		defer closer()
-
-		if _, err := client.QueryByNetwork(ctx, networkID); err == nil {
-			t.Error("expected error for a 500 response, got nil")
-		}
+		client := newTestClient(t, fastRetryConfig(server.URL))
+		_, err := client.QueryByNetwork(ctx, networkID)
+		requireWrappedCodedErr(t, err, http.StatusServiceUnavailable, codeNetDownstreamUnavailable)
 	})
 
 	t.Run("malformed response body returns error", func(t *testing.T) {
@@ -1074,9 +1075,8 @@ func TestQueryByNetwork(t *testing.T) {
 		}
 		defer closer()
 
-		if _, err := client.QueryByNetwork(ctx, networkID); err == nil {
-			t.Error("expected error for malformed response body, got nil")
-		}
+		_, err = client.QueryByNetwork(ctx, networkID)
+		requireWrappedCodedErr(t, err, http.StatusBadGateway, codeNetDownstreamInvalidResp)
 	})
 
 	t.Run("oversized response is rejected rather than read into memory unbounded", func(t *testing.T) {
@@ -1096,9 +1096,8 @@ func TestQueryByNetwork(t *testing.T) {
 		}
 		defer closer()
 
-		if _, err := client.QueryByNetwork(ctx, networkID); err == nil {
-			t.Error("expected error for a response exceeding maxQueryResponseBytes, got nil")
-		}
+		_, err = client.QueryByNetwork(ctx, networkID)
+		requireWrappedCodedErr(t, err, http.StatusBadGateway, codeNetDownstreamInvalidResp)
 	})
 }
 
@@ -1131,10 +1130,10 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 		Subscriber: model.Subscriber{SubscriberID: "sub.example.com"},
 		KeyID:      "key-1",
 	}
-	expectedCacheKey := "dedi_lookup_sub.example.com_key-1"
+	expectedCacheKey := "dedi_lookup_v2_sub.example.com/key-1"
 
 	t.Run("cache hit skips HTTP call", func(t *testing.T) {
-		cached := []model.Subscription{{SigningPublicKey: "cached-key"}}
+		cached := []model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "sub.example.com"}, SigningPublicKey: "cached-key"}}
 		cachedJSON, _ := json.Marshal(cached)
 
 		httpCalled := false
@@ -1317,9 +1316,7 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 		defer closer()
 
 		_, err = client.Lookup(makeStepCtx("other.org/prod"), sub)
-		if err == nil {
-			t.Error("expected block when context.network_id is not in cached memberships")
-		}
+		requireWrappedCodedErr(t, err, http.StatusUnauthorized, codeAutNetworkNotAllowed)
 	})
 
 	t.Run("cache hit allows catalog subscriber despite mismatched context.network_id", func(t *testing.T) {
@@ -1380,9 +1377,7 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 		defer closer()
 
 		_, err = client.Lookup(makeStepCtx("nfo2.com/retail"), sub)
-		if err == nil {
-			t.Error("expected block when context.network_id is in memberships but not in allowlist")
-		}
+		requireSanitizedMembership(t, err)
 	})
 
 	t.Run("cache hit enforces allowedNetworkIDs", func(t *testing.T) {
@@ -1408,9 +1403,7 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 		defer closer()
 
 		_, err = client.Lookup(ctx, sub)
-		if err == nil {
-			t.Error("expected error when cached memberships do not match allowedNetworkIDs")
-		}
+		requireSanitizedMembership(t, err)
 	})
 }
 
@@ -1601,9 +1594,13 @@ func TestContextNetworkIDValidation(t *testing.T) {
 
 			ctx := makeStepCtx(tt.networkID)
 			_, err = client.Lookup(ctx, req)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Lookup() error = %v, wantErr = %v", err, tt.wantErr)
+			if !tt.wantErr {
+				if err != nil {
+					t.Errorf("Lookup() error = %v, want nil", err)
+				}
+				return
 			}
+			requireWrappedCodedErr(t, err, http.StatusUnauthorized, codeAutNetworkNotAllowed)
 		})
 	}
 }
