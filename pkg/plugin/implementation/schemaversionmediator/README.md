@@ -25,7 +25,7 @@
 On every inbound request, `Mediate` runs the following sequence:
 
 1. **Cold-start guard** — if the local node manifest was absent, unreachable, or had no `schemaObjects` at startup (or if `nodeId` was not set in config), every call is rejected immediately with `SCH_SUBSCRIBER_NOT_FOUND`.
-2. **Identity extraction** — reads `networkId`/`network_id` from the payload `context` block; reads the counterparty subscriber ID from `ContextKeyRemoteID` (set by `reqpreprocessor`). If either is empty the payload passes through unchanged.
+2. **Identity extraction** — reads the counterparty subscriber ID from `ContextKeyRemoteID` (set by `reqpreprocessor`). If it is empty the payload passes through unchanged.
 3. **Target manifest selection** — direction-aware:
    - **Receiver handler** (`bapTxnReceiver`, `bppTxnReceiver`): uses the local node manifest loaded at startup. No network call at request time.
    - **Caller handler** (`bapTxnCaller`, `bppTxnCaller`): calls `ManifestLoader.GetBySubscriberID` to fetch the counterparty's node manifest from DeDi at request time.
@@ -72,7 +72,7 @@ plugins:
 |---|---|---|---|
 | `nodeId` | string | — | **Required.** Three-part DeDi subscriber identity for this node (`namespace/registry/recordId`). Used at startup to load the local node manifest. |
 | `action` | `translate` \| `reject` | `translate` | What to do when schema objects are incompatible |
-| `onFailure` | `reject` \| `passThrough` | `reject` | What to do when `action=translate` but an artifact cannot be fetched |
+| `onFailure` | `reject` \| `passThrough` | `reject` | What to do when an artifact cannot be fetched (`action=translate`), or, on caller handlers, the counterparty manifest cannot be loaded (any `action`) |
 | `fetchTimeout` | duration string | `"30s"` | HTTP timeout for each artifact fetch (e.g. `"10s"`, `"1m"`) |
 | `artifactCacheTTL` | duration string | `"24h"` | How long to cache successfully fetched artifacts |
 | `negativeCacheTTL` | duration string | `"5m"` | How long to cache artifact-not-found responses |
@@ -83,9 +83,9 @@ plugins:
 - `translate` — attempt translation for each incompatible schema object; apply `onFailure` if any artifact is unavailable.
 - `reject` — return `SCH_SCHEMA_ADAPTATION_FAILED` immediately without attempting translation.
 
-**`onFailure` values (only evaluated when `action=translate`):**
+**`onFailure` values** (applied when an artifact cannot be fetched with `action=translate`, and on caller handlers when the counterparty manifest cannot be loaded, whatever `action` is):
 
-- `reject` — return `SCH_SCHEMA_ADAPTATION_FAILED` when an artifact cannot be fetched.
+- `reject` — return `SCH_SCHEMA_ADAPTATION_FAILED`.
 - `passThrough` — forward the untranslated payload. Operator escape hatch for false-mismatch situations (e.g. stale local manifest during rollout). Not recommended for production.
 
 ---
@@ -217,14 +217,14 @@ The artifact at that URL must contain a JSONata expression that transforms a `v2
 
 ## Error Codes
 
-All errors returned by `Mediate` are of type `*MediationError`, which carries a `Code` field aligned with the Beckn v2.0.0 `ErrorCode` taxonomy's `SCH_*` prefix. `MediationError` implements `model.BecknErrorer`, so the handler's NACK-building dispatch (`nackBecknError`) recognizes it and surfaces its Code/Message as a proper NACK response, at HTTP 400 Bad Request.
+Structured errors returned by `Mediate` are of type `*MediationError`, which carries a `Code` field aligned with the Beckn v2.0.0 `ErrorCode` taxonomy's `SCH_*` prefix. `MediationError` implements `model.BecknErrorer`, so the handler's NACK-building dispatch (`nackBecknError`) recognizes it and surfaces its Code/Message as a proper NACK response, at HTTP 400 Bad Request.
 
 | Code | Cause | Resolution |
 |---|---|---|
 | `SCH_SUBSCRIBER_NOT_FOUND` | Local node manifest absent or has no `schemaObjects` at startup | Publish node manifest to DeDi and restart the adapter |
-| `SCH_SCHEMA_ADAPTATION_FAILED` | Two causes share this code: (1) incompatible schema objects found and `action=reject`, or artifact fetch failed and `onFailure=reject`; (2) translation dropped fields present in the source payload (not yet implemented — no code path currently constructs this case) | Check counterparty manifest in DeDi and verify artifact URLs are reachable; for (2), review the translation artifact — it must not remove fields from the source |
+| `SCH_SCHEMA_ADAPTATION_FAILED` | Two causes share this code: (1) incompatible schema objects found and `action=reject`, or artifact fetch or counterparty-manifest lookup failed and `onFailure=reject`; (2) translation dropped fields present in the source payload (not yet implemented — no code path currently constructs this case) | Check counterparty manifest in DeDi and verify artifact URLs are reachable; for (2), review the translation artifact — it must not remove fields from the source |
 
-Plain (non-`MediationError`) errors may also be returned for malformed payloads (e.g. missing `message` field). The handler treats these as HTTP 400 Bad Request with a generic error body — distinct from the structured NACK produced by `MediationError`.
+Plain (non-`MediationError`) errors may also be returned for malformed payloads (e.g. missing `message` field). The handler treats these as HTTP 500 Internal Server Error with a generic `NET_INTERNAL_ERROR` body — distinct from the structured NACK produced by `MediationError`. A counterparty-manifest lookup failure (e.g. a DeDi 404 or outage) never surfaces the registry's own code; its cause is logged at Warn, not sent in the NACK.
 
 ---
 

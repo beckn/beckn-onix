@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/testutil"
 )
 
 // Mock implementations for testing
@@ -330,15 +331,18 @@ func TestLookupNPKeys(t *testing.T) {
 		t.Error("LookupNPKeys() returned empty encryption key")
 	}
 
-	// Test error cases
+	// An empty ID means a malformed signature keyId: a classified 401 that
+	// still matches the package's sentinel.
 	_, _, err = skm.LookupNPKeys(ctx, "", "test-key")
-	if err == nil {
-		t.Error("LookupNPKeys() should fail with empty subscriberID")
+	testutil.RequireCodedErr(t, err, http.StatusUnauthorized, "AUT_SIGNATURE_INVALID")
+	if !errors.Is(err, ErrEmptySubscriberID) {
+		t.Error("expected errors.Is(err, ErrEmptySubscriberID) = true")
 	}
 
 	_, _, err = skm.LookupNPKeys(ctx, "test-subscriber", "")
-	if err == nil {
-		t.Error("LookupNPKeys() should fail with empty uniqueKeyID")
+	testutil.RequireCodedErr(t, err, http.StatusUnauthorized, "AUT_SIGNATURE_INVALID")
+	if !errors.Is(err, ErrEmptyUniqueKeyID) {
+		t.Error("expected errors.Is(err, ErrEmptyUniqueKeyID) = true")
 	}
 }
 

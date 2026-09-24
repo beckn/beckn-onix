@@ -28,8 +28,9 @@ registry:
 
 | Parameter | Required | Description | Default |
 |-----------|----------|-------------|---------|
-| `url` | Yes | DeDi wrapper API base URL (include /dedi path) | - |
+| `url` | Yes | DeDi wrapper API base URL (include /dedi path). Must be an absolute `http(s)` URL with a host and no query or fragment (checked at startup); a trailing slash is trimmed | - |
 | `allowedNetworkIDs` | No | Allowlist of network membership IDs from `data.network_memberships` for signature validation | - |
+| `cacheTTL` | No | How long a `Lookup` result is cached: a Go duration with a unit (e.g. `300s`, `5m`); a bare number is rejected with a warning and the default is used, and zero or negative also means the default. A positive `data.ttl` in the DeDi response (in seconds) overrides it | 5m |
 | `timeout` | No | Request timeout in seconds | Client default |
 | `retry_max` | No | Maximum number of retry attempts | 4 (library default) |
 | `retry_wait_min` | No | Minimum wait time between retries (e.g., "1s", "500ms") | 1s (library default) |
@@ -77,7 +78,7 @@ In addition to the single-record `RegistryLookup`/`RegistryMetadataLookup.Lookup
 GET {url}/query/{networkID}
 ```
 
-`networkID` is passed through verbatim in `namespace/registryName` form (e.g. `beckn.one/testnet`), matching the DeDi path convention used elsewhere (`LookupRegistry`, `LookupNode`).
+`networkID` is sent in `namespace/registryName` form (e.g. `beckn.one/testnet`), matching the DeDi path convention used elsewhere (`LookupRegistry`, `LookupNode`). Each `/`-separated segment is path-escaped, and an empty, whitespace-only, `.` or `..` segment is rejected with `CTX_INVALID_FIELD`.
 
 ### Expected Response Format
 
@@ -135,7 +136,7 @@ modules:
 
 | DeDi Wrapper Field | Beckn Field | Description |
 |-------------------|-------------|-------------|
-| `data.details.subscriber_id` | `subscriber_id` | Participant identifier |
+| `data.details.subscriber_id` | `subscriber_id` | Participant identifier (empty if DeDi omits it) |
 | `{key_id from URL}` | `key_id` | Unique key identifier |
 | `data.details.signing_public_key` | `signing_public_key` | Public key for signature verification |
 | `data.details.encr_public_key` | `encr_public_key` | Public key for encryption |
@@ -147,7 +148,7 @@ modules:
 
 - **No Authentication Required**: DeDi wrapper API doesn't require API keys
 - **GET Request Format**: Simple URL-based parameter passing
-- **Comprehensive Error Handling**: Validates required fields and HTTP responses
+- **Classified Errors**: Every request-time failure maps to an error code and NACK status by cause (see [Error Handling](#error-handling))
 - **Simplified Response**: Focuses on public key retrieval for signature validation
 - **Retry Support**: Built-in retry mechanism for network resilience
 
@@ -162,7 +163,7 @@ go test ./pkg/plugin/implementation/dediregistry -v
 The tests cover:
 - URL construction validation
 - Response parsing for new API format
-- Error handling scenarios
+- Error-code classification of every failure path (`dediregistry_errors_test.go` and the error cases in `dediregistry_test.go`)
 - Configuration validation
 - Plugin provider functionality
 
@@ -184,8 +185,34 @@ This plugin replaces direct DeDi API integration with the new DeDi Wrapper API f
 
 ## Error Handling
 
-- **Configuration Errors**: Missing url
-- **Network Errors**: Connection failures, timeouts
-- **HTTP Errors**: Non-200 status codes from DeDi wrapper
-- **Data Errors**: Missing required fields in response
-- **Validation Errors**: Empty subscriber ID or key ID in request
+A `url` that fails the startup check above stops the plugin from loading. Every failure at request time is returned as a `*model.CodedErr` carrying an error code and an HTTP status.
+
+The HTTP status becomes the NACK's only where a request handler propagates the error with `%w`. Today that is `Lookup`, via `keymanager` / `simplekeymanager` and core's signature validation. Other callers handle the errors themselves:
+- `catalogcrawler` and `catalogpublisher` signature verification (`Lookup`, via `internal/registrykey`) treat any lookup error as a transient crawl or verify fault.
+- `schemaversionmediator`'s per-request counterparty `LookupNode` follows its `onFailure` setting (`reject` → `SCH_SCHEMA_ADAPTATION_FAILED`). A failed startup lookup of its own `nodeId` marks the node not onboarded (`SCH_SUBSCRIBER_NOT_FOUND`).
+- `catalogpublisher`'s optional self-lookup (`LookupNode`) only logs a failure at Warn.
+- `LookupRegistry` runs only at policy load, and `QueryByNetwork` only in the catalog crawler.
+
+Most codes are Beckn v2.0.0 `ErrorCode` values. Those marked † are ONIX codes, used where no spec value names the cause.
+
+| Failure | Code | HTTP |
+|---------|------|------|
+| DeDi request timed out (client `timeout` or caller context deadline) | `NET_TIMEOUT` | 504 |
+| DeDi unreachable (DNS, dial, TLS, connection reset, redirect loop, response body cut short) | `NET_DOWNSTREAM_UNAVAILABLE` | 503 |
+| DeDi returned 5xx or 429 after retries were exhausted, or any other non-200 status outside 4xx (e.g. 501, 202) | `NET_DOWNSTREAM_UNAVAILABLE` | 503 |
+| DeDi returned 200 with an unusable body: not JSON; for `Lookup`/`LookupNode`, missing or non-object `data` or `details`; for `LookupRegistry`, missing or non-object `data` or `meta`; for `QueryByNetwork`, not the `{"data":{"records":[...]}}` shape (a body with no `data` is an empty result, not an error) | `NET_DOWNSTREAM_INVALID_RESPONSE` † | 502 |
+| DeDi response body over the read cap (1 MiB for lookups, 8 MiB for `/query`) | `NET_DOWNSTREAM_INVALID_RESPONSE` † | 502 |
+| Caller's request was cancelled mid-lookup | `NET_REQUEST_CANCELLED` † | 500 |
+| DeDi returned any other 4xx (the adapter sent a request DeDi rejected) | `NET_INTERNAL_ERROR` | 500 |
+| Request could not be built (adapter-side) | `NET_INTERNAL_ERROR` | 500 |
+| `Lookup`: empty, whitespace-only, `.` or `..` subscriber ID or key ID (malformed signature `keyId`) | `AUT_SIGNATURE_INVALID` | 401 |
+| `Lookup`: DeDi returned 404, or a record whose `subscriber_id` is a different subscriber (compared case-insensitively; a record with no `subscriber_id` is accepted, and its empty `subscriber_id` is returned as is) | `AUT_SUBSCRIBER_NOT_FOUND` | 401 |
+| `Lookup`: record has no `signing_public_key` | `AUT_KEY_NOT_FOUND` | 401 |
+| `Lookup`: subscriber not in `allowedNetworkIDs`, or `context.network_id` not in its memberships / `allowedNetworkIDs` | `AUT_NETWORK_NOT_ALLOWED` † | 401 |
+| `LookupNode` / `LookupRegistry` / `QueryByNetwork`: DeDi returned 404 | `NET_ENTITY_NOT_FOUND` † | 404 |
+| `LookupNode` / `LookupRegistry` / `QueryByNetwork`: empty node ID, namespace, registry name or network ID | `CTX_MISSING_FIELD` | 400 |
+| `LookupNode` / `LookupRegistry` / `QueryByNetwork`: `nodeID` not in `namespace/registry/recordName` form, or a path argument with an empty, whitespace-only, `.` or `..` segment | `CTX_INVALID_FIELD` | 400 |
+
+Transient failures before a response arrives (dial, DNS, connection reset, client timeout), 5xx (except 501) and 429 are retried per `retry_max` before being classified. A response body cut short while being read, redirect loops, TLS certificate failures, and a cancelled or expired caller context are not retried. `QueryByNetwork` skips individual records that don't parse, rather than failing.
+
+Transport, request-build, oversized-response and `allowedNetworkIDs` failures report a generic message in the NACK that names no DeDi URL, host or adapter config. Registry and adapter faults are logged at Error level with their detailed cause, including a record returned for a different subscriber. Routine, caller-triggered outcomes are not logged as errors.

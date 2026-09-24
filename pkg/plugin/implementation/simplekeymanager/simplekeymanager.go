@@ -73,6 +73,9 @@ const (
 	// codeKeyExpiredOrRevoked is used when a matched subscriber's key is no
 	// longer usable per model.IsKeyStatusUsable.
 	codeKeyExpiredOrRevoked = "AUT_KEY_EXPIRED_OR_REVOKED"
+	// codeSignatureInvalid is used when the subscriber or key ID (from the
+	// signature keyId) is empty.
+	codeSignatureInvalid = "AUT_SIGNATURE_INVALID"
 )
 
 // ValidateCfg validates the SimpleKeyManager configuration.
@@ -244,14 +247,17 @@ func (skm *SimpleKeyMgr) Keyset(ctx context.Context, keyID string) (*model.Keyse
 
 // LookupNPKeys retrieves the signing and encryption public keys for the given subscriber ID and unique key ID.
 //
-// A zero-result lookup and a matched-but-unusable-status subscriber are both
-// AUT_* authentication failures, so both are returned already classified as
-// a 401 *model.CodedErr — the caller (signvalidator's validateSignStep)
-// propagates this as-is; it does not need to know keymanager's own sentinel
-// errors to build the correct NACK code.
+// An empty subscriberID or uniqueKeyID (a malformed signature keyId), a
+// zero-result lookup, and a matched-but-unusable-status subscriber are all
+// AUT_* authentication failures, so each is returned already classified as
+// a 401 *model.CodedErr — the caller (core's validateSignStep,
+// core/module/handler/step.go) propagates this as-is; it does not need to
+// know simplekeymanager's own sentinel errors to build the correct NACK
+// code. A registry error is wrapped with %w, keeping the registry's own
+// classification (e.g. a 5xx when it is down).
 func (skm *SimpleKeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueKeyID string) (string, string, error) {
 	if err := validateParams(subscriberID, uniqueKeyID); err != nil {
-		return "", "", err
+		return "", "", model.NewSignValidationErr(codeSignatureInvalid, err)
 	}
 
 	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))

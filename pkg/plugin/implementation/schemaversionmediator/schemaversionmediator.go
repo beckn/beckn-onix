@@ -431,7 +431,11 @@ func (m *mediator) Mediate(ctx *model.StepContext) error {
 	if ctx.IsCallerHandler {
 		targetManifest, err = m.fetchCounterpartyManifest(ctx, counterpartyID)
 		if err != nil {
-			return m.applyOnFailure(fmt.Errorf("schemaversionmediator: counterparty manifest unavailable for %q: %w", counterpartyID, err))
+			// The NACK carries only a generic message, so log the cause here.
+			log.Warnf(ctx, "schemaversionmediator: counterparty manifest unavailable counterparty=%q onFailure=%s cause=%v", counterpartyID, m.policy.OnFailure, err)
+			// %v, not %w: a registry *model.CodedErr in the chain would win over
+			// MediationError in nackBecknError and replace this NACK's code.
+			return m.applyOnFailure(fmt.Errorf("schemaversionmediator: counterparty manifest unavailable for %q: %v", counterpartyID, err))
 		}
 	} else {
 		targetManifest = m.localManifest
