@@ -11,13 +11,14 @@ import (
 	logger "github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
 )
 
 const auditLoggerName = "Beckn_ONIX"
 
-func EmitAuditLogs(ctx context.Context, body []byte, header http.Header, attrs ...log.KeyValue) {
+func EmitAuditLogs(ctx context.Context, body []byte, header http.Header, attrs ...attribute.KeyValue) {
 	// global.GetLoggerProvider() always returns a no-op provider (never nil),
 	// so a nil-check on the provider is ineffective. Instead we rely on the
 	// logEnabled atomic flag, which otelsetup sets to true after calling
@@ -35,7 +36,7 @@ func EmitAuditLogs(ctx context.Context, body []byte, header http.Header, attrs .
 	auditBody := ProcessAuditPayload(ctx, body)
 	auditlog := provider.Logger(auditLoggerName)
 	record := log.Record{}
-	record.SetBody(log.StringValue(string(auditBody)))
+	record.SetBody(attribute.StringValue(string(auditBody)))
 	record.SetTimestamp(time.Now())
 	record.SetObservedTimestamp(time.Now())
 	record.SetSeverity(log.SeverityInfo)
@@ -47,11 +48,11 @@ func EmitAuditLogs(ctx context.Context, body []byte, header http.Header, attrs .
 	parentID, _ := ctx.Value(model.ContextKeyParentID).(string)
 
 	record.AddAttributes(
-		log.String("checkSum", checkSum),
-		log.String("log_uuid", uuid.New().String()),
-		log.String("transaction_id", txnID),
-		log.String("message_id", msgID),
-		log.String("parent_id", parentID),
+		attribute.String("checkSum", checkSum),
+		attribute.String("log_uuid", uuid.New().String()),
+		attribute.String("transaction_id", txnID),
+		attribute.String("message_id", msgID),
+		attribute.String("parent_id", parentID),
 	)
 
 	if len(attrs) > 0 {
@@ -69,7 +70,7 @@ func EmitAuditLogs(ctx context.Context, body []byte, header http.Header, attrs .
 				// header attribute keys to be lowercase (e.g. "x-request-id").
 				// header.Get uses canonical MIME casing internally, so lookup is
 				// case-insensitive regardless of how name is cased in signatureHeaders.
-				record.AddAttributes(log.String("http.request.header."+strings.ToLower(name), val))
+				record.AddAttributes(attribute.String("http.request.header."+strings.ToLower(name), val))
 			}
 		}
 	}
