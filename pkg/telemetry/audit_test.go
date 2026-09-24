@@ -8,7 +8,7 @@ import (
 	"os"
 	"testing"
 
-	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -66,7 +66,7 @@ func TestEmitAuditLogs_Enabled(t *testing.T) {
 	require.True(t, LogsEnabled(), "LogsEnabled should be true after NewTestProviderWithLogs")
 
 	require.NotPanics(t, func() {
-		EmitAuditLogs(ctx, []byte(`{"message":"audit-test"}`), nil, log.String("extra_key", "extra_value"))
+		EmitAuditLogs(ctx, []byte(`{"message":"audit-test"}`), nil, attribute.String("extra_key", "extra_value"))
 	}, "EmitAuditLogs should not panic when logs are enabled")
 
 	// One log record must be emitted regardless of how selectAuditPayload
@@ -76,7 +76,7 @@ func TestEmitAuditLogs_Enabled(t *testing.T) {
 
 	// Verify the standard attributes set by EmitAuditLogs are present.
 	var hasChecksum, hasLogUUID, hasExtraKey bool
-	records[0].WalkAttributes(func(kv log.KeyValue) bool {
+	records[0].WalkAttributes(func(kv attribute.KeyValue) bool {
 		switch kv.Key {
 		case "checkSum":
 			hasChecksum = true
@@ -119,7 +119,7 @@ func TestEmitAuditLogs_CaptureSignatureHeaders(t *testing.T) {
 	require.Len(t, records, 1, "exactly one log record should be emitted")
 
 	var hasAuth, hasReqID bool
-	records[0].WalkAttributes(func(kv log.KeyValue) bool {
+	records[0].WalkAttributes(func(kv attribute.KeyValue) bool {
 		switch kv.Key {
 		case "http.request.header.authorization":
 			hasAuth = true
@@ -157,7 +157,7 @@ func TestEmitAuditLogs_CaptureSignatureHeaders_Disabled(t *testing.T) {
 	records := exporter.Records()
 	require.Len(t, records, 1)
 
-	records[0].WalkAttributes(func(kv log.KeyValue) bool {
+	records[0].WalkAttributes(func(kv attribute.KeyValue) bool {
 		assert.NotEqual(t, "http.request.header.authorization", kv.Key,
 			"authorization header must not appear when captureSignatureHeaders is false")
 		return true

@@ -22,7 +22,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	auditlog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -192,9 +191,9 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		body := stepCtx.Body
-		telemetry.EmitAuditLogs(r.Context(), body, r.Header, auditlog.String("audit.direction", "request"), auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.request.error", errString(err)), auditlog.String("sender.id", senderID), auditlog.String("receiver.id", receiverID))
+		telemetry.EmitAuditLogs(r.Context(), body, r.Header, attribute.String("audit.direction", "request"), attribute.Int("http.response.status_code", wrapped.statusCode), attribute.String("http.request.error", errString(err)), attribute.String("sender.id", senderID), attribute.String("receiver.id", receiverID))
 		if len(responseBody) > 0 {
-			telemetry.EmitAuditLogs(r.Context(), responseBody, nil, auditlog.String("audit.direction", "response"), auditlog.Int("http.response.status_code", wrapped.statusCode), auditlog.String("http.request.error", errString(err)), auditlog.String("sender.id", senderID), auditlog.String("receiver.id", receiverID))
+			telemetry.EmitAuditLogs(r.Context(), responseBody, nil, attribute.String("audit.direction", "response"), attribute.Int("http.response.status_code", wrapped.statusCode), attribute.String("http.request.error", errString(err)), attribute.String("sender.id", senderID), attribute.String("receiver.id", receiverID))
 		}
 		span.End()
 	}()
