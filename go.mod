@@ -117,7 +117,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.46.0
 	go.uber.org/automaxprocs v1.6.0
 	golang.org/x/sync v0.23.0
-	google.golang.org/grpc v1.84.0
+	google.golang.org/grpc v1.83.2 // security floor: do not bump to >=1.84.0-dev until v1.85.0 stable ships (GHSA-2v4p-qf9q-27wj / CVE-2026-84445)
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v2 v2.4.0
 )
