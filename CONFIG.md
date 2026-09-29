@@ -423,6 +423,7 @@ Metrics are organized by module for better maintainability and encapsulation:
 - `beckn_signature_validations_total` - Signature validation attempts
 - `beckn_schema_validations_total` - Schema validation attempts
 - `onix_routing_decisions_total` - Routing decisions taken by handler
+- `onix_signature_replay_checks_total` - Inbound signature replay checks, labelled `status=accepted|replay|error` (see [`replayGuard`](#replayguard))
 
 #### Cache Metrics (from `cache` plugin)
 - `onix_cache_operations_total`, `onix_cache_hits_total`, `onix_cache_misses_total`
@@ -690,6 +691,46 @@ modules:
 **Required**: No  
 **Description**: Subscriber ID for the participant. Used primarily for BPP modules.  
 **Example**: `bpp1`
+
+##### `replayGuard`
+**Type**: `object`  
+**Required**: No  
+**Description**: Rejects replayed inbound signatures on the `validateSign` step.
+
+A verified Beckn signature stays valid for its whole `created`/`expires` window, and nothing in the signature binds it to a single delivery. Without this guard, anyone who obtains one signed request can send it to the receiver repeatedly and every copy verifies. The guard remembers each signature it accepts, for as long as that signature could still be accepted again, and rejects the second and later arrivals with `AUT_REPLAY_DETECTED` (HTTP 401).
+
+It uses the module's existing `cache` plugin and needs no plugin of its own. The guard runs only after a signature has been cryptographically verified, so unauthenticated traffic cannot fill the cache.
+
+```yaml
+handler:
+  type: std
+  role: bap
+  replayGuard:
+    enabled: true          # optional, default true
+    onCacheError: allow    # optional, "allow" (default) or "deny"
+    namespace: onix        # optional, default "onix"
+  plugins:
+    cache:
+      id: redis
+      config:
+        addr: 127.0.0.1:6379
+```
+
+**Parameters**:
+
+- `enabled` *(optional, boolean, default: `true`)*: Turns the guard on. Omitting the whole `replayGuard` block leaves it enabled with defaults. Set to `false` to restore the previous behaviour of accepting an unlimited number of copies of one signature; this is logged as a warning at startup.
+- `onCacheError` *(optional, string, default: `allow`)*: What to do when the cache cannot answer. `allow` logs a warning and lets the request through, matching how `payloadstore` and `manifestloader` already treat cache faults, so a Redis outage degrades security rather than dropping all traffic. `deny` fails the request instead, surfacing as a 500 rather than a 401 because a cache outage is not an authentication failure.
+- `namespace` *(optional, string, default: `onix`)*: Prefixes every replay key so two ONIX deployments sharing one Redis do not see each other's claims.
+
+**Requirements and behaviour**:
+
+- A `cache` plugin must be configured on the module. Without one the guard stays inactive and logs a warning.
+- Claims are keyed on the signature value, not on `message_id`. Only a byte-identical resend collides, so a peer that re-signs its retry produces a different signature and is still accepted.
+- Each claim is held until the signature's own `expires`, plus a small grace, and capped at one hour. Claims expire on their own, so the keyspace does not grow without bound.
+- Exactly-once claiming requires a cache implementing `definition.AtomicCache` (the bundled `redis` cache does, via `SET NX`). With any other cache the guard falls back to a non-atomic check that still catches sequential replays but can miss two replays arriving simultaneously; this is logged as a warning at startup.
+- Rejections are counted by the `onix_signature_replay_checks_total` metric, labelled `status=accepted|replay|error`.
+
+> **Upgrade note.** A caller that retries by resending the exact same signed bytes (for example a load balancer replaying a timed-out POST) will now be rejected as a replay. If the first attempt already completed, rejecting the duplicate is the correct idempotent outcome. Peers that re-sign on retry, including ONIX itself, are unaffected. Set `enabled: false` if you need the old behaviour while peers migrate.
 
 ##### `authDisabled`
 **Type**: `boolean`  
@@ -991,7 +1032,8 @@ Auxiliary specs are additive — they may only introduce new action verbs not al
 signValidator:
   id: signvalidator
   config:
-    clockSkewToleranceSeconds: 5   # optional — see parameters below
+    clockSkewToleranceSeconds: 5     # optional — see parameters below
+    maxSignatureValiditySeconds: 300 # optional — see parameters below
 ```
 
 **Parameters**:
@@ -1000,6 +1042,13 @@ signValidator:
   - A value of `0` enforces strict same-second validation.
   - Values greater than `10` are accepted but trigger a startup warning — large tolerances widen the replay window.
   - **The `expires` field always uses zero tolerance regardless of this setting.** An expired signature is rejected unconditionally.
+
+- `maxSignatureValiditySeconds` *(optional, integer, default: `300`)*: Maximum width of an inbound signature's validity window, measured as `expires - created`. Both endpoints are chosen by the sender, so the liveness checks above say nothing about how long a signature stays acceptable: without this bound a peer can set `expires` years into the future and that single signature remains valid for as long as it likes. The default of 300 s matches the window ONIX itself uses when signing outbound requests.
+  - A value of `0` disables the bound and restores the previous unbounded behaviour. Only set this if you knowingly accept long-lived signatures; it is logged as a warning at startup.
+  - A signature whose window is inverted (`expires` before `created`) is always rejected, regardless of this setting.
+  - Applies to both `Validate` and `ValidateAck`.
+
+> **Upgrade note.** This bound is new and is enforced by default. A peer that signs with a window wider than 300 s will start being rejected with `AUT_SIGNATURE_INVALID` and a `validity window too long` message. Raise `maxSignatureValiditySeconds` (or set it to `0`) if you need to keep accepting such peers while they migrate.
 
 ---
 
