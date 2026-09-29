@@ -29,6 +29,15 @@ func (vp provider) New(ctx context.Context, config map[string]string) (definitio
 		cfg.ClockSkewTolerance = &d
 	}
 
+	if s, ok := config["maxSignatureValiditySeconds"]; ok {
+		secs, err := strconv.Atoi(s)
+		if err != nil || secs < 0 {
+			return nil, nil, errors.New("signvalidator: maxSignatureValiditySeconds must be a non-negative integer")
+		}
+		d := time.Duration(secs) * time.Second
+		cfg.MaxSignatureValidity = &d
+	}
+
 	return signvalidator.New(ctx, cfg)
 }
 

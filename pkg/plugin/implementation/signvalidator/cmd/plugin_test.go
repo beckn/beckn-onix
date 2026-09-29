@@ -128,3 +128,49 @@ func TestVerifierProviderFailure(t *testing.T) {
 		})
 	}
 }
+
+// TestVerifierProviderMaxValidityConfig tests that maxSignatureValiditySeconds is parsed correctly.
+func TestVerifierProviderMaxValidityConfig(t *testing.T) {
+	p := provider{}
+
+	tests := []struct {
+		name    string
+		config  map[string]string
+		wantErr bool
+	}{
+		{
+			name:    "valid bound",
+			config:  map[string]string{"maxSignatureValiditySeconds": "300"},
+			wantErr: false,
+		},
+		{
+			name:    "zero disables the bound",
+			config:  map[string]string{"maxSignatureValiditySeconds": "0"},
+			wantErr: false,
+		},
+		{
+			name:    "absent key falls back to the default",
+			config:  map[string]string{},
+			wantErr: false,
+		},
+		{
+			name:    "duration string is not accepted",
+			config:  map[string]string{"maxSignatureValiditySeconds": "5m"},
+			wantErr: true,
+		},
+		{
+			name:    "negative value",
+			config:  map[string]string{"maxSignatureValiditySeconds": "-1"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := p.New(context.Background(), tt.config)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("wantErr=%v, got err=%v", tt.wantErr, err)
+			}
+		})
+	}
+}
