@@ -29,6 +29,11 @@ func (m *MockRedisClient) Set(ctx context.Context, key string, value interface{}
 	return redis.NewStatusResult(args.String(0), args.Error(1))
 }
 
+func (m *MockRedisClient) SetNX(ctx context.Context, key string, value interface{}, ttl time.Duration) *redis.BoolCmd {
+	args := m.Called(ctx, key, value, ttl)
+	return redis.NewBoolResult(args.Bool(0), args.Error(1))
+}
+
 func (m *MockRedisClient) Del(ctx context.Context, keys ...string) *redis.IntCmd {
 	args := m.Called(ctx, keys)
 	return redis.NewIntResult(int64(args.Int(0)), args.Error(1))
@@ -390,4 +395,77 @@ func TestGetCacheMetrics_ConcurrentAccess(t *testing.T) {
 	for i := 1; i < n; i++ {
 		assert.Same(t, results[0], results[i], "goroutine %d returned a different metrics instance", i)
 	}
+}
+
+// TestCache_SetNX covers the definition.AtomicCache implementation.
+func TestCache_SetNX(t *testing.T) {
+	ctx := context.Background()
+	ttl := 5 * time.Minute
+
+	tests := []struct {
+		name       string
+		mockReturn bool
+		mockErr    error
+		wantStored bool
+		wantErr    bool
+	}{
+		{
+			name:       "key absent, claim succeeds",
+			mockReturn: true,
+			wantStored: true,
+		},
+		{
+			name:       "key already present, claim refused",
+			mockReturn: false,
+			wantStored: false,
+		},
+		{
+			// go-redis pairs an error with false; the wrapper must not let a
+			// caller that ignores err read that as "already claimed".
+			name:       "redis error reports false and the error",
+			mockReturn: false,
+			mockErr:    errors.New("connection refused"),
+			wantStored: false,
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := new(MockRedisClient)
+			mockClient.On("SetNX", mock.Anything, "replay-key", "1", ttl).Return(tt.mockReturn, tt.mockErr)
+
+			c := &Cache{Client: mockClient}
+			stored, err := c.SetNX(ctx, "replay-key", "1", ttl)
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("SetNX() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if stored != tt.wantStored {
+				t.Errorf("SetNX() stored = %v, want %v", stored, tt.wantStored)
+			}
+			mockClient.AssertExpectations(t)
+		})
+	}
+}
+
+// TestCache_SetNXOnlyFirstCallerWins proves the semantics the replay guard
+// depends on, against a store that behaves like Redis SET NX.
+func TestCache_SetNXOnlyFirstCallerWins(t *testing.T) {
+	ctx := context.Background()
+	ttl := time.Minute
+
+	mockClient := new(MockRedisClient)
+	mockClient.On("SetNX", mock.Anything, "k", "1", ttl).Return(true, nil).Once()
+	mockClient.On("SetNX", mock.Anything, "k", "1", ttl).Return(false, nil).Once()
+
+	c := &Cache{Client: mockClient}
+
+	if stored, err := c.SetNX(ctx, "k", "1", ttl); err != nil || !stored {
+		t.Fatalf("first claim: stored=%v err=%v, want true/nil", stored, err)
+	}
+	if stored, err := c.SetNX(ctx, "k", "1", ttl); err != nil || stored {
+		t.Fatalf("second claim: stored=%v err=%v, want false/nil", stored, err)
+	}
+	mockClient.AssertExpectations(t)
 }
