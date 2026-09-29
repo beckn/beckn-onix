@@ -54,6 +54,7 @@ type stdHandler struct {
 	transportWrapper   definition.TransportWrapper
 	payloadTransformer definition.Step
 	payloadStore       definition.PayloadStore
+	replayGuard        *replayGuard
 	// ackSigner is non-nil only when the "signAck" step is configured (Receiver
 	// modules). It is also used to sign pipeline-NACK responses so that ALL
 	// synchronous responses carry a Signature header per NFH-007 CON-004-02.
@@ -110,6 +111,9 @@ func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleNa
 	}
 	// Initialize HTTP client after plugins so transport wrapper can be applied.
 	h.httpClient = newHTTPClient(&cfg.HttpClientConfig, h.transportWrapper)
+	// Build the replay guard before steps: validateSign takes it by value at
+	// construction, and it depends on the Cache that initPlugins just loaded.
+	h.replayGuard = newReplayGuard(ctx, h.cache, cfg.ReplayGuard)
 	// Initialize steps.
 	if err := h.initSteps(ctx, mgr, cfg); err != nil {
 		return nil, fmt.Errorf("failed to initialize steps: %w", err)
@@ -665,7 +669,7 @@ func (h *stdHandler) initSteps(ctx context.Context, mgr PluginManager, cfg *Conf
 		case "sign":
 			s, err = newSignStep(h.signer, h.km, h.payloadStore)
 		case "validateSign":
-			s, err = newValidateSignStep(h.signValidator, h.km, h.payloadStore)
+			s, err = newValidateSignStep(h.signValidator, h.km, h.payloadStore, h.replayGuard)
 		case "validateSchema":
 			s, err = newValidateSchemaStep(h.schemaValidator, h.basePath)
 		case "addRoute":
