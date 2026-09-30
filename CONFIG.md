@@ -1413,7 +1413,7 @@ plugins:
 - `gzip`: Serve every published file gzip-compressed. Default: `"true"`.
 - `compactionChangeCountThreshold`: Automatically compact (fresh baseline instead of another change file) once this many pending change files have accumulated. `0`/unset disables. Default: `0`.
 - `compactionSizeRatioThreshold`: Automatically compact once pending change files' combined size is at least this fraction of the baseline's size (e.g. `"0.5"` for 50%). `0`/unset disables. Default: `0`.
-- `checkCatalogIndexLink`: Read-only, warn-only check (via `dediregistry`, using this same module's `keyManager.subscriberId`/keyId) of whether this node's DeDi registry record already links this publisher's catalog index (`meta.catalog_index_url`). A miss is reported as a `PublishResult` warning, never a failure. Requires the module's `registry` plugin to implement `RegistryMetadataLookup` (e.g. `dediregistry`). Default: `"false"`.
+- `checkCatalogIndexLink`: Read-only, warn-only check (via `dediregistry`, using this same module's `keyManager.subscriberId`/keyId) of whether this node's DeDi registry record already links this publisher's catalog index (`meta.catalog_index_urls`, an array of `{url}` objects). A miss is reported as a `PublishResult` warning, never a failure. Requires the module's `registry` plugin to implement `RegistryMetadataLookup` (e.g. `dediregistry`). Default: `"false"`.
 
 Per-catalog controls (`forceBaseline`, `visibleTo`, `catalogType`, `retire`) live in the **request body** (`message.publishDirectives[]`/top-level `retire`), not in this plugin config — see [`catalogPublish` handler type](#handler-type-catalogpublish) below.
 
