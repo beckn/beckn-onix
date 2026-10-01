@@ -18,11 +18,26 @@ import (
 const (
 	defaultClockSkewTolerance = 5 * time.Second
 	maxClockSkewTolerance     = 10 * time.Second
+
+	// defaultMaxSignatureValidity bounds how long a single inbound signature
+	// may stay acceptable, measured as (expires - created). The sender picks
+	// both values, so without this bound a peer can mint one signature that
+	// stays valid for years. 5 minutes matches the window ONIX itself uses
+	// when signing outbound requests (see signStep.Run in
+	// core/module/handler/step.go), so honest peers are unaffected.
+	defaultMaxSignatureValidity = 5 * time.Minute
 )
 
-// AUT_* codes reachable from this plugin's failure modes. AUT_RATE_LIMITED,
-// AUT_DOMAIN_NOT_ALLOWED, and AUT_REPLAY_DETECTED have no corresponding checks
-// in signvalidator today and are intentionally absent from this list.
+// AUT_* codes reachable from this plugin's failure modes. AUT_RATE_LIMITED and
+// AUT_DOMAIN_NOT_ALLOWED have no corresponding checks in signvalidator today
+// and are intentionally absent from this list.
+//
+// AUT_REPLAY_DETECTED is raised by the replay guard in
+// core/module/handler/replayguard.go rather than here: rejecting a replay
+// needs shared state across requests, and this plugin's provider takes only a
+// config map, no Cache. The guard runs immediately after Validate/ValidateAck
+// returns success, so the check is still part of signature verification from a
+// caller's point of view.
 const (
 	// codeSignatureMissing covers an absent signature value in the Authorization header.
 	codeSignatureMissing = "AUT_SIGNATURE_MISSING"
@@ -43,11 +58,20 @@ type Config struct {
 	// per-subnet via the plugin config key "clockSkewToleranceSeconds".
 	// The `expires` field always uses zero tolerance regardless of this value.
 	ClockSkewTolerance *time.Duration
+
+	// MaxSignatureValidity caps (expires - created) on an inbound signature.
+	// nil means use the default (5 min). A zero-value pointer (&0) disables
+	// the bound entirely, which restores the previous unbounded behaviour and
+	// should only be used by an operator who knowingly accepts long-lived
+	// signatures. NFOs may override this per-subnet via the plugin config key
+	// "maxSignatureValiditySeconds".
+	MaxSignatureValidity *time.Duration
 }
 
 // validator implements the validator interface.
 type validator struct {
-	clockSkewTolerance time.Duration // resolved at construction; never changes
+	clockSkewTolerance   time.Duration // resolved at construction; never changes
+	maxSignatureValidity time.Duration // resolved at construction; 0 means unbounded
 }
 
 // New creates a new Verifier instance.
@@ -61,7 +85,16 @@ func New(ctx context.Context, config *Config) (*validator, func() error, error) 
 		log.Warnf(ctx, "signvalidator: clockSkewToleranceSeconds=%ds exceeds recommended maximum of %ds; large tolerances widen the replay window",
 			int(tolerance.Seconds()), int(maxClockSkewTolerance.Seconds()))
 	}
-	return &validator{clockSkewTolerance: tolerance}, nil, nil
+	maxValidity := defaultMaxSignatureValidity
+	if config.MaxSignatureValidity != nil {
+		maxValidity = *config.MaxSignatureValidity
+	}
+	if maxValidity <= 0 {
+		log.Warnf(ctx, "signvalidator: maxSignatureValiditySeconds=0 disables the signature validity bound; a peer can mint a signature that stays acceptable indefinitely")
+		maxValidity = 0
+	}
+
+	return &validator{clockSkewTolerance: tolerance, maxSignatureValidity: maxValidity}, nil, nil
 }
 
 // Validate verifies the 3-line signing string for inbound requests.
@@ -80,7 +113,7 @@ func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBas
 		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("error decoding signature: %w", err))
 	}
 
-	if err := checkTimestampWindow("signature", createdTimestamp, expiredTimestamp, v.clockSkewTolerance); err != nil {
+	if err := checkTimestampWindow("signature", createdTimestamp, expiredTimestamp, v.clockSkewTolerance, v.maxSignatureValidity); err != nil {
 		return err
 	}
 
@@ -170,7 +203,7 @@ func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHe
 		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("error decoding signature: %w", err))
 	}
 
-	if err := checkTimestampWindow("AckSignature", createdTimestamp, expiredTimestamp, v.clockSkewTolerance); err != nil {
+	if err := checkTimestampWindow("AckSignature", createdTimestamp, expiredTimestamp, v.clockSkewTolerance, v.maxSignatureValidity); err != nil {
 		return err
 	}
 
@@ -227,7 +260,13 @@ func checkSubscriberIdentity(ctx *model.StepContext, body []byte, signerID strin
 // clockSkewTolerance is applied to `created` only — the spec permits a
 // configurable forward drift window to accommodate NTP skew between NPs.
 // `expires` is always checked with zero tolerance per the spec.
-func checkTimestampWindow(prefix string, createdTimestamp, expiredTimestamp int64, clockSkewTolerance time.Duration) error {
+//
+// maxValidity bounds the width of the window itself, (expires - created). Both
+// endpoints are chosen by the sender, so the liveness checks below say nothing
+// about how long the signature stays acceptable: without this bound a peer can
+// set expires years out and replay that one signature for as long as it likes.
+// A maxValidity of 0 disables the bound.
+func checkTimestampWindow(prefix string, createdTimestamp, expiredTimestamp int64, clockSkewTolerance, maxValidity time.Duration) error {
 	now := time.Now().UTC()
 	// Accept created values up to clockSkewTolerance in the future.
 	deadline := now.Add(clockSkewTolerance)
@@ -249,6 +288,27 @@ func checkTimestampWindow(prefix string, createdTimestamp, expiredTimestamp int6
 			now.Unix()-expiredTimestamp,
 		))
 	}
+
+	// Width checks run after the liveness checks so an expired or not-yet-valid
+	// signature still reports as such. They constrain the window itself, which
+	// the liveness checks say nothing about.
+	//
+	// An inverted window is malformed rather than expired, and can slip past
+	// both checks above: created a second into the skew tolerance, expires a
+	// second from now.
+	if expiredTimestamp < createdTimestamp {
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("%s has an inverted validity window: created=%d is after expires=%d",
+			prefix, createdTimestamp, expiredTimestamp))
+	}
+
+	if maxValidity > 0 {
+		validity := time.Duration(expiredTimestamp-createdTimestamp) * time.Second
+		if validity > maxValidity {
+			return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("%s validity window too long: created=%d, expires=%d, window=%ds, max=%ds",
+				prefix, createdTimestamp, expiredTimestamp, int64(validity.Seconds()), int64(maxValidity.Seconds())))
+		}
+	}
+
 	return nil
 }
 

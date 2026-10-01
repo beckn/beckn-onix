@@ -134,14 +134,14 @@ func makeReceiverStepCtx(protocolVersion, messageID, subID, authHeader, bodyJSON
 
 func TestNewValidateSignStep_NilSignValidator_ReturnsError(t *testing.T) {
 	km := &mockKMBasic{}
-	if _, err := newValidateSignStep(nil, km, nil); err == nil {
+	if _, err := newValidateSignStep(nil, km, nil, nil); err == nil {
 		t.Fatal("expected error for nil SignValidator")
 	}
 }
 
 func TestNewValidateSignStep_NilKM_ReturnsError(t *testing.T) {
 	sv := &mockSignValidatorBasic{}
-	if _, err := newValidateSignStep(sv, nil, nil); err == nil {
+	if _, err := newValidateSignStep(sv, nil, nil, nil); err == nil {
 		t.Fatal("expected error for nil KeyManager")
 	}
 }
@@ -149,7 +149,7 @@ func TestNewValidateSignStep_NilKM_ReturnsError(t *testing.T) {
 func TestNewValidateSignStep_NilPayloadStore_OK(t *testing.T) {
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
-	step, err := newValidateSignStep(sv, km, nil)
+	step, err := newValidateSignStep(sv, km, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestValidateHeaders_SolicitedCallback_UsesValidateAck(t *testing.T) {
 
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
-	step, _ := newValidateSignStep(sv, km, store)
+	step, _ := newValidateSignStep(sv, km, store, nil)
 	vStep := step.(*validateSignStep)
 
 	ctx := makeValidateStepCtx("2.0.0", "msg-vh-001", "bap.example.com",
@@ -364,7 +364,7 @@ func TestValidateHeaders_SolicitedCallback_UsesValidateAck(t *testing.T) {
 func TestValidateHeaders_ProviderInitiated_UsesValidate(t *testing.T) {
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
-	step, _ := newValidateSignStep(sv, km, nil)
+	step, _ := newValidateSignStep(sv, km, nil, nil)
 	vStep := step.(*validateSignStep)
 
 	ctx := makeValidateStepCtx("2.0.0", "msg-vh-002", "bap.example.com",
@@ -386,7 +386,7 @@ func TestValidateHeaders_SolicitedCallback_NilStore_FallsBackToValidate(t *testi
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
 	// nil payloadStore — degrade to 3-line verification
-	step, _ := newValidateSignStep(sv, km, nil)
+	step, _ := newValidateSignStep(sv, km, nil, nil)
 	vStep := step.(*validateSignStep)
 
 	ctx := makeValidateStepCtx("2.0.0", "msg-vh-003", "bap.example.com",
@@ -408,7 +408,7 @@ func TestValidateHeaders_SolicitedCallback_PreV2_FallsBackToValidate(t *testing.
 	store := newMockPayloadStore()
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
-	step, _ := newValidateSignStep(sv, km, store)
+	step, _ := newValidateSignStep(sv, km, store, nil)
 	vStep := step.(*validateSignStep)
 
 	ctx := makeValidateStepCtx("1.1.0", "msg-vh-004", "bap.example.com",
@@ -453,7 +453,7 @@ func TestValidateHeaders_PreservesClassifiedCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			step, _ := newValidateSignStep(tt.sv, tt.km, nil)
+			step, _ := newValidateSignStep(tt.sv, tt.km, nil, nil)
 			vStep := step.(*validateSignStep)
 
 			ctx := makeValidateStepCtx("2.0.0", "msg-vh-code", "bap.example.com",
@@ -480,7 +480,7 @@ func TestValidateHeaders_SolicitedCallback_NoEntry_ReturnsError(t *testing.T) {
 
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
-	step, _ := newValidateSignStep(sv, km, store)
+	step, _ := newValidateSignStep(sv, km, store, nil)
 	vStep := step.(*validateSignStep)
 
 	ctx := makeValidateStepCtx("2.0.0", "msg-vh-005", "bap.example.com",
@@ -498,7 +498,7 @@ func TestValidateHeaders_SolicitedCallback_StoreError_ReturnsError(t *testing.T)
 
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
-	step, _ := newValidateSignStep(sv, km, store)
+	step, _ := newValidateSignStep(sv, km, store, nil)
 	vStep := step.(*validateSignStep)
 
 	ctx := makeValidateStepCtx("2.0.0", "msg-vh-006", "bap.example.com",
@@ -513,7 +513,7 @@ func TestValidateHeaders_SolicitedCallback_StoreError_ReturnsError(t *testing.T)
 func TestValidate_NonEd25519Algorithm_ReturnsError(t *testing.T) {
 	sv := &mockSignValidatorBasic{}
 	km := &mockKMBasic{publicKey: "pubKey=="}
-	step, _ := newValidateSignStep(sv, km, nil)
+	step, _ := newValidateSignStep(sv, km, nil, nil)
 	vStep := step.(*validateSignStep)
 
 	badAlgHeader := `Signature keyId="bpp.example.com|key-1|rsa",algorithm="rsa",` +

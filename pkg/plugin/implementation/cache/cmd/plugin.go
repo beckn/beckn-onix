@@ -9,6 +9,13 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/plugin/implementation/cache"
 )
 
+// Compile-time proof that the Redis cache also satisfies the optional
+// definition.AtomicCache capability. Consumers discover this at runtime with a
+// type assertion, so nothing else would catch an accidental signature change
+// on SetNX -- the assertion would just start failing silently and callers
+// would quietly fall back to the non-atomic path.
+var _ definition.AtomicCache = (*cache.Cache)(nil)
+
 // cacheProvider implements the CacheProvider interface for the cache plugin.
 type cacheProvider struct{}
 
