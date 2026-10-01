@@ -10,7 +10,7 @@ than bespoke per-publisher code.
 
 This package does not produce a DeDi manifest. The catalog index's
 location is declared directly in the publisher's own DeDi registry
-record (`meta.catalog_index_url`), not via a separate node-manifest
+record (`meta.catalog_index_urls`, an array of `{url}` objects), not via a separate node-manifest
 document's `catalog.catalogIndexes` indirection -- see "Node-manifest
 link check" below for how `catalogPublishHandler.go` checks and reports
 this. An earlier version of this package computed and signed a manifest
@@ -464,7 +464,7 @@ every check from `keyManager.Keyset(ctx, subscriberId)` (re-resolved
 per-check rather than cached, so a signing-key rotation is picked up
 immediately, matching `catalogpublisher.Publish`'s own per-request
 `Keyset` resolution) -- and checks whether the record's
-`meta.catalog_index_url` already matches this publisher's own index URL
+`meta.catalog_index_urls` array already includes this publisher's own index URL
 (`CatalogPublisher.IndexURL()`, part of the plugin's exported interface
 precisely so callers like this can ask for it without knowing
 `PublicBaseURL` internals). This directly declares the catalog index in
@@ -575,8 +575,8 @@ subscriptions, and served `catalog/pull`/`catalog/search` to consumers.
 (any CDN, object store, or static host) via this plugin's `Publish` call,
 exposed here as a DS-internal `catalog/publish` trigger with no ACK/NACK
 envelope at all -- see "HTTP handler: `catalog/publish`" above. Once your
-files are on your storage and your DeDi record's `meta.catalog_index_url`
-points at your index, crawlers discover and pull your catalogs on their
+files are on your storage and your DeDi record's `meta.catalog_index_urls`
+includes your index URL, crawlers discover and pull your catalogs on their
 own schedule. There is no central service to call, subscribe to, or wait
 on.
 
@@ -602,7 +602,18 @@ get right.
    baseline or an incremental change; a resubmission of identical content
    is simply a no-op.
 3. **Set one field on your existing DeDi Subscriber record:
-   `meta.catalog_index_url`.** That's the entire "registration" step --
+   `meta.catalog_index_urls`.** It's an array of `{url}` objects (a node
+   may host more than one catalog index), so add your index URL as an
+   entry:
+   ```json
+   "meta": {
+     "catalog_index_urls": [
+       { "url": "https://your-host.example/index/becknCatalogs.index.json" }
+     ]
+   }
+   ```
+   A singular `catalog_index_url` string is not read by either this
+   plugin or `catalogcrawler`. That's the entire "registration" step --
    no separate pointer file, no new registry to onboard into. The plugin
    can even check this for you after every publish and warn you if it's
    missing (see "Optional registry catalog-index link check" above).

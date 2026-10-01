@@ -280,7 +280,7 @@ type PublishError struct {
 // merges each outcome's SignedEntry into the index it already holds).
 // There is no DeDi manifest here: the index's location is declared
 // directly in the publisher's own DeDi registry record
-// (meta.catalog_index_url, see IndexURL and
+// (meta.catalog_index_urls, see IndexURL and
 // core/module/handler/catalogPublishHandler.go's
 // checkRegistryLinksCatalogIndex), not via a separate manifest document.
 type PublishResult struct {
@@ -370,8 +370,8 @@ type CatalogPublisher interface {
 
 	// IndexURL returns the public location this publisher's catalog index
 	// is (or will be) reachable at -- callers use this to check the
-	// publisher's own DeDi registry record for a matching
-	// meta.catalog_index_url before publishing (see
+	// publisher's own DeDi registry record for a matching entry in
+	// meta.catalog_index_urls before publishing (see
 	// pkg/plugin/implementation/catalogpublisher/registrylink.go), without
 	// this package knowing anything about DeDi or registries itself.
 	IndexURL() string
