@@ -221,6 +221,74 @@ maskRules:
 	assert.Equal(t, "[REDACTED]", out["d"].(map[string]interface{})["e"].(map[string]interface{})["f"].(map[string]interface{})["email"])
 }
 
+func TestProcessAuditPayload_FullMode_MasksByPathSuffix(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  sensitive:
+    maskType: replace
+    mask: "[REDACTED]"
+  email:
+    maskType: replace
+    mask: "***@***.***"
+maskRules:
+  - keys: [contact.name]
+    pattern: sensitive
+  - keys: [email]
+    pattern: email
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	body := []byte(`{
+		"Provider": {"contact": {"name": "Alice", "email": "alice@example.com"}},
+		"Resource": {"descriptor": {"name": "Public resource"}},
+		"Participant": {"contact": {"name": {"fullName": "Bob"}}}
+	}`)
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+
+	providerContact := out["Provider"].(map[string]interface{})["contact"].(map[string]interface{})
+	resourceDescriptor := out["Resource"].(map[string]interface{})["descriptor"].(map[string]interface{})
+	participantName := out["Participant"].(map[string]interface{})["contact"].(map[string]interface{})["name"].(map[string]interface{})
+
+	assert.Equal(t, "[REDACTED]", providerContact["name"], "contact.name suffix should match")
+	assert.Equal(t, "***@***.***", providerContact["email"], "plain field-name rule should still match")
+	assert.Equal(t, "Public resource", resourceDescriptor["name"], "descriptor.name must not match contact.name")
+	assert.Equal(t, "Bob", participantName["fullName"], "contact.name must not match contact.name.fullName")
+}
+
+func TestProcessAuditPayload_FullMode_MostSpecificSuffixWins(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  generic:
+    maskType: replace
+    mask: "[GENERIC]"
+  contact:
+    maskType: replace
+    mask: "[CONTACT]"
+maskRules:
+  - keys: [name]
+    pattern: generic
+  - keys: [contact.name]
+    pattern: contact
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	body := []byte(`{
+		"Provider": {"contact": {"name": "Alice"}},
+		"Resource": {"descriptor": {"name": "Public resource"}}
+	}`)
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+
+	providerName := out["Provider"].(map[string]interface{})["contact"].(map[string]interface{})["name"]
+	resourceName := out["Resource"].(map[string]interface{})["descriptor"].(map[string]interface{})["name"]
+
+	assert.Equal(t, "[CONTACT]", providerName)
+	assert.Equal(t, "[GENERIC]", resourceName)
+}
+
 func TestProcessAuditPayload_FullMode_ArrayTraversal(t *testing.T) {
 	resetConfig(t)
 	url := serveYAML(t, `

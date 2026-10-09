@@ -424,9 +424,9 @@ These headers are intentionally not masked — the Beckn `Authorization` header 
 
 The audit configuration file (`config/audit-fields.yaml`) controls a single-pass pipeline applied to every payload before the record is emitted:
 
-**Stage 1 — key-name masking (`maskRules`):** Fields are masked wherever they appear in the payload, regardless of nesting depth, by matching field name. This makes rules portable across Beckn domains, actions, and schema versions.
+**Stage 1 — key-name/path-suffix masking (`maskRules`):** A plain field name is masked wherever it appears in the payload. A dot-separated suffix such as `contact.name` matches `provider.contact.name`, but not `provider.descriptor.name` or `provider.contact.name.fullName`. When multiple rules match, the most specific suffix wins.
 
-**Stage 2 — path-override masking (`pathOverrides`):** Field masking bound to a specific dot-path. Use sparingly — key-name masking is preferred because it is schema-agnostic.
+**Stage 2 — path-override masking (`pathOverrides`):** Field masking bound to a specific dot-path. Use sparingly — suffix masking is preferred when the same rule applies below multiple root paths.
 
 **Stage 3 — field selection:** Only active in `selective` mode. The audit body is trimmed to the paths listed in `selectedFields` for the current action.
 
@@ -455,7 +455,8 @@ patterns:
   account:
     maskType: last4
 
-# Key-name masking — applied wherever the key appears in the payload
+# Key-name/path-suffix masking. Plain keys match at any depth; dot-separated
+# entries match only complete path suffixes.
 maskRules:
   - keys: [email, emailAddress, supportEmail, providerEmail]
     pattern: email
