@@ -34,7 +34,7 @@ type pathOverrideDef struct {
 }
 
 type auditConfig struct {
-	Mode                    string                `yaml:"mode"`           // "full" | "selective"
+	Mode                    string                `yaml:"mode"` // "full" | "selective"
 	Patterns                map[string]patternDef `yaml:"patterns"`
 	MaskRules               []maskRule            `yaml:"maskRules"`
 	PathOverrides           []pathOverrideDef     `yaml:"pathOverrides"`
@@ -56,10 +56,11 @@ type CompiledPattern struct {
 var signatureHeaders = []string{"Authorization", "X-Request-Id"}
 
 // CompiledConfig is the compiled, query-ready form of auditConfig.
-// All lookups are O(1) map operations so the per-request cost is minimal.
+// Lookups use pre-built maps so the per-request cost stays proportional to the
+// payload path depth rather than the number of configured rules.
 type CompiledConfig struct {
 	mode                    string                         // "full" or "selective"
-	keyToPattern            map[string]*CompiledPattern    // field name → pattern (from maskRules)
+	keyToPattern            map[string]*CompiledPattern    // field-name/path suffix → pattern (from maskRules)
 	pathOverrides           map[string]*CompiledPattern    // full dot-path → pattern
 	keepPaths               map[string]map[string]struct{} // action → set of paths to keep/traverse (selective only)
 	captureSignatureHeaders bool
@@ -144,7 +145,7 @@ func fetchSource(ctx context.Context, src string) ([]byte, error) {
 }
 
 // compile validates the raw auditConfig and produces a CompiledConfig with
-// all lookups pre-built for O(1) access during request processing.
+// pre-built lookup maps for request processing.
 func compile(ctx context.Context, cfg *auditConfig) (*CompiledConfig, error) {
 	// Resolve named patterns.
 	patterns := make(map[string]*CompiledPattern, len(cfg.Patterns))
@@ -156,7 +157,7 @@ func compile(ctx context.Context, cfg *auditConfig) (*CompiledConfig, error) {
 		patterns[name] = &CompiledPattern{MaskType: mt, Mask: def.Mask}
 	}
 
-	// Build field-name → pattern map from maskRules.
+	// Build field-name/path-suffix → pattern map from maskRules.
 	keyToPattern := make(map[string]*CompiledPattern)
 	for _, rule := range cfg.MaskRules {
 		p, ok := patterns[rule.Pattern]
@@ -291,8 +292,28 @@ func extractAction(root map[string]interface{}) string {
 	return strings.TrimSpace(action)
 }
 
+// findSuffixPattern checks the full path first, then progressively removes its
+// leftmost segment. This makes the most specific configured suffix win while
+// preserving O(1) map lookups at each path depth.
+//
+// Example: "provider.contact.name" is checked as:
+// "provider.contact.name" → "contact.name" → "name".
+func findSuffixPattern(path string, suffixToPattern map[string]*CompiledPattern) (*CompiledPattern, bool) {
+	for {
+		if pattern, ok := suffixToPattern[path]; ok {
+			return pattern, true
+		}
+
+		dot := strings.IndexByte(path, '.')
+		if dot < 0 {
+			return nil, false
+		}
+		path = path[dot+1:]
+	}
+}
+
 // walkMap processes a JSON object node in-place. Priority order per key:
-//  1. Key-name masking  (O(1) map lookup — checked first for lowest latency)
+//  1. Key-name/path-suffix masking (checked first)
 //  2. Path-override masking
 //  3. Selective-mode field dropping
 //  4. Recurse into nested objects / arrays
@@ -300,10 +321,18 @@ func walkMap(node map[string]interface{}, prefix string, cfg *CompiledConfig, ke
 	for key := range node {
 		fullPath := prefix + key
 
-		// 1. Key-name masking — field name is sufficient signal; no path needed.
-		if pattern, ok := cfg.keyToPattern[key]; ok {
-			node[key] = applyMask(node[key], pattern)
-			continue
+		// 1. Key-name/path-suffix masking. Only leaf values are candidates: an
+		// intermediate object at contact.name must not make the contact.name rule
+		// match a deeper field such as contact.name.fullName. Checking longest to
+		// shortest makes the most specific configured suffix win.
+		switch node[key].(type) {
+		case map[string]interface{}, []interface{}:
+			// Continue below so containers can be selected and traversed.
+		default:
+			if pattern, ok := findSuffixPattern(fullPath, cfg.keyToPattern); ok {
+				node[key] = applyMask(node[key], pattern)
+				continue
+			}
 		}
 
 		// 2. Path-override masking — for fields that need path-level precision.

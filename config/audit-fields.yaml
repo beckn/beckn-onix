@@ -4,7 +4,7 @@
 # mode: selective  — emit only the fields listed under selectedFields, then mask PII.
 #
 # The two-stage pipeline runs in a single pass over the payload:
-#   1. Key-name masking  (maskRules)   — checked first, O(1) per field
+#   1. Key-name/path-suffix masking (maskRules) — checked first
 #   2. Path-override masking           — for fields needing path-level precision
 #   3. Field selection / dropping      — only active in selective mode
 #
@@ -24,9 +24,10 @@ patterns:
   account:
     maskType: last4
 
-# maskRules — driven by field name, not payload path.
-# A field is masked wherever it appears in the payload, regardless of nesting depth.
-# This makes rules portable across Beckn domains, actions, and schema versions.
+# maskRules — driven by a field name or dot-separated path suffix.
+# A plain field name is masked wherever it appears, regardless of nesting depth.
+# A path suffix such as contact.name matches provider.contact.name, but not
+# provider.descriptor.name or provider.contact.name.fullName.
 maskRules:
   - keys: [email, emailAddress, supportEmail, providerEmail]
     pattern: email
@@ -51,7 +52,7 @@ captureSignatureHeaders: false
 
 # pathOverrides — use sparingly.
 # These bind masking to a specific dot-path and are harder to maintain as schemas
-# evolve. Prefer maskRules (key-name matching) wherever possible.
+# evolve. Prefer maskRules (key-name/path-suffix matching) wherever possible.
 pathOverrides: []
 
 # selectedFields — only applied when mode: selective.
