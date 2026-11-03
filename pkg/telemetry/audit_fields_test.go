@@ -194,6 +194,48 @@ maskRules:
 	assert.Equal(t, "u1", out["id"])
 }
 
+func TestProcessAuditPayload_FullMode_PlainKeyRulesMaskContainerValues(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "array elements are masked while preserving shape",
+			body: `{"email":["a@x.com","b@x.com"]}`,
+			want: `{"email":["***@***.***","***@***.***"]}`,
+		},
+		{
+			name: "object value is masked as a whole",
+			body: `{"address":{"street":"1 Main St","city":"Pune"}}`,
+			want: `{"address":"[REDACTED]"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetConfig(t)
+			url := serveYAML(t, `
+mode: full
+patterns:
+  email:
+    maskType: replace
+    mask: "***@***.***"
+  sensitive:
+    maskType: replace
+    mask: "[REDACTED]"
+maskRules:
+  - keys: [email]
+    pattern: email
+  - keys: [address]
+    pattern: sensitive
+`)
+			require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+			out := ProcessAuditPayload(context.Background(), []byte(tc.body))
+			assert.JSONEq(t, tc.want, string(out))
+		})
+	}
+}
+
 func TestProcessAuditPayload_FullMode_ArrayMaskingPaths(t *testing.T) {
 	for _, tc := range []struct {
 		name string

@@ -327,7 +327,12 @@ func walkMap(node map[string]interface{}, prefix string, cfg *CompiledConfig, ke
 		// shortest makes the most specific configured suffix win.
 		switch node[key].(type) {
 		case map[string]interface{}:
-			// Continue below so objects can be selected and traversed.
+			// Dotted suffix rules only apply to leaves, but a plain key rule keeps
+			// the pre-suffix behavior of masking the entire object value.
+			if pattern, ok := cfg.keyToPattern[key]; ok {
+				node[key] = applyMask(node[key], pattern)
+				continue
+			}
 		case []interface{}:
 			if _, ok := findSuffixPattern(fullPath, cfg.keyToPattern); ok {
 				walkSlice(node[key].([]interface{}), fullPath+".", cfg, keepSet)
