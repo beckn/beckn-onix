@@ -1168,3 +1168,62 @@ func TestRouteBodylessPublisherUnaffectedByQueryParams(t *testing.T) {
 		t.Errorf("expected route.URL to be nil for publisher route, got %v", route.URL)
 	}
 }
+
+// TestRouteONDCRetailCoreVersion tests routing of ONDC Retail 1.x messages, which
+// carry the protocol version in context.core_version instead of context.version.
+func TestRouteONDCRetailCoreVersion(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		endpoint string
+		body     string
+		wantURL  string
+	}{
+		{
+			name:     "search with core_version routes to the seller service",
+			endpoint: "search",
+			body:     `{"context": {"domain": "ONDC:RET10", "core_version": "1.2.5", "bap_uri": "https://buyer.example.com/"}}`,
+			wantURL:  "http://ondc-service:7001/search",
+		},
+		{
+			name:     "on_search with core_version routes to bap_uri",
+			endpoint: "on_search",
+			body:     `{"context": {"domain": "ONDC:RET10", "core_version": "1.2.5", "bap_uri": "https://buyer.example.com/ondc/"}}`,
+			wantURL:  "https://buyer.example.com/ondc/on_search",
+		},
+		{
+			name:     "version takes precedence over core_version when both are present",
+			endpoint: "select",
+			body:     `{"context": {"domain": "ONDC:RET10", "version": "1.2.5", "core_version": "9.9.9"}}`,
+			wantURL:  "http://ondc-service:7001/select",
+		},
+		{
+			name:     "empty version falls back to core_version",
+			endpoint: "select",
+			body:     `{"context": {"domain": "ONDC:RET10", "version": "", "core_version": "1.2.5"}}`,
+			wantURL:  "http://ondc-service:7001/select",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router, _, _ := setupRouter(t, "ondc_retail_1x.yaml")
+			route, err := router.Route(ctx, &url.URL{Path: tt.endpoint}, []byte(tt.body))
+			if err != nil {
+				t.Fatalf("router.Route() err = %v, want nil", err)
+			}
+			if route.URL == nil || route.URL.String() != tt.wantURL {
+				t.Errorf("router.Route() URL = %v, want %s", route.URL, tt.wantURL)
+			}
+		})
+	}
+
+	t.Run("missing version and core_version is rejected", func(t *testing.T) {
+		router, _, _ := setupRouter(t, "ondc_retail_1x.yaml")
+		_, err := router.Route(ctx, &url.URL{Path: "search"}, []byte(`{"context": {"domain": "ONDC:RET10"}}`))
+		if err == nil || !strings.Contains(err.Error(), "no routing rules found for domain ONDC:RET10 version ") {
+			t.Errorf("router.Route() err = %v, want 'no routing rules found for domain ONDC:RET10 version '", err)
+		}
+	})
+}

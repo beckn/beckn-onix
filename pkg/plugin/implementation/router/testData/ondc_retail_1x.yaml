@@ -1,0 +1,17 @@
+# ONDC Retail 1.x seller side: requests go to the seller service, callbacks to the
+# buyer app's bap_uri. Retail 1.x messages carry context.core_version, not context.version.
+routingRules:
+  - domain: ONDC:RET10
+    version: 1.2.5
+    targetType: url
+    target:
+      url: http://ondc-service:7001
+    endpoints:
+      - search
+      - select
+  - domain: ONDC:RET10
+    version: 1.2.5
+    targetType: bap
+    endpoints:
+      - on_search
+      - on_select
