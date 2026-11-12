@@ -91,7 +91,10 @@ catalogs) -- widening the gap until `catalogcrawler` catches up.
    carrying `retiredAt` -- so a consumer that only ever fetches `latest`
    directly, never revisiting the index, can still learn the catalog is
    gone (NFH-014 CON-TBD-38). Independent of whether `Config.PublishLatest`
-   is on for this call.
+   is on for this call. Only a `catalogId` that is in the index can be
+   retired: retiring one that was never published is a `PublishError`
+   ("catalog not found"), not a tombstone. Retiring one that is already
+   retired changes nothing.
 8. Leaves every other catalog untouched by this call alone -- `Publish`
    itself only ever produces the submitted/retired catalogs' own signed
    entries (`PublishResult.Catalogs`/`Retirements`); it holds no index of
@@ -324,13 +327,50 @@ own `Submission.Directives.ForceBaseline` is per-submission) -- a call
 publishing several catalogs at once can force a baseline for one while
 leaving the rest to diff normally. Each catalog's own top-level `"id"` is used verbatim
 as its `catalogId` -- the handler does not prefix or derive it from a
-domain; submit the full id you want. Response borrows beckn.yaml's
+domain, and does not require its prefix to be this node's subscriber id
+(NFH-014 leaves that enforcement as an open question); submit the full id
+you want. See "What a catalogId may do" below for what is refused.
+Response borrows beckn.yaml's
 `CatalogPublishAction`/`CatalogProcessingResult` vocabulary
 (`ACCEPTED`/`REJECTED` per catalog) but as one synchronous call, not an
 Ack-now/`on_publish`-later pair -- beckn.yaml's async, signed
 `CatalogPublishAction` is a materially larger scope (routing, subscriber
 lookup, callback signing) that this handler deliberately does not
 implement; see "Known open items."
+
+#### What a catalogId may do
+
+Each of these is reported per catalog (`REJECTED` with a reason); the
+other catalogs in the request are processed normally, and nothing is
+written for the rejected one.
+
+| The id's index entry | Catalog in `message.catalogs` | Id in `retire` |
+|---|---|---|
+| None | `ACCEPTED`, first baseline. `REJECTED` if the id's last path segment is already used by another catalog in the index (live or retired) or earlier in the same request, or if the id is not safe to use as a file name and URL. | `REJECTED`, "catalog not found". |
+| Live (active or paused) | `ACCEPTED`: update, metadata-only change, forced baseline or no change. | `ACCEPTED`, reason `retired`. |
+| Retired | `REJECTED`: retirement is one-way (NFH-014 CON-TBD-26). Publish the catalog under a new `catalogId`. | `ACCEPTED`, reason `retired`; nothing changes. |
+
+- **File names come from the last path segment only.** `a.example/CAT-1`
+  and `b.example/CAT-1` would both be written to `catalogs/CAT-1.*`, so
+  the second one is rejected; so is `a.example/cat-1`, because some
+  filesystems ignore case.
+- **Shape of a new id:** no white space or control characters, no empty,
+  `.` or `..` path segment, and a last segment of at most 200 bytes made
+  of letters, digits, `-`, `.`, `_`, `~`, not starting with `.`. A catalog
+  that is already in the index is not re-checked: it keeps its id, its
+  file names and its URLs, and can still be updated and retired.
+- **The same id in `message.catalogs` and `retire`:** the submission is
+  published and the retire is not done; `warnings` says so.
+- **The same id twice in `retire`:** one retirement, one result row.
+- **The same id twice in `message.catalogs`:** the whole request is
+  refused with HTTP 400.
+- **`isActive` and `catalogType`:** `isActive` in the catalog must be
+  `true` or `false` when present, and `catalogType` must be `REGULAR` or
+  `MASTER`; anything else is `REJECTED` rather than replaced by a default.
+- **Metadata is restated on every publish.** `catalogType`, `visibleTo`
+  and `schemaTypes` come from this request's `publishDirectives` entry.
+  Leaving the entry out on an update sets the catalog back to `REGULAR`
+  and visible to all.
 
 Note: `schemaTypes` is not a beckn.yaml `CatalogPublishAction` field at
 all -- beckn.yaml only uses it on `catalog/subscription`'s
