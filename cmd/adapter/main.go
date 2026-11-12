@@ -7,8 +7,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
@@ -72,8 +74,19 @@ func main() {
 		version.Version, version.GitCommit, version.GitTreeState, version.BuildDate)
 	log.Infof(context.Background(), "Starting application with config: %s", configPath)
 
-	// Run the application within a context.
-	if err := runFunc(context.Background(), configPath); err != nil {
+	// Run the application within a context that SIGINT / SIGTERM cancel, so
+	// that a stop request (Ctrl-C, docker stop, a Kubernetes pod termination)
+	// drains in-flight requests and runs the plugin closers instead of
+	// killing the process mid-request. A second signal restores the default
+	// behaviour and terminates immediately.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	err := runFunc(ctx, configPath)
+	stop()
+	if err != nil {
 		log.Fatalf(context.Background(), err, "Application failed: %v", err)
 	}
 	log.Infof(context.Background(), "Application finished")
@@ -268,22 +281,30 @@ func run(ctx context.Context, configPath string) error {
 		IdleTimeout:  cfg.HTTP.Timeouts.Idle * time.Second,
 	}
 
-	// Start HTTP server.
+	// Start HTTP server. If it stops for any reason other than a requested
+	// shutdown (most commonly: the port cannot be bound), cancel serveCtx so
+	// the shutdown path below runs the closers and run returns the error,
+	// rather than leaving a process that is up but serves nothing.
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	defer cancelServe()
+	var serveErr error
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		log.Infof(ctx, "Server listening on %s", httpServer.Addr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Errorf(ctx, fmt.Errorf("http server ListenAndServe: %w", err), "error listening and serving")
+			serveErr = fmt.Errorf("http server ListenAndServe: %w", err)
+			log.Errorf(ctx, serveErr, "error listening and serving")
+			cancelServe()
 		}
 	}()
 
 	// Handle shutdown.
-	shutdown(ctx, httpServer, &wg, closers)
+	shutdown(serveCtx, httpServer, &wg, closers)
 	wg.Wait()
 	log.Infof(ctx, "Server shutdown complete")
-	return nil
+	return serveErr
 }
 
 // shutdown handles server shutdown.

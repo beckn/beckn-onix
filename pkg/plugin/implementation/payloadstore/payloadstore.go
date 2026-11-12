@@ -7,8 +7,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
+	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
@@ -111,6 +114,15 @@ func ParseConfig(cfg map[string]string) (*Config, error) {
 
 func msgKey(namespace, messageID string) string {
 	return "payload:" + namespace + ":msg:" + messageID
+}
+
+// actionKey is the per-(message, action) record. A callback carries the
+// message_id of the request it answers, so the message key alone can hold only
+// one of the two: whichever was stored last. The action is query-escaped (it
+// then contains no ":"), and the message ID is the tail of the key, so two
+// different (message, action) pairs never share a key.
+func actionKey(namespace, messageID, action string) string {
+	return "payload:" + namespace + ":act:" + url.QueryEscape(action) + ":msg:" + messageID
 }
 
 func txnIndexKey(namespace, transactionID string) string {
@@ -217,10 +229,25 @@ func firstJSONString(m map[string]json.RawMessage, keys ...string) string {
 	return ""
 }
 
+// indexLockStripes is the number of mutexes guarding transaction-index
+// updates. Two transactions that hash to the same stripe only wait for each
+// other; they never see each other's data.
+const indexLockStripes = 64
+
 type store struct {
 	cache     definition.Cache
 	config    *Config
 	namespace string // fixed as "onix" — reserved for future configurable namespacing
+
+	// indexLocks serialises the read-modify-write of a transaction index
+	// within this process. See appendToIndex for what it does not cover.
+	indexLocks [indexLockStripes]sync.Mutex
+}
+
+func (s *store) indexLock(key string) *sync.Mutex {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	return &s.indexLocks[h.Sum32()%indexLockStripes]
 }
 
 // New creates a PayloadStore backed by the provided Cache.
@@ -269,10 +296,12 @@ func (s *store) Store(ctx *model.StepContext) error {
 // persist applies config policies (storeBody, storeSignature, maxBodyBytes, compress)
 // and writes the entry to the cache, then updates the transaction index.
 //
-// Index race: definition.Cache has no atomic append primitive, so concurrent persist
-// calls for the same transaction can race on the index (last writer wins). Individual
-// payload:msg:{id} keys are always written correctly; only GetByTransactionID may
-// return an incomplete list under concurrent writes for the same transaction.
+// Two records are written per entry:
+//   - payload:{ns}:act:{action}:msg:{id}, the entry without its body. This is
+//     what GetByMessageID(id, action) relies on, and it is never overwritten
+//     by an entry for a different action.
+//   - payload:{ns}:msg:{id}, the full entry. It holds the most recent entry
+//     for the message ID whatever its action, as before.
 func (s *store) persist(ctx context.Context, entry definition.PayloadEntry) error {
 	if !s.config.StoreBody {
 		entry.RequestBody = nil
@@ -287,6 +316,18 @@ func (s *store) persist(ctx context.Context, entry definition.PayloadEntry) erro
 	now := time.Now().UTC()
 	entry.StoredAt = now
 	entry.ExpiresAt = now.Add(s.config.TTL)
+
+	if entry.Action != "" {
+		record := entry
+		record.RequestBody = nil
+		serialized, err := marshalEntry(record, s.config.Compress)
+		if err != nil {
+			return err
+		}
+		if err := s.cache.Set(ctx, actionKey(s.namespace, entry.MessageID, entry.Action), serialized, s.config.TTL); err != nil {
+			return fmt.Errorf("payloadstore: set action key: %w", err)
+		}
+	}
 
 	serialized, err := marshalEntry(entry, s.config.Compress)
 	if err != nil {
@@ -303,12 +344,33 @@ func (s *store) persist(ctx context.Context, entry definition.PayloadEntry) erro
 	return s.appendToIndex(ctx, entry.TransactionID, entry.MessageID)
 }
 
+// appendToIndex adds messageID to the transaction's index.
+//
+// definition.Cache has no atomic append, so the index is read, extended and
+// written back. The per-key lock makes that safe between requests handled by
+// this process. It does not make it safe between replicas sharing one cache:
+// two replicas appending to the same transaction at the same moment can still
+// lose one of the two IDs (the payload records themselves are unaffected).
+// Closing that needs an atomic set-add in the Cache interface.
 func (s *store) appendToIndex(ctx context.Context, transactionID, messageID string) error {
 	key := txnIndexKey(s.namespace, transactionID)
+
+	mu := s.indexLock(key)
+	mu.Lock()
+	defer mu.Unlock()
+
 	raw, err := s.cache.Get(ctx, key)
+	if err != nil {
+		// A failed read says nothing about what the index holds. Writing back
+		// a one-element list would drop every message recorded so far, so the
+		// update is skipped: this message stays reachable by ID, only its
+		// index entry is missing.
+		log.Warnf(ctx, "payloadstore: transaction index read failed — index update skipped for message %s: %v", messageID, err)
+		return nil
+	}
 
 	var ids []string
-	if err == nil && raw != "" {
+	if raw != "" {
 		if jsonErr := json.Unmarshal([]byte(raw), &ids); jsonErr != nil {
 			ids = nil
 		}
@@ -359,17 +421,35 @@ func (s *store) GetByTransactionID(ctx context.Context, transactionID string) ([
 }
 
 // GetByMessageID returns the entry for the given message ID, optionally filtered by action.
+//
+// With an action, the message key is tried first (it carries the body). If it
+// is missing or now holds an entry for a different action (a callback stored
+// after the request it answers, or the reverse), the per-action record is
+// returned instead; that record has no RequestBody.
 func (s *store) GetByMessageID(ctx context.Context, messageID, action string) (*definition.PayloadEntry, error) {
 	raw, err := s.cache.Get(ctx, msgKey(s.namespace, messageID))
-	if err != nil || raw == "" {
+	if err == nil && raw != "" {
+		entry, err := unmarshalEntry(raw)
+		if err != nil {
+			return nil, err
+		}
+		if action == "" || entry.Action == action {
+			return &entry, nil
+		}
+	}
+	if action == "" {
 		return nil, nil
 	}
 
+	raw, err = s.cache.Get(ctx, actionKey(s.namespace, messageID, action))
+	if err != nil || raw == "" {
+		return nil, nil
+	}
 	entry, err := unmarshalEntry(raw)
 	if err != nil {
 		return nil, err
 	}
-	if action != "" && entry.Action != action {
+	if entry.Action != action || entry.MessageID != messageID {
 		return nil, nil
 	}
 	return &entry, nil

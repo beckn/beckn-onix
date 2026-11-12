@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httputil"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -196,6 +197,37 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			telemetry.EmitAuditLogs(r.Context(), responseBody, nil, attribute.String("audit.direction", "response"), attribute.Int("http.response.status_code", wrapped.statusCode), attribute.String("http.request.error", errString(err)), attribute.String("sender.id", senderID), attribute.String("receiver.id", receiverID))
 		}
 		span.End()
+	}()
+
+	// Contain a panic raised by a step, a response step or the proxy. Left to
+	// net/http it only closes the connection: the sender gets no Beckn
+	// response and cannot tell a plugin fault from a network failure. This
+	// defer runs before the telemetry defer above, so the span and the audit
+	// record carry the 500.
+	defer func() {
+		rec := recover()
+		if rec == nil {
+			return
+		}
+		if rec == http.ErrAbortHandler {
+			// A deliberate abort (httputil.ReverseProxy uses it): not ours to handle.
+			panic(rec)
+		}
+		// The panic value stays in the log; the sender gets a generic NACK.
+		err = fmt.Errorf("panic in request pipeline: %v", rec)
+		log.Errorf(stepCtx, err, "recovered from panic while handling %s\n%s", r.URL.Path, debug.Stack())
+		if wrapped.written {
+			// Part of a response is already on the wire; all that is left is
+			// to abort it so the sender does not take it for a complete one.
+			panic(http.ErrAbortHandler)
+		}
+		func() {
+			// Signing calls plugins too; if that is what panicked, send the
+			// NACK unsigned rather than not at all.
+			defer func() { _ = recover() }()
+			h.signNackResponse(stepCtx, err)
+		}()
+		responseBody = sendNack(stepCtx, wrapped, err)
 	}()
 
 	// Execute processing steps.
