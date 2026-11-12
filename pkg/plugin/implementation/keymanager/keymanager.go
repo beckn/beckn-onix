@@ -119,8 +119,10 @@ func New(ctx context.Context, registryLookup definition.RegistryLookup, cfg *Con
 	// Cleanup function to release KeyManager resources.
 	cleanup := func() error {
 		log.Info(ctx, "Cleaning up KeyManager resources")
-		km.VaultClient = nil
-		km.Registry = nil
+		// Nothing to release: the Vault client holds no connection of its
+		// own. The fields are deliberately left set; clearing them raced
+		// with requests still in flight at shutdown and turned them into
+		// nil dereferences.
 		return nil
 	}
 
