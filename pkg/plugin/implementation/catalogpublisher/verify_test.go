@@ -201,7 +201,7 @@ func TestVerifyPublished_PermanentFailureIsNotRetried(t *testing.T) {
 	bs.mu.Unlock()
 
 	start := time.Now()
-	errs := p.verifyPublished(context.Background(), published)
+	errs, _ := p.verifyPublished(context.Background(), published)
 	elapsed := time.Since(start)
 
 	if len(errs) == 0 {
@@ -278,7 +278,7 @@ func definitionPublishRequestOneCatalog(catalogID string) definition.PublishRequ
 
 func TestVerifyOutcome_EntryNotFoundInIndex(t *testing.T) {
 	p := testPublisher(t)
-	err := p.verifyOutcome(context.Background(), "example.test", catalog.Index{}, definition.CatalogPublishOutcome{CatalogID: "example.test/CAT-1", Mode: "baseline"})
+	_, err := p.verifyOutcome(context.Background(), "example.test", catalog.Index{}, definition.CatalogPublishOutcome{CatalogID: "example.test/CAT-1", Mode: "baseline"})
 	if err == nil {
 		t.Fatal("expected an error when the catalog isn't in the re-fetched index")
 	}
@@ -290,7 +290,7 @@ func TestVerifyOutcome_ChangeVersionNotFoundInIndex(t *testing.T) {
 		CatalogID: "example.test/CAT-1",
 		Changes:   []catalog.FileEntry{{ToVersion: 1}},
 	}}}
-	err := p.verifyOutcome(context.Background(), "example.test", idx,
+	_, err := p.verifyOutcome(context.Background(), "example.test", idx,
 		definition.CatalogPublishOutcome{CatalogID: "example.test/CAT-1", Mode: "change", Version: 99})
 	if err == nil {
 		t.Fatal("expected an error when no changes[] entry matches the outcome's version")
@@ -300,7 +300,7 @@ func TestVerifyOutcome_ChangeVersionNotFoundInIndex(t *testing.T) {
 func TestVerifyOutcome_LatestExpectedButMissingFromIndex(t *testing.T) {
 	p := testPublisher(t)
 	idx := catalog.Index{Catalogs: []catalog.CatalogEntry{{CatalogID: "example.test/CAT-1"}}}
-	err := p.verifyOutcome(context.Background(), "example.test", idx, definition.CatalogPublishOutcome{
+	_, err := p.verifyOutcome(context.Background(), "example.test", idx, definition.CatalogPublishOutcome{
 		CatalogID:     "example.test/CAT-1",
 		LatestContent: []byte(`{}`),
 	})
@@ -449,7 +449,7 @@ func TestVerifyPublished_IndexFetchFailureIsReportedForEveryTouchedCatalog(t *te
 	srv.Close() // FetchIndex now fails to even connect.
 
 	result := definitionPublishResultOneChanged("example.test/CAT-1")
-	errs := p.verifyPublished(context.Background(), result)
+	errs, _ := p.verifyPublished(context.Background(), result)
 	if len(errs) != 1 || errs[0].CatalogID != "example.test/CAT-1" || errs[0].Stage != "verify" {
 		t.Fatalf("expected one verify error for the changed catalog, got %+v", errs)
 	}

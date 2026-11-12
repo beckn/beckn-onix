@@ -25,7 +25,10 @@ package catalogpublisher
 //   - The entry in the re-fetched index must be the entry this call signed
 //     (same entryVersion and signature). File references are then taken
 //     from the signed entry. An index that still serves an earlier entry
-//     is a propagation delay and is retried.
+//     is a propagation delay and is retried. An index that serves a later
+//     one is another adapter replica having published the catalog again
+//     in the meantime; this call's publish was committed and then built
+//     on, which is not a failure (see verifyOutcome).
 //   - A baseline or change outcome: that file.
 //   - Every outcome whose entry lists "latest", changed or not: the
 //     "latest" file, against the entry's digest (NFH-014 CON-TBD-36). An
@@ -146,11 +149,12 @@ func (p *Publisher) logVerifyOutcome(result definition.PublishResult, verifyErrs
 // verifyRetryAttempts) while at least one failure looks transient, so a
 // still-propagating write gets a fair chance to become visible before
 // being reported REJECTED. Returns one PublishError per catalog that still
-// fails after the final attempt.
-func (p *Publisher) verifyPublished(ctx context.Context, result definition.PublishResult) []definition.PublishError {
+// fails after the final attempt, and a note for each outcome that passed
+// because a later publish had already superseded it (see verifyOutcome).
+func (p *Publisher) verifyPublished(ctx context.Context, result definition.PublishResult) (errs []definition.PublishError, notes []string) {
 	outcomes := result.Catalogs
 	if len(outcomes) == 0 && len(result.Retirements) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	retiredLatest := make(map[string][]definition.RetiredCatalogFile, len(result.RetiredLatest))
@@ -158,18 +162,17 @@ func (p *Publisher) verifyPublished(ctx context.Context, result definition.Publi
 		retiredLatest[rl.CatalogID] = append(retiredLatest[rl.CatalogID], rl)
 	}
 
-	var errs []definition.PublishError
 	for attempt := 0; attempt < verifyRetryAttempts; attempt++ {
 		if attempt > 0 {
 			if err := sleepOrDone(ctx, verifyRetryBaseDelay*time.Duration(1<<(attempt-1))); err != nil {
-				return errs
+				return errs, notes
 			}
 		}
 
 		idxRes, err := p.fetcher.FetchIndex(ctx, p.IndexURL(), catalog.IndexConditions{})
 		if err != nil {
 			err = fmt.Errorf("fetching published index: %w", err)
-			errs = nil
+			errs, notes = nil, nil
 			for _, o := range outcomes {
 				errs = append(errs, definition.PublishError{CatalogID: o.CatalogID, Stage: "verify", Reason: err.Error(), Fatal: false})
 			}
@@ -179,16 +182,23 @@ func (p *Publisher) verifyPublished(ctx context.Context, result definition.Publi
 			continue // an index fetch failure is never a PermanentError -- always worth a retry.
 		}
 
-		changedErrs := runConcurrent(len(outcomes), verifyConcurrency, func(i int) error {
-			return p.verifyOutcome(ctx, result.NodeID, idxRes.Index, outcomes[i])
+		outcomeNotes := make([]string, len(outcomes))
+		changedErrs := runConcurrent(len(outcomes), verifyConcurrency, func(i int) (err error) {
+			outcomeNotes[i], err = p.verifyOutcome(ctx, result.NodeID, idxRes.Index, outcomes[i])
+			return err
 		})
 		retireErrs := runConcurrent(len(result.Retirements), verifyConcurrency, func(i int) error {
 			r := result.Retirements[i]
 			return p.verifyRetirement(ctx, result.NodeID, idxRes.Index, r, retiredLatest[r.CatalogID])
 		})
 
-		errs = nil
+		errs, notes = nil, nil
 		anyTransient := false
+		for _, note := range outcomeNotes {
+			if note != "" {
+				notes = append(notes, note)
+			}
+		}
 		for i, err := range changedErrs {
 			if err != nil {
 				errs = append(errs, definition.PublishError{CatalogID: outcomes[i].CatalogID, Stage: "verify", Reason: err.Error(), Fatal: false})
@@ -202,10 +212,10 @@ func (p *Publisher) verifyPublished(ctx context.Context, result definition.Publi
 			}
 		}
 		if len(errs) == 0 || !anyTransient {
-			return errs
+			return errs, notes
 		}
 	}
-	return errs
+	return errs, notes
 }
 
 // runConcurrent runs work(0), work(1), ..., work(n-1) concurrently, at most
@@ -246,21 +256,39 @@ func sleepOrDone(ctx context.Context, d time.Duration) error {
 // FetchIndex drops any entry that doesn't), that it is the entry this call
 // signed, and re-fetches the file this call wrote for it plus the "latest"
 // file its entry lists, written this call or not.
-func (p *Publisher) verifyOutcome(ctx context.Context, nodeID string, idx catalog.Index, o definition.CatalogPublishOutcome) error {
+//
+// The entry the index serves need not be the one this call signed:
+//   - An older one (lower entryVersion) is a copy of the index from before
+//     this call's write. Retryable.
+//   - A different one at the same entryVersion is not this call's and not
+//     a successor of it. Retryable, and REJECTED if it stays.
+//   - A newer one (higher entryVersion) means a later publish has already
+//     replaced this call's entry: another adapter replica sharing the blob
+//     store, which the store only lets commit on top of the entry it
+//     loaded. This call's publish was committed and then built on, so it
+//     is not a failure. See verifySuperseded for what is still checked.
+//     The returned note says so, for PublishResult.Warnings.
+func (p *Publisher) verifyOutcome(ctx context.Context, nodeID string, idx catalog.Index, o definition.CatalogPublishOutcome) (note string, err error) {
 	entry, ok := catalog.FindCatalog(idx, o.CatalogID)
 	if !ok {
-		return fmt.Errorf("published entry not found in the re-fetched index (dropped for a bad signature, or missing outright)")
+		return "", fmt.Errorf("published entry not found in the re-fetched index (dropped for a bad signature, or missing outright)")
 	}
 	if len(o.SignedEntry) > 0 {
 		var signed catalog.CatalogEntry
 		if err := json.Unmarshal(o.SignedEntry, &signed); err != nil {
-			return crawler.Permanentf("the entry this call signed does not parse: %v", err)
+			return "", crawler.Permanentf("the entry this call signed does not parse: %v", err)
 		}
-		// Not permanent: an index that still serves the previous entry is
-		// what a cache in front of the blob store looks like.
-		if entry.EntryVersion != signed.EntryVersion || entry.Signature.Value != signed.Signature.Value {
-			return fmt.Errorf("the re-fetched index does not serve the entry this call published (it has entryVersion %d, published %d); an earlier copy of the index may still be cached",
+		switch {
+		case entry.EntryVersion > signed.EntryVersion:
+			return p.verifySuperseded(ctx, nodeID, entry, signed, o)
+		case entry.EntryVersion < signed.EntryVersion:
+			// Not permanent: an index that still serves the previous entry is
+			// what a cache in front of the blob store looks like.
+			return "", fmt.Errorf("the re-fetched index does not serve the entry this call published (it has entryVersion %d, published %d); an earlier copy of the index may still be cached",
 				entry.EntryVersion, signed.EntryVersion)
+		case entry.Signature.Value != signed.Signature.Value:
+			return "", fmt.Errorf("the re-fetched index serves a different entry at entryVersion %d than the one this call published; another publisher is writing this catalog without seeing this one's writes",
+				entry.EntryVersion)
 		}
 		entry = signed
 	}
@@ -268,25 +296,67 @@ func (p *Publisher) verifyOutcome(ctx context.Context, nodeID string, idx catalo
 	switch o.Mode {
 	case "baseline":
 		if _, err := p.fetcher.FetchFile(ctx, nodeID, o.CatalogID, entry.Baseline); err != nil {
-			return fmt.Errorf("baseline file: %w", err)
+			return "", fmt.Errorf("baseline file: %w", err)
 		}
 	case "change":
 		change, ok := changeAtVersion(entry.Changes, int64(o.Version))
 		if !ok {
-			return fmt.Errorf("published change file for version %d not found in the re-fetched index entry", o.Version)
+			return "", fmt.Errorf("published change file for version %d not found in the re-fetched index entry", o.Version)
 		}
 		if _, err := p.fetcher.FetchFile(ctx, nodeID, o.CatalogID, change); err != nil {
-			return fmt.Errorf("change file: %w", err)
+			return "", fmt.Errorf("change file: %w", err)
 		}
 	}
 
 	if entry.Latest == nil {
 		if len(o.LatestContent) > 0 {
-			return fmt.Errorf("latest file expected but missing from the re-fetched index entry")
+			return "", fmt.Errorf("latest file expected but missing from the re-fetched index entry")
 		}
-		return nil
+		return "", nil
 	}
-	return p.fetchOverwritten(ctx, nodeID, o.CatalogID, *entry.Latest, "latest file")
+	return "", p.fetchOverwritten(ctx, nodeID, o.CatalogID, *entry.Latest, "latest file")
+}
+
+// verifySuperseded is verifyOutcome for a call whose entry (signed) has
+// already been replaced in the index by a newer one (served).
+//
+// The baseline or change file this call wrote sits at an immutable URL. If
+// the newer entry still lists that version, it must list it with the
+// digest this call signed, and the file must still verify: anything else
+// means the file this call published was replaced, which no later publish
+// may do. If the newer entry no longer lists it (a re-baseline past it, or
+// a retirement), nothing this call wrote is advertised any more and there
+// is nothing left to fetch.
+//
+// "latest" is not checked. It is one file overwritten in place and now
+// belongs to the newer entry; the call that published that entry verifies
+// it.
+func (p *Publisher) verifySuperseded(ctx context.Context, nodeID string, served, signed catalog.CatalogEntry, o definition.CatalogPublishOutcome) (string, error) {
+	if served.IsRetired() {
+		return fmt.Sprintf("catalog %s was retired by a later request (entryVersion %d) before this one (entryVersion %d) was verified", o.CatalogID, served.EntryVersion, signed.EntryVersion), nil
+	}
+	note := fmt.Sprintf("catalog %s was published again by a later request (entryVersion %d) before this one (entryVersion %d) was verified; the index now serves the later content", o.CatalogID, served.EntryVersion, signed.EntryVersion)
+
+	var mine, listed catalog.FileEntry
+	var found bool
+	switch o.Mode {
+	case "baseline":
+		mine, listed, found = signed.Baseline, served.Baseline, served.Baseline.Version == int64(o.Version)
+	case "change":
+		mine, _ = changeAtVersion(signed.Changes, int64(o.Version))
+		listed, found = changeAtVersion(served.Changes, int64(o.Version))
+	}
+	if !found {
+		return note, nil
+	}
+	if listed.Digest != mine.Digest {
+		return "", crawler.Permanentf("the index now lists version %d of this catalog with digest %s, but this call published it with digest %s: a file at an immutable URL was replaced",
+			o.Version, listed.Digest, mine.Digest)
+	}
+	if _, err := p.fetcher.FetchFile(ctx, nodeID, o.CatalogID, listed); err != nil {
+		return "", fmt.Errorf("%s file: %w", o.Mode, err)
+	}
+	return note, nil
 }
 
 // fetchOverwritten fetches and verifies a file that is overwritten in

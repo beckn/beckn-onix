@@ -287,8 +287,9 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 	// crawlable, so it's appended to Errors -- the same non-fatal,
 	// per-catalog PublishError vocabulary as any other failure -- rather
 	// than left silently reported as a successful CatalogPublishOutcome.
-	verifyErrs := p.verifyPublished(ctx, definitionResult)
+	verifyErrs, verifyNotes := p.verifyPublished(ctx, definitionResult)
 	definitionResult.Errors = append(definitionResult.Errors, verifyErrs...)
+	definitionResult.Warnings = append(definitionResult.Warnings, verifyNotes...)
 	p.logVerifyOutcome(definitionResult, verifyErrs)
 
 	if p.config.CheckCatalogIndexLink && p.registryMetadata != nil {
