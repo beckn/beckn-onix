@@ -21,8 +21,12 @@ import (
 )
 
 // lockFileName is the file under Root that PutIfVersion locks. A dot
-// file, so it is never mistaken for a blob.
-const lockFileName = ".catalogblobstore.lock"
+// file, so it is never mistaken for a blob. It sits inside catalogs/,
+// next to the temp files Put creates there, so that the top level of
+// Root holds only the two directories of the published layout (index/
+// and catalogs/) and nothing an operator syncing or auditing the root
+// has to explain. Every adapter sharing Root must agree on this path.
+const lockFileName = "catalogs/.catalogblobstore.lock"
 
 // Store is a filesystem-backed definition.CatalogBlobStore rooted at Root.
 type Store struct{ Root string }

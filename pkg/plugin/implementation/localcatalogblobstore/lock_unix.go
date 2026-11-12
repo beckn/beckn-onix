@@ -31,10 +31,11 @@ var errLockNotExclusive = errors.New("another process held the write lock at the
 // This catches overlapping holders only, so it is a tripwire, not
 // protection.
 func (s *Store) lock(ctx context.Context) (unlock func() error, err error) {
-	if err := os.MkdirAll(s.Root, 0o755); err != nil {
+	lockPath := filepath.Join(s.Root, filepath.FromSlash(lockFileName))
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(s.Root, lockFileName), os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}

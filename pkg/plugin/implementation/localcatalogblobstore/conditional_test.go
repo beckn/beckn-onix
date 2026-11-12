@@ -162,7 +162,7 @@ func TestPut_ReadersSeeWholeFilesAndNoTempFilesRemain(t *testing.T) {
 		}
 		return nil
 	})
-	if got := strings.Join(files, " "); got != ".catalogblobstore.lock catalogs/big.json" {
+	if got := strings.Join(files, " "); got != localcatalogblobstore.LockFileName+" catalogs/big.json" {
 		t.Errorf("files left under the root: %s", got)
 	}
 }
@@ -200,7 +200,7 @@ func TestPutIfVersion_FailsWhenLockWasNotExclusive(t *testing.T) {
 	s := localcatalogblobstore.New(root)
 	ctx := context.Background()
 	big := bytes.Repeat([]byte("x"), 8<<20)
-	lockFile := filepath.Join(root, localcatalogblobstore.LockFileName)
+	lockFile := filepath.Join(root, filepath.FromSlash(localcatalogblobstore.LockFileName))
 
 	// Overwrite the holder's mark while it is busy writing the blob.
 	stop := make(chan struct{})
@@ -229,5 +229,28 @@ func TestPutIfVersion_FailsWhenLockWasNotExclusive(t *testing.T) {
 	<-scribbled
 	if err == nil || !strings.Contains(err.Error(), "does not enforce flock") {
 		t.Fatalf("got %v, want the lock-not-exclusive error", err)
+	}
+}
+
+// The blob store's own working files stay inside the published layout's
+// two directories: after conditional writes the top level of the root
+// holds index/ and catalogs/ and nothing else.
+func TestPutIfVersion_LeavesNothingAtTheTopOfTheRoot(t *testing.T) {
+	root := t.TempDir()
+	s := localcatalogblobstore.New(root)
+	ctx := context.Background()
+	for _, p := range []string{"index/becknCatalogs.index.json", "catalogs/CAT-1.v1.json", "catalogs/changes/CAT-1.v2.changes.json"} {
+		if _, err := s.PutIfVersion(ctx, p, []byte("{}"), ""); err != nil {
+			t.Fatalf("PutIfVersion(%s): %v", p, err)
+		}
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != "index" && e.Name() != "catalogs" {
+			t.Errorf("unexpected %q at the top of the blob root", e.Name())
+		}
 	}
 }
