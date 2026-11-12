@@ -32,12 +32,23 @@ var errLockNotExclusive = errors.New("another process held the write lock at the
 // protection.
 func (s *Store) lock(ctx context.Context) (unlock func() error, err error) {
 	lockPath := filepath.Join(s.Root, filepath.FromSlash(lockFileName))
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return nil, err
+	// The directory can be removed between creating it and opening the
+	// file in it (someone emptying the blob root), and some shared
+	// filesystems report a directory that was just removed as still
+	// there. Creating it again is all that is needed.
+	var f *os.File
+	for attempt := 0; ; attempt++ {
+		if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+			return nil, err
+		}
+		f, err = os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) || attempt == 4 {
+			return nil, err
+		}
+		time.Sleep(time.Duration(attempt+1) * 5 * time.Millisecond)
 	}
 	// Non-blocking attempts with a short pause rather than a blocking
 	// flock, so a waiter can give up when its context ends.
