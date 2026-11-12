@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -101,12 +102,23 @@ type Publisher struct {
 	fetcher  *catalog.Fetcher
 	registry definition.RegistryLookup
 	config   *Config
-	// publishLock serialises Publish. Every call reads the one catalog
-	// index, merges its own entries and writes it back, so two calls that
-	// overlap would each drop the other's entries. A one-slot channel
-	// rather than a sync.Mutex so a waiting call can give up when its
-	// context ends. This covers one process only: replicas sharing a blob
-	// store still need a conditional write on the index.
+	// publishLock serialises Publish within this process. A one-slot
+	// channel rather than a sync.Mutex so a waiting call can give up
+	// when its context ends.
+	//
+	// What it is for depends on the blob store:
+	//   - A store that implements definition.ConditionalCatalogBlobStore
+	//     is safe without it: catalogStore compare-and-swaps the index,
+	//     across processes too. The lock then only saves work -- calls
+	//     in one process queue instead of each signing, writing files,
+	//     losing the index write and starting again -- and keeps the
+	//     index a call verifies the one it wrote, as far as this process
+	//     is concerned.
+	//   - A store that does not is only safe with a single adapter
+	//     process, and this lock is what makes that one process safe:
+	//     every call reads the one catalog index, merges its own entries
+	//     and writes it back, so two overlapping calls would each drop
+	//     the other's entries.
 	publishLock chan struct{}
 	log         *slog.Logger
 }
@@ -231,7 +243,8 @@ func validatePublicBaseURL(raw string) error {
 // warning rather than failing the call.
 func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) (definition.PublishResult, error) {
 	// Held through post-write verification, so the index a call verifies
-	// against is the one it wrote.
+	// against is the one it wrote (see publishLock for what it does and
+	// does not guarantee).
 	select {
 	case p.publishLock <- struct{}{}:
 		defer func() { <-p.publishLock }()
@@ -248,6 +261,55 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 		return definition.PublishResult{}, fmt.Errorf("catalogpublisher: decoding keyset %q: %w", p.config.SubscriberID, err)
 	}
 
+	// Another adapter process sharing the blob store can change one of
+	// this call's catalogs between loading its prior state and writing
+	// the index. The store refuses to commit then (store.ErrConflict):
+	// what this call signed was diffed against state that no longer
+	// exists, so everything from loading prior state onwards is done
+	// again. Each repeat means another process really did commit that
+	// catalog, so the bound is only reached under sustained contention
+	// on one catalogId.
+	var definitionResult definition.PublishResult
+	for attempt := 1; ; attempt++ {
+		definitionResult, err = p.computeAndPersist(ctx, req, keyset, priv)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, store.ErrConflict) || attempt == maxPublishAttempts {
+			return definition.PublishResult{}, err
+		}
+		p.log.Warn("catalogpublisher: a catalog was changed by another publisher, recomputing", "attempt", attempt, "error", err)
+	}
+
+	// Post-write verification (verify.go): re-fetch and re-verify whatever
+	// this call actually touched against a real registry key lookup. A
+	// failure here means the write committed but isn't actually
+	// crawlable, so it's appended to Errors -- the same non-fatal,
+	// per-catalog PublishError vocabulary as any other failure -- rather
+	// than left silently reported as a successful CatalogPublishOutcome.
+	verifyErrs := p.verifyPublished(ctx, definitionResult)
+	definitionResult.Errors = append(definitionResult.Errors, verifyErrs...)
+	p.logVerifyOutcome(definitionResult, verifyErrs)
+
+	if p.config.CheckCatalogIndexLink && p.registryMetadata != nil {
+		if warning, err := p.checkIndexLink(ctx); err != nil {
+			p.log.Warn("catalogpublisher: registry catalog-index link check failed", "error", err)
+		} else if warning != "" {
+			definitionResult.Warnings = append(definitionResult.Warnings, warning)
+		}
+	}
+
+	return definitionResult, nil
+}
+
+// maxPublishAttempts bounds how often Publish recomputes a request
+// after store.ErrConflict.
+const maxPublishAttempts = 8
+
+// computeAndPersist is one attempt at a Publish call: load prior state,
+// diff and sign against it, and persist the result on condition that
+// the catalogs involved are still in that prior state.
+func (p *Publisher) computeAndPersist(ctx context.Context, req definition.PublishRequest, keyset *model.Keyset, priv ed25519.PrivateKey) (definition.PublishResult, error) {
 	// Retired catalogIds need their prior state loaded too -- the
 	// tombstone Publish builds for them carries forward their prior
 	// CatalogType/NetworkIds/SchemaTypes and bumps their EntryVersion
@@ -255,7 +317,7 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 	// fields), not just retiredAt.
 	loadIDs := append(nonEmptyCatalogIDs(req.Catalogs), req.Retire...)
 
-	priorStates, err := p.catalogStore.LoadCatalogs(ctx, loadIDs)
+	priorStates, base, err := p.catalogStore.LoadForPublish(ctx, loadIDs)
 	if err != nil {
 		return definition.PublishResult{}, fmt.Errorf("catalogpublisher: loading prior state: %w", err)
 	}
@@ -299,28 +361,11 @@ func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) 
 
 	definitionResult := toDefinitionResult(result)
 
-	if err := p.catalogStore.Publish(ctx, ToStorePublishRequest(definitionResult)); err != nil {
+	storeReq := ToStorePublishRequest(definitionResult)
+	storeReq.Base = base
+	if err := p.catalogStore.Publish(ctx, storeReq); err != nil {
 		return definition.PublishResult{}, fmt.Errorf("catalogpublisher: persisting publish result: %w", err)
 	}
-
-	// Post-write verification (verify.go): re-fetch and re-verify whatever
-	// this call actually touched against a real registry key lookup. A
-	// failure here means the write committed but isn't actually
-	// crawlable, so it's appended to Errors -- the same non-fatal,
-	// per-catalog PublishError vocabulary as any other failure -- rather
-	// than left silently reported as a successful CatalogPublishOutcome.
-	verifyErrs := p.verifyPublished(ctx, definitionResult)
-	definitionResult.Errors = append(definitionResult.Errors, verifyErrs...)
-	p.logVerifyOutcome(definitionResult, verifyErrs)
-
-	if p.config.CheckCatalogIndexLink && p.registryMetadata != nil {
-		if warning, err := p.checkIndexLink(ctx); err != nil {
-			p.log.Warn("catalogpublisher: registry catalog-index link check failed", "error", err)
-		} else if warning != "" {
-			definitionResult.Warnings = append(definitionResult.Warnings, warning)
-		}
-	}
-
 	return definitionResult, nil
 }
 
