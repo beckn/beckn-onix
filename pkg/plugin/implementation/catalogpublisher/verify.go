@@ -39,7 +39,11 @@ package catalogpublisher
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
@@ -47,6 +51,7 @@ import (
 
 	"github.com/beckn/catalog-core/pkg/catalog"
 	"github.com/beckn/catalog-core/pkg/catalog/crawler"
+	"github.com/beckn/catalog-core/pkg/catalog/store"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -132,9 +137,9 @@ func (p *Publisher) verifyPublished(ctx context.Context, result definition.Publi
 		return nil
 	}
 
-	retiredLatest := make(map[string]bool, len(result.RetiredLatest))
-	for _, rl := range result.RetiredLatest {
-		retiredLatest[rl.CatalogID] = true
+	retiredLatest := make(map[string]*definition.RetiredCatalogFile, len(result.RetiredLatest))
+	for i := range result.RetiredLatest {
+		retiredLatest[result.RetiredLatest[i].CatalogID] = &result.RetiredLatest[i]
 	}
 
 	var errs []definition.PublishError
@@ -258,22 +263,57 @@ func (p *Publisher) verifyOutcome(ctx context.Context, nodeID string, idx catalo
 
 // verifyRetirement verifies a retired catalog's tombstone entry is present
 // (same signature-implies-presence reasoning as verifyOutcome) and, if
-// this call wrote a final "latest" tombstone for it, that it's fetchable
-// too.
-func (p *Publisher) verifyRetirement(ctx context.Context, nodeID string, idx catalog.Index, r definition.RetirementOutcome, wroteLatest bool) error {
-	entry, ok := catalog.FindCatalog(idx, r.CatalogID)
-	if !ok {
+// this call wrote a final "latest" tombstone for it (latest != nil), that
+// it's fetchable too.
+//
+// Unlike verifyOutcome, the final "latest" file can't be looked up through
+// the re-fetched index: a tombstone entry never carries a "latest" pointer
+// (catalog-core drops it once retiredAt is set). It is checked at the
+// stable "latest" URL this call wrote it to instead -- the URL a consumer
+// that only ever fetches "latest" already holds.
+func (p *Publisher) verifyRetirement(ctx context.Context, nodeID string, idx catalog.Index, r definition.RetirementOutcome, latest *definition.RetiredCatalogFile) error {
+	if _, ok := catalog.FindCatalog(idx, r.CatalogID); !ok {
 		return fmt.Errorf("retired entry not found in the re-fetched index (dropped for a bad signature, or missing outright)")
 	}
-	if wroteLatest {
-		if entry.Latest == nil {
-			return fmt.Errorf("final latest file expected but missing from the re-fetched index entry")
-		}
-		if _, err := p.fetcher.FetchFile(ctx, nodeID, r.CatalogID, *entry.Latest); err != nil {
-			return fmt.Errorf("retired latest file: %w", err)
-		}
+	if latest == nil {
+		return nil
+	}
+	entry, err := p.retiredLatestEntry(*latest)
+	if err != nil {
+		return fmt.Errorf("retired latest file: %w", err)
+	}
+	if _, err := p.fetcher.FetchFile(ctx, nodeID, r.CatalogID, entry); err != nil {
+		return fmt.Errorf("retired latest file: %w", err)
 	}
 	return nil
+}
+
+// retiredLatestEntry builds the file reference for a retired catalog's
+// final "latest" write, the same way catalog-core builds a live catalog's
+// "latest" index pointer: the stable URL under PublicBaseURL, and a digest
+// over the canonical (uncompressed) signed content. FetchFile's digest
+// check against it therefore proves the bytes now served at that URL are
+// exactly the tombstone this call signed. A document without retiredAt is
+// a permanent failure -- re-fetching can't change what was signed.
+func (p *Publisher) retiredLatestEntry(latest definition.RetiredCatalogFile) (catalog.FileEntry, error) {
+	var doc catalog.CatalogFileDoc
+	if err := json.Unmarshal(latest.Content, &doc); err != nil {
+		return catalog.FileEntry{}, crawler.Permanentf("not a valid catalog file: %v", err)
+	}
+	if doc.RetiredAt == nil {
+		return catalog.FileEntry{}, crawler.Permanentf("final latest file does not carry retiredAt")
+	}
+	sum := sha256.Sum256(latest.Content)
+	entry := catalog.FileEntry{
+		Version: doc.Version,
+		URL:     strings.TrimRight(p.config.PublicBaseURL, "/") + "/" + store.LatestFilePath(latest.CatalogID, latest.Compressed),
+		Size:    int64(len(latest.ServedContent)),
+		Digest:  "sha-256:" + hex.EncodeToString(sum[:]),
+	}
+	if latest.Compressed {
+		entry.Encoding = "gzip"
+	}
+	return entry, nil
 }
 
 func changeAtVersion(changes []catalog.FileEntry, version int64) (catalog.FileEntry, bool) {

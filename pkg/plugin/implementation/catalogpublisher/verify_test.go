@@ -16,6 +16,7 @@ import (
 
 	"github.com/beckn/catalog-core/pkg/catalog"
 	"github.com/beckn/catalog-core/pkg/catalog/crawler"
+	"github.com/beckn/catalog-core/pkg/catalog/store"
 )
 
 // stubRegistryLookup is a definition.RegistryLookup double giving each test
@@ -311,19 +312,97 @@ func TestVerifyOutcome_LatestExpectedButMissingFromIndex(t *testing.T) {
 func TestVerifyRetirement_EntryNotFoundInIndex(t *testing.T) {
 	p := testPublisher(t)
 	err := p.verifyRetirement(context.Background(), "example.test", catalog.Index{},
-		definition.RetirementOutcome{CatalogID: "example.test/CAT-1"}, false)
+		definition.RetirementOutcome{CatalogID: "example.test/CAT-1"}, nil)
 	if err == nil {
 		t.Fatal("expected an error when the retired catalog isn't in the re-fetched index")
 	}
 }
 
-func TestVerifyRetirement_LatestExpectedButMissingFromIndex(t *testing.T) {
+// TestVerifyRetirement_TombstoneWithoutLatestWrite covers a retirement of a
+// catalog that never had "latest" published: the tombstone entry being
+// present is all there is to verify.
+func TestVerifyRetirement_TombstoneWithoutLatestWrite(t *testing.T) {
 	p := testPublisher(t)
 	idx := catalog.Index{Catalogs: []catalog.CatalogEntry{{CatalogID: "example.test/CAT-1"}}}
 	err := p.verifyRetirement(context.Background(), "example.test", idx,
-		definition.RetirementOutcome{CatalogID: "example.test/CAT-1"}, true)
+		definition.RetirementOutcome{CatalogID: "example.test/CAT-1"}, nil)
+	if err != nil {
+		t.Fatalf("expected no error for a tombstone with no final latest write, got %v", err)
+	}
+}
+
+// TestVerifyRetirement_FinalLatestWithoutRetiredAtIsPermanent guards the
+// one thing the final "latest" write exists for: telling a latest-only
+// consumer the catalog is gone. A document without retiredAt fails, and
+// permanently -- a retry can't change what was signed.
+func TestVerifyRetirement_FinalLatestWithoutRetiredAtIsPermanent(t *testing.T) {
+	p := testPublisher(t)
+	idx := catalog.Index{Catalogs: []catalog.CatalogEntry{{CatalogID: "example.test/CAT-1"}}}
+	content := []byte(`{"catalogId":"example.test/CAT-1","version":1,"catalog":{}}`)
+	err := p.verifyRetirement(context.Background(), "example.test", idx,
+		definition.RetirementOutcome{CatalogID: "example.test/CAT-1"},
+		&definition.RetiredCatalogFile{CatalogID: "example.test/CAT-1", Content: content, ServedContent: content})
 	if err == nil {
-		t.Fatal("expected an error when a final latest write was expected but the re-fetched entry has no Latest pointer")
+		t.Fatal("expected an error when the final latest file carries no retiredAt")
+	}
+	if !crawler.IsPermanent(err) {
+		t.Errorf("expected a permanent error so it is not retried, got %v", err)
+	}
+}
+
+// TestVerifyRetirement_StaleLatestStillServedIsRejected proves the check
+// has teeth: when the stable "latest" URL still serves the live
+// (pre-retirement) file rather than the tombstone this call signed, the
+// retirement is reported as a failure, and permanently so.
+func TestVerifyRetirement_StaleLatestStillServedIsRejected(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	km.domain = "example.test"
+	p := newVerifiablePublisher(t, km, newFakeBlobStore(), nil, &Config{SubscriberID: "k1", PublishLatest: true})
+	if _, err := p.Publish(context.Background(), definitionPublishRequestOneCatalog("example.test/CAT-1")); err != nil {
+		t.Fatalf("seeding Publish: %v", err)
+	}
+	idxRes, err := p.fetcher.FetchIndex(context.Background(), p.IndexURL(), catalog.IndexConditions{})
+	if err != nil {
+		t.Fatalf("FetchIndex: %v", err)
+	}
+
+	// A tombstone that was signed but never reached the "latest" URL.
+	unwritten := []byte(`{"catalogId":"example.test/CAT-1","version":1,"catalog":{},"retiredAt":"2026-01-02T03:04:05Z"}`)
+	err = p.verifyRetirement(context.Background(), "example.test", idxRes.Index,
+		definition.RetirementOutcome{CatalogID: "example.test/CAT-1"},
+		&definition.RetiredCatalogFile{CatalogID: "example.test/CAT-1", Content: unwritten, ServedContent: unwritten})
+	if err == nil {
+		t.Fatal("expected an error when the latest URL does not serve the signed tombstone")
+	}
+	if !crawler.IsPermanent(err) {
+		t.Errorf("expected a permanent (digest mismatch) error, got %v", err)
+	}
+}
+
+func TestRetiredLatestEntry_StableURLAndEncoding(t *testing.T) {
+	p := testPublisher(t) // PublicBaseURL: https://example.test
+	content := []byte(`{"catalogId":"example.test/CAT-1","version":7,"catalog":{},"retiredAt":"2026-01-02T03:04:05Z"}`)
+	for _, tc := range []struct {
+		compressed bool
+		wantURL    string
+		wantEnc    string
+	}{
+		{false, "https://example.test/" + store.LatestFilePath("example.test/CAT-1", false), ""},
+		{true, "https://example.test/" + store.LatestFilePath("example.test/CAT-1", true), "gzip"},
+	} {
+		entry, err := p.retiredLatestEntry(definition.RetiredCatalogFile{
+			CatalogID: "example.test/CAT-1", Content: content, ServedContent: content, Compressed: tc.compressed,
+		})
+		if err != nil {
+			t.Fatalf("retiredLatestEntry: %v", err)
+		}
+		if entry.URL != tc.wantURL || entry.Encoding != tc.wantEnc || entry.Version != 7 {
+			t.Errorf("compressed=%v: got URL=%q Encoding=%q Version=%d, want URL=%q Encoding=%q Version=7",
+				tc.compressed, entry.URL, entry.Encoding, entry.Version, tc.wantURL, tc.wantEnc)
+		}
+		if !crawler.DigestMatches(content, entry.Digest) {
+			t.Errorf("compressed=%v: digest %q does not match the canonical content", tc.compressed, entry.Digest)
+		}
 	}
 }
 
