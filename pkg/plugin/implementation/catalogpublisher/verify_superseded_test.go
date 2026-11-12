@@ -190,8 +190,8 @@ func TestVerifyOutcome_ServedEntryRelativeToTheSignedOne(t *testing.T) {
 		newer := catalog.CatalogEntry{CatalogID: id, EntryVersion: 3, Baseline: catalog.FileEntry{Version: 1}, Changes: []catalog.FileEntry{swapped, {FromVersion: 2, ToVersion: 3}},
 			Signature: catalog.EntrySignature{Value: "newer"}}
 		note, err := p.verifyOutcome(context.Background(), "example.test", index(newer), o)
-		if err == nil || !crawler.IsPermanent(err) || note != "" {
-			t.Errorf("note=%q err=%v, want a permanent error: the immutable file this call published is listed with different content", note, err)
+		if err == nil || !crawler.IsPermanent(err) || note != "" || !strings.Contains(err.Error(), "immutable URL was replaced") {
+			t.Errorf("note=%q err=%v, want a permanent error saying the immutable file this call published is listed with different content", note, err)
 		}
 	})
 }
