@@ -533,6 +533,12 @@ silently drops any entry that doesn't (see `verifyOutcome`/
 wrote -- baseline, a specific change version, and/or a refreshed `latest` --
 are then individually re-fetched and digest/signature-checked too.
 
+A retirement is the one case where a written file is not referenced from
+the index: the tombstone entry carries no `latest` pointer, so the final
+`latest` write (`PublishResult.RetiredLatest`) is re-fetched from its
+stable `latest` URL and checked against the digest of the tombstone this
+call signed.
+
 Unlike `checkCatalogIndexLink`, a verification failure here is **not** a
 warning: `definition.PublishError{Stage: "verify", Fatal: false}` is
 appended to the result, which makes the handler report that catalog as

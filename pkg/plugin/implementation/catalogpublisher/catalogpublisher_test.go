@@ -410,6 +410,45 @@ func TestPublish_RetireSynthesizesSubmissionForUnsubmittedID(t *testing.T) {
 	}
 }
 
+// TestPublish_RetireWithLatestPassesVerification is the end-to-end guard
+// for retiring a catalog that had a "latest" file published: the tombstone
+// index entry carries no "latest" pointer by design, so post-write
+// verification must check the final "latest" file at its stable URL
+// instead of reporting the (successful) retirement as a verify failure.
+// Covers both the plain and gzip-compressed file names.
+func TestPublish_RetireWithLatestPassesVerification(t *testing.T) {
+	for _, gzip := range []bool{false, true} {
+		name := "plain"
+		if gzip {
+			name = "gzip"
+		}
+		t.Run(name, func(t *testing.T) {
+			km := newFakeKeyManager(t, "k1")
+			km.domain = "example.test"
+			bs := newFakeBlobStore()
+			p := newVerifiablePublisher(t, km, bs, nil, &Config{SubscriberID: "k1", PublishLatest: true, Gzip: gzip})
+
+			seed := definition.PublishRequest{
+				Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: validCatalogJSON("CAT-1")}},
+			}
+			if result, err := p.Publish(context.Background(), seed); err != nil || len(result.Errors) != 0 {
+				t.Fatalf("seeding Publish: err=%v errors=%+v", err, result.Errors)
+			}
+
+			result, err := p.Publish(context.Background(), definition.PublishRequest{Retire: []string{"example.test/CAT-1"}})
+			if err != nil {
+				t.Fatalf("Publish: %v", err)
+			}
+			if len(result.Retirements) != 1 || len(result.RetiredLatest) != 1 {
+				t.Fatalf("expected one retirement with a final latest write, got Retirements=%d RetiredLatest=%d", len(result.Retirements), len(result.RetiredLatest))
+			}
+			if len(result.Errors) != 0 {
+				t.Fatalf("retirement succeeded but was reported with errors: %+v", result.Errors)
+			}
+		})
+	}
+}
+
 // TestPublish_RegistryLinkCheckAddsWarning verifies Publish's own wiring of
 // the registry catalog-index-link check into PublishResult.Warnings when
 // CheckCatalogIndexLink is configured and the link is missing.
