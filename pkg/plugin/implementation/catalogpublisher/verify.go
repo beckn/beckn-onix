@@ -36,8 +36,8 @@ package catalogpublisher
 //     until the files verify.
 //   - Every outcome whose entry lists "latest", changed or not: the
 //     "latest" file, against the entry's digest (NFH-014 CON-TBD-36). An
-//     unchanged outcome is not skipped: the index is rewritten on every
-//     call, "latest" may have been repaired, and a caller repeating a
+//     unchanged outcome is not skipped: "latest" may have been repaired,
+//     and a caller repeating a
 //     publish that was REJECTED at this stage must get a real answer.
 //   - A retirement, first or repeated: the index entry is a tombstone, the
 //     one this call reports, and every "latest" file of the catalog serves
