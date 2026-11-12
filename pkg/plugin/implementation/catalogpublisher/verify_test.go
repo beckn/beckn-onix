@@ -320,14 +320,39 @@ func TestVerifyRetirement_EntryNotFoundInIndex(t *testing.T) {
 
 // TestVerifyRetirement_TombstoneWithoutLatestWrite covers a retirement of a
 // catalog that never had "latest" published: the tombstone entry being
-// present is all there is to verify.
+// present, and being a tombstone, is all there is to verify.
 func TestVerifyRetirement_TombstoneWithoutLatestWrite(t *testing.T) {
 	p := testPublisher(t)
-	idx := catalog.Index{Catalogs: []catalog.CatalogEntry{{CatalogID: "example.test/CAT-1"}}}
+	idx := catalog.Index{Catalogs: []catalog.CatalogEntry{{CatalogID: "example.test/CAT-1", RetiredAt: "2026-01-02T03:04:05Z"}}}
 	err := p.verifyRetirement(context.Background(), "example.test", idx,
 		definition.RetirementOutcome{CatalogID: "example.test/CAT-1"}, nil)
 	if err != nil {
 		t.Fatalf("expected no error for a tombstone with no final latest write, got %v", err)
+	}
+}
+
+// TestVerifyRetirement_LiveEntryIsNotARetirement: an entry with that id
+// being present is not enough; it has to carry retiredAt, and be the
+// tombstone this call reports. Both are retryable: a cache can still be
+// serving the previous index.
+func TestVerifyRetirement_LiveEntryIsNotARetirement(t *testing.T) {
+	p := testPublisher(t)
+	live := catalog.Index{Catalogs: []catalog.CatalogEntry{{CatalogID: "example.test/CAT-1", EntryVersion: 2}}}
+	err := p.verifyRetirement(context.Background(), "example.test", live,
+		definition.RetirementOutcome{CatalogID: "example.test/CAT-1", EntryVersion: 3, RetiredAt: "2026-01-02T03:04:05Z"}, nil)
+	if err == nil || crawler.IsPermanent(err) {
+		t.Fatalf("live entry: got %v, want a retryable error", err)
+	}
+	// Also when the outcome names no tombstone to compare against.
+	if err = p.verifyRetirement(context.Background(), "example.test", live,
+		definition.RetirementOutcome{CatalogID: "example.test/CAT-1"}, nil); err == nil || crawler.IsPermanent(err) {
+		t.Fatalf("live entry, outcome without retiredAt: got %v, want a retryable error", err)
+	}
+	other := catalog.Index{Catalogs: []catalog.CatalogEntry{{CatalogID: "example.test/CAT-1", EntryVersion: 1, RetiredAt: "2025-01-01T00:00:00Z"}}}
+	err = p.verifyRetirement(context.Background(), "example.test", other,
+		definition.RetirementOutcome{CatalogID: "example.test/CAT-1", EntryVersion: 3, RetiredAt: "2026-01-02T03:04:05Z"}, nil)
+	if err == nil || crawler.IsPermanent(err) {
+		t.Fatalf("different tombstone: got %v, want a retryable error", err)
 	}
 }
 
@@ -337,11 +362,11 @@ func TestVerifyRetirement_TombstoneWithoutLatestWrite(t *testing.T) {
 // permanently -- a retry can't change what was signed.
 func TestVerifyRetirement_FinalLatestWithoutRetiredAtIsPermanent(t *testing.T) {
 	p := testPublisher(t)
-	idx := catalog.Index{Catalogs: []catalog.CatalogEntry{{CatalogID: "example.test/CAT-1"}}}
+	idx := catalog.Index{Catalogs: []catalog.CatalogEntry{{CatalogID: "example.test/CAT-1", RetiredAt: "2026-01-02T03:04:05Z"}}}
 	content := []byte(`{"catalogId":"example.test/CAT-1","version":1,"catalog":{}}`)
 	err := p.verifyRetirement(context.Background(), "example.test", idx,
 		definition.RetirementOutcome{CatalogID: "example.test/CAT-1"},
-		&definition.RetiredCatalogFile{CatalogID: "example.test/CAT-1", Content: content, ServedContent: content})
+		[]definition.RetiredCatalogFile{{CatalogID: "example.test/CAT-1", Content: content, ServedContent: content}})
 	if err == nil {
 		t.Fatal("expected an error when the final latest file carries no retiredAt")
 	}
@@ -352,8 +377,11 @@ func TestVerifyRetirement_FinalLatestWithoutRetiredAtIsPermanent(t *testing.T) {
 
 // TestVerifyRetirement_StaleLatestStillServedIsRejected proves the check
 // has teeth: when the stable "latest" URL still serves the live
-// (pre-retirement) file rather than the tombstone this call signed, the
-// retirement is reported as a failure, and permanently so.
+// (pre-retirement) file rather than the tombstone, the retirement is
+// reported as a failure. It replaces a test of the same name that also
+// required the failure to be permanent: "latest" is overwritten in place,
+// so the previous copy can legitimately be served for a moment, and the
+// failure is now retryable (see TestVerify_LatestServedStale*).
 func TestVerifyRetirement_StaleLatestStillServedIsRejected(t *testing.T) {
 	km := newFakeKeyManager(t, "k1")
 	km.domain = "example.test"
@@ -361,21 +389,18 @@ func TestVerifyRetirement_StaleLatestStillServedIsRejected(t *testing.T) {
 	if _, err := p.Publish(context.Background(), definitionPublishRequestOneCatalog("example.test/CAT-1")); err != nil {
 		t.Fatalf("seeding Publish: %v", err)
 	}
-	idxRes, err := p.fetcher.FetchIndex(context.Background(), p.IndexURL(), catalog.IndexConditions{})
-	if err != nil {
-		t.Fatalf("FetchIndex: %v", err)
-	}
+	idx := catalog.Index{Catalogs: []catalog.CatalogEntry{{CatalogID: "example.test/CAT-1", RetiredAt: "2026-01-02T03:04:05Z"}}}
 
 	// A tombstone that was signed but never reached the "latest" URL.
 	unwritten := []byte(`{"catalogId":"example.test/CAT-1","version":1,"catalog":{},"retiredAt":"2026-01-02T03:04:05Z"}`)
-	err = p.verifyRetirement(context.Background(), "example.test", idxRes.Index,
+	err := p.verifyRetirement(context.Background(), "example.test", idx,
 		definition.RetirementOutcome{CatalogID: "example.test/CAT-1"},
-		&definition.RetiredCatalogFile{CatalogID: "example.test/CAT-1", Content: unwritten, ServedContent: unwritten})
+		[]definition.RetiredCatalogFile{{CatalogID: "example.test/CAT-1", Content: unwritten, ServedContent: unwritten}})
 	if err == nil {
 		t.Fatal("expected an error when the latest URL does not serve the signed tombstone")
 	}
-	if !crawler.IsPermanent(err) {
-		t.Errorf("expected a permanent (digest mismatch) error, got %v", err)
+	if crawler.IsPermanent(err) {
+		t.Errorf("a mismatch on the overwritten-in-place latest file must be retryable, got permanent: %v", err)
 	}
 }
 

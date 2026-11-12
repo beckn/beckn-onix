@@ -43,20 +43,30 @@ func ToStorePublishRequest(result definition.PublishResult) store.PublishRequest
 		if outcome.LatestContent != nil {
 			u.Latest = &store.FileWrite{
 				Version: int64(outcome.Version), Content: outcome.LatestContent,
-				ServedContent: outcome.LatestServedContent, Compressed: outcome.Compressed,
+				ServedContent: outcome.LatestServedContent, Compressed: outcome.LatestCompressed,
 			}
 		}
 		req.Updates = append(req.Updates, u)
 	}
 
-	retiredLatest := make(map[string]definition.RetiredCatalogFile, len(result.RetiredLatest))
-	for _, rl := range result.RetiredLatest {
-		retiredLatest[rl.CatalogID] = rl
-	}
 	for _, r := range result.Retirements {
+		if len(r.SignedEntry) == 0 {
+			// Already retired and nothing to repair: nothing to persist.
+			continue
+		}
 		u := store.CatalogUpdate{CatalogID: r.CatalogID, SignedEntry: r.SignedEntry}
-		if rl, ok := retiredLatest[r.CatalogID]; ok {
-			u.Latest = &store.FileWrite{Content: rl.Content, ServedContent: rl.ServedContent, Compressed: rl.Compressed}
+		// A catalog has at most two "latest" files to tombstone, one per
+		// encoding; a file storage already holds is not written again.
+		for _, rl := range result.RetiredLatest {
+			if rl.CatalogID != r.CatalogID || rl.AlreadyStored {
+				continue
+			}
+			fw := &store.FileWrite{Content: rl.Content, ServedContent: rl.ServedContent, Compressed: rl.Compressed}
+			if u.Latest == nil {
+				u.Latest = fw
+			} else {
+				u.LatestAlt = fw
+			}
 		}
 		req.Retirements = append(req.Retirements, u)
 	}
@@ -163,22 +173,42 @@ func toDefinitionResult(result publisher.Result) definition.PublishResult {
 			outcome.ServedContent, outcome.Compressed = fw.ServedContent, fw.Compressed
 		}
 		if u.Latest != nil {
+			// "latest" has its own encoding: it keeps the file name it
+			// was first published under, whatever gzip is now, and it
+			// can be written when there is no baseline/change file at
+			// all (a repair on an unchanged or metadata-only outcome).
 			outcome.LatestServedContent = u.Latest.ServedContent
-			// An unchanged or metadata-only outcome has no baseline/change
-			// file, but still refreshes "latest": Compressed must describe
-			// LatestServedContent then, or the write goes to the
-			// uncompressed file name.
-			outcome.Compressed = u.Latest.Compressed
+			outcome.LatestCompressed = u.Latest.Compressed
 		}
 		out.Catalogs = append(out.Catalogs, outcome)
 	}
 
+	// result.Retired lists every catalogId asked to be retired, including
+	// one already retired (no update in Publish.Retirements unless a
+	// "latest" file had to be repaired), with every "latest" file of it.
+	retirementsByID := make(map[string]store.CatalogUpdate, len(result.Publish.Retirements))
 	for _, ret := range result.Publish.Retirements {
-		out.Retirements = append(out.Retirements, definition.RetirementOutcome{CatalogID: ret.CatalogID, SignedEntry: ret.SignedEntry})
-		if ret.Latest != nil {
-			out.RetiredLatest = append(out.RetiredLatest, definition.RetiredCatalogFile{
-				CatalogID: ret.CatalogID, Content: ret.Latest.Content, ServedContent: ret.Latest.ServedContent, Compressed: ret.Latest.Compressed,
-			})
+		retirementsByID[ret.CatalogID] = ret
+	}
+	for _, rep := range result.Retired {
+		u := retirementsByID[rep.CatalogID]
+		out.Retirements = append(out.Retirements, definition.RetirementOutcome{
+			CatalogID: rep.CatalogID, SignedEntry: u.SignedEntry,
+			EntryVersion: int(rep.EntryVersion), RetiredAt: rep.RetiredAt, AlreadyRetired: rep.AlreadyRetired,
+		})
+		for _, lf := range rep.Latest {
+			rl := definition.RetiredCatalogFile{
+				CatalogID: rep.CatalogID, Content: lf.Content, Compressed: lf.Compressed,
+				AlreadyStored: !lf.Written, ServedSize: lf.File.Size,
+			}
+			if lf.Written {
+				for _, fw := range []*store.FileWrite{u.Latest, u.LatestAlt} {
+					if fw != nil && fw.Compressed == lf.Compressed {
+						rl.ServedContent = fw.ServedContent
+					}
+				}
+			}
+			out.RetiredLatest = append(out.RetiredLatest, rl)
 		}
 	}
 	return out
