@@ -83,7 +83,7 @@ func newLifecycleWorld(t *testing.T, gz, latest bool) *lifecycleWorld {
 // blob store -- what a restart with changed plugin config amounts to.
 func (w *lifecycleWorld) publisher() *Publisher {
 	w.t.Helper()
-	p, _, err := New(w.ctx, w.km, w.blobs, fakeVerifyRegistry{PubB64: base64.StdEncoding.EncodeToString(w.km.pub)}, nil, &Config{
+	p, _, err := New(w.ctx, w.km, worldStore(w.blobs), fakeVerifyRegistry{PubB64: base64.StdEncoding.EncodeToString(w.km.pub)}, nil, &Config{
 		SubscriberID: "k1", PublicBaseURL: w.srv.URL, AllowPrivateVerifyHosts: true,
 		Gzip: w.gzip, PublishLatest: w.latest, NextUpdateIn: time.Hour,
 	})

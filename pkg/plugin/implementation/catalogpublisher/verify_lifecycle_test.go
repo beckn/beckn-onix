@@ -100,7 +100,7 @@ func newCachedWorld(t *testing.T, cfg Config) *cachedWorld {
 	bs := newFakeBlobStore()
 	srv := newCachingServer(t, bs)
 	cfg.SubscriberID, cfg.PublicBaseURL, cfg.AllowPrivateVerifyHosts = "k1", srv.URL, true
-	p, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{PubB64: base64.StdEncoding.EncodeToString(km.pub)}, nil, &cfg)
+	p, _, err := New(context.Background(), km, worldStore(bs), fakeVerifyRegistry{PubB64: base64.StdEncoding.EncodeToString(km.pub)}, nil, &cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
