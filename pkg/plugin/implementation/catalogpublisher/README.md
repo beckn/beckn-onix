@@ -85,13 +85,19 @@ catalogs) -- widening the gap until `catalogcrawler` catches up.
    there -- its prior metadata survives retirement, only `isActive` and
    the file references are dropped -- so crawlers can tell "gone" apart
    from "never existed" (NFH-014 §10.4, "a retired catalog stays as a
-   tombstone"). If `PriorCatalogState.LatestPublished` was set for that
-   catalog, also makes one final write to its "latest" URL (via
+   tombstone"). If the catalog ever had `latest` published, also makes
+   one final write to its "latest" URL (via
    `PublishResult.RetiredLatest`), a self-signed `CatalogFile` now
    carrying `retiredAt` -- so a consumer that only ever fetches `latest`
    directly, never revisiting the index, can still learn the catalog is
-   gone (NFH-014 CON-TBD-38). Independent of whether `Config.PublishLatest`
-   is on for this call.
+   gone (NFH-014 CON-TBD-38). Where that write goes is decided by what
+   was published, not by this call's `Config.PublishLatest` or
+   `Config.Gzip`: the file name the index entry advertised, and any other
+   `latest` file the blob store still holds for the catalog (one left
+   behind when `publishLatest` was switched off, or under the other
+   encoding's name). Retiring a catalog that is already retired signs
+   nothing; it rewrites a `latest` file that does not yet carry
+   `retiredAt`, and every `latest` file is verified again (below).
 8. Leaves every other catalog untouched by this call alone -- `Publish`
    itself only ever produces the submitted/retired catalogs' own signed
    entries (`PublishResult.Catalogs`/`Retirements`); it holds no index of
@@ -110,9 +116,17 @@ catalogs) -- widening the gap until `catalogcrawler` catches up.
 10. Maintains a **`latest` pointer** (`Config.PublishLatest`) -- a full,
     self-signed `CatalogFile` overwritten in place at one stable,
     non-versioned URL, for consumers who want fully-current content
-    without ever applying `changes[]`. Regenerated from the submitted
-    catalog on every call regardless of `Mode`, unlike `baseline`/
-    `changes[]` which are only written when content actually changes.
+    without ever applying `changes[]`. Rewritten whenever a baseline or
+    change file is published. An unchanged or metadata-only call leaves an
+    intact file as it is (its digest changes only when its content does)
+    and rewrites one that is missing or no longer matches its index
+    reference. The file keeps the name, and so the URL, it was first
+    published under: switching `gzip` later changes the baseline and
+    change files, not the `latest` URL consumers already hold. With
+    `publishLatest` switched off the entry stops listing `latest` and the
+    file is left where it is, no longer refreshed, until the catalog is
+    retired. Any change to the entry, including its `latest` reference
+    appearing or going away, bumps `entryVersion`.
     Explicitly exempt from the immutable-URL rule every other catalog
     file here follows (NFH-014 CON-TBD-36). On by default for the
     `catalogPublish` plugin config (opt out with `publishLatest:
@@ -522,22 +536,34 @@ publish. `Registry` is now a required constructor argument for this reason
 the "minimise config fields" principle used for `checkCatalogIndexLink`
 above.
 
-Only catalogs actually touched by *this* call are checked --
-`CatalogPublishOutcome.Changed == true`, plus every retirement -- so an
-unrelated catalog already sitting in the index untouched this call incurs
-no extra fetch. One index fetch (`FetchIndex`) covers the whole batch; a
-per-catalog entry's mere presence in that re-fetched index already proves
-its self-signature verified against the real registry key, since `Fetcher`
-silently drops any entry that doesn't (see `verifyOutcome`/
-`verifyRetirement` in `verify.go`). Whichever file(s) this call actually
-wrote -- baseline, a specific change version, and/or a refreshed `latest` --
-are then individually re-fetched and digest/signature-checked too.
+Every catalog in *this* call is checked -- submitted or retired, changed
+or not -- so an unrelated catalog already sitting in the index incurs no
+extra fetch. One index fetch (`FetchIndex`) covers the whole batch. For
+each catalog (see `verifyOutcome`/`verifyRetirement` in `verify.go`):
 
-A retirement is the one case where a written file is not referenced from
-the index: the tombstone entry carries no `latest` pointer, so the final
-`latest` write (`PublishResult.RetiredLatest`) is re-fetched from its
-stable `latest` URL and checked against the digest of the tombstone this
-call signed.
+- Its entry must be in the re-fetched index (presence already proves the
+  self-signature verified against the real registry key, since `Fetcher`
+  drops any entry that doesn't) and must be the entry this call signed.
+  An index still serving an earlier entry is treated as a propagation
+  delay and retried.
+- The baseline or change file this call wrote is re-fetched and
+  digest/signature-checked.
+- If the entry lists `latest`, that file is re-fetched and checked against
+  the entry's digest, whether or not this call wrote it. An unchanged
+  republish is therefore a real check, not an automatic `ACCEPTED`.
+- For a retirement, first or repeated, the entry must be the tombstone,
+  and every `latest` file of the catalog (`PublishResult.RetiredLatest`)
+  is re-fetched from its stable URL and must be a `CatalogFile` carrying
+  `retiredAt`. A tombstone entry carries no `latest` pointer, so these
+  URLs are built the way catalog-core builds them.
+
+Failures that can be a propagation delay are retried: 5 attempts, waiting
+0.2, 0.4, 0.8 and 1.6s (3s in all). That includes a digest mismatch on
+`latest`, the one file overwritten in place, which a cache can serve in
+its previous version for a moment (NFH-014 CON-TBD-37). A digest mismatch
+on a baseline or change file, whose URLs are immutable, is never retried.
+`Publish` holds its lock while verifying, so a failure that persists
+delays the next publish by those 3s.
 
 Publish calls are serialised within one adapter process: each call reads
 the catalog index, merges its own entries and writes it back, so two
