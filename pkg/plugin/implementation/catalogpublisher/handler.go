@@ -193,14 +193,29 @@ func NewHandler(ctx context.Context, mgr handler.PluginManager, cfg *handler.Con
 		for _, id := range nonEmptyCatalogIDs(req.Catalogs) {
 			submittedIDs[id] = true
 		}
+		warnings := resp.Warnings
+		reportedRetire := make(map[string]bool, len(req.Retire))
 		for _, id := range req.Retire {
-			if submittedIDs[id] || rejected[id] {
+			if reportedRetire[id] {
+				// The same catalogId listed twice in retire is one
+				// retirement, so it gets one row.
+				continue
+			}
+			reportedRetire[id] = true
+			if submittedIDs[id] {
 				// Publish's own rule: submitting and retiring the same
 				// catalogId in one call means the submission wins, so no
 				// tombstone was actually written -- reporting "retired"
 				// here too would falsely tell the caller this catalog was
-				// retired. Same reasoning for rejected: already reported
-				// REJECTED above, so not also "retired".
+				// retired. The caller asked for it, though, so say that it
+				// was not done rather than nothing at all.
+				warnings = append(warnings, fmt.Sprintf("retire of %q was ignored: the same catalogId is also in message.catalogs, and a submission takes precedence over a retire in the same request", id))
+				continue
+			}
+			if rejected[id] {
+				// Already reported REJECTED above (e.g. a catalogId that
+				// was never published, or a tombstone that did not survive
+				// re-fetch), so not also "retired".
 				continue
 			}
 			results = append(results, catalogProcessingResult{CatalogID: id, Status: catalogAccepted, Reason: "retired"})
@@ -216,8 +231,8 @@ func NewHandler(ctx context.Context, mgr handler.PluginManager, cfg *handler.Con
 			status = publishOverallFailed
 		}
 
-		log.Debugf(r.Context(), "catalogPublish: completed, %d result(s), %d warning(s), anyFatal=%v", len(results), len(resp.Warnings), anyFatal)
-		writePublishJSON(w, r, publishResponse{Status: status, Results: results, Warnings: resp.Warnings})
+		log.Debugf(r.Context(), "catalogPublish: completed, %d result(s), %d warning(s), anyFatal=%v", len(results), len(warnings), anyFatal)
+		writePublishJSON(w, r, publishResponse{Status: status, Results: results, Warnings: warnings})
 	}
 
 	log.Debugf(ctx, "catalogPublish handler %s initialized", moduleName)
