@@ -23,7 +23,13 @@ import (
 // subscriber do). wrap, if set, wraps replica i's blob store.
 func newReplicaPublishers(t *testing.T, n int, wrap func(i int, bs definition.CatalogBlobStore) definition.CatalogBlobStore) []*Publisher {
 	t.Helper()
-	root := t.TempDir()
+	return newReplicaPublishersAt(t, t.TempDir(), n, wrap)
+}
+
+// newReplicaPublishersAt is newReplicaPublishers over a blob root the
+// caller chose, so it can look at the directory afterwards.
+func newReplicaPublishersAt(t *testing.T, root string, n int, wrap func(i int, bs definition.CatalogBlobStore) definition.CatalogBlobStore) []*Publisher {
+	t.Helper()
 	srv := httptest.NewServer(http.FileServer(http.Dir(root)))
 	t.Cleanup(srv.Close)
 	km := newFakeKeyManager(t, "k1")
