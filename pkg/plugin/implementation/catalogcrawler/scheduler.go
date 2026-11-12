@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/beckn/catalog-core/pkg/catalog/crawlmanager"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // DefaultIndexInterval, DefaultCatalogInterval, and DefaultParkSweepInterval
@@ -165,20 +166,34 @@ func (s *Scheduler) loop(ctx context.Context, interval time.Duration, fn func(co
 	}()
 }
 
+// Each tick below starts a new root span, so every tick is its own trace
+// rather than part of one trace spanning the scheduler's lifetime.
+
 // parkSweepTick drives RequeueOrAbandonParked on its own independent
 // cadence -- Params.RequeueOrAbandonParked itself logs revived/abandoned
 // counts, so there's nothing further to log here beyond a transport-level
 // error.
 func (s *Scheduler) parkSweepTick(ctx context.Context) {
+	ctx, op := startOperation(ctx, opParkSweep, trace.WithNewRoot())
 	if err := s.params.RequeueOrAbandonParked(ctx, s.cfg.ParkOlderThan); err != nil {
 		s.log.ErrorContext(ctx, "catalogcrawler: park sweep failed", "error", err)
+		op.end(ctx, statusError, classifyError(err, errTypeSweepFailed), err)
+		return
 	}
+	op.end(ctx, statusSuccess, "", nil)
 }
 
+// pollTick runs one PollIndexes pass. A pass that skipped failed networks or
+// sources is recorded as partial_failure, so a broken network hiding behind
+// healthy ones still shows up in onix_plugin_errors_total.
 func (s *Scheduler) pollTick(ctx context.Context) {
-	if err := s.params.PollIndexes(ctx); err != nil {
+	ctx, op := startOperation(ctx, opPollTick, trace.WithNewRoot())
+	ctx, partial := withPartialFailureTracking(ctx)
+	err := s.params.PollIndexes(ctx)
+	if err != nil {
 		s.log.ErrorContext(ctx, "catalogcrawler: poll tick failed", "error", err)
 	}
+	op.endPoll(ctx, err, partial.Load())
 }
 
 // syncTick drains the queue: SyncNext until it reports nothing left to claim
@@ -187,19 +202,42 @@ func (s *Scheduler) pollTick(ctx context.Context) {
 // tick, and erroring on every loop iteration would spin hot on a wedged
 // store instead of waiting for the next tick).
 func (s *Scheduler) syncTick(ctx context.Context) {
+	ctx, span := tracer().Start(ctx, spanNamePrefix+opSyncTick, trace.WithNewRoot())
+	itemsClaimed := 0
+	defer func() {
+		span.SetAttributes(attrItemsClaimed.Int(itemsClaimed))
+		span.End()
+	}()
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		claimed, err := s.params.SyncNext(ctx)
-		if !claimed {
-			if err != nil {
-				s.log.ErrorContext(ctx, "catalogcrawler: claiming next queue item failed", "error", err)
-			}
+		if !s.syncNext(ctx) {
 			return
 		}
+		itemsClaimed++
 		// SyncNext already logs and records a per-catalog sync failure itself
 		// (see SyncNext's RecordFailure/Park/Reschedule handling); nothing
 		// further to do here beyond continuing to drain the queue.
 	}
+}
+
+// syncNext runs one SyncNext call under a sync_next span and reports whether
+// an item was claimed.
+func (s *Scheduler) syncNext(ctx context.Context) bool {
+	ctx, op := startOperation(ctx, opSyncNext)
+	claimed, err := s.params.SyncNext(ctx)
+	op.span.SetAttributes(attrClaimed.Bool(claimed))
+	switch {
+	case !claimed && err != nil:
+		s.log.ErrorContext(ctx, "catalogcrawler: claiming next queue item failed", "error", err)
+		op.end(ctx, statusError, classifyError(err, errTypeClaimFailed), err)
+	case !claimed:
+		op.end(ctx, statusEmpty, "", nil)
+	case err != nil:
+		op.end(ctx, statusError, syncErrorType(err), err)
+	default:
+		op.end(ctx, statusSuccess, "", nil)
+	}
+	return claimed
 }
