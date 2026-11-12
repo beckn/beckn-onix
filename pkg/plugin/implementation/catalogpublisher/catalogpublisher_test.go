@@ -16,6 +16,7 @@ import (
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
 	"github.com/beckn/catalog-core/pkg/catalog/publisher"
+	"github.com/beckn/catalog-core/pkg/catalog/store"
 )
 
 // fakeBlobStore is an in-memory definition.CatalogBlobStore double.
@@ -446,6 +447,76 @@ func TestPublish_RetireWithLatestPassesVerification(t *testing.T) {
 				t.Fatalf("retirement succeeded but was reported with errors: %+v", result.Errors)
 			}
 		})
+	}
+}
+
+// TestPublish_RepeatRetireLeavesTombstoneUnchanged proves retiring an
+// already-retired catalog is a no-op end to end: the tombstone written by
+// the first retire stays exactly as it was (same entryVersion, same
+// retiredAt, so it still matches the final "latest" file), and the repeat
+// call reports no errors.
+func TestPublish_RepeatRetireLeavesTombstoneUnchanged(t *testing.T) {
+	km := newFakeKeyManager(t, "k1")
+	km.domain = "example.test"
+	bs := newFakeBlobStore()
+	p := newVerifiablePublisher(t, km, bs, nil, &Config{SubscriberID: "k1", PublishLatest: true})
+
+	seed := definition.PublishRequest{
+		Catalogs: []definition.CatalogSubmission{{CatalogID: "example.test/CAT-1", Catalog: validCatalogJSON("CAT-1")}},
+	}
+	if result, err := p.Publish(context.Background(), seed); err != nil || len(result.Errors) != 0 {
+		t.Fatalf("seeding Publish: err=%v errors=%+v", err, result.Errors)
+	}
+
+	type indexEntry struct {
+		CatalogID    string `json:"catalogId"`
+		EntryVersion int64  `json:"entryVersion"`
+		RetiredAt    string `json:"retiredAt"`
+	}
+	readEntry := func(t *testing.T) indexEntry {
+		t.Helper()
+		raw, err := bs.Get(context.Background(), store.IndexPath())
+		if err != nil {
+			t.Fatalf("reading index from the blob store: %v", err)
+		}
+		var index struct {
+			Catalogs []indexEntry `json:"catalogs"`
+		}
+		if err := json.Unmarshal(raw, &index); err != nil {
+			t.Fatalf("parsing index: %v", err)
+		}
+		if len(index.Catalogs) != 1 || index.Catalogs[0].CatalogID != "example.test/CAT-1" {
+			t.Fatalf("expected exactly one index entry for example.test/CAT-1, got %+v", index.Catalogs)
+		}
+		return index.Catalogs[0]
+	}
+
+	retire := definition.PublishRequest{Retire: []string{"example.test/CAT-1"}}
+	first, err := p.Publish(context.Background(), retire)
+	if err != nil {
+		t.Fatalf("first retire: %v", err)
+	}
+	if len(first.Retirements) != 1 || len(first.Errors) != 0 {
+		t.Fatalf("expected one clean retirement, got Retirements=%d Errors=%+v", len(first.Retirements), first.Errors)
+	}
+	before := readEntry(t)
+	if before.RetiredAt == "" || before.EntryVersion < 2 {
+		t.Fatalf("expected a tombstone with retiredAt set and entryVersion advanced past the publish, got %+v", before)
+	}
+
+	second, err := p.Publish(context.Background(), retire)
+	if err != nil {
+		t.Fatalf("second retire: %v", err)
+	}
+	if len(second.Errors) != 0 {
+		t.Fatalf("repeat retire of an already-retired catalog was reported with errors: %+v", second.Errors)
+	}
+	after := readEntry(t)
+	if after.EntryVersion != before.EntryVersion {
+		t.Errorf("repeat retire changed entryVersion: %d -> %d", before.EntryVersion, after.EntryVersion)
+	}
+	if after.RetiredAt != before.RetiredAt {
+		t.Errorf("repeat retire changed retiredAt: %q -> %q", before.RetiredAt, after.RetiredAt)
 	}
 }
 
