@@ -164,6 +164,11 @@ func toDefinitionResult(result publisher.Result) definition.PublishResult {
 		}
 		if u.Latest != nil {
 			outcome.LatestServedContent = u.Latest.ServedContent
+			// An unchanged or metadata-only outcome has no baseline/change
+			// file, but still refreshes "latest": Compressed must describe
+			// LatestServedContent then, or the write goes to the
+			// uncompressed file name.
+			outcome.Compressed = u.Latest.Compressed
 		}
 		out.Catalogs = append(out.Catalogs, outcome)
 	}

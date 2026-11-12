@@ -101,7 +101,14 @@ type Publisher struct {
 	fetcher  *catalog.Fetcher
 	registry definition.RegistryLookup
 	config   *Config
-	log      *slog.Logger
+	// publishLock serialises Publish. Every call reads the one catalog
+	// index, merges its own entries and writes it back, so two calls that
+	// overlap would each drop the other's entries. A one-slot channel
+	// rather than a sync.Mutex so a waiting call can give up when its
+	// context ends. This covers one process only: replicas sharing a blob
+	// store still need a conditional write on the index.
+	publishLock chan struct{}
+	log         *slog.Logger
 }
 
 // New creates a Publisher instance. pkg/catalog/publisher's own logging
@@ -179,6 +186,7 @@ func New(ctx context.Context, keyManager definition.KeyManager, blobStore defini
 		fetcher:          fetcher,
 		registry:         registry,
 		config:           cfg,
+		publishLock:      make(chan struct{}, 1),
 		log:              slog.New(log.NewSlogHandler()),
 	}, func() error { return nil }, nil
 }
@@ -222,6 +230,15 @@ func validatePublicBaseURL(raw string) error {
 // registry catalog-index-link check, surfacing a miss as a non-fatal
 // warning rather than failing the call.
 func (p *Publisher) Publish(ctx context.Context, req definition.PublishRequest) (definition.PublishResult, error) {
+	// Held through post-write verification, so the index a call verifies
+	// against is the one it wrote.
+	select {
+	case p.publishLock <- struct{}{}:
+		defer func() { <-p.publishLock }()
+	case <-ctx.Done():
+		return definition.PublishResult{}, fmt.Errorf("catalogpublisher: waiting for another publish to finish: %w", ctx.Err())
+	}
+
 	keyset, err := p.keyManager.Keyset(ctx, p.config.SubscriberID)
 	if err != nil {
 		return definition.PublishResult{}, fmt.Errorf("catalogpublisher: loading keyset %q: %w", p.config.SubscriberID, err)

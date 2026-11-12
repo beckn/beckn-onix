@@ -539,6 +539,13 @@ the index: the tombstone entry carries no `latest` pointer, so the final
 stable `latest` URL and checked against the digest of the tombstone this
 call signed.
 
+Publish calls are serialised within one adapter process: each call reads
+the catalog index, merges its own entries and writes it back, so two
+overlapping calls would otherwise drop each other's entries. A call that
+is waiting returns an error if its request context ends first. This does
+not cover several adapter replicas writing to one blob store; that needs
+a conditional write on the index and is not implemented.
+
 Unlike `checkCatalogIndexLink`, a verification failure here is **not** a
 warning: `definition.PublishError{Stage: "verify", Fatal: false}` is
 appended to the result, which makes the handler report that catalog as
