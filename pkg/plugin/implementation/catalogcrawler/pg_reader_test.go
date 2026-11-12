@@ -660,3 +660,30 @@ func TestPG_ConcurrentCrawlsOfOnePublisher(t *testing.T) {
 		}
 	}
 }
+
+// After an upgrade the crawler must look again at entries the previous
+// build decided: a tombstone it skipped stays skipped behind a 304
+// otherwise. Starting up forgets the stored validators.
+func TestPG_StartupForgetsIndexValidators(t *testing.T) {
+	r := newPGRig(t)
+	ctx := context.Background()
+	r.pub.mu.Lock()
+	r.pub.etag = `"e1"`
+	r.pub.mu.Unlock()
+	r.pub.setLive(pgCatA, 2, 2, "v2")
+	r.crawl()
+	// What an earlier build left behind: the tombstone was seen and
+	// skipped, and the index's validator stored.
+	r.pub.setTombstone(pgCatA, 1, "2026-11-12T10:00:05Z")
+	if ic, err := r.st.GetIndexCursor(ctx, r.pub.srv.URL+"/index"); err != nil || ic == nil || ic.ETag != `"e1"` {
+		t.Fatalf("setup: index cursor %+v %v", ic, err)
+	}
+	r.crawl() // 304: nothing happens
+	r.want(pgCatA, "v2", "active")
+
+	if err := store.Migrate(ctx, r.db); err != nil { // a restart
+		t.Fatal(err)
+	}
+	r.crawl()
+	r.want(pgCatA, "WIPE", "retired")
+}
