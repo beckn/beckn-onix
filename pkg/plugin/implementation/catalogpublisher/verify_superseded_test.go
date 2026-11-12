@@ -195,3 +195,48 @@ func TestVerifyOutcome_ServedEntryRelativeToTheSignedOne(t *testing.T) {
 		}
 	})
 }
+
+// A publish REJECTED at verification is already committed. Repeating it
+// changes nothing, so the repeat is an "unchanged" outcome that writes no
+// file -- and it must still be REJECTED for as long as a consumer cannot
+// fetch what the entry lists. An unchanged or metadata-only outcome
+// therefore verifies the baseline and every change file after it, not
+// only "latest".
+func TestVerify_RepeatOfARejectedPublishStaysRejected(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		path  string
+		setUp func(w *cachedWorld)
+		items []string
+	}{
+		{"baseline served truncated", store.CatalogFilePath(cachedID, 1, "json", false), func(*cachedWorld) {}, []string{"ITEM-1"}},
+		{"change file served tampered", store.CatalogFilePath(cachedID, 2, "changes.json", false), func(w *cachedWorld) { w.publish("ITEM-1") }, []string{"ITEM-1", "ITEM-2"}},
+	} {
+		for _, latest := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/publishLatest=%v", tc.name, latest), func(t *testing.T) {
+				w := newCachedWorld(t, Config{PublishLatest: latest})
+				tc.setUp(w)
+				// The server answers this URL with other bytes, whatever is stored.
+				w.bs.Put(context.Background(), tc.path, []byte(`{"catalogId":"example.test/CAT-1"`))
+				w.srv.freeze(t, tc.path, 0)
+
+				if res := w.publish(tc.items...); len(res.Errors) != 1 || res.Errors[0].Stage != "verify" {
+					t.Fatalf("first call: errors = %+v, want one verify error", res.Errors)
+				}
+				for n := 2; n <= 3; n++ {
+					res := w.publish(tc.items...)
+					if len(res.Catalogs) != 1 || res.Catalogs[0].Changed {
+						t.Fatalf("call %d: outcome = %+v, want unchanged", n, res.Catalogs)
+					}
+					if len(res.Errors) != 1 || res.Errors[0].Stage != "verify" {
+						t.Fatalf("call %d: errors = %+v; the file is still not what the entry lists, the repeat must be REJECTED", n, res.Errors)
+					}
+				}
+				w.srv.thaw()
+				if res := w.publish(tc.items...); len(res.Errors) != 0 {
+					t.Fatalf("after the server recovered: %+v", res.Errors)
+				}
+			})
+		}
+	}
+}

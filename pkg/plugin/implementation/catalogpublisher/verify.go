@@ -30,6 +30,10 @@ package catalogpublisher
 //     in the meantime; this call's publish was committed and then built
 //     on, which is not a failure (see verifyOutcome).
 //   - A baseline or change outcome: that file.
+//   - An unchanged or metadata-only outcome: the baseline and every change
+//     file after it. Such a call may be the repeat of one that was REJECTED
+//     here after it had already committed, and must give the same answer
+//     until the files verify.
 //   - Every outcome whose entry lists "latest", changed or not: the
 //     "latest" file, against the entry's digest (NFH-014 CON-TBD-36). An
 //     unchanged outcome is not skipped: the index is rewritten on every
@@ -305,6 +309,26 @@ func (p *Publisher) verifyOutcome(ctx context.Context, nodeID string, idx catalo
 		}
 		if _, err := p.fetcher.FetchFile(ctx, nodeID, o.CatalogID, change); err != nil {
 			return "", fmt.Errorf("change file: %w", err)
+		}
+	default:
+		// "unchanged" or "metadata": this call wrote no baseline or change
+		// file, so there is no one file to point at. It may be the repeat
+		// of a call that was REJECTED here after it had committed, and the
+		// answer must not turn into ACCEPTED while the file that failed is
+		// still not what the entry lists. So fetch what a consumer starting
+		// from this entry fetches: the baseline and every change after it.
+		// (Changes at or below the baseline's version are only listed for
+		// consumers part-way through the older lineage.)
+		if _, err := p.fetcher.FetchFile(ctx, nodeID, o.CatalogID, entry.Baseline); err != nil {
+			return "", fmt.Errorf("baseline file: %w", err)
+		}
+		for _, change := range entry.Changes {
+			if change.EffectiveVersion() <= entry.Baseline.Version {
+				continue
+			}
+			if _, err := p.fetcher.FetchFile(ctx, nodeID, o.CatalogID, change); err != nil {
+				return "", fmt.Errorf("change file for version %d: %w", change.EffectiveVersion(), err)
+			}
 		}
 	}
 
