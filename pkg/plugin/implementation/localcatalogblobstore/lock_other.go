@@ -13,7 +13,7 @@ import (
 // on unix only.
 var processLock sync.Mutex
 
-func (s *Store) lock(ctx context.Context) (unlock func(), err error) {
+func (s *Store) lock(ctx context.Context) (unlock func() error, err error) {
 	processLock.Lock()
-	return processLock.Unlock, nil
+	return func() error { processLock.Unlock(); return nil }, nil
 }

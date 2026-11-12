@@ -127,17 +127,24 @@ func syncDir(dir string) {
 // clean up. Readers and plain Put take no lock; they are safe because
 // every write is a rename.
 //
-// This relies on the filesystem honouring flock between the processes
-// that share it. Local filesystems and volumes shared between
-// containers on one host do; NFS does from Linux 2.6.12 where the
-// server supports locking. If the lock cannot be taken, PutIfVersion
-// fails rather than write unprotected.
-func (s *Store) PutIfVersion(ctx context.Context, path string, content []byte, ifVersion string) (string, error) {
+// This relies on the filesystem enforcing flock between the processes
+// that share it. A local Linux filesystem does, including a Docker or
+// Kubernetes volume mounted into several containers on one node; NFS
+// does where the server supports locking. Some do not and report no
+// error: a macOS host directory bind-mounted into Docker Desktop
+// containers is one (see lock). If the lock cannot be taken, or turns
+// out not to have been exclusive, PutIfVersion fails rather than report
+// an unprotected write as safe.
+func (s *Store) PutIfVersion(ctx context.Context, path string, content []byte, ifVersion string) (version string, err error) {
 	unlock, err := s.lock(ctx)
 	if err != nil {
 		return "", fmt.Errorf("localcatalogblobstore: locking %s: %w", s.Root, err)
 	}
-	defer unlock()
+	defer func() {
+		if uerr := unlock(); uerr != nil && (err == nil || errors.Is(err, definition.ErrBlobPreconditionFailed)) {
+			version, err = "", fmt.Errorf("localcatalogblobstore: %s: %w", s.Root, uerr)
+		}
+	}()
 
 	current := ""
 	b, err := s.Get(ctx, path)

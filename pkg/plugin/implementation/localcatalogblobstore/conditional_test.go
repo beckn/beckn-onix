@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -187,5 +188,46 @@ func TestPutIfVersion_StopsWaitingWhenContextEnds(t *testing.T) {
 	release()
 	if _, err := s.PutIfVersion(context.Background(), "f", []byte("x"), ""); err != nil {
 		t.Fatalf("after release: %v", err)
+	}
+}
+
+// A filesystem that accepts flock without enforcing it lets a second
+// process in while the first holds the lock. The second leaves its mark
+// in the lock file; the first must then fail instead of reporting a
+// protected write.
+func TestPutIfVersion_FailsWhenLockWasNotExclusive(t *testing.T) {
+	root := t.TempDir()
+	s := localcatalogblobstore.New(root)
+	ctx := context.Background()
+	big := bytes.Repeat([]byte("x"), 8<<20)
+	lockFile := filepath.Join(root, localcatalogblobstore.LockFileName)
+
+	// Overwrite the holder's mark while it is busy writing the blob.
+	stop := make(chan struct{})
+	scribbled := make(chan struct{})
+	go func() {
+		defer close(scribbled)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if b, err := os.ReadFile(lockFile); err == nil && len(b) > 0 && string(b) != strings.Repeat("0", len(b)) {
+				os.WriteFile(lockFile, []byte(strings.Repeat("0", len(b))), 0o644)
+			}
+		}
+	}()
+	var err error
+	for range 20 {
+		if _, err = s.PutIfVersion(ctx, "f", big, ""); err != nil {
+			break
+		}
+		os.Remove(filepath.Join(root, "f"))
+	}
+	close(stop)
+	<-scribbled
+	if err == nil || !strings.Contains(err.Error(), "does not enforce flock") {
+		t.Fatalf("got %v, want the lock-not-exclusive error", err)
 	}
 }
