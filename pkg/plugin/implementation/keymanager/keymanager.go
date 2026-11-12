@@ -260,8 +260,11 @@ func (km *KeyMgr) Keyset(ctx context.Context, keyID string) (*model.Keyset, erro
 	path := km.getSecretPath(keyID)
 
 	secret, err := km.VaultClient.Logical().Read(path)
-	if err != nil || secret == nil {
+	if err != nil {
 		return nil, fmt.Errorf("failed to read secret from Vault: %w", err)
+	}
+	if secret == nil {
+		return nil, fmt.Errorf("failed to read secret from Vault: no secret at %s", path)
 	}
 
 	var data map[string]interface{}
@@ -278,13 +281,30 @@ func (km *KeyMgr) Keyset(ctx context.Context, keyID string) (*model.Keyset, erro
 		data = secret.Data
 	}
 
-	return &model.Keyset{
-		UniqueKeyID:    data["uniqueKeyID"].(string),
-		SigningPublic:  data["signingPublicKey"].(string),
-		SigningPrivate: data["signingPrivateKey"].(string),
-		EncrPublic:     data["encrPublicKey"].(string),
-		EncrPrivate:    data["encrPrivateKey"].(string),
-	}, nil
+	// A missing or non-string field is reported by name only: the values are
+	// key material and must not reach an error message or a log line.
+	field := func(name string) (string, error) {
+		v, ok := data[name].(string)
+		if !ok {
+			return "", fmt.Errorf("secret at %s: field %q is missing or not a string", path, name)
+		}
+		return v, nil
+	}
+	ks := &model.Keyset{}
+	for name, dst := range map[string]*string{
+		"uniqueKeyID":       &ks.UniqueKeyID,
+		"signingPublicKey":  &ks.SigningPublic,
+		"signingPrivateKey": &ks.SigningPrivate,
+		"encrPublicKey":     &ks.EncrPublic,
+		"encrPrivateKey":    &ks.EncrPrivate,
+	} {
+		v, err := field(name)
+		if err != nil {
+			return nil, err
+		}
+		*dst = v
+	}
+	return ks, nil
 }
 
 // LookupNPKeys retrieves the signing and encryption public keys for the given subscriber ID and unique key ID.
