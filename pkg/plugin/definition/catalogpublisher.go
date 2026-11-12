@@ -186,6 +186,11 @@ type PublishRequest struct {
 	// isActive/baseline/changes. A catalogId present in both Retire and
 	// Catalogs is published normally; Retire is ignored for it.
 	//
+	// Only a catalogId that has an index entry can be retired. One that
+	// was never published comes back as a PublishError (stage "retire",
+	// "catalog not found") and no tombstone is written; one that is
+	// already retired is left exactly as it is.
+	//
 	// This stays a batch-wide list here, kept distinct from
 	// CatalogSubmission, rather than becoming a third per-submission bool
 	// alongside ForceBaseline: catalog-core's own
