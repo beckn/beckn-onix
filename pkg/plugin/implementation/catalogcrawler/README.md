@@ -60,6 +60,17 @@ Supported config keys:
 - Key resolution and caching are entirely the `RegistryLookup` plugin's responsibility (e.g. `registry`, `dediregistry`) — this plugin does not add its own cache in front of it, to avoid a second, independently-expiring cache that could still trust a key after the registry plugin's own cache has already invalidated it (e.g. on revocation).
 - A signature failure (unknown key, revoked/expired subscription, malformed key material, bad signature) is permanent and the item is parked, not retried on its own schedule — but see "Parked and abandoned catalogs" below: a permanent failure isn't necessarily final if its underlying cause was transient in practice (e.g. the publisher's registered key gets corrected later). A registry lookup failure (network/outage) is transient and retried on the next tick.
 
+## Retirement, re-listing and rollback
+
+What the crawler does with index entries that break the publisher-side rules of RFC NFH-014 (deployed publishers do produce them):
+
+- **A signed tombstone always retires.** An entry carrying `retiredAt` wipes the catalog from Discovery and marks it `retired`, whatever the tombstone's `entryVersion` — including one below the stored cursor (a repeated retire on older publishers rewrites the tombstone at `entryVersion` 1). The wipe is pushed once; later rewrites of the tombstone do nothing.
+- **A retired `catalogId` is not served again.** A live entry for a catalog this crawler has retired is not synced (CON-TBD-26). `/crawl/status` keeps `retired: true` and reports the refusal in `lastError`. The publisher has to use a new `catalogId`; an operator who decides otherwise has to delete the catalog's `crawler_catalog` row.
+- **A regression is not applied.** A live entry whose `entryVersion` or content version is below the stored cursor is neither synced nor allowed to move the cursor (CON-TBD-11), at poll time and again at sync time. It is reported in `lastError`; what was synced before stays served.
+- **Absence is not retirement.** A catalog missing from a fetched index is left as it is (CON-TBD-27).
+
+The store's SQL is covered by tests that need a Postgres: set `CATALOGCRAWLER_TEST_DSN` (they are skipped without it).
+
 ## Parked and abandoned catalogs
 
 A catalog whose sync keeps failing permanently (or exhausts `maxAttempts`) gets **parked**: `crawlmanager.SyncNext` stops retrying it on the normal `catalogIntervalSeconds` cadence. Without anything else, a parked catalog would stay parked forever unless its publisher republishes a *changed* index — an unchanged (304, or same declared version) index never re-triggers the decide loop that would otherwise notice the underlying cause cleared up.

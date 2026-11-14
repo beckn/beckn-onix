@@ -211,10 +211,12 @@ func parseBundleArchive(data []byte, verification *ArtifactVerificationConfig, f
 			algorithm = defaultBundleVerificationAlgorithm
 		}
 
-		keyConfig, err := keys.NewKeyConfig(string(pemKey), algorithm, "")
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to parse bundle verification key: %w", err)
-		}
+		// Built directly rather than with keys.NewKeyConfig, which first
+		// stats its argument in case it is a file path. This is PEM text, not
+		// a path: for a key whose base64 has no "/" in its first ~230
+		// characters that stat fails with "file name too long" and the
+		// bundle could not be loaded at all.
+		keyConfig := &keys.Config{Key: string(pemKey), Algorithm: algorithm}
 
 		reader = reader.WithBundleVerificationConfig(
 			bundle.NewVerificationConfig(map[string]*keys.Config{defaultBundleVerificationKeyID: keyConfig}, defaultBundleVerificationKeyID, "", nil),

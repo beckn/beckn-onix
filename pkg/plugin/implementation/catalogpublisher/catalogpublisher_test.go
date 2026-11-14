@@ -117,7 +117,7 @@ func newVerifiablePublisher(t *testing.T, km *fakeKeyManager, bs *fakeBlobStore,
 	// into the SSRF guard's private-host allowance the same way a real
 	// deployment would for an internal PublicBaseURL.
 	cfg.AllowPrivateVerifyHosts = true
-	p, _, err := New(context.Background(), km, bs, fakeVerifyRegistry{PubB64: base64.StdEncoding.EncodeToString(km.pub)}, rm, cfg)
+	p, _, err := New(context.Background(), km, worldStore(bs), fakeVerifyRegistry{PubB64: base64.StdEncoding.EncodeToString(km.pub)}, rm, cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
