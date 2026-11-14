@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -66,6 +67,12 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 			ctx := r.Context()
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
+				var tooLarge *http.MaxBytesError
+				if errors.As(err, &tooLarge) {
+					writeCodedError(ctx, w, http.StatusRequestEntityTooLarge, "SCH_INVALID_FORMAT",
+						fmt.Sprintf("request body exceeds the %d byte limit", tooLarge.Limit))
+					return
+				}
 				writeCodedError(ctx, w, http.StatusBadRequest, "SCH_INVALID_JSON", "Failed to read request body")
 				return
 			}
