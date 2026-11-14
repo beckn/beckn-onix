@@ -8,6 +8,14 @@ Only the latest published release is supported for security fixes. We ship frequ
 
 If you're not on the latest tag, please upgrade before or shortly after filing a report so the fix reaches you.
 
+### How security fixes are announced
+
+- Each fix is published as a [GitHub security advisory](https://github.com/beckn/beckn-onix/security/advisories) that states the affected versions and the release that fixes them.
+- The release notes, a pinned issue and a post in [Discussions (Announcements)](https://github.com/beckn/beckn-onix/discussions/categories/announcements) carry the same notice, with upgrade notes and, where one exists, a workaround for those who cannot upgrade at once.
+- We request a CVE ID for advisories rated medium or higher.
+
+If you cannot upgrade, ask in Discussions and we will help where we can. We do not release patches for older versions.
+
 ## Reporting a Vulnerability
 
 Report vulnerabilities privately using [GitHub Private Vulnerability Reporting](https://github.com/beckn/beckn-onix/security/advisories/new):
