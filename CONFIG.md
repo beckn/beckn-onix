@@ -170,6 +170,14 @@ appName: "onix-local"
 **Default**: `30`  
 **Description**: Maximum amount of time to wait for the next request when keep-alives are enabled.
 
+##### `maxBodyBytes`
+**Type**: `integer` (bytes)  
+**Required**: No  
+**Default**: `10485760` (10 MiB)  
+**Description**: Largest request body the server accepts, on every route. A larger request is answered with `413 Request Entity Too Large` before its signature is checked. Raise it if you publish catalogs larger than the default through `catalog/publish`.
+
+The request log records at most the first 64 KiB of a body, with `bodyBytes` giving the full size and `bodyTruncated: true` when it was cut.
+
 **Example**:
 ```yaml
 http:
@@ -178,6 +186,7 @@ http:
     read: 30
     write: 30
     idle: 30
+  maxBodyBytes: 10485760
 ```
 
 ---

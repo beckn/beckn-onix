@@ -275,12 +275,23 @@ func logEvent(ctx context.Context, level zerolog.Level, msg string, err error) {
 func Request(ctx context.Context, r *http.Request, body []byte) {
 	event := logger.Info()
 	addCtx(ctx, event)
+	logged := body
+	if len(logged) > maxLoggedBodyBytes {
+		logged = logged[:maxLoggedBodyBytes]
+		event.Bool("bodyTruncated", true)
+	}
 	event.Str("method", r.Method).
 		Str("url", r.URL.String()).
-		Str("body", string(body)).
+		Str("body", string(logged)).
+		Int("bodyBytes", len(body)).
 		Str("remoteAddr", r.RemoteAddr).
 		Msg("HTTP Request")
 }
+
+// maxLoggedBodyBytes is how much of a request body Request writes to the log.
+// The request is logged before its signature is checked, so the log line must
+// not grow with whatever an unauthenticated sender chooses to post.
+const maxLoggedBodyBytes = 64 << 10
 
 // addCtx adds context values to the log event based on configured context keys.
 func addCtx(ctx context.Context, event *zerolog.Event) {
