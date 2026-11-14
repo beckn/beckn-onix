@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -135,6 +136,15 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// This must happen before span creation so the attributes are available.
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		// The server caps the request body; a sender that exceeds the cap
+		// gets 413, not the 500 of a genuine read failure.
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			log.Warnf(r.Context(), "request body exceeds the %d byte limit", tooLarge.Limit)
+			sendNack(r.Context(), w, model.NewCodedErr(http.StatusRequestEntityTooLarge, "SCH_INVALID_FORMAT",
+				fmt.Errorf("request body exceeds the %d byte limit", tooLarge.Limit)))
+			return
+		}
 		log.Errorf(r.Context(), err, "failed to read request body: %v", err)
 		http.Error(w, "failed to read request body", http.StatusInternalServerError)
 		return
