@@ -1,5 +1,8 @@
 # Beckn-ONIX
 
+> [!IMPORTANT]
+> **Security notice, 14 Nov 2026:** every version before v1.9.4 is affected by [GHSA-cp53-rwrh-93vp](https://github.com/beckn/beckn-onix/security/advisories/GHSA-cp53-rwrh-93vp) (high severity). Upgrade to [v1.9.4](https://github.com/beckn/beckn-onix/releases/tag/v1.9.4). Upgrade notes and a workaround are in [#963](https://github.com/beckn/beckn-onix/issues/963).
+
 <div align="center">
 
 [![Go Version](https://img.shields.io/badge/Go-1.24-blue.svg)](https://golang.org)
