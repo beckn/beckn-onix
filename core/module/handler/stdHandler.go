@@ -64,6 +64,9 @@ type stdHandler struct {
 	basePath     string
 	httpClient   *http.Client
 	moduleName   string
+	// maxResponseBody caps the upstream response body proxy reads into
+	// memory. Zero means DefaultMaxBodyBytes.
+	maxResponseBody int64
 }
 
 // newHTTPClient creates a new HTTP client with a custom transport configuration.
@@ -111,6 +114,7 @@ func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleNa
 	}
 	// Initialize HTTP client after plugins so transport wrapper can be applied.
 	h.httpClient = newHTTPClient(&cfg.HttpClientConfig, h.transportWrapper)
+	h.maxResponseBody = cfg.HttpClientConfig.maxResponseBodyBytes()
 	// Initialize steps.
 	if err := h.initSteps(ctx, mgr, cfg); err != nil {
 		return nil, fmt.Errorf("failed to initialize steps: %w", err)
@@ -133,22 +137,20 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Read body early to extract the Beckn action, which is needed for both
 	// the trace context span attributes and for the HTTP request metrics.
 	// This must happen before span creation so the attributes are available.
-	body, err := io.ReadAll(r.Body)
+	body, err := readRequestBody(r)
 	if err != nil {
 		// The server caps the request body; a sender that exceeds the cap
 		// gets 413, not the 500 of a genuine read failure.
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			log.Warnf(r.Context(), "request body exceeds the %d byte limit", tooLarge.Limit)
-			sendNack(r.Context(), w, model.NewCodedErr(http.StatusRequestEntityTooLarge, "SCH_INVALID_FORMAT",
-				fmt.Errorf("request body exceeds the %d byte limit", tooLarge.Limit)))
+			RejectBodyTooLarge(w, r, tooLarge.Limit)
 			return
 		}
 		log.Errorf(r.Context(), err, "failed to read request body: %v", err)
 		http.Error(w, "failed to read request body", http.StatusInternalServerError)
 		return
 	}
-	r.Body = io.NopCloser(bytes.NewBuffer(body))
+	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	action := extractBecknAction(body)
 	if action == "" {
@@ -184,12 +186,8 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// set beckn attribute
 	setBecknAttr(span, r, h, action)
 
-	stepCtx, err := h.stepCtx(r, w.Header())
-	if err != nil {
-		log.Errorf(r.Context(), err, "stepCtx(r):%v", err)
-		sendNack(r.Context(), wrapped, err)
-		return
-	}
+	// The body is already in memory; hand the same bytes to the steps.
+	stepCtx := h.stepCtxFromBody(r, w.Header(), body)
 	log.Request(r.Context(), r, stepCtx.Body)
 
 	var responseBody []byte
@@ -276,7 +274,12 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 		return nil, model.NewBadReqErr("", err)
 	}
 	r.Body.Close()
-	body := bodyBuffer.Bytes()
+	return h.stepCtxFromBody(r, rh, bodyBuffer.Bytes()), nil
+}
+
+// stepCtxFromBody creates a StepContext over a request body that has already
+// been read. It keeps body as is, without copying it.
+func (h *stdHandler) stepCtxFromBody(r *http.Request, rh http.Header, body []byte) *model.StepContext {
 	subID := h.subID(r.Context())
 	protocolVersion := extractProtocolVersion(body)
 	messageID := extractMessageID(body)
@@ -301,7 +304,8 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 		MessageID:            messageID,
 		InboundAuthSignature: inboundAuthSignature,
 		IsCallerHandler:      direction == DirectionCaller,
-	}, nil
+		MaxResponseBodyBytes: h.maxResponseBody,
+	}
 }
 
 // subID retrieves the subscriber ID from the request context.
@@ -403,10 +407,23 @@ func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpC
 	// ResponseStepContext, then runs all response steps. Body restoration for
 	// ReverseProxy happens here — individual steps read from rctx.Body and do
 	// not need to touch resp.Body directly.
+	// The response is held in memory for the response steps, so it is capped
+	// like the request: a counterparty must not decide how much memory its
+	// answer costs. An oversized response is dropped and the caller gets 502.
+	limit := ctx.MaxResponseBodyBytes
+	if limit <= 0 {
+		limit = DefaultMaxBodyBytes
+	}
 	modifyResponse := func(resp *http.Response) error {
-		body, err := io.ReadAll(resp.Body)
+		if resp.ContentLength > limit {
+			return fmt.Errorf("modifyResponse: upstream response body of %d bytes exceeds the %d byte limit", resp.ContentLength, limit)
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 		if err != nil {
 			return fmt.Errorf("modifyResponse: failed to read upstream response body: %w", err)
+		}
+		if int64(len(body)) > limit {
+			return fmt.Errorf("modifyResponse: upstream response body exceeds the %d byte limit", limit)
 		}
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		rctx := &model.ResponseStepContext{

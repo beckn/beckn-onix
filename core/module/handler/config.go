@@ -163,6 +163,10 @@ type HttpClientConfig struct {
 	// ResponseHeaderTimeout, if non-zero, specifies the amount of time to wait
 	// for a server's response headers after fully writing the request.
 	ResponseHeaderTimeout time.Duration `yaml:"responseHeaderTimeout"`
+
+	// MaxResponseBodyBytes is the largest upstream response body the handler
+	// accepts when it forwards a request. Zero means DefaultMaxBodyBytes.
+	MaxResponseBodyBytes int64 `yaml:"maxResponseBodyBytes"`
 }
 
 // Config holds the configuration for request processing handlers.

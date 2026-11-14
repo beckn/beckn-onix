@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -112,9 +113,9 @@ func NewHandler(ctx context.Context, mgr handler.PluginManager, cfg *handler.Con
 	}
 
 	decode := func(ctx context.Context, r *http.Request) (definition.PublishRequest, error) {
-		body, err := io.ReadAll(r.Body)
+		body, err := readPublishBody(r)
 		if err != nil {
-			return definition.PublishRequest{}, fmt.Errorf("reading request body: %w", err)
+			return definition.PublishRequest{}, err
 		}
 		// publisher.DecodeRequest below does its own io.ReadAll(r.Body) --
 		// buffer and replace r.Body so it can still read the same bytes
@@ -305,4 +306,23 @@ func writePublishJSON(w http.ResponseWriter, r *http.Request, body publishRespon
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		log.Errorf(r.Context(), err, "catalogPublish handler: failed to encode response")
 	}
+}
+
+// readPublishBody reads the request body, answering one cut off by the
+// server's size limit with 413 like every other route.
+func readPublishBody(r *http.Request) ([]byte, error) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			log.Warnf(r.Context(), "rejected request body over the %d byte limit: method=%s path=%s remoteAddr=%s",
+				tooLarge.Limit, r.Method, r.URL.Path, r.RemoteAddr)
+			return nil, &handler.StatusError{
+				Status: http.StatusRequestEntityTooLarge,
+				Err:    fmt.Errorf("request body exceeds the %d byte limit", tooLarge.Limit),
+			}
+		}
+		return nil, fmt.Errorf("reading request body: %w", err)
+	}
+	return body, nil
 }

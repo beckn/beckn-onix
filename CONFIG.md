@@ -174,7 +174,7 @@ appName: "onix-local"
 **Type**: `integer` (bytes)  
 **Required**: No  
 **Default**: `10485760` (10 MiB)  
-**Description**: Largest request body the server accepts, on every route. A larger request is answered with `413 Request Entity Too Large` before its signature is checked. Raise it if you publish catalogs larger than the default through `catalog/publish`.
+**Description**: Largest request body the server accepts, on every route. A larger request is answered with `413 Request Entity Too Large` before its signature is checked. The response is a NACK on message routes and plain text on `catalog/publish`, and each rejection is logged at `warn` with the method, path and remote address. Raise it if you publish catalogs larger than the default through `catalog/publish`.
 
 The request log records at most the first 64 KiB of a body, with `bodyBytes` giving the full size and `bodyTruncated: true` when it was cut.
 
@@ -730,6 +730,11 @@ modules:
 **Type**: `duration`  
 **Default**: `5s`  
 **Description**: Time to wait for server response headers.
+
+###### `maxResponseBodyBytes`
+**Type**: `integer` (bytes)  
+**Default**: `10485760` (10 MiB)  
+**Description**: Largest response body the handler accepts from the endpoint it forwards a request to. A larger response is dropped and the caller receives `502 Bad Gateway`.
 
 ##### `plugins`
 **Type**: `object`  

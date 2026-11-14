@@ -326,6 +326,9 @@ type StepContext struct {
 	MessageID            string // Message ID parsed from context.messageId in the request body
 	InboundAuthSignature string // Raw Base64 signature from the inbound Authorization header's signature="..." attribute
 	IsCallerHandler      bool   // True when the handler is a Caller (outbound); false for Receiver (inbound)
+	// MaxResponseBodyBytes caps the upstream response body read when the
+	// request is forwarded. Zero means the handler's default.
+	MaxResponseBodyBytes int64
 }
 
 // WithContext updates the existing StepContext with a new context.
