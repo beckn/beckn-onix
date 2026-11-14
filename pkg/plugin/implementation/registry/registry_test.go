@@ -7,24 +7,34 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
+	"github.com/beckn-one/beckn-onix/pkg/testutil"
 )
 
-// mockCache is a test double for definition.Cache.
+// mockCache is a test double for definition.Cache. When entries is non-nil,
+// Set stores into it and Get reads from it, so what Lookup writes can be read
+// back; gets records the keys Get was asked for.
 type mockCache struct {
 	getFunc func(ctx context.Context, key string) (string, error)
 	setKey  string
 	setVal  string
 	setTTL  time.Duration
 	setErr  error
+	entries map[string]string
+	gets    []string
 }
 
 func (m *mockCache) Get(ctx context.Context, key string) (string, error) {
+	m.gets = append(m.gets, key)
 	if m.getFunc != nil {
 		return m.getFunc(ctx, key)
+	}
+	if v, ok := m.entries[key]; ok {
+		return v, nil
 	}
 	return "", errors.New("cache miss")
 }
@@ -32,6 +42,9 @@ func (m *mockCache) Set(ctx context.Context, key, value string, ttl time.Duratio
 	m.setKey = key
 	m.setVal = value
 	m.setTTL = ttl
+	if m.entries != nil {
+		m.entries[key] = value
+	}
 	return m.setErr
 }
 func (m *mockCache) Delete(ctx context.Context, key string) error { return nil }
@@ -236,7 +249,7 @@ func TestRegistryClient_Lookup_Cache(t *testing.T) {
 		Subscriber: model.Subscriber{SubscriberID: "test-np"},
 		KeyID:      "key-1",
 	}
-	expectedCacheKey := "lookup_test-np_key-1"
+	expectedCacheKey := "lookup_v2_test-np/key-1"
 
 	t.Run("cache hit skips HTTP call", func(t *testing.T) {
 		cached := []model.Subscription{{SigningPublicKey: "cached-key"}}
@@ -421,5 +434,184 @@ func TestRegistryClient_Lookup_Cache(t *testing.T) {
 		if len(results) != 1 || results[0].SigningPublicKey != "direct-key" {
 			t.Errorf("unexpected result: %+v", results)
 		}
+	})
+}
+
+// registryServer answers /lookup with respond(request) and counts the requests.
+func registryServer(t *testing.T, respond func(req model.Subscription) []model.Subscription) (*httptest.Server, *int32) {
+	t.Helper()
+	var hits int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		var req model.Subscription
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("failed to decode lookup request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(respond(req)); err != nil {
+			t.Errorf("failed to write response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server, &hits
+}
+
+// echoRecord answers with a record for the requested subscriber.
+func echoRecord(req model.Subscription) []model.Subscription {
+	return []model.Subscription{{
+		Subscriber:       model.Subscriber{SubscriberID: req.SubscriberID},
+		KeyID:            req.KeyID,
+		SigningPublicKey: "key-of-" + req.SubscriberID + "-" + req.KeyID,
+	}}
+}
+
+// recordFor answers every lookup with one record for subscriberID.
+func recordFor(subscriberID string) func(model.Subscription) []model.Subscription {
+	return func(req model.Subscription) []model.Subscription {
+		return []model.Subscription{{
+			Subscriber:       model.Subscriber{SubscriberID: subscriberID},
+			KeyID:            req.KeyID,
+			SigningPublicKey: "key-of-" + subscriberID,
+		}}
+	}
+}
+
+// cachingClient returns a client whose cache stores what Lookup writes.
+func cachingClient(t *testing.T, serverURL string) (*RegistryClient, *mockCache) {
+	t.Helper()
+	cache := &mockCache{entries: map[string]string{}}
+	client, closer, err := New(context.Background(), cache, &Config{URL: serverURL, RetryMax: 1})
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	t.Cleanup(func() { _ = closer() })
+	return client, cache
+}
+
+func mustLookup(t *testing.T, c *RegistryClient, sub, key string) model.Subscription {
+	t.Helper()
+	results, err := c.Lookup(context.Background(), &model.Subscription{Subscriber: model.Subscriber{SubscriberID: sub}, KeyID: key})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("Lookup(%q, %q) = %v, %v", sub, key, results, err)
+	}
+	return results[0]
+}
+
+// requireHits asserts the server behind hits received exactly want requests.
+func requireHits(t *testing.T, hits *int32, want int32) {
+	t.Helper()
+	if n := atomic.LoadInt32(hits); n != want {
+		t.Errorf("registry hit %d times, want %d", n, want)
+	}
+}
+
+// TestLookupCacheKey verifies pairs that the old "lookup_<sub>_<key>" format
+// joined alike now get distinct keys.
+func TestLookupCacheKey(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ subA, keyA, subB, keyB string }{
+		{"bpp.example_k", "1", "bpp.example", "k_1"},
+		{"a/b", "c", "a", "b/c"},
+		{"a%2Fb", "c", "a/b", "c"},
+	} {
+		a, b := lookupCacheKey(tc.subA, tc.keyA), lookupCacheKey(tc.subB, tc.keyB)
+		if a == b {
+			t.Errorf("(%q, %q) and (%q, %q) share cache key %q", tc.subA, tc.keyA, tc.subB, tc.keyB, a)
+		}
+	}
+}
+
+// TestLookupCacheCannotServeAnotherSubscriber verifies one subscriber's
+// cached signing key is never returned for a different subscriber.
+func TestLookupCacheCannotServeAnotherSubscriber(t *testing.T) {
+	t.Parallel()
+
+	t.Run("pairs that joined to the same key get separate entries", func(t *testing.T) {
+		server, hits := registryServer(t, echoRecord)
+		client, _ := cachingClient(t, server.URL)
+
+		// Victim "bpp.example"+"k_1" and attacker "bpp.example_k"+"1" both
+		// became lookup_bpp.example_k_1 under the old key.
+		mustLookup(t, client, "bpp.example_k", "1")
+		if got := mustLookup(t, client, "bpp.example", "k_1"); got.SubscriberID != "bpp.example" {
+			t.Fatalf("got the record of %q for a lookup of bpp.example", got.SubscriberID)
+		}
+		// Each pair must now be served from its own entry. With a shared key,
+		// each repeat would find the other's record and go back to the registry.
+		mustLookup(t, client, "bpp.example_k", "1")
+		mustLookup(t, client, "bpp.example", "k_1")
+		requireHits(t, hits, 2) // one per pair, then cache hits
+	})
+
+	t.Run("a cached record for another subscriber is ignored", func(t *testing.T) {
+		server, hits := registryServer(t, echoRecord)
+		client, cache := cachingClient(t, server.URL)
+		key := lookupCacheKey("bpp.example", "k1")
+		planted, _ := json.Marshal([]model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "attacker.example"}, SigningPublicKey: "attacker-key"}})
+		cache.entries[key] = string(planted)
+
+		got := mustLookup(t, client, "bpp.example", "k1")
+		if got.SigningPublicKey == "attacker-key" || got.SubscriberID != "bpp.example" {
+			t.Errorf("served the planted record %+v for bpp.example", got)
+		}
+		if len(cache.gets) == 0 || cache.gets[0] != key {
+			t.Errorf("cache reads %v, want the planted key %q read", cache.gets, key)
+		}
+		requireHits(t, hits, 1) // the planted entry refetched
+	})
+}
+
+// TestLookupFreshRecordIdentity verifies a record fetched from the registry
+// must belong to the requested subscriber, as a cached one must.
+func TestLookupFreshRecordIdentity(t *testing.T) {
+	t.Parallel()
+
+	rejected := func(t *testing.T, respond func(model.Subscription) []model.Subscription, sub string) {
+		t.Helper()
+		server, _ := registryServer(t, respond)
+		client, cache := cachingClient(t, server.URL)
+
+		_, err := client.Lookup(context.Background(), &model.Subscription{Subscriber: model.Subscriber{SubscriberID: sub}, KeyID: "k1"})
+		if err == nil {
+			t.Fatalf("Lookup(%q) succeeded, want AUT_SUBSCRIBER_NOT_FOUND", sub)
+		}
+		// keymanager and core wrap the error with %w before building the NACK.
+		wrapped := fmt.Errorf("failed to get validation key: %w", fmt.Errorf("failed to lookup registry: %w", err))
+		testutil.RequireCodedErr(t, wrapped, http.StatusUnauthorized, "AUT_SUBSCRIBER_NOT_FOUND")
+		if len(cache.entries) != 0 {
+			t.Errorf("rejected record was cached: %v", cache.entries)
+		}
+	}
+
+	t.Run("a record for another subscriber is rejected and not cached", func(t *testing.T) {
+		rejected(t, recordFor("attacker.example"), "bpp.example")
+	})
+
+	t.Run("a response that also has another subscriber's record is rejected", func(t *testing.T) {
+		rejected(t, func(req model.Subscription) []model.Subscription {
+			return append(echoRecord(req), recordFor("attacker.example")(req)...)
+		}, "bpp.example")
+	})
+
+	t.Run("a lookup without a subscriber ID gets no record that names one", func(t *testing.T) {
+		rejected(t, recordFor("bpp.example"), "")
+	})
+
+	t.Run("a record without subscriber_id is accepted and cached", func(t *testing.T) {
+		server, hits := registryServer(t, recordFor(""))
+		client, _ := cachingClient(t, server.URL)
+
+		mustLookup(t, client, "bpp.example", "k1")
+		mustLookup(t, client, "bpp.example", "k1")
+		requireHits(t, hits, 1) // second lookup served from cache
+	})
+
+	t.Run("a subscriber_id differing only in case matches and is cached", func(t *testing.T) {
+		server, hits := registryServer(t, recordFor("BPP.Example"))
+		client, _ := cachingClient(t, server.URL)
+
+		mustLookup(t, client, "bpp.example", "k1")
+		mustLookup(t, client, "bpp.example", "k1")
+		requireHits(t, hits, 1) // second lookup served from cache
 	})
 }

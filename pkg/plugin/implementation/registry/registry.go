@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
@@ -19,6 +21,11 @@ import (
 )
 
 const defaultCacheTTL = 5 * time.Minute
+
+// codeAutSubscriberNotFound is the NACK code for a record that isn't the
+// requested subscriber's: dediregistry's code for the same case, and
+// keymanager's for no record at all.
+const codeAutSubscriberNotFound = "AUT_SUBSCRIBER_NOT_FOUND"
 
 // Config holds configuration parameters for the registry client.
 type Config struct {
@@ -127,25 +134,74 @@ func (c *RegistryClient) Subscribe(ctx context.Context, subscription *model.Subs
 	return nil
 }
 
+// lookupCacheKey is Lookup's cache key. The IDs are path-escaped, so they
+// contain no "/" and different subscriber/key pairs can't share a key (the
+// old "lookup_<sub>_<key>" joined "a_b"+"c" and "a"+"b_c" alike). The "v2"
+// prefix keeps any old-format entry from ever being read.
+func lookupCacheKey(subscriberID, keyID string) string {
+	return fmt.Sprintf("lookup_v2_%s/%s", url.PathEscape(subscriberID), url.PathEscape(keyID))
+}
+
+// isSubscriberRecord reports whether a record whose subscriber_id is
+// recordSubscriberID belongs to the requested subscriber. Subscriber IDs are
+// domains, so case is ignored. A record without subscriber_id was addressed by
+// the requested ID, so it is accepted as that subscriber's.
+func isSubscriberRecord(recordSubscriberID, subscriberID string) bool {
+	return recordSubscriberID == "" || strings.EqualFold(recordSubscriberID, subscriberID)
+}
+
+// foreignSubscriber returns the subscriber_id of the first record in results
+// that belongs to a subscriber other than subscriberID. Every record is
+// checked: a registry answering a lookup for one subscriber has no reason to
+// return another's.
+func foreignSubscriber(results []model.Subscription, subscriberID string) (string, bool) {
+	for _, r := range results {
+		if !isSubscriberRecord(r.SubscriberID, subscriberID) {
+			return r.SubscriberID, true
+		}
+	}
+	return "", false
+}
+
+// cachedLookup returns Lookup's cached results for key, and false on a miss,
+// an unreadable entry, or an entry with a record for a subscriber other than
+// subscriberID.
+func (c *RegistryClient) cachedLookup(ctx context.Context, key, subscriberID string) ([]model.Subscription, bool) {
+	if c.cache == nil {
+		return nil, false
+	}
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
+	cacheCtx, span := tracer.Start(ctx, "cache lookup")
+	defer span.End()
+
+	cached, err := c.cache.Get(cacheCtx, key)
+	if err != nil {
+		return nil, false
+	}
+	var results []model.Subscription
+	if err := json.Unmarshal([]byte(cached), &results); err != nil {
+		return nil, false
+	}
+	if other, foreign := foreignSubscriber(results, subscriberID); foreign {
+		// Never serve a signing key cached for a different subscriber.
+		log.Warnf(ctx, "Ignoring cached registry record for key %s: subscriber %q does not match requested %q",
+			key, other, subscriberID)
+		return nil, false
+	}
+	log.Debugf(ctx, "Registry lookup cache hit for key: %s", key)
+	return results, true
+}
+
 // Lookup calls the /lookup endpoint with retry and returns a slice of Subscription.
-// Results are cached using the subscriber ID and key ID as the cache key.
-// On a cache hit the network call is skipped entirely.
+// Results are cached under lookupCacheKey, and on a cache hit the network call
+// is skipped entirely. Records for a subscriber other than the requested one
+// are never returned, whether cached or fresh.
 func (c *RegistryClient) Lookup(ctx context.Context, subscription *model.Subscription) ([]model.Subscription, error) {
-	cacheKey := fmt.Sprintf("lookup_%s_%s", subscription.SubscriberID, subscription.KeyID)
+	cacheKey := lookupCacheKey(subscription.SubscriberID, subscription.KeyID)
 	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
 
-	if c.cache != nil {
-		cacheCtx, cacheSpan := tracer.Start(ctx, "cache lookup")
-		cached, err := c.cache.Get(cacheCtx, cacheKey)
-		if err == nil {
-			var results []model.Subscription
-			if err := json.Unmarshal([]byte(cached), &results); err == nil {
-				log.Debugf(ctx, "Registry lookup cache hit for key: %s", cacheKey)
-				cacheSpan.End()
-				return results, nil
-			}
-		}
-		cacheSpan.End()
+	if results, ok := c.cachedLookup(ctx, cacheKey, subscription.SubscriberID); ok {
+		return results, nil
 	}
 
 	lookupURL := fmt.Sprintf("%s/lookup", c.config.URL)
@@ -189,6 +245,14 @@ func (c *RegistryClient) Lookup(ctx context.Context, subscription *model.Subscri
 	var results []model.Subscription
 	if err := json.Unmarshal(body, &results); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response body: %w", err)
+	}
+
+	// The records must be the requested subscriber's, or a signature claimed
+	// for one subscriber would be checked against another's key.
+	if other, foreign := foreignSubscriber(results, subscription.SubscriberID); foreign {
+		log.Errorf(ctx, nil, "Registry lookup for subscriber %q returned a record for %q", subscription.SubscriberID, other)
+		return nil, model.NewSignValidationErr(codeAutSubscriberNotFound,
+			fmt.Errorf("registry returned a record for subscriber %q, not %q", other, subscription.SubscriberID))
 	}
 
 	log.Debugf(ctx, "Lookup request successful, found %d subscriptions", len(results))
