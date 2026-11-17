@@ -167,6 +167,13 @@ func compile(ctx context.Context, cfg *auditConfig) (*CompiledConfig, error) {
 			return nil, err
 		}
 		for _, key := range rule.Keys {
+			for _, segment := range strings.Split(key, ".") {
+				if segment == "" {
+					err := fmt.Errorf("maskRule key %q contains an empty path segment", key)
+					log.Error(ctx, err, "")
+					return nil, err
+				}
+			}
 			keyToPattern[key] = p
 		}
 	}
@@ -298,15 +305,15 @@ func extractAction(root map[string]interface{}) string {
 //
 // Example: "provider.contact.name" is checked as:
 // "provider.contact.name" → "contact.name" → "name".
-func findSuffixPattern(path string, suffixToPattern map[string]*CompiledPattern) (*CompiledPattern, bool) {
+func findSuffixPattern(path string, suffixToPattern map[string]*CompiledPattern) (*CompiledPattern, string, bool) {
 	for {
 		if pattern, ok := suffixToPattern[path]; ok {
-			return pattern, true
+			return pattern, path, true
 		}
 
 		dot := strings.IndexByte(path, '.')
 		if dot < 0 {
-			return nil, false
+			return nil, "", false
 		}
 		path = path[dot+1:]
 	}
@@ -334,12 +341,16 @@ func walkMap(node map[string]interface{}, prefix string, cfg *CompiledConfig, ke
 				continue
 			}
 		case []interface{}:
-			if _, ok := findSuffixPattern(fullPath, cfg.keyToPattern); ok {
+			if pattern, suffix, ok := findSuffixPattern(fullPath, cfg.keyToPattern); ok {
+				if !strings.ContainsRune(suffix, '.') {
+					maskSlice(node[key].([]interface{}), pattern)
+					continue
+				}
 				walkSlice(node[key].([]interface{}), fullPath+".", cfg, keepSet)
 				continue
 			}
 		default:
-			if pattern, ok := findSuffixPattern(fullPath, cfg.keyToPattern); ok {
+			if pattern, _, ok := findSuffixPattern(fullPath, cfg.keyToPattern); ok {
 				node[key] = applyMask(node[key], pattern)
 				continue
 			}
@@ -372,7 +383,7 @@ func walkMap(node map[string]interface{}, prefix string, cfg *CompiledConfig, ke
 // walkSlice masks scalar elements using the array's path and forwards the same
 // path prefix when traversing containers. Array indices are not path segments.
 func walkSlice(arr []interface{}, prefix string, cfg *CompiledConfig, keepSet map[string]struct{}) {
-	pattern, matched := findSuffixPattern(strings.TrimSuffix(prefix, "."), cfg.keyToPattern)
+	pattern, _, matched := findSuffixPattern(strings.TrimSuffix(prefix, "."), cfg.keyToPattern)
 	for i, elem := range arr {
 		switch child := elem.(type) {
 		case map[string]interface{}:
@@ -384,6 +395,19 @@ func walkSlice(arr []interface{}, prefix string, cfg *CompiledConfig, keepSet ma
 				arr[i] = applyMask(elem, pattern)
 			}
 		}
+	}
+}
+
+// maskSlice masks every element of an array matched by a plain-key rule while
+// preserving its shape. Object elements are treated as whole values, matching
+// the behavior of a plain-key rule on an object outside an array.
+func maskSlice(arr []interface{}, pattern *CompiledPattern) {
+	for i, elem := range arr {
+		if child, ok := elem.([]interface{}); ok {
+			maskSlice(child, pattern)
+			continue
+		}
+		arr[i] = applyMask(elem, pattern)
 	}
 }
 

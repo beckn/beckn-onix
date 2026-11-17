@@ -426,11 +426,11 @@ The audit configuration file (`config/audit-fields.yaml`) controls a single-pass
 
 **Stage 1 — key-name/path-suffix masking (`maskRules`):** A plain field name matches at any nesting depth. A dot-separated suffix such as `contact.name` matches `provider.contact.name`, but not `provider.descriptor.name` or `provider.contact.name.fullName`. When multiple rules match, the most specific suffix wins.
 
-Matching scalar values are masked directly. For arrays, the matching rule is applied independently to each scalar element, preserving the array's shape, including nested arrays. Array indices are not path segments. For example, a `phoneNumbers` rule using `last4` transforms `["11111111", "22222222"]` into `["****1111", "****2222"]`. Matching scalar and array rules run before path overrides and field selection at that field; an unselected ancestor can still prevent traversal to the field.
+A plain-key rule masks a scalar directly, replaces an object as a whole, and masks each array element while preserving the array's shape, including nested arrays. For example, a `phoneNumbers` rule using `last4` transforms `["11111111", "22222222"]` into `["****1111", "****2222"]`. A dotted-suffix rule applies only to scalar leaves and scalar array elements at that path; it does not replace matching objects. Array indices are not path segments. Matching rules run before path overrides and field selection at that field; an unselected ancestor can still prevent traversal to the field.
 
-Objects are traversed rather than replaced. A rule matching an object's path does not automatically mask its descendants, including properties inside array elements. For example, `phoneNumbers` does not mask `phoneNumbers.value` in `{"phoneNumbers": [{"value": "11111111"}]}`; use `phoneNumbers.value` or `value` to mask that property.
+JSON keys containing dots are interpreted as path-like. For example, the literal key `b.name` can match the plain-key rule `name` by its tail. Empty path segments in rule keys, such as `.name` or `contact..name`, are rejected when the configuration is loaded.
 
-**Compatibility:** Previously, plain-key rules masked the entire matching value, including objects and arrays. Arrays now retain their structure and mask scalar elements individually. Object descendants require their own matching rules; review existing rules that previously relied on replacing a whole object.
+**Compatibility:** An array matched by a rule now keeps its shape instead of becoming a single mask string.
 
 **Stage 2 — path-override masking (`pathOverrides`):** Field masking bound to a specific dot-path. Use sparingly — suffix masking is preferred when the same rule applies below multiple root paths.
 

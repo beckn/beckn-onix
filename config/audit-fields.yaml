@@ -3,7 +3,7 @@
 # mode: full       — emit the entire payload; apply PII masking where configured.
 # mode: selective  — emit only the fields listed under selectedFields, then mask PII.
 #
-# The two-stage pipeline runs in a single pass over the payload:
+# The three-stage pipeline runs in a single pass over the payload:
 #   1. Key-name/path-suffix masking (maskRules) — checked first
 #   2. Path-override masking           — for fields needing path-level precision
 #   3. Field selection / dropping      — only active in selective mode
@@ -25,13 +25,13 @@ patterns:
     maskType: last4
 
 # maskRules — driven by a field name or dot-separated path suffix.
-# A plain field name matches at any nesting depth. Matching scalar values are
-# masked directly; scalar array elements are masked individually, preserving
-# array shape (including nested arrays). Array indices are not path segments.
-# Objects are traversed rather than replaced: a rule matching an object's path
-# does not automatically mask its descendants; those need their own matching rule.
-# A path suffix such as contact.name matches provider.contact.name, but not
-# provider.descriptor.name or provider.contact.name.fullName.
+# A plain field name matches at any nesting depth. It masks a scalar directly,
+# replaces an object as a whole, and masks each array element while preserving
+# array shape (including nested arrays). A dotted suffix such as contact.name
+# applies only to scalar leaves and scalar array elements at that path; it matches
+# provider.contact.name, but not provider.descriptor.name or
+# provider.contact.name.fullName. Array indices are not path segments. A JSON key
+# containing a dot is interpreted as path-like and may match a rule by its tail.
 maskRules:
   - keys: [email, emailAddress, supportEmail, providerEmail]
     pattern: email
