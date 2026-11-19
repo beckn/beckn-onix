@@ -197,4 +197,8 @@ type Config struct {
 	// Authorization header, so any caller can query any subscriber's crawl
 	// status. Must stay false/unset for any network-facing deployment.
 	AuthDisabled bool `yaml:"authDisabled,omitempty"`
+	// ReplayGuard configures rejection of replayed inbound signatures on the
+	// validateSign step. Omitting it leaves the guard on with defaults; it
+	// needs no plugin of its own because it reuses the module's Cache.
+	ReplayGuard *ReplayGuardConfig `yaml:"replayGuard,omitempty"`
 }

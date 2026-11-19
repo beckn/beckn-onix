@@ -25,6 +25,7 @@ var RedisCl *redis.Client
 type RedisClient interface {
 	Get(ctx context.Context, key string) *redis.StringCmd
 	Set(ctx context.Context, key string, value interface{}, ttl time.Duration) *redis.StatusCmd
+	SetNX(ctx context.Context, key string, value interface{}, ttl time.Duration) *redis.BoolCmd
 	Del(ctx context.Context, keys ...string) *redis.IntCmd
 	FlushDB(ctx context.Context) *redis.StatusCmd
 	Ping(ctx context.Context) *redis.StatusCmd
@@ -156,6 +157,27 @@ func (c *Cache) Set(ctx context.Context, key, value string, ttl time.Duration) e
 	err := c.Client.Set(spanCtx, key, value, ttl).Err()
 	c.recordOperation(spanCtx, "set", err)
 	return err
+}
+
+// SetNX stores the key only if it is not already present, and reports whether
+// this call was the one that stored it. It implements definition.AtomicCache.
+//
+// Atomicity comes from Redis SET ... NX, which performs the existence check and
+// the write as a single command, so exactly one of N concurrent callers for the
+// same key gets true.
+func (c *Cache) SetNX(ctx context.Context, key, value string, ttl time.Duration) (bool, error) {
+	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
+	spanCtx, span := tracer.Start(ctx, "redis_setnx")
+	defer span.End()
+
+	stored, err := c.Client.SetNX(spanCtx, key, value, ttl).Result()
+	c.recordOperation(spanCtx, "setnx", err)
+	if err != nil {
+		// go-redis returns false alongside an error; return it explicitly so a
+		// caller that ignores err cannot read the zero value as "already claimed".
+		return false, err
+	}
+	return stored, nil
 }
 
 // Delete removes the specified key from Redis.

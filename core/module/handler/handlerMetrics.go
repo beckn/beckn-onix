@@ -14,6 +14,7 @@ type HandlerMetrics struct {
 	SignatureValidationsTotal metric.Int64Counter
 	SchemaValidationsTotal    metric.Int64Counter
 	RoutingDecisionsTotal     metric.Int64Counter
+	ReplayChecksTotal         metric.Int64Counter
 }
 
 // handlerMetricsCache caches HandlerMetrics for the current global MeterProvider.
@@ -82,6 +83,14 @@ func newHandlerMetrics() (*HandlerMetrics, error) {
 		metric.WithUnit("{decision}"),
 	); err != nil {
 		return nil, fmt.Errorf("onix_routing_decisions_total: %w", err)
+	}
+
+	if m.ReplayChecksTotal, err = meter.Int64Counter(
+		"onix_signature_replay_checks_total",
+		metric.WithDescription("Inbound signature replay checks, by outcome"),
+		metric.WithUnit("{check}"),
+	); err != nil {
+		return nil, fmt.Errorf("onix_signature_replay_checks_total: %w", err)
 	}
 
 	return m, nil

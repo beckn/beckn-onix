@@ -96,6 +96,13 @@ func (m *mockRedisClient) Del(ctx context.Context, keys ...string) *redis.IntCmd
 	return cmd
 }
 
+func (m *mockRedisClient) SetNX(ctx context.Context, key string, value interface{}, ttl time.Duration) *redis.BoolCmd {
+	args := m.Called(ctx, key, value, ttl)
+	cmd := redis.NewBoolCmd(ctx)
+	cmd.SetVal(args.Bool(0))
+	return cmd
+}
+
 func (m *mockRedisClient) FlushDB(ctx context.Context) *redis.StatusCmd {
 	args := m.Called(ctx)
 	cmd := redis.NewStatusCmd(ctx)

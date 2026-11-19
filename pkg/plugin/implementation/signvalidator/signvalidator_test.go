@@ -97,7 +97,7 @@ func TestClockSkewTolerance_Default(t *testing.T) {
 	body := []byte("payload")
 	now := time.Now().Unix()
 	created := now + 3
-	expires := now + 3600
+	expires := now + 120
 	header := fmt.Sprintf(
 		`Signature algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
 		created, expires, signTestData(privateKey, body, created, expires),
@@ -114,7 +114,7 @@ func TestClockSkewTolerance_CreatedBeyondTolerance_Rejected(t *testing.T) {
 	body := []byte("payload")
 	now := time.Now().Unix()
 	created := now + 7
-	expires := now + 3600
+	expires := now + 120
 	header := fmt.Sprintf(
 		`Signature algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
 		created, expires, signTestData(privateKey, body, created, expires),
@@ -150,7 +150,7 @@ func TestClockSkewTolerance_CustomTolerance(t *testing.T) {
 	body := []byte("payload")
 	now := time.Now().Unix()
 	created := now + 8
-	expires := now + 3600
+	expires := now + 120
 	header := fmt.Sprintf(
 		`Signature algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
 		created, expires, signTestData(privateKey, body, created, expires),
@@ -179,7 +179,7 @@ func TestVerifySuccess(t *testing.T) {
 			name:      "Valid Signature",
 			body:      []byte("Test Payload"),
 			createdAt: time.Now().Unix(),
-			expiresAt: time.Now().Unix() + 3600,
+			expiresAt: time.Now().Unix() + 120,
 		},
 	}
 
@@ -235,7 +235,7 @@ func TestVerifyFailure(t *testing.T) {
 			name: "Unsupported Algorithm",
 			body: []byte("Test Payload"),
 			header: `Signature algorithm="rsa", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
-				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) +
+				`", expires="` + strconv.FormatInt(time.Now().Unix()+120, 10) +
 				`", signature="somesig=="`,
 			pubKey:   publicKeyBase64,
 			wantCode: codeSignatureInvalid,
@@ -244,7 +244,7 @@ func TestVerifyFailure(t *testing.T) {
 			name: "Missing Algorithm",
 			body: []byte("Test Payload"),
 			header: `Signature created="` + strconv.FormatInt(time.Now().Unix(), 10) +
-				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) +
+				`", expires="` + strconv.FormatInt(time.Now().Unix()+120, 10) +
 				`", signature="somesig=="`,
 			pubKey:   publicKeyBase64,
 			wantCode: codeSignatureInvalid,
@@ -253,7 +253,7 @@ func TestVerifyFailure(t *testing.T) {
 			name: "Invalid Base64 Signature",
 			body: []byte("Test Payload"),
 			header: `Signature algorithm="ed25519", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
-				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) +
+				`", expires="` + strconv.FormatInt(time.Now().Unix()+120, 10) +
 				`", signature="!!INVALIDBASE64!!"`,
 			pubKey:   publicKeyBase64,
 			wantCode: codeSignatureInvalid,
@@ -272,8 +272,8 @@ func TestVerifyFailure(t *testing.T) {
 			name: "Invalid Public Key",
 			body: []byte("Test Payload"),
 			header: `Signature algorithm="ed25519", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
-				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) +
-				`", signature="` + signTestData(privateKeyBase64, []byte("Test Payload"), time.Now().Unix(), time.Now().Unix()+3600) + `"`,
+				`", expires="` + strconv.FormatInt(time.Now().Unix()+120, 10) +
+				`", signature="` + signTestData(privateKeyBase64, []byte("Test Payload"), time.Now().Unix(), time.Now().Unix()+120) + `"`,
 			pubKey:   wrongPublicKeyBase64,
 			wantCode: codeSignatureInvalid,
 		},
@@ -289,7 +289,7 @@ func TestVerifyFailure(t *testing.T) {
 			name: "Signature Missing in Headers",
 			body: []byte("Test Payload"),
 			header: `Signature algorithm="ed25519", created="` + strconv.FormatInt(time.Now().Unix(), 10) +
-				`", expires="` + strconv.FormatInt(time.Now().Unix()+3600, 10) + `"`,
+				`", expires="` + strconv.FormatInt(time.Now().Unix()+120, 10) + `"`,
 			pubKey:   publicKeyBase64,
 			wantCode: codeSignatureMissing,
 		},
@@ -332,7 +332,7 @@ func TestVerifyFailure(t *testing.T) {
 func TestValidate_SubIdentity_FromContext_Match(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair()
 	body := []byte(`{"context":{"action":"search","bap_id":"bap.example.com"}}`)
-	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	now, exp := time.Now().Unix(), time.Now().Unix()+120
 	header := signedHeaderWithKeyID("bap.example.com", privateKey, body, now, exp)
 
 	verifier, _, _ := New(context.Background(), &Config{})
@@ -345,7 +345,7 @@ func TestValidate_SubIdentity_FromContext_Match(t *testing.T) {
 func TestValidate_SubIdentity_FromContext_Mismatch(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair()
 	body := []byte(`{"context":{"action":"search","bap_id":"bap.example.com"}}`)
-	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	now, exp := time.Now().Unix(), time.Now().Unix()+120
 	header := signedHeaderWithKeyID("evil.com", privateKey, body, now, exp)
 
 	verifier, _, _ := New(context.Background(), &Config{})
@@ -366,7 +366,7 @@ func TestValidate_SubIdentity_FromContext_Mismatch(t *testing.T) {
 func TestValidate_SubIdentity_FromBody_Match(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair()
 	body := []byte(`{"context":{"action":"search","bap_id":"bap.example.com"}}`)
-	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	now, exp := time.Now().Unix(), time.Now().Unix()+120
 	header := signedHeaderWithKeyID("bap.example.com", privateKey, body, now, exp)
 
 	verifier, _, _ := New(context.Background(), &Config{})
@@ -379,7 +379,7 @@ func TestValidate_SubIdentity_FromBody_Match(t *testing.T) {
 func TestValidate_SubIdentity_FromBody_Mismatch(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair()
 	body := []byte(`{"context":{"action":"search","bap_id":"bap.example.com"}}`)
-	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	now, exp := time.Now().Unix(), time.Now().Unix()+120
 	header := signedHeaderWithKeyID("evil.com", privateKey, body, now, exp)
 
 	verifier, _, _ := New(context.Background(), &Config{})
@@ -392,7 +392,7 @@ func TestValidate_SubIdentity_FromBody_Mismatch(t *testing.T) {
 func TestValidate_SubIdentity_V2Alias_SenderId(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair()
 	body := []byte(`{"context":{"action":"search","senderId":"bap.example.com"}}`)
-	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	now, exp := time.Now().Unix(), time.Now().Unix()+120
 	header := signedHeaderWithKeyID("bap.example.com", privateKey, body, now, exp)
 
 	verifier, _, _ := New(context.Background(), &Config{})
@@ -404,7 +404,7 @@ func TestValidate_SubIdentity_V2Alias_SenderId(t *testing.T) {
 func TestValidate_SubIdentity_V2Alias_ReceiverId(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair()
 	body := []byte(`{"context":{"action":"on_search","receiverId":"bpp.example.com"}}`)
-	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	now, exp := time.Now().Unix(), time.Now().Unix()+120
 	header := signedHeaderWithKeyID("bpp.example.com", privateKey, body, now, exp)
 
 	verifier, _, _ := New(context.Background(), &Config{})
@@ -416,7 +416,7 @@ func TestValidate_SubIdentity_V2Alias_ReceiverId(t *testing.T) {
 func TestValidate_SubIdentity_NoCallerIDField_Skips(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair()
 	body := []byte(`{"context":{"action":"search"}}`)
-	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	now, exp := time.Now().Unix(), time.Now().Unix()+120
 	header := signedHeaderWithKeyID("anyone.example.com", privateKey, body, now, exp)
 
 	verifier, _, _ := New(context.Background(), &Config{})
@@ -428,7 +428,7 @@ func TestValidate_SubIdentity_NoCallerIDField_Skips(t *testing.T) {
 func TestValidate_SubIdentity_GatewayRole_Skips(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair()
 	body := []byte(`{"context":{"action":"search","bap_id":"bap.example.com"}}`)
-	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	now, exp := time.Now().Unix(), time.Now().Unix()+120
 	header := signedHeaderWithKeyID("gateway.example.com", privateKey, body, now, exp)
 
 	verifier, _, _ := New(context.Background(), &Config{})
@@ -441,7 +441,7 @@ func TestValidate_SubIdentity_GatewayRole_Skips(t *testing.T) {
 func TestValidate_SubIdentity_MalformedBody_Skips(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair()
 	body := []byte(`not-valid-json`)
-	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	now, exp := time.Now().Unix(), time.Now().Unix()+120
 	header := signedHeaderWithKeyID("anyone.example.com", privateKey, body, now, exp)
 
 	verifier, _, _ := New(context.Background(), &Config{})
@@ -458,7 +458,7 @@ func TestValidateAck_SubIdentity_FromContext_Match(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair()
 	body := []byte(`{"context":{"action":"on_search","bap_id":"bap.example.com"}}`)
 	outboundAuth := "outbound-sig-value=="
-	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	now, exp := time.Now().Unix(), time.Now().Unix()+120
 	header := signedAckHeaderWithKeyID("bap.example.com", privateKey, body, outboundAuth, now, exp)
 
 	verifier, _, _ := New(context.Background(), &Config{})
@@ -472,7 +472,7 @@ func TestValidateAck_SubIdentity_FromContext_Mismatch(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair()
 	body := []byte(`{"context":{"action":"on_search","bap_id":"bap.example.com"}}`)
 	outboundAuth := "outbound-sig-value=="
-	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	now, exp := time.Now().Unix(), time.Now().Unix()+120
 	header := signedAckHeaderWithKeyID("evil.com", privateKey, body, outboundAuth, now, exp)
 
 	verifier, _, _ := New(context.Background(), &Config{})
@@ -494,7 +494,7 @@ func TestValidateAck_SubIdentity_FromBody_Match(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair()
 	body := []byte(`{"context":{"action":"on_search","bap_id":"bap.example.com"}}`)
 	outboundAuth := "outbound-sig-value=="
-	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	now, exp := time.Now().Unix(), time.Now().Unix()+120
 	header := signedAckHeaderWithKeyID("bap.example.com", privateKey, body, outboundAuth, now, exp)
 
 	verifier, _, _ := New(context.Background(), &Config{})
@@ -507,11 +507,157 @@ func TestValidateAck_SubIdentity_FromBody_Mismatch(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair()
 	body := []byte(`{"context":{"action":"on_search","bap_id":"bap.example.com"}}`)
 	outboundAuth := "outbound-sig-value=="
-	now, exp := time.Now().Unix(), time.Now().Unix()+3600
+	now, exp := time.Now().Unix(), time.Now().Unix()+120
 	header := signedAckHeaderWithKeyID("evil.com", privateKey, body, outboundAuth, now, exp)
 
 	verifier, _, _ := New(context.Background(), &Config{})
 	if err := verifier.ValidateAck(makeCtx(body, model.RoleBPP), body, header, outboundAuth, publicKey, true); err == nil {
 		t.Fatal("expected error: signer evil.com does not match body bap_id bap.example.com")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Signature validity window
+// ---------------------------------------------------------------------------
+
+// validityHeader builds a signed header whose window is `window` seconds wide
+// and still open, isolating the width check from the liveness checks.
+func validityHeader(privateKey string, body []byte, window int64) string {
+	created := time.Now().Unix()
+	expires := created + window
+	return fmt.Sprintf(
+		`Signature algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
+		created, expires, signTestData(privateKey, body, created, expires),
+	)
+}
+
+func TestValidityWindow_DefaultAcceptsSpecCompliantWindow(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte("payload")
+
+	verifier, _, _ := New(context.Background(), &Config{})
+	// 5 minutes is exactly what ONIX itself signs with, so it must pass.
+	if err := verifier.Validate(makeCtx(body, ""), validityHeader(privateKey, body, 300), publicKey, false); err != nil {
+		t.Fatalf("expected a 300 s window to be accepted, got: %v", err)
+	}
+}
+
+func TestValidityWindow_DefaultRejectsOverlongWindow(t *testing.T) {
+	// The core of the fix: a peer chooses both created and expires, so without
+	// this bound one signature can be made to stay acceptable indefinitely.
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte("payload")
+
+	verifier, _, _ := New(context.Background(), &Config{})
+	err := verifier.Validate(makeCtx(body, ""), validityHeader(privateKey, body, 86400), publicKey, false)
+	if err == nil {
+		t.Fatal("expected a 24 h validity window to be rejected")
+	}
+	if !strings.Contains(err.Error(), "validity window too long") {
+		t.Errorf("expected a validity-window error, got: %v", err)
+	}
+
+	var signErr *model.CodedErr
+	if !errors.As(err, &signErr) {
+		t.Fatalf("expected *model.CodedErr, got %T", err)
+	}
+	if got := signErr.BecknError().Code; got != codeSignatureInvalid {
+		t.Errorf("code = %s, want %s", got, codeSignatureInvalid)
+	}
+}
+
+func TestValidityWindow_ConfiguredBoundIsHonoured(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte("payload")
+
+	tolerance := 60 * time.Second
+	verifier, _, _ := New(context.Background(), &Config{MaxSignatureValidity: &tolerance})
+
+	if err := verifier.Validate(makeCtx(body, ""), validityHeader(privateKey, body, 60), publicKey, false); err != nil {
+		t.Fatalf("a 60 s window should pass a 60 s bound, got: %v", err)
+	}
+	if err := verifier.Validate(makeCtx(body, ""), validityHeader(privateKey, body, 61), publicKey, false); err == nil {
+		t.Fatal("a 61 s window should fail a 60 s bound")
+	}
+}
+
+func TestValidityWindow_ZeroDisablesTheBound(t *testing.T) {
+	// The documented escape hatch for operators who knowingly accept
+	// long-lived signatures.
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte("payload")
+
+	unlimited := time.Duration(0)
+	verifier, _, _ := New(context.Background(), &Config{MaxSignatureValidity: &unlimited})
+	if err := verifier.Validate(makeCtx(body, ""), validityHeader(privateKey, body, 86400*365), publicKey, false); err != nil {
+		t.Fatalf("expected the bound to be disabled, got: %v", err)
+	}
+}
+
+func TestValidityWindow_ExpiredStillReportsAsExpired(t *testing.T) {
+	// Ordering guard: the width checks run after the liveness checks, so an
+	// expired signature keeps its existing, more useful error message even
+	// when its window would also breach the bound.
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte("payload")
+	now := time.Now().Unix()
+	created, expires := now-7200, now-3600
+	header := fmt.Sprintf(
+		`Signature algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
+		created, expires, signTestData(privateKey, body, created, expires),
+	)
+
+	verifier, _, _ := New(context.Background(), &Config{})
+	err := verifier.Validate(makeCtx(body, ""), header, publicKey, false)
+	if err == nil {
+		t.Fatal("expected rejection")
+	}
+	if !strings.Contains(err.Error(), "expired") {
+		t.Errorf("expected an expiry error, got: %v", err)
+	}
+}
+
+func TestValidityWindow_InvertedWindowRejected(t *testing.T) {
+	// created inside the skew tolerance, expires a second out: this slips past
+	// both liveness checks, so it needs its own rejection.
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte("payload")
+	now := time.Now().Unix()
+	created, expires := now+3, now+1
+	header := fmt.Sprintf(
+		`Signature algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
+		created, expires, signTestData(privateKey, body, created, expires),
+	)
+
+	verifier, _, _ := New(context.Background(), &Config{})
+	err := verifier.Validate(makeCtx(body, ""), header, publicKey, false)
+	if err == nil {
+		t.Fatal("expected an inverted validity window to be rejected")
+	}
+	if !strings.Contains(err.Error(), "inverted validity window") {
+		t.Errorf("expected an inverted-window error, got: %v", err)
+	}
+}
+
+func TestValidityWindow_AppliesToValidateAck(t *testing.T) {
+	// ValidateAck shares checkTimestampWindow, so the bound must hold there too.
+	privateKey, publicKey := generateTestKeyPair()
+	body := []byte("ack payload")
+	const outbound = "outboundSig=="
+
+	created := time.Now().Unix()
+	expires := created + 86400
+	header := fmt.Sprintf(
+		`Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",created="%d",expires="%d",signature="%s"`,
+		created, expires, signAckTestData(privateKey, body, outbound, created, expires),
+	)
+
+	verifier, _, _ := New(context.Background(), &Config{})
+	err := verifier.ValidateAck(makeCtx(body, ""), body, header, outbound, publicKey, false)
+	if err == nil {
+		t.Fatal("expected an overlong AckSignature window to be rejected")
+	}
+	if !strings.Contains(err.Error(), "validity window too long") {
+		t.Errorf("expected a validity-window error, got: %v", err)
 	}
 }

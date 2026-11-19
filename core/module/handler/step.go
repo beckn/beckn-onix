@@ -144,13 +144,18 @@ type validateSignStep struct {
 	km           definition.KeyManager
 	metrics      *HandlerMetrics
 	payloadStore definition.PayloadStore
+	// replayGuard rejects a signature that has already been accepted once.
+	// nil when replay protection is disabled or no Cache is configured.
+	replayGuard *replayGuard
 }
 
 // newValidateSignStep initializes and returns a new validate sign step.
+// guard may be nil, in which case accepted signatures are not remembered and a
+// replayed request is indistinguishable from the original.
 // payloadStore may be nil; when non-nil and the incoming request is a solicited
 // callback (v2, headers declares "request-signature"), ValidateAck is used with
 // the stored outbound signature to verify the 4-line signing string (NFH-004 §3.3).
-func newValidateSignStep(signValidator definition.SignValidator, km definition.KeyManager, payloadStore definition.PayloadStore) (definition.Step, error) {
+func newValidateSignStep(signValidator definition.SignValidator, km definition.KeyManager, payloadStore definition.PayloadStore, guard *replayGuard) (definition.Step, error) {
 	if signValidator == nil {
 		return nil, fmt.Errorf("invalid config: SignValidator plugin not configured")
 	}
@@ -163,6 +168,7 @@ func newValidateSignStep(signValidator definition.SignValidator, km definition.K
 		km:           km,
 		metrics:      metrics,
 		payloadStore: payloadStore,
+		replayGuard:  guard,
 	}, nil
 }
 
@@ -280,7 +286,11 @@ func (s *validateSignStep) validate(ctx *model.StepContext, value, requestSig st
 	if validErr != nil {
 		return fmt.Errorf("sign validation failed: %w", validErr)
 	}
-	return nil
+
+	// Claim only now that the signature is proven genuine. Both the gateway
+	// and subscriber headers reach this point, so both are guarded, and each
+	// carries its own signature so they claim separate keys.
+	return s.replayGuard.check(ctx, headerVals.SubscriberID, value)
 }
 
 func (s *validateSignStep) recordMetrics(ctx *model.StepContext, err error) {
