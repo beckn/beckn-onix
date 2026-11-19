@@ -12,6 +12,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -21,6 +22,11 @@ import (
 // claimLease bounds how long a claim is considered live; a claim older than
 // this is reclaimable (crash/OOM recovery -- the orphaned-claim reaper).
 const claimLease = 15 * time.Minute
+
+// ErrClaimLost is returned by Complete when the queue row is no longer held
+// under the caller's claim: the lease ran out mid-sync and another worker
+// took the item over. The caller's result is not recorded.
+var ErrClaimLost = errors.New("store: queue claim lost to another worker")
 
 // Enqueue upserts a work item. UNIQUE(catalog_id) coalesces repeated changes
 // into one pending item. A row that is NOT in progress (claimed_at IS
@@ -33,6 +39,12 @@ const claimLease = 15 * time.Minute
 // sat parked -- park_count is deliberately left untouched here (it's
 // cumulative across the catalog's whole troubled history, not reset by a
 // fresh publish), unlike attempts.
+//
+// enqueued_at is stamped on every call, including on an in-progress row.
+// That is how Complete learns that something was announced for this catalog
+// after the worker holding it claimed it (enqueued_at > claimed_at): the
+// worker resolved an index read from before the announcement, so its
+// completion must leave the item queued rather than delete it.
 func (s *Store) Enqueue(ctx context.Context, item crawlmanager.QueueItem) error {
 	op := string(item.Op)
 	if op == "" {
@@ -45,6 +57,7 @@ func (s *Store) Enqueue(ctx context.Context, item crawlmanager.QueueItem) error 
 		 ON CONFLICT (catalog_id) DO UPDATE SET
 		   index_url    = EXCLUDED.index_url,
 		   op           = EXCLUDED.op,
+		   enqueued_at  = now(),
 		   status       = CASE WHEN crawler_queue.claimed_at IS NULL THEN 'queued' ELSE crawler_queue.status END,
 		   attempts     = CASE WHEN crawler_queue.claimed_at IS NULL THEN 0 ELSE crawler_queue.attempts END,
 		   next_attempt_at = CASE WHEN crawler_queue.claimed_at IS NULL THEN now() ELSE crawler_queue.next_attempt_at END,
@@ -55,6 +68,17 @@ func (s *Store) Enqueue(ctx context.Context, item crawlmanager.QueueItem) error 
 		return fmt.Errorf("store: Enqueue: %w", err)
 	}
 	return nil
+}
+
+// HasPending implements crawlmanager.PendingChecker: whether catalogID has
+// a queue row in any state.
+func (s *Store) HasPending(ctx context.Context, catalogID string) (bool, error) {
+	var pending bool
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM crawler_queue WHERE catalog_id = $1)`, catalogID).Scan(&pending); err != nil {
+		return false, fmt.Errorf("store: HasPending: %w", err)
+	}
+	return pending, nil
 }
 
 // ClaimNext atomically claims the next ready item -- unclaimed OR past its
@@ -216,13 +240,27 @@ func (s *Store) ListAbandoned(ctx context.Context) ([]crawlmanager.AbandonedCata
 	return out, nil
 }
 
-// Complete records the catalog's settled cursor and removes the queue row,
+// Complete records the catalog's settled cursor and settles the queue row,
 // in one transaction -- so a crash between the two never leaves the cursor
-// advanced with the item still claimed, or vice versa. Matched on id AND
-// claim_id only: unlike the prototype this schema came from, crawlmanager's
-// QueueItem carries no target version for Complete to check against, since
-// SyncNext always resolves against whatever the index currently declares --
-// there is no "superseded by a newer target" case to detect here.
+// advanced with the item still claimed, or vice versa.
+//
+// The queue row is locked under (id, claim_id) first, and what happens
+// next depends on what is found:
+//
+//   - Not found: the claim was lost (lease expired, another worker claimed
+//     the item, and may already have completed it against a newer index).
+//     Nothing is written -- a late worker must not move the cursor, least
+//     of all backwards -- and ErrClaimLost is returned. What the late
+//     worker pushed may have replaced newer content at the destination, so
+//     the catalog is queued for a fresh sync (or, if another worker still
+//     holds it, marked so that worker's completion re-queues it).
+//   - Found, and Enqueue was called for this catalog after the claim was
+//     taken: the cursor is recorded, and the row goes back to queued with a
+//     fresh attempt budget instead of being deleted. Deleting it dropped
+//     the announcement, and with an index that answers 304 nothing made it
+//     again until the publisher's next publish -- a retirement announced
+//     during the last sync of the live version was never applied.
+//   - Found otherwise: the cursor is recorded and the row deleted.
 func (s *Store) Complete(ctx context.Context, id, claimID string, cursor crawlmanager.CatalogCursor) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -230,10 +268,48 @@ func (s *Store) Complete(ctx context.Context, id, claimID string, cursor crawlma
 	}
 	defer tx.Rollback() //nolint:errcheck // best-effort rollback if commit not reached
 
+	var reannounced bool
+	err = tx.QueryRowContext(ctx,
+		`SELECT enqueued_at > claimed_at FROM crawler_queue WHERE id = $1 AND claim_id = $2 FOR UPDATE`, id, claimID).
+		Scan(&reannounced)
+	if err == sql.ErrNoRows {
+		// A row another worker holds (or that is queued again) is stamped as
+		// re-announced; only if there is none is a new one inserted, from
+		// the catalog's own recorded index URL.
+		res, err := tx.ExecContext(ctx, `UPDATE crawler_queue SET enqueued_at = now() WHERE catalog_id = $1`, cursor.CatalogID)
+		if err != nil {
+			return fmt.Errorf("store: Complete: re-queuing after a lost claim: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO crawler_queue
+				   (catalog_id, index_url, from_version, to_version, entry_version, op, status, attempts, next_attempt_at, enqueued_at)
+				 SELECT c.catalog_id, c.index_url, 0, 0, 0, 'sync', 'queued', 0, now(), now()
+				   FROM crawler_catalog c WHERE c.catalog_id = $1 AND c.index_url <> ''
+				 ON CONFLICT (catalog_id) DO UPDATE SET enqueued_at = now()`, cursor.CatalogID); err != nil {
+				return fmt.Errorf("store: Complete: re-queuing after a lost claim: %w", err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("store: Complete: re-queuing after a lost claim: %w", err)
+		}
+		return fmt.Errorf("%w (catalog %s)", ErrClaimLost, cursor.CatalogID)
+	}
+	if err != nil {
+		return fmt.Errorf("store: Complete: locking queue row: %w", err)
+	}
+
 	if err := upsertCatalog(ctx, tx, cursor); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM crawler_queue WHERE id = $1 AND claim_id = $2`, id, claimID); err != nil {
+	if reannounced {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE crawler_queue
+			    SET status = 'queued', attempts = 0, next_attempt_at = now(), claimed_at = NULL, claim_id = NULL
+			  WHERE id = $1`, id); err != nil {
+			return fmt.Errorf("store: Complete requeue: %w", err)
+		}
+	} else if _, err := tx.ExecContext(ctx, `DELETE FROM crawler_queue WHERE id = $1`, id); err != nil {
 		return fmt.Errorf("store: Complete delete: %w", err)
 	}
 	return tx.Commit()

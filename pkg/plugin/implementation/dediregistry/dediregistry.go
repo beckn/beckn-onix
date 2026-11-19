@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -58,6 +59,10 @@ const (
 	codeCtxMissingField          = "CTX_MISSING_FIELD"
 	codeCtxInvalidField          = "CTX_INVALID_FIELD"
 )
+
+// maxRecordTTLSeconds is the largest record "ttl" (in seconds) that fits in a
+// time.Duration.
+const maxRecordTTLSeconds = float64(math.MaxInt64 / int64(time.Second))
 
 // maxLookupResponseBytes caps a single-record /lookup response read into
 // memory. A record is a few KiB; this only guards against a runaway body.
@@ -608,7 +613,13 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 	if c.cache != nil {
 		ttl := c.cacheTTL
 		if ttlSec, ok := data["ttl"].(float64); ok && ttlSec > 0 {
-			ttl = time.Duration(ttlSec) * time.Second
+			if ttlSec <= maxRecordTTLSeconds {
+				ttl = time.Duration(ttlSec) * time.Second
+			} else {
+				// Too large for a time.Duration: converting it would wrap
+				// around, and a negative TTL reaches the cache as "no expiry".
+				log.Warnf(ctx, "DeDi record ttl %g s for key %s is out of range; using the configured cacheTTL %s", ttlSec, cacheKey, c.cacheTTL)
+			}
 		}
 		if encoded, err := json.Marshal(results); err == nil {
 			if err := c.cache.Set(ctx, cacheKey, string(encoded), ttl); err != nil {

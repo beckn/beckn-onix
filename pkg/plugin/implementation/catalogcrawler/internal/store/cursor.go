@@ -65,7 +65,12 @@ func (s *Store) GetCatalogEnvelope(ctx context.Context, catalogID string) (descr
 // envelope (COALESCE(EXCLUDED, existing): a retire settle or a recorded
 // failure passes no envelope of its own and must not blank out one a
 // previous successful sync wrote -- that envelope is what a later retire
-// needs once the index stops carrying any content to refetch). Clears
+// needs once the index stops carrying any content to refetch). index_url
+// falls back to the row's existing value, then to the empty string: the
+// column is NOT NULL and Postgres checks that on the proposed row before ON
+// CONFLICT is considered, so a settle that names no index URL -- a retire
+// settled by catalog-core up to v0.2.1 -- failed outright, and no
+// retirement was ever recorded. Clears
 // reason unconditionally: this only ever runs on a successful settle (via
 // Complete), so any reason RecordFailure previously stamped no longer
 // describes this catalog's current state and would otherwise report a
@@ -78,10 +83,10 @@ func upsertCatalog(ctx context.Context, ex execer, c crawlmanager.CatalogCursor)
 	}
 	_, err := ex.ExecContext(ctx,
 		`INSERT INTO crawler_catalog (catalog_id, index_url, participant_id, version, entry_version, status, descriptor, provider, catalog_type, updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
+		 VALUES ($1, COALESCE($2, (SELECT index_url FROM crawler_catalog WHERE catalog_id = $1), ''), $3,$4,$5,$6,$7,$8,$9, now())
 		 ON CONFLICT (catalog_id) DO UPDATE SET
 		   index_url      = EXCLUDED.index_url,
-		   participant_id = EXCLUDED.participant_id,
+		   participant_id = COALESCE(EXCLUDED.participant_id, crawler_catalog.participant_id),
 		   version        = EXCLUDED.version,
 		   entry_version  = EXCLUDED.entry_version,
 		   status         = EXCLUDED.status,

@@ -302,6 +302,15 @@ func (c *artifactCache) get(key string) (artifact *TranslationArtifact, found bo
 		// Re-check under write lock: another goroutine may have refreshed the entry.
 		if e, ok := c.entries[key]; ok && time.Since(e.fetchedAt) > ttl {
 			delete(c.entries, key)
+			// Drop the key from the insertion-order list too. Leaving it there
+			// meant a refreshed key was appended again on every expiry, and the
+			// stale copies later evicted live entries.
+			for i, k := range c.keys {
+				if k == key {
+					c.keys = append(c.keys[:i], c.keys[i+1:]...)
+					break
+				}
+			}
 		}
 		c.mu.Unlock()
 		return nil, false

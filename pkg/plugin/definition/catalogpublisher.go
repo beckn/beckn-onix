@@ -186,6 +186,11 @@ type PublishRequest struct {
 	// isActive/baseline/changes. A catalogId present in both Retire and
 	// Catalogs is published normally; Retire is ignored for it.
 	//
+	// Only a catalogId that has an index entry can be retired. One that
+	// was never published comes back as a PublishError (stage "retire",
+	// "catalog not found") and no tombstone is written; one that is
+	// already retired is left exactly as it is.
+	//
 	// This stays a batch-wide list here, kept distinct from
 	// CatalogSubmission, rather than becoming a third per-submission bool
 	// alongside ForceBaseline: catalog-core's own
@@ -242,24 +247,31 @@ type CatalogPublishOutcome struct {
 	// "Compression"). Nil whenever Content is nil.
 	ServedContent []byte
 
-	// Compressed reports whether ServedContent (and LatestServedContent
-	// below) are gzip-compressed relative to Content/LatestContent --
-	// mirrors Config.Gzip at the time of this Publish call. The index
-	// entry's own file reference URLs already carry the matching ".gz"
-	// extension; a caller writing ServedContent to a filename derived from
-	// that URL needs no separate bookkeeping.
+	// Compressed reports whether ServedContent is gzip-compressed relative
+	// to Content -- mirrors Config.Gzip at the time of this Publish call.
+	// The index entry's own file reference URLs already carry the matching
+	// ".gz" extension; a caller writing ServedContent to a filename derived
+	// from that URL needs no separate bookkeeping.
 	Compressed bool
 
-	// LatestContent/LatestServedContent/LatestDigest are set whenever
-	// Config.PublishLatest is on (NFH-014 §Schema Changes, "latest"): a
-	// full CatalogFile mirroring this catalog's current content,
-	// regenerated on every call regardless of Mode -- a caller writes
-	// LatestServedContent to the same fixed, overwritten-in-place URL
-	// every time (never a new, versioned one like Content above). Nil/
-	// empty when PublishLatest is off.
+	// LatestDigest is set whenever the index entry lists "latest" (NFH-014
+	// §Schema Changes, "latest"): a full CatalogFile mirroring this
+	// catalog's current content at one fixed, overwritten-in-place URL.
+	//
+	// LatestContent/LatestServedContent are set only when this call
+	// (re)writes that file: on a baseline or change, or when the published
+	// file is missing or no longer matches its reference. An unchanged or
+	// metadata-only outcome whose "latest" is intact leaves it alone.
+	//
+	// LatestCompressed is the encoding of that write, and so which of the
+	// two "latest" file names it goes to. It is the encoding "latest" was
+	// first published under for this catalog, which is not necessarily
+	// Compressed/Config.Gzip: the stable URL does not move when gzip is
+	// switched.
 	LatestContent       json.RawMessage
 	LatestServedContent []byte
 	LatestDigest        string
+	LatestCompressed    bool
 }
 
 // PublishError is a non-fatal, per-catalog failure -- one bad submission
@@ -303,12 +315,14 @@ type PublishResult struct {
 	// Version/EntryVersion/Mode of its own to report there.
 	Retirements []RetirementOutcome
 
-	// RetiredLatest carries the final, self-signed CatalogFile write
-	// CON-TBD-38 requires for each retired catalogId whose PriorState had
-	// LatestPublished set: the same stable "latest" URL as before, now
-	// carrying CatalogFile.retiredAt, so a consumer that only ever fetches
-	// "latest" directly (never revisiting the index) can still learn the
-	// catalog is gone.
+	// RetiredLatest carries, for each catalogId in Retirements, every
+	// "latest" file a consumer may hold a URL for: the final, self-signed
+	// CatalogFile CON-TBD-38 requires at the same stable URL as before,
+	// now carrying CatalogFile.retiredAt, so a consumer that only ever
+	// fetches "latest" directly (never revisiting the index) can still
+	// learn the catalog is gone. A catalog can have two (one per encoding)
+	// and, on a repeat retire, files that are already in place and only
+	// need verifying (RetiredCatalogFile.AlreadyStored).
 	RetiredLatest []RetiredCatalogFile
 
 	// Warnings carries non-fatal operational notices produced alongside an
@@ -323,9 +337,20 @@ type PublishResult struct {
 // RetirementOutcome is one retired catalog's signed tombstone entry --
 // ready to hand a catalog storage layer to merge into the index, same as
 // CatalogPublishOutcome.SignedEntry for a submitted catalog.
+//
+// A retire request for a catalog that is already retired is reported here
+// too, with AlreadyRetired set. Its SignedEntry is the tombstone exactly as
+// already published when a "latest" file had to be repaired, and nil when
+// there is nothing to write at all.
 type RetirementOutcome struct {
 	CatalogID   string
 	SignedEntry json.RawMessage
+
+	// EntryVersion and RetiredAt identify the tombstone that must be in
+	// the index after this call.
+	EntryVersion   int
+	RetiredAt      string
+	AlreadyRetired bool
 }
 
 // RetiredCatalogFile is one retired catalog's final "latest" write (see
@@ -333,11 +358,17 @@ type RetirementOutcome struct {
 // signed bytes; ServedContent is what a caller should actually write to
 // the "latest" URL -- identical to Content unless Compressed is true, same
 // convention as CatalogPublishOutcome's Content/ServedContent pair.
+//
+// AlreadyStored marks a file that storage already holds exactly as given
+// (a repeat retire): nothing is to be written, ServedContent is nil, and
+// ServedSize is the stored size.
 type RetiredCatalogFile struct {
 	CatalogID     string
 	Content       json.RawMessage
 	ServedContent []byte
 	Compressed    bool
+	AlreadyStored bool
+	ServedSize    int64
 }
 
 // CatalogPublisher turns a publisher's catalog submissions into a catalog

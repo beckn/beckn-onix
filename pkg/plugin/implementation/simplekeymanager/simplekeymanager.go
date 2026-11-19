@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
@@ -33,7 +34,11 @@ type Config struct {
 // SimpleKeyMgr provides methods for managing cryptographic keys using configuration.
 type SimpleKeyMgr struct {
 	Registry definition.RegistryLookup
-	keysets  map[string]*model.Keyset // In-memory storage for keysets
+
+	// mu guards keysets: Keyset runs on every signing request, concurrently
+	// with InsertKeyset / DeleteKeyset and with the cleanup at shutdown.
+	mu      sync.RWMutex
+	keysets map[string]*model.Keyset // In-memory storage for keysets
 }
 
 var (
@@ -152,8 +157,13 @@ func New(ctx context.Context, registryLookup definition.RegistryLookup, cfg *Con
 	// Cleanup function to release SimpleKeyManager resources.
 	cleanup := func() error {
 		log.Info(ctx, "Cleaning up SimpleKeyManager resources")
-		skm.Registry = nil
-		skm.keysets = nil
+		// Drop the key material, but leave the manager usable: a request
+		// still in flight when the server's shutdown grace period ends must
+		// get ErrKeysetNotFound, not a nil dereference. Registry is left in
+		// place for the same reason.
+		skm.mu.Lock()
+		skm.keysets = make(map[string]*model.Keyset)
+		skm.mu.Unlock()
 		return nil
 	}
 
@@ -196,7 +206,9 @@ func (skm *SimpleKeyMgr) InsertKeyset(ctx context.Context, keyID string, keys *m
 	}
 
 	log.Debugf(ctx, "Storing keyset for keyID: %s", keyID)
+	skm.mu.Lock()
 	skm.keysets[keyID] = keys
+	skm.mu.Unlock()
 	log.Debugf(ctx, "Successfully stored keyset for keyID: %s", keyID)
 	return nil
 }
@@ -208,12 +220,14 @@ func (skm *SimpleKeyMgr) DeleteKeyset(ctx context.Context, keyID string) error {
 	}
 
 	log.Debugf(ctx, "Deleting keyset for keyID: %s", keyID)
-	if _, exists := skm.keysets[keyID]; !exists {
+	skm.mu.Lock()
+	_, exists := skm.keysets[keyID]
+	delete(skm.keysets, keyID)
+	skm.mu.Unlock()
+	if !exists {
 		log.Warnf(ctx, "Keyset not found for keyID: %s", keyID)
 		return ErrKeysetNotFound
 	}
-
-	delete(skm.keysets, keyID)
 	log.Debugf(ctx, "Successfully deleted keyset for keyID: %s", keyID)
 	return nil
 }
@@ -225,7 +239,9 @@ func (skm *SimpleKeyMgr) Keyset(ctx context.Context, keyID string) (*model.Keyse
 	}
 
 	log.Debugf(ctx, "Retrieving keyset for keyID: %s", keyID)
+	skm.mu.RLock()
 	keyset, exists := skm.keysets[keyID]
+	skm.mu.RUnlock()
 	if !exists {
 		log.Warnf(ctx, "Keyset not found for keyID: %s", keyID)
 		return nil, ErrKeysetNotFound

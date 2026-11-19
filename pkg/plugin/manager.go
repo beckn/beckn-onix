@@ -67,11 +67,24 @@ func NewManager(ctx context.Context, cfg *ManagerConfig) (*Manager, func(), erro
 		constants:      constants,
 		overridesByKey: make(map[string]telemetry.ConstantsOverride),
 	}
-	return m, func() {
-		for _, closer := range m.closers {
+	return m, m.closeAll, nil
+}
+
+// closeAll runs every registered closer. The closers panic when a plugin's
+// Close fails; each is contained here so that one plugin failing to close
+// (for example a connection that is already gone) does not leave the plugins
+// registered after it unclosed and unflushed.
+func (m *Manager) closeAll() {
+	for _, closer := range m.closers {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Errorf(context.Background(), fmt.Errorf("%v", r), "plugin closer failed; continuing with the remaining closers")
+				}
+			}()
 			closer()
-		}
-	}, nil
+		}()
+	}
 }
 
 // applyConstants enforces beckn constants for the given plugin config.

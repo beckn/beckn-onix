@@ -85,13 +85,22 @@ catalogs) -- widening the gap until `catalogcrawler` catches up.
    there -- its prior metadata survives retirement, only `isActive` and
    the file references are dropped -- so crawlers can tell "gone" apart
    from "never existed" (NFH-014 §10.4, "a retired catalog stays as a
-   tombstone"). If `PriorCatalogState.LatestPublished` was set for that
-   catalog, also makes one final write to its "latest" URL (via
+   tombstone"). If the catalog ever had `latest` published, also makes
+   one final write to its "latest" URL (via
    `PublishResult.RetiredLatest`), a self-signed `CatalogFile` now
    carrying `retiredAt` -- so a consumer that only ever fetches `latest`
    directly, never revisiting the index, can still learn the catalog is
-   gone (NFH-014 CON-TBD-38). Independent of whether `Config.PublishLatest`
-   is on for this call.
+   gone (NFH-014 CON-TBD-38). Where that write goes is decided by what
+   was published, not by this call's `Config.PublishLatest` or
+   `Config.Gzip`: the file name the index entry advertised, and any other
+   `latest` file the blob store still holds for the catalog (one left
+   behind when `publishLatest` was switched off, or under the other
+   encoding's name). Only a `catalogId` that is in the index can be
+   retired: retiring one that was never published is a `PublishError`
+   ("catalog not found"), not a tombstone. Retiring a catalog that is
+   already retired signs nothing; it rewrites a `latest` file that does
+   not yet carry `retiredAt`, and every `latest` file is verified again
+   (below).
 8. Leaves every other catalog untouched by this call alone -- `Publish`
    itself only ever produces the submitted/retired catalogs' own signed
    entries (`PublishResult.Catalogs`/`Retirements`); it holds no index of
@@ -110,9 +119,17 @@ catalogs) -- widening the gap until `catalogcrawler` catches up.
 10. Maintains a **`latest` pointer** (`Config.PublishLatest`) -- a full,
     self-signed `CatalogFile` overwritten in place at one stable,
     non-versioned URL, for consumers who want fully-current content
-    without ever applying `changes[]`. Regenerated from the submitted
-    catalog on every call regardless of `Mode`, unlike `baseline`/
-    `changes[]` which are only written when content actually changes.
+    without ever applying `changes[]`. Rewritten whenever a baseline or
+    change file is published. An unchanged or metadata-only call leaves an
+    intact file as it is (its digest changes only when its content does)
+    and rewrites one that is missing or no longer matches its index
+    reference. The file keeps the name, and so the URL, it was first
+    published under: switching `gzip` later changes the baseline and
+    change files, not the `latest` URL consumers already hold. With
+    `publishLatest` switched off the entry stops listing `latest` and the
+    file is left where it is, no longer refreshed, until the catalog is
+    retired. Any change to the entry, including its `latest` reference
+    appearing or going away, bumps `entryVersion`.
     Explicitly exempt from the immutable-URL rule every other catalog
     file here follows (NFH-014 CON-TBD-36). On by default for the
     `catalogPublish` plugin config (opt out with `publishLatest:
@@ -324,13 +341,50 @@ own `Submission.Directives.ForceBaseline` is per-submission) -- a call
 publishing several catalogs at once can force a baseline for one while
 leaving the rest to diff normally. Each catalog's own top-level `"id"` is used verbatim
 as its `catalogId` -- the handler does not prefix or derive it from a
-domain; submit the full id you want. Response borrows beckn.yaml's
+domain, and does not require its prefix to be this node's subscriber id
+(NFH-014 leaves that enforcement as an open question); submit the full id
+you want. See "What a catalogId may do" below for what is refused.
+Response borrows beckn.yaml's
 `CatalogPublishAction`/`CatalogProcessingResult` vocabulary
 (`ACCEPTED`/`REJECTED` per catalog) but as one synchronous call, not an
 Ack-now/`on_publish`-later pair -- beckn.yaml's async, signed
 `CatalogPublishAction` is a materially larger scope (routing, subscriber
 lookup, callback signing) that this handler deliberately does not
 implement; see "Known open items."
+
+#### What a catalogId may do
+
+Each of these is reported per catalog (`REJECTED` with a reason); the
+other catalogs in the request are processed normally, and nothing is
+written for the rejected one.
+
+| The id's index entry | Catalog in `message.catalogs` | Id in `retire` |
+|---|---|---|
+| None | `ACCEPTED`, first baseline. `REJECTED` if the id's last path segment is already used by another catalog in the index (live or retired) or earlier in the same request, or if the id is not safe to use as a file name and URL. | `REJECTED`, "catalog not found". |
+| Live (active or paused) | `ACCEPTED`: update, metadata-only change, forced baseline or no change. | `ACCEPTED`, reason `retired`. |
+| Retired | `REJECTED`: retirement is one-way (NFH-014 CON-TBD-26). Publish the catalog under a new `catalogId`. | `ACCEPTED`, reason `retired`; nothing changes. |
+
+- **File names come from the last path segment only.** `a.example/CAT-1`
+  and `b.example/CAT-1` would both be written to `catalogs/CAT-1.*`, so
+  the second one is rejected; so is `a.example/cat-1`, because some
+  filesystems ignore case.
+- **Shape of a new id:** no white space or control characters, no empty,
+  `.` or `..` path segment, and a last segment of at most 200 bytes made
+  of letters, digits, `-`, `.`, `_`, `~`, not starting with `.`. A catalog
+  that is already in the index is not re-checked: it keeps its id, its
+  file names and its URLs, and can still be updated and retired.
+- **The same id in `message.catalogs` and `retire`:** the submission is
+  published and the retire is not done; `warnings` says so.
+- **The same id twice in `retire`:** one retirement, one result row.
+- **The same id twice in `message.catalogs`:** the whole request is
+  refused with HTTP 400.
+- **`isActive` and `catalogType`:** `isActive` in the catalog must be
+  `true` or `false` when present, and `catalogType` must be `REGULAR` or
+  `MASTER`; anything else is `REJECTED` rather than replaced by a default.
+- **Metadata is restated on every publish.** `catalogType`, `visibleTo`
+  and `schemaTypes` come from this request's `publishDirectives` entry.
+  Leaving the entry out on an update sets the catalog back to `REGULAR`
+  and visible to all.
 
 Note: `schemaTypes` is not a beckn.yaml `CatalogPublishAction` field at
 all -- beckn.yaml only uses it on `catalog/subscription`'s
@@ -522,22 +576,78 @@ publish. `Registry` is now a required constructor argument for this reason
 the "minimise config fields" principle used for `checkCatalogIndexLink`
 above.
 
-Only catalogs actually touched by *this* call are checked --
-`CatalogPublishOutcome.Changed == true`, plus every retirement -- so an
-unrelated catalog already sitting in the index untouched this call incurs
-no extra fetch. One index fetch (`FetchIndex`) covers the whole batch; a
-per-catalog entry's mere presence in that re-fetched index already proves
-its self-signature verified against the real registry key, since `Fetcher`
-silently drops any entry that doesn't (see `verifyOutcome`/
-`verifyRetirement` in `verify.go`). Whichever file(s) this call actually
-wrote -- baseline, a specific change version, and/or a refreshed `latest` --
-are then individually re-fetched and digest/signature-checked too.
+Every catalog in *this* call is checked -- submitted or retired, changed
+or not -- so an unrelated catalog already sitting in the index incurs no
+extra fetch. One index fetch (`FetchIndex`) covers the whole batch. For
+each catalog (see `verifyOutcome`/`verifyRetirement` in `verify.go`):
 
-A retirement is the one case where a written file is not referenced from
-the index: the tombstone entry carries no `latest` pointer, so the final
-`latest` write (`PublishResult.RetiredLatest`) is re-fetched from its
-stable `latest` URL and checked against the digest of the tombstone this
-call signed.
+- Its entry must be in the re-fetched index (presence already proves the
+  self-signature verified against the real registry key, since `Fetcher`
+  drops any entry that doesn't) and must be the entry this call signed.
+  An index still serving an earlier entry is treated as a propagation
+  delay and retried. An index serving a later one means another adapter
+  replica published the catalog again before this call was verified:
+  the call is `ACCEPTED`, `warnings` says it was superseded, and the
+  baseline or change file it wrote is still checked if the later entry
+  lists it.
+- The baseline or change file this call wrote is re-fetched and
+  digest/signature-checked.
+- A call that wrote neither (an unchanged or metadata-only result)
+  re-fetches the baseline and every change file after it. Repeating a
+  publish that was `REJECTED` here is such a call, and it stays
+  `REJECTED` until the files verify.
+- If the entry lists `latest`, that file is re-fetched and checked against
+  the entry's digest, whether or not this call wrote it. An unchanged
+  republish is therefore a real check, not an automatic `ACCEPTED`.
+- For a retirement, first or repeated, the entry must be the tombstone,
+  and every `latest` file of the catalog (`PublishResult.RetiredLatest`)
+  is re-fetched from its stable URL and must be a `CatalogFile` carrying
+  `retiredAt`. A tombstone entry carries no `latest` pointer, so these
+  URLs are built the way catalog-core builds them.
+
+Failures that can be a propagation delay are retried: 5 attempts, waiting
+0.2, 0.4, 0.8 and 1.6s (3s in all). That includes a digest mismatch on
+`latest`, the one file overwritten in place, which a cache can serve in
+its previous version for a moment (NFH-014 CON-TBD-37). A digest mismatch
+on a baseline or change file, whose URLs are immutable, is never retried.
+`Publish` holds its lock while verifying, so a failure that persists
+delays the next publish by those 3s.
+
+Publish calls are serialised within one adapter process; a call that is
+waiting returns an error if its request context ends first.
+
+**Several adapters on one blob store.** Whether that is safe depends on
+the blob store. With one that implements
+`definition.ConditionalCatalogBlobStore` (`localcatalogblobstore` does),
+`catalog-core` writes the index with a compare-and-swap, so any number of
+adapter processes can publish to it: no entry is lost, and two adapters
+updating the same catalog each build on the other's change (the one that
+loses the race loads the new state and computes its change again, up to
+8 times). With a blob store that has no conditional write there must be
+exactly one adapter process, and the in-process lock is what keeps that
+one correct. For `localcatalogblobstore` the shared directory has to be
+on a filesystem that enforces `flock` between its clients: a volume
+shared by containers on one node, or NFS with locking. A macOS directory
+bind-mounted into Docker Desktop containers does not; there a publish
+fails with an error naming the filesystem rather than risk the index.
+
+**What a request that changes nothing writes.** Nothing: if every catalog
+in a request is refused, the index is not rewritten and its `next_update`
+does not move.
+
+**A submission that drops a top-level catalog attribute** (for example
+resuming a paused catalog by sending it without `isActive`) is published
+as a new baseline, not a change file: a change file can set an attribute
+but has no way to remove one.
+
+**If the adapter stops part-way.** On SIGTERM the adapter finishes the
+requests in flight (up to 10s) before it exits, so a publish under way
+completes and answers. If the process is killed instead, baseline and
+change files are always written before the index that lists them, so a
+consumer never finds a listed file missing. The `latest` file of the one
+catalog being written can be left a version behind its index entry; it
+is brought back in line by the next publish of that catalog (identical
+content is enough) or by retiring it.
 
 Unlike `checkCatalogIndexLink`, a verification failure here is **not** a
 warning: `definition.PublishError{Stage: "verify", Fatal: false}` is

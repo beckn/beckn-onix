@@ -66,13 +66,15 @@ When `compress: "true"`, `RequestBody` is gzip-compressed before storage. The se
 
 | Key | Value | TTL |
 |-----|-------|-----|
-| `payload:onix:msg:{messageID}` | `j:<JSON>` or `c:<base64(gzip(JSON))>` — format detected from prefix at read time | `ttl` |
+| `payload:onix:msg:{messageID}` | `j:<JSON>` or `c:<base64(gzip(JSON))>` — format detected from prefix at read time. The most recent entry stored for the message ID, whatever its action. | `ttl` |
+| `payload:onix:act:{action}:msg:{messageID}` | Same format, without `RequestBody`. One record per (message ID, action); the action is query-escaped. | `ttl` |
 | `payload:onix:txn:{transactionID}:index` | JSON array of message IDs, oldest-first | `indexTTL` |
 
+A callback carries the message ID of the request it answers (`on_search` and `search` share one). When both the caller and the receiver module run `storePayload`, the message key therefore ends up holding whichever of the two was stored last. The per-action record is what keeps the other one reachable: `GetByMessageID(id, action)` returns the message key's entry when its action matches, and otherwise the per-action record (which has the signature but no `RequestBody`). This is what lets `validateSign` and `sign` find the original request's signature for every callback of a message, not only the first.
 
-`GetByTransactionID` reads the index, fetches each entry individually, and silently skips any that have expired between the index write and read.
+`GetByTransactionID` reads the index, fetches each entry individually by its message key, and silently skips any that have expired between the index write and read. It returns one entry per message ID (the most recent).
 
-**Known limitation**: The transaction index update is a non-atomic read-modify-write over the cache. Two concurrent `Store` calls for the same transaction can race — the last writer wins, potentially dropping one message ID from the index. Individual message keys are always written correctly; only `GetByTransactionID` may return an incomplete list under this race. Individual message lookup via `GetByMessageID` and duplicate detection via `Exists` are unaffected.
+**Known limitation**: The transaction index update is a read-modify-write over the cache. Within one adapter process it is serialised per transaction, so concurrent `Store` calls do not lose entries. Two adapter replicas sharing one cache can still race — the last writer wins, potentially dropping one message ID from the index — because `definition.Cache` has no atomic append. If the index cannot be read (cache error), the update is skipped for that message rather than overwriting the index. Individual message keys are always written correctly; only `GetByTransactionID` may return an incomplete list. Lookup via `GetByMessageID` and duplicate detection via `Exists` are unaffected.
 
 ## Example handler configuration
 
