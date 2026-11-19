@@ -248,7 +248,7 @@ At `SIGINT`/`SIGTERM`, the adapter calls the `otelsetup` closer, which flushes a
 | `onix_plugin_errors_total` | Counter | `{error}` | Per-plugin call failures |
 | `onix_plugin_info` | Observable Gauge | `{plugin}` | Loaded plugin inventory; value is always 1 |
 
-**Histogram buckets (`onix_plugin_execution_duration_seconds`):** 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1 s
+**Histogram buckets (`onix_plugin_execution_duration_seconds`):** 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300 s (the upper range covers long-running background work such as catalog crawler ticks)
 
 **Labels on `onix_plugin_execution_duration_seconds` and `onix_plugin_errors_total`:**
 
@@ -257,6 +257,11 @@ At `SIGINT`/`SIGTERM`, the adapter calls the `otelsetup` closer, which flushes a
 | `plugin_id` | Plugin implementation ID as configured (e.g. `schemavalidator`) |
 | `plugin_type` | Plugin slot type (e.g. `schema_validator`, `router`, `cache`) |
 | `action` | Beckn action |
+| `operation` | Plugin-specific operation name (e.g. `poll_tick`, `registry_lookup`) |
+| `status` | Operation outcome (e.g. `success`, `error`, `partial_failure`) |
+| `error_type` | Low-cardinality failure class (`onix_plugin_errors_total` only) |
+
+The catalog crawler (`plugin_id="catalogcrawler"`, `plugin_type="crawler"`) records these for each background operation (`poll_tick`, `registry_lookup`, `sync_next`, `park_sweep`, `on_demand_crawl`). See the [catalogcrawler README](../catalogcrawler/README.md#observability) for label values.
 
 **Labels on `onix_plugin_info`:**
 
@@ -372,6 +377,22 @@ Each step executes as a child span of the request span. Step metrics (`onix_step
 | `redis_get` | Cache read |
 | `redis_set` | Cache write |
 | `redis_delete` | Cache delete |
+
+### Catalog crawler spans
+
+The `catalogcrawler` plugin runs outside any request, so each scheduler tick is its own trace:
+
+```
+[catalogcrawler.poll_tick]                 every indexIntervalSeconds
+  └── [catalogcrawler.registry_lookup]     one per configured network (attr network_id)
+[catalogcrawler.sync_tick]                 every catalogIntervalSeconds
+  └── [catalogcrawler.sync_next]           one per claimed queue item, plus the claim that ends the drain
+[catalogcrawler.park_sweep]                every parkSweepIntervalSeconds
+[catalogcrawler.on_demand_crawl]           per POST /crawl/trigger run; linked to the caller's span, if any
+  └── [catalogcrawler.registry_lookup]
+```
+
+See the [catalogcrawler README](../catalogcrawler/README.md#observability) for attributes.
 
 ### Trace context propagation
 

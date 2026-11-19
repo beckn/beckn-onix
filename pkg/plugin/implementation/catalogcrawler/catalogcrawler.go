@@ -33,6 +33,7 @@ import (
 	"github.com/beckn/catalog-core/pkg/catalog/crawler"
 	"github.com/beckn/catalog-core/pkg/catalog/crawlmanager"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Config keys, all read from the plugin's config map[string]string. camelCase,
@@ -239,8 +240,10 @@ func (d *registryDiscoverer) Discover(ctx context.Context) ([]crawlmanager.Index
 	var refs []crawlmanager.IndexRef
 	var failed []error
 	for _, net := range d.networkIDs {
-		records, err := d.lookup.QueryByNetwork(ctx, net)
+		lookupCtx, op := startOperation(ctx, opRegistryLookup, trace.WithAttributes(attrNetworkID.String(net)))
+		records, err := d.lookup.QueryByNetwork(lookupCtx, net)
 		if err != nil {
+			op.end(lookupCtx, statusError, classifyError(err, errTypeLookupFailed), err)
 			netErr := fmt.Errorf("networkId %q: %w", net, err)
 			failed = append(failed, netErr)
 			if streak := d.recordFailure(net); streak >= consecutiveFailEscalateThreshold {
@@ -272,11 +275,16 @@ func (d *registryDiscoverer) Discover(ctx context.Context) ([]crawlmanager.Index
 				refs = append(refs, crawlmanager.IndexRef{IndexURL: idx, ParticipantID: rec.SubscriberID})
 			}
 		}
+		op.span.SetAttributes(attrProvidersFound.Int(found))
+		op.end(lookupCtx, statusSuccess, "", nil)
 		d.log.InfoContext(ctx, "catalogcrawler: registry lookup succeeded", "networkId", net, "providersFound", found)
 	}
 	if err := errIfAllFailed(len(d.networkIDs), failed, fmt.Sprintf("registry lookup failed for all %d configured network(s)", len(failed))); err != nil {
 		d.log.ErrorContext(ctx, "catalogcrawler: registry lookup failed for every configured network", "networks", d.networkIDs, "error", err)
 		return nil, err
+	}
+	if len(failed) > 0 {
+		markPartialFailure(ctx, "registry networks", len(failed), len(d.networkIDs))
 	}
 	return refs, nil
 }
@@ -349,6 +357,7 @@ func (m multiSource) Discover(ctx context.Context) ([]crawlmanager.IndexRef, err
 		return nil, err
 	}
 	if len(failed) > 0 {
+		markPartialFailure(ctx, "discovery sources", len(failed), len(m.sources))
 		m.log.WarnContext(ctx, "catalogcrawler: one or more discovery sources failed this tick, continuing with partial results from the rest", "failedSources", len(failed), "totalSources", len(m.sources), "error", errors.Join(failed...))
 	}
 	return refs, nil
@@ -384,8 +393,9 @@ func (c *crawlerImpl) Stop() error {
 // goes through the configured RegistryMetadataLookup plugin instance, which
 // owns its own registry URL -- there is no per-call registry URL to select a
 // different endpoint. It launches one background poll and returns a run ID
-// immediately; the poll's outcome is only observable via logs/the queue, the
-// same as a scheduled tick. The poll runs under the Scheduler's own
+// immediately; the poll's outcome is only observable via logs/the queue and
+// its on_demand_crawl span and metrics, the same as a scheduled tick. The poll
+// runs under the Scheduler's own
 // lifecycle (via Scheduler.RunOnce), not the caller's context, so it
 // survives a request-scoped caller returning and is still waited-for (not
 // orphaned) by Stop.
@@ -409,10 +419,23 @@ func (c *crawlerImpl) CrawlRegistry(ctx context.Context, networkIDs []string) (s
 	adhoc.Source = &registryDiscoverer{lookup: c.metadataLookup, networkIDs: networkIDs, log: c.log}
 
 	runID := uuid.NewString()
+	// The run outlives the request, so it gets its own trace, linked to the
+	// request's span when there is one.
+	spanOpts := []trace.SpanStartOption{
+		trace.WithNewRoot(),
+		trace.WithAttributes(attrRunID.String(runID), attrNetworkIDs.StringSlice(networkIDs)),
+	}
+	if reqSpan := trace.SpanContextFromContext(ctx); reqSpan.IsValid() {
+		spanOpts = append(spanOpts, trace.WithLinks(trace.Link{SpanContext: reqSpan}))
+	}
 	started := c.sched.RunOnce(func(ctx context.Context) {
-		if err := adhoc.PollIndexes(ctx); err != nil {
+		ctx, op := startOperation(ctx, opOnDemandCrawl, spanOpts...)
+		ctx, partial := withPartialFailureTracking(ctx)
+		err := adhoc.PollIndexes(ctx)
+		if err != nil {
 			c.log.ErrorContext(ctx, "catalogcrawler: on-demand crawl failed", "runId", runID, "networkIds", networkIDs, "error", err)
 		}
+		op.endPoll(ctx, err, partial.Load())
 	})
 	if !started {
 		return "", fmt.Errorf("catalogcrawler: crawler is not running")
