@@ -116,6 +116,21 @@ maskRules:
 	require.Error(t, LoadAuditConfig(context.Background(), url))
 }
 
+func TestCompile_RejectsMaskRuleKeysWithEmptyPathSegments(t *testing.T) {
+	for _, key := range []string{"", ".name", "contact..name", "contact.name."} {
+		t.Run(key, func(t *testing.T) {
+			_, err := compile(context.Background(), &auditConfig{
+				Patterns: map[string]patternDef{
+					"sensitive": {MaskType: "replace", Mask: "[REDACTED]"},
+				},
+				MaskRules: []maskRule{{Keys: []string{key}, Pattern: "sensitive"}},
+			})
+
+			require.ErrorContains(t, err, "empty path segment")
+		})
+	}
+}
+
 func TestLoadAuditConfig_PathOverrideUnknownPattern(t *testing.T) {
 	resetConfig(t)
 	url := serveYAML(t, `
@@ -173,6 +188,215 @@ maskRules:
 	assert.Equal(t, "txn-1", out["context"].(map[string]interface{})["transactionId"])
 }
 
+func TestProcessAuditPayload_FullMode_MasksPhoneArrayLast4(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  phone:
+    maskType: last4
+maskRules:
+  - keys: [phoneNumbers]
+    pattern: phone
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	body := []byte(`{"phoneNumbers": ["11111111", "22222222"], "id": "u1"}`)
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+
+	// Mask each scalar independently while preserving the array's shape.
+	assert.Equal(t, []interface{}{"****1111", "****2222"}, out["phoneNumbers"])
+	assert.Equal(t, "u1", out["id"])
+}
+
+func TestProcessAuditPayload_FullMode_PlainKeyRulesMaskContainerValues(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "array elements are masked while preserving shape",
+			body: `{"email":["a@x.com","b@x.com"]}`,
+			want: `{"email":["***@***.***","***@***.***"]}`,
+		},
+		{
+			name: "object value is masked as a whole",
+			body: `{"address":{"street":"1 Main St","city":"Pune"}}`,
+			want: `{"address":"[REDACTED]"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetConfig(t)
+			url := serveYAML(t, `
+mode: full
+patterns:
+  email:
+    maskType: replace
+    mask: "***@***.***"
+  sensitive:
+    maskType: replace
+    mask: "[REDACTED]"
+maskRules:
+  - keys: [email]
+    pattern: email
+  - keys: [address]
+    pattern: sensitive
+`)
+			require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+			out := ProcessAuditPayload(context.Background(), []byte(tc.body))
+			assert.JSONEq(t, tc.want, string(out))
+		})
+	}
+}
+
+func TestProcessAuditPayload_FullMode_ArrayMaskingPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "dotted suffix inside object array",
+			body: `{"buyers":[{"contact":{"email":"alice@example.com"}},{"contact":{"email":"bob@example.com"}}]}`,
+			want: `{"buyers":[{"contact":{"email":"[REDACTED]"}},{"contact":{"email":"[REDACTED]"}}]}`,
+		},
+		{
+			name: "nested scalar arrays preserve shape",
+			body: `{"buyer":{"phoneNumbers":[["11111111"],["22222222",[]]]}}`,
+			want: `{"buyer":{"phoneNumbers":[["****1111"],["****2222",[]]]}}`,
+		},
+		{
+			name: "replacement masks each scalar using dotted suffix",
+			body: `{"buyer":{"contact":{"email":["alice@example.com","bob@example.com"]}}}`,
+			want: `{"buyer":{"contact":{"email":["[REDACTED]","[REDACTED]"]}}}`,
+		},
+		{
+			name: "unmatched scalar array remains unchanged",
+			body: `{"ids":["11111111","22222222"]}`,
+			want: `{"ids":["11111111","22222222"]}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetConfig(t)
+			url := serveYAML(t, `
+mode: full
+patterns:
+  phone:
+    maskType: last4
+  sensitive:
+    maskType: replace
+    mask: "[REDACTED]"
+maskRules:
+  - keys: [phoneNumbers]
+    pattern: phone
+  - keys: [contact.email]
+    pattern: sensitive
+`)
+			require.NoError(t, LoadAuditConfig(context.Background(), url))
+			out := ProcessAuditPayload(context.Background(), []byte(tc.body))
+			assert.JSONEq(t, tc.want, string(out))
+		})
+	}
+}
+
+func TestProcessAuditPayload_FullMode_PlainKeyMasksArraysOfObjects(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  sensitive:
+    maskType: replace
+    mask: "***"
+maskRules:
+  - keys: [phone, address]
+    pattern: sensitive
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "phone object array",
+			body: `{"phone":[{"type":"mobile","value":"9876543210"}]}`,
+			want: `{"phone":["***"]}`,
+		},
+		{
+			name: "address object array",
+			body: `{"address":[{"street":"12 MG Road","city":"Bengaluru"}]}`,
+			want: `{"address":["***"]}`,
+		},
+		{
+			name: "nested object arrays preserve shape",
+			body: `{"address":[[{"street":"12 MG Road"}],[]]}`,
+			want: `{"address":[["***"],[]]}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := ProcessAuditPayload(context.Background(), []byte(tc.body))
+			assert.JSONEq(t, tc.want, string(out))
+		})
+	}
+}
+
+func TestProcessAuditPayload_FullMode_PlainKeyLast4MasksObjectArrayElementAsWhole(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  phone:
+    maskType: last4
+maskRules:
+  - keys: [phone]
+    pattern: phone
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	body := []byte(`{"phone":["11111111",{"value":"22222222"}]}`)
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+	phone := out["phone"].([]interface{})
+
+	assert.Equal(t, "****1111", phone[0])
+	maskedObject, ok := phone[1].(string)
+	require.True(t, ok, "the object element must be replaced as a whole")
+	assert.NotContains(t, maskedObject, "22222222", "the original object value must not remain in clear")
+}
+
+func TestProcessAuditPayload_ArraySuffixMaskingPrecedence(t *testing.T) {
+	for _, mode := range []string{"full", "selective"} {
+		t.Run(mode, func(t *testing.T) {
+			resetConfig(t)
+			url := serveYAML(t, `
+mode: `+mode+`
+patterns:
+  phone:
+    maskType: last4
+  redact:
+    maskType: replace
+    mask: "[REDACTED]"
+maskRules:
+  - keys: [phoneNumbers, scalarPhone]
+    pattern: phone
+pathOverrides:
+  - path: phoneNumbers
+    pattern: redact
+  - path: scalarPhone
+    pattern: redact
+selectedFields:
+  default: [id]
+`)
+			require.NoError(t, LoadAuditConfig(context.Background(), url))
+			body := []byte(`{"phoneNumbers":["11111111","22222222"],"scalarPhone":"11111111","id":"u1"}`)
+			out := ProcessAuditPayload(context.Background(), body)
+			assert.JSONEq(t, `{"phoneNumbers":["****1111","****2222"],"scalarPhone":"****1111","id":"u1"}`, string(out))
+		})
+	}
+}
+
 func TestProcessAuditPayload_FullMode_MasksPhoneLast4(t *testing.T) {
 	resetConfig(t)
 	url := serveYAML(t, `
@@ -219,6 +443,104 @@ maskRules:
 	assert.Equal(t, "[REDACTED]", out["a"].(map[string]interface{})["email"])
 	assert.Equal(t, "[REDACTED]", out["b"].(map[string]interface{})["c"].(map[string]interface{})["email"])
 	assert.Equal(t, "[REDACTED]", out["d"].(map[string]interface{})["e"].(map[string]interface{})["f"].(map[string]interface{})["email"])
+}
+
+func TestProcessAuditPayload_FullMode_MasksByPathSuffix(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  sensitive:
+    maskType: replace
+    mask: "[REDACTED]"
+  email:
+    maskType: replace
+    mask: "***@***.***"
+maskRules:
+  - keys: [contact.name]
+    pattern: sensitive
+  - keys: [email]
+    pattern: email
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	body := []byte(`{
+		"Provider": {"contact": {"name": "Alice", "email": "alice@example.com"}},
+		"Resource": {"descriptor": {"name": "Public resource"}},
+		"Participant": {"contact": {"name": {"fullName": "Bob"}}}
+	}`)
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+
+	providerContact := out["Provider"].(map[string]interface{})["contact"].(map[string]interface{})
+	resourceDescriptor := out["Resource"].(map[string]interface{})["descriptor"].(map[string]interface{})
+	participantName := out["Participant"].(map[string]interface{})["contact"].(map[string]interface{})["name"].(map[string]interface{})
+
+	assert.Equal(t, "[REDACTED]", providerContact["name"], "contact.name suffix should match")
+	assert.Equal(t, "***@***.***", providerContact["email"], "plain field-name rule should still match")
+	assert.Equal(t, "Public resource", resourceDescriptor["name"], "descriptor.name must not match contact.name")
+	assert.Equal(t, "Bob", participantName["fullName"], "contact.name must not match contact.name.fullName")
+}
+
+func TestProcessAuditPayload_FullMode_ThreeSegmentSuffixScope(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  sensitive:
+    maskType: replace
+    mask: "[REDACTED]"
+maskRules:
+  - keys: [provider.contact.name]
+    pattern: sensitive
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	body := []byte(`{
+		"provider": {"contact": {"name": "Asha Rao"}},
+		"buyer": {"contact": {"name": "Ravi K"}},
+		"message": {"provider": {"contact": {"name": "Nested Provider"}}}
+	}`)
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+
+	providerName := out["provider"].(map[string]interface{})["contact"].(map[string]interface{})["name"]
+	buyerName := out["buyer"].(map[string]interface{})["contact"].(map[string]interface{})["name"]
+	nestedProviderName := out["message"].(map[string]interface{})["provider"].(map[string]interface{})["contact"].(map[string]interface{})["name"]
+
+	assert.Equal(t, "[REDACTED]", providerName, "exact three-segment path should match")
+	assert.Equal(t, "[REDACTED]", nestedProviderName, "three-segment suffix should match below another root")
+	assert.Equal(t, "Ravi K", buyerName, "a different three-segment suffix must remain unchanged")
+}
+
+func TestProcessAuditPayload_FullMode_MostSpecificSuffixWins(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: full
+patterns:
+  generic:
+    maskType: replace
+    mask: "[GENERIC]"
+  contact:
+    maskType: replace
+    mask: "[CONTACT]"
+maskRules:
+  - keys: [name]
+    pattern: generic
+  - keys: [contact.name]
+    pattern: contact
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	body := []byte(`{
+		"Provider": {"contact": {"name": "Alice"}},
+		"Resource": {"descriptor": {"name": "Public resource"}}
+	}`)
+	out := unmarshalJSON(t, ProcessAuditPayload(context.Background(), body))
+
+	providerName := out["Provider"].(map[string]interface{})["contact"].(map[string]interface{})["name"]
+	resourceName := out["Resource"].(map[string]interface{})["descriptor"].(map[string]interface{})["name"]
+
+	assert.Equal(t, "[CONTACT]", providerName)
+	assert.Equal(t, "[GENERIC]", resourceName)
 }
 
 func TestProcessAuditPayload_FullMode_ArrayTraversal(t *testing.T) {
@@ -420,6 +742,28 @@ selectedFields:
 	assert.Equal(t, "***@***.***", buyer["email"])
 	assert.Nil(t, buyer["name"], "name not in selectedFields — must be dropped")
 	assert.Nil(t, out["message"].(map[string]interface{})["order"], "order not in selectedFields — must be dropped")
+}
+
+func TestProcessAuditPayload_SelectiveMode_PlainKeyMasksUnselectedObjectArray(t *testing.T) {
+	resetConfig(t)
+	url := serveYAML(t, `
+mode: selective
+patterns:
+  sensitive:
+    maskType: replace
+    mask: "[REDACTED]"
+maskRules:
+  - keys: [address]
+    pattern: sensitive
+selectedFields:
+  default: [id]
+`)
+	require.NoError(t, LoadAuditConfig(context.Background(), url))
+
+	body := []byte(`{"id":"order-1","address":[{"street":"12 MG Road","city":"Bengaluru"}]}`)
+	out := ProcessAuditPayload(context.Background(), body)
+
+	assert.JSONEq(t, `{"id":"order-1","address":["[REDACTED]"]}`, string(out))
 }
 
 // ── Edge cases ───────────────────────────────────────────────────────────────
