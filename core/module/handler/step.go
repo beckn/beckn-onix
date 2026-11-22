@@ -259,7 +259,8 @@ func (s *validateSignStep) lookupCallbackRequestSig(ctx *model.StepContext, auth
 func (s *validateSignStep) validate(ctx *model.StepContext, value, requestSig string, checkIdentity bool) error {
 	headerVals, err := parseHeader(value)
 	if err != nil {
-		return fmt.Errorf("failed to parse header")
+		// A header that cannot be read is the sender's fault: 401, not 500.
+		return model.NewSignValidationErr("AUT_SIGNATURE_INVALID", fmt.Errorf("failed to parse header: %w", err))
 	}
 	// Guards the keyId component (sub|key|alg); parseAuthHeader in signvalidator
 	// guards the outer algorithm= attribute — the two cover different header fields.
