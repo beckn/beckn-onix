@@ -30,6 +30,7 @@ func (r *fakeSubscriptionRegistry) Lookup(context.Context, *model.Subscription) 
 
 func registrySub(status string, pub ed25519.PublicKey) model.Subscription {
 	return model.Subscription{
+		Subscriber:       model.Subscriber{SubscriberID: "node"},
 		KeyID:            "k1",
 		Status:           status,
 		SigningPublicKey: base64.StdEncoding.EncodeToString(pub),
@@ -89,7 +90,7 @@ func TestNewRegistryKeySource_UnusableStatusIsPermanent(t *testing.T) {
 }
 
 func TestNewRegistryKeySource_MissingSigningKeyIsPermanent(t *testing.T) {
-	reg := &fakeSubscriptionRegistry{subs: []model.Subscription{{KeyID: "k1", Status: "SUBSCRIBED"}}}
+	reg := &fakeSubscriptionRegistry{subs: []model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "node"}, KeyID: "k1", Status: "SUBSCRIBED"}}}
 	keys := newRegistryKeySource(reg)
 	_, err := keys(context.Background(), "node", "k1")
 	if !crawler.IsPermanent(err) || crawler.PermanentClass(err) != crawler.FaultSignature {
@@ -98,7 +99,7 @@ func TestNewRegistryKeySource_MissingSigningKeyIsPermanent(t *testing.T) {
 }
 
 func TestNewRegistryKeySource_BadBase64IsPermanent(t *testing.T) {
-	reg := &fakeSubscriptionRegistry{subs: []model.Subscription{{KeyID: "k1", Status: "SUBSCRIBED", SigningPublicKey: "not-base64!!"}}}
+	reg := &fakeSubscriptionRegistry{subs: []model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "node"}, KeyID: "k1", Status: "SUBSCRIBED", SigningPublicKey: "not-base64!!"}}}
 	keys := newRegistryKeySource(reg)
 	_, err := keys(context.Background(), "node", "k1")
 	if !crawler.IsPermanent(err) || crawler.PermanentClass(err) != crawler.FaultSignature {
@@ -108,7 +109,7 @@ func TestNewRegistryKeySource_BadBase64IsPermanent(t *testing.T) {
 
 func TestNewRegistryKeySource_WrongKeySizeIsPermanent(t *testing.T) {
 	reg := &fakeSubscriptionRegistry{subs: []model.Subscription{{
-		KeyID: "k1", Status: "SUBSCRIBED", SigningPublicKey: base64.StdEncoding.EncodeToString([]byte("too-short")),
+		Subscriber: model.Subscriber{SubscriberID: "node"}, KeyID: "k1", Status: "SUBSCRIBED", SigningPublicKey: base64.StdEncoding.EncodeToString([]byte("too-short")),
 	}}}
 	keys := newRegistryKeySource(reg)
 	_, err := keys(context.Background(), "node", "k1")

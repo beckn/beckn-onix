@@ -236,10 +236,10 @@ func TestRegistryClient_Lookup_Cache(t *testing.T) {
 		Subscriber: model.Subscriber{SubscriberID: "test-np"},
 		KeyID:      "key-1",
 	}
-	expectedCacheKey := "lookup_test-np_key-1"
+	expectedCacheKey := "lookup_v2_test-np_key-1"
 
 	t.Run("cache hit skips HTTP call", func(t *testing.T) {
-		cached := []model.Subscription{{SigningPublicKey: "cached-key"}}
+		cached := []model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "test-np"}, SigningPublicKey: "cached-key"}}
 		cachedJSON, _ := json.Marshal(cached)
 
 		httpCalled := false
@@ -275,10 +275,10 @@ func TestRegistryClient_Lookup_Cache(t *testing.T) {
 	t.Run("cache miss calls HTTP and writes to cache", func(t *testing.T) {
 		validUntil := time.Now().Add(10 * time.Minute)
 		resp := []model.Subscription{{
-			Subscriber:      model.Subscriber{SubscriberID: "test-np"},
-			KeyID:           "key-1",
+			Subscriber:       model.Subscriber{SubscriberID: "test-np"},
+			KeyID:            "key-1",
 			SigningPublicKey: "registry-key",
-			ValidUntil:      validUntil,
+			ValidUntil:       validUntil,
 		}}
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -314,7 +314,7 @@ func TestRegistryClient_Lookup_Cache(t *testing.T) {
 	})
 
 	t.Run("corrupt cache value falls through to HTTP", func(t *testing.T) {
-		resp := []model.Subscription{{SigningPublicKey: "fresh-key"}}
+		resp := []model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "test-np"}, SigningPublicKey: "fresh-key"}}
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -344,7 +344,7 @@ func TestRegistryClient_Lookup_Cache(t *testing.T) {
 	})
 
 	t.Run("cache set error does not fail lookup", func(t *testing.T) {
-		resp := []model.Subscription{{SigningPublicKey: "registry-key"}}
+		resp := []model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "test-np"}, SigningPublicKey: "registry-key"}}
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -371,6 +371,7 @@ func TestRegistryClient_Lookup_Cache(t *testing.T) {
 
 	t.Run("zero ValidUntil uses default cache TTL", func(t *testing.T) {
 		resp := []model.Subscription{{
+			Subscriber:       model.Subscriber{SubscriberID: "test-np"},
 			SigningPublicKey: "registry-key",
 			// ValidUntil is zero — no expiry in the response
 		}}
@@ -399,7 +400,7 @@ func TestRegistryClient_Lookup_Cache(t *testing.T) {
 	})
 
 	t.Run("nil cache behaves as before — no cache operations", func(t *testing.T) {
-		resp := []model.Subscription{{SigningPublicKey: "direct-key"}}
+		resp := []model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "test-np"}, SigningPublicKey: "direct-key"}}
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -422,4 +423,85 @@ func TestRegistryClient_Lookup_Cache(t *testing.T) {
 			t.Errorf("unexpected result: %+v", results)
 		}
 	})
+}
+
+// GHSA-xvr2-rwvm-4g6v: a registry that answers a lookup for one subscriber
+// with another subscriber's record must not have that record returned, fresh
+// or from the cache.
+func TestRegistryClient_Lookup_DropsOtherSubscribersRecord(t *testing.T) {
+	answer := []model.Subscription{{
+		Subscriber:       model.Subscriber{SubscriberID: "attacker.example.com"},
+		KeyID:            "key-1",
+		SigningPublicKey: "attacker-key",
+		Status:           "SUBSCRIBED",
+	}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(answer)
+	}))
+	defer server.Close()
+
+	cache := &mockCache{}
+	client, closer, err := New(context.Background(), cache, &Config{URL: server.URL})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer closer()
+
+	req := &model.Subscription{Subscriber: model.Subscriber{SubscriberID: "victim.example.com"}, KeyID: "key-1"}
+	got, err := client.Lookup(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("lookup for victim returned %d record(s), first for %q", len(got), got[0].SubscriberID)
+	}
+	if cache.setKey != "" {
+		t.Fatal("another subscriber's record was cached under the victim's key")
+	}
+
+	// A poisoned cache entry is not served either.
+	poisoned, _ := json.Marshal(answer)
+	cache2 := &mockCache{getFunc: func(context.Context, string) (string, error) { return string(poisoned), nil }}
+	client2, closer2, _ := New(context.Background(), cache2, &Config{URL: server.URL})
+	defer closer2()
+	got, err = client2.Lookup(context.Background(), req)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("cached record for another subscriber was served: %v, err=%v", got, err)
+	}
+}
+
+// A long valid_until must not stretch the cache beyond cacheTTL, or a revoked
+// key keeps verifying until its original expiry (GHSA-8h5h-6653-979h).
+func TestRegistryClient_Lookup_CacheTTLIsCapped(t *testing.T) {
+	answer := []model.Subscription{{
+		Subscriber: model.Subscriber{SubscriberID: "test-np"}, KeyID: "key-1", SigningPublicKey: "k",
+		ValidUntil: time.Now().Add(90 * 24 * time.Hour),
+	}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(answer)
+	}))
+	defer server.Close()
+	cache := &mockCache{}
+	client, closer, _ := New(context.Background(), cache, &Config{URL: server.URL})
+	defer closer()
+	if _, err := client.Lookup(context.Background(), &model.Subscription{Subscriber: model.Subscriber{SubscriberID: "test-np"}, KeyID: "key-1"}); err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if cache.setTTL != defaultCacheTTL {
+		t.Fatalf("cached for %s, want the %s cap", cache.setTTL, defaultCacheTTL)
+	}
+}
+
+func TestValidateRegistryURL(t *testing.T) {
+	for _, bad := range []string{"registry.example.com", "ftp://registry.example.com", "http://", "/lookup"} {
+		if err := validate(&Config{URL: bad}); err == nil {
+			t.Errorf("accepted registry URL %q", bad)
+		}
+	}
+	for _, good := range []string{"https://registry.example.com", "http://localhost:8080"} {
+		if err := validate(&Config{URL: good}); err != nil {
+			t.Errorf("rejected registry URL %q: %v", good, err)
+		}
+	}
 }

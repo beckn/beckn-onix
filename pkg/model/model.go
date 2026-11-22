@@ -34,26 +34,6 @@ type Subscription struct {
 	NetworkMemberships []string  `json:"network_memberships,omitempty"`
 }
 
-// nonUsableKeySubscriptionStatuses are the Subscription.Status values that mean a
-// matched subscriber's key is no longer usable for signature verification.
-// INITIATED and UNDER_SUBSCRIPTION are intentionally absent — this function
-// distinguishes revocation/expiry from good standing only; it does not gate on
-// subscription completeness. A subscriber that has registered a key but not yet
-// finished onboarding is still treated as usable here. If pre-subscription
-// participants should be rejected too, that is a separate authorization
-// decision for a caller (or a future ticket) to make, not part of this check.
-var nonUsableKeySubscriptionStatuses = map[string]bool{
-	"EXPIRED":      true,
-	"UNSUBSCRIBED": true,
-	"INVALID_SSL":  true,
-}
-
-// IsKeyStatusUsable reports whether a subscriber's registry Status still
-// permits its key to be used for signature verification.
-func IsKeyStatusUsable(status string) bool {
-	return !nonUsableKeySubscriptionStatuses[status]
-}
-
 // RegistryMetadata represents metadata configured on a registry itself rather than on a specific record.
 type RegistryMetadata struct {
 	NamespaceIdentifier string

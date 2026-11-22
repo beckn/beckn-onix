@@ -576,6 +576,14 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 
 	log.Debugf(ctx, "DeDi lookup request successful, parsing response")
 
+	// DeDi has no subscription status; a record that is not live (revoked or
+	// otherwise withdrawn) must not supply a verification key.
+	if state, ok := data["state"].(string); ok && state != "live" {
+		log.Errorf(ctx, nil, "DeDi record for subscriber %q is in state %q, not live", subscriberID, state)
+		return nil, model.NewSignValidationErr(codeAutKeyNotFound,
+			fmt.Errorf("DeDi record for subscriber %q is not live", subscriberID))
+	}
+
 	parsed, err := c.parseSubscriptionFromData(ctx, data, true)
 	if err != nil {
 		return nil, err

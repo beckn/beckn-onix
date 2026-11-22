@@ -48,25 +48,25 @@ func TestResolveRegistryKey_NoSubscription(t *testing.T) {
 }
 
 func TestResolveRegistryKey_UnusableStatus(t *testing.T) {
-	subs := []model.Subscription{{SigningPublicKey: "AA==", Status: "UNSUBSCRIBED"}}
+	subs := []model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "node"}, SigningPublicKey: "AA==", Status: "UNSUBSCRIBED"}}
 	_, err := resolveRegistryKey(context.Background(), stubRegistryLookup{subs: subs}, "node", "key1")
 	assertPermanentSignatureFault(t, err)
 }
 
 func TestResolveRegistryKey_EmptySigningPublicKey(t *testing.T) {
-	subs := []model.Subscription{{Status: "SUBSCRIBED"}}
+	subs := []model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "node"}, Status: "SUBSCRIBED"}}
 	_, err := resolveRegistryKey(context.Background(), stubRegistryLookup{subs: subs}, "node", "key1")
 	assertPermanentSignatureFault(t, err)
 }
 
 func TestResolveRegistryKey_InvalidBase64(t *testing.T) {
-	subs := []model.Subscription{{SigningPublicKey: "not-base64!!", Status: "SUBSCRIBED"}}
+	subs := []model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "node"}, SigningPublicKey: "not-base64!!", Status: "SUBSCRIBED"}}
 	_, err := resolveRegistryKey(context.Background(), stubRegistryLookup{subs: subs}, "node", "key1")
 	assertPermanentSignatureFault(t, err)
 }
 
 func TestResolveRegistryKey_WrongKeySize(t *testing.T) {
-	subs := []model.Subscription{{SigningPublicKey: base64.StdEncoding.EncodeToString([]byte("too-short")), Status: "SUBSCRIBED"}}
+	subs := []model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "node"}, SigningPublicKey: base64.StdEncoding.EncodeToString([]byte("too-short")), Status: "SUBSCRIBED"}}
 	_, err := resolveRegistryKey(context.Background(), stubRegistryLookup{subs: subs}, "node", "key1")
 	assertPermanentSignatureFault(t, err)
 }
@@ -76,7 +76,7 @@ func TestResolveRegistryKey_Valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generating key: %v", err)
 	}
-	subs := []model.Subscription{{SigningPublicKey: base64.StdEncoding.EncodeToString(pub), Status: "SUBSCRIBED"}}
+	subs := []model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "node"}, SigningPublicKey: base64.StdEncoding.EncodeToString(pub), Status: "SUBSCRIBED"}}
 	got, err := resolveRegistryKey(context.Background(), stubRegistryLookup{subs: subs}, "node", "key1")
 	if err != nil {
 		t.Fatalf("resolveRegistryKey: %v", err)
@@ -448,10 +448,10 @@ type flakyThenUsableRegistry struct {
 	failuresLeft *int
 }
 
-func (f *flakyThenUsableRegistry) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
+func (f *flakyThenUsableRegistry) Lookup(_ context.Context, req *model.Subscription) ([]model.Subscription, error) {
 	if *f.failuresLeft > 0 {
 		*f.failuresLeft--
 		return nil, errors.New("registry temporarily unavailable")
 	}
-	return []model.Subscription{{SigningPublicKey: f.pubB64Fn(), Status: "SUBSCRIBED"}}, nil
+	return []model.Subscription{{Subscriber: req.Subscriber, SigningPublicKey: f.pubB64Fn(), Status: "SUBSCRIBED"}}, nil
 }

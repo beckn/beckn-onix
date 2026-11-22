@@ -78,11 +78,11 @@ func (f *fakeRegistryMetadata) QueryByNetwork(context.Context, string) ([]model.
 // makes verification actually succeed.
 type fakeVerifyRegistry struct{ PubB64 string }
 
-func (f fakeVerifyRegistry) Lookup(context.Context, *model.Subscription) ([]model.Subscription, error) {
+func (f fakeVerifyRegistry) Lookup(_ context.Context, req *model.Subscription) ([]model.Subscription, error) {
 	if f.PubB64 == "" {
 		return nil, nil
 	}
-	return []model.Subscription{{SigningPublicKey: f.PubB64, Status: "SUBSCRIBED"}}, nil
+	return []model.Subscription{{Subscriber: req.Subscriber, SigningPublicKey: f.PubB64, Status: "SUBSCRIBED"}}, nil
 }
 
 // newVerifyingBlobServer serves bs's own contents over HTTP, so a
