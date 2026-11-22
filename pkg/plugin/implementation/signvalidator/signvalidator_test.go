@@ -546,3 +546,45 @@ func TestValidate_DuplicateKeyID_Rejected(t *testing.T) {
 		t.Fatal("accepted the attacker's signature under the victim's keyId")
 	}
 }
+
+// GHSA-676x-xg5x-hxxp: a registry record with a key of the wrong length used
+// to panic inside ed25519.Verify.
+func TestValidate_MalformedPublicKey_NoPanic(t *testing.T) {
+	priv, _ := generateTestKeyPair()
+	body := []byte(`{"context":{"action":"search","bap_id":"bap.example.com"}}`)
+	now, exp := time.Now().Unix(), time.Now().Unix()+300
+	header := signedHeaderWithKeyID("bap.example.com", priv, body, now, exp)
+	verifier, _, _ := New(context.Background(), &Config{})
+
+	for name, key := range map[string]string{
+		"3 bytes":  base64.StdEncoding.EncodeToString([]byte{1, 2, 3}),
+		"empty":    "",
+		"33 bytes": base64.StdEncoding.EncodeToString(make([]byte, 33)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("Validate panicked: %v", r)
+				}
+			}()
+			if err := verifier.Validate(makeCtx(body, model.RoleBPP), header, key, true); err == nil {
+				t.Fatal("accepted a signature against a malformed key")
+			}
+			if err := verifier.ValidateAck(makeCtx(body, model.RoleBPP), body, header, "req-sig", key, true); err == nil {
+				t.Fatal("ValidateAck accepted a signature against a malformed key")
+			}
+		})
+	}
+}
+
+func TestValidate_ExpiresBeforeCreated_Rejected(t *testing.T) {
+	priv, pub := generateTestKeyPair()
+	body := []byte(`{"context":{"action":"search","bap_id":"bap.example.com"}}`)
+	// created is inside the clock-skew tolerance, expires is still in the future, but before created.
+	created, expires := time.Now().Unix()+20, time.Now().Unix()+10
+	header := signedHeaderWithKeyID("bap.example.com", priv, body, created, expires)
+	verifier, _, _ := New(context.Background(), &Config{})
+	if err := verifier.Validate(makeCtx(body, model.RoleBPP), header, pub, true); err == nil {
+		t.Fatal("accepted a signature that expires before it was created")
+	}
+}

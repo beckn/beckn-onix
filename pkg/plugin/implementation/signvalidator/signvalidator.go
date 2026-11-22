@@ -94,6 +94,11 @@ func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBas
 		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("error decoding public key: %w", err))
 	}
 
+	// ed25519.Verify panics on a key of any other length. The key comes from a
+	// registry record, so a malformed record must fail this request, not crash it.
+	if len(decodedPublicKey) != ed25519.PublicKeySize {
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("public key is %d bytes, want %d", len(decodedPublicKey), ed25519.PublicKeySize))
+	}
 	if !ed25519.Verify(ed25519.PublicKey(decodedPublicKey), []byte(signingString), signatureBytes) {
 		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("signature verification failed"))
 	}
@@ -174,6 +179,11 @@ func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHe
 		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("error decoding public key: %w", err))
 	}
 
+	// ed25519.Verify panics on a key of any other length. The key comes from a
+	// registry record, so a malformed record must fail this request, not crash it.
+	if len(decodedPublicKey) != ed25519.PublicKeySize {
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("public key is %d bytes, want %d", len(decodedPublicKey), ed25519.PublicKeySize))
+	}
 	if !ed25519.Verify(ed25519.PublicKey(decodedPublicKey), []byte(signingString), signatureBytes) {
 		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("AckSignature verification failed"))
 	}
@@ -222,6 +232,11 @@ func checkSubscriberIdentity(ctx *model.StepContext, body []byte, signerID strin
 // `expires` is always checked with zero tolerance per the spec.
 func checkTimestampWindow(prefix string, createdTimestamp, expiredTimestamp int64, clockSkewTolerance time.Duration) error {
 	now := time.Now().UTC()
+	// A signature cannot expire before it was created.
+	if expiredTimestamp < createdTimestamp {
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("%s expires before it was created: created=%d, expires=%d",
+			prefix, createdTimestamp, expiredTimestamp))
+	}
 	// Accept created values up to clockSkewTolerance in the future.
 	deadline := now.Add(clockSkewTolerance)
 	if time.Unix(createdTimestamp, 0).UTC().After(deadline) {
