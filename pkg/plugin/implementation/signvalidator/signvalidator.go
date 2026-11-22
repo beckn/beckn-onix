@@ -109,18 +109,11 @@ func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBas
 // parseAuthHeader extracts signature values from the Authorization header.
 // subscriberID is the first |-delimited component of keyId="..." (empty if keyId absent).
 func parseAuthHeader(header string) (int64, int64, string, string, error) {
-	header = strings.TrimPrefix(header, "Signature ")
-
-	parts := strings.Split(header, ",")
-	signatureMap := make(map[string]string)
-
-	for _, part := range parts {
-		keyValue := strings.SplitN(strings.TrimSpace(part), "=", 2)
-		if len(keyValue) == 2 {
-			key := strings.TrimSpace(keyValue[0])
-			value := strings.Trim(keyValue[1], "\"")
-			signatureMap[key] = value
-		}
+	// The shared parser rejects a repeated parameter, so the keyId read here
+	// for the identity check is the one the key lookup used.
+	signatureMap, err := model.ParseSignatureHeader(header)
+	if err != nil {
+		return 0, 0, "", "", model.NewSignValidationErr(codeSignatureInvalid, err)
 	}
 
 	if signatureMap["algorithm"] != "ed25519" {

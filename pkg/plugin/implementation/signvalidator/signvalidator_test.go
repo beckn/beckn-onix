@@ -515,3 +515,34 @@ func TestValidateAck_SubIdentity_FromBody_Mismatch(t *testing.T) {
 		t.Fatal("expected error: signer evil.com does not match body bap_id bap.example.com")
 	}
 }
+
+// GHSA-j2f4-5mf2-f824: a header that names keyId twice used to show the
+// attacker's keyId to the key lookup and the victim's keyId to the identity
+// check. The attacker signs with its own key and claims the victim's bap_id.
+func TestValidate_DuplicateKeyID_Rejected(t *testing.T) {
+	attackerPriv, attackerPub := generateTestKeyPair()
+	body := []byte(`{"context":{"action":"status","bap_id":"bap.example.com"}}`)
+	now, exp := time.Now().Unix(), time.Now().Unix()+300
+	sig := signTestData(attackerPriv, body, now, exp)
+
+	headers := map[string]string{
+		"attacker first, victim last": fmt.Sprintf(
+			`Signature keyId="attacker.example.com|key-1|ed25519",keyId="bap.example.com|key-9|ed25519",algorithm="ed25519",created="%d",expires="%d",headers="(created) (expires) digest",signature="%s"`,
+			now, exp, sig),
+		"lookalike parameter before keyId": fmt.Sprintf(
+			`Signature xkeyId="attacker.example.com|key-1|ed25519",keyId="bap.example.com|key-9|ed25519",algorithm="ed25519",created="%d",expires="%d",headers="(created) (expires) digest",signature="%s"`,
+			now, exp, sig),
+	}
+	verifier, _, _ := New(context.Background(), &Config{})
+
+	// Duplicate: refused outright, with the attacker's key as the lookup result.
+	if err := verifier.Validate(makeCtx(body, model.RoleBPP), headers["attacker first, victim last"], attackerPub, true); err == nil {
+		t.Fatal("accepted a header with two keyId parameters")
+	}
+	// Lookalike: keyId is the victim's, so the handler looks up the victim's
+	// key, and the attacker's signature does not verify against it.
+	_, victimPub := generateTestKeyPair()
+	if err := verifier.Validate(makeCtx(body, model.RoleBPP), headers["lookalike parameter before keyId"], victimPub, true); err == nil {
+		t.Fatal("accepted the attacker's signature under the victim's keyId")
+	}
+}

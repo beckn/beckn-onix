@@ -300,17 +300,11 @@ func (s *validateSignStep) recordMetrics(ctx *model.StepContext, err error) {
 // This distinguishes solicited callbacks (4-line signing string) from
 // provider-initiated pushes (3-line signing string, no request-signature).
 func authHeaderIncludesRequestSig(header string) bool {
-	const hPrefix = `headers="`
-	idx := strings.Index(header, hPrefix)
-	if idx == -1 {
+	params, err := model.ParseSignatureHeader(header)
+	if err != nil {
 		return false
 	}
-	idx += len(hPrefix)
-	end := strings.Index(header[idx:], `"`)
-	if end == -1 {
-		return false
-	}
-	return strings.Contains(header[idx:idx+end], "request-signature")
+	return strings.Contains(params["headers"], "request-signature")
 }
 
 // ParsedKeyID holds the components from the parsed Authorization header's keyId.
@@ -324,17 +318,13 @@ type authHeader struct {
 // Example keyId format: "{subscriber_id}|{unique_key_id}|{algorithm}"
 func parseHeader(header string) (*authHeader, error) {
 	// Example: Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",...
-	keyIDPart := ""
-	// Look for keyId="<value>"
-	const keyIdPrefix = `keyId="`
-	startIndex := strings.Index(header, keyIdPrefix)
-	if startIndex != -1 {
-		startIndex += len(keyIdPrefix)
-		endIndex := strings.Index(header[startIndex:], `"`)
-		if endIndex != -1 {
-			keyIDPart = strings.TrimSpace(header[startIndex : startIndex+endIndex])
-		}
+	// Parsed with the same function the sign validator uses, so the key looked
+	// up here belongs to the keyId whose identity is checked there.
+	params, err := model.ParseSignatureHeader(header)
+	if err != nil {
+		return nil, err
 	}
+	keyIDPart := strings.TrimSpace(params["keyId"])
 
 	if keyIDPart == "" {
 		return nil, fmt.Errorf("keyId parameter not found in Authorization header")
@@ -486,17 +476,11 @@ func extractProtocolVersion(body []byte) string {
 // "request-signature=..." before "signature=..." in its header does not cause
 // the wrong value to be extracted.
 func extractAuthSignature(authHeader string) string {
-	const marker = `,signature="`
-	idx := strings.Index(authHeader, marker)
-	if idx < 0 {
+	params, err := model.ParseSignatureHeader(authHeader)
+	if err != nil {
 		return ""
 	}
-	rest := authHeader[idx+len(marker):]
-	end := strings.IndexByte(rest, '"')
-	if end < 0 {
-		return ""
-	}
-	return rest[:end]
+	return params["signature"]
 }
 
 func extractMessageID(body []byte) string {
