@@ -528,12 +528,12 @@ func TestLookupFreshRecordIdentity(t *testing.T) {
 		}
 	})
 
-	t.Run("a record without subscriber_id is accepted as is and cached", func(t *testing.T) {
+	t.Run("a record without subscriber_id is accepted, returned under the requested id, and cached", func(t *testing.T) {
 		server, hits := countingServer(t, record(nil))
 		client, _ := cachingClient(t, server.URL)
 
-		if got := mustLookup(t, client, "bpp.example", "k1"); got.SubscriberID != "" {
-			t.Errorf("SubscriberID = %q, want the empty value DeDi returned", got.SubscriberID)
+		if got := mustLookup(t, client, "bpp.example", "k1"); got.SubscriberID != "bpp.example" {
+			t.Errorf("SubscriberID = %q, want the requested subscriber", got.SubscriberID)
 		}
 		mustLookup(t, client, "bpp.example", "k1")
 		requireHits(t, hits, 1) // second lookup served from cache

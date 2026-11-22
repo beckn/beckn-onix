@@ -24,6 +24,12 @@ func TestSelectKeyRecord(t *testing.T) {
 		{"other subscriber's record only", []Subscription{rec("attacker", "k1", "SUBSCRIBED")}, "", ErrKeyRecordNotFound},
 		{"other subscriber's record first", []Subscription{rec("attacker", "k1", "SUBSCRIBED"), rec("victim", "k1", "SUBSCRIBED")}, "victim-key", nil},
 		{"record without subscriber id", []Subscription{rec("", "k1", "SUBSCRIBED")}, "", ErrKeyRecordNotFound},
+		// Host names: case and a trailing dot do not make a different subscriber.
+		{"subscriber id in another case", []Subscription{{Subscriber: Subscriber{SubscriberID: "VICTIM."}, KeyID: "K1", Status: "SUBSCRIBED", SigningPublicKey: "victim-key"}}, "victim-key", nil},
+		// Rotation: an expired record listed before the usable one for the same key.
+		{"expired record before a usable one", []Subscription{rec("victim", "k1", "EXPIRED"), rec("victim", "k1", "SUBSCRIBED")}, "victim-key", nil},
+		{"record naming the key preferred over one naming none", []Subscription{{Subscriber: Subscriber{SubscriberID: "victim"}, Status: "SUBSCRIBED", SigningPublicKey: "unnamed"}, rec("victim", "k1", "SUBSCRIBED")}, "victim-key", nil},
+		{"all matching records unusable", []Subscription{rec("victim", "k1", "EXPIRED"), rec("victim", "k1", "UNSUBSCRIBED")}, "", ErrKeyRecordNotUsable},
 		{"different key id", []Subscription{rec("victim", "k2", "SUBSCRIBED")}, "", ErrKeyRecordNotFound},
 		{"empty answer", nil, "", ErrKeyRecordNotFound},
 		// GHSA-8h5h-6653-979h: status is an allowlist.
@@ -60,6 +66,7 @@ func TestSelectKeyRecordValidityWindow(t *testing.T) {
 		{"expired, status still SUBSCRIBED", now.Add(-48 * time.Hour), now.Add(-time.Hour), ErrKeyRecordOutsideValidity},
 		{"expires exactly now", time.Time{}, now, ErrKeyRecordOutsideValidity},
 		{"not yet valid", now.Add(time.Hour), now.Add(48 * time.Hour), ErrKeyRecordOutsideValidity},
+		{"valid_from 30s ahead of our clock", now.Add(30 * time.Second), now.Add(48 * time.Hour), nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

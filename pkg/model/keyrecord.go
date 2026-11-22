@@ -17,40 +17,74 @@ var (
 	ErrKeyRecordOutsideValidity = errors.New("registry record is outside its validity window")
 )
 
+// validFromLeeway is how far ahead of this adapter's clock a record's
+// valid_from may be and still count as started. Registries and adapters do
+// not share a clock.
+const validFromLeeway = time.Minute
+
+// SameSubscriberID reports whether two subscriber IDs name the same
+// subscriber. Subscriber IDs are host names, so letter case and a trailing
+// dot do not distinguish them.
+func SameSubscriberID(a, b string) bool {
+	a, b = strings.TrimSuffix(strings.TrimSpace(a), "."), strings.TrimSuffix(strings.TrimSpace(b), ".")
+	return a != "" && strings.EqualFold(a, b)
+}
+
 // SelectKeyRecord picks, from a registry lookup answer, the record whose key
 // may be used to verify a signature made as subscriberID with keyID.
 //
 // A registry answer is not trusted to be about the subscriber that was asked
 // for: a record for anyone else is ignored, so one subscriber's key can never
 // verify a message sent in another's name. A record that names a different
-// key id is ignored too. The chosen record must have a usable status and be
-// inside its validity window.
+// key id is ignored too. Among the records that remain, one that names the
+// requested key id is preferred over one that names none, and the first one
+// with a usable status inside its validity window is returned. If none is
+// usable, the error says why the best candidate was refused.
 func SelectKeyRecord(subs []Subscription, subscriberID, keyID string, now time.Time) (*Subscription, error) {
-	var match *Subscription
-	for i := range subs {
-		s := &subs[i]
-		if subscriberID == "" || s.SubscriberID != subscriberID {
-			continue
+	var candidates []*Subscription
+	for pass := 0; pass < 2; pass++ {
+		for i := range subs {
+			s := &subs[i]
+			if !SameSubscriberID(s.SubscriberID, subscriberID) {
+				continue
+			}
+			named := s.KeyID != "" && keyID != ""
+			if named && !strings.EqualFold(s.KeyID, keyID) {
+				continue
+			}
+			// Pass 0: records that name the requested key. Pass 1: the rest.
+			if (pass == 0) == named {
+				candidates = append(candidates, s)
+			}
 		}
-		if keyID != "" && s.KeyID != "" && s.KeyID != keyID {
-			continue
-		}
-		match = s
-		break
 	}
-	if match == nil {
+	if len(candidates) == 0 {
 		return nil, ErrKeyRecordNotFound
 	}
-	if !IsKeyStatusUsable(match.Status) {
-		return nil, fmt.Errorf("%w: status %q", ErrKeyRecordNotUsable, match.Status)
+	var firstErr error
+	for _, s := range candidates {
+		err := keyRecordUsable(s, now)
+		if err == nil {
+			return s, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
 	}
-	if !match.ValidFrom.IsZero() && now.Before(match.ValidFrom) {
-		return nil, fmt.Errorf("%w: valid from %s", ErrKeyRecordOutsideValidity, match.ValidFrom.UTC().Format(time.RFC3339))
+	return nil, firstErr
+}
+
+func keyRecordUsable(s *Subscription, now time.Time) error {
+	if !IsKeyStatusUsable(s.Status) {
+		return fmt.Errorf("%w: status %q", ErrKeyRecordNotUsable, s.Status)
 	}
-	if !match.ValidUntil.IsZero() && !now.Before(match.ValidUntil) {
-		return nil, fmt.Errorf("%w: valid until %s", ErrKeyRecordOutsideValidity, match.ValidUntil.UTC().Format(time.RFC3339))
+	if !s.ValidFrom.IsZero() && now.Add(validFromLeeway).Before(s.ValidFrom) {
+		return fmt.Errorf("%w: valid from %s", ErrKeyRecordOutsideValidity, s.ValidFrom.UTC().Format(time.RFC3339))
 	}
-	return match, nil
+	if !s.ValidUntil.IsZero() && !now.Before(s.ValidUntil) {
+		return fmt.Errorf("%w: valid until %s", ErrKeyRecordOutsideValidity, s.ValidUntil.UTC().Format(time.RFC3339))
+	}
+	return nil
 }
 
 // usableKeySubscriptionStatuses are the Subscription.Status values under which

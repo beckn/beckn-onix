@@ -236,7 +236,7 @@ func TestRegistryClient_Lookup_Cache(t *testing.T) {
 		Subscriber: model.Subscriber{SubscriberID: "test-np"},
 		KeyID:      "key-1",
 	}
-	expectedCacheKey := "lookup_v2_test-np_key-1"
+	expectedCacheKey := "lookup_v3/test-np/key-1"
 
 	t.Run("cache hit skips HTTP call", func(t *testing.T) {
 		cached := []model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "test-np"}, SigningPublicKey: "cached-key"}}
@@ -503,5 +503,40 @@ func TestValidateRegistryURL(t *testing.T) {
 		if err := validate(&Config{URL: good}); err != nil {
 			t.Errorf("rejected registry URL %q: %v", good, err)
 		}
+	}
+}
+
+// Two different {subscriber, key} pairs must not share a cache key, and an
+// entry with nothing for this subscriber must not be served as an answer.
+func TestRegistryClient_Lookup_CacheKeysDoNotCollide(t *testing.T) {
+	var keys []string
+	asked := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked++
+		_ = json.NewEncoder(w).Encode([]model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "bap.example.com"}, KeyID: "k_1", SigningPublicKey: "k"}})
+	}))
+	defer server.Close()
+	other, _ := json.Marshal([]model.Subscription{{Subscriber: model.Subscriber{SubscriberID: "bap.example.com_k"}, KeyID: "1", SigningPublicKey: "other"}})
+	cache := &mockCache{getFunc: func(_ context.Context, key string) (string, error) {
+		keys = append(keys, key)
+		return string(other), nil // every key "hits" with the other subscriber's entry
+	}}
+	client, closer, _ := New(context.Background(), cache, &Config{URL: server.URL})
+	defer closer()
+
+	a := &model.Subscription{Subscriber: model.Subscriber{SubscriberID: "bap.example.com_k"}, KeyID: "1"}
+	b := &model.Subscription{Subscriber: model.Subscriber{SubscriberID: "bap.example.com"}, KeyID: "k_1"}
+	if _, err := client.Lookup(context.Background(), a); err != nil {
+		t.Fatalf("Lookup a: %v", err)
+	}
+	got, err := client.Lookup(context.Background(), b)
+	if err != nil {
+		t.Fatalf("Lookup b: %v", err)
+	}
+	if len(keys) != 2 || keys[0] == keys[1] {
+		t.Fatalf("cache keys collide: %v", keys)
+	}
+	if asked != 1 || len(got) != 1 || got[0].SigningPublicKey != "k" {
+		t.Fatalf("lookup b was answered from the other subscriber's entry: asked=%d got=%v", asked, got)
 	}
 }

@@ -69,7 +69,7 @@ func recordsForSubscriber(ctx context.Context, results []model.Subscription, sub
 	}
 	kept := make([]model.Subscription, 0, len(results))
 	for _, r := range results {
-		if r.SubscriberID != subscriberID {
+		if !model.SameSubscriberID(r.SubscriberID, subscriberID) {
 			log.Warnf(ctx, "registry lookup for subscriber %q returned a record for %q; ignored", subscriberID, r.SubscriberID)
 			continue
 		}
@@ -161,8 +161,10 @@ func (c *RegistryClient) Subscribe(ctx context.Context, subscription *model.Subs
 // Results are cached using the subscriber ID and key ID as the cache key.
 // On a cache hit the network call is skipped entirely.
 func (c *RegistryClient) Lookup(ctx context.Context, subscription *model.Subscription) ([]model.Subscription, error) {
-	// Escaped so that two different {subscriber, key} pairs cannot share a key.
-	cacheKey := fmt.Sprintf("lookup_v2_%s_%s", url.QueryEscape(subscription.SubscriberID), url.QueryEscape(subscription.KeyID))
+	// "/" separates the parts and is escaped inside them, so two different
+	// {subscriber, key} pairs cannot share a key, and no key written by an
+	// earlier release ("lookup_<sub>_<key>") can be read as one of these.
+	cacheKey := fmt.Sprintf("lookup_v3/%s/%s", url.PathEscape(subscription.SubscriberID), url.PathEscape(subscription.KeyID))
 	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
 
 	if c.cache != nil {
@@ -171,9 +173,13 @@ func (c *RegistryClient) Lookup(ctx context.Context, subscription *model.Subscri
 		if err == nil {
 			var results []model.Subscription
 			if err := json.Unmarshal([]byte(cached), &results); err == nil {
-				log.Debugf(ctx, "Registry lookup cache hit for key: %s", cacheKey)
-				cacheSpan.End()
-				return recordsForSubscriber(ctx, results, subscription.SubscriberID), nil
+				// An entry that holds nothing for this subscriber is not an
+				// answer; ask the registry.
+				if kept := recordsForSubscriber(ctx, results, subscription.SubscriberID); len(kept) > 0 {
+					log.Debugf(ctx, "Registry lookup cache hit for key: %s", cacheKey)
+					cacheSpan.End()
+					return kept, nil
+				}
 			}
 		}
 		cacheSpan.End()
