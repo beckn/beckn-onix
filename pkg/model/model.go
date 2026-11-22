@@ -254,6 +254,36 @@ func ResolveCallerID(reqContext map[string]interface{}, role Role) string {
 	return ""
 }
 
+// CallerIDs returns every caller identity a Beckn context declares for role,
+// under any of the field names ResolveCallerID accepts and in any letter
+// case. A message can carry more than one of them (bap_id next to bapId, or
+// BapId), and different readers pick different ones, so a check that binds
+// the signer to the declared caller must look at all of them.
+func CallerIDs(reqContext map[string]interface{}, role Role) []string {
+	var names []string
+	switch role {
+	case RoleBAP:
+		names = []string{"bpp_id", "bppid", "receiverid"}
+	case RoleBPP:
+		names = []string{"bap_id", "bapid", "senderid"}
+	default:
+		return nil
+	}
+	var ids []string
+	for k, raw := range reqContext {
+		lk := strings.ToLower(k)
+		for _, n := range names {
+			if lk != n {
+				continue
+			}
+			if v, ok := raw.(string); ok && v != "" {
+				ids = append(ids, v)
+			}
+		}
+	}
+	return ids
+}
+
 // ResolveSubscriberID returns the node's own subscriber ID from a parsed Beckn context map.
 // For BAP role: returns bap_id / bapId / senderId.
 // For BPP role: returns bpp_id / bppId / receiverId.

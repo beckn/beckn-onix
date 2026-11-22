@@ -24,6 +24,8 @@ func TestParseSignatureHeader(t *testing.T) {
 	for _, h := range []string{
 		`keyId="a|b|ed25519", algorithm="ed25519", created=100, expires=200, signature="x"`,
 		`Signature   keyId="a|b|ed25519",algorithm="ed25519",created="1",expires="2",signature="x"`,
+		`Signature keyId="a|b|ed25519",algorithm="ed25519",created="1",expires="2",signature=abc+/==`,
+		`Signature keyId="a|b|ed25519",algorithm="ed25519",created="1",expires="2",signature="x",`,
 	} {
 		if _, err := ParseSignatureHeader(h); err != nil {
 			t.Errorf("rejected %q: %v", h, err)
@@ -38,7 +40,6 @@ func TestParseSignatureHeader(t *testing.T) {
 		"bare word":                 `Signature keyId="a|k|ed25519",garbage`,
 		"junk after value":          `Signature keyId="a|k|ed25519"x,algorithm="ed25519"`,
 		"unterminated quote":        `Signature keyId="a|k|ed25519`,
-		"trailing comma":            `Signature keyId="a|k|ed25519",`,
 		"empty":                     `Signature `,
 		"name with quote":           `Signature x"keyId="a|k|ed25519"`,
 		"name with space":           `Signature key Id="a|k|ed25519"`,

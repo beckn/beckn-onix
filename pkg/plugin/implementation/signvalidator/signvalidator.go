@@ -201,27 +201,34 @@ func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHe
 // in the request body context. body is the body that was actually validated so
 // callers with different bodies (Validate vs ValidateAck) each pass the right one.
 func checkSubscriberIdentity(ctx *model.StepContext, body []byte, signerID string) error {
-	expected, _ := ctx.Value(model.ContextKeyRemoteID).(string)
-
-	if expected == "" {
-		var payload struct {
-			Context map[string]interface{} `json:"context"`
-		}
-		if err := json.Unmarshal(body, &payload); err != nil {
-			log.Debugf(ctx, "checkSubscriberIdentity: failed to parse body: %v; skipping check", err)
-		} else if payload.Context != nil {
-			expected = model.ResolveCallerID(payload.Context, ctx.Role)
-		}
+	// Every caller identity the message declares must be the signer: the one
+	// the request preprocessor resolved, and every alias in the body. A body
+	// can carry several (bap_id next to bapId, or another letter case), and
+	// the application behind this adapter may read a different one than the
+	// adapter does.
+	var declared []string
+	if remote, _ := ctx.Value(model.ContextKeyRemoteID).(string); remote != "" {
+		declared = append(declared, remote)
+	}
+	var payload struct {
+		Context map[string]interface{} `json:"context"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Debugf(ctx, "checkSubscriberIdentity: failed to parse body: %v", err)
+	} else if payload.Context != nil {
+		declared = append(declared, model.CallerIDs(payload.Context, ctx.Role)...)
 	}
 
-	if expected == "" {
+	if len(declared) == 0 {
 		log.Debugf(ctx, "checkSubscriberIdentity: no caller ID available for role %v; skipping check", ctx.Role)
 		return nil
 	}
 
-	if signerID != expected {
-		return model.NewSignValidationErr(codeUnauthorizedAction, fmt.Errorf("subscriber identity mismatch: signing subscriber %q does not match declared context identity %q",
-			signerID, expected))
+	for _, expected := range declared {
+		if signerID != expected {
+			return model.NewSignValidationErr(codeUnauthorizedAction, fmt.Errorf("subscriber identity mismatch: signing subscriber %q does not match declared context identity %q",
+				signerID, expected))
+		}
 	}
 	return nil
 }

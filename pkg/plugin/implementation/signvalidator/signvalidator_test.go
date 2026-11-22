@@ -588,3 +588,34 @@ func TestValidate_ExpiresBeforeCreated_Rejected(t *testing.T) {
 		t.Fatal("accepted a signature that expires before it was created")
 	}
 }
+
+// Found in review: the body can declare the caller under several field names.
+// The signer must match every one of them, or a signer can put its own id in
+// the field the adapter checks and a victim's id in the field the application
+// reads.
+func TestValidate_AllCallerAliasesMustMatchSigner(t *testing.T) {
+	priv, pub := generateTestKeyPair()
+	now, exp := time.Now().Unix(), time.Now().Unix()+300
+	verifier, _, _ := New(context.Background(), &Config{})
+	spoofs := map[string]string{
+		"bap_id attacker, bapId victim":   `{"context":{"action":"status","bap_id":"attacker.example.com","bapId":"bap.example.com"}}`,
+		"bapId attacker, senderId victim": `{"context":{"action":"status","bapId":"attacker.example.com","senderId":"bap.example.com"}}`,
+		"bapId attacker, BapId victim":    `{"context":{"action":"status","bapId":"attacker.example.com","BapId":"bap.example.com"}}`,
+		"only BapId, naming the victim":   `{"context":{"action":"status","BapId":"bap.example.com"}}`,
+		"only BAP_ID, naming the victim":  `{"context":{"action":"status","BAP_ID":"bap.example.com"}}`,
+	}
+	for name, body := range spoofs {
+		t.Run(name, func(t *testing.T) {
+			header := signedHeaderWithKeyID("attacker.example.com", priv, []byte(body), now, exp)
+			if err := verifier.Validate(makeCtx([]byte(body), model.RoleBPP), header, pub, true); err == nil {
+				t.Fatal("message signed by attacker.example.com accepted while the body names bap.example.com")
+			}
+		})
+	}
+	// An honest message that repeats its own id under two names is fine.
+	body := []byte(`{"context":{"action":"status","bap_id":"bap.example.com","bapId":"bap.example.com"}}`)
+	header := signedHeaderWithKeyID("bap.example.com", priv, body, now, exp)
+	if err := verifier.Validate(makeCtx(body, model.RoleBPP), header, pub, true); err != nil {
+		t.Fatalf("honest message with consistent aliases refused: %v", err)
+	}
+}

@@ -189,6 +189,15 @@ func (s *validateSignStep) Run(ctx *model.StepContext) error {
 
 func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 	unauthHeader := fmt.Sprintf("Signature realm=\"%s\",headers=\"(created) (expires) digest\"", ctx.SubID)
+	// One signature header of each kind. Only the first line is verified, but
+	// all lines are forwarded, so a second one could say something else to the
+	// application behind the adapter.
+	for _, name := range []string{model.AuthHeaderGateway, model.AuthHeaderSubscriber} {
+		if len(ctx.Request.Header.Values(name)) > 1 {
+			ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
+			return model.NewSignValidationErr("AUT_SIGNATURE_INVALID", fmt.Errorf("more than one %s header", name))
+		}
+	}
 	headerValue := ctx.Request.Header.Get(model.AuthHeaderGateway)
 	if len(headerValue) != 0 {
 		log.Debugf(ctx, "Validating %v Header", model.AuthHeaderGateway)
@@ -199,8 +208,7 @@ func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 			// checks) — wrap with plain fmt.Errorf (not model.NewSignValidationErr)
 			// so errors.As still finds that inner classification instead of
 			// shadowing it with a new, default-coded wrapper. Its own header-parse
-			// and algorithm-mismatch checks still return unclassified errors that
-			// fall through to a generic 500 either way; see #864 follow-up.
+			// and algorithm-mismatch checks are classified as 401 too.
 			return fmt.Errorf("failed to validate %s: %w", model.AuthHeaderGateway, err)
 		}
 	}
@@ -265,7 +273,7 @@ func (s *validateSignStep) validate(ctx *model.StepContext, value, requestSig st
 	// Guards the keyId component (sub|key|alg); parseAuthHeader in signvalidator
 	// guards the outer algorithm= attribute — the two cover different header fields.
 	if headerVals.Algorithm != "ed25519" {
-		return fmt.Errorf("unsupported algorithm %q: only ed25519 is permitted", headerVals.Algorithm)
+		return model.NewSignValidationErr("AUT_SIGNATURE_INVALID", fmt.Errorf("unsupported algorithm %q: only ed25519 is permitted", headerVals.Algorithm))
 	}
 	log.Debugf(ctx, "Validating Signature for subscriberID: %v", headerVals.SubscriberID)
 	signingPublicKey, _, err := s.km.LookupNPKeys(ctx, headerVals.SubscriberID, headerVals.UniqueID)

@@ -49,7 +49,7 @@ func ParseSignatureHeader(header string) (map[string]string, error) {
 				end = len(rest)
 			}
 			value, rest = strings.TrimSpace(rest[:end]), rest[end:]
-			if value == "" || strings.ContainsAny(value, "\"= \t") {
+			if value == "" || strings.ContainsAny(value, "\" \t") {
 				return nil, fmt.Errorf("signature header is malformed: invalid value for %q", name)
 			}
 		}
@@ -64,7 +64,8 @@ func ParseSignatureHeader(header string) (map[string]string, error) {
 		}
 		rest = strings.TrimSpace(rest[1:])
 		if rest == "" {
-			return nil, fmt.Errorf("signature header is malformed: trailing ','")
+			// A trailing comma is harmless and some senders write one.
+			return params, nil
 		}
 	}
 }

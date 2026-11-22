@@ -94,14 +94,10 @@ func newHTTPClient(cfg *HttpClientConfig, wrapper definition.TransportWrapper, g
 		transport.ResponseHeaderTimeout = cfg.ResponseHeaderTimeout
 	}
 
-	if guard != nil && !egressProxyConfigured() {
-		// Check the address actually dialled, after name resolution. Behind an
-		// egress proxy the dial goes to the proxy, so only checkURL applies.
-		transport.DialContext = (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-			Control:   guard.control,
-		}).DialContext
+	if guard != nil {
+		// Check the address actually dialled, after name resolution. Only a
+		// dial to the operator's own egress proxy is exempt.
+		transport.DialContext = guard.dialContext()
 	}
 
 	var finalTransport http.RoundTripper = transport
@@ -129,7 +125,11 @@ func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleNa
 	}
 	// Initialize HTTP client after plugins so transport wrapper can be applied.
 	h.httpClient = newHTTPClient(&cfg.HttpClientConfig, h.transportWrapper, nil)
-	h.destGuard = newDestinationGuard(&cfg.HttpClientConfig)
+	guard, err := newDestinationGuard(&cfg.HttpClientConfig)
+	if err != nil {
+		return nil, fmt.Errorf("invalid httpClientConfig: %w", err)
+	}
+	h.destGuard = guard
 	if cfg.HttpClientConfig.AllowPrivateDestinations == nil && h.destGuard.allowPrivate {
 		log.Warnf(ctx, "module %s: httpClientConfig.allowPrivateDestinations is not set, so destinations taken from messages may be on private networks. Set it to false unless counterparties are reached on a private network.", moduleName)
 	}
@@ -263,9 +263,9 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		client := h.httpClient
 		if stepCtx.Route.FromRequest {
 			if h.destGuard == nil {
-				h.destGuard = newDestinationGuard(&HttpClientConfig{})
+				h.destGuard, _ = newDestinationGuard(&HttpClientConfig{})
 			}
-			if err := h.destGuard.checkURL(stepCtx, stepCtx.Route.URL, net.DefaultResolver); err != nil {
+			if err := h.destGuard.checkURL(stepCtx, stepCtx.Route.URL, net.DefaultResolver, goesViaProxy(stepCtx.Route.URL)); err != nil {
 				log.Errorf(stepCtx, err, "refusing message-supplied destination %s: %v", stepCtx.Route.URL.Redacted(), err)
 				nack := destinationNotAllowedErr()
 				h.signNackResponse(stepCtx, nack)

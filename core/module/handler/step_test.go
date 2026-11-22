@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -899,5 +900,21 @@ func TestParseHeaderAgreesWithSignValidator(t *testing.T) {
 	}
 	if got := extractAuthSignature(dup); got != "" {
 		t.Fatalf("extractAuthSignature read %q from a malformed header", got)
+	}
+}
+
+// Found in review: with two Authorization lines only the first was verified
+// while both were forwarded.
+func TestValidateHeadersRefusesRepeatedSignatureHeader(t *testing.T) {
+	for _, name := range []string{model.AuthHeaderSubscriber, model.AuthHeaderGateway} {
+		req := httptest.NewRequest(http.MethodPost, "/bpp/receiver/select", strings.NewReader(`{}`))
+		req.Header.Add(name, `Signature keyId="a|k|ed25519",algorithm="ed25519",created="1",expires="2",signature="x"`)
+		req.Header.Add(name, `Signature keyId="b|k|ed25519",algorithm="ed25519",created="1",expires="2",signature="y"`)
+		s := &validateSignStep{}
+		err := s.validateHeaders(&model.StepContext{Context: context.Background(), Request: req, RespHeader: http.Header{}})
+		var coded *model.CodedErr
+		if !errors.As(err, &coded) || coded.HTTPStatus() != http.StatusUnauthorized {
+			t.Fatalf("%s given twice: err=%v, want a 401", name, err)
+		}
 	}
 }
