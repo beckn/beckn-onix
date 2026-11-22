@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"strconv"
@@ -39,22 +40,22 @@ const (
 )
 
 type stdHandler struct {
-	signer             definition.Signer
-	steps              []definition.Step
-	responseSteps      []definition.ResponseStep
-	signValidator      definition.SignValidator
-	cache              definition.Cache
-	registry           definition.RegistryLookup
-	manifestLoader     definition.ManifestLoader
-	km                 definition.KeyManager
-	schemaValidator    definition.SchemaValidator
+	signer                definition.Signer
+	steps                 []definition.Step
+	responseSteps         []definition.ResponseStep
+	signValidator         definition.SignValidator
+	cache                 definition.Cache
+	registry              definition.RegistryLookup
+	manifestLoader        definition.ManifestLoader
+	km                    definition.KeyManager
+	schemaValidator       definition.SchemaValidator
 	policyChecker         definition.PolicyChecker
 	schemaVersionMediator definition.SchemaVersionMediator
 	router                definition.Router
-	publisher          definition.Publisher
-	transportWrapper   definition.TransportWrapper
-	payloadTransformer definition.Step
-	payloadStore       definition.PayloadStore
+	publisher             definition.Publisher
+	transportWrapper      definition.TransportWrapper
+	payloadTransformer    definition.Step
+	payloadStore          definition.PayloadStore
 	// ackSigner is non-nil only when the "signAck" step is configured (Receiver
 	// modules). It is also used to sign pipeline-NACK responses so that ALL
 	// synchronous responses carry a Signature header per NFH-007 CON-004-02.
@@ -63,14 +64,18 @@ type stdHandler struct {
 	role         model.Role
 	basePath     string
 	httpClient   *http.Client
-	moduleName   string
+	// requestDestClient forwards to destinations taken from the message. Its
+	// dialler refuses addresses the destination guard does not allow.
+	requestDestClient *http.Client
+	destGuard         *destinationGuard
+	moduleName        string
 	// maxResponseBody caps the upstream response body proxy reads into
 	// memory. Zero means DefaultMaxBodyBytes.
 	maxResponseBody int64
 }
 
 // newHTTPClient creates a new HTTP client with a custom transport configuration.
-func newHTTPClient(cfg *HttpClientConfig, wrapper definition.TransportWrapper) *http.Client {
+func newHTTPClient(cfg *HttpClientConfig, wrapper definition.TransportWrapper, guard *destinationGuard) *http.Client {
 	// Clone the default transport to inherit its sensible defaults.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 
@@ -87,6 +92,16 @@ func newHTTPClient(cfg *HttpClientConfig, wrapper definition.TransportWrapper) *
 	}
 	if cfg.ResponseHeaderTimeout > 0 {
 		transport.ResponseHeaderTimeout = cfg.ResponseHeaderTimeout
+	}
+
+	if guard != nil && !egressProxyConfigured() {
+		// Check the address actually dialled, after name resolution. Behind an
+		// egress proxy the dial goes to the proxy, so only checkURL applies.
+		transport.DialContext = (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			Control:   guard.control,
+		}).DialContext
 	}
 
 	var finalTransport http.RoundTripper = transport
@@ -113,7 +128,9 @@ func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleNa
 		return nil, fmt.Errorf("failed to initialize plugins: %w", err)
 	}
 	// Initialize HTTP client after plugins so transport wrapper can be applied.
-	h.httpClient = newHTTPClient(&cfg.HttpClientConfig, h.transportWrapper)
+	h.httpClient = newHTTPClient(&cfg.HttpClientConfig, h.transportWrapper, nil)
+	h.destGuard = newDestinationGuard(&cfg.HttpClientConfig)
+	h.requestDestClient = newHTTPClient(&cfg.HttpClientConfig, h.transportWrapper, h.destGuard)
 	h.maxResponseBody = cfg.HttpClientConfig.maxResponseBodyBytes()
 	// Initialize steps.
 	if err := h.initSteps(ctx, mgr, cfg); err != nil {
@@ -238,8 +255,26 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			responseBody = sendAck(stepCtx, wrapped)
 			return
 		}
+		// A destination taken from the message is chosen by a counterparty.
+		// Check it before connecting, and forward through the guarded client.
+		client := h.httpClient
+		if stepCtx.Route.FromRequest {
+			if h.destGuard == nil {
+				h.destGuard = newDestinationGuard(&HttpClientConfig{})
+			}
+			if err := h.destGuard.checkURL(stepCtx, stepCtx.Route.URL, net.DefaultResolver); err != nil {
+				log.Errorf(stepCtx, err, "refusing message-supplied destination %s: %v", stepCtx.Route.URL.Redacted(), err)
+				nack := destinationNotAllowedErr()
+				h.signNackResponse(stepCtx, nack)
+				responseBody = sendNack(stepCtx, wrapped, nack)
+				return
+			}
+			if h.requestDestClient != nil {
+				client = h.requestDestClient
+			}
+		}
 		// Handle routing based on the defined route type.
-		route(stepCtx, r, wrapped, h.publisher, h.httpClient, h.responseSteps, h.signNackResponse, &responseBody)
+		route(stepCtx, r, wrapped, h.publisher, client, h.responseSteps, h.signNackResponse, &responseBody)
 	}
 }
 

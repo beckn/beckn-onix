@@ -1168,3 +1168,29 @@ func TestRouteBodylessPublisherUnaffectedByQueryParams(t *testing.T) {
 		t.Errorf("expected route.URL to be nil for publisher route, got %v", route.URL)
 	}
 }
+
+// A destination read from the message is marked FromRequest so the handler
+// checks it before connecting, and must be a plain http(s) URL.
+func TestHandleProtocolMappingMessageSuppliedDestination(t *testing.T) {
+	rule := &model.Route{TargetType: targetTypeBPP}
+
+	got, err := handleProtocolMapping(rule, "http://169.254.169.254/latest/meta-data/", "search", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got.FromRequest {
+		t.Fatal("route built from a message URI is not marked FromRequest")
+	}
+
+	fallback, _ := url.Parse("https://bpp.example.com/beckn")
+	got, err = handleProtocolMapping(&model.Route{TargetType: targetTypeBPP, URL: fallback}, "", "search", "")
+	if err != nil || got.FromRequest {
+		t.Fatalf("config fallback: FromRequest=%v err=%v", got != nil && got.FromRequest, err)
+	}
+
+	for _, bad := range []string{"file:///etc/passwd", "gopher://internal:70/", "//no-scheme.example.com/x", "https://user:pw@bpp.example.com/", "http:///nohost", "bpp.example.com/path"} {
+		if _, err := handleProtocolMapping(rule, bad, "search", ""); err == nil {
+			t.Errorf("accepted %q as a destination", bad)
+		}
+	}
+}

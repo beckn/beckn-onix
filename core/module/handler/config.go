@@ -167,6 +167,20 @@ type HttpClientConfig struct {
 	// MaxResponseBodyBytes is the largest upstream response body the handler
 	// accepts when it forwards a request. Zero means DefaultMaxBodyBytes.
 	MaxResponseBodyBytes int64 `yaml:"maxResponseBodyBytes"`
+
+	// AllowPrivateDestinations lets the handler forward to loopback and
+	// private-network addresses when the destination comes from the message
+	// (context.bapUri / context.bppUri). Off by default. Turn it on only where
+	// counterparties are reached on a private network, such as a local or
+	// single-cluster setup. Link-local addresses, which include cloud metadata
+	// services, are refused either way. Destinations written in the routing
+	// config are not affected.
+	AllowPrivateDestinations bool `yaml:"allowPrivateDestinations"`
+
+	// AllowedDestinationHosts, when set, limits message-supplied destinations
+	// to these hosts. An entry is a host name, or "*.example.com" for its
+	// subdomains. Empty means any host that passes the address checks.
+	AllowedDestinationHosts []string `yaml:"allowedDestinationHosts"`
 }
 
 // Config holds the configuration for request processing handlers.

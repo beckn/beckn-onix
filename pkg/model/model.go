@@ -301,6 +301,10 @@ type Route struct {
 	TargetType  string   // "url" or "publisher"
 	PublisherID string   // For message queues
 	URL         *url.URL // For API calls
+	// FromRequest is true when URL was taken from the message (context.bapUri /
+	// context.bppUri) instead of the routing config. Such a destination is
+	// chosen by a counterparty and is checked before the adapter connects to it.
+	FromRequest bool
 }
 
 // Keyset represents a collection of cryptographic keys used for signing and encryption.
