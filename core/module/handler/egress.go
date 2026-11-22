@@ -31,8 +31,16 @@ type destinationGuard struct {
 	allowedHosts []string
 }
 
+// defaultAllowPrivateDestinations is what an unset allowPrivateDestinations
+// means. True in the 1.9 line so a patch upgrade does not cut off setups that
+// reach counterparties on a private network.
+const defaultAllowPrivateDestinations = true
+
 func newDestinationGuard(cfg *HttpClientConfig) *destinationGuard {
-	g := &destinationGuard{allowPrivate: cfg.AllowPrivateDestinations}
+	g := &destinationGuard{allowPrivate: defaultAllowPrivateDestinations}
+	if cfg.AllowPrivateDestinations != nil {
+		g.allowPrivate = *cfg.AllowPrivateDestinations
+	}
 	for _, h := range cfg.AllowedDestinationHosts {
 		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
 			g.allowedHosts = append(g.allowedHosts, h)

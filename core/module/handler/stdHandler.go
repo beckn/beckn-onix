@@ -130,6 +130,9 @@ func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleNa
 	// Initialize HTTP client after plugins so transport wrapper can be applied.
 	h.httpClient = newHTTPClient(&cfg.HttpClientConfig, h.transportWrapper, nil)
 	h.destGuard = newDestinationGuard(&cfg.HttpClientConfig)
+	if cfg.HttpClientConfig.AllowPrivateDestinations == nil && h.destGuard.allowPrivate {
+		log.Warnf(ctx, "module %s: httpClientConfig.allowPrivateDestinations is not set, so destinations taken from messages may be on private networks. Set it to false unless counterparties are reached on a private network.", moduleName)
+	}
 	h.requestDestClient = newHTTPClient(&cfg.HttpClientConfig, h.transportWrapper, h.destGuard)
 	h.maxResponseBody = cfg.HttpClientConfig.maxResponseBodyBytes()
 	// Initialize steps.

@@ -130,7 +130,8 @@ func TestGuardedClientRefusesLoopbackAtDial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
 	defer srv.Close()
 
-	guarded := newHTTPClient(&HttpClientConfig{}, nil, newDestinationGuard(&HttpClientConfig{}))
+	deny := HttpClientConfig{AllowPrivateDestinations: boolPtr(false)}
+	guarded := newHTTPClient(&deny, nil, newDestinationGuard(&deny))
 	resp, err := guarded.Get(srv.URL)
 	if err == nil {
 		resp.Body.Close()
@@ -146,7 +147,7 @@ func TestGuardedClientRefusesLoopbackAtDial(t *testing.T) {
 	// With private destinations allowed, and for config-defined targets
 	// (unguarded client), the same address is reachable.
 	for name, c := range map[string]*http.Client{
-		"allowPrivate": newHTTPClient(&HttpClientConfig{}, nil, newDestinationGuard(&HttpClientConfig{AllowPrivateDestinations: true})),
+		"allowPrivate": newHTTPClient(&HttpClientConfig{}, nil, newDestinationGuard(&HttpClientConfig{AllowPrivateDestinations: boolPtr(true)})),
 		"unguarded":    newHTTPClient(&HttpClientConfig{}, nil, nil),
 	} {
 		resp, err := c.Get(srv.URL)
@@ -192,7 +193,7 @@ func TestServeHTTPRefusesMessageSuppliedPrivateDestination(t *testing.T) {
 		return rr
 	}
 
-	rr := serve(true, HttpClientConfig{})
+	rr := serve(true, HttpClientConfig{AllowPrivateDestinations: boolPtr(false)})
 	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), codeDestinationNotAllowed) {
 		t.Fatalf("message-supplied loopback destination: got %d %s", rr.Code, rr.Body.String())
 	}
@@ -203,10 +204,27 @@ func TestServeHTTPRefusesMessageSuppliedPrivateDestination(t *testing.T) {
 		t.Fatalf("upstream was contacted %d times", hits)
 	}
 
-	if rr := serve(false, HttpClientConfig{}); rr.Code != http.StatusOK || hits != 1 {
+	if rr := serve(false, HttpClientConfig{AllowPrivateDestinations: boolPtr(false)}); rr.Code != http.StatusOK || hits != 1 {
 		t.Fatalf("config-defined destination: got %d %s, hits=%d", rr.Code, rr.Body.String(), hits)
 	}
-	if rr := serve(true, HttpClientConfig{AllowPrivateDestinations: true}); rr.Code != http.StatusOK || hits != 2 {
+	if rr := serve(true, HttpClientConfig{AllowPrivateDestinations: boolPtr(true)}); rr.Code != http.StatusOK || hits != 2 {
 		t.Fatalf("allowPrivateDestinations: got %d %s, hits=%d", rr.Code, rr.Body.String(), hits)
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+// An unset allowPrivateDestinations follows the release line's default, and
+// the metadata address is refused whatever it is.
+func TestDestinationGuardDefault(t *testing.T) {
+	g := newDestinationGuard(&HttpClientConfig{})
+	if g.allowPrivate != defaultAllowPrivateDestinations {
+		t.Fatalf("allowPrivate=%v, want the default %v", g.allowPrivate, defaultAllowPrivateDestinations)
+	}
+	if err := g.checkAddr(netip.MustParseAddr("169.254.169.254")); err == nil {
+		t.Fatal("metadata address allowed by default")
+	}
+	if g := newDestinationGuard(&HttpClientConfig{AllowPrivateDestinations: boolPtr(false)}); g.allowPrivate {
+		t.Fatal("explicit false ignored")
 	}
 }
