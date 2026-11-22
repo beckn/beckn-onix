@@ -116,17 +116,21 @@ maskRules:
 	require.Error(t, LoadAuditConfig(context.Background(), url))
 }
 
-func TestCompile_RejectsMaskRuleKeysWithEmptyPathSegments(t *testing.T) {
+// A mask rule key with an empty path segment is ignored with a warning; the
+// rest of the file still loads and masks. Rejecting the file would leave
+// every audit record unmasked, and releases before 1.9.5 loaded such a file.
+func TestCompile_SkipsMaskRuleKeysWithEmptyPathSegments(t *testing.T) {
 	for _, key := range []string{"", ".name", "contact..name", "contact.name."} {
 		t.Run(key, func(t *testing.T) {
-			_, err := compile(context.Background(), &auditConfig{
+			compiled, err := compile(context.Background(), &auditConfig{
 				Patterns: map[string]patternDef{
 					"sensitive": {MaskType: "replace", Mask: "[REDACTED]"},
 				},
-				MaskRules: []maskRule{{Keys: []string{key}, Pattern: "sensitive"}},
+				MaskRules: []maskRule{{Keys: []string{key, "phone"}, Pattern: "sensitive"}},
 			})
 
-			require.ErrorContains(t, err, "empty path segment")
+			require.NoError(t, err)
+			require.NotNil(t, compiled)
 		})
 	}
 }

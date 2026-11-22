@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -145,7 +146,7 @@ func (g *destinationGuard) checkURL(ctx context.Context, u *url.URL, resolver *n
 	}
 	addrs, err := resolver.LookupNetIP(ctx, "ip", host)
 	if err != nil {
-		return fmt.Errorf("could not resolve host %q: %w", host, err)
+		return fmt.Errorf("%w: host %q: %v", errDestinationUnresolved, host, err)
 	}
 	for _, addr := range addrs {
 		if err := g.checkAddr(addr); err != nil {
@@ -176,6 +177,19 @@ func (g *destinationGuard) dialContext() func(ctx context.Context, network, addr
 		}
 		return guarded.DialContext(ctx, network, addr)
 	}
+}
+
+// errDestinationUnresolved marks a pre-check that failed because the host
+// name could not be resolved. That is a failure to reach the counterparty,
+// answered as 502 like any other, not a refused destination: a DNS outage
+// must not look like the sender's permanent error.
+var errDestinationUnresolved = errors.New("destination host could not be resolved")
+
+// destinationUnreachableErr is the NACK for a destination whose host name
+// could not be resolved.
+func destinationUnreachableErr() *model.CodedErr {
+	return model.NewCodedErr(http.StatusBadGateway, "NET_DOWNSTREAM_UNAVAILABLE",
+		fmt.Errorf("the destination in the message context could not be reached"))
 }
 
 // destinationNotAllowedErr is the NACK for a refused message-supplied

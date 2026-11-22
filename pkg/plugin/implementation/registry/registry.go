@@ -48,7 +48,11 @@ func validate(cfg *Config) error {
 	}
 	u, err := url.Parse(cfg.URL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("registry URL must be an absolute http(s) URL, got %q", cfg.URL)
+		// Lookups with such a URL cannot succeed, but releases before 1.9.5
+		// started with one (for example a placeholder on a module that never
+		// verifies signatures), so the 1.9 line only warns.
+		log.Warnf(context.Background(), "registry URL %q is not an absolute http(s) URL; registry lookups will fail", cfg.URL)
+		return nil
 	}
 	if u.Scheme == "http" {
 		// The registry is where signing keys come from. Over plain http anyone

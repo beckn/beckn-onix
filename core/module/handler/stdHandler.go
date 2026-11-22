@@ -268,6 +268,9 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err := h.destGuard.checkURL(stepCtx, stepCtx.Route.URL, net.DefaultResolver, goesViaProxy(stepCtx.Route.URL)); err != nil {
 				log.Errorf(stepCtx, err, "refusing message-supplied destination %s: %v", stepCtx.Route.URL.Redacted(), err)
 				nack := destinationNotAllowedErr()
+				if errors.Is(err, errDestinationUnresolved) {
+					nack = destinationUnreachableErr()
+				}
 				h.signNackResponse(stepCtx, nack)
 				responseBody = sendNack(stepCtx, wrapped, nack)
 				return

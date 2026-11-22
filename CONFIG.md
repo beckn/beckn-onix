@@ -736,6 +736,20 @@ modules:
 **Default**: `10485760` (10 MiB)  
 **Description**: Largest response body the handler accepts from the endpoint it forwards a request to. A larger response is dropped and the caller receives `502 Bad Gateway`.
 
+###### `allowPrivateDestinations`
+**Type**: `boolean`  
+**Default**: `true` in the 1.9 line (the next minor release changes it to `false`)  
+**Description**: Whether the handler may forward to loopback and private-network addresses when the destination comes from the message (`context.bapUri` / `context.bppUri`, routing target types `bap`, `bpp`, `sender`, `receiver`). Set it to `false` on any module whose counterparties are reached over the public internet; a message that names a private, loopback or reserved address is then answered with `400` and code `NET_DESTINATION_NOT_ALLOWED`. Leave it `true` only where counterparties really are on a private network (local setups, a single cluster). A module logs a start-up warning while it is unset.
+
+Whatever this setting says, link-local addresses and cloud metadata addresses are refused, as are destinations that are not `http`/`https` URLs or that carry credentials. Destinations written in the routing config (`targetType: url`) are never checked.
+
+The adapter resolves the destination host before forwarding and checks the address again when it connects. If requests leave through an egress proxy (`HTTP_PROXY` / `HTTPS_PROXY`), the proxy resolves host names, so the adapter can only check literal addresses and `allowedDestinationHosts`; the proxy's own access rules must keep internal ranges out. A host name that cannot be resolved is answered with `502`.
+
+###### `allowedDestinationHosts`
+**Type**: `array` of strings  
+**Default**: empty (any host that passes the address checks)  
+**Description**: Limits message-supplied destinations to these hosts. An entry is a host name (`bpp.example.com`) or `*.example.com` for its subdomains, with no scheme, port or path. An invalid entry stops the module at start-up.
+
 ##### `plugins`
 **Type**: `object`  
 **Required**: Yes  

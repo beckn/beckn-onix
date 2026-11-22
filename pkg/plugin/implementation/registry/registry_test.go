@@ -494,10 +494,14 @@ func TestRegistryClient_Lookup_CacheTTLIsCapped(t *testing.T) {
 }
 
 func TestValidateRegistryURL(t *testing.T) {
-	for _, bad := range []string{"registry.example.com", "ftp://registry.example.com", "http://", "/lookup"} {
-		if err := validate(&Config{URL: bad}); err == nil {
-			t.Errorf("accepted registry URL %q", bad)
+	// Malformed URLs only warn in the 1.9 line; an empty one is still an error.
+	for _, odd := range []string{"registry.example.com", "ftp://registry.example.com", "http://", "/lookup"} {
+		if err := validate(&Config{URL: odd}); err != nil {
+			t.Errorf("registry URL %q stops start-up: %v", odd, err)
 		}
+	}
+	if err := validate(&Config{URL: ""}); err == nil {
+		t.Error("accepted an empty registry URL")
 	}
 	for _, good := range []string{"https://registry.example.com", "http://localhost:8080"} {
 		if err := validate(&Config{URL: good}); err != nil {
