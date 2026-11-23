@@ -1,7 +1,7 @@
 # Beckn-ONIX
 
 > [!IMPORTANT]
-> **Security notice, 14 Nov 2026:** every version before v1.9.4 is affected by [GHSA-cp53-rwrh-93vp](https://github.com/beckn/beckn-onix/security/advisories/GHSA-cp53-rwrh-93vp) (high severity). Upgrade to [v1.9.4](https://github.com/beckn/beckn-onix/releases/tag/v1.9.4). Upgrade notes and a workaround are in [#963](https://github.com/beckn/beckn-onix/issues/963).
+> **Security notice, 23 Nov 2026:** every version before v1.9.5 is affected by seven security advisories, the most serious rated critical and high: a registered participant could direct the adapter at internal addresses, or send a message accepted as coming from another participant. Upgrade to [v1.9.5](https://github.com/beckn/beckn-onix/releases/tag/v1.9.5) and read "Before you upgrade" in its release notes: some registry and signature checks are stricter. The advisories are listed under [Security advisories](https://github.com/beckn/beckn-onix/security/advisories).
 
 <div align="center">
 
