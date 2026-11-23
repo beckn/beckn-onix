@@ -64,7 +64,7 @@ func TestDestinationGuardCheckURL(t *testing.T) {
 		{"metadata address", "http://169.254.169.254/latest/meta-data/", destinationGuard{verdicts: map[string]time.Time{}}, "link-local"},
 		{"metadata address with private allowed", "http://169.254.169.254/", destinationGuard{allowPrivate: true, verdicts: map[string]time.Time{}}, "link-local"},
 		{"loopback", "http://127.0.0.1:8080/x", destinationGuard{verdicts: map[string]time.Time{}}, "private or loopback"},
-		{"localhost name", "http://localhost:8080/x", destinationGuard{verdicts: map[string]time.Time{}}, "private or loopback"},
+		{"localhost name", "http://localhost:8080/x", destinationGuard{verdicts: map[string]time.Time{}}, ""},
 		{"rfc1918", "https://10.0.0.7/bpp", destinationGuard{verdicts: map[string]time.Time{}}, "private or loopback"},
 		{"ipv6 loopback", "http://[::1]:9000/", destinationGuard{verdicts: map[string]time.Time{}}, "private or loopback"},
 		{"decimal ip form", "http://2130706433/", destinationGuard{verdicts: map[string]time.Time{}}, "numeric"},

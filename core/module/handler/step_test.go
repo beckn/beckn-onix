@@ -918,3 +918,23 @@ func TestValidateHeadersRefusesRepeatedSignatureHeader(t *testing.T) {
 		}
 	}
 }
+
+// An unreadable signature header, or a keyId naming another algorithm, is the
+// sender's error: the validate step answers 401, not 500.
+func TestValidateSignStepClassifiesUnreadableHeaderAs401(t *testing.T) {
+	s := &validateSignStep{}
+	for name, header := range map[string]string{
+		"repeated keyId":       `Signature keyId="a.example.com|k|ed25519",keyId="b.example.com|k|ed25519",algorithm="ed25519",created="1",expires="2",signature="x"`,
+		"not a parameter list": `Signature garbage`,
+		"keyId missing":        `Signature algorithm="ed25519",created="1",expires="2",signature="x"`,
+		"keyId algorithm rsa":  `Signature keyId="a.example.com|k|rsa",algorithm="ed25519",created="1",expires="2",signature="x"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := s.validate(&model.StepContext{Context: context.Background()}, header, "", true)
+			var coded *model.CodedErr
+			if !errors.As(err, &coded) || coded.HTTPStatus() != http.StatusUnauthorized {
+				t.Fatalf("err=%v, want a 401", err)
+			}
+		})
+	}
+}
