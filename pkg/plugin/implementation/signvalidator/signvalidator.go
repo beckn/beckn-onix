@@ -94,6 +94,11 @@ func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBas
 		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("error decoding public key: %w", err))
 	}
 
+	// ed25519.Verify panics on a key of any other length. The key comes from a
+	// registry record, so a malformed record must fail this request, not crash it.
+	if len(decodedPublicKey) != ed25519.PublicKeySize {
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("public key is %d bytes, want %d", len(decodedPublicKey), ed25519.PublicKeySize))
+	}
 	if !ed25519.Verify(ed25519.PublicKey(decodedPublicKey), []byte(signingString), signatureBytes) {
 		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("signature verification failed"))
 	}
@@ -109,18 +114,11 @@ func (v *validator) Validate(ctx *model.StepContext, header string, publicKeyBas
 // parseAuthHeader extracts signature values from the Authorization header.
 // subscriberID is the first |-delimited component of keyId="..." (empty if keyId absent).
 func parseAuthHeader(header string) (int64, int64, string, string, error) {
-	header = strings.TrimPrefix(header, "Signature ")
-
-	parts := strings.Split(header, ",")
-	signatureMap := make(map[string]string)
-
-	for _, part := range parts {
-		keyValue := strings.SplitN(strings.TrimSpace(part), "=", 2)
-		if len(keyValue) == 2 {
-			key := strings.TrimSpace(keyValue[0])
-			value := strings.Trim(keyValue[1], "\"")
-			signatureMap[key] = value
-		}
+	// The shared parser rejects a repeated parameter, so the keyId read here
+	// for the identity check is the one the key lookup used.
+	signatureMap, err := model.ParseSignatureHeader(header)
+	if err != nil {
+		return 0, 0, "", "", model.NewSignValidationErr(codeSignatureInvalid, err)
 	}
 
 	if signatureMap["algorithm"] != "ed25519" {
@@ -181,6 +179,11 @@ func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHe
 		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("error decoding public key: %w", err))
 	}
 
+	// ed25519.Verify panics on a key of any other length. The key comes from a
+	// registry record, so a malformed record must fail this request, not crash it.
+	if len(decodedPublicKey) != ed25519.PublicKeySize {
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("public key is %d bytes, want %d", len(decodedPublicKey), ed25519.PublicKeySize))
+	}
 	if !ed25519.Verify(ed25519.PublicKey(decodedPublicKey), []byte(signingString), signatureBytes) {
 		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("AckSignature verification failed"))
 	}
@@ -198,27 +201,34 @@ func (v *validator) ValidateAck(ctx *model.StepContext, body []byte, signatureHe
 // in the request body context. body is the body that was actually validated so
 // callers with different bodies (Validate vs ValidateAck) each pass the right one.
 func checkSubscriberIdentity(ctx *model.StepContext, body []byte, signerID string) error {
-	expected, _ := ctx.Value(model.ContextKeyRemoteID).(string)
-
-	if expected == "" {
-		var payload struct {
-			Context map[string]interface{} `json:"context"`
-		}
-		if err := json.Unmarshal(body, &payload); err != nil {
-			log.Debugf(ctx, "checkSubscriberIdentity: failed to parse body: %v; skipping check", err)
-		} else if payload.Context != nil {
-			expected = model.ResolveCallerID(payload.Context, ctx.Role)
-		}
+	// Every caller identity the message declares must be the signer: the one
+	// the request preprocessor resolved, and every alias in the body. A body
+	// can carry several (bap_id next to bapId, or another letter case), and
+	// the application behind this adapter may read a different one than the
+	// adapter does.
+	var declared []string
+	if remote, _ := ctx.Value(model.ContextKeyRemoteID).(string); remote != "" {
+		declared = append(declared, remote)
+	}
+	var payload struct {
+		Context map[string]interface{} `json:"context"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Debugf(ctx, "checkSubscriberIdentity: failed to parse body: %v", err)
+	} else if payload.Context != nil {
+		declared = append(declared, model.CallerIDs(payload.Context, ctx.Role)...)
 	}
 
-	if expected == "" {
+	if len(declared) == 0 {
 		log.Debugf(ctx, "checkSubscriberIdentity: no caller ID available for role %v; skipping check", ctx.Role)
 		return nil
 	}
 
-	if signerID != expected {
-		return model.NewSignValidationErr(codeUnauthorizedAction, fmt.Errorf("subscriber identity mismatch: signing subscriber %q does not match declared context identity %q",
-			signerID, expected))
+	for _, expected := range declared {
+		if !model.SameSubscriberID(signerID, expected) {
+			return model.NewSignValidationErr(codeUnauthorizedAction, fmt.Errorf("subscriber identity mismatch: signing subscriber %q does not match declared context identity %q",
+				signerID, expected))
+		}
 	}
 	return nil
 }
@@ -229,6 +239,11 @@ func checkSubscriberIdentity(ctx *model.StepContext, body []byte, signerID strin
 // `expires` is always checked with zero tolerance per the spec.
 func checkTimestampWindow(prefix string, createdTimestamp, expiredTimestamp int64, clockSkewTolerance time.Duration) error {
 	now := time.Now().UTC()
+	// A signature cannot expire before it was created.
+	if expiredTimestamp < createdTimestamp {
+		return model.NewSignValidationErr(codeSignatureInvalid, fmt.Errorf("%s expires before it was created: created=%d, expires=%d",
+			prefix, createdTimestamp, expiredTimestamp))
+	}
 	// Accept created values up to clockSkewTolerance in the future.
 	deadline := now.Add(clockSkewTolerance)
 	if time.Unix(createdTimestamp, 0).UTC().After(deadline) {

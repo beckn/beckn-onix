@@ -26,4 +26,7 @@ func TestNewPreProcessor_BodyOverLimit(t *testing.T) {
 	if called {
 		t.Error("the next handler ran for a body over the limit")
 	}
+	if !strings.Contains(rr.Body.String(), `"ack":{"status":"NACK"}`) {
+		t.Errorf("body = %s, want a NACK envelope", rr.Body.String())
+	}
 }

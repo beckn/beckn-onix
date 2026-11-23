@@ -189,6 +189,15 @@ func (s *validateSignStep) Run(ctx *model.StepContext) error {
 
 func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 	unauthHeader := fmt.Sprintf("Signature realm=\"%s\",headers=\"(created) (expires) digest\"", ctx.SubID)
+	// One signature header of each kind. Only the first line is verified, but
+	// all lines are forwarded, so a second one could say something else to the
+	// application behind the adapter.
+	for _, name := range []string{model.AuthHeaderGateway, model.AuthHeaderSubscriber} {
+		if len(ctx.Request.Header.Values(name)) > 1 {
+			ctx.RespHeader.Set(model.UnaAuthorizedHeaderSubscriber, unauthHeader)
+			return model.NewSignValidationErr("AUT_SIGNATURE_INVALID", fmt.Errorf("more than one %s header", name))
+		}
+	}
 	headerValue := ctx.Request.Header.Get(model.AuthHeaderGateway)
 	if len(headerValue) != 0 {
 		log.Debugf(ctx, "Validating %v Header", model.AuthHeaderGateway)
@@ -199,8 +208,7 @@ func (s *validateSignStep) validateHeaders(ctx *model.StepContext) error {
 			// checks) — wrap with plain fmt.Errorf (not model.NewSignValidationErr)
 			// so errors.As still finds that inner classification instead of
 			// shadowing it with a new, default-coded wrapper. Its own header-parse
-			// and algorithm-mismatch checks still return unclassified errors that
-			// fall through to a generic 500 either way; see #864 follow-up.
+			// and algorithm-mismatch checks are classified as 401 too.
 			return fmt.Errorf("failed to validate %s: %w", model.AuthHeaderGateway, err)
 		}
 	}
@@ -259,12 +267,13 @@ func (s *validateSignStep) lookupCallbackRequestSig(ctx *model.StepContext, auth
 func (s *validateSignStep) validate(ctx *model.StepContext, value, requestSig string, checkIdentity bool) error {
 	headerVals, err := parseHeader(value)
 	if err != nil {
-		return fmt.Errorf("failed to parse header")
+		// A header that cannot be read is the sender's fault: 401, not 500.
+		return model.NewSignValidationErr("AUT_SIGNATURE_INVALID", fmt.Errorf("failed to parse header: %w", err))
 	}
 	// Guards the keyId component (sub|key|alg); parseAuthHeader in signvalidator
 	// guards the outer algorithm= attribute — the two cover different header fields.
 	if headerVals.Algorithm != "ed25519" {
-		return fmt.Errorf("unsupported algorithm %q: only ed25519 is permitted", headerVals.Algorithm)
+		return model.NewSignValidationErr("AUT_SIGNATURE_INVALID", fmt.Errorf("unsupported algorithm %q: only ed25519 is permitted", headerVals.Algorithm))
 	}
 	log.Debugf(ctx, "Validating Signature for subscriberID: %v", headerVals.SubscriberID)
 	signingPublicKey, _, err := s.km.LookupNPKeys(ctx, headerVals.SubscriberID, headerVals.UniqueID)
@@ -300,17 +309,11 @@ func (s *validateSignStep) recordMetrics(ctx *model.StepContext, err error) {
 // This distinguishes solicited callbacks (4-line signing string) from
 // provider-initiated pushes (3-line signing string, no request-signature).
 func authHeaderIncludesRequestSig(header string) bool {
-	const hPrefix = `headers="`
-	idx := strings.Index(header, hPrefix)
-	if idx == -1 {
+	params, err := model.ParseSignatureHeader(header)
+	if err != nil {
 		return false
 	}
-	idx += len(hPrefix)
-	end := strings.Index(header[idx:], `"`)
-	if end == -1 {
-		return false
-	}
-	return strings.Contains(header[idx:idx+end], "request-signature")
+	return strings.Contains(params["headers"], "request-signature")
 }
 
 // ParsedKeyID holds the components from the parsed Authorization header's keyId.
@@ -324,17 +327,13 @@ type authHeader struct {
 // Example keyId format: "{subscriber_id}|{unique_key_id}|{algorithm}"
 func parseHeader(header string) (*authHeader, error) {
 	// Example: Signature keyId="bpp.example.com|key-1|ed25519",algorithm="ed25519",...
-	keyIDPart := ""
-	// Look for keyId="<value>"
-	const keyIdPrefix = `keyId="`
-	startIndex := strings.Index(header, keyIdPrefix)
-	if startIndex != -1 {
-		startIndex += len(keyIdPrefix)
-		endIndex := strings.Index(header[startIndex:], `"`)
-		if endIndex != -1 {
-			keyIDPart = strings.TrimSpace(header[startIndex : startIndex+endIndex])
-		}
+	// Parsed with the same function the sign validator uses, so the key looked
+	// up here belongs to the keyId whose identity is checked there.
+	params, err := model.ParseSignatureHeader(header)
+	if err != nil {
+		return nil, err
 	}
+	keyIDPart := strings.TrimSpace(params["keyId"])
 
 	if keyIDPart == "" {
 		return nil, fmt.Errorf("keyId parameter not found in Authorization header")
@@ -448,6 +447,7 @@ func (s *addRouteStep) Run(ctx *model.StepContext) error {
 		TargetType:  route.TargetType,
 		PublisherID: route.PublisherID,
 		URL:         route.URL,
+		FromRequest: route.FromRequest,
 	}
 	if s.metrics != nil && ctx.Route != nil {
 		s.metrics.RoutingDecisionsTotal.Add(ctx.Context, 1,
@@ -485,17 +485,11 @@ func extractProtocolVersion(body []byte) string {
 // "request-signature=..." before "signature=..." in its header does not cause
 // the wrong value to be extracted.
 func extractAuthSignature(authHeader string) string {
-	const marker = `,signature="`
-	idx := strings.Index(authHeader, marker)
-	if idx < 0 {
+	params, err := model.ParseSignatureHeader(authHeader)
+	if err != nil {
 		return ""
 	}
-	rest := authHeader[idx+len(marker):]
-	end := strings.IndexByte(rest, '"')
-	if end < 0 {
-		return ""
-	}
-	return rest[:end]
+	return params["signature"]
 }
 
 func extractMessageID(body []byte) string {

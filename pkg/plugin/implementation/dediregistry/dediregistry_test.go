@@ -1166,11 +1166,11 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 		}
 	})
 
-	t.Run("cache miss writes to cache using ttl from response", func(t *testing.T) {
+	t.Run("cache miss writes to cache using a shorter ttl from response", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(dediLookupResponse(600))
+			json.NewEncoder(w).Encode(dediLookupResponse(60))
 		}))
 		defer server.Close()
 
@@ -1191,8 +1191,8 @@ func TestDeDiRegistryClient_Lookup_Cache(t *testing.T) {
 		if cache.setKey != expectedCacheKey {
 			t.Errorf("expected cache key %q, got %q", expectedCacheKey, cache.setKey)
 		}
-		if cache.setTTL != 600*time.Second {
-			t.Errorf("expected TTL 600s from response, got %v", cache.setTTL)
+		if cache.setTTL != 60*time.Second {
+			t.Errorf("expected TTL 60s from response, got %v", cache.setTTL)
 		}
 	})
 
@@ -1735,4 +1735,105 @@ func TestExtractContextNetworkID(t *testing.T) {
 			t.Errorf("expected empty string, got %q", got)
 		}
 	})
+}
+
+// GHSA-8h5h-6653-979h: a DeDi record that is not live must not supply a key,
+// DeDi's ttl must not stretch the cache past cacheTTL, and a record DeDi
+// returns without subscriber_id (or in another letter case) is returned under
+// the requested id so that callers can bind it.
+func TestDeDiLookup_StateTTLAndSubscriberID(t *testing.T) {
+	ctx := context.Background()
+	serve := func(mutate func(data, details map[string]interface{})) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			resp := dediLookupResponse(7776000) // 90 days
+			data := resp["data"].(map[string]interface{})
+			details, _ := data["details"].(map[string]interface{})
+			if mutate != nil {
+				mutate(data, details)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+		}))
+	}
+	req := &model.Subscription{Subscriber: model.Subscriber{SubscriberID: "sub.example.com"}, KeyID: "key-1"}
+
+	for name, state := range map[string]interface{}{"revoked": "revoked", "draft": "draft", "null": nil, "object": map[string]interface{}{"x": 1}} {
+		t.Run("state "+name+" is refused", func(t *testing.T) {
+			server := serve(func(data, _ map[string]interface{}) { data["state"] = state })
+			defer server.Close()
+			cache := &mockCache{}
+			client, closer, _ := New(ctx, cache, &Config{URL: server.URL})
+			defer closer()
+			if _, err := client.Lookup(ctx, req); err == nil {
+				t.Fatal("a record that is not live supplied a key")
+			}
+			if cache.setKey != "" {
+				t.Fatal("a record that is not live was cached")
+			}
+		})
+	}
+	for _, state := range []string{"live", "Live", " LIVE "} {
+		t.Run("state "+state+" is accepted", func(t *testing.T) {
+			server := serve(func(data, _ map[string]interface{}) { data["state"] = state })
+			defer server.Close()
+			client, closer, _ := New(ctx, nil, &Config{URL: server.URL})
+			defer closer()
+			if _, err := client.Lookup(ctx, req); err != nil {
+				t.Fatalf("live record refused: %v", err)
+			}
+		})
+	}
+
+	t.Run("ttl from DeDi cannot exceed cacheTTL", func(t *testing.T) {
+		server := serve(nil)
+		defer server.Close()
+		cache := &mockCache{}
+		client, closer, _ := New(ctx, cache, &Config{URL: server.URL})
+		defer closer()
+		if _, err := client.Lookup(ctx, req); err != nil {
+			t.Fatalf("Lookup: %v", err)
+		}
+		if cache.setTTL != defaultCacheTTL {
+			t.Fatalf("cached for %s, want the %s cap", cache.setTTL, defaultCacheTTL)
+		}
+	})
+
+	for name, id := range map[string]interface{}{"absent": nil, "upper case": "SUB.Example.COM"} {
+		t.Run("subscriber_id "+name+" is returned under the requested id", func(t *testing.T) {
+			server := serve(func(_, details map[string]interface{}) {
+				if id == nil {
+					delete(details, "subscriber_id")
+				} else {
+					details["subscriber_id"] = id
+				}
+			})
+			defer server.Close()
+			client, closer, _ := New(ctx, nil, &Config{URL: server.URL})
+			defer closer()
+			got, err := client.Lookup(ctx, req)
+			if err != nil {
+				t.Fatalf("Lookup: %v", err)
+			}
+			if _, err := model.SelectKeyRecord(got, "sub.example.com", "key-1", time.Now()); err != nil {
+				t.Fatalf("key manager binding would refuse this record: %v", err)
+			}
+		})
+	}
+}
+
+// A DeDi record whose subscriber_id is a Unicode look-alike of the requested
+// id is another subscriber's record.
+func TestDeDiLookup_LookalikeSubscriberIDRefused(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := dediLookupResponse(60)
+		resp["data"].(map[string]interface{})["details"].(map[string]interface{})["subscriber_id"] = "ſub.example.com"
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+	client, closer, _ := New(context.Background(), nil, &Config{URL: server.URL})
+	defer closer()
+	_, err := client.Lookup(context.Background(), &model.Subscription{Subscriber: model.Subscriber{SubscriberID: "sub.example.com"}, KeyID: "key-1"})
+	if err == nil {
+		t.Fatal("a look-alike subscriber's record was returned for sub.example.com")
+	}
 }

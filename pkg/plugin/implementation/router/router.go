@@ -372,11 +372,15 @@ func handleProtocolMapping(route *model.Route, npURI, endpoint, rawQuery string)
 		return nil, model.NewBadReqErr("SCH_INVALID_FORMAT",
 			fmt.Errorf("invalid %s URI - %s in request body for %s: %w", role, target, endpoint, err))
 	}
+	if (targetURL.Scheme != "http" && targetURL.Scheme != "https") || targetURL.Hostname() == "" || targetURL.User != nil {
+		return nil, model.NewBadReqErr("SCH_INVALID_FORMAT",
+			fmt.Errorf("invalid %s URI in request body for %s: it must be an http or https URL with a host and no credentials", role, endpoint))
+	}
 	targetURL.Path = joinPath(targetURL, endpoint)
 	if rawQuery != "" {
 		targetURL.RawQuery = rawQuery
 	}
-	return &model.Route{TargetType: targetTypeURL, URL: targetURL}, nil
+	return &model.Route{TargetType: targetTypeURL, URL: targetURL, FromRequest: true}, nil
 }
 
 func joinPath(u *url.URL, endpoint string) string {

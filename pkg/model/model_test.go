@@ -19,6 +19,10 @@ func TestIsKeyStatusUsable(t *testing.T) {
 		{status: "EXPIRED", want: false},
 		{status: "UNSUBSCRIBED", want: false},
 		{status: "INVALID_SSL", want: false},
+		// Unknown values are not usable (GHSA-8h5h-6653-979h).
+		{status: "SUSPENDED", want: false},
+		{status: "typo", want: false},
+		{status: " subscribed ", want: true},
 	}
 
 	for _, tt := range tests {

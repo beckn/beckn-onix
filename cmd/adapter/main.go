@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
@@ -196,7 +195,7 @@ func initCrawler(ctx context.Context, mgr *plugin.Manager, cfg ApplicationPlugin
 
 // defaultMaxBodyBytes is the request body limit used when http.maxBodyBytes
 // is not set.
-const defaultMaxBodyBytes int64 = 10 << 20
+const defaultMaxBodyBytes = handler.DefaultMaxBodyBytes
 
 // maxBodyBytes returns the configured request body limit, or the default
 // when none is set.
@@ -218,12 +217,7 @@ func (c httpConfig) maxBodyBytes() int64 {
 func limitRequestBody(next http.Handler, limit int64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > limit {
-			data, _ := json.Marshal(model.NewCodedError("SCH_INVALID_FORMAT",
-				fmt.Sprintf("request body of %d bytes exceeds the %d byte limit", r.ContentLength, limit)))
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Connection", "close")
-			w.WriteHeader(http.StatusRequestEntityTooLarge)
-			_, _ = w.Write(data)
+			handler.RejectBodyTooLarge(w, r, limit)
 			return
 		}
 		if r.Body != nil {

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
@@ -290,16 +291,19 @@ func (skm *SimpleKeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueK
 		if err != nil {
 			return "", "", fmt.Errorf("failed to lookup registry: %w", err)
 		}
-		if len(subscribers) == 0 {
+	}
+	// The answer is not trusted to be about the subscriber asked for.
+	rec, err := model.SelectKeyRecord(subscribers, subscriberID, uniqueKeyID, time.Now())
+	if err != nil {
+		if errors.Is(err, model.ErrKeyRecordNotFound) {
 			return "", "", model.NewSignValidationErr(codeSubscriberNotFound, ErrSubscriberNotFound)
 		}
-		if !model.IsKeyStatusUsable(subscribers[0].Status) {
-			return "", "", model.NewSignValidationErr(codeKeyExpiredOrRevoked, ErrKeyExpiredOrRevoked)
-		}
+		log.Warnf(ctx, "registry key for subscriber %s key %s refused: %v", subscriberID, uniqueKeyID, err)
+		return "", "", model.NewSignValidationErr(codeKeyExpiredOrRevoked, ErrKeyExpiredOrRevoked)
 	}
 
 	log.Debugf(ctx, "Successfully looked up keys for subscriber: %s, uniqueKeyID: %s", subscriberID, uniqueKeyID)
-	return subscribers[0].SigningPublicKey, subscribers[0].EncrPublicKey, nil
+	return rec.SigningPublicKey, rec.EncrPublicKey, nil
 }
 
 // loadKeysFromConfig loads keys from configuration if they exist

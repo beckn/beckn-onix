@@ -28,6 +28,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"fmt"
+	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/model"
 	"github.com/beckn-one/beckn-onix/pkg/plugin/definition"
@@ -65,12 +66,10 @@ func Resolve(ctx context.Context, caller string, reg definition.RegistryLookup, 
 		// FaultTransient.
 		return nil, fmt.Errorf("%s: registry lookup for node %q key %q: %w", caller, nodeID, keyID, err)
 	}
-	if len(subs) == 0 {
-		return nil, crawler.PermanentFaultf(crawler.FaultSignature, "%s: registry has no key %q for node %q", caller, keyID, nodeID)
-	}
-	sub := subs[0]
-	if !model.IsKeyStatusUsable(sub.Status) {
-		return nil, crawler.PermanentFaultf(crawler.FaultSignature, "%s: registry key %q for node %q has unusable status %q", caller, keyID, nodeID, sub.Status)
+	// The answer is not trusted to be about the node asked for.
+	sub, selErr := model.SelectKeyRecord(subs, nodeID, keyID, time.Now())
+	if selErr != nil {
+		return nil, crawler.PermanentFaultf(crawler.FaultSignature, "%s: registry key %q for node %q: %v", caller, keyID, nodeID, selErr)
 	}
 	if sub.SigningPublicKey == "" {
 		return nil, crawler.PermanentFaultf(crawler.FaultSignature, "%s: registry key %q for node %q has no signing public key", caller, keyID, nodeID)

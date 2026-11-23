@@ -5,11 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
+	"github.com/beckn-one/beckn-onix/core/module/handler"
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
 )
@@ -69,8 +69,7 @@ func NewPreProcessor(cfg *Config) (func(http.Handler) http.Handler, error) {
 			if err != nil {
 				var tooLarge *http.MaxBytesError
 				if errors.As(err, &tooLarge) {
-					writeCodedError(ctx, w, http.StatusRequestEntityTooLarge, "SCH_INVALID_FORMAT",
-						fmt.Sprintf("request body exceeds the %d byte limit", tooLarge.Limit))
+					handler.RejectBodyTooLarge(w, r, tooLarge.Limit)
 					return
 				}
 				writeCodedError(ctx, w, http.StatusBadRequest, "SCH_INVALID_JSON", "Failed to read request body")

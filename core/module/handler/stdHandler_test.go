@@ -659,7 +659,7 @@ func TestNewHTTPClient(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := newHTTPClient(&tt.config, nil)
+			client := newHTTPClient(&tt.config, nil, nil)
 
 			if client == nil {
 				t.Fatal("newHTTPClient returned nil")
@@ -692,7 +692,7 @@ func TestNewHTTPClient(t *testing.T) {
 func TestHttpClientConfigDefaults(t *testing.T) {
 	// Test that zero config values don't override defaults
 	config := &HttpClientConfig{}
-	client := newHTTPClient(config, nil)
+	client := newHTTPClient(config, nil, nil)
 
 	transport := client.Transport.(*http.Transport)
 
@@ -716,7 +716,7 @@ func TestHttpClientConfigPerformanceValues(t *testing.T) {
 		ResponseHeaderTimeout: 5 * time.Second,
 	}
 
-	client := newHTTPClient(config, nil)
+	client := newHTTPClient(config, nil, nil)
 	transport := client.Transport.(*http.Transport)
 
 	// Verify performance-optimized values
@@ -743,7 +743,7 @@ func TestNewHTTPClientWithTransportWrapper(t *testing.T) {
 		returnTransport: wrappedTransport,
 	}
 
-	client := newHTTPClient(&HttpClientConfig{}, wrapper)
+	client := newHTTPClient(&HttpClientConfig{}, wrapper, nil)
 
 	if !wrapper.wrapCalled {
 		t.Fatal("expected transport wrapper to be invoked")

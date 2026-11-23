@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -878,5 +879,62 @@ func TestAddRouteStep_Run_NoBasePath_UsesRawAction(t *testing.T) {
 	}
 	if mr.gotURL == nil || mr.gotURL.Path != "search" {
 		t.Errorf("router received path %q, want %q", mr.gotURL.Path, "search")
+	}
+}
+
+// The key lookup must read the same keyId as the identity check
+// (GHSA-j2f4-5mf2-f824). A repeated keyId is refused; a parameter whose name
+// only ends in keyId is not mistaken for it.
+func TestParseHeaderAgreesWithSignValidator(t *testing.T) {
+	dup := `Signature keyId="attacker.example.com|key-1|ed25519",keyId="bap.example.com|key-9|ed25519",algorithm="ed25519",created="1",expires="2",signature="x"`
+	if h, err := parseHeader(dup); err == nil {
+		t.Fatalf("accepted a repeated keyId, read as %+v", h)
+	}
+	lookalike := `Signature xkeyId="attacker.example.com|key-1|ed25519",keyId="bap.example.com|key-9|ed25519",algorithm="ed25519",created="1",expires="2",signature="x"`
+	h, err := parseHeader(lookalike)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if h.SubscriberID != "bap.example.com" || h.UniqueID != "key-9" {
+		t.Fatalf("key lookup would use %+v, not the keyId parameter", h)
+	}
+	if got := extractAuthSignature(dup); got != "" {
+		t.Fatalf("extractAuthSignature read %q from a malformed header", got)
+	}
+}
+
+// Found in review: with two Authorization lines only the first was verified
+// while both were forwarded.
+func TestValidateHeadersRefusesRepeatedSignatureHeader(t *testing.T) {
+	for _, name := range []string{model.AuthHeaderSubscriber, model.AuthHeaderGateway} {
+		req := httptest.NewRequest(http.MethodPost, "/bpp/receiver/select", strings.NewReader(`{}`))
+		req.Header.Add(name, `Signature keyId="a|k|ed25519",algorithm="ed25519",created="1",expires="2",signature="x"`)
+		req.Header.Add(name, `Signature keyId="b|k|ed25519",algorithm="ed25519",created="1",expires="2",signature="y"`)
+		s := &validateSignStep{}
+		err := s.validateHeaders(&model.StepContext{Context: context.Background(), Request: req, RespHeader: http.Header{}})
+		var coded *model.CodedErr
+		if !errors.As(err, &coded) || coded.HTTPStatus() != http.StatusUnauthorized {
+			t.Fatalf("%s given twice: err=%v, want a 401", name, err)
+		}
+	}
+}
+
+// An unreadable signature header, or a keyId naming another algorithm, is the
+// sender's error: the validate step answers 401, not 500.
+func TestValidateSignStepClassifiesUnreadableHeaderAs401(t *testing.T) {
+	s := &validateSignStep{}
+	for name, header := range map[string]string{
+		"repeated keyId":       `Signature keyId="a.example.com|k|ed25519",keyId="b.example.com|k|ed25519",algorithm="ed25519",created="1",expires="2",signature="x"`,
+		"not a parameter list": `Signature garbage`,
+		"keyId missing":        `Signature algorithm="ed25519",created="1",expires="2",signature="x"`,
+		"keyId algorithm rsa":  `Signature keyId="a.example.com|k|rsa",algorithm="ed25519",created="1",expires="2",signature="x"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := s.validate(&model.StepContext{Context: context.Background()}, header, "", true)
+			var coded *model.CodedErr
+			if !errors.As(err, &coded) || coded.HTTPStatus() != http.StatusUnauthorized {
+				t.Fatalf("err=%v, want a 401", err)
+			}
+		})
 	}
 }

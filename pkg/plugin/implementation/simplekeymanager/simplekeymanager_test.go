@@ -392,7 +392,7 @@ func TestLookupNPKeys_KeyExpiredOrRevoked(t *testing.T) {
 			skm := &SimpleKeyMgr{
 				Registry: &mockRegistry{
 					LookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
-						return []model.Subscription{{Status: tt.status}}, nil
+						return []model.Subscription{{Subscriber: sub.Subscriber, Status: tt.status}}, nil
 					},
 				},
 			}

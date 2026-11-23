@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
@@ -45,7 +46,40 @@ func validate(cfg *Config) error {
 	if cfg.URL == "" {
 		return fmt.Errorf("registry URL cannot be empty")
 	}
+	u, err := url.Parse(cfg.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		// Lookups with such a URL cannot succeed, but releases before 1.9.5
+		// started with one (for example a placeholder on a module that never
+		// verifies signatures), so the 1.9 line only warns.
+		log.Warnf(context.Background(), "registry URL %q is not an absolute http(s) URL; registry lookups will fail", cfg.URL)
+		return nil
+	}
+	if u.Scheme == "http" {
+		// The registry is where signing keys come from. Over plain http anyone
+		// on the path can replace them.
+		log.Warnf(context.Background(), "registry URL %q uses plain http: key lookups can be tampered with in transit; use https outside local development", cfg.URL)
+	}
 	return nil
+}
+
+// recordsForSubscriber drops records that are not for the subscriber that was
+// asked for. The registry's answer is not trusted on this: a record for
+// another subscriber, returned under this lookup, would let that subscriber's
+// key verify messages sent in this one's name. A lookup with no subscriber ID
+// is returned as is.
+func recordsForSubscriber(ctx context.Context, results []model.Subscription, subscriberID string) []model.Subscription {
+	if subscriberID == "" {
+		return results
+	}
+	kept := make([]model.Subscription, 0, len(results))
+	for _, r := range results {
+		if !model.SameSubscriberID(r.SubscriberID, subscriberID) {
+			log.Warnf(ctx, "registry lookup for subscriber %q returned a record for %q; ignored", subscriberID, r.SubscriberID)
+			continue
+		}
+		kept = append(kept, r)
+	}
+	return kept
 }
 
 // New creates a new instance of RegistryClient.
@@ -131,7 +165,10 @@ func (c *RegistryClient) Subscribe(ctx context.Context, subscription *model.Subs
 // Results are cached using the subscriber ID and key ID as the cache key.
 // On a cache hit the network call is skipped entirely.
 func (c *RegistryClient) Lookup(ctx context.Context, subscription *model.Subscription) ([]model.Subscription, error) {
-	cacheKey := fmt.Sprintf("lookup_%s_%s", subscription.SubscriberID, subscription.KeyID)
+	// "/" separates the parts and is escaped inside them, so two different
+	// {subscriber, key} pairs cannot share a key, and no key written by an
+	// earlier release ("lookup_<sub>_<key>") can be read as one of these.
+	cacheKey := fmt.Sprintf("lookup_v3/%s/%s", url.PathEscape(subscription.SubscriberID), url.PathEscape(subscription.KeyID))
 	tracer := otel.Tracer(telemetry.ScopeName, trace.WithInstrumentationVersion(telemetry.ScopeVersion))
 
 	if c.cache != nil {
@@ -140,9 +177,13 @@ func (c *RegistryClient) Lookup(ctx context.Context, subscription *model.Subscri
 		if err == nil {
 			var results []model.Subscription
 			if err := json.Unmarshal([]byte(cached), &results); err == nil {
-				log.Debugf(ctx, "Registry lookup cache hit for key: %s", cacheKey)
-				cacheSpan.End()
-				return results, nil
+				// An entry that holds nothing for this subscriber is not an
+				// answer; ask the registry.
+				if kept := recordsForSubscriber(ctx, results, subscription.SubscriberID); len(kept) > 0 {
+					log.Debugf(ctx, "Registry lookup cache hit for key: %s", cacheKey)
+					cacheSpan.End()
+					return kept, nil
+				}
 			}
 		}
 		cacheSpan.End()
@@ -192,11 +233,14 @@ func (c *RegistryClient) Lookup(ctx context.Context, subscription *model.Subscri
 	}
 
 	log.Debugf(ctx, "Lookup request successful, found %d subscriptions", len(results))
+	results = recordsForSubscriber(ctx, results, subscription.SubscriberID)
 
 	if c.cache != nil && len(results) > 0 {
+		// Never cache longer than cacheTTL: a revoked key must stop verifying
+		// within that time. A record that expires sooner is cached only until then.
 		ttl := c.cacheTTL
 		if !results[0].ValidUntil.IsZero() {
-			if d := time.Until(results[0].ValidUntil); d > 0 {
+			if d := time.Until(results[0].ValidUntil); d > 0 && d < ttl {
 				ttl = d
 			}
 		}

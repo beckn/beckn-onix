@@ -36,6 +36,9 @@ func TestLimitRequestBody(t *testing.T) {
 		if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
 			t.Errorf("Content-Type = %q, want application/json", ct)
 		}
+		if !strings.Contains(rr.Body.String(), `"ack":{"status":"NACK"}`) {
+			t.Errorf("body = %s, want a NACK envelope", rr.Body.String())
+		}
 	})
 
 	t.Run("undeclared length over the limit fails the read", func(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"strconv"
@@ -39,22 +40,22 @@ const (
 )
 
 type stdHandler struct {
-	signer             definition.Signer
-	steps              []definition.Step
-	responseSteps      []definition.ResponseStep
-	signValidator      definition.SignValidator
-	cache              definition.Cache
-	registry           definition.RegistryLookup
-	manifestLoader     definition.ManifestLoader
-	km                 definition.KeyManager
-	schemaValidator    definition.SchemaValidator
+	signer                definition.Signer
+	steps                 []definition.Step
+	responseSteps         []definition.ResponseStep
+	signValidator         definition.SignValidator
+	cache                 definition.Cache
+	registry              definition.RegistryLookup
+	manifestLoader        definition.ManifestLoader
+	km                    definition.KeyManager
+	schemaValidator       definition.SchemaValidator
 	policyChecker         definition.PolicyChecker
 	schemaVersionMediator definition.SchemaVersionMediator
 	router                definition.Router
-	publisher          definition.Publisher
-	transportWrapper   definition.TransportWrapper
-	payloadTransformer definition.Step
-	payloadStore       definition.PayloadStore
+	publisher             definition.Publisher
+	transportWrapper      definition.TransportWrapper
+	payloadTransformer    definition.Step
+	payloadStore          definition.PayloadStore
 	// ackSigner is non-nil only when the "signAck" step is configured (Receiver
 	// modules). It is also used to sign pipeline-NACK responses so that ALL
 	// synchronous responses carry a Signature header per NFH-007 CON-004-02.
@@ -63,11 +64,18 @@ type stdHandler struct {
 	role         model.Role
 	basePath     string
 	httpClient   *http.Client
-	moduleName   string
+	// requestDestClient forwards to destinations taken from the message. Its
+	// dialler refuses addresses the destination guard does not allow.
+	requestDestClient *http.Client
+	destGuard         *destinationGuard
+	moduleName        string
+	// maxResponseBody caps the upstream response body proxy reads into
+	// memory. Zero means DefaultMaxBodyBytes.
+	maxResponseBody int64
 }
 
 // newHTTPClient creates a new HTTP client with a custom transport configuration.
-func newHTTPClient(cfg *HttpClientConfig, wrapper definition.TransportWrapper) *http.Client {
+func newHTTPClient(cfg *HttpClientConfig, wrapper definition.TransportWrapper, guard *destinationGuard) *http.Client {
 	// Clone the default transport to inherit its sensible defaults.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 
@@ -84,6 +92,12 @@ func newHTTPClient(cfg *HttpClientConfig, wrapper definition.TransportWrapper) *
 	}
 	if cfg.ResponseHeaderTimeout > 0 {
 		transport.ResponseHeaderTimeout = cfg.ResponseHeaderTimeout
+	}
+
+	if guard != nil {
+		// Check the address actually dialled, after name resolution. Only a
+		// dial to the operator's own egress proxy is exempt.
+		transport.DialContext = guard.dialContext()
 	}
 
 	var finalTransport http.RoundTripper = transport
@@ -110,7 +124,17 @@ func NewStdHandler(ctx context.Context, mgr PluginManager, cfg *Config, moduleNa
 		return nil, fmt.Errorf("failed to initialize plugins: %w", err)
 	}
 	// Initialize HTTP client after plugins so transport wrapper can be applied.
-	h.httpClient = newHTTPClient(&cfg.HttpClientConfig, h.transportWrapper)
+	h.httpClient = newHTTPClient(&cfg.HttpClientConfig, h.transportWrapper, nil)
+	guard, err := newDestinationGuard(&cfg.HttpClientConfig)
+	if err != nil {
+		return nil, fmt.Errorf("invalid httpClientConfig: %w", err)
+	}
+	h.destGuard = guard
+	if cfg.HttpClientConfig.AllowPrivateDestinations == nil && h.destGuard.allowPrivate {
+		log.Warnf(ctx, "module %s: httpClientConfig.allowPrivateDestinations is not set, so destinations taken from messages may be on private networks. Set it to false unless counterparties are reached on a private network.", moduleName)
+	}
+	h.requestDestClient = newHTTPClient(&cfg.HttpClientConfig, h.transportWrapper, h.destGuard)
+	h.maxResponseBody = cfg.HttpClientConfig.maxResponseBodyBytes()
 	// Initialize steps.
 	if err := h.initSteps(ctx, mgr, cfg); err != nil {
 		return nil, fmt.Errorf("failed to initialize steps: %w", err)
@@ -133,22 +157,20 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Read body early to extract the Beckn action, which is needed for both
 	// the trace context span attributes and for the HTTP request metrics.
 	// This must happen before span creation so the attributes are available.
-	body, err := io.ReadAll(r.Body)
+	body, err := readRequestBody(r)
 	if err != nil {
 		// The server caps the request body; a sender that exceeds the cap
 		// gets 413, not the 500 of a genuine read failure.
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			log.Warnf(r.Context(), "request body exceeds the %d byte limit", tooLarge.Limit)
-			sendNack(r.Context(), w, model.NewCodedErr(http.StatusRequestEntityTooLarge, "SCH_INVALID_FORMAT",
-				fmt.Errorf("request body exceeds the %d byte limit", tooLarge.Limit)))
+			RejectBodyTooLarge(w, r, tooLarge.Limit)
 			return
 		}
 		log.Errorf(r.Context(), err, "failed to read request body: %v", err)
 		http.Error(w, "failed to read request body", http.StatusInternalServerError)
 		return
 	}
-	r.Body = io.NopCloser(bytes.NewBuffer(body))
+	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	action := extractBecknAction(body)
 	if action == "" {
@@ -184,12 +206,8 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// set beckn attribute
 	setBecknAttr(span, r, h, action)
 
-	stepCtx, err := h.stepCtx(r, w.Header())
-	if err != nil {
-		log.Errorf(r.Context(), err, "stepCtx(r):%v", err)
-		sendNack(r.Context(), wrapped, err)
-		return
-	}
+	// The body is already in memory; hand the same bytes to the steps.
+	stepCtx := h.stepCtxFromBody(r, w.Header(), body)
 	log.Request(r.Context(), r, stepCtx.Body)
 
 	var responseBody []byte
@@ -240,8 +258,29 @@ func (h *stdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			responseBody = sendAck(stepCtx, wrapped)
 			return
 		}
+		// A destination taken from the message is chosen by a counterparty.
+		// Check it before connecting, and forward through the guarded client.
+		client := h.httpClient
+		if stepCtx.Route.FromRequest {
+			if h.destGuard == nil {
+				h.destGuard, _ = newDestinationGuard(&HttpClientConfig{})
+			}
+			if err := h.destGuard.checkURL(stepCtx, stepCtx.Route.URL, net.DefaultResolver, goesViaProxy(stepCtx.Route.URL)); err != nil {
+				log.Errorf(stepCtx, err, "refusing message-supplied destination %s: %v", stepCtx.Route.URL.Redacted(), err)
+				nack := destinationNotAllowedErr()
+				if errors.Is(err, errDestinationUnresolved) {
+					nack = destinationUnreachableErr()
+				}
+				h.signNackResponse(stepCtx, nack)
+				responseBody = sendNack(stepCtx, wrapped, nack)
+				return
+			}
+			if h.requestDestClient != nil {
+				client = h.requestDestClient
+			}
+		}
 		// Handle routing based on the defined route type.
-		route(stepCtx, r, wrapped, h.publisher, h.httpClient, h.responseSteps, h.signNackResponse, &responseBody)
+		route(stepCtx, r, wrapped, h.publisher, client, h.responseSteps, h.signNackResponse, &responseBody)
 	}
 }
 
@@ -276,7 +315,12 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 		return nil, model.NewBadReqErr("", err)
 	}
 	r.Body.Close()
-	body := bodyBuffer.Bytes()
+	return h.stepCtxFromBody(r, rh, bodyBuffer.Bytes()), nil
+}
+
+// stepCtxFromBody creates a StepContext over a request body that has already
+// been read. It keeps body as is, without copying it.
+func (h *stdHandler) stepCtxFromBody(r *http.Request, rh http.Header, body []byte) *model.StepContext {
 	subID := h.subID(r.Context())
 	protocolVersion := extractProtocolVersion(body)
 	messageID := extractMessageID(body)
@@ -301,7 +345,8 @@ func (h *stdHandler) stepCtx(r *http.Request, rh http.Header) (*model.StepContex
 		MessageID:            messageID,
 		InboundAuthSignature: inboundAuthSignature,
 		IsCallerHandler:      direction == DirectionCaller,
-	}, nil
+		MaxResponseBodyBytes: h.maxResponseBody,
+	}
 }
 
 // subID retrieves the subscriber ID from the request context.
@@ -403,10 +448,23 @@ func proxy(ctx *model.StepContext, r *http.Request, w http.ResponseWriter, httpC
 	// ResponseStepContext, then runs all response steps. Body restoration for
 	// ReverseProxy happens here — individual steps read from rctx.Body and do
 	// not need to touch resp.Body directly.
+	// The response is held in memory for the response steps, so it is capped
+	// like the request: a counterparty must not decide how much memory its
+	// answer costs. An oversized response is dropped and the caller gets 502.
+	limit := ctx.MaxResponseBodyBytes
+	if limit <= 0 {
+		limit = DefaultMaxBodyBytes
+	}
 	modifyResponse := func(resp *http.Response) error {
-		body, err := io.ReadAll(resp.Body)
+		if resp.ContentLength > limit {
+			return fmt.Errorf("modifyResponse: upstream response body of %d bytes exceeds the %d byte limit", resp.ContentLength, limit)
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 		if err != nil {
 			return fmt.Errorf("modifyResponse: failed to read upstream response body: %w", err)
+		}
+		if int64(len(body)) > limit {
+			return fmt.Errorf("modifyResponse: upstream response body exceeds the %d byte limit", limit)
 		}
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		rctx := &model.ResponseStepContext{

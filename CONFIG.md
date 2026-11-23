@@ -174,7 +174,7 @@ appName: "onix-local"
 **Type**: `integer` (bytes)  
 **Required**: No  
 **Default**: `10485760` (10 MiB)  
-**Description**: Largest request body the server accepts, on every route. A larger request is answered with `413 Request Entity Too Large` before its signature is checked. Raise it if you publish catalogs larger than the default through `catalog/publish`.
+**Description**: Largest request body the server accepts, on every route. A larger request is answered with `413 Request Entity Too Large` before its signature is checked. The response is a NACK on message routes and plain text on `catalog/publish`, and each rejection is logged at `warn` with the method, path and remote address. Raise it if you publish catalogs larger than the default through `catalog/publish`.
 
 The request log records at most the first 64 KiB of a body, with `bodyBytes` giving the full size and `bodyTruncated: true` when it was cut.
 
@@ -730,6 +730,25 @@ modules:
 **Type**: `duration`  
 **Default**: `5s`  
 **Description**: Time to wait for server response headers.
+
+###### `maxResponseBodyBytes`
+**Type**: `integer` (bytes)  
+**Default**: `10485760` (10 MiB)  
+**Description**: Largest response body the handler accepts from the endpoint it forwards a request to. A larger response is dropped and the caller receives `502 Bad Gateway`.
+
+###### `allowPrivateDestinations`
+**Type**: `boolean`  
+**Default**: `true` in the 1.9 line (the next minor release changes it to `false`)  
+**Description**: Whether the handler may forward to loopback and private-network addresses when the destination comes from the message (`context.bapUri` / `context.bppUri`, routing target types `bap`, `bpp`, `sender`, `receiver`). Set it to `false` on any module whose counterparties are reached over the public internet; a message that names a private, loopback or reserved address is then answered with `400` and code `NET_DESTINATION_NOT_ALLOWED`. Leave it `true` only where counterparties really are on a private network (local setups, a single cluster). A module logs a start-up warning while it is unset.
+
+Whatever this setting says, link-local addresses and cloud metadata addresses are refused, as are destinations that are not `http`/`https` URLs or that carry credentials. Destinations written in the routing config (`targetType: url`) are never checked.
+
+The adapter resolves the destination host before forwarding and checks the address again when it connects. If requests leave through an egress proxy (`HTTP_PROXY` / `HTTPS_PROXY`), the proxy resolves host names, so the adapter's check is only as good as its own view of DNS: it refuses a name that it resolves to a refused address, and leaves a name it cannot resolve to the proxy. The proxy's own access rules must keep internal ranges out as well. A host name that cannot be resolved is answered with `502`.
+
+###### `allowedDestinationHosts`
+**Type**: `array` of strings  
+**Default**: empty (any host that passes the address checks)  
+**Description**: Limits message-supplied destinations to these hosts. An entry is a host name (`bpp.example.com`) or `*.example.com` for its subdomains, with no scheme, port or path. An invalid entry stops the module at start-up.
 
 ##### `plugins`
 **Type**: `object`  

@@ -1030,7 +1030,7 @@ func TestLookupNPKeysFailure(t *testing.T) {
 		{
 			name: "subscriber found but key EXPIRED",
 			registryLookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
-				return []model.Subscription{{Status: "EXPIRED"}}, nil
+				return []model.Subscription{{Subscriber: sub.Subscriber, Status: "EXPIRED"}}, nil
 			},
 			expectedError: "subscriber key is expired or revoked",
 			wantCode:      "AUT_KEY_EXPIRED_OR_REVOKED",
@@ -1039,7 +1039,7 @@ func TestLookupNPKeysFailure(t *testing.T) {
 		{
 			name: "subscriber found but UNSUBSCRIBED",
 			registryLookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
-				return []model.Subscription{{Status: "UNSUBSCRIBED"}}, nil
+				return []model.Subscription{{Subscriber: sub.Subscriber, Status: "UNSUBSCRIBED"}}, nil
 			},
 			expectedError: "subscriber key is expired or revoked",
 			wantCode:      "AUT_KEY_EXPIRED_OR_REVOKED",
@@ -1048,7 +1048,7 @@ func TestLookupNPKeysFailure(t *testing.T) {
 		{
 			name: "subscriber found but INVALID_SSL",
 			registryLookupFunc: func(ctx context.Context, sub *model.Subscription) ([]model.Subscription, error) {
-				return []model.Subscription{{Status: "INVALID_SSL"}}, nil
+				return []model.Subscription{{Subscriber: sub.Subscriber, Status: "INVALID_SSL"}}, nil
 			},
 			expectedError: "subscriber key is expired or revoked",
 			wantCode:      "AUT_KEY_EXPIRED_OR_REVOKED",

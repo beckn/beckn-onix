@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/beckn-one/beckn-onix/pkg/netguard"
 	"io"
 	"net/http"
 	"net/url"
@@ -30,17 +31,17 @@ type payload struct {
 type schemav2Validator struct {
 	config          *Config
 	specMutex       sync.RWMutex
-	specsLoaded     bool                            // true once at least one successful loadAllSpecs has completed
-	actionSchemas   map[string]*openapi3.SchemaRef  // merged across primary + all auxiliary specs
-	bodylessActions map[string]struct{}              // merged across primary + all auxiliary specs
-	schemaCache     *schemaCache                     // cache for extended schemas
+	specsLoaded     bool                           // true once at least one successful loadAllSpecs has completed
+	actionSchemas   map[string]*openapi3.SchemaRef // merged across primary + all auxiliary specs
+	bodylessActions map[string]struct{}            // merged across primary + all auxiliary specs
+	schemaCache     *schemaCache                   // cache for extended schemas
 }
 
 // cachedSpec holds a cached OpenAPI spec.
 type cachedSpec struct {
 	doc             *openapi3.T
 	actionSchemas   map[string]*openapi3.SchemaRef // body operations: action → schema (O(1) lookup)
-	bodylessActions map[string]struct{}             // bodyless operations: path without leading slash → exists
+	bodylessActions map[string]struct{}            // bodyless operations: path without leading slash → exists
 	loadedAt        time.Time
 }
 
@@ -312,7 +313,18 @@ func (v *schemav2Validator) loadAllSpecs(ctx context.Context, failOnAuxError boo
 // specHTTPClient is used by freshReadFromURI for all remote spec fetches.
 // The 30 s timeout prevents a hanging server from stalling the reload goroutine
 // indefinitely; caller context deadlines further constrain it when set.
-var specHTTPClient = &http.Client{Timeout: 30 * time.Second}
+//
+// A message can name the schema to fetch (@context), and a fetched schema can
+// redirect or $ref elsewhere, so the client never connects to link-local or
+// cloud metadata addresses. Private addresses stay reachable: schema servers
+// on a private network are a supported setup.
+var specHTTPClient = &http.Client{Timeout: 30 * time.Second, Transport: specTransport()}
+
+func specTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DialContext = netguard.Dialer(true).DialContext
+	return t
+}
 
 // maxSpecBodyBytes caps how much of a spec response is read into memory.
 // No legitimate OpenAPI spec approaches this limit; it guards against

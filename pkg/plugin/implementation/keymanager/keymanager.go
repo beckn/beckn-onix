@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/beckn-one/beckn-onix/pkg/log"
 	"github.com/beckn-one/beckn-onix/pkg/model"
@@ -306,13 +307,16 @@ func (km *KeyMgr) LookupNPKeys(ctx context.Context, subscriberID, uniqueKeyID st
 	if err != nil {
 		return "", "", fmt.Errorf("failed to lookup registry: %w", err)
 	}
-	if len(subscribers) == 0 {
-		return "", "", model.NewSignValidationErr(codeSubscriberNotFound, ErrSubscriberNotFound)
-	}
-	if !model.IsKeyStatusUsable(subscribers[0].Status) {
+	// The answer is not trusted to be about the subscriber asked for.
+	rec, err := model.SelectKeyRecord(subscribers, subscriberID, uniqueKeyID, time.Now())
+	if err != nil {
+		if errors.Is(err, model.ErrKeyRecordNotFound) {
+			return "", "", model.NewSignValidationErr(codeSubscriberNotFound, ErrSubscriberNotFound)
+		}
+		log.Warnf(ctx, "registry key for subscriber %s key %s refused: %v", subscriberID, uniqueKeyID, err)
 		return "", "", model.NewSignValidationErr(codeKeyExpiredOrRevoked, ErrKeyExpiredOrRevoked)
 	}
-	return subscribers[0].SigningPublicKey, subscribers[0].EncrPublicKey, nil
+	return rec.SigningPublicKey, rec.EncrPublicKey, nil
 }
 
 // validateParams checks that subscriberID and uniqueKeyID are not empty.
