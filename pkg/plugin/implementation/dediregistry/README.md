@@ -30,7 +30,7 @@ registry:
 |-----------|----------|-------------|---------|
 | `url` | Yes | DeDi wrapper API base URL (include /dedi path). Must be an absolute `http(s)` URL with a host and no query or fragment (checked at startup); a trailing slash is trimmed | - |
 | `allowedNetworkIDs` | No | Allowlist of network membership IDs from `data.network_memberships` for signature validation | - |
-| `cacheTTL` | No | How long a `Lookup` result is cached: a Go duration with a unit (e.g. `300s`, `5m`); a bare number is rejected with a warning and the default is used, and zero or negative also means the default. A positive `data.ttl` in the DeDi response (in seconds) overrides it | 5m |
+| `cacheTTL` | No | How long a `Lookup` result is cached: a Go duration with a unit (e.g. `300s`, `5m`); a bare number is rejected with a warning and the default is used, and zero or negative also means the default. A positive `data.ttl` in the DeDi response (in seconds) shortens it for that record but never extends it, so a revoked record stops verifying within `cacheTTL` | 5m |
 | `timeout` | No | Request timeout in seconds | Client default |
 | `retry_max` | No | Maximum number of retry attempts | 4 (library default) |
 | `retry_wait_min` | No | Minimum wait time between retries (e.g., "1s", "500ms") | 1s (library default) |

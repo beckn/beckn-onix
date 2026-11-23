@@ -163,6 +163,25 @@ type HttpClientConfig struct {
 	// ResponseHeaderTimeout, if non-zero, specifies the amount of time to wait
 	// for a server's response headers after fully writing the request.
 	ResponseHeaderTimeout time.Duration `yaml:"responseHeaderTimeout"`
+
+	// MaxResponseBodyBytes is the largest upstream response body the handler
+	// accepts when it forwards a request. Zero means DefaultMaxBodyBytes.
+	MaxResponseBodyBytes int64 `yaml:"maxResponseBodyBytes"`
+
+	// AllowPrivateDestinations says whether the handler may forward to loopback
+	// and private-network addresses when the destination comes from the message
+	// (context.bapUri / context.bppUri). Set it to false wherever counterparties
+	// are reached over the public internet. When unset it is true in the 1.9
+	// line, which keeps existing private-network setups working; the next
+	// minor release changes the default to false. Link-local addresses, which
+	// include cloud metadata services, are refused either way. Destinations
+	// written in the routing config are not affected.
+	AllowPrivateDestinations *bool `yaml:"allowPrivateDestinations"`
+
+	// AllowedDestinationHosts, when set, limits message-supplied destinations
+	// to these hosts. An entry is a host name, or "*.example.com" for its
+	// subdomains. Empty means any host that passes the address checks.
+	AllowedDestinationHosts []string `yaml:"allowedDestinationHosts"`
 }
 
 // Config holds the configuration for request processing handlers.

@@ -34,26 +34,6 @@ type Subscription struct {
 	NetworkMemberships []string  `json:"network_memberships,omitempty"`
 }
 
-// nonUsableKeySubscriptionStatuses are the Subscription.Status values that mean a
-// matched subscriber's key is no longer usable for signature verification.
-// INITIATED and UNDER_SUBSCRIPTION are intentionally absent — this function
-// distinguishes revocation/expiry from good standing only; it does not gate on
-// subscription completeness. A subscriber that has registered a key but not yet
-// finished onboarding is still treated as usable here. If pre-subscription
-// participants should be rejected too, that is a separate authorization
-// decision for a caller (or a future ticket) to make, not part of this check.
-var nonUsableKeySubscriptionStatuses = map[string]bool{
-	"EXPIRED":      true,
-	"UNSUBSCRIBED": true,
-	"INVALID_SSL":  true,
-}
-
-// IsKeyStatusUsable reports whether a subscriber's registry Status still
-// permits its key to be used for signature verification.
-func IsKeyStatusUsable(status string) bool {
-	return !nonUsableKeySubscriptionStatuses[status]
-}
-
 // RegistryMetadata represents metadata configured on a registry itself rather than on a specific record.
 type RegistryMetadata struct {
 	NamespaceIdentifier string
@@ -274,6 +254,36 @@ func ResolveCallerID(reqContext map[string]interface{}, role Role) string {
 	return ""
 }
 
+// CallerIDs returns every caller identity a Beckn context declares for role,
+// under any of the field names ResolveCallerID accepts and in any letter
+// case. A message can carry more than one of them (bap_id next to bapId, or
+// BapId), and different readers pick different ones, so a check that binds
+// the signer to the declared caller must look at all of them.
+func CallerIDs(reqContext map[string]interface{}, role Role) []string {
+	var names []string
+	switch role {
+	case RoleBAP:
+		names = []string{"bpp_id", "bppid", "receiverid"}
+	case RoleBPP:
+		names = []string{"bap_id", "bapid", "senderid"}
+	default:
+		return nil
+	}
+	var ids []string
+	for k, raw := range reqContext {
+		lk := strings.ToLower(k)
+		for _, n := range names {
+			if lk != n {
+				continue
+			}
+			if v, ok := raw.(string); ok && v != "" {
+				ids = append(ids, v)
+			}
+		}
+	}
+	return ids
+}
+
 // ResolveSubscriberID returns the node's own subscriber ID from a parsed Beckn context map.
 // For BAP role: returns bap_id / bapId / senderId.
 // For BPP role: returns bpp_id / bppId / receiverId.
@@ -301,6 +311,10 @@ type Route struct {
 	TargetType  string   // "url" or "publisher"
 	PublisherID string   // For message queues
 	URL         *url.URL // For API calls
+	// FromRequest is true when URL was taken from the message (context.bapUri /
+	// context.bppUri) instead of the routing config. Such a destination is
+	// chosen by a counterparty and is checked before the adapter connects to it.
+	FromRequest bool
 }
 
 // Keyset represents a collection of cryptographic keys used for signing and encryption.
@@ -326,6 +340,9 @@ type StepContext struct {
 	MessageID            string // Message ID parsed from context.messageId in the request body
 	InboundAuthSignature string // Raw Base64 signature from the inbound Authorization header's signature="..." attribute
 	IsCallerHandler      bool   // True when the handler is a Caller (outbound); false for Receiver (inbound)
+	// MaxResponseBodyBytes caps the upstream response body read when the
+	// request is forwarded. Zero means the handler's default.
+	MaxResponseBodyBytes int64
 }
 
 // WithContext updates the existing StepContext with a new context.

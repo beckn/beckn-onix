@@ -53,6 +53,7 @@ const (
 	codeNetEntityNotFound        = "NET_ENTITY_NOT_FOUND"
 	codeAutSubscriberNotFound    = "AUT_SUBSCRIBER_NOT_FOUND"
 	codeAutKeyNotFound           = "AUT_KEY_NOT_FOUND"
+	codeAutKeyExpiredOrRevoked   = "AUT_KEY_EXPIRED_OR_REVOKED"
 	codeAutSignatureInvalid      = "AUT_SIGNATURE_INVALID"
 	codeAutNetworkNotAllowed     = "AUT_NETWORK_NOT_ALLOWED"
 	codeCtxMissingField          = "CTX_MISSING_FIELD"
@@ -503,7 +504,8 @@ func lookupCacheKey(subscriberID, keyID string) string {
 // domains, so case is ignored. A record without subscriber_id was addressed by
 // the requested ID, so it is accepted as that subscriber's.
 func isSubscriberRecord(recordSubscriberID, subscriberID string) bool {
-	return recordSubscriberID == "" || strings.EqualFold(recordSubscriberID, subscriberID)
+	// ASCII case only: Unicode folding would accept a look-alike id.
+	return recordSubscriberID == "" || model.SameSubscriberID(recordSubscriberID, subscriberID)
 }
 
 // cachedLookup returns Lookup's cached results for key, and false on a miss,
@@ -576,6 +578,19 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 
 	log.Debugf(ctx, "DeDi lookup request successful, parsing response")
 
+	// DeDi has no subscription status; a record that is not live (revoked or
+	// otherwise withdrawn) must not supply a verification key.
+	// DeDi returns the state at the top level of data ("live" for a usable
+	// record). An answer with no state is accepted, as before.
+	if raw, present := data["state"]; present {
+		state, _ := raw.(string)
+		if !strings.EqualFold(strings.TrimSpace(state), "live") {
+			log.Errorf(ctx, nil, "DeDi record for subscriber %q is in state %v, not live", subscriberID, raw)
+			return nil, model.NewSignValidationErr(codeAutKeyExpiredOrRevoked,
+				fmt.Errorf("DeDi record for subscriber %q is not live", subscriberID))
+		}
+	}
+
 	parsed, err := c.parseSubscriptionFromData(ctx, data, true)
 	if err != nil {
 		return nil, err
@@ -599,6 +614,10 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 	}
 
 	subscription := *parsed
+	// The record passed the subscriber check above (DeDi may omit the id or
+	// write it in another letter case). Callers bind the record to the
+	// subscriber they asked for, so return it under that id.
+	subscription.SubscriberID = subscriberID
 	subscription.KeyID = keyID
 	subscription.NetworkMemberships = networkMemberships
 
@@ -607,8 +626,12 @@ func (c *DeDiRegistryClient) Lookup(ctx context.Context, req *model.Subscription
 
 	if c.cache != nil {
 		ttl := c.cacheTTL
+		// DeDi's ttl can shorten the cache time but not stretch it past
+		// cacheTTL: a revoked record must stop verifying within cacheTTL.
 		if ttlSec, ok := data["ttl"].(float64); ok && ttlSec > 0 {
-			ttl = time.Duration(ttlSec) * time.Second
+			if d := time.Duration(ttlSec) * time.Second; d < ttl {
+				ttl = d
+			}
 		}
 		if encoded, err := json.Marshal(results); err == nil {
 			if err := c.cache.Set(ctx, cacheKey, string(encoded), ttl); err != nil {

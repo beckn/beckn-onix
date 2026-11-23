@@ -515,3 +515,107 @@ func TestValidateAck_SubIdentity_FromBody_Mismatch(t *testing.T) {
 		t.Fatal("expected error: signer evil.com does not match body bap_id bap.example.com")
 	}
 }
+
+// GHSA-j2f4-5mf2-f824: a header that names keyId twice used to show the
+// attacker's keyId to the key lookup and the victim's keyId to the identity
+// check. The attacker signs with its own key and claims the victim's bap_id.
+func TestValidate_DuplicateKeyID_Rejected(t *testing.T) {
+	attackerPriv, attackerPub := generateTestKeyPair()
+	body := []byte(`{"context":{"action":"status","bap_id":"bap.example.com"}}`)
+	now, exp := time.Now().Unix(), time.Now().Unix()+300
+	sig := signTestData(attackerPriv, body, now, exp)
+
+	headers := map[string]string{
+		"attacker first, victim last": fmt.Sprintf(
+			`Signature keyId="attacker.example.com|key-1|ed25519",keyId="bap.example.com|key-9|ed25519",algorithm="ed25519",created="%d",expires="%d",headers="(created) (expires) digest",signature="%s"`,
+			now, exp, sig),
+		"lookalike parameter before keyId": fmt.Sprintf(
+			`Signature xkeyId="attacker.example.com|key-1|ed25519",keyId="bap.example.com|key-9|ed25519",algorithm="ed25519",created="%d",expires="%d",headers="(created) (expires) digest",signature="%s"`,
+			now, exp, sig),
+	}
+	verifier, _, _ := New(context.Background(), &Config{})
+
+	// Duplicate: refused outright, with the attacker's key as the lookup result.
+	if err := verifier.Validate(makeCtx(body, model.RoleBPP), headers["attacker first, victim last"], attackerPub, true); err == nil {
+		t.Fatal("accepted a header with two keyId parameters")
+	}
+	// Lookalike: keyId is the victim's, so the handler looks up the victim's
+	// key, and the attacker's signature does not verify against it.
+	_, victimPub := generateTestKeyPair()
+	if err := verifier.Validate(makeCtx(body, model.RoleBPP), headers["lookalike parameter before keyId"], victimPub, true); err == nil {
+		t.Fatal("accepted the attacker's signature under the victim's keyId")
+	}
+}
+
+// GHSA-676x-xg5x-hxxp: a registry record with a key of the wrong length used
+// to panic inside ed25519.Verify.
+func TestValidate_MalformedPublicKey_NoPanic(t *testing.T) {
+	priv, _ := generateTestKeyPair()
+	body := []byte(`{"context":{"action":"search","bap_id":"bap.example.com"}}`)
+	now, exp := time.Now().Unix(), time.Now().Unix()+300
+	header := signedHeaderWithKeyID("bap.example.com", priv, body, now, exp)
+	verifier, _, _ := New(context.Background(), &Config{})
+
+	for name, key := range map[string]string{
+		"3 bytes":  base64.StdEncoding.EncodeToString([]byte{1, 2, 3}),
+		"empty":    "",
+		"33 bytes": base64.StdEncoding.EncodeToString(make([]byte, 33)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("Validate panicked: %v", r)
+				}
+			}()
+			if err := verifier.Validate(makeCtx(body, model.RoleBPP), header, key, true); err == nil {
+				t.Fatal("accepted a signature against a malformed key")
+			}
+			if err := verifier.ValidateAck(makeCtx(body, model.RoleBPP), body, header, "req-sig", key, true); err == nil {
+				t.Fatal("ValidateAck accepted a signature against a malformed key")
+			}
+		})
+	}
+}
+
+func TestValidate_ExpiresBeforeCreated_Rejected(t *testing.T) {
+	priv, pub := generateTestKeyPair()
+	body := []byte(`{"context":{"action":"search","bap_id":"bap.example.com"}}`)
+	// created is inside the clock-skew tolerance, expires is still in the future, but before created.
+	created, expires := time.Now().Unix()+20, time.Now().Unix()+10
+	header := signedHeaderWithKeyID("bap.example.com", priv, body, created, expires)
+	verifier, _, _ := New(context.Background(), &Config{})
+	if err := verifier.Validate(makeCtx(body, model.RoleBPP), header, pub, true); err == nil {
+		t.Fatal("accepted a signature that expires before it was created")
+	}
+}
+
+// Found in review: the body can declare the caller under several field names.
+// The signer must match every one of them, or a signer can put its own id in
+// the field the adapter checks and a victim's id in the field the application
+// reads.
+func TestValidate_AllCallerAliasesMustMatchSigner(t *testing.T) {
+	priv, pub := generateTestKeyPair()
+	now, exp := time.Now().Unix(), time.Now().Unix()+300
+	verifier, _, _ := New(context.Background(), &Config{})
+	spoofs := map[string]string{
+		"bap_id attacker, bapId victim":   `{"context":{"action":"status","bap_id":"attacker.example.com","bapId":"bap.example.com"}}`,
+		"bapId attacker, senderId victim": `{"context":{"action":"status","bapId":"attacker.example.com","senderId":"bap.example.com"}}`,
+		"bapId attacker, BapId victim":    `{"context":{"action":"status","bapId":"attacker.example.com","BapId":"bap.example.com"}}`,
+		"only BapId, naming the victim":   `{"context":{"action":"status","BapId":"bap.example.com"}}`,
+		"only BAP_ID, naming the victim":  `{"context":{"action":"status","BAP_ID":"bap.example.com"}}`,
+	}
+	for name, body := range spoofs {
+		t.Run(name, func(t *testing.T) {
+			header := signedHeaderWithKeyID("attacker.example.com", priv, []byte(body), now, exp)
+			if err := verifier.Validate(makeCtx([]byte(body), model.RoleBPP), header, pub, true); err == nil {
+				t.Fatal("message signed by attacker.example.com accepted while the body names bap.example.com")
+			}
+		})
+	}
+	// An honest message that repeats its own id under two names is fine.
+	body := []byte(`{"context":{"action":"status","bap_id":"bap.example.com","bapId":"bap.example.com"}}`)
+	header := signedHeaderWithKeyID("bap.example.com", priv, body, now, exp)
+	if err := verifier.Validate(makeCtx(body, model.RoleBPP), header, pub, true); err != nil {
+		t.Fatalf("honest message with consistent aliases refused: %v", err)
+	}
+}

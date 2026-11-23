@@ -167,12 +167,19 @@ func compile(ctx context.Context, cfg *auditConfig) (*CompiledConfig, error) {
 			return nil, err
 		}
 		for _, key := range rule.Keys {
+			// A key with an empty path segment (".name", "a..b", "") can never
+			// match. It is skipped with a warning, not treated as fatal:
+			// rejecting the whole file would leave every audit record unmasked,
+			// and releases before 1.9.5 loaded such a file.
+			malformed := false
 			for _, segment := range strings.Split(key, ".") {
 				if segment == "" {
-					err := fmt.Errorf("maskRule key %q contains an empty path segment", key)
-					log.Error(ctx, err, "")
-					return nil, err
+					malformed = true
 				}
+			}
+			if malformed {
+				log.Warnf(ctx, "audit: maskRule key %q contains an empty path segment and is ignored", key)
+				continue
 			}
 			keyToPattern[key] = p
 		}
