@@ -298,6 +298,13 @@ func TestDestinationGuardViaProxy(t *testing.T) {
 	if err := g.checkURL(context.Background(), u, net.DefaultResolver, true); err == nil {
 		t.Fatal("literal private address allowed because a proxy is in use")
 	}
+	// A name this host CAN resolve is checked even when a proxy is in use.
+	u, _ = url.Parse("http://localhost/bpp")
+	if addrs, lerr := net.DefaultResolver.LookupNetIP(context.Background(), "ip", "localhost"); lerr == nil && len(addrs) > 0 {
+		if err := g.checkURL(context.Background(), u, net.DefaultResolver, true); err == nil {
+			t.Fatal("a name that resolves to loopback was left to the proxy")
+		}
+	}
 }
 
 // With proxy variables set, a dial that is not to the proxy is still checked.
@@ -316,5 +323,16 @@ func TestGuardedClientChecksDirectDialsWhenProxyIsSet(t *testing.T) {
 	}
 	if !egressProxyAddrs()["127.0.0.1:1"] {
 		t.Fatal("proxy address not recognised")
+	}
+}
+
+func TestLooksNumeric(t *testing.T) {
+	for host, want := range map[string]bool{
+		"2130706433": true, "0177.0.0.1": true, "0x7f.0.0.1": true, "0x7f000001": true, "127.1": true, "10.213.19722": true, "0": true,
+		"3f2a9c0b1d2e": false, "deadbeef": false, "1a.example.com": false, "bpp.example.com": false, "1.2.3.4.5": false, "0x": false, "abc.def": false,
+	} {
+		if got := looksNumeric(host); got != want {
+			t.Errorf("looksNumeric(%q)=%v, want %v", host, got, want)
+		}
 	}
 }

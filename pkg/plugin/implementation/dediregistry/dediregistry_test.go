@@ -1820,3 +1820,20 @@ func TestDeDiLookup_StateTTLAndSubscriberID(t *testing.T) {
 		})
 	}
 }
+
+// A DeDi record whose subscriber_id is a Unicode look-alike of the requested
+// id is another subscriber's record.
+func TestDeDiLookup_LookalikeSubscriberIDRefused(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := dediLookupResponse(60)
+		resp["data"].(map[string]interface{})["details"].(map[string]interface{})["subscriber_id"] = "ſub.example.com"
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+	client, closer, _ := New(context.Background(), nil, &Config{URL: server.URL})
+	defer closer()
+	_, err := client.Lookup(context.Background(), &model.Subscription{Subscriber: model.Subscriber{SubscriberID: "sub.example.com"}, KeyID: "key-1"})
+	if err == nil {
+		t.Fatal("a look-alike subscriber's record was returned for sub.example.com")
+	}
+}

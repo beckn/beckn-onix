@@ -25,9 +25,34 @@ const validFromLeeway = time.Minute
 // SameSubscriberID reports whether two subscriber IDs name the same
 // subscriber. Subscriber IDs are host names, so letter case and a trailing
 // dot do not distinguish them.
+//
+// Only the ASCII letters A-Z are folded. Unicode case folding must not be
+// used here: it maps other characters onto ASCII letters (U+017F onto "s",
+// U+212A onto "k"), which would make a different, look-alike ID equal.
 func SameSubscriberID(a, b string) bool {
 	a, b = strings.TrimSuffix(strings.TrimSpace(a), "."), strings.TrimSuffix(strings.TrimSpace(b), ".")
-	return a != "" && strings.EqualFold(a, b)
+	return a != "" && EqualASCIIFold(a, b)
+}
+
+// EqualASCIIFold reports whether a and b are equal byte for byte once the
+// ASCII letters A-Z are lower-cased. Every other byte must match exactly.
+func EqualASCIIFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		x, y := a[i], b[i]
+		if x >= 'A' && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if y >= 'A' && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
 }
 
 // SelectKeyRecord picks, from a registry lookup answer, the record whose key
@@ -49,7 +74,7 @@ func SelectKeyRecord(subs []Subscription, subscriberID, keyID string, now time.T
 				continue
 			}
 			named := s.KeyID != "" && keyID != ""
-			if named && !strings.EqualFold(s.KeyID, keyID) {
+			if named && !EqualASCIIFold(s.KeyID, keyID) {
 				continue
 			}
 			// Pass 0: records that name the requested key. Pass 1: the rest.

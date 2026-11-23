@@ -85,18 +85,32 @@ func (g *destinationGuard) hostAllowed(host string) bool {
 	return false
 }
 
-// looksNumeric reports whether host is written like an IP address in a form
-// netip does not accept (octal, hex, short or decimal forms such as
-// 0177.0.0.1 or 2130706433). Readers disagree about what such a host means,
-// so it is refused.
+// looksNumeric reports whether host is an IPv4 address written in a legacy
+// form netip does not accept: up to four dot-separated parts, each a decimal
+// or octal number or 0x-prefixed hex (0177.0.0.1, 0x7f.1, 2130706433).
+// Readers disagree about what such a host means, so it is refused. A name
+// that merely consists of hex digits, such as a container id, is a name.
 func looksNumeric(host string) bool {
-	last := host[strings.LastIndexByte(host, '.')+1:]
-	if last == "" || last[0] < '0' || last[0] > '9' {
+	parts := strings.Split(strings.TrimSuffix(host, "."), ".")
+	if len(parts) > 4 {
 		return false
 	}
-	for _, r := range host {
-		if !(r >= '0' && r <= '9' || r == '.' || r == 'x' || r == 'X' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F') {
+	for _, p := range parts {
+		digits := p
+		hex := false
+		if len(p) > 2 && (p[:2] == "0x" || p[:2] == "0X") {
+			digits, hex = p[2:], true
+		}
+		if digits == "" {
 			return false
+		}
+		for _, r := range digits {
+			switch {
+			case r >= '0' && r <= '9':
+			case hex && (r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F'):
+			default:
+				return false
+			}
 		}
 	}
 	return true
@@ -107,10 +121,11 @@ func looksNumeric(host string) bool {
 // It resolves the host and refuses if any address it resolves to is refused;
 // control repeats the check on the address actually dialled.
 //
-// viaProxy says the request will be sent through an egress proxy. The proxy
-// then resolves the name, possibly with names this host cannot resolve, so
-// only literal addresses and the host allowlist are checked here and the
-// proxy's own access rules must keep internal ranges out.
+// viaProxy says the request will be sent through an egress proxy, which does
+// its own name resolution. The name is still resolved here and refused if it
+// resolves to a refused address; only a name this host cannot resolve at all
+// is left to the proxy. The proxy may resolve a name differently, so its own
+// access rules must keep internal ranges out as well.
 func (g *destinationGuard) checkURL(ctx context.Context, u *url.URL, resolver *net.Resolver, viaProxy bool) error {
 	if u == nil {
 		return fmt.Errorf("no destination")
@@ -134,9 +149,6 @@ func (g *destinationGuard) checkURL(ctx context.Context, u *url.URL, resolver *n
 	if looksNumeric(host) {
 		return fmt.Errorf("host %q is a non-standard numeric address", host)
 	}
-	if viaProxy {
-		return nil
-	}
 	key := strings.ToLower(host)
 	g.mu.Lock()
 	until, known := g.verdicts[key]
@@ -146,6 +158,11 @@ func (g *destinationGuard) checkURL(ctx context.Context, u *url.URL, resolver *n
 	}
 	addrs, err := resolver.LookupNetIP(ctx, "ip", host)
 	if err != nil {
+		if viaProxy {
+			// Only the proxy can resolve this name. Let it; a name this host
+			// can resolve is still checked below.
+			return nil
+		}
 		return fmt.Errorf("%w: host %q: %v", errDestinationUnresolved, host, err)
 	}
 	for _, addr := range addrs {

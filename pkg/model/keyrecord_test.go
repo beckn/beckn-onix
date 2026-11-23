@@ -78,3 +78,37 @@ func TestSelectKeyRecordValidityWindow(t *testing.T) {
 		})
 	}
 }
+
+// Found in round 2: Unicode case folding made look-alike ids equal, so a
+// record for "bap.example.com" spelt with U+017F or U+212A matched the real
+// subscriber. Only ASCII case may be ignored.
+func TestSameSubscriberIDIsASCIIOnly(t *testing.T) {
+	same := [][2]string{{"bap.example.com", "BAP.Example.COM"}, {"bap.example.com", " bap.example.com. "}}
+	for _, p := range same {
+		if !SameSubscriberID(p[0], p[1]) {
+			t.Errorf("%q and %q should be the same subscriber", p[0], p[1])
+		}
+	}
+	different := [][2]string{
+		{"sub.example.com", "\u017fub.example.com"},   // long s
+		{"bap.kite.example", "bap.\u212aite.example"}, // Kelvin sign
+		{"bap.example.com", "bap.example.com.evil.test"},
+		{"bap.example.com", "xbap.example.com"},
+		{"bap.example.com", "bap.example.com.."},
+		{"", ""},
+	}
+	for _, p := range different {
+		if SameSubscriberID(p[0], p[1]) {
+			t.Errorf("%q and %q must not be the same subscriber", p[0], p[1])
+		}
+	}
+	now := time.Now()
+	subs := []Subscription{{Subscriber: Subscriber{SubscriberID: "\u017fub.example.com"}, KeyID: "k1", Status: "SUBSCRIBED"}}
+	if _, err := SelectKeyRecord(subs, "sub.example.com", "k1", now); !errors.Is(err, ErrKeyRecordNotFound) {
+		t.Fatalf("look-alike record selected: %v", err)
+	}
+	subs = []Subscription{{Subscriber: Subscriber{SubscriberID: "sub.example.com"}, KeyID: "\u212a1", Status: "SUBSCRIBED"}}
+	if _, err := SelectKeyRecord(subs, "sub.example.com", "k1", now); !errors.Is(err, ErrKeyRecordNotFound) {
+		t.Fatalf("look-alike key id selected: %v", err)
+	}
+}

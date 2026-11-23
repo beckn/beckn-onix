@@ -743,7 +743,7 @@ modules:
 
 Whatever this setting says, link-local addresses and cloud metadata addresses are refused, as are destinations that are not `http`/`https` URLs or that carry credentials. Destinations written in the routing config (`targetType: url`) are never checked.
 
-The adapter resolves the destination host before forwarding and checks the address again when it connects. If requests leave through an egress proxy (`HTTP_PROXY` / `HTTPS_PROXY`), the proxy resolves host names, so the adapter can only check literal addresses and `allowedDestinationHosts`; the proxy's own access rules must keep internal ranges out. A host name that cannot be resolved is answered with `502`.
+The adapter resolves the destination host before forwarding and checks the address again when it connects. If requests leave through an egress proxy (`HTTP_PROXY` / `HTTPS_PROXY`), the proxy resolves host names, so the adapter's check is only as good as its own view of DNS: it refuses a name that it resolves to a refused address, and leaves a name it cannot resolve to the proxy. The proxy's own access rules must keep internal ranges out as well. A host name that cannot be resolved is answered with `502`.
 
 ###### `allowedDestinationHosts`
 **Type**: `array` of strings  

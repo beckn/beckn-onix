@@ -504,7 +504,8 @@ func lookupCacheKey(subscriberID, keyID string) string {
 // domains, so case is ignored. A record without subscriber_id was addressed by
 // the requested ID, so it is accepted as that subscriber's.
 func isSubscriberRecord(recordSubscriberID, subscriberID string) bool {
-	return recordSubscriberID == "" || strings.EqualFold(recordSubscriberID, subscriberID)
+	// ASCII case only: Unicode folding would accept a look-alike id.
+	return recordSubscriberID == "" || model.SameSubscriberID(recordSubscriberID, subscriberID)
 }
 
 // cachedLookup returns Lookup's cached results for key, and false on a miss,
